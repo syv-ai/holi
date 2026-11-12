@@ -166,9 +166,7 @@ export async function syncThreads(
   const queryMatchIds = new Set(queryMatches.map((thread) => thread.id))
   const refetched = await fetchThreadSummaries(
     api,
-    [...changed].filter(
-      (id) => !gone.has(id) && !queryMatchIds.has(id) && !confirmedIds.has(id),
-    ),
+    [...changed].filter((id) => !gone.has(id) && !queryMatchIds.has(id) && !confirmedIds.has(id)),
     knownAddresses,
   )
   const available = new Set([
