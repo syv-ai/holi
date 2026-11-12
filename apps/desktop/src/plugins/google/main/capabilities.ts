@@ -75,6 +75,7 @@ import type { OutgoingMail } from './mime'
 import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
+import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 
 /** Longest calendar window one call may ask for. */
@@ -634,7 +635,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const data = await dataOf(ctx.remote)
         return google(() => data.threads(options))
       },
-      cliValue: (page) => ({ ...page, threads: fenceThreads(page.threads) }),
+      cliValue: (page) => ({
+        ...page,
+        threads: fenceThreads(
+          page.threads.map((thread) => ({
+            ...thread,
+            snippet: cleanSearchSnippet(thread.snippet),
+          })),
+        ),
+      }),
       text: (page) => json(page.threads),
     }),
 
@@ -671,10 +680,17 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
      */
     'google.read': cap({
       doors: ['cli'],
-      cli: { args: ['id'], summary: 'one thread, as text' },
-      params: idParams,
-      run: async (ctx, { id }) =>
-        google(async () => textOnly(await readThread(apiOf(ctx.remote), id))),
+      cli: {
+        args: ['id'],
+        flags: ['full'],
+        summary: 'one thread, as text (--full: include quoted history and boilerplate)',
+      },
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return { ...idParams(p), full: flagParam(p, 'full') }
+      },
+      run: async (ctx, { id, full }) =>
+        google(async () => textOnly(await readThread(apiOf(ctx.remote), id), { full })),
       cliValue: fenceThread,
     }),
 
