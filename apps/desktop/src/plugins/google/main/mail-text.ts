@@ -19,17 +19,33 @@ const PROVIDER_LINK =
   /^\s*https?:\/\/(?:meet\.google\.com|zoom\.us|[\w.-]+\.zoom\.us|teams\.microsoft\.com)\/[^\s<>]+\s*$/i
 const CALENDAR_DETAIL = /^\s*(?:Dial in:\s*\+?[\d ()-]+(?:\s+PIN:\s*[\d #]+)?|PIN:\s*[\d #]+)\s*$/i
 
-function isForwardBlock(lines: string[], marker: number): boolean {
-  const following = lines.slice(marker + 1, marker + 8)
-  const fields = following.flatMap((line) => {
-    const field = line.match(FORWARD_HEADER)?.[1]
-    return field === undefined ? [] : [field.toLowerCase()]
-  })
-  return (
-    fields.includes('from') &&
-    fields.includes('subject') &&
-    (fields.includes('sent') || fields.includes('date'))
-  )
+function forwardHistoryEnd(lines: string[], marker: number): number | null {
+  const headerEnd = Math.min(marker + 8, lines.length)
+  let lastHeader = -1
+  const fields = new Set<string>()
+  for (let index = marker + 1; index < headerEnd; index++) {
+    const field = lines[index]!.match(FORWARD_HEADER)?.[1]?.toLowerCase()
+    if (field) {
+      fields.add(field)
+      lastHeader = index
+    }
+  }
+  if (!fields.has('from') || !fields.has('subject') || (!fields.has('sent') && !fields.has('date')))
+    return null
+
+  // A recognized header alone does not prove the rest is history: people often
+  // answer below a forwarded or quoted message. Only remove a visibly quoted
+  // span, as HTML blockquotes are marked with `>` before this cleanup runs.
+  let index = lastHeader + 1
+  while (index < lines.length && lines[index]!.trim() === '') index++
+  if (index === lines.length || !/^\s*>/.test(lines[index]!)) return null
+  let lastQuote = index
+  for (; index < lines.length; index++) {
+    if (lines[index]!.trim() === '') continue
+    if (!/^\s*>/.test(lines[index]!)) break
+    lastQuote = index
+  }
+  return lastQuote
 }
 
 function isCalendarHeader(lines: string[], index: number): boolean {
@@ -60,7 +76,11 @@ export function cleanMailText(text: string): string {
     // Only a new attribution can establish another span as reply history.
     if (line.trim() !== '') quotedBlock = false
     if (FORWARD_START.test(line)) {
-      if (isForwardBlock(lines, index)) break
+      const historyEnd = forwardHistoryEnd(lines, index)
+      if (historyEnd !== null) {
+        index = historyEnd
+        continue
+      }
       kept.push(line)
       continue
     }

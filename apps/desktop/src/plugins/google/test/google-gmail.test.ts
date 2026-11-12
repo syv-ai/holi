@@ -1149,6 +1149,22 @@ describe('readThread', () => {
 })
 
 describe('textOnly', () => {
+  it('keeps an HTML bottom-posted reply after a bounded forwarded quote', async () => {
+    const html =
+      '<p>-----Original Message-----</p><p>From: Ada</p><p>Date: Tue</p><p>Subject: Plan</p><blockquote><p>Old proposal.</p><p>Old dates.</p></blockquote><p>The dates work for me.</p>'
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+      },
+    })
+
+    const thread = await readThread(api, 't1')
+    expect(textOnly(thread).messages[0]!.body).toBe('The dates work for me.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(thread.messages[0]!.body)
+    expect(thread.messages[0]!.html).toBe(html)
+  })
+
   it('cleans complete HTML quote spans only for the CLI and leaves the original projection intact', async () => {
     const html =
       '<p>On Tuesday Ada wrote:</p><blockquote><p>Old first paragraph.</p><p>Old second paragraph.</p><blockquote><p>Nested older history.</p></blockquote></blockquote><p>New bottom-posted answer.</p>'
