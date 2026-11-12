@@ -31,10 +31,12 @@ export function NavUser({
   onManage,
   onError,
   visible,
+  canSwitchAccount,
 }: {
   onManage: () => void
   onError: (message: string) => void
   visible: boolean
+  canSwitchAccount: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const { account, accounts, currentSub, refresh } = useGoogleAccount()
@@ -43,7 +45,7 @@ export function NavUser({
   const others = accounts.filter((a) => a.sub !== currentSub)
 
   const use = (sub: string) => {
-    if (remote === null) return
+    if (remote === null || !canSwitchAccount || sub === currentSub) return
     setSwitching(true)
     void googleCap
       .useAccount(remote, { sub })
@@ -99,13 +101,19 @@ export function NavUser({
             <>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
+                {' '}
                 <DropdownMenuLabel className="text-muted-foreground text-xs">
                   Read mail from
                 </DropdownMenuLabel>
+                {!canSwitchAccount && (
+                  <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+                    Close your reply before switching accounts.
+                  </DropdownMenuLabel>
+                )}
                 {accounts.map((a) => (
                   <DropdownMenuItem
                     key={a.sub}
-                    disabled={switching}
+                    disabled={switching || (a.sub !== currentSub && !canSwitchAccount)}
                     onSelect={() => a.sub !== currentSub && use(a.sub)}
                   >
                     <span className="min-w-0 flex-1 truncate">{a.email}</span>

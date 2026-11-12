@@ -224,7 +224,12 @@ function MailAccountShell({
           <MailList
             mail={mail}
             account={
-              <NavUser onManage={openConnections} onError={mail.reportError} visible={visible} />
+              <NavUser
+                onManage={openConnections}
+                onError={mail.reportError}
+                visible={visible}
+                canSwitchAccount={inline === null}
+              />
             }
             visible={visible}
             onSelectFolder={(folder) => {
