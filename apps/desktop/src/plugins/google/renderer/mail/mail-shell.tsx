@@ -8,7 +8,7 @@
  * parent (`h-full`) and brings its own folder rail and list column. Not
  * mounted yet; see the plugin's `index.tsx` for the surfaces that are.
  */
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -172,6 +172,13 @@ function MailAccountShell({
     mail.reloadDrafts()
   }
 
+  // Closing the dialog unmounts MailComposer, whose cleanup saves an in-progress
+  // draft. Clear the request as well: retaining it while hidden would reopen a
+  // fresh composer when Mail returns, creating a duplicate draft.
+  useEffect(() => {
+    if (!visible) setCompose(null)
+  }, [visible])
+
   const composer =
     inline !== null && thread !== null ? (
       <div className="pt-4">
@@ -198,6 +205,7 @@ function MailAccountShell({
         open
         onOpenChange={keepOpen}
         className={cn('relative h-full min-h-0', className)}
+        inert={!visible}
         style={
           {
             '--sidebar-width': '440px',
