@@ -96,6 +96,7 @@ describe('the capability host', () => {
       ['fake'],
       { 'fake.ping': ui, 'fake.cli': { ...ui, doors: ['cli'], cli: { args: [], summary: '' } } },
       'fake',
+      'o/r',
     )
     return createCapabilityHost({
       registry: caps,
@@ -161,8 +162,8 @@ describe('the capability host', () => {
 
   it('opens the app door once', () => {
     const h = host(() => true)
-    h.openAppDoor({ admit: async () => {} })
-    expect(() => h.openAppDoor({ admit: async () => {} })).toThrow(/already open/)
+    h.openAppDoor({ admit: async () => {} }, 'o/r')
+    expect(() => h.openAppDoor({ admit: async () => {} }, 'o/r')).toThrow(/already open/)
   })
 
   it("asks the opener's consent for an entry with an appGrant, at the app door only", async () => {
@@ -184,12 +185,15 @@ describe('the capability host', () => {
       claims: async () => [],
     })
     const asked: string[] = []
-    const door = h.openAppDoor({
-      admit: async (_ctx, grant) => {
-        asked.push(grant)
-        throw new Error('not approved')
+    const door = h.openAppDoor(
+      {
+        admit: async (_ctx, grant) => {
+          asked.push(grant)
+          throw new Error('not approved')
+        },
       },
-    })
+      'o/r',
+    )
     await expect(door.call('o/r', 'A.app', 'x.read', {})).rejects.toThrow(/not approved/)
     expect(asked).toEqual(['mail'])
     expect(
