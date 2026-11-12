@@ -919,6 +919,7 @@ describe('syncThreads', () => {
 
       const second = gmail({
         list: [{ id: 't2' }],
+        history: archivedInHistory('t2'),
         threads: { t2: rawThread('t2', 'Two (archived)', ['SENT']) },
       })
       const page = await syncThreads(second.api, cache, { mailbox: 'sent' })
