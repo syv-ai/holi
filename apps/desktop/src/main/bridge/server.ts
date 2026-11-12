@@ -57,7 +57,7 @@ export interface BridgeServerDeps {
   cli?: {
     dispatch: Dispatch
     /** The capabilities open at the CLI door, read per call. */
-    commands(): readonly CliCommand[]
+    commands(remote: string): readonly CliCommand[]
     /** The vault's clone, where an answer too long to print is spilled
      *  (`spill.ts`). Null prints it whole. */
     rootFor(remote: string): Promise<string | null>
@@ -80,7 +80,7 @@ export interface BridgeServer {
    */
   tokenForVault(remote: string): string
   /** Serve one exact path. Throws if it is taken. Returns the undo. */
-  route(path: string, route: Route): () => void
+  route(path: string, route: Route, remote?: string): () => void
 }
 
 /** Cap the request body: a guard against a runaway sender holding the socket
@@ -108,7 +108,9 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
   const tokens = new Map<string, string>()
   /** remote → its standing token. */
   const vaultTokens = new Map<string, string>()
-  const routes = new Map<string, Route>()
+  type RouteLease = { route: Route }
+  const routes = new Map<string, RouteLease>()
+  const scopedRoutes = new Map<string, Map<string, RouteLease>>()
   let server: Server | null = null
   let boundPort: number | null = null
 
@@ -126,7 +128,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     const form = new URLSearchParams(body)
     const request = resolveArgv(
       form.getAll('argv'),
-      cli.commands(),
+      cli.commands(remote),
       form.get('stdin'),
       form.get('job'),
     )
@@ -141,7 +143,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         name: request.name,
         params: request.params,
       })
-      const succeeded = commandSucceeded(cli.commands(), request.name, result.value)
+      const succeeded = commandSucceeded(cli.commands(remote), request.name, result.value)
       // A command that answered with its own failure: 422, the answer whole.
       if (!succeeded) return { status: 422, body: JSON.stringify(result.value, null, 2) }
       const value =
@@ -169,12 +171,17 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     }
   }
 
+  const routeIsCurrent = (path: string, remote: string, lease: RouteLease): boolean =>
+    path === CLI_PATH
+      ? deps.cli !== undefined
+      : scopedRoutes.get(remote)?.get(path) === lease || routes.get(path) === lease
+
   /** The route for a path: a registered one, or the built-in CLI door. */
-  const routeFor = (pathname: string): Route | undefined => {
-    const exact = routes.get(pathname)
+  const routeFor = (pathname: string, remote: string): RouteLease | undefined => {
+    const exact = scopedRoutes.get(remote)?.get(pathname) ?? routes.get(pathname)
     if (exact !== undefined) return exact
     if (deps.cli === undefined || pathname !== CLI_PATH) return undefined
-    return { body: 'text', handle: (remote, _query, body) => runCli(remote, body) }
+    return { route: { body: 'text', handle: (remote, _query, body) => runCli(remote, body) } }
   }
 
   const handle: RequestListener = (req, res) => {
@@ -194,7 +201,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       res.writeHead(403).end()
       return
     }
-    const route = routeFor(url.pathname)
+    const route = routeFor(url.pathname, remote)
     if (route === undefined) {
       req.resume()
       res.writeHead(404).end()
@@ -216,12 +223,15 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         req.destroy()
         return
       }
-      if (route.body === 'text') body += chunk.toString('utf8')
+      if (route.route.body === 'text') body += chunk.toString('utf8')
     })
 
     req.on('end', () => {
       void Promise.resolve()
-        .then(() => route.handle(remote, new URLSearchParams(url.search), body, hungUp.signal))
+        .then(() => {
+          if (!routeIsCurrent(url.pathname, remote, route)) return { status: 404 }
+          return route.route.handle(remote, new URLSearchParams(url.search), body, hungUp.signal)
+        })
         .then((reply) => {
           if (hungUp.signal.aborted) return
           if (reply.body === undefined || reply.body === '') {
@@ -249,13 +259,26 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       }
       return token
     },
-    route(path, route) {
-      if (routes.has(path) || path === CLI_PATH) {
-        throw new Error(`bridge route ${path} is already taken`)
+    route(path, route, remote) {
+      if (path === CLI_PATH) throw new Error(`bridge route ${path} is reserved`)
+      if (remote === undefined) {
+        if (routes.has(path) || [...scopedRoutes.values()].some((scoped) => scoped.has(path)))
+          throw new Error(`bridge route ${path} is already taken`)
+        const lease = { route }
+        routes.set(path, lease)
+        return () => {
+          if (routes.get(path) === lease) routes.delete(path)
+        }
       }
-      routes.set(path, route)
+      if (routes.has(path)) throw new Error(`bridge route ${path} is already taken`)
+      const scoped = scopedRoutes.get(remote) ?? new Map<string, RouteLease>()
+      if (scoped.has(path)) throw new Error(`bridge route ${path} is already taken for ${remote}`)
+      const lease = { route }
+      scoped.set(path, lease)
+      scopedRoutes.set(remote, scoped)
       return () => {
-        if (routes.get(path) === route) routes.delete(path)
+        if (scoped.get(path) === lease) scoped.delete(path)
+        if (scoped.size === 0 && scopedRoutes.get(remote) === scoped) scopedRoutes.delete(remote)
       }
     },
     port: () => boundPort,
