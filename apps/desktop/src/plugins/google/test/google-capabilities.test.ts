@@ -353,6 +353,10 @@ describe('what other people wrote, at the CLI door', () => {
     labels: [],
     unsubscribeUrl: null,
     hasInvite: false,
+    replied: true,
+    lastReplyAt: '2026-10-21T08:00:00Z',
+    addressedAs: 'to' as const,
+    automated: false,
   }
   const page = { threads: [INJECTED], nextPageToken: null, syncedAt: '2026-10-21T08:00:00Z' }
 
