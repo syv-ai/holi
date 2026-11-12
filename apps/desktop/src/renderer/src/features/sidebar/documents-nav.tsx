@@ -56,7 +56,7 @@ export function DocumentsNav({
         <SidebarMenuItem>
           <SidebarMenuButton
             isActive={activeId === BOARD_KEY}
-            tooltip={label}
+            tooltip={{ children: label, hidden: false }}
             aria-current={activeId === BOARD_KEY ? 'page' : undefined}
             onClick={() => onOpen(BOARD_KEY)}
             {...tabDrag({ kind: 'board' })}
@@ -72,9 +72,9 @@ export function DocumentsNav({
             ) : null}
           </SidebarMenuButton>
           {/* A sibling of the button, where the badge's own placement applies. */}
-          {(attention?.due ?? openTasks) > 0 ? (
-            <SidebarMenuBadge key={`${attention?.due ?? openTasks}`} aria-hidden="true">
-              {attention?.due ? `${attention.due} due` : openTasks}
+          {attention && (attention.due > 0 || attention.open > 0) ? (
+            <SidebarMenuBadge key={`${attention.due}`} aria-hidden="true">
+              {attention.due > 0 ? `${attention.due} due` : attention.open}
             </SidebarMenuBadge>
           ) : null}
         </SidebarMenuItem>

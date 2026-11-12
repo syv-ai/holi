@@ -93,9 +93,10 @@ export function AppSidebar({
 
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip={boardLabel}
+                  tooltip={{ children: boardLabel, hidden: false }}
                   isActive={activeId === BOARD_KEY}
                   onClick={() => onOpen(BOARD_KEY)}
+                  aria-current={activeId === BOARD_KEY ? 'page' : undefined}
                   aria-label={boardLabel}
                   variant="fill"
                   size="rail"
