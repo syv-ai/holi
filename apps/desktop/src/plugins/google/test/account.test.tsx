@@ -20,7 +20,7 @@ vi.mock('@/lib/trpc', () => ({
             ? statusMock()
             : // The same read also asks which accounts exist and which one
               // this vault uses. Mocked here so these stay about the shared atom.
-              name === 'google.accounts'
+              name === 'google.allAccounts'
               ? accountsMock()
               : Promise.reject(new Error(`unexpected ${name}`)),
       },

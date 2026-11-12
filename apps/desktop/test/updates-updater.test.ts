@@ -5,6 +5,7 @@ type Listener = (...args: unknown[]) => void
 /** electron-updater's `autoUpdater`, as far as the updater uses it. */
 interface FakeUpdater {
   on(event: string, listener: Listener): FakeUpdater
+  removeListener(event: string, listener: Listener): FakeUpdater
   removeAllListeners(): void
   emit(event: string, ...args: unknown[]): void
   listeners: Map<string, Listener[]>
@@ -24,6 +25,13 @@ const mocks = vi.hoisted(() => {
   const updater = {
     on: (event: string, listener: Listener) => {
       listeners.set(event, [...(listeners.get(event) ?? []), listener])
+      return updater
+    },
+    removeListener: (event: string, listener: Listener) => {
+      listeners.set(
+        event,
+        (listeners.get(event) ?? []).filter((l) => l !== listener),
+      )
       return updater
     },
     removeAllListeners: () => listeners.clear(),
@@ -90,13 +98,21 @@ beforeEach(() => {
 
 describe('updater channel switching', () => {
   it('uses Electron app.getVersion with the default updater adapter', () => {
-    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    const updater = createUpdater({
+      send: vi.fn(),
+      beforeInstall: async () => true,
+      installFailed: vi.fn(),
+    })
     expect(updater.status().version).toBe('0.1.2-dev.42')
     expect(mocks.macUpdater).not.toHaveBeenCalled()
   })
 
   it('applies rapid channel selections in order', async () => {
-    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    const updater = createUpdater({
+      send: vi.fn(),
+      beforeInstall: async () => true,
+      installFailed: vi.fn(),
+    })
     await tick()
     let persistFirst!: () => void
     const firstPersist = new Promise<void>((resolve) => {
@@ -120,7 +136,11 @@ describe('updater channel switching', () => {
     updater.dispose()
   })
   it('keeps native install-on-quit disabled and only explicitly installs a ready candidate', async () => {
-    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    const updater = createUpdater({
+      send: vi.fn(),
+      beforeInstall: async () => true,
+      installFailed: vi.fn(),
+    })
     await tick()
     expect(mocks.updater.channel).toBe('latest')
     expect(mocks.updater.autoDownload).toBe(true)
@@ -141,7 +161,11 @@ describe('updater channel switching', () => {
         resolveRead = resolve
       }),
     )
-    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    const updater = createUpdater({
+      send: vi.fn(),
+      beforeInstall: async () => true,
+      installFailed: vi.fn(),
+    })
     const check = updater.check()
     await tick()
     expect(mocks.updater.checkForUpdates).not.toHaveBeenCalled()
@@ -158,7 +182,11 @@ describe('updater channel switching', () => {
   })
 
   it('cancels and drains the previous channel download before checking the selected channel', async () => {
-    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    const updater = createUpdater({
+      send: vi.fn(),
+      beforeInstall: async () => true,
+      installFailed: vi.fn(),
+    })
     await tick()
     let finish!: () => void
     const downloadPromise = new Promise<void>((resolve) => {
@@ -190,7 +218,7 @@ describe('updater channel switching', () => {
 
   it('keeps the ready update when the guarded restart is cancelled', async () => {
     const beforeInstall = vi.fn(async () => false)
-    const updater = createUpdater({ send: vi.fn(), beforeInstall })
+    const updater = createUpdater({ send: vi.fn(), beforeInstall, installFailed: vi.fn() })
     await tick()
     mocks.updater.emit('update-available', { version: '1.1.0' })
     mocks.updater.emit('update-downloaded')
@@ -211,7 +239,7 @@ describe('updater channel switching', () => {
           allowInstall = resolve
         }),
     )
-    const updater = createUpdater({ send: vi.fn(), beforeInstall })
+    const updater = createUpdater({ send: vi.fn(), beforeInstall, installFailed: vi.fn() })
     await tick()
     mocks.updater.emit('update-available', { version: '1.1.0' })
     mocks.updater.emit('update-downloaded')
@@ -226,8 +254,63 @@ describe('updater channel switching', () => {
     updater.dispose()
   })
 
+  // electron-updater's deb install runs pkexec synchronously inside
+  // quitAndInstall: a cancelled prompt or a failed dpkg emits `error` there
+  // and returns without quitting, after Holi's teardown already ran.
+  const failingInstall = () =>
+    mocks.updater.quitAndInstall.mockImplementation(() => {
+      mocks.updater.emit('error', new Error('pkexec: authorization dismissed'))
+    })
+
+  it('reports a restart-to-update whose installer fails, so Holi can still exit', async () => {
+    const installFailed = vi.fn()
+    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true, installFailed })
+    await tick()
+    mocks.updater.emit('update-available', { version: '1.1.0' })
+    mocks.updater.emit('update-downloaded')
+    failingInstall()
+
+    await expect(updater.install()).resolves.toBe(false)
+
+    expect(installFailed).toHaveBeenCalledExactlyOnceWith('pkexec: authorization dismissed')
+    updater.dispose()
+  })
+
+  it('reports an install on quit whose installer fails, and keeps the quit', async () => {
+    const installFailed = vi.fn()
+    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true, installFailed })
+    await tick()
+    mocks.updater.emit('update-available', { version: '1.1.0' })
+    mocks.updater.emit('update-downloaded')
+    failingInstall()
+
+    expect(updater.installOnQuit()).toBe(true)
+
+    expect(installFailed).toHaveBeenCalledExactlyOnceWith('pkexec: authorization dismissed')
+    updater.dispose()
+  })
+
+  it('does not report a failure for an installer that starts', async () => {
+    const installFailed = vi.fn()
+    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true, installFailed })
+    await tick()
+    mocks.updater.emit('update-available', { version: '1.1.0' })
+    mocks.updater.emit('update-downloaded')
+
+    await expect(updater.install()).resolves.toBe(true)
+    // A later error (a background check, say) is not the install failing.
+    mocks.updater.emit('error', new Error('net::ERR_INTERNET_DISCONNECTED'))
+
+    expect(installFailed).not.toHaveBeenCalled()
+    updater.dispose()
+  })
+
   it('does not install a ready candidate staged on the previous channel', async () => {
-    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    const updater = createUpdater({
+      send: vi.fn(),
+      beforeInstall: async () => true,
+      installFailed: vi.fn(),
+    })
     await tick()
     mocks.updater.emit('update-available', { version: '1.1.0' })
     mocks.updater.emit('update-downloaded')
@@ -248,7 +331,11 @@ describe('updater channel switching', () => {
   })
 
   it('restores channel switching after a failed preference write', async () => {
-    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    const updater = createUpdater({
+      send: vi.fn(),
+      beforeInstall: async () => true,
+      installFailed: vi.fn(),
+    })
     await tick()
     mocks.update.mockRejectedValueOnce(new Error('disk full'))
     await expect(updater.setChannel('dev')).rejects.toThrow('disk full')
@@ -263,7 +350,11 @@ describe('updater channel switching', () => {
   })
 
   it('drains an explicit download before changing channel', async () => {
-    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    const updater = createUpdater({
+      send: vi.fn(),
+      beforeInstall: async () => true,
+      installFailed: vi.fn(),
+    })
     await tick()
     mocks.updater.emit('update-available', { version: '1.1.0' })
     let finish!: () => void

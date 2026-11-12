@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml'
 import { execFile } from 'node:child_process'
+import { commitChanges } from './commit-changes'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
@@ -1694,13 +1695,16 @@ describe('vaults large-file actions', () => {
 
   it('keepFileLocal excludes a held-back file locally, keeping it on disk', async () => {
     const { caller, path } = await adopted()
-    await writeFile(join(path, 'video.mov'), 'x'.repeat(50), 'utf8')
+    await writeFile(join(path, 'video[1].mov'), 'x'.repeat(50), 'utf8')
+    await mkdir(join(path, 'sub'))
+    await writeFile(join(path, 'sub', 'video[1].mov'), 'x'.repeat(50), 'utf8')
 
-    await caller.vaults.keepFileLocal({ remote: 'syv-ai/notes', path: 'video.mov' })
+    await caller.vaults.keepFileLocal({ remote: 'syv-ai/notes', path: 'video[1].mov' })
     // No longer dirty (git-ignored locally) but still on disk.
-    expect(await plainGit(path, ['status', '--porcelain', '--', 'video.mov'])).toBe('')
-    await expect(readFile(join(path, 'video.mov'), 'utf8')).resolves.toHaveLength(50)
-    expect(await readFile(join(path, '.git', 'info', 'exclude'), 'utf8')).toContain('video.mov')
+    expect(await plainGit(path, ['status', '--porcelain', '--', 'video[1].mov'])).toBe('')
+    await expect(readFile(join(path, 'video[1].mov'), 'utf8')).resolves.toHaveLength(50)
+    // That one file, not a pattern: the same name in another folder still syncs.
+    expect(await plainGit(path, ['status', '--porcelain', '-uall'])).toContain('sub/')
   })
 })
 
@@ -1909,11 +1913,7 @@ describe('history', () => {
     await plainGit(root, ['add', '-A'])
     await plainGit(root, ['commit', '-m', 'create demo app'])
     const target = (await plainGit(root, ['rev-parse', 'HEAD'])).trim()
-    for (let i = 0; i < 201; i++) {
-      await writeFile(join(root, 'Demo.app', 'data', 'records.json'), `${i}\n`, 'utf8')
-      await plainGit(root, ['add', '-A'])
-      await plainGit(root, ['commit', '-m', `data ${i}`])
-    }
+    await commitChanges(root, 'Demo.app/data/records.json', 201)
     await caller.vaults.open({ remote: REMOTE })
     const recent = await caller.history.list({ path: 'Demo.app' })
     expect(recent).toHaveLength(200)

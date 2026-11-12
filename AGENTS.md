@@ -294,12 +294,11 @@ Gotchas of a fresh checkout or worktree that no file states.
   from the branch you are on. Have it `git reset --hard <your commit>` first, and bring its
   work back with `git cherry-pick`.
 - Holi edits the stock files in place, and `shadcn add` would overwrite those edits if
-  you let it. Added on purpose: `Button` variants `text`, `dashed`, `section` and sizes `row`, `field`,
-  `inline`; `DialogContent`, `PopoverContent`, `HoverCardContent` variant `flush`;
+  you let it. Added on purpose: `Button` variants `text`, `quiet`, `dashed`, `section` and sizes `row`, `field`, `inline`, `media` (document image sizing); `DialogContent`, `PopoverContent`, `HoverCardContent` variant `flush`;
   `DialogContent` `size` (the width of a dialog chosen at runtime); `FileType`'s `deck`
   extension (a community plugin's presentation);
   `SidebarMenuButton` variant `fill` and size `rail`; `Avatar` `shape="square"`;
-  `TabsTrigger` variant `tab`; `Toggle` size `icon`; `ResizableHandle` variant `primary`
+  `TabsTrigger` variant `tab` with `bg-muted/40` combine-preview tint; `TabsEntry` sizes `tab`, `tab-group`, `tab-wide` own strip widths; `Toggle` size `icon`; `ResizableHandle` variant `primary`
   and `ResizablePanelGroup` `animateFirst`; `PanelSeparator` variant `line`;
   `motion-reduce` on `Skeleton` and `Spinner`; the scroll fade on `CommandList`; ReUI
   `KanbanBoard` variant `row`, `FramePanel` `flush`, `TreeItem` `arrived`, the data grid's

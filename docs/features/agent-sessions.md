@@ -529,19 +529,30 @@ still exists. A conversation with no note, or resumed in the same job, gets noth
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
-the job id from `$CLAUDE_JOB_DIR`; at a Stop, also `pending`, how many background tasks and
+the job id from `$CLAUDE_JOB_DIR`; at a start, also `pid`, the session's `claude` process (`$CLAUDE_PID`, or the hook's parent on
+an older CLI); at a Stop, also `pending`, how many background tasks and
 session crons its input lists, which is what tells a done session from a paused one
-([scheduled-agents](scheduled-agents.md)). The vault has one working set: the first turn to start pauses
-sync, the last to end resumes it and takes one settle commit. A session also leaves the set when
+([scheduled-agents](scheduled-agents.md)). At a Stop it also saves where the turn left the vault, for the
+prompt hook's "changed since your last turn" ([agent-config](agent-config.md)), Holi open or not:
+the tree of the settle commit, when that Stop emptied the working set and `/turn/end` answers with
+it within five seconds, and otherwise the working tree as the hook took it. The vault has one working set: the first turn to start pauses
+sync, the last to end resumes it and takes one settle commit (when the resume's own commit is
+already running, the settle commit waits for it and takes what it left; with nothing left, that commit
+is the settle commit). A session also leaves the set when
 its process goes, on two consecutive `idle` readings (escaping a permission prompt fires no `Stop`),
-or on a 10 minute cap. Sessions keep running while Holi is closed, so the first read after a vault
+or on a 10 minute cap. Whether its process went is the process's own answer, not the listing's:
+a working session the listing does not name stays in the set while either pid known for it (from the turn's
+start, or from the listing while it named the session) still runs, since the listing can lose
+sight of a live session after a resume. With no pid known, as from a hook older than it, the
+listing's silence is enough. A reused pid could hold the set past a crash, but only until the cap. Sessions keep running while Holi is closed, so the first read after a vault
 opens puts any session already busy into the set.
 
 **Turn review.** A turn is a commit range, `base` at start to the settle commit, or, for a turn
 that ended while another session's was still running, to a tree object of the working tree as it
 ended. Records go to `.holi/state/turns.local.json` (50, newest first), keyed by job id; files and
 diffs come from git when shown. A turn that changed nothing is recorded too, since the prompt hook
-counts "changed since your last turn" from it ([agent-config.md](agent-config.md)), but only the
+counts "changed since your last turn" from it when its `Stop` hook has saved no tree for the
+conversation yet ([agent-config.md](agent-config.md)), but only the
 session's latest such one is kept, and the chip skips it. A chip under a session's window says
 `Claude changed N files` and opens a review with per-hunk accept and reject, saved as one new
 commit per file. An overlapped turn says so; an unreachable range says its history is gone.
