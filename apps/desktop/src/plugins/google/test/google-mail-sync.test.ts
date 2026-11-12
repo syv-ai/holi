@@ -133,6 +133,33 @@ describe('syncThreads', () => {
     expect(threadGets(seen)).toHaveLength(2)
   })
 
+  it('refreshes explicit searches so repeated results retain current pagination', async () => {
+    const firstIds = Array.from({ length: 25 }, (_, i) => `t${i + 1}`)
+    const threads = Object.fromEntries([...firstIds, 't26'].map((id) => [id, rawThread(id, id)]))
+    const first = gmail({
+      listPages: { '': { threads: firstIds.map((id) => ({ id })), nextPageToken: 'page-2' } },
+      threads,
+    })
+    const query = { query: 'in:inbox newer_than:7d' }
+
+    const initial = await syncThreads(first.api, cache, query)
+    expect(initial.threads).toHaveLength(25)
+    expect(initial.nextPageToken).toBe('page-2')
+
+    const repeated = gmail({
+      listPages: { '': { threads: firstIds.map((id) => ({ id })), nextPageToken: 'page-2' } },
+      threads,
+    })
+    const refreshed = await syncThreads(repeated.api, cache, query)
+    expect(refreshed.threads).toHaveLength(25)
+    expect(refreshed.nextPageToken).toBe('page-2')
+
+    const later = gmail({ list: [{ id: 't26' }], threads })
+    const next = await syncThreads(later.api, cache, { ...query, pageToken: 'page-2' })
+    expect(next.threads.map((thread) => thread.id)).toEqual(['t26'])
+    expect(next.nextPageToken).toBeNull()
+  })
+
   it('asks Gmail only what changed when a history id is held', async () => {
     const first = gmail({
       list: [{ id: 't1' }, { id: 't2' }],
@@ -379,7 +406,7 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toHaveLength(1)
   })
 
-  it('removes a conversation from a drafts-only query when its last draft is deleted', async () => {
+  it('refreshes a drafts query when its last draft is deleted', async () => {
     const options = { query: 'in:drafts' }
     const draft = rawThread('t1', 'Draft', ['DRAFT'])
     const first = gmail({ list: [{ id: 't1' }], threads: { t1: draft } })
@@ -401,7 +428,7 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toHaveLength(0)
   })
 
-  it('refreshes a matching conversation after a draft is deleted', async () => {
+  it('refreshes a matching drafts query after a draft is deleted', async () => {
     const options = { query: 'in:drafts' }
     const draft = rawThread('t1', 'Before', ['DRAFT'])
     const first = gmail({ list: [{ id: 't1' }], threads: { t1: draft } })
@@ -482,7 +509,6 @@ describe('syncThreads', () => {
   it.each([
     ['Inbox', {}, 'in:inbox', ['INBOX']],
     ['Sent', { mailbox: 'sent' as const }, 'in:sent', ['SENT']],
-    ['explicit query', { query: 'from:jane' }, 'from:jane', ['INBOX']],
   ])(
     'admits an uncached message arrival for %s without labelsAdded',
     async (_name, options, query, labels) => {
@@ -505,8 +531,8 @@ describe('syncThreads', () => {
     },
   )
 
-  it('admits a label-only arrival after an archive and undo in an explicit query', async () => {
-    const options = { query: 'from:jane' }
+  it('admits a label-only arrival after an archive and undo in the inbox', async () => {
+    const options = {}
     const first = gmail({
       list: [{ id: 'restored' }, { id: 'old' }],
       threads: { restored: rawThread('restored', 'Restored match'), old: rawThread('old', 'Old') },
@@ -542,7 +568,7 @@ describe('syncThreads', () => {
     )
   })
 
-  it('does not admit unrelated archive or trash departures to an explicit query', async () => {
+  it('does not admit unrelated archive or trash departures to the inbox', async () => {
     for (const [id, event] of [
       [
         'trashed-sent',
@@ -557,7 +583,7 @@ describe('syncThreads', () => {
         },
       ],
     ] as const) {
-      const options = { query: 'from:jane' }
+      const options = {}
       const first = gmail({
         list: [{ id: 'match' }],
         threads: { match: rawThread('match', 'Match') },
@@ -578,8 +604,8 @@ describe('syncThreads', () => {
     }
   })
 
-  it('confirms uncached arrivals across every page of the active query', async () => {
-    const options = { query: 'from:jane' }
+  it('confirms uncached arrivals across every page of the active mailbox list', async () => {
+    const options = {}
     const first = gmail({ list: [{ id: 'old' }], threads: { old: rawThread('old', 'Old') } })
     await syncThreads(first.api, cache, options)
 
@@ -621,8 +647,8 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen).some((url) => url.includes('unrelated'))).toBe(false)
   })
 
-  it('does not admit an uncached message that the active query does not return', async () => {
-    const options = { query: 'from:jane' }
+  it('does not admit an uncached message that the active mailbox list does not return', async () => {
+    const options = {}
     const first = gmail({ list: [{ id: 'old' }], threads: { old: rawThread('old', 'Old') } })
     await syncThreads(first.api, cache, options)
 
@@ -640,8 +666,9 @@ describe('syncThreads', () => {
     const page = await syncThreads(second.api, cache, options)
 
     expect(page.threads.map((thread) => thread.id)).not.toContain('not-a-match')
-    const list = second.seen.find((url) => new URL(url).pathname.endsWith('/threads'))!
-    expect(new URL(list).searchParams.get('q')).toBe('from:jane')
+    expect(threadGets(second.seen)).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('/threads/not-a-match')]),
+    )
   })
 
   it('drops a thread history reports as deleted', async () => {
@@ -683,7 +710,7 @@ describe('syncThreads', () => {
     expect(cache.historyId(cacheKey({}))).toBe(cursor)
   })
 
-  it('does not serve a cached list for a different query', async () => {
+  it('refreshes an explicit query instead of using mailbox history', async () => {
     const first = gmail({ list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'Inbox thing') } })
     await syncThreads(first.api, cache, {})
 
@@ -693,8 +720,9 @@ describe('syncThreads', () => {
     })
     const page = await syncThreads(second.api, cache, { query: 'from:jane' })
 
-    // A delta is only meaningful against the list it was computed for.
+    // Explicit searches are fetched from Gmail rather than inferred from mailbox history.
     expect(page.threads.map((t) => t.subject)).toEqual(['Search hit'])
+    expect(second.seen.some((url) => new URL(url).pathname.endsWith('/history'))).toBe(false)
   })
 
   it('asks for changes since the list was cached, not since some other list was', async () => {
@@ -706,13 +734,13 @@ describe('syncThreads', () => {
     })
     await syncThreads(inbox.api, cache, {})
 
-    // …then a search is run, and the mailbox has moved on to 200.
-    const search = gmail({
+    // …then a Sent list is refreshed, and the mailbox has moved on to 200.
+    const sent = gmail({
       list: [{ id: 't9' }],
-      threads: { t9: rawThread('t9', 'Hit') },
+      threads: { t9: rawThread('t9', 'Hit', ['SENT']) },
       profile: { historyId: '200' },
     })
-    await syncThreads(search.api, cache, { query: 'from:jane' })
+    await syncThreads(sent.api, cache, { mailbox: 'sent' })
 
     const back = gmail({ history: { historyId: '201' } })
     await syncThreads(back.api, cache, {})
@@ -882,22 +910,19 @@ describe('syncThreads', () => {
       expect(page.threads.map((t) => t.id)).toContain('t2')
     })
 
-    it('keeps it in a SEARCH, which may still legitimately match', async () => {
-      // An explicit query is not the inbox, so "left the inbox" says nothing
-      // about whether the thread still answers `from:jane`. Here it is a
-      // refetch, exactly as it was before departures existed.
+    it('keeps an archived thread in Sent', async () => {
       const first = gmail({
         list: [{ id: 't2' }],
-        threads: { t2: rawThread('t2', 'Two') },
+        threads: { t2: rawThread('t2', 'Two', ['INBOX', 'SENT']) },
       })
-      await syncThreads(first.api, cache, { query: 'from:jane' })
+      await syncThreads(first.api, cache, { mailbox: 'sent' })
 
       const second = gmail({
         list: [{ id: 't2' }],
         history: archivedInHistory('t2'),
-        threads: { t2: rawThread('t2', 'Two (archived)', []) },
+        threads: { t2: rawThread('t2', 'Two (archived)', ['SENT']) },
       })
-      const page = await syncThreads(second.api, cache, { query: 'from:jane' })
+      const page = await syncThreads(second.api, cache, { mailbox: 'sent' })
 
       expect(page.threads.map((t) => t.subject)).toEqual(['Two (archived)'])
     })
