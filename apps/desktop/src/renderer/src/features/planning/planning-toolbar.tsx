@@ -101,7 +101,7 @@ export function PlanningToolbar({
               <FilterIcon data-icon="inline-start" aria-hidden="true" />
               Filter
               {active > 0 ? (
-                <Badge variant="outline" className="tabular-nums">
+                <Badge variant="secondary" className="tabular-nums">
                   {active}
                 </Badge>
               ) : null}

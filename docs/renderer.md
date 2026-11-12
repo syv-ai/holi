@@ -120,9 +120,7 @@ Need something the component lacks? Add a variant or size to its file in `compon
 `components/ui`, so every caller gets it. The full design rules are [ui-system](ui-system.md);
 the summary:
 
-- **Colour** is a semantic token (`bg-background`, `text-muted-foreground`). State is a `Badge`
-  variant (`success-light`) or an `Alert` variant. A raw palette class is for categorical identity
-  only (a tag colour, a file type), always with its `dark:` pair. No `bg-[#fff]` literals.
+- **Colour** is a semantic token (`bg-background`, `text-muted-foreground`). State is a readable solid `Badge` variant or an `Alert` variant. Badges have no border and never pair text and background of the same hue; neutral badges use `secondary`. A raw palette class is for categorical identity only (a tag colour, a file type), always with its `dark:` pair. No `bg-[#fff]` literals.
 - **Spacing** is `gap-*` on the parent: `gap-1` to `gap-2` in a row, `gap-3` to `gap-4` between
   groups, `gap-6` to `gap-8` between sections.
 - **Type**: `text-sm` body, `text-xs` meta, nothing smaller. Never resize `CardTitle` or

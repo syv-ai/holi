@@ -77,7 +77,7 @@ function FileHeader({
                 </span>
               ) : null}
               {editorMode !== undefined ? (
-                <Badge variant="outline" aria-label={`Vim ${editorMode} mode`}>
+                <Badge variant="secondary" aria-label={`Vim ${editorMode} mode`}>
                   {editorMode.toUpperCase()}
                 </Badge>
               ) : null}

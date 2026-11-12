@@ -290,17 +290,17 @@ function EventView({
         </SheetTitle>
         <SheetDescription className="sr-only">Event details.</SheetDescription>
         {draft.allDay && (
-          <Badge variant="outline" className="shrink-0">
+          <Badge variant="secondary" className="shrink-0">
             All day
           </Badge>
         )}
         {data?.myResponse === 'needsAction' && (
-          <Badge variant="warning-light" className="shrink-0">
+          <Badge variant="warning" className="shrink-0">
             Invited
           </Badge>
         )}
         {data?.myResponse === 'tentative' && (
-          <Badge variant="info-light" className="shrink-0">
+          <Badge variant="info" className="shrink-0">
             Maybe
           </Badge>
         )}

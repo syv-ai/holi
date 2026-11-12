@@ -854,10 +854,10 @@ function EventCalendarMonthCell({
       data-slot="event-calendar-drop-placeholder"
       data-drop-invalid={!inlineDrop.valid || undefined}
       className={cn(
-        "shrink-0 rounded-sm border border-dashed",
+        "shrink-0 rounded-sm border-dashed",
         inlineDrop.valid
-          ? "border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
-          : "border-destructive/70 bg-destructive/10",
+          ? "border border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
+          : "bg-status-destructive-solid",
         viewConfig.classNames?.dragGhost
       )}
       style={
@@ -1138,10 +1138,10 @@ function EventCalendarMoreIndicator({
           // chip tall, so the drop target is unmistakable.
           dropInto &&
             cn(
-              "flex shrink-0 items-center border border-dashed",
+              "flex shrink-0 items-center border-dashed",
               dropInto.valid
-                ? "text-foreground border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
-                : "border-destructive/70 bg-destructive/10 text-destructive"
+                ? "border text-foreground border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
+                : "bg-status-destructive-solid text-badge-solid-foreground"
             ),
           viewConfig.classNames?.moreIndicator
         )}

@@ -48,7 +48,7 @@ function StatusColumn({ status, tasks, context, onAddTask, ...props }: StatusCol
                 <FrameTitle className="min-w-0">
                   <span className="block truncate">{status.name}</span>
                 </FrameTitle>
-                <Badge variant="outline" size="sm" className="bg-background">
+                <Badge variant="secondary" size="sm" className="bg-background">
                   {tasks.length}
                 </Badge>
               </div>

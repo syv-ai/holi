@@ -76,10 +76,7 @@ counts or aligns is `tabular-nums`; a path, a slug or a code is Geist Mono.
 
 ### Colour
 
-The palette is shadcn's neutral ramp, monotone: the brand is the grey ramp itself. **Hue identifies, it does not decorate:** a brand mark, a file type, a task status, the
-destructive red. State is a `Badge` variant (`success-light`, `destructive-light`) or an `Alert`
-variant. A raw palette class is for categorical identity only (a tag or folder colour) and always
-carries its `dark:` pair. Never coloured text on a tinted background of the same hue.
+The palette is shadcn's neutral ramp, monotone: the brand is the grey ramp itself. **Hue identifies, it does not decorate:** a brand mark, a file type, a task status, the destructive red. State is a `Badge` solid variant or an `Alert` variant. Solid badge text uses a neutral foreground with at least 4.5:1 contrast against its fill in both default themes. A neutral badge uses `secondary`. A raw palette class is for categorical identity only (a tag or folder colour) and always carries its `dark:` pair. Never pair coloured text with a same-hue tinted background.
 
 ### Window
 
@@ -236,6 +233,7 @@ motion, header and edge through the injected stylesheet and cannot resize.
 ## Rules
 
 - State shows by background colour, not by borders or rings, except focus, above.
+- Badges never have a border, and never pair text and background of the same hue. Use a readable solid state variant or `secondary`; do not recreate tinted or outlined badge styles at the call site.
 - Only floating things (dialogs, menus, popovers, tooltips, toasts) get `--popover` and a shadow,
   in React and CodeMirror alike, and no border of their own.
 - Tokens or nothing: no colour literal and no motion number at a call site.

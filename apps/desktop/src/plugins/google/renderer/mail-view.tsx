@@ -1675,7 +1675,7 @@ function ThreadRow({
               <span className="mt-1.5 flex flex-wrap gap-1 pl-3.5">
                 {/* Outlined, where a user label is filled: the tab is Gmail's
                     classification, not a label the reader chose. */}
-                {categoryLabel !== null && <Badge variant="outline">{categoryLabel}</Badge>}
+                {categoryLabel !== null && <Badge variant="secondary">{categoryLabel}</Badge>}
                 {thread.labels.map((label) => (
                   <Badge key={label} variant="secondary">
                     {label}
