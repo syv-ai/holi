@@ -101,7 +101,6 @@ export function NavUser({
             <>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
-                {' '}
                 <DropdownMenuLabel className="text-muted-foreground text-xs">
                   Read mail from
                 </DropdownMenuLabel>
