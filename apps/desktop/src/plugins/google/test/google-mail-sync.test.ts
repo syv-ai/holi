@@ -66,6 +66,7 @@ interface Routes {
   threads?: Record<string, unknown>
   /** `history.list`. A number means "answer this status instead". */
   history?: unknown | number
+  historyPages?: Record<string, unknown | number>
   profile?: { historyId?: string }
   missingThreads?: string[]
   failedThreads?: string[]
@@ -87,12 +88,14 @@ function gmail(routes: Routes) {
     if (path.endsWith('/labels')) return ok({ labels: [] })
     if (path.endsWith('/profile')) return ok(routes.profile ?? { historyId: '5000' })
     if (path.endsWith('/history')) {
-      if (typeof routes.history === 'number') {
+      const token = new URL(url).searchParams.get('pageToken') ?? ''
+      const historyPage = routes.historyPages?.[token] ?? routes.history
+      if (typeof historyPage === 'number') {
         // Gmail answers 404 when `startHistoryId` is older than it keeps —
         // roughly a week. A NORMAL outcome, not an error.
-        return { ok: false, status: routes.history, text: async () => '{}', json: async () => ({}) }
+        return { ok: false, status: historyPage, text: async () => '{}', json: async () => ({}) }
       }
-      return ok(routes.history ?? { historyId: '5000' })
+      return ok(historyPage ?? { historyId: '5000' })
     }
     if (path.endsWith('/threads')) {
       const token = new URL(url).searchParams.get('pageToken') ?? ''
@@ -179,6 +182,78 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toHaveLength(1)
     const historyUrl = second.seen.find((url) => new URL(url).pathname.endsWith('/history'))!
     expect(new URL(historyUrl).searchParams.has('labelId')).toBe(false)
+  })
+
+  it('applies arrivals and replies found on later history pages', async () => {
+    const first = gmail({
+      list: [{ id: 'cached' }],
+      threads: { cached: rawThread('cached', 'Incoming') },
+    })
+    await syncThreads(first.api, cache, {})
+
+    const replied = rawThread('cached', 'Incoming')
+    replied.messages.push(
+      message('cached-reply', 'cached', [['From', 'Me <me@example.com>']], ['SENT']),
+    )
+    const second = gmail({
+      historyPages: {
+        '': {
+          historyId: '5001',
+          history: [{ messagesAdded: [{ message: { id: 'irrelevant', threadId: 'elsewhere' } }] }],
+          nextPageToken: 'next',
+        },
+        next: {
+          historyId: '5002',
+          history: [
+            { messagesAdded: [{ message: { id: 'arrival-message', threadId: 'arrival' } }] },
+            { messagesAdded: [{ message: { id: 'reply-message', threadId: 'cached' } }] },
+          ],
+        },
+      },
+      list: [{ id: 'arrival' }],
+      threads: {
+        arrival: rawThread('arrival', 'New arrival'),
+        cached: replied,
+      },
+    })
+
+    const page = await syncThreads(second.api, cache, {})
+
+    expect(page.threads.map((thread) => thread.id)).toEqual(['arrival', 'cached'])
+    expect(page.threads.find((thread) => thread.id === 'cached')!.replied).toBe(true)
+    expect(cache.historyId(cacheKey({}))).toBe('5002')
+    const historyRequests = second.seen.filter((url) => new URL(url).pathname.endsWith('/history'))
+    expect(historyRequests).toHaveLength(2)
+    expect(historyRequests.map((url) => new URL(url).searchParams.get('startHistoryId'))).toEqual([
+      '5000',
+      '5000',
+    ])
+    expect(new URL(historyRequests[1]!).searchParams.get('pageToken')).toBe('next')
+  })
+
+  it('keeps the cached list and cursor when a later history page fails', async () => {
+    const first = gmail({
+      list: [{ id: 'cached' }],
+      threads: { cached: rawThread('cached', 'Incoming') },
+    })
+    const original = await syncThreads(first.api, cache, {})
+    const cursor = cache.historyId(cacheKey({}))
+
+    const second = gmail({
+      historyPages: {
+        '': {
+          historyId: '5001',
+          history: [{ messagesAdded: [{ message: { id: 'changed', threadId: 'cached' } }] }],
+          nextPageToken: 'broken',
+        },
+        broken: 503,
+      },
+      threads: { cached: rawThread('cached', 'Changed') },
+    })
+
+    await expect(syncThreads(second.api, cache, {})).rejects.toThrow()
+    expect(cache.readThreads(cacheKey({}))).toEqual(original.threads)
+    expect(cache.historyId(cacheKey({}))).toBe(cursor)
   })
 
   it('refetches only the threads history says changed', async () => {

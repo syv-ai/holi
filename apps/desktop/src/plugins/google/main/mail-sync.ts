@@ -73,6 +73,7 @@ interface RawHistoryRecord {
 interface RawHistoryPage {
   history?: RawHistoryRecord[]
   historyId?: string
+  nextPageToken?: string
 }
 
 /**
@@ -115,15 +116,23 @@ export async function syncThreads(
   // and the label whose removal means a thread has left.
   const label = mailboxLabel(options.mailbox)
 
-  let page: RawHistoryPage
+  const history: RawHistoryRecord[] = []
+  let historyId: string | undefined
+  let pageToken: string | undefined
   try {
-    page = await api.get<RawHistoryPage>(`${BASE}/history`, {
-      startHistoryId: since,
-      // Gmail's labelId filter omits cross-label updates to existing threads:
-      // a SENT-only reply to an inbox thread is precisely such an update. Read
-      // mailbox history unfiltered, then restrict refetches to cached threads
-      // (plus explicit arrivals into this mailbox) below.
-    })
+    do {
+      const page = await api.get<RawHistoryPage>(`${BASE}/history`, {
+        startHistoryId: since,
+        pageToken,
+        // Gmail's labelId filter omits cross-label updates to existing threads:
+        // a SENT-only reply to an inbox thread is precisely such an update. Read
+        // mailbox history unfiltered, then restrict refetches to cached threads
+        // (plus explicit arrivals into this mailbox) below.
+      })
+      history.push(...(page.history ?? []))
+      historyId = page.historyId ?? historyId
+      pageToken = page.nextPageToken
+    } while (pageToken !== undefined)
   } catch (error) {
     // Gmail keeps roughly a week. Older than that is a resync, not a failure,
     // and must never reach the user as one.
@@ -133,7 +142,7 @@ export async function syncThreads(
     throw error
   }
 
-  const { changed, deleted, left, patches } = readHistory(page.history ?? [], label)
+  const { changed, deleted, left, patches } = readHistory(history, label)
   const cachedIds = new Set(cached.map((thread) => thread.id))
   // History's label changes describe individual messages, while Gmail's list
   // membership is decided across the whole conversation. Confirm every
@@ -181,7 +190,7 @@ export async function syncThreads(
 
   const threads = merge(cached, [...refreshed.values()], gone, patches, options)
   cache.writeThreads(key, threads)
-  if (page.historyId !== undefined) cache.setHistoryId(key, page.historyId)
+  if (historyId !== undefined) cache.setHistoryId(key, historyId)
 
   // A delta IS a sync: these threads are current as of this moment, even
   // though most of them were served from disk rather than refetched.
