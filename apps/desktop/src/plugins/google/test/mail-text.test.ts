@@ -10,6 +10,16 @@ describe('cleanMailText', () => {
     ).toBe('Thanks for the update.\n\nYes, Thursday works.')
   })
 
+  it('preserves later authored blockquotes once prose resumes after reply history', () => {
+    expect(
+      cleanMailText(
+        'On Tuesday Ada wrote:\n> Can you share the release note?\n\nYes, here is the exact wording to publish:\n> The release is postponed until Friday.\nPlease use that wording.',
+      ),
+    ).toBe(
+      'Yes, here is the exact wording to publish:\n> The release is postponed until Friday.\nPlease use that wording.',
+    )
+  })
+
   it('removes bottom-posted quotes when the quote itself is marked', () => {
     expect(
       cleanMailText(

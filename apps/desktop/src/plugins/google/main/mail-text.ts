@@ -55,6 +55,10 @@ export function cleanMailText(text: string): string {
       quotedBlock = true
       continue
     }
+    if (quotedBlock && /^\s*>/.test(line)) continue
+    // Once authored prose resumes, a later blockquote may be new material.
+    // Only a new attribution can establish another span as reply history.
+    if (line.trim() !== '') quotedBlock = false
     if (FORWARD_START.test(line)) {
       if (isForwardBlock(lines, index)) break
       kept.push(line)
@@ -92,9 +96,6 @@ export function cleanMailText(text: string): string {
       index = end - 1
       continue
     }
-    if (quotedBlock && /^\s*>/.test(line)) continue
-    // A standalone quote marker is not proof of reply history. Keep it unless
-    // a recognized attribution header has established quoted context.
     kept.push(line)
   }
   return kept
