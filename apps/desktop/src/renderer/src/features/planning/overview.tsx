@@ -160,7 +160,7 @@ export function Overview({
                   </span>
                 ) : null}
                 {summary.overdue > 0 ? (
-                  <Badge variant="destructive-light">{summary.overdue} overdue</Badge>
+                  <Badge variant="destructive">{summary.overdue} overdue</Badge>
                 ) : null}
               </>
             }

@@ -271,7 +271,7 @@ export function AgentsCard() {
           <SettingsFieldRow
             key={v.harness.id}
             title={v.harness.label}
-            titleAddon={v.path === null ? <Badge variant="warning-light">Not found</Badge> : null}
+            titleAddon={v.path === null ? <Badge variant="warning">Not found</Badge> : null}
             description={
               <span className="flex flex-col gap-0.5">
                 <span>{BUILT_IN_ABOUT[v.harness.id] ?? CUSTOM_ABOUT}</span>
@@ -282,7 +282,7 @@ export function AgentsCard() {
           >
             <div className="flex items-center gap-2">
               {v.harness.id === current ? (
-                <Badge variant="success-light">Default</Badge>
+                <Badge variant="success">Default</Badge>
               ) : (
                 <Button variant="outline" size="sm" onClick={() => makeDefault(v)}>
                   Make default

@@ -300,12 +300,12 @@ function DaySheetRows({
               </span>
             </span>
             {data?.myResponse === 'needsAction' && (
-              <Badge variant="warning-light" className="shrink-0">
+              <Badge variant="warning" className="shrink-0">
                 Invited
               </Badge>
             )}
             {data?.myResponse === 'tentative' && (
-              <Badge variant="info-light" className="shrink-0">
+              <Badge variant="info" className="shrink-0">
                 Maybe
               </Badge>
             )}

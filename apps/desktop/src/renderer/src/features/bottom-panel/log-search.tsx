@@ -44,7 +44,7 @@ function FirstFacePlus({
     <span className="flex min-w-0 items-center gap-1">
       <span className="flex min-w-0">{face(first)}</span>
       {values.length > 1 ? (
-        <Badge variant="outline" className="shrink-0 tabular-nums">
+        <Badge variant="secondary" className="shrink-0 tabular-nums">
           +{values.length - 1}
         </Badge>
       ) : null}
@@ -117,7 +117,7 @@ export function LogSearch({
         {count > 0 ? (
           <>
             <Badge
-              variant="primary-light"
+              variant="default"
               radius="full"
               className="tabular-nums"
               aria-label={`${rules} applied`}

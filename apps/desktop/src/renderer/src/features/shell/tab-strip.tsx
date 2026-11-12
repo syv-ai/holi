@@ -660,10 +660,10 @@ function EntryMenu({
  *  changed while another tab was in front. Said in the tab's own label, so
  *  hidden from the reader here. */
 const TAB_STATUS = {
-  working: { variant: 'info-light', label: 'Working' },
-  'needs-you': { variant: 'warning-light', label: 'Needs you' },
-  done: { variant: 'success-light', label: 'Done' },
-  updated: { variant: 'primary-light', label: 'Updated' },
+  working: { variant: 'info', label: 'Working' },
+  'needs-you': { variant: 'warning', label: 'Needs you' },
+  done: { variant: 'success', label: 'Done' },
+  updated: { variant: 'default', label: 'Updated' },
 } as const
 
 function TabStatus({ status }: { status: NonNullable<HeaderTab['status']> }) {

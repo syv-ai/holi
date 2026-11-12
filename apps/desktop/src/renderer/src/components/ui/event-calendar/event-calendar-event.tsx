@@ -66,8 +66,8 @@ const EVENT_CALENDAR_GHOST = {
   move: "rounded-sm border border-dashed border-(--ec-event-color)/50 bg-(--ec-event-color)/8",
   resize:
     "rounded-sm border border-dashed border-(--ec-event-color)/70 overflow-hidden",
-  invalid: "border-destructive/70 bg-destructive/10",
-  invalidResize: "border-destructive/70",
+  invalid: "bg-status-destructive-solid text-badge-solid-foreground",
+  invalidResize: "",
   /** Applied to the clone inside an invalid resize ghost. */
   invalidContent: "opacity-60",
 } as const

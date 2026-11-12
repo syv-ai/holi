@@ -83,7 +83,7 @@ export function MembersPage() {
             title="Visibility"
             description="A public vault can be read by anyone on GitHub."
           >
-            <Badge variant={state.visibility === 'public' ? 'warning-light' : 'secondary'}>
+            <Badge variant={state.visibility === 'public' ? 'warning' : 'secondary'}>
               {state.visibility}
             </Badge>
           </SettingsFieldRow>
@@ -111,7 +111,7 @@ export function MembersPage() {
                   </span>
                 }
               >
-                <Badge variant="outline">{person.permission}</Badge>
+                <Badge variant="secondary">{person.permission}</Badge>
               </SettingsFieldRow>
             ))
           )}
