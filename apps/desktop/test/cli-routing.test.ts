@@ -85,6 +85,21 @@ describe('generated CLI registry routing', () => {
             },
             text: (value) => value,
           }),
+          'probe.check': cap({
+            doors: ['cli'],
+            cli: {
+              args: [],
+              values: ['query'],
+              flags: ['flag'],
+              summary: `check ${remote} plugin context`,
+            },
+            params: (params) => params as Record<string, string>,
+            run: async (ctx, params) => {
+              invoked()
+              return `${ctx.remote}: ${remote}: ${params.flag ?? ''}: ${params.query ?? ''}`
+            },
+            text: (value) => value,
+          }),
         },
         'probe',
         remote,
@@ -160,6 +175,26 @@ describe('generated CLI registry routing', () => {
     })
     expect(live).toBe(shown)
   })
+  it('uses scoped option metadata before resolving selector candidates', async () => {
+    live = { remote: 'owner/a', root: a }
+    expect(await run(['probe', 'check', '--flag', '--vault', 'owner/a'], b)).toMatchObject({
+      code: 0,
+      stdout: 'owner/a: owner/a: true: \n',
+    })
+    expect(
+      await run(['probe', 'check', '--query=--vault=owner/b', '--vault=owner/a'], b),
+    ).toMatchObject({ code: 0, stdout: 'owner/a: owner/a: : --vault=owner/b\n' })
+    expect(await run(['probe', 'check', '--flag'], a)).toMatchObject({
+      code: 0,
+      stdout: 'owner/a: owner/a: true: \n',
+    })
+    expect(await run(['probe', 'read', '--query', '--', '--vault=owner/a'], b)).toMatchObject({
+      code: 0,
+      stdout: 'owner/a: owner/a\n',
+    })
+    expect(invoked).toHaveBeenCalledTimes(4)
+  })
+
   it('never falls back to B for missing, unknown, or escaped cwd targets', async () => {
     expect(await run(['docs', 'read', 'note.md'])).toMatchObject({
       code: 2,
