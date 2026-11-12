@@ -2,7 +2,7 @@
  * The shell’s real retained-host and TabView composition with Google’s Mail
  * contribution. Gmail responses are synthetic; Mail state and DOM are real.
  */
-import { act, fireEvent, render, screen, within } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createStore, getDefaultStore, Provider, useAtomValue } from 'jotai'
@@ -28,6 +28,8 @@ const markReadMock = vi.fn()
 const starMock = vi.fn()
 const archiveMock = vi.fn()
 const trashMock = vi.fn()
+const saveDraftMock = vi.fn()
+const saveDraftAccounts: string[] = []
 const useAccountMock = vi.fn()
 const toastMock = vi.fn()
 const openExternal = vi.fn()
@@ -61,6 +63,10 @@ const google: Record<string, (params: unknown) => unknown> = {
   star: (p) => starMock(p),
   archive: (p) => archiveMock(p),
   trash: (p) => trashMock(p),
+  saveDraft: (p) => {
+    saveDraftAccounts.push(currentAccount)
+    return saveDraftMock(p)
+  },
   imageSenders: () => [],
   allowImagesFrom: () => ({ ok: true }),
   forgetImageSenders: () => ({ ok: true }),
@@ -151,6 +157,8 @@ beforeEach(() => {
   starMock.mockReset().mockResolvedValue({ ok: true })
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
+  saveDraftMock.mockReset().mockResolvedValue({ id: 'draft-1' })
+  saveDraftAccounts.length = 0
   useAccountMock.mockReset().mockImplementation(({ sub }: { sub: string }) => {
     currentAccount = sub
     return { ok: true }
@@ -330,6 +338,50 @@ test('switching Google accounts releases the previous account’s Mail state', a
   expect(list.isConnected).toBe(false)
   expect(frame.isConnected).toBe(false)
   expect(screen.queryByRole('heading', { name: 'Q2 budget' })).toBeNull()
+  expect(screen.getByText('Pick a thread to read it')).toBeInTheDocument()
+})
+
+test('an open inline reply prevents switching accounts until its save succeeds and it closes', async () => {
+  const user = userEvent.setup()
+  mountMailTabs()
+  const list = await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(within(list).getByText('Q2 budget'))
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  await user.click(screen.getByRole('button', { name: 'Reply all' }))
+
+  const composer = await screen.findByRole('region', { name: 'Compose mail' })
+  const subject = within(composer).getByRole('textbox', { name: 'Subject' })
+  await user.clear(subject)
+  await user.type(subject, 'Private reply text')
+  saveDraftMock.mockRejectedValueOnce(new Error('offline'))
+  fireEvent.blur(subject)
+  await screen.findByText('Not saved')
+  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
+  const otherAccount = await screen.findByRole('menuitem', { name: 'ada@home.test' })
+  expect(otherAccount).toHaveAttribute('aria-disabled', 'true')
+  expect(screen.getByText('Close your reply before switching accounts.')).toBeInTheDocument()
+  await user.click(otherAccount)
+  expect(useAccountMock).not.toHaveBeenCalled()
+  expect(saveDraftAccounts).not.toContain('b')
+  expect(
+    saveDraftMock.mock.calls.some(
+      ([params]) => (params as { mail: { subject: string } }).mail.subject === 'Private reply text',
+    ),
+  ).toBe(true)
+  expect(composer.isConnected).toBe(true)
+  expect(subject).toHaveValue('Private reply text')
+
+  saveDraftMock.mockResolvedValue({ id: 'draft-1' })
+  fireEvent.blur(subject)
+  await screen.findByText('Saved')
+  fireEvent.keyDown(composer, { key: 'Escape' })
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+
+  searchMock.mockResolvedValue(page([summary({ id: 'second', subject: 'Second account mail' })]))
+  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
+  await screen.findByText('Second account mail', { selector: 'p' })
+  expect(useAccountMock).toHaveBeenCalledWith(expect.objectContaining({ sub: 'b' }))
   expect(screen.getByText('Pick a thread to read it')).toBeInTheDocument()
 })
 
