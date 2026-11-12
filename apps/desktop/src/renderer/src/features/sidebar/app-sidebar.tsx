@@ -8,6 +8,7 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
@@ -17,6 +18,7 @@ import { cn } from '@/lib/cn'
 import { runningPluginsAtom } from '@/state/plugins'
 import { appModeAtom, type AppMode } from '@/state/app-mode'
 import { activeRemoteAtom } from '@/state/vaults'
+import { taskDueAttentionAtom } from '@/state/tasks'
 import type { Move } from '@/lib/tree-actions'
 import { APPS_KEY, BOARD_KEY } from '@/state/tab-descriptor'
 import { DocumentsNav, useAppsOn } from './documents-nav'
@@ -57,6 +59,10 @@ export function AppSidebar({
   const [section, setSection] = useAtom(appModeAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const appsOn = useAppsOn()
+  const taskAttention = useAtomValue(taskDueAttentionAtom)
+  const boardLabel = taskAttention?.due
+    ? `Board, ${taskAttention.overdue} overdue, ${taskAttention.dueToday} due today, ${taskAttention.open} open tasks`
+    : `Board${taskAttention?.open ? `, ${taskAttention.open} open tasks` : ''}`
   /** Off until the first switch, so the sidebar's first paint is never held
    *  back by a fade. */
   const [switched, setSwitched] = useState(false)
@@ -87,16 +93,21 @@ export function AppSidebar({
 
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip="Board"
+                  tooltip={boardLabel}
                   isActive={activeId === BOARD_KEY}
                   onClick={() => onOpen(BOARD_KEY)}
-                  aria-label="Board"
+                  aria-label={boardLabel}
                   variant="fill"
                   size="rail"
                 >
                   <SquareKanbanIcon aria-hidden="true" />
                   <span>Board</span>
                 </SidebarMenuButton>
+                {taskAttention?.due ? (
+                  <SidebarMenuBadge placement="rail" aria-hidden="true">
+                    {taskAttention.due}
+                  </SidebarMenuBadge>
+                ) : null}
               </SidebarMenuItem>
 
               {appsOn ? (

@@ -12,7 +12,7 @@ import { hotkeyLabels } from '@/lib/hotkey'
 import { isMac } from '@/lib/platform'
 import { useTabDrag } from '@/features/shell/use-tab-drag'
 import { surfacesAtom } from '@/state/plugins'
-import { openTaskCountAtom } from '@/state/tasks'
+import { taskDueAttentionAtom } from '@/state/tasks'
 import { AppWindowIcon, SearchIcon, SquareKanbanIcon } from 'lucide-react'
 
 /** Whether vault apps are on: the Apps row is there only while they are. */
@@ -30,7 +30,11 @@ export function DocumentsNav({
   onOpenSearch: () => void
   onOpen: (id: string) => void
 }) {
-  const openTasks = useAtomValue(openTaskCountAtom)
+  const attention = useAtomValue(taskDueAttentionAtom)
+  const openTasks = attention?.open ?? 0
+  const label = attention?.due
+    ? `Board, ${attention.overdue} overdue, ${attention.dueToday} due today, ${attention.open} open tasks`
+    : `Board, ${openTasks} open tasks`
   // The Board row drags as its tab, onto the content or the strip.
   const tabDrag = useTabDrag()
   const appsOn = useAppsOn()
@@ -52,19 +56,25 @@ export function DocumentsNav({
         <SidebarMenuItem>
           <SidebarMenuButton
             isActive={activeId === BOARD_KEY}
+            tooltip={label}
             aria-current={activeId === BOARD_KEY ? 'page' : undefined}
             onClick={() => onOpen(BOARD_KEY)}
             {...tabDrag({ kind: 'board' })}
+            aria-label={label}
             variant="fill"
           >
             <SquareKanbanIcon aria-hidden="true" />
             <span>Board</span>
-            {openTasks > 0 ? <span className="sr-only">, {openTasks} open tasks</span> : null}
+            {attention?.due ? (
+              <span className="sr-only">, {label.slice(7)}</span>
+            ) : openTasks > 0 ? (
+              <span className="sr-only">, {openTasks} open tasks</span>
+            ) : null}
           </SidebarMenuButton>
           {/* A sibling of the button, where the badge's own placement applies. */}
-          {openTasks > 0 ? (
-            <SidebarMenuBadge key={openTasks} aria-hidden="true">
-              {openTasks}
+          {(attention?.due ?? openTasks) > 0 ? (
+            <SidebarMenuBadge key={`${attention?.due ?? openTasks}`} aria-hidden="true">
+              {attention?.due ? `${attention.due} due` : openTasks}
             </SidebarMenuBadge>
           ) : null}
         </SidebarMenuItem>
