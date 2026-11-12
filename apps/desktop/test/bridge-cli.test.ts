@@ -366,6 +366,12 @@ describe('a command', () => {
     })
   })
 
+  it('preserves Unicode arguments and the option terminator', async () => {
+    const res = await run(bin, ['apps', 'open', '--', 'føø/日本語.md'], env)
+    expect(res.code).toBe(0)
+    expect(capability).toHaveBeenCalledWith('apps.open', { path: 'føø/日本語.md' })
+  })
+
   it('prints JSON with --json, before or after the path', async () => {
     for (const args of [
       ['--json', 'a.pdf'],
