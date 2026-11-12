@@ -44,6 +44,7 @@ let dir: string
 let server: BridgeServer
 let turns: Array<[string, string, boolean]>
 let pendings: Array<number | null>
+let pids: Array<number | undefined>
 let statuses: Array<[string, string, unknown]>
 let channels: Array<[string, string, unknown]>
 
@@ -51,12 +52,14 @@ beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-endpoint-'))
   turns = []
   pendings = []
+  pids = []
   statuses = []
   channels = []
   server = createBridgeServer({ log: () => {} })
   registerAgentRoutes(server, {
-    onTurn: (remote, job, active, pending) => {
+    onTurn: (remote, job, active, pending, pid) => {
       turns.push([remote, job, active])
+      if (active) pids.push(pid)
       if (!active) pendings.push(pending)
     },
     onStatus: (remote, job, status) => statuses.push([remote, job, status]),
@@ -171,6 +174,14 @@ describe('turn-signal.mjs', () => {
     // An input that says neither: unsaid, not done.
     await stop({ stop_hook_active: false })
     expect(pendings).toEqual([0, 2, null])
+  })
+
+  it("reports Claude's own pid at a turn's start, or its parent's on an older CLI", async () => {
+    await writeFor()
+    await run(process.execPath, [HOOK, 'start'], { ...sessionEnv(), CLAUDE_PID: '4242' })
+    await run(process.execPath, [HOOK, 'start'], { ...sessionEnv(), CLAUDE_PID: '1;rm' })
+    await run(process.execPath, [HOOK, 'start'], sessionEnv())
+    expect(pids).toEqual([4242, process.pid, process.pid])
   })
 
   it('hands Holi the session inbox at its start and at each turn, never at a Stop', async () => {

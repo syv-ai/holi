@@ -46,9 +46,13 @@ async function rig(cli?: BridgeServerDeps['cli']) {
   // useful if it says WHICH session turned.
   const starts: string[] = []
   const ends: string[] = []
+  const pids: Array<number | undefined> = []
   const server = createBridgeServer({ cli, log: () => {} })
   registerAgentRoutes(server, {
-    onTurn: (remote, job, active) => (active ? starts : ends).push(`${remote}:${job}`),
+    onTurn: (remote, job, active, _pending, pid) => {
+      ;(active ? starts : ends).push(`${remote}:${job}`)
+      if (active) pids.push(pid)
+    },
     log: () => {},
   })
   servers.push(server)
@@ -60,6 +64,7 @@ async function rig(cli?: BridgeServerDeps['cli']) {
     token: () => token,
     starts: () => starts,
     ends: () => ends,
+    pids: () => pids,
   }
 }
 
@@ -123,11 +128,32 @@ describe('createBridgeServer', () => {
     expect(r.ends()).toEqual([])
   })
 
+  it("POST /turn/start hands over the session's pid, when it is one", async () => {
+    const r = await rig()
+    await post(r.port(), `/turn/start?t=${r.token()}&job=1234abcd&pid=4242`)
+    await post(r.port(), `/turn/start?t=${r.token()}&job=1234abcd&pid=-1`)
+    await post(r.port(), `/turn/start?t=${r.token()}&job=1234abcd`)
+    expect(r.pids()).toEqual([4242, undefined, undefined])
+  })
+
   it('POST /turn/end with a job id names that session', async () => {
     const r = await rig()
     await post(r.port(), `/turn/end?t=${r.token()}&job=1234abcd`)
     expect(r.ends()).toEqual([`${VAULT}:1234abcd`])
     expect(r.starts()).toEqual([])
+  })
+
+  it("POST /turn/end answers the settle commit's tree, and stays empty without one", async () => {
+    const answers: Array<string | null> = ['a'.repeat(40), null, 'HEAD']
+    const server = createBridgeServer({ log: () => {} })
+    registerAgentRoutes(server, { onTurn: async () => answers.shift() ?? null, log: () => {} })
+    servers.push(server)
+    await server.start()
+    const end = () =>
+      post(server.port()!, `/turn/end?t=${server.tokenForVault(VAULT)}&job=1234abcd`)
+    expect(await end()).toEqual({ status: 200, body: JSON.stringify({ tree: 'a'.repeat(40) }) })
+    expect(await end()).toEqual({ status: 204, body: '' })
+    expect(await end()).toEqual({ status: 204, body: '' })
   })
 
   it('tells two sessions in one vault apart', async () => {

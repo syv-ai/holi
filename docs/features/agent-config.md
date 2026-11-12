@@ -62,21 +62,49 @@ agent finds itself with `Glob`, `grep` and `git`. The line carries no time or co
 focus and selection print the same bytes and do not break the prompt cache.
 
 The second line is what changed since the session's last turn that the session did not change:
-`Changed since your last turn, not by you: <paths> (git diff <sha> shows how)`. The hook finds the
-session's newest record in `.holi/state/turns.local.json` by its job id (the name of
-`$CLAUDE_JOB_DIR`, as the turn hooks send it) and diffs that record's `end` against the working
-tree as it stands, written as a tree object through a scratch index so the real one is untouched:
-commits since then (autosave makes most edits commits) and work not yet committed alike. That is
-the user's edits, a pull, or another session's turn, which is why it says "not by you" rather than
-naming who. A turn that ends while another session's is still running cannot have a settle commit
-yet, so its record ends at the same kind of tree, taken as it ends; its own uncommitted edits are
-then never reported back to it. What the user edits during the session's own turn lands in that
-turn's settle commit and is not reported either. Ten paths at most, then `and N more`;
-`.holi/state/`, `.local.` and secret files are left out. Both lines name paths a teammate may have
+`Changed since your last turn, not by you: <paths> (git diff <id> shows how)`. The hooks keep
+where each conversation's last turn ended themselves, one file per conversation:
+`.holi/state/turn-trees/<session_id>.local.json`, holding `{ "tree": <id> }` (the newest 100
+kept, each written to a temporary file and renamed). A `/resume` keeps the `session_id`, so a
+resumed conversation still counts from its own last turn; Holi's turn records, keyed by the job id,
+do not always follow a resume, and a stale record named the same files at every turn. At `Stop`,
+`turn-signal.mjs end` writes the working tree as a tree object, through a scratch index so the real
+one is untouched, then sends `/turn/end` and waits up to five seconds for the answer. When that
+`Stop` empties the working set, main resumes sync, takes the settle commit and answers with its
+tree, and that is what is saved: the commit's pre-commit transforms (the memory index, markdown
+normalising, image shrinking, relinking) rewrite files the agent touched, and counted from the
+hook's tree those would be named as not the agent's. Five seconds covers the transforms and the
+settle commit's one retry a second after finding a pull in flight (`commitNow` answers `busy`
+then); a clean tree, a turn that only read, answers at once, with no retry. With no answer (Holi closed,
+another session still working, nothing to commit, a commit that failed, or a slow one), the hook
+saves its own tree, taken before it told Holi: taken after, it could hold a pull the resumed sync
+brought in, which would then never be named. A turn that ended while another session's was still
+running can therefore have a file a transform rewrote named once. A conversation's `Stop` and its
+next prompt run one after the other, so nothing else writes its file meanwhile and no lock is
+needed. At the next prompt the hook diffs that tree against the working tree as it stands, written
+the same way: commits since then (autosave makes most edits commits) and work not yet committed
+alike. That is the user's edits, a pull, or another session's turn, which is why it says "not by
+you" rather than naming who. The agent's own edits are inside the tree it left, and so is what the
+user edited while it worked, so neither is reported, and a change is named once, since the next
+`Stop` takes it into the tree. A tree is used once: the prompt that reads it empties the file, so a
+turn that never reaches `Stop` (an interrupt fires none) leaves the next prompt nothing to count
+from. When git fails at `Stop` and Holi gives no tree, the file is likewise saved with none. Either
+way the next prompt names nothing, rather than counting from an older tree that would report the
+agent's own latest edits. A conversation with no file yet (its first turn, or one from before this hook) falls back to the
+session's newest record in `.holi/state/turns.local.json`, found by its job id (the name of
+`$CLAUDE_JOB_DIR`), and diffs that record's `end`: the turn's settle commit, or, for a turn that
+ended while another session's was still running, a tree of the working tree as it ended. `git diff
+<id>` compares with the real index, so it may also list a file autosave has not added yet. Ten
+paths at most, then `and N more`;
+`.holi/state/`, `.local.` and secret files are left out, and so is a file Holi holds back as too big
+to commit, which would otherwise look changed at every turn: both hooks leave exactly the paths main
+lists in `.holi/state/held-back.local.json` ([vaults-sync](vaults-sync.md)) out of the trees they
+write, so a big file is not hashed at every turn, and out of what is named, so a big file a teammate
+committed anyway is still named, and with no such file nothing is left out. Both lines name paths a teammate may have
 chosen, so a path is cut at 200 characters, and one a code span cannot safely hold (a backtick, or a
 control, format or line-breaking character, which could end the line or hide what it says) is
-quoted as JSON with those characters escaped. A session with no recorded turn, an unreachable `end`, or a vault opened outside
-Holi prints nothing. The hook is a shipped one, so a vault created before it gets it with
+quoted as JSON with those characters escaped. A session that is not a background one, a conversation with neither kind of
+record, or an unreachable base prints nothing. The hook is a shipped one, so a vault created before it gets it with
 `holi skills update`.
 
 **Showing a file.** `holi docs open <path>` opens a note, task, PDF, vault app or any file the
@@ -153,7 +181,7 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
   entry, `disableClaudeAiConnectors`, `autoMemoryEnabled`, `awaySummaryEnabled` and
   `promptSuggestionEnabled` (all `false`: no session recap, no next-prompt suggestion),
   `worktree.bgIsolation: "none"` (so sessions edit the vault rather than a worktree of it) and the
-  inline `statusLine`. Everything else stays. A vault turns a default back by setting it here or
+  inline `statusLine`. Everything else stays, apart from what a fragment retires by name. A vault turns a default back by setting it here or
   in `settings.local.json`; Claude Code's `/config` writes user settings, which a project value
   outranks. Malformed JSON is left alone.
 
@@ -202,7 +230,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   one may answer 202 with a program for the script to run in its own place (`cliRun`), so that
   program's stdin, output and exit code are the caller's: `holi plugin <id> <verb>`, a community
   plugin's verbs ([community-plugins.md](community-plugins.md)). Today: `apps open|init|console`, `skills update|status`,
-  `comments list|add|reply|resolve|reopen`, `community path`, `plugin`, `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|respond|schedule|reschedule|unschedule|api`, `tasks list|complete`,
+  `comments list|add|reply|resolve|reopen`, `community path`, `plugin`, `pdf comments|typst`, `google accounts|agenda|search|read|mark-read|star|archive|trash|draft|send|reply|respond|schedule|reschedule|unschedule|api`, `tasks list|complete`,
   `store list|get|put|delete|check`,
   `docs list|read|inspect|render|open|screenshot|create|update|delete|settle`, `sync status`,
   `agent sessions|notify|log|message|version`, `schedules list|disable|run` (turning one on is the
@@ -239,7 +267,7 @@ outranks an allow in every scope, so getting a tool back means removing it from 
 
 **Permissions.** Each agent's native prompts are the permission UX, answered in its terminal.
 The seeded rules ask for `curl`, `wget`, `holi schedules run` and
-`holi google archive|trash|unschedule|send|reply|respond` (one rule per verb) and
+`holi google send|reply|respond` (one rule per verb) and
 `holi google api POST|PUT|PATCH|DELETE` (one rule per method), and allow `holi apps`,
 `holi store`, `holi pdf comments`, `holi pdf typst`, `holi community path`, `holi comments list`,
 `holi schedules list`, the read-only memory lint (`node .claude/skills/memory/lint.mjs`),

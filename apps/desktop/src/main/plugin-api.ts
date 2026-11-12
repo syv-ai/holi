@@ -125,8 +125,10 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * does nothing.
    */
   pauseSync(reason: string): () => void
-  /** Commit whatever is dirty now. The new commit's sha, or null for none. */
-  commitNow(): Promise<string | null>
+  /** Commit whatever is dirty now. The new commit's sha, or null for none;
+   *  `'busy'` when a pull in flight refused it, so asking again shortly may
+   *  commit. */
+  commitNow(): Promise<string | null | 'busy'>
   /** The checked-out commit, or null on an unborn branch. */
   head(): Promise<string | null>
   /** Hear what the renderer reports the person is looking at in this vault. */

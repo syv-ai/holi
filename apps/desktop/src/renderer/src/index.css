@@ -378,10 +378,14 @@
   --diff-removed: var(--color-red-500);
   --diff-added-foreground: var(--color-green-400);
   --diff-removed-foreground: var(--color-red-400);
+  --scrollbar-thumb: var(--color-zinc-700);
+  --scrollbar-thumb-hover: var(--color-zinc-600);
 }
 [data-theme='light'] {
   --diff-added-foreground: var(--color-green-700);
   --diff-removed-foreground: var(--color-red-700);
+  --scrollbar-thumb: var(--color-neutral-400);
+  --scrollbar-thumb-hover: var(--color-neutral-500);
 }
 @theme inline {
   --color-brand: var(--brand);
@@ -396,6 +400,43 @@
 }
 ::selection {
   background: var(--selection);
+}
+
+/* ── Scrollbars ───────────────────────────────────────────────────────────
+ * One rule for every scroller in the app, drawn from the theme's Scrollbars
+ * tokens (`--scrollbar-thumb`, `--scrollbar-thumb-hover`). A bare
+ * `::-webkit-scrollbar` reaches the scrollers no stylesheet of ours names
+ * (CodeMirror's, xterm's viewport, a Radix menu that outgrew the screen), and
+ * styling it makes Chromium drop the native overlay bar, which otherwise
+ * turned into the wide macOS bar with a track under the pointer. So the bar
+ * is one shape always: a 10px gutter with a transparent track and a round
+ * thumb inset 3px, shown while the pointer is over its scroller and darker
+ * under the pointer itself. `.no-scrollbar` (shadcn's) still hides it.
+ * Pseudo-elements rather than `scrollbar-color`: setting that makes Chromium
+ * ignore these. The PDF viewer repeats the shape inside its shadow root
+ * (`PDF_SCROLLBAR_CSS`). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  transition: background-color var(--motion-respond) var(--ease-settle);
+}
+:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
 }
 
 /* ── Icons ────────────────────────────────────────────────────────────────
@@ -485,6 +526,13 @@
 @utility motion-in-rise {
   animation: motion-in-rise var(--motion-arrive) var(--ease-settle) both;
 }
+/* A view paged sideways comes in from the side it was paged towards. */
+@utility motion-in-from-end {
+  animation: motion-in-from-end var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-from-start {
+  animation: motion-in-from-start var(--motion-arrive) var(--ease-settle) both;
+}
 
 /* Acknowledging an act the user committed: one beat, once (`hooks/use-ack.ts`
    adds the class and removes it when the animation ends). */
@@ -540,6 +588,18 @@
   from {
     opacity: 0;
     transform: translateY(6px);
+  }
+}
+@keyframes motion-in-from-end {
+  from {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+}
+@keyframes motion-in-from-start {
+  from {
+    opacity: 0;
+    transform: translateX(-1.5rem);
   }
 }
 @keyframes motion-ack-bloom {
@@ -609,7 +669,9 @@
   .motion-out-origin {
     animation-duration: 1ms;
   }
-  .motion-in-rise {
+  .motion-in-rise,
+  .motion-in-from-end,
+  .motion-in-from-start {
     animation-name: motion-in-fade;
   }
 }
