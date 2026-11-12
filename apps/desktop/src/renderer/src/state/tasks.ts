@@ -9,11 +9,18 @@
  * body; backrefs are a grep).
  */
 import type { Task, TaskStatus } from '@holi/shared'
-import { privateTaskPath, sharedTaskPath, snapshotTasks } from '@holi/shared'
+import { isOverdue, privateTaskPath, sharedTaskPath, snapshotTasks, stampDate } from '@holi/shared'
 import { atom } from 'jotai'
 import { capClient, type UiCapability } from '@/lib/cap-client'
 import { isClosedAtom } from './planning'
-import { activeRemoteAtom, loadSnapshotAtom, renameNoteAtom, snapshotAtom } from './vaults'
+import { nowAtom, todayAtom } from './clock'
+import {
+  activeRemoteAtom,
+  loadSnapshotAtom,
+  openedRemoteAtom,
+  renameNoteAtom,
+  snapshotAtom,
+} from './vaults'
 
 /** The snapshot's claimed task files: the tasks, and those that would not
  *  parse. */
@@ -40,6 +47,30 @@ export const brokenTasksAtom = atom((get) => get(snapshotTasksAtom).broken)
 export const openTaskCountAtom = atom((get) => {
   const isClosed = get(isClosedAtom)
   return get(snapshotTasksAtom).items.filter((t) => !isClosed(t.status)).length
+})
+
+/** Due-task attention for the displayed vault; null while its snapshot is loading. */
+export const taskDueAttentionAtom = atom((get) => {
+  const remote = get(activeRemoteAtom)
+  if (!remote || get(openedRemoteAtom) !== remote) return null
+
+  const tasks = get(snapshotTasksAtom).items
+  const isClosed = get(isClosedAtom)
+  const now = get(nowAtom)
+  const today = get(todayAtom)
+  let open = 0
+  let overdue = 0
+  let dueToday = 0
+
+  for (const task of tasks) {
+    if (isClosed(task.status)) continue
+    open += 1
+    if (task.due === undefined || stampDate(task.due) === null) continue
+    if (isOverdue(task.due, now)) overdue += 1
+    else if (stampDate(task.due) === today) dueToday += 1
+  }
+
+  return { open, overdue, dueToday, due: overdue + dueToday }
 })
 
 // ------------------------------------------------------------------- writes
