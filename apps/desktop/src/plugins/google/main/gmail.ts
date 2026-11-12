@@ -18,7 +18,7 @@
  * Google returned, so there is one sanitizer, in the one process with a DOM,
  * rather than two half-measures that each assume the other did the work.
  */
-import type { GoogleApi } from './api'
+import { GoogleApiError, type GoogleApi } from './api'
 import { fetchLabelNames } from './labels'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
 
@@ -635,25 +635,30 @@ export async function fetchThreadSummaries(
   const labelNames = fetchLabelNames(api)
 
   const threads = await mapPooled(ids, 5, (id) =>
-    api.get<RawThread>(`${BASE}/threads/${id}`, {
-      format: 'metadata',
-      // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
-      // Comma-joined, Gmail reads the whole string as one header name, matches
-      // nothing, and returns 200 with no headers.
-      metadataHeaders: [
-        'Subject',
-        'From',
-        'Date',
-        'Message-ID',
-        'To',
-        'Cc',
-        'Reply-To',
-        'List-Unsubscribe',
-        'Auto-Submitted',
-        'List-Id',
-        'Content-Type',
-      ],
-    }),
+    api
+      .get<RawThread>(`${BASE}/threads/${id}`, {
+        format: 'metadata',
+        // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
+        // Comma-joined, Gmail reads the whole string as one header name, matches
+        // nothing, and returns 200 with no headers.
+        metadataHeaders: [
+          'Subject',
+          'From',
+          'Date',
+          'Message-ID',
+          'To',
+          'Cc',
+          'Reply-To',
+          'List-Unsubscribe',
+          'Auto-Submitted',
+          'List-Id',
+          'Content-Type',
+        ],
+      })
+      .catch((error: unknown): RawThread => {
+        if (error instanceof GoogleApiError && error.status === 404) return {}
+        throw error
+      }),
   )
 
   const names = await labelNames
