@@ -228,6 +228,22 @@ function parseAddress(value: string | null): MailAddress {
   return { name: bare, email: bare.includes('@') ? bare.toLowerCase() : '' }
 }
 
+function stripGroupLabel(mailbox: string): string {
+  let quoted = false
+  let escaped = false
+  let angleDepth = 0
+  for (let index = 0; index < mailbox.length; index += 1) {
+    const character = mailbox[index]!
+    if (escaped) escaped = false
+    else if (character === '\\' && quoted) escaped = true
+    else if (character === '"') quoted = !quoted
+    else if (!quoted && character === '<') angleDepth += 1
+    else if (!quoted && character === '>') angleDepth = Math.max(0, angleDepth - 1)
+    else if (!quoted && angleDepth === 0 && character === ':') return mailbox.slice(index + 1)
+  }
+  return mailbox
+}
+
 function parseAddresses(value: string | null): MailAddress[] {
   if (value === null) return []
   // RFC 5322 address lists can contain nested comments and named groups in
@@ -241,7 +257,7 @@ function parseAddresses(value: string | null): MailAddress[] {
     if (escaped) {
       if (commentDepth === 0) uncommented += character
       escaped = false
-    } else if (character === '\\\\' && quoted) {
+    } else if (character === '\\' && quoted) {
       if (commentDepth === 0) uncommented += character
       escaped = true
     } else if (character === '"' && commentDepth === 0) {
@@ -265,7 +281,7 @@ function parseAddresses(value: string | null): MailAddress[] {
     if (escaped) {
       part += character
       escaped = false
-    } else if (character === '\\\\' && quoted) {
+    } else if (character === '\\' && quoted) {
       part += character
       escaped = true
     } else if (character === '"') {
@@ -279,8 +295,7 @@ function parseAddresses(value: string | null): MailAddress[] {
       part += character
     } else if (!quoted && angleDepth === 0 && (character === ',' || character === ';')) {
       const mailbox = part.trim()
-      const colon = mailbox.indexOf(':')
-      const candidate = colon < 0 ? mailbox : mailbox.slice(colon + 1)
+      const candidate = stripGroupLabel(mailbox)
       if (candidate !== '') addresses.push(parseAddress(candidate))
       part = ''
     } else {
@@ -288,8 +303,7 @@ function parseAddresses(value: string | null): MailAddress[] {
     }
   }
   if (part.trim() !== '') {
-    const colon = part.indexOf(':')
-    addresses.push(parseAddress(colon < 0 ? part : part.slice(colon + 1)))
+    addresses.push(parseAddress(stripGroupLabel(part)))
   }
   return addresses.filter((address) => address.name !== '')
 }

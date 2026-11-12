@@ -276,6 +276,8 @@ describe('listThreads', () => {
     ['comment after bare mailbox', 'ada@example.com (Ada Holm)', 'to'],
     ['group mailbox', 'team: Ada <ada@example.com>;', 'to'],
     ['escaped quoted display name', '"Ada \\\"A\\\" Holm" <ada@example.com>', 'to'],
+    ['colon in quoted display name', '"Support: Ada" <ada@example.com>', 'to'],
+    ['escaped comma in quoted display name', '"Ada \\\\, Holm" <ada@example.com>', 'to'],
     ['To wins over Cc', 'ada@example.com', 'to'],
   ])('extracts RFC mailbox addresses (%s)', async (_name, to, expected) => {
     const { api } = gmail([{ id: 'address' }], {
@@ -892,6 +894,35 @@ describe('listThreads', () => {
 })
 
 describe('readThread', () => {
+  it('keeps escaped quotes, commas and colons inside a display name', async () => {
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              headers: [
+                header('From', 'ada@syv.ai'),
+                header('To', '"Ada \\"A, B: C\\" Holm" <ada@syv.ai>, "Bob Smith" <bob@syv.ai>'),
+                header('Cc', '"Carol, Jones: Esq." <carol@syv.ai>'),
+              ],
+              mimeType: 'text/plain',
+            },
+          },
+        ],
+      },
+    })
+
+    const [message] = (await readThread(api, 't1')).messages
+
+    expect(message!.to).toEqual([
+      { name: 'Ada "A, B: C" Holm', email: 'ada@syv.ai' },
+      { name: 'Bob Smith', email: 'bob@syv.ai' },
+    ])
+    expect(message!.cc).toEqual([{ name: 'Carol, Jones: Esq.', email: 'carol@syv.ai' }])
+  })
+
   it('returns each message with its text body, sender and recipients', async () => {
     const { api } = gmail([], {
       t1: {

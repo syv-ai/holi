@@ -66,6 +66,7 @@ interface Routes {
   /** `history.list`. A number means "answer this status instead". */
   history?: unknown | number
   profile?: { historyId?: string }
+  missingThreads?: string[]
 }
 
 /** A fake Gmail covering list, get, history, labels and profile. */
@@ -92,7 +93,11 @@ function gmail(routes: Routes) {
       return ok(routes.history ?? { historyId: '5000' })
     }
     if (path.endsWith('/threads')) return ok({ threads: routes.list ?? [] })
-    return ok(routes.threads?.[path.split('/').pop()!] ?? {})
+    const threadId = path.split('/').pop()!
+    if (routes.missingThreads?.includes(threadId)) {
+      return { ok: false, status: 404, text: async () => '{}', json: async () => ({}) }
+    }
+    return ok(routes.threads?.[threadId] ?? {})
   }) as unknown as typeof globalThis.fetch
 
   return { api: new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }), seen }
@@ -274,6 +279,125 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toHaveLength(1)
   })
 
+  it('keeps a conversation when history deletes only its draft message', async () => {
+    const first = gmail({ list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'Reply') } })
+    await syncThreads(first.api, cache, {})
+
+    const second = gmail({
+      history: {
+        historyId: '5005',
+        history: [{ messagesDeleted: [{ message: { id: 'draft', threadId: 't1' } }] }],
+      },
+      threads: { t1: rawThread('t1', 'Reply') },
+    })
+    const page = await syncThreads(second.api, cache, {})
+    expect(page.threads.map((thread) => thread.id)).toEqual(['t1'])
+    expect(threadGets(second.seen)).toHaveLength(1)
+  })
+
+  it('retains a thread when a draft is replaced by another draft', async () => {
+    const original = rawThread('t1', 'Reply')
+    original.messages.push(message('old-draft', 't1', [], ['DRAFT']))
+    const first = gmail({ list: [{ id: 't1' }], threads: { t1: original } })
+    await syncThreads(first.api, cache, {})
+
+    const replacement = rawThread('t1', 'Reply')
+    replacement.messages.push(message('replacement-draft', 't1', [], ['DRAFT']))
+    const second = gmail({
+      history: {
+        historyId: '5005',
+        history: [
+          { messagesDeleted: [{ message: { id: 'old-draft', threadId: 't1' } }] },
+          { messagesAdded: [{ message: { id: 'replacement-draft', threadId: 't1' } }] },
+        ],
+      },
+      threads: { t1: replacement },
+    })
+
+    const page = await syncThreads(second.api, cache, {})
+    expect(page.threads.map((thread) => thread.id)).toEqual(['t1'])
+    expect(page.threads[0]!.hasDraft).toBe(true)
+  })
+
+  it('retains a thread and records its reply when a draft is sent', async () => {
+    const draft = rawThread('t1', 'Reply')
+    draft.messages.push(message('draft', 't1', [], ['DRAFT']))
+    const first = gmail({ list: [{ id: 't1' }], threads: { t1: draft } })
+    await syncThreads(first.api, cache, {})
+
+    const sent = rawThread('t1', 'Reply')
+    sent.messages.push({
+      ...message('sent-reply', 't1', [['From', 'Me <me@example.com>']], ['SENT']),
+      internalDate: '2000000000000',
+    })
+    const second = gmail({
+      history: {
+        historyId: '5006',
+        history: [
+          { messagesDeleted: [{ message: { id: 'draft', threadId: 't1' } }] },
+          { messagesAdded: [{ message: { id: 'sent-reply', threadId: 't1' } }] },
+        ],
+      },
+      threads: { t1: sent },
+    })
+
+    const page = await syncThreads(second.api, cache, {})
+    expect(page.threads.map((thread) => thread.id)).toEqual(['t1'])
+    expect(page.threads[0]).toMatchObject({
+      replied: true,
+      lastReplyAt: new Date(2000000000000).toISOString(),
+    })
+  })
+
+  it.each([
+    ['Inbox', {}, 'in:inbox', ['INBOX']],
+    ['Sent', { mailbox: 'sent' as const }, 'in:sent', ['SENT']],
+    ['explicit query', { query: 'from:jane' }, 'from:jane', ['INBOX']],
+  ])(
+    'admits an uncached message arrival for %s without labelsAdded',
+    async (_name, options, query, labels) => {
+      const first = gmail({ list: [{ id: 'old' }], threads: { old: rawThread('old', 'Old') } })
+      await syncThreads(first.api, cache, options)
+
+      const second = gmail({
+        list: [{ id: 'new' }],
+        history: {
+          historyId: '5005',
+          history: [{ messagesAdded: [{ message: { id: 'new-message', threadId: 'new' } }] }],
+        },
+        threads: { new: rawThread('new', 'New matching result', labels) },
+      })
+      const page = await syncThreads(second.api, cache, options)
+
+      expect(page.threads.map((thread) => thread.id)).toContain('new')
+      const list = second.seen.find((url) => new URL(url).pathname.endsWith('/threads'))!
+      expect(new URL(list).searchParams.get('q')).toBe(query)
+    },
+  )
+
+  it('does not admit an uncached message that the active query does not return', async () => {
+    const options = { query: 'from:jane' }
+    const first = gmail({ list: [{ id: 'old' }], threads: { old: rawThread('old', 'Old') } })
+    await syncThreads(first.api, cache, options)
+
+    const second = gmail({
+      list: [{ id: 'other-match' }],
+      history: {
+        historyId: '5005',
+        history: [{ messagesAdded: [{ message: { id: 'new-message', threadId: 'not-a-match' } }] }],
+      },
+      threads: {
+        'other-match': rawThread('other-match', 'Other matching result'),
+        'not-a-match': rawThread('not-a-match', 'Does not match'),
+      },
+    })
+    const page = await syncThreads(second.api, cache, options)
+
+    expect(page.threads.map((thread) => thread.id)).not.toContain('not-a-match')
+    const list = second.seen.find((url) => new URL(url).pathname.endsWith('/threads'))!
+    expect(new URL(list).searchParams.get('q')).toBe('from:jane')
+  })
+
   it('drops a thread history reports as deleted', async () => {
     const first = gmail({
       list: [{ id: 't1' }, { id: 't2' }],
@@ -286,9 +410,11 @@ describe('syncThreads', () => {
         historyId: '5005',
         history: [{ messagesDeleted: [{ message: { id: 't2-m1', threadId: 't2' } }] }],
       },
+      missingThreads: ['t2'],
     })
     const page = await syncThreads(second.api, cache, {})
 
+    expect(threadGets(second.seen)).toHaveLength(1)
     expect(page.threads.map((t) => t.id)).toEqual(['t1'])
   })
 
