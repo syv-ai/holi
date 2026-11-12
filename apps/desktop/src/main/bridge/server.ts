@@ -148,7 +148,11 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     const globalCommands = machine ? cli.commands() : cli.commands(remote)
     const vaultSelector = machine ? requestedVault(argv, globalCommands) : null
     const terminator = argv.indexOf('--')
-    const help = argv.length === 0 || argv.slice(0, terminator < 0 ? undefined : terminator).some((word) => word === '--help' || word === '-h')
+    const help =
+      argv.length === 0 ||
+      argv
+        .slice(0, terminator < 0 ? undefined : terminator)
+        .some((word) => word === '--help' || word === '-h')
     if (machine && help) {
       const request = resolveArgv(argv, globalCommands, form.get('stdin'), form.get('job'))
       if (request.kind === 'help') return { status: 200, body: request.text }
@@ -202,9 +206,10 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       try {
         const vaults = await cli.machine!.listVaults?.()
         if (!vaults) return { status: 403, body: 'holi: machine vault listing is unavailable' }
-        const value = request.json && request.fields !== undefined
-          ? projectJsonFields(vaults, request.fields)
-          : vaults
+        const value =
+          request.json && request.fields !== undefined
+            ? projectJsonFields(vaults, request.fields)
+            : vaults
         const json = request.json
           ? JSON.stringify(value, null, 2)
           : vaults

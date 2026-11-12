@@ -97,10 +97,15 @@ function usageText(commands: readonly CliCommand[]): string {
  * `job` is the calling session's job id, or null outside a background one.
  */
 /** Find the machine-vault selector using the same option grammar as resolveArgv. */
-export function requestedVault(argv: readonly string[], commands: readonly CliCommand[]): string | null {
+export function requestedVault(
+  argv: readonly string[],
+  commands: readonly CliCommand[],
+): string | null {
   const end = argv.indexOf('--')
   const words = end < 0 ? argv : argv.slice(0, end)
-  const standalone = commands.find((command) => command.cli.standalone === true && command.name.startsWith(`${words[0]}.`))
+  const standalone = commands.find(
+    (command) => command.cli.standalone === true && command.name.startsWith(`${words[0]}.`),
+  )
   const bare = standalone !== undefined && (words[1] === undefined || words[1]!.startsWith('-'))
   const command = bare
     ? standalone
@@ -115,15 +120,19 @@ export function requestedVault(argv: readonly string[], commands: readonly CliCo
     const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
     if (name === 'vault') {
       if (vault !== null) return null
-      vault = eq < 0 ? rest[++i] ?? null : word.slice(eq + 1)
+      vault = eq < 0 ? (rest[++i] ?? null) : word.slice(eq + 1)
       continue
     }
-    const takesValue = name === 'fields' || name !== 'json' && (
-      spec?.values?.includes(name) === true || spec?.many?.includes(name) === true ||
-      spec?.args.some((arg) => argName(arg) === name) === true || name === spec?.stdin ||
-      name === spec?.stdinUnless || name === spec?.job || spec?.values === undefined &&
-      spec?.flags?.includes(name) !== true
-    )
+    const takesValue =
+      name === 'fields' ||
+      (name !== 'json' &&
+        (spec?.values?.includes(name) === true ||
+          spec?.many?.includes(name) === true ||
+          spec?.args.some((arg) => argName(arg) === name) === true ||
+          name === spec?.stdin ||
+          name === spec?.stdinUnless ||
+          name === spec?.job ||
+          (spec?.values === undefined && spec?.flags?.includes(name) !== true)))
     if (eq < 0 && takesValue) i++
   }
   return vault
