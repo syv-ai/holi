@@ -96,6 +96,39 @@ function usageText(commands: readonly CliCommand[]): string {
  * `stdin` is what the script sent on its second leg, or null on the first.
  * `job` is the calling session's job id, or null outside a background one.
  */
+/** Find the machine-vault selector using the same option grammar as resolveArgv. */
+export function requestedVault(argv: readonly string[], commands: readonly CliCommand[]): string | null {
+  const end = argv.indexOf('--')
+  const words = end < 0 ? argv : argv.slice(0, end)
+  const standalone = commands.find((command) => command.cli.standalone === true && command.name.startsWith(`${words[0]}.`))
+  const bare = standalone !== undefined && (words[1] === undefined || words[1]!.startsWith('-'))
+  const command = bare
+    ? standalone
+    : commands.find((candidate) => candidate.name === `${words[0]}.${words[1]}`)
+  const spec = command?.cli
+  let vault: string | null = null
+  const rest = words.slice(bare ? 1 : 2)
+  for (let i = 0; i < rest.length; i++) {
+    const word = rest[i]!
+    if (!word.startsWith('--')) continue
+    const eq = word.indexOf('=')
+    const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
+    if (name === 'vault') {
+      if (vault !== null) return null
+      vault = eq < 0 ? rest[++i] ?? null : word.slice(eq + 1)
+      continue
+    }
+    const takesValue = name === 'fields' || name !== 'json' && (
+      spec?.values?.includes(name) === true || spec?.many?.includes(name) === true ||
+      spec?.args.some((arg) => argName(arg) === name) === true || name === spec?.stdin ||
+      name === spec?.stdinUnless || name === spec?.job || spec?.values === undefined &&
+      spec?.flags?.includes(name) !== true
+    )
+    if (eq < 0 && takesValue) i++
+  }
+  return vault
+}
+
 export function resolveArgv(
   argv: readonly string[],
   commands: readonly CliCommand[],
