@@ -71,9 +71,12 @@ had (the system refused the computer's sound, say), the other records: the audio
 actually records, and the header says which source is missing and how to fix it, so half a
 conversation is not lost unseen. Recording lives outside the tab, so leaving the tab keeps it going;
 the status bar shows a timer. A Stop while Record is still starting cancels it: whatever the start
-gets after that (the meeting, the capture) is let go as it arrives. The tab is reached from ⌘K:
+gets after that (the meeting, the capture) is let go as it arrives. Meetings is one of the
+sidebar's apps, after Mail and Calendar (the plugin's `sidebarApps`), and is also reached from ⌘K:
 **Meetings** under Go to, or **Start meeting**, which also starts recording with the picked profile
-(the Default without one); and from the vault's tree (**Files**, below).
+(the Default without one); and from the vault's tree (**Files**, below). The app and the status
+bar's timer open the same tab, which folds the files sidebar as Mail does; a meeting folder from
+the tree is a tab of its own.
 
 **Transcription** happens in main, per chunk. The WAV is written to
 `userData/meetings/<id>/chunk-<n>.wav` before anything else, so a crash or a failed upload loses no
