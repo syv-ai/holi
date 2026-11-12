@@ -39,9 +39,34 @@ import { replyTarget, useMail, type DraftSummary } from './use-mail'
  *  changes it. */
 const keepOpen = () => undefined
 
-export function MailShell({ className }: { className?: string }) {
+export function MailShell({
+  className,
+  visible = true,
+}: {
+  className?: string
+  visible?: boolean
+}) {
   const { currentSub } = useGoogleAccount()
-  const mail = useMail(currentSub)
+  return (
+    <MailAccountShell
+      key={currentSub ?? 'disconnected'}
+      account={currentSub}
+      className={className}
+      visible={visible}
+    />
+  )
+}
+
+function MailAccountShell({
+  account,
+  className,
+  visible,
+}: {
+  account: string | null
+  className?: string
+  visible: boolean
+}) {
+  const mail = useMail(account)
   const remote = useAtomValue(activeRemoteAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   const openNote = useSetAtom(openDocumentAtom)
@@ -214,16 +239,18 @@ export function MailShell({ className }: { className?: string }) {
         </div>
       </SidebarProvider>
 
-      <ComposeDialog
-        request={compose}
-        sendAs={mail.sendAs}
-        contacts={mail.contacts}
-        onReconnect={openConnections}
-        onClose={() => {
-          setCompose(null)
-          mail.reloadDrafts()
-        }}
-      />
+      {visible ? (
+        <ComposeDialog
+          request={compose}
+          sendAs={mail.sendAs}
+          contacts={mail.contacts}
+          onReconnect={openConnections}
+          onClose={() => {
+            setCompose(null)
+            mail.reloadDrafts()
+          }}
+        />
+      ) : null}
     </TooltipProvider>
   )
 }
