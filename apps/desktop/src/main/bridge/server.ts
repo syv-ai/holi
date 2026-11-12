@@ -27,7 +27,7 @@ import { realpath } from 'node:fs/promises'
 import type { Dispatch } from '../capabilities/dispatch'
 import type { CliCommand } from '../capabilities/registry'
 import { CapabilityError } from '../capabilities/error'
-import { refusalText, resolveArgv } from './cli'
+import { refusalText, requestedVault, resolveArgv } from './cli'
 import { SPILL_BYTES, spillNotice, spillOutput } from './spill'
 import { projectJsonFields } from './json-fields'
 
@@ -145,20 +145,19 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     const cli = deps.cli!
     const form = new URLSearchParams(body)
     const argv = form.getAll('argv')
-    const requestedVault = (() => {
-      for (let i = 2; i < argv.length; i++) {
-        const word = argv[i]!
-        if (word === '--') return null
-        if (word === '--vault') return argv[i + 1] ?? null
-        if (word.startsWith('--vault=')) return word.slice('--vault='.length)
-      }
-      return null
-    })()
+    const globalCommands = machine ? cli.commands() : cli.commands(remote)
+    const vaultSelector = machine ? requestedVault(argv, globalCommands) : null
+    const terminator = argv.indexOf('--')
+    const help = argv.length === 0 || argv.slice(0, terminator < 0 ? undefined : terminator).some((word) => word === '--help' || word === '-h')
+    if (machine && help) {
+      const request = resolveArgv(argv, globalCommands, form.get('stdin'), form.get('job'))
+      if (request.kind === 'help') return { status: 200, body: request.text }
+    }
     const listing = argv[0] === 'vault' && argv[1] === 'list'
     let targetRemote = remote
     let machineTarget: { remote: string; root: string; live: boolean } | null = null
     let requestCwd: string | null = null
-    if (machine && !listing) {
+    if (machine && !listing && !help) {
       if (!cli.machine) return { status: 403 }
       requestCwd = form.get('cwd')
       if (
@@ -168,18 +167,18 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         return { status: 400, body: 'holi: cwd must be an absolute physical path' }
       }
       try {
-        machineTarget = await cli.machine.resolveTarget(requestedVault, requestCwd)
+        machineTarget = await cli.machine.resolveTarget(vaultSelector, requestCwd)
       } catch (error) {
         return {
-          status: requestedVault === null ? 400 : 422,
+          status: vaultSelector === null ? 400 : 422,
           body: `holi: ${message(error)}`,
         }
       }
       if (!machineTarget)
         return {
-          status: requestedVault === null ? 400 : 422,
+          status: vaultSelector === null ? 400 : 422,
           body:
-            requestedVault === null
+            vaultSelector === null
               ? 'holi: target required; run inside a managed vault or pass --vault owner/repo'
               : 'holi: unknown vault target; check --vault owner/repo',
         }
@@ -188,7 +187,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     const request = resolveArgv(
       argv,
       machine
-        ? [...cli.commands(listing ? undefined : targetRemote), MACHINE_LIST]
+        ? [...(listing || help ? globalCommands : cli.commands(targetRemote)), MACHINE_LIST]
         : cli.commands(remote),
       form.get('stdin'),
       form.get('job'),
@@ -203,8 +202,11 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       try {
         const vaults = await cli.machine!.listVaults?.()
         if (!vaults) return { status: 403, body: 'holi: machine vault listing is unavailable' }
+        const value = request.json && request.fields !== undefined
+          ? projectJsonFields(vaults, request.fields)
+          : vaults
         const json = request.json
-          ? JSON.stringify(vaults, null, 2)
+          ? JSON.stringify(value, null, 2)
           : vaults
               .map((vault) => `${vault.remote}\t${vault.name}\t${vault.live ? 'open' : 'closed'}`)
               .join('\n')
@@ -220,7 +222,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         body: `holi ${commandName}: vault is closed; open it in Holi before running this command`,
       }
     }
-    if (machine && !listing && selector !== requestedVault) {
+    if (machine && !listing && selector !== requestedVault(argv, globalCommands)) {
       return { status: 400, body: 'holi: invalid --vault selector' }
     }
     if (!machine && selector !== null && selector.toLowerCase() !== remote.toLowerCase()) {

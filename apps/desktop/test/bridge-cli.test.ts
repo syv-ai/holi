@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
-import { installHoliCli, resolveArgv } from '../src/main/bridge/cli'
+import { installHoliCli, requestedVault, resolveArgv } from '../src/main/bridge/cli'
 import { createActivityLog } from '../src/main/activity/log'
 import { logsCapabilities } from '../src/main/capabilities/logs-caps'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
@@ -300,6 +300,19 @@ describe('usage', () => {
       expect(res.code, args.join(' ')).toBe(2)
     }
     expect(capability).not.toHaveBeenCalled()
+  })
+})
+
+describe('machine vault selector parsing', () => {
+  const commands = [
+    { name: 'holi.logs', cli: { args: [], summary: 'logs', standalone: true } },
+    { name: 'holis.search', cli: { args: ['query'], values: ['query'], summary: 'search' } },
+  ] as const
+
+  it('recognizes standalone selectors while skipping option values and terminators', () => {
+    expect(requestedVault(['logs', '--vault=owner/repo'], commands)).toBe('owner/repo')
+    expect(requestedVault(['holis', 'search', '--query', '--vault=not/a-vault', '--vault', 'owner/repo'], commands)).toBe('owner/repo')
+    expect(requestedVault(['logs', '--', '--vault=not/a-vault'], commands)).toBeNull()
   })
 })
 
