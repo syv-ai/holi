@@ -73,9 +73,11 @@ test.each([
   ['source closure', 'middle combine', 150],
   ['source closure', 'leading edge', 5],
   ['source closure', 'trailing edge', 195],
+  ['source closure', 'unused space', 900],
   ['vault switch', 'middle combine', 150],
   ['vault switch', 'leading edge', 5],
   ['vault switch', 'trailing edge', 195],
+  ['vault switch', 'unused space', 900],
 ] as const)('same-tick %s rejects a %s drop and clears drag ownership', (change, position, x) => {
   const workspace =
     position === 'leading edge' ? openTab(openTab(emptyWorkspace(), 'B.md'), 'A.md') : undefined
@@ -162,6 +164,113 @@ test.each([
   expect(document.querySelector('[data-combine-preview="true"]')).toBeNull()
   fireEvent(list, dragEvent('drop', transfer, x))
   expect(store.get(shellWorkspaceAtom)).not.toBe(workspace)
+})
+
+test('the strip drop target fills unused space without including its controls', () => {
+  const { list } = setup()
+  // jsdom has no layout: lock down the flex contract as well as the drop behavior below.
+  expect(list.classList.contains('flex-1')).toBe(true)
+  expect(list.contains(screen.getByRole('button', { name: 'New tab' }))).toBe(false)
+  expect(list.contains(screen.getByRole('button', { name: 'Tab options' }))).toBe(false)
+  expect(list.querySelector('[data-tab-switcher-toggle]')).toBeNull()
+})
+
+test.each([205, 450, 900])('unused strip space at x=%s reorders to the end', (x) => {
+  const { store, list, tabs, transfer } = setup()
+  // Leave a combine preview first: entering unused space must replace it with the end marker.
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  expect(tabs[1]!.dataset.combinePreview).toBe('true')
+  const over = dragEvent('dragover', transfer, x)
+  fireEvent(list, over)
+  expect(over.defaultPrevented).toBe(true)
+  expect(transfer.dropEffect).toBe('move')
+  expect(tabs[1]!.dataset.combinePreview).toBeUndefined()
+  expect(tabs[1]!.dataset.dropAfter).toBe('true')
+  const drop = dragEvent('drop', transfer, x)
+  fireEvent(list, drop)
+  expect(drop.defaultPrevented).toBe(true)
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md', 'A.md'])
+  expect(store.get(tabDragAtom)).toBeNull()
+  expect(document.querySelector('[data-drop-before="true"], [data-drop-after="true"]')).toBeNull()
+})
+
+test.each(['whole split', 'split member'])('unused space moves a %s to the end', (source) => {
+  const workspace = combineOnStrip(
+    openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md'),
+    'B.md',
+    'A.md',
+  )
+  const { store, list, transfer } = setup(workspace)
+  const split = workspace.entries[0]
+  if (split === undefined || typeof split === 'string') throw new Error('expected split')
+  const key = source === 'whole split' ? split.id : 'A.md'
+  transfer.setData(MIME, key)
+  act(() => store.set(tabDragAtom, { key, vault: 'owner/vault', wasOpen: true }))
+  fireEvent(list, dragEvent('dragover', transfer, 900))
+  fireEvent(list, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(
+    source === 'whole split' ? ['C.md', split] : ['B.md', 'C.md', 'A.md'],
+  )
+  expect(store.get(tabDragAtom)).toBeNull()
+})
+
+test('an end drop of the last entry remains a no-op', () => {
+  const { store, list, transfer } = setup()
+  const before = store.get(shellWorkspaceAtom)
+  transfer.setData(MIME, 'B.md')
+  act(() => store.set(tabDragAtom, { key: 'B.md', vault: 'owner/vault', wasOpen: true }))
+  const over = dragEvent('dragover', transfer, 900)
+  fireEvent(list, over)
+  expect(over.defaultPrevented).toBe(false)
+  fireEvent(list, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+  expect(store.get(tabDragAtom)).toBeNull()
+})
+
+test('unused strip space does not accept a non-Holi drag', () => {
+  const { store, list, transfer } = setup()
+  const before = store.get(shellWorkspaceAtom)
+  Object.defineProperty(transfer, 'types', { value: ['text/plain'] })
+  const over = dragEvent('dragover', transfer, 900)
+  fireEvent(list, over)
+  expect(over.defaultPrevented).toBe(false)
+  fireEvent(list, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+})
+
+test.each(['New tab', 'Tab options'])('%s stays outside the strip drop target', (name) => {
+  const { store, transfer } = setup()
+  const before = store.get(shellWorkspaceAtom)
+  const control = screen.getByRole('button', { name })
+  const over = dragEvent('dragover', transfer, 900)
+  fireEvent(control, over)
+  expect(over.defaultPrevented).toBe(false)
+  fireEvent(control, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+})
+
+test('the overflow count stays outside the strip drop target', () => {
+  let resized = () => {}
+  const observer = vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(function (callback) {
+    const instance = { observe() {}, unobserve() {}, disconnect() {} }
+    resized = () => callback([], instance)
+    return instance
+  })
+  try {
+    const { store, list, transfer } = setup()
+    Object.defineProperties(list, { scrollWidth: { value: 400 }, clientWidth: { value: 200 } })
+    act(resized)
+    const count = screen.getByRole('button', { name: '2 tabs' })
+    expect(list.contains(count)).toBe(false)
+    const before = store.get(shellWorkspaceAtom)
+    const over = dragEvent('dragover', transfer, 900)
+    fireEvent(count, over)
+    expect(over.defaultPrevented).toBe(false)
+    fireEvent(count, dragEvent('drop', transfer, 900))
+    expect(store.get(shellWorkspaceAtom)).toBe(before)
+  } finally {
+    observer.mockRestore()
+  }
 })
 
 test('entry slots anchor close controls and shrink while triggers fill their slot', () => {

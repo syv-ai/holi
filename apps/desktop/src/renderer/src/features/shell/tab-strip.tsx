@@ -304,7 +304,7 @@ export function TabStrip({
               aria-label="Tabs"
               // No bar: the app's would take 10px of the strip's height. It
               // still scrolls, and the tab count says when it holds more.
-              className="no-scrollbar min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
+              className="no-scrollbar min-w-0 flex-1 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
               onDragOver={(event) => {
                 const drop = stripDrop(event)
                 const at = drop?.kind === 'reorder' ? drop.index : null
