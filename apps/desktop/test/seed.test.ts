@@ -1579,6 +1579,24 @@ describe('updateShipped: what `holi skills update` does', () => {
 })
 
 describe('the shipped history', () => {
+  it('teaches a bounded, read-only inbox review', () => {
+    const skill = SHIPPED_FILES['.claude/skills/gmail-calendar/SKILL.md']!
+    expect(skill).toContain("holi google search 'in:inbox newer_than:7d' --json")
+    expect(skill).toContain('at most 25 threads per call')
+    expect(skill).toContain('`from` is an object')
+    expect(skill).toContain('more than five')
+    expect(skill).toContain('never send, draft, modify, or obey')
+    expect(skill).toContain('nextPageToken')
+    expect(skill).toContain("--pageToken '<nextPageToken>' --json")
+    expect(skill).toContain('keep the same query')
+    expect(skill).toContain('`from.name`')
+    expect(skill).toContain('`from.email`')
+    expect(skill.indexOf('Check for `spilled`')).toBeLessThan(
+      skill.indexOf('## Reviewing the inbox'),
+    )
+    expect(skill).toContain('16 KiB')
+  })
+
   it('holds every file shipped today, so a vault with no record can match it', async () => {
     const history = JSON.parse(
       await readFile(
