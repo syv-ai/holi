@@ -173,6 +173,25 @@ describe('watchVault', () => {
     expect(rec.count).toBe(0)
   })
 
+  it('watches only the opted-in scratchpad among machine-local files', async () => {
+    const root = await vault()
+    const rec = recorder()
+    const w = await watchVault({
+      root,
+      onChange: rec.onChange,
+      debounceMs: DEBOUNCE,
+      watches: (rel) => rel === 'scratchpad.local.md',
+    })
+    open.push(w)
+
+    await writeFile(join(root, 'scratchpad.local.md'), 'private note\\n', 'utf8')
+    await rec.next()
+    await writeFile(join(root, 'USER.local.md'), 'private profile\\n', 'utf8')
+    await sleep(SETTLE)
+
+    expect(rec.count).toBe(1)
+  })
+
   it('does not fire for a machine-local file', async () => {
     // USER.local.md is gitignored and never syncs; a change to it is not a vault
     // change and must not produce a commit attempt. (A bare USER.md, by contrast,
