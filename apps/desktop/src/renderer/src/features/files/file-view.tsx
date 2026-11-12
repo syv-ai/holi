@@ -13,7 +13,7 @@
  * half-typed settings file never reaches the vault. Its header carries the
  * latest commit and History, the same as a document's (`FileHistoryButton`).
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { fileKind } from '@holi/shared'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
 import { findNext, findPrevious } from '@codemirror/search'
@@ -35,6 +35,7 @@ import { useViewMemory } from '@/state/view-memory'
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { useVimEditor } from '@/editor/vim'
 import { claimsAtom } from '@/state/plugins'
+import type { PathClaim } from '@/state/plugin-types'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { FileHistoryButton } from '../history/file-history-button'
@@ -106,6 +107,14 @@ const SAVE_LABEL: Record<SaveState, string> = {
 type Load =
   { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; text: string }
 
+/** True only when FileView will choose the core CodeMirror editor. */
+export function isCoreTextFilePath(path: string, claims: readonly PathClaim[]): boolean {
+  if (/\.md$/i.test(path)) return false
+  if (claims.some((claim) => claim.view !== undefined && claim.match(path))) return false
+  const kind = fileKind(path)
+  return kind !== 'image' && kind !== 'doc' && kind !== 'pdf'
+}
+
 function FileLoading({ label }: { label: string }) {
   return (
     <div className="flex flex-col gap-2.5 px-4 py-6 sm:px-6" role="status" aria-label={label}>
@@ -130,6 +139,8 @@ function TextEditor({
   onSaveState,
   vimEnabled,
   onVimModeChange,
+  visible,
+  focused,
 }: {
   path: string
   text: string
@@ -137,6 +148,8 @@ function TextEditor({
   onSaveState: (state: SaveState) => void
   vimEnabled: boolean
   onVimModeChange: (mode: string) => void
+  visible: boolean
+  focused: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -145,6 +158,7 @@ function TextEditor({
   const saveTimer = useRef<number | undefined>(undefined)
   const dirty = useRef(false)
   const writing = useRef<Promise<void>>(Promise.resolve())
+  const leaveWriter = useRef<((view: EditorView) => Promise<void>) | null>(null)
   const callbacks = useRef({ onSaved, onSaveState })
   callbacks.current = { onSaved, onSaveState }
   const [view, setView] = useState<EditorView | null>(null)
@@ -155,7 +169,31 @@ function TextEditor({
   const reportSelection = useRef(setEditorSelection)
   reportSelection.current = setEditorSelection
   const memory = useViewMemory()
-  const vim = useVimEditor(view, vimEnabled, onVimModeChange, handleFindKeyDown)
+  const vim = useVimEditor(view, vimEnabled && focused, onVimModeChange, handleFindKeyDown)
+  const visibility = useRef(visible)
+  const focusState = useRef(focused)
+  focusState.current = focused
+
+  const publishCurrentSelection = useCallback(
+    (current: EditorView) => {
+      const { from, to } = current.state.selection.main
+      if (from === to) {
+        reportSelection.current((was) => (was?.path === path ? null : was))
+        return
+      }
+      const doc = current.state.doc
+      const start = doc.lineAt(from)
+      const end = doc.lineAt(to)
+      const endLine =
+        to > from && to === end.from && end.number > start.number ? end.number - 1 : end.number
+      reportSelection.current((was) =>
+        was?.path === path && was.lines.startLine === start.number && was.lines.endLine === endLine
+          ? was
+          : { path, lines: { startLine: start.number, endLine } },
+      )
+    },
+    [path],
+  )
 
   useEffect(() => {
     const host = hostRef.current
@@ -193,6 +231,7 @@ function TextEditor({
       return done
     }
     const save = (view: EditorView) => write(view, true)
+    leaveWriter.current = save
 
     const editable = new Compartment()
     const frozen = { current: false }
@@ -234,14 +273,16 @@ function TextEditor({
                 to > from && to === end.from && end.number > start.number
                   ? end.number - 1
                   : end.number
-              reportSelection.current((was) => {
-                if (from === to) return was?.path === path ? null : was
-                const same =
-                  was?.path === path &&
-                  was.lines.startLine === start.number &&
-                  was.lines.endLine === endLine
-                return same ? was : { path, lines: { startLine: start.number, endLine } }
-              })
+              if (focusState.current) {
+                reportSelection.current((was) => {
+                  if (from === to) return was?.path === path ? null : was
+                  const same =
+                    was?.path === path &&
+                    was.lines.startLine === start.number &&
+                    was.lines.endLine === endLine
+                  return same ? was : { path, lines: { startLine: start.number, endLine } }
+                })
+              }
             }
             if (
               !update.docChanged ||
@@ -287,9 +328,9 @@ function TextEditor({
     )
     return () => {
       unregister()
+      leaveWriter.current = null
       scroller.removeEventListener('scroll', noteScroll)
-      // Leaving the editor writes what is pending, and leaves what it showed
-      // for its tab to be compared to (`doc-changes.ts`).
+      // A closed editor leaves what it showed for `doc-changes.ts`.
       sawText(remote, path, view.state.doc.toString())
       if (dirty.current) void save(view).catch(() => undefined)
       view.destroy()
@@ -298,6 +339,24 @@ function TextEditor({
       setFind(null)
     }
   }, [remote, path, memory, vim.extension])
+
+  useEffect(() => {
+    const wasVisible = visibility.current
+    visibility.current = visible
+    if (wasVisible && !visible) {
+      const current = viewRef.current
+      if (current !== null) {
+        reportSelection.current((was) => (was?.path === path ? null : was))
+        sawText(remote!, path, current.state.doc.toString())
+        if (dirty.current) void leaveWriter.current?.(current).catch(() => undefined)
+      }
+    }
+  }, [visible, remote, path])
+
+  useEffect(() => {
+    focusState.current = focused
+    if (focused && viewRef.current !== null) publishCurrentSelection(viewRef.current)
+  }, [focused, path, publishCurrentSelection, view])
 
   // A change on disk comes back in, unless local edits are still pending.
   useEffect(() => {
@@ -358,7 +417,15 @@ function TextEditor({
   )
 }
 
-function TextFileView({ path }: { path: string }) {
+function TextFileView({
+  path,
+  visible = true,
+  focused = true,
+}: {
+  path: string
+  visible?: boolean
+  focused?: boolean
+}) {
   const remote = useAtomValue(activeRemoteAtom)
   const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const mtime = useAtomValue(snapshotAtom).files.find((file) => file.path === path)?.updatedAt
@@ -416,7 +483,7 @@ function TextFileView({ path }: { path: string }) {
         path={path}
         status={ready ? SAVE_LABEL[saveState] : undefined}
         editorMode={vimMode || undefined}
-        actions={<FileHistoryButton path={path} />}
+        actions={<FileHistoryButton path={path} visible={visible} />}
       />
       {load.kind === 'error' ? (
         <ErrorState
@@ -434,6 +501,8 @@ function TextFileView({ path }: { path: string }) {
           onSaveState={setSaveState}
           vimEnabled={vimEnabled}
           onVimModeChange={setVimMode}
+          visible={visible}
+          focused={focused}
         />
       )}
     </div>
@@ -476,7 +545,15 @@ function UnviewableFile({ path }: { path: string }) {
   )
 }
 
-export function FileView({ path }: { path: string }) {
+export function FileView({
+  path,
+  visible = true,
+  focused = visible,
+}: {
+  path: string
+  visible?: boolean
+  focused?: boolean
+}) {
   const claims = useAtomValue(claimsAtom)
   const Claimed = claims.find((claim) => claim.view !== undefined && claim.match(path))?.view
   if (Claimed !== undefined) return <Claimed path={path} />
@@ -484,5 +561,5 @@ export function FileView({ path }: { path: string }) {
   const kind = fileKind(path)
   if (kind === 'image') return <ImageFileView key={path} path={path} />
   if (kind === 'doc' || kind === 'pdf') return <UnviewableFile path={path} />
-  return <TextFileView key={path} path={path} />
+  return <TextFileView key={path} path={path} visible={visible} focused={focused} />
 }
