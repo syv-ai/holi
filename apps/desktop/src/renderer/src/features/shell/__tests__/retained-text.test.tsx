@@ -10,6 +10,7 @@ import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { coreContributionAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { AGENTS_HOME_KEY } from '@/state/tab-descriptor'
 import {
   activeSplit,
   closeTab,
@@ -368,4 +369,50 @@ test('History closes when its owner is hidden and cannot refocus its parked edit
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   expect(one.dom.contains(document.activeElement)).toBe(false)
   expect(two.dom.contains(document.activeElement)).toBe(true)
+})
+
+test('selected line context survives switching to the agent while hidden publications stop', async () => {
+  const store = fixture()
+  const cm = await cmFor()
+  act(() => cm.dispatch({ selection: { anchor: 0, head: 12 } }))
+  const context = store.get(editorSelectionAtom)
+  expect(context).toEqual({ path: 'src/one.ts', lines: { startLine: 1, endLine: 2 } })
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, AGENTS_HOME_KEY)))
+  expect(store.get(editorSelectionAtom)).toBe(context)
+  act(() => cm.dispatch({ selection: { anchor: 11, head: 15 } }))
+  expect(store.get(editorSelectionAtom)).toBe(context)
+})
+
+test('a disk read started before a local save cannot replace that save but later clean reloads work', async () => {
+  const store = fixture()
+  const cm = await cmFor()
+  let finishRead!: (text: string) => void
+  const staleRead = new Promise<string>((resolve) => {
+    finishRead = resolve
+  })
+  read.mockImplementation(({ path }) =>
+    path === 'src/one.ts' ? staleRead : Promise.resolve('other file\n'),
+  )
+  const previousReads = read.mock.calls.length
+  diskChanged(store, 'src/one.ts', 'before local edit')
+  await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(previousReads))
+  replace(cm, 'my final edit')
+  focusTab(store, 'src/two.ts')
+  await cmFor('src/two.ts')
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith({
+      remote: 'owner/repo',
+      path: 'src/one.ts',
+      text: 'my final edit',
+    }),
+  )
+  await act(async () => {})
+  await act(async () => {
+    finishRead('stale disk read')
+  })
+  expect(cm.state.doc.toString()).toBe('my final edit')
+  read.mockResolvedValue('new external text after the save')
+  diskChanged(store, 'src/one.ts', 'after local save')
+  await waitFor(() => expect(cm.state.doc.toString()).toBe('new external text after the save'))
+  expect(editor()).toBe(cm.dom)
 })

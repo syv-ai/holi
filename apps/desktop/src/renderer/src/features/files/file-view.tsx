@@ -346,7 +346,7 @@ function TextEditor({
     if (wasVisible && !visible) {
       const current = viewRef.current
       if (current !== null) {
-        reportSelection.current((was) => (was?.path === path ? null : was))
+        // Keep the last selected passage available when the agent becomes active.
         sawText(remote!, path, current.state.doc.toString())
         if (dirty.current) void leaveWriter.current?.(current).catch(() => undefined)
       }
@@ -433,6 +433,7 @@ function TextFileView({
   const [attempt, setAttempt] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [vimMode, setVimMode] = useState('')
+  const writeGeneration = useRef(0)
 
   useEffect(() => {
     if (remote === null) return
@@ -460,11 +461,13 @@ function TextFileView({
   useEffect(() => {
     if (!ready || remote === null || mtime === undefined) return
     let live = true
+    const generation = writeGeneration.current
     trpc.notes.read
       .query({ remote, path })
       .then(
         (text) =>
           live &&
+          generation === writeGeneration.current &&
           setLoad((current) =>
             current.kind === 'ready' && current.text === text ? current : { kind: 'ready', text },
           ),
@@ -497,7 +500,11 @@ function TextFileView({
         <TextEditor
           path={path}
           text={load.text}
-          onSaved={(text) => setLoad({ kind: 'ready', text })}
+          onSaved={(text) => {
+            // A read begun before this write cannot replace its durable result.
+            writeGeneration.current++
+            setLoad({ kind: 'ready', text })
+          }}
           onSaveState={setSaveState}
           vimEnabled={vimEnabled}
           onVimModeChange={setVimMode}
