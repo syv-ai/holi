@@ -24,6 +24,7 @@ function deferred() {
 describe('generated CLI registry routing', () => {
   let dir: string, a: string, b: string, bin: string
   let endpoint: CliEndpoint, server: BridgeServer, registry: VaultRegistry
+  let unregisterA: (() => void) | undefined
   let live: { remote: string; root: string } | null
   let pause: (() => Promise<void>) | null
   const invoked = vi.fn()
@@ -70,22 +71,26 @@ describe('generated CLI registry routing', () => {
         screenshot: async () => new Uint8Array(),
       }),
     )
-    capabilities.register(
-      ['probe'],
-      {
-        'probe.read': cap({
-          doors: ['cli'],
-          cli: { args: [], summary: 'read live plugin context' },
-          params: () => null,
-          run: async (ctx) => {
-            invoked()
-            return ctx.remote
-          },
-          text: (value) => value,
-        }),
-      },
-      'probe',
-    )
+    for (const remote of ['owner/a', 'owner/b']) {
+      const unregister = capabilities.register(
+        ['probe'],
+        {
+          'probe.read': cap({
+            doors: ['cli'],
+            cli: { args: [], summary: `read ${remote} plugin context` },
+            params: () => null,
+            run: async (ctx) => {
+              invoked()
+              return `${ctx.remote}: ${remote}`
+            },
+            text: (value) => value,
+          }),
+        },
+        'probe',
+        remote,
+      )
+      if (remote === 'owner/a') unregisterA = unregister
+    }
     const rootFor = async (remote: string) =>
       (await registry.list()).find((entry) => entry.remote === remote)?.path ?? null
     const host = createCapabilityHost({
@@ -107,7 +112,7 @@ describe('generated CLI registry routing', () => {
       log: () => {},
       cli: {
         dispatch: host.dispatch,
-        commands: () => capabilities.commands(),
+        commands: (remote) => capabilities.commands(remote),
         rootFor,
         machine: {
           token: () => endpoint?.token ?? '',
@@ -171,6 +176,14 @@ describe('generated CLI registry routing', () => {
     expect((await run(['--vault', 'owner/a', 'docs', 'read', 'note.md'])).code).toBe(2)
   })
   it('denies closed writes and plugin/UI actions before invoking them', async () => {
+    expect(await run(['probe', 'read', '--vault', 'owner/a', '--help'])).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining('read owner/a plugin context'),
+    })
+    expect(await run(['probe', 'read', '--vault', 'owner/b', '--help'])).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining('read owner/b plugin context'),
+    })
     for (const args of [
       ['docs', 'create', 'new.md'],
       ['docs', 'open', 'note.md'],
@@ -186,9 +199,17 @@ describe('generated CLI registry routing', () => {
     }
     expect(invoked).not.toHaveBeenCalled()
     expect(await readFile(join(a, 'new.md'), 'utf8').catch(() => null)).toBeNull()
+    unregisterA?.()
+    expect(await run(['probe', 'read', '--vault', 'owner/a'])).toMatchObject({
+      code: 2,
+      stdout: '',
+      stderr: expect.stringContaining('no such command: probe read'),
+    })
+    expect(invoked).not.toHaveBeenCalled()
+    live = { remote: 'owner/b', root: b }
     expect(await run(['probe', 'read', '--vault', 'owner/b'])).toMatchObject({
       code: 0,
-      stdout: 'owner/b\n',
+      stdout: 'owner/b: owner/b\n',
     })
     expect(invoked).toHaveBeenCalledTimes(1)
   })

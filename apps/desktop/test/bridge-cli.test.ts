@@ -8,12 +8,13 @@
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
 import { installHoliCli, requestedVault, resolveArgv } from '../src/main/bridge/cli'
+import { publishCliEndpoint, type CliEndpoint } from '../src/main/bridge/cli-endpoint'
 import { createActivityLog } from '../src/main/activity/log'
 import { logsCapabilities } from '../src/main/capabilities/logs-caps'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
@@ -105,6 +106,7 @@ function recording(called: Called): Record<string, AnyCapability> {
 let dir: string
 let bin: string
 let server: BridgeServer
+let endpoint: CliEndpoint | undefined
 let env: NodeJS.ProcessEnv
 let capability: ReturnType<typeof vi.fn<Called>>
 
@@ -122,8 +124,24 @@ function bridge(table: Record<string, AnyCapability>, namespaces: string[]): Bri
         pluginEnabled: async () => true,
         claims: async () => [],
       }).dispatch,
-      commands: () => registry.commands(),
+      commands: (remote) => registry.commands(remote),
       rootFor: async () => dir,
+      machine: {
+        token: () => endpoint?.token ?? '',
+        listVaults: async () => [{ remote: 'owner/repo', name: 'repo', live: true }],
+        resolveTarget: async (selector, cwd) => {
+          const fromCwd = cwd === null ? null : relative(dir, cwd)
+          const cwdMatches =
+            cwd !== null &&
+            isAbsolute(cwd) &&
+            (fromCwd === '' ||
+              (fromCwd !== '..' && !fromCwd.startsWith(`..${sep}`) && !isAbsolute(fromCwd)))
+          return (selector === null && !cwdMatches) ||
+            (selector !== null && selector.toLowerCase() !== 'owner/repo')
+            ? null
+            : { remote: 'owner/repo', root: dir, live: true }
+        },
+      },
     },
   })
 }
@@ -138,12 +156,17 @@ beforeEach(async () => {
   )
   const table = recording(capability)
   server = bridge(table, [...new Set(Object.keys(table).map((n) => n.split('.')[0]!))])
-  await server.start()
+  await startBridge()
   env = { PATH: process.env.PATH ?? '' }
-  await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
 })
 
+async function startBridge() {
+  await server.start()
+  endpoint = await publishCliEndpoint(join(dir, 'cli-endpoint.json'), server.port()!)
+}
+
 afterEach(async () => {
+  await endpoint?.dispose()
   await server.stop()
   await rm(dir, { recursive: true, force: true })
 })
@@ -156,7 +179,9 @@ describe('the installed script', () => {
 
 describe('when Holi is not running', () => {
   it('exits non-zero with a sentence a human can read', async () => {
-    await writeVaultEnv(dir, null)
+    await endpoint?.dispose()
+    endpoint = undefined
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
     const res = await run(bin, ['apps', 'open', 'retro'], env)
     expect(res.code).toBe(1)
     expect(res.stderr).toMatch(/holi: Holi is not running/)
@@ -165,18 +190,24 @@ describe('when Holi is not running', () => {
   it('finds the vault from a folder inside it, and nothing outside one', async () => {
     await mkdir(join(dir, 'Notes/deep'), { recursive: true })
     expect((await run(bin, ['sync', 'status'], env, '', join(dir, 'Notes/deep'))).code).toBe(0)
-    expect((await run(bin, ['sync', 'status'], env, '', tmpdir())).code).toBe(1)
+    expect((await run(bin, ['sync', 'status'], env, '', tmpdir())).code).toBe(2)
   })
 
-  it('reads the file, never runs it', async () => {
-    // A collaborator could force-add one: a line that would run as shell must
-    // not, and a value that is not digits or hex is no value at all.
-    await writeVaultEnv(
-      dir,
-      `HOLI_BRIDGE_PORT=${server.port()}\nHOLI_BRIDGE_TOKEN=$(touch ${dir}/ran)\ntouch ${dir}/ran\n`,
-    )
+  it('uses the machine endpoint selector rather than vault-local credentials', async () => {
+    const selected = await run(bin, ['sync', 'status', '--vault=owner/repo'], env, '', tmpdir())
+    expect(selected).toMatchObject({ code: 0, stdout: 'sync.status ok\n' })
+    const missing = await run(bin, ['sync', 'status'], env, '', tmpdir())
+    expect(missing.code).toBe(2)
+    expect(missing.stderr).toContain('target required')
+  })
+
+  it('reads the endpoint descriptor, never runs it', async () => {
+    // A local file could be replaced with shell-like content: parsing it as
+    // data must neither execute it nor accept it as a credential.
+    await writeFile(join(dir, 'cli-endpoint.json'), `$(touch ${dir}/ran)\n`, { mode: 0o600 })
     const res = await run(bin, ['sync', 'status'], env)
     expect(res.code).toBe(1)
+    expect(res.stderr).toContain('CLI endpoint descriptor is malformed')
     await expect(stat(join(dir, 'ran'))).rejects.toThrow()
   })
 })
@@ -311,7 +342,12 @@ describe('machine vault selector parsing', () => {
 
   it('recognizes standalone selectors while skipping option values and terminators', () => {
     expect(requestedVault(['logs', '--vault=owner/repo'], commands)).toBe('owner/repo')
-    expect(requestedVault(['holis', 'search', '--query', '--vault=not/a-vault', '--vault', 'owner/repo'], commands)).toBe('owner/repo')
+    expect(
+      requestedVault(
+        ['holis', 'search', '--query', '--vault=not/a-vault', '--vault', 'owner/repo'],
+        commands,
+      ),
+    ).toBe('owner/repo')
     expect(requestedVault(['logs', '--', '--vault=not/a-vault'], commands)).toBeNull()
   })
 })
@@ -550,12 +586,13 @@ describe('a pending docs mutation receipt', () => {
   })
 
   beforeEach(async () => {
+    await endpoint?.dispose()
+    endpoint = undefined
     await server.stop()
     result.mockClear()
     pushed = false
     server = bridge({ 'docs.create': mutation }, ['docs'])
-    await server.start()
-    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+    await startBridge()
   })
 
   it('exits 1 with the full JSON receipt on stderr and writes stdin only once', async () => {
@@ -606,11 +643,12 @@ describe('a command that reads stdin', () => {
   })
 
   beforeEach(async () => {
+    await endpoint?.dispose()
+    endpoint = undefined
     await server.stop()
     ran.mockClear()
     server = bridge({ 'x.echo': echo }, ['x'])
-    await server.start()
-    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+    await startBridge()
   })
 
   it('runs once, with stdin, preserving paths with spaces', async () => {
@@ -619,6 +657,18 @@ describe('a command that reads stdin', () => {
     // The first leg ran nothing: a write never runs without its body.
     expect(ran).toHaveBeenCalledTimes(1)
     expect(ran).toHaveBeenCalledWith({ to: 'My notes/a b.md', body: 'hello\nthere\n' })
+  })
+
+  it('keeps an explicit vault selector when stdin triggers a retry', async () => {
+    const res = await run(
+      bin,
+      ['x', 'echo', 'My notes/a b.md', '--vault=owner/repo'],
+      env,
+      'body from outside the vault',
+      tmpdir(),
+    )
+    expect(res).toMatchObject({ code: 0, stdout: 'body from outside the vault\n' })
+    expect(ran).toHaveBeenCalledWith({ to: 'My notes/a b.md', body: 'body from outside the vault' })
   })
 
   it('never reads stdin when the body is given', async () => {
@@ -749,11 +799,12 @@ describe('a command that acts as the calling session', () => {
   const inSession = (job: string) => ({ ...env, CLAUDE_JOB_DIR: `/Users/ada/.claude/jobs/${job}` })
 
   beforeEach(async () => {
+    await endpoint?.dispose()
+    endpoint = undefined
     await server.stop()
     ran.mockClear()
     server = bridge({ 'x.who': who }, ['x'])
-    await server.start()
-    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+    await startBridge()
   })
 
   it('is the session the script runs in, with no flag for it', async () => {
