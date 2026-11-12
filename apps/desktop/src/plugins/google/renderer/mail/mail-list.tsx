@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   CalendarDaysIcon,
   ChevronDownIcon,
@@ -538,33 +538,31 @@ export function MailList({
       {/* ── Header: the mailbox is the title's menu ── */}
       <div className="border-border flex h-(--header-height) shrink-0 items-center justify-between border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Fragment key={`mailbox-${visible ? 'visible' : 'hidden'}`}>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Mailbox: ${mailbox.label}`}
-                  className="-ml-2 min-w-0 font-semibold"
-                >
-                  <span className="truncate">{mail.searching ? 'Search' : mailbox.label}</span>
-                  <ChevronDownIcon className="text-muted-foreground" aria-hidden="true" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-48">
-                <DropdownMenuRadioGroup
-                  value={mail.searching ? '' : mailbox.id}
-                  onValueChange={(value) => onSelectFolder(value as MailFolder)}
-                >
-                  {MAILBOXES.map((m) => (
-                    <DropdownMenuRadioItem key={m.id} value={m.id}>
-                      {m.label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </Fragment>
+          <DropdownMenu key={`mailbox-${visible ? 'visible' : 'hidden'}`}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Mailbox: ${mailbox.label}`}
+                className="-ml-2 min-w-0 font-semibold"
+              >
+                <span className="truncate">{mail.searching ? 'Search' : mailbox.label}</span>
+                <ChevronDownIcon className="text-muted-foreground" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-48">
+              <DropdownMenuRadioGroup
+                value={mail.searching ? '' : mailbox.id}
+                onValueChange={(value) => onSelectFolder(value as MailFolder)}
+              >
+                {MAILBOXES.map((m) => (
+                  <DropdownMenuRadioItem key={m.id} value={m.id}>
+                    {m.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {unreadCount !== null && unreadCount > 0 && (
             <Badge radius="full" variant="outline" size="sm">
               {unreadCount}
@@ -591,60 +589,59 @@ export function MailList({
 
           {/* Gmail's tabs: the inbox's own subdivisions */}
           {inbox && (
-            <Fragment key={`category-${visible ? 'visible' : 'hidden'}`}>
-              <DropdownMenu
-                onOpenChange={(open) => {
-                  if (open && mail.categoryCounts === null) mail.loadCategoryCounts()
-                }}
-              >
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label={`Inbox tab: ${categoryLabel}`}>
-                    <FilterIcon aria-hidden="true" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel className="text-muted-foreground text-xs">
-                      Gmail tab
-                    </DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
-                      value={mail.category ?? 'all'}
-                      onValueChange={(value) =>
-                        mail.setCategory(
-                          value === 'all' ? null : (value as NonNullable<typeof mail.category>),
-                        )
-                      }
-                    >
-                      {CATEGORIES.map((category) => {
-                        const count =
-                          category.value === null
-                            ? mail.counts?.unread
-                            : mail.categoryCounts?.[category.value]
-                        const shown =
-                          typeof count === 'number'
-                            ? count
-                            : count == null
-                              ? null
-                              : `${count.count}${count.more ? '+' : ''}`
-                        return (
-                          <DropdownMenuRadioItem
-                            key={category.value ?? 'all'}
-                            value={category.value ?? 'all'}
-                          >
-                            {category.label}
-                            {shown !== null && shown !== 0 && (
-                              <span className="text-muted-foreground ml-auto text-xs tabular-nums">
-                                {shown}
-                              </span>
-                            )}
-                          </DropdownMenuRadioItem>
-                        )
-                      })}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </Fragment>
+            <DropdownMenu
+              key={`category-${visible ? 'visible' : 'hidden'}`}
+              onOpenChange={(open) => {
+                if (open && mail.categoryCounts === null) mail.loadCategoryCounts()
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label={`Inbox tab: ${categoryLabel}`}>
+                  <FilterIcon aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="text-muted-foreground text-xs">
+                    Gmail tab
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={mail.category ?? 'all'}
+                    onValueChange={(value) =>
+                      mail.setCategory(
+                        value === 'all' ? null : (value as NonNullable<typeof mail.category>),
+                      )
+                    }
+                  >
+                    {CATEGORIES.map((category) => {
+                      const count =
+                        category.value === null
+                          ? mail.counts?.unread
+                          : mail.categoryCounts?.[category.value]
+                      const shown =
+                        typeof count === 'number'
+                          ? count
+                          : count == null
+                            ? null
+                            : `${count.count}${count.more ? '+' : ''}`
+                      return (
+                        <DropdownMenuRadioItem
+                          key={category.value ?? 'all'}
+                          value={category.value ?? 'all'}
+                        >
+                          {category.label}
+                          {shown !== null && shown !== 0 && (
+                            <span className="text-muted-foreground ml-auto text-xs tabular-nums">
+                              {shown}
+                            </span>
+                          )}
+                        </DropdownMenuRadioItem>
+                      )
+                    })}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
 
           {/* Compose */}

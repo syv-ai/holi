@@ -32,14 +32,21 @@ const useAccountMock = vi.fn()
 const toastMock = vi.fn()
 const openExternal = vi.fn()
 
+let currentAccount = 'a'
 const google: Record<string, (params: unknown) => unknown> = {
-  status: () => ({ account: { email: 'ada@syv.ai', sub: 'a' }, missingScopes: [] }),
+  status: () => ({
+    account: {
+      email: currentAccount === 'a' ? 'ada@syv.ai' : 'ada@home.test',
+      sub: currentAccount,
+    },
+    missingScopes: [],
+  }),
   allAccounts: () => ({
     accounts: [
       { sub: 'a', email: 'ada@syv.ai' },
       { sub: 'b', email: 'ada@home.test' },
     ],
-    current: 'a',
+    current: currentAccount,
   }),
   useAccount: (p) => useAccountMock(p),
   search: (p) => searchMock(p),
@@ -136,6 +143,7 @@ const thread = {
 }
 
 beforeEach(() => {
+  currentAccount = 'a'
   searchMock.mockReset().mockResolvedValue(page([summary()]))
   threadMock.mockReset().mockResolvedValue(thread)
   draftsMock.mockReset().mockResolvedValue([])
@@ -143,7 +151,10 @@ beforeEach(() => {
   starMock.mockReset().mockResolvedValue({ ok: true })
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
-  useAccountMock.mockReset().mockResolvedValue({ ok: true })
+  useAccountMock.mockReset().mockImplementation(({ sub }: { sub: string }) => {
+    currentAccount = sub
+    return { ok: true }
+  })
   toastMock.mockReset()
   openExternal.mockReset()
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
@@ -302,6 +313,24 @@ test('parked Mail closes its More actions menu without losing the open thread', 
   show(mailKey)
   expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
   expect(screen.queryByRole('menu')).toBeNull()
+})
+
+test('switching Google accounts releases the previous account’s Mail state', async () => {
+  const user = userEvent.setup()
+  mountMailTabs()
+  const list = await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(within(list).getByText('Q2 budget'))
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  const frame = document.querySelector('iframe')!
+  searchMock.mockResolvedValue(page([summary({ id: 'second', subject: 'Second account mail' })]))
+
+  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
+  await screen.findByText('Second account mail', { selector: 'p' })
+  expect(list.isConnected).toBe(false)
+  expect(frame.isConnected).toBe(false)
+  expect(screen.queryByRole('heading', { name: 'Q2 budget' })).toBeNull()
+  expect(screen.getByText('Pick a thread to read it')).toBeInTheDocument()
 })
 
 test('Mail first mounts when displayed, close and reopen starts fresh, other apps still unmount', async () => {
