@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
 import { installHoliCli, resolveArgv } from '../src/main/bridge/cli'
+import { createActivityLog } from '../src/main/activity/log'
+import { logsCapabilities } from '../src/main/capabilities/logs-caps'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { SPILL_BYTES } from '../src/main/bridge/spill'
 import { OUT_DIR } from '../src/main/vault/out-files'
@@ -84,6 +86,7 @@ function recording(called: Called): Record<string, AnyCapability> {
       liveRemote: () => null,
       commitNow: async () => null,
     }),
+    ...logsCapabilities(createActivityLog()),
   }
   return Object.fromEntries(
     Object.entries(real).map(([name, entry]) => [
@@ -92,6 +95,7 @@ function recording(called: Called): Record<string, AnyCapability> {
         ...entry,
         params: (raw: unknown) => raw,
         run: (_ctx, p) => called(name, p),
+        cliValue: (result) => result,
         text: (r: { text: string }) => r.text,
       },
     ]),
@@ -177,6 +181,48 @@ describe('when Holi is not running', () => {
   })
 })
 
+describe('legacy command option grammar', () => {
+  it('accepts undeclared value options for commands without strict metadata', () => {
+    const legacy = [
+      { name: 'google.draft', cli: { args: [], summary: 'draft' } },
+      { name: 'google.schedule', cli: { args: [], summary: 'schedule' } },
+      { name: 'browser.read', cli: { args: [], summary: 'read' } },
+      { name: 'holis.search', cli: { args: ['query', 'words'], summary: 'search' } },
+    ]
+    for (const [args, command] of [
+      [['google', 'draft', '--to', 'ada@example.test', '--subject', 'fixture'], 'google.draft'],
+      [
+        [
+          'google',
+          'schedule',
+          '--title',
+          'fixture',
+          '--start',
+          '2026-01-01T12:00:00Z',
+          '--end',
+          '2026-01-01T13:00:00Z',
+        ],
+        'google.schedule',
+      ],
+      [['browser', 'read', '--tab', 'fixture'], 'browser.read'],
+      [['holis', 'search', 'fixture', 'words', '--since', '30d'], 'holis.search'],
+    ] as const) {
+      expect(resolveArgv(args, legacy, '')).toMatchObject({ kind: 'run', name: command })
+    }
+    expect(resolveArgv(['google', 'draft', '--subject=--update'], legacy, '')).toMatchObject({
+      kind: 'run',
+      params: { subject: '--update' },
+    })
+    expect(
+      resolveArgv(
+        ['fixture', 'read', '--all=false'],
+        [{ name: 'fixture.read', cli: { args: [], flags: ['all'], summary: 'read' } }],
+        '',
+      ),
+    ).toMatchObject({ kind: 'run', params: { all: 'false' } })
+  })
+})
+
 describe('usage', () => {
   it('names every command with its summary when called with none, and succeeds', async () => {
     const res = await run(bin, [], env)
@@ -200,6 +246,20 @@ describe('usage', () => {
     expect(one.stdout).toContain('usage: holi apps open <path>')
     expect(one.stdout).not.toContain('holi skills update')
     expect(capability).not.toHaveBeenCalled()
+  })
+
+  it('runs bare logs from the generated script with valued filters and specific help', async () => {
+    const help = await run(bin, ['logs', '--help'], env)
+    expect(help.code).toBe(0)
+    expect(help.stdout).toContain('usage: holi logs [--channel <channel>] [--since <since>]')
+    const result = await run(bin, ['logs', '--channel', 'google', '--since', '15m', '--json'], env)
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain('"name": "logs.list"')
+    expect(capability).toHaveBeenCalledWith('logs.list', { channel: 'google', since: '15m' })
+    const bare = await run(bin, ['logs'], env)
+    expect(bare.code).toBe(0)
+    expect(bare.stdout).toContain('logs.list ok')
+    expect(capability).toHaveBeenLastCalledWith('logs.list', {})
   })
 
   it('refuses an unknown command rather than doing something adjacent', async () => {
