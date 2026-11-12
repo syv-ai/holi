@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
-import { installHoliCli, requestedVault, resolveArgv } from '../src/main/bridge/cli'
+import { installHoliCli, resolveArgv } from '../src/main/bridge/cli'
 import { publishCliEndpoint, type CliEndpoint } from '../src/main/bridge/cli-endpoint'
 import { createActivityLog } from '../src/main/activity/log'
 import { logsCapabilities } from '../src/main/capabilities/logs-caps'
@@ -336,19 +336,33 @@ describe('usage', () => {
 
 describe('machine vault selector parsing', () => {
   const commands = [
-    { name: 'holi.logs', cli: { args: [], summary: 'logs', standalone: true } },
-    { name: 'holis.search', cli: { args: ['query'], values: ['query'], summary: 'search' } },
+    { name: 'logs.list', cli: { args: [], summary: 'logs', standalone: true } },
+    { name: 'holis.search', cli: { args: ['query'], summary: 'search' } },
   ] as const
 
-  it('recognizes standalone selectors while skipping option values and terminators', () => {
-    expect(requestedVault(['logs', '--vault=owner/repo'], commands)).toBe('owner/repo')
+  it('recognizes standalone selectors while preserving option values and terminators', () => {
+    expect(resolveArgv(['logs', '--vault=owner/repo'], commands, null)).toMatchObject({
+      kind: 'run',
+      vault: 'owner/repo',
+    })
     expect(
-      requestedVault(
+      resolveArgv(
         ['holis', 'search', '--query', '--vault=not/a-vault', '--vault', 'owner/repo'],
         commands,
+        null,
       ),
-    ).toBe('owner/repo')
-    expect(requestedVault(['logs', '--', '--vault=not/a-vault'], commands)).toBeNull()
+    ).toMatchObject({
+      kind: 'run',
+      vault: 'owner/repo',
+      params: { query: '--vault=not/a-vault' },
+    })
+    expect(
+      resolveArgv(['holis', 'search', '--', '--vault=not/a-vault'], commands, null),
+    ).toMatchObject({
+      kind: 'run',
+      vault: null,
+      params: { query: '--vault=not/a-vault' },
+    })
   })
 })
 
