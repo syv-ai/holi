@@ -17,6 +17,7 @@ import {
   Trash2Icon,
   VideoIcon,
 } from 'lucide-react'
+import { Fragment } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -53,7 +54,7 @@ interface AppHeaderProps {
  * what can be done to it. Permanent delete is not here because Holi has no
  * scope for it; Trash is Gmail's, recoverable for 30 days.
  */
-export function AppHeader({ mail, commands }: AppHeaderProps) {
+export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visible: boolean }) {
   const reader = mail.reader
   const thread = reader.kind === 'ready' ? reader.thread : null
   const row = mail.openRow
@@ -167,7 +168,7 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{starred ? 'Unstar' : 'Star'}</TooltipContent>
+            {visible && <TooltipContent>{starred ? 'Unstar' : 'Star'}</TooltipContent>}
           </Tooltip>
 
           <Tooltip>
@@ -182,7 +183,9 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 <ArchiveIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Archive: out of the inbox, kept in All Mail</TooltipContent>
+            {visible && (
+              <TooltipContent>Archive: out of the inbox, kept in All Mail</TooltipContent>
+            )}
           </Tooltip>
 
           <Tooltip>
@@ -197,85 +200,92 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 <Trash2Icon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Move to trash: recoverable for 30 days</TooltipContent>
+            {visible && <TooltipContent>Move to trash: recoverable for 30 days</TooltipContent>}
           </Tooltip>
 
           <div className="mx-0.5 hidden items-center sm:flex">
             <Separator orientation="vertical" className="h-5" />
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="More actions"
-                className="text-muted-foreground shrink-0"
-              >
-                <MoreHorizontalIcon aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-60">
-              <DropdownMenuGroup>
-                <DropdownMenuItem disabled={thread === null} onSelect={() => commands.reply(false)}>
-                  <ReplyIcon aria-hidden="true" />
-                  Reply
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={thread === null} onSelect={commands.forward}>
-                  <ForwardIcon aria-hidden="true" />
-                  Forward
-                </DropdownMenuItem>
-                {row?.hasDraft === true && (
-                  <DropdownMenuItem onSelect={commands.continueDraft}>
-                    <FilePenIcon aria-hidden="true" />
-                    Continue your draft
+          <Fragment key={`more-${visible ? 'visible' : 'hidden'}`}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="More actions"
+                  className="text-muted-foreground shrink-0"
+                >
+                  <MoreHorizontalIcon aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem
+                    disabled={thread === null}
+                    onSelect={() => commands.reply(false)}
+                  >
+                    <ReplyIcon aria-hidden="true" />
+                    Reply
                   </DropdownMenuItem>
-                )}
-                <DropdownMenuItem onSelect={() => void mail.setRead(openId, false)}>
-                  <MailIcon aria-hidden="true" />
-                  Mark as unread
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-
-              {(commands.summarize !== null || commands.linkToTask !== null) && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuGroup>
-                    {commands.summarize !== null && (
-                      <DropdownMenuItem disabled={thread === null} onSelect={commands.summarize}>
-                        <SparklesIcon aria-hidden="true" />
-                        Summarize with the assistant
-                      </DropdownMenuItem>
-                    )}
-                    {commands.linkToTask !== null && (
-                      <DropdownMenuItem onSelect={commands.linkToTask}>
-                        <Link2Icon aria-hidden="true" />
-                        Make a task linking this thread
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuGroup>
-                </>
-              )}
-
-              <DropdownMenuSeparator />
-
-              <DropdownMenuGroup>
-                {/* Advertised by the sender; opened, never requested. */}
-                {row?.unsubscribeUrl != null && (
-                  <DropdownMenuItem onSelect={() => openExternal(row.unsubscribeUrl!)}>
-                    <MailMinusIcon aria-hidden="true" />
-                    Open the sender’s unsubscribe page
+                  <DropdownMenuItem disabled={thread === null} onSelect={commands.forward}>
+                    <ForwardIcon aria-hidden="true" />
+                    Forward
                   </DropdownMenuItem>
-                )}
-                {(thread?.webUrl ?? row?.webUrl) !== undefined && (
-                  <DropdownMenuItem onSelect={() => openExternal((thread?.webUrl ?? row?.webUrl)!)}>
-                    <ExternalLinkIcon aria-hidden="true" />
-                    Open in Gmail
+                  {row?.hasDraft === true && (
+                    <DropdownMenuItem onSelect={commands.continueDraft}>
+                      <FilePenIcon aria-hidden="true" />
+                      Continue your draft
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onSelect={() => void mail.setRead(openId, false)}>
+                    <MailIcon aria-hidden="true" />
+                    Mark as unread
                   </DropdownMenuItem>
+                </DropdownMenuGroup>
+
+                {(commands.summarize !== null || commands.linkToTask !== null) && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuGroup>
+                      {commands.summarize !== null && (
+                        <DropdownMenuItem disabled={thread === null} onSelect={commands.summarize}>
+                          <SparklesIcon aria-hidden="true" />
+                          Summarize with the assistant
+                        </DropdownMenuItem>
+                      )}
+                      {commands.linkToTask !== null && (
+                        <DropdownMenuItem onSelect={commands.linkToTask}>
+                          <Link2Icon aria-hidden="true" />
+                          Make a task linking this thread
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuGroup>
+                  </>
                 )}
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+
+                <DropdownMenuSeparator />
+
+                <DropdownMenuGroup>
+                  {/* Advertised by the sender; opened, never requested. */}
+                  {row?.unsubscribeUrl != null && (
+                    <DropdownMenuItem onSelect={() => openExternal(row.unsubscribeUrl!)}>
+                      <MailMinusIcon aria-hidden="true" />
+                      Open the sender’s unsubscribe page
+                    </DropdownMenuItem>
+                  )}
+                  {(thread?.webUrl ?? row?.webUrl) !== undefined && (
+                    <DropdownMenuItem
+                      onSelect={() => openExternal((thread?.webUrl ?? row?.webUrl)!)}
+                    >
+                      <ExternalLinkIcon aria-hidden="true" />
+                      Open in Gmail
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </Fragment>
         </div>
       )}
     </header>
