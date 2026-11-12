@@ -51,7 +51,7 @@ describe('taskDueAttentionAtom', () => {
     expect(store.get(taskDueAttentionAtom)?.open).toBe(1)
   })
 
-  it('updates with snapshot completion, deletion, due edits and a clock-only midnight transition', () => {
+  it('updates with snapshot completion, deletion, due edits and a clock-only midnight change', () => {
     const store = readyStore([
       makeTask('projects/task.due-now.md', '2026-11-12T10:30'),
       makeTask('projects/task.tomorrow.md', '2026-11-13'),
