@@ -156,6 +156,7 @@ test('due chips distinguish today, exact-minute urgency, invalid dates and compl
       task('task.today.md', { title: 'Due today', due: '2026-10-23' }),
       task('task.minute.md', { title: 'Due this minute', due: '2026-10-23T12:00' }),
       task('task.minute-past.md', { title: 'Minute overdue', due: '2026-10-23T11:59' }),
+      task('task.tomorrow.md', { title: 'Check the schedule', due: '2026-10-24' }),
       task('task.invalid-due.md', { title: 'Invalid due', due: 'not-a-date' }),
       task('task.done-due.md', { title: 'Completed due', status: 'archived', due: '2026-10-20' }),
     ],
@@ -167,13 +168,36 @@ test('due chips distinguish today, exact-minute urgency, invalid dates and compl
   expect(screen.getByLabelText(/11:59, overdue/)).toBeInTheDocument()
   expect(screen.getByLabelText('Due not-a-date')).toBeInTheDocument()
   expect(screen.getByLabelText(/Was due/)).toBeInTheDocument()
-  expect(document.querySelector('[data-task="task.today.md"]')).toHaveTextContent('Due today')
-  expect(document.querySelector('[data-task="task.minute-past.md"]')).toHaveTextContent('Overdue')
+  const todayChip = screen.getByLabelText(/^Due today, Oct 23$/)
+  expect(within(todayChip).getByText('Due today')).toBeVisible()
+  expect(within(screen.getByLabelText(/11:59, overdue/)).getByText('Overdue')).toBeVisible()
+  expect(within(screen.getByLabelText('Due not-a-date')).queryByText('Overdue')).toBeNull()
+  expect(document.querySelector('[data-task="task.ship.md"] [aria-label^="Due"]')).toBeNull()
+  expect(screen.getByLabelText(/Due Oct 24, soon/)).not.toHaveTextContent('Due today')
+
+  store.set(nowAtom, '2026-10-23T12:01')
+  await waitFor(() =>
+    expect(within(screen.getByLabelText(/12:00, overdue/)).getByText('Overdue')).toBeVisible(),
+  )
+  expect(todayChip).toHaveTextContent('Due today')
+  expect(update).not.toHaveBeenCalled()
+
+  store.set(
+    snapshotAtom,
+    snapshotOf(
+      snapshotTasks.map((item) =>
+        item.path === 'task.minute.md' ? { ...item, status: 'archived' } : item,
+      ),
+    ),
+  )
+  await waitFor(() => expect(screen.getByLabelText(/Was due.*12:00/)).toBeInTheDocument())
+  expect(screen.getByLabelText(/Was due.*12:00/)).not.toHaveTextContent('Overdue')
 
   store.set(nowAtom, '2026-10-24T00:00')
   await waitFor(() =>
     expect(document.querySelector('[data-task="task.today.md"]')).toHaveTextContent('Overdue'),
   )
+  expect(within(screen.getByLabelText(/^Due today, Oct 24$/)).getByText('Due today')).toBeVisible()
   const completedCard = document.querySelector('[data-task="task.done-due.md"]')
   expect(completedCard).toHaveTextContent('Completed due')
   expect(within(completedCard as HTMLElement).getByLabelText(/Was due/)).toBeInTheDocument()
