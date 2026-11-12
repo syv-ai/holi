@@ -628,7 +628,11 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.search': cap({
       doors: ['ui', 'cli', 'app'],
       appGrant: 'mail',
-      cli: { args: ['query?'], summary: "threads matching Gmail's search grammar (the inbox)" },
+      cli: {
+        args: ['query?'],
+        summary:
+          "threads matching Gmail's search grammar (the inbox); summaries include replied (a SENT message after incoming mail), lastReplyAt (ISO or null), addressedAs (latest incoming To/Cc/neither/unknown; null without incoming), and automated (recognized automation evidence on latest incoming only)",
+      },
       params: searchParams,
       run: async (ctx, options) => {
         const data = await dataOf(ctx.remote)
