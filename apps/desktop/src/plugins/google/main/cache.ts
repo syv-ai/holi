@@ -83,7 +83,7 @@ export interface GoogleCache {
  * cached type changes**, or when `cacheKey` changes (old keys would otherwise
  * sit on disk unread forever).
  */
-const SHAPE_VERSION = '4'
+const SHAPE_VERSION = '5'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
