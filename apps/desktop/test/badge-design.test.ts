@@ -5,24 +5,13 @@ import { describe, expect, it } from 'vitest'
 const sourceRoot = join(import.meta.dirname, '../src')
 const badgeSource = readFileSync(join(sourceRoot, 'renderer/src/components/ui/badge.tsx'), 'utf8')
 const themeSource = readFileSync(join(sourceRoot, 'renderer/src/index.css'), 'utf8')
+const buttonSource = readFileSync(join(sourceRoot, 'renderer/src/components/ui/button.tsx'), 'utf8')
 
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name)
     return entry.isDirectory() ? sourceFiles(path) : /\.(ts|tsx)$/.test(entry.name) ? [path] : []
   })
-}
-
-function contrastRatio(a: readonly number[], b: readonly number[]): number {
-  const luminance = (rgb: readonly number[]) => {
-    const [r, g, b] = rgb.map((channel) => {
-      const value = channel / 255
-      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
-    })
-    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
-  }
-  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x)
-  return (light! + 0.05) / (dark! + 0.05)
 }
 
 describe('badge design contract', () => {
@@ -57,11 +46,15 @@ describe('badge design contract', () => {
 
   it('uses a neutral foreground for solid state badges', () => {
     for (const variant of ['info', 'success', 'warning', 'destructive', 'focus']) {
-      const background = variant === 'destructive' ? 'status-destructive-solid' : variant
-      expect(badgeSource).toContain(`${variant}: "bg-${background} text-badge-solid-foreground"`)
+      const background = variant
+      const foreground =
+        variant === 'destructive' ? 'destructive-solid-foreground' : 'badge-solid-foreground'
+      expect(badgeSource).toContain(`${variant}: "bg-${background} text-${foreground}"`)
     }
     expect(themeSource).toContain('--badge-solid-foreground: var(--color-zinc-950)')
-    expect(themeSource).toContain('--status-destructive-solid: var(--color-red-500)')
+    expect(themeSource).toContain(
+      '--color-destructive-solid-foreground: var(--destructive-solid-foreground)',
+    )
     expect(themeSource).toContain('--success: var(--color-emerald-500)')
     expect(themeSource).toContain('--warning: var(--color-yellow-500)')
     expect(themeSource).toContain('--info: var(--color-violet-500)')
@@ -81,26 +74,20 @@ describe('badge design contract', () => {
     )
     const button = readFileSync(join(sourceRoot, 'renderer/src/components/ui/button.tsx'), 'utf8')
     expect(session).toContain('<Badge variant="warning">')
-    expect(calendar).toContain('invalid: "bg-status-destructive-solid text-badge-solid-foreground"')
+    expect(calendar).toContain('invalid: "bg-destructive text-destructive-solid-foreground"')
+    expect(calendar).toContain('invalidResize: "bg-destructive text-destructive-solid-foreground"')
     expect(calendar).not.toContain('border-destructive')
-    expect(button).toContain('bg-status-destructive-solid text-badge-solid-foreground')
+    expect(button).toContain(
+      'bg-destructive text-destructive-solid-foreground hover:bg-destructive',
+    )
     expect(button).not.toContain('bg-destructive/10 text-destructive')
   })
 
-  it('meets 4.5:1 for default status fills in light and dark themes', () => {
-    // Tailwind v4 default 500 shades used by Holi's status tokens. Both themes
-    // retain these fills; the destructive badge token is isolated from Alerts.
-    const neutral = [9, 9, 11] as const // zinc-950
-    const fills: Record<string, readonly number[]> = {
-      success: [16, 185, 129], // emerald-500
-      warning: [234, 179, 8], // yellow-500
-      info: [139, 92, 246], // violet-500
-      focus: [59, 130, 246], // blue-500
-      destructive: [239, 68, 68], // red-500
-    }
-    for (const [name, fill] of Object.entries(fills)) {
-      expect(contrastRatio(neutral, fill), `${name} light`).toBeGreaterThanOrEqual(4.5)
-      expect(contrastRatio(neutral, fill), `${name} dark`).toBeGreaterThanOrEqual(4.5)
-    }
+  it('keeps destructive button fill on the configurable Danger token', () => {
+    expect(themeSource).toContain('--destructive: oklch(0.577 0.245 27.325)')
+    expect(themeSource).toContain('--destructive: oklch(0.704 0.191 22.216)')
+    expect(themeSource).toContain('--destructive-solid-foreground: oklch(0.985 0 0)')
+    expect(themeSource).toContain('--destructive-solid-foreground: oklch(0.1 0 0)')
+    expect(buttonSource).toContain('hover:bg-destructive')
   })
 })

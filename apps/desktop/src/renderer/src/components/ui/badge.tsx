@@ -18,7 +18,7 @@ const badgeVariants = cva(
         info: "bg-info text-badge-solid-foreground",
         success: "bg-success text-badge-solid-foreground",
         warning: "bg-warning text-badge-solid-foreground",
-        destructive: "bg-status-destructive-solid text-badge-solid-foreground",
+        destructive: "bg-destructive text-destructive-solid-foreground",
         focus: "bg-focus text-badge-solid-foreground",
         invert: "bg-invert text-invert-foreground",
       },

@@ -857,7 +857,7 @@ function EventCalendarMonthCell({
         "shrink-0 rounded-sm border-dashed",
         inlineDrop.valid
           ? "border border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
-          : "bg-status-destructive-solid",
+          : "bg-destructive",
         viewConfig.classNames?.dragGhost
       )}
       style={
@@ -1141,7 +1141,7 @@ function EventCalendarMoreIndicator({
               "flex shrink-0 items-center border-dashed",
               dropInto.valid
                 ? "border text-foreground border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
-                : "bg-status-destructive-solid text-badge-solid-foreground"
+                : "bg-destructive text-destructive-solid-foreground"
             ),
           viewConfig.classNames?.moreIndicator
         )}
