@@ -19,6 +19,7 @@ Element.prototype.getAnimations ??= () => []
 
 const activity = vi.fn()
 const update = vi.fn()
+let snapshotTasks: Task[] = []
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -40,7 +41,7 @@ vi.mock('@/lib/trpc', () => ({
         },
       },
     },
-    vaults: { snapshot: { query: () => Promise.resolve(snapshotOf(TASKS)) } },
+    vaults: { snapshot: { query: () => Promise.resolve(snapshotOf(snapshotTasks)) } },
     github: {
       collaborators: { query: () => Promise.resolve({ collaborators: [] }) },
     },
@@ -78,7 +79,12 @@ function snapshotOf(tasks: Task[]): VaultSnapshot {
   }
 }
 
-function setup(tab: 'board' | 'list' | 'overview' = 'board') {
+function setup(
+  tab: 'board' | 'list' | 'overview' = 'board',
+  tasks = TASKS,
+  statuses = [...DEFAULT_STATUSES],
+) {
+  snapshotTasks = tasks
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/site')
   store.set(vaultsAtom, [
@@ -89,11 +95,11 @@ function setup(tab: 'board' | 'list' | 'overview' = 'board') {
       lastOpenedAt: '2026-10-01',
     },
   ])
-  store.set(snapshotAtom, snapshotOf(TASKS))
+  store.set(snapshotAtom, snapshotOf(tasks))
   store.set(nowAtom, '2026-10-23T12:00')
   store.set(statusesFileAtom, {
     state: 'ready',
-    value: [...DEFAULT_STATUSES],
+    value: statuses,
     warnings: [],
   })
   store.set(projectFileAtom, {
@@ -139,6 +145,40 @@ test('the board has a column per status, and a card in each task’s column', ()
   // A status the vault does not list shows in the first unstarted column.
   const todo = screen.getByRole('region', { name: 'To do tasks' })
   expect(within(todo).getByText('Waiting on legal')).toBeInTheDocument()
+})
+
+test('due chips distinguish today, exact-minute urgency, invalid dates and completion', async () => {
+  activity.mockResolvedValue([])
+  const { store } = setup(
+    'board',
+    [
+      ...TASKS.slice(0, 3),
+      task('task.today.md', { title: 'Due today', due: '2026-10-23' }),
+      task('task.minute.md', { title: 'Due this minute', due: '2026-10-23T12:00' }),
+      task('task.minute-past.md', { title: 'Minute overdue', due: '2026-10-23T11:59' }),
+      task('task.invalid-due.md', { title: 'Invalid due', due: 'not-a-date' }),
+      task('task.done-due.md', { title: 'Completed due', status: 'archived', due: '2026-10-20' }),
+    ],
+    [...DEFAULT_STATUSES, { id: 'archived', name: 'Archived', category: 'completed' }],
+  )
+
+  expect(screen.getAllByLabelText(/Due today/)).toHaveLength(2)
+  expect(screen.getByLabelText(/Due today.*12:00/)).toBeInTheDocument()
+  expect(screen.getByLabelText(/11:59, overdue/)).toBeInTheDocument()
+  expect(screen.getByLabelText('Due not-a-date')).toBeInTheDocument()
+  expect(screen.getByLabelText(/Was due/)).toBeInTheDocument()
+  expect(document.querySelector('[data-task="task.today.md"]')).toHaveTextContent('Due today')
+  expect(document.querySelector('[data-task="task.minute-past.md"]')).toHaveTextContent('Overdue')
+
+  store.set(nowAtom, '2026-10-24T00:00')
+  await waitFor(() =>
+    expect(document.querySelector('[data-task="task.today.md"]')).toHaveTextContent('Overdue'),
+  )
+  const completedCard = document.querySelector('[data-task="task.done-due.md"]')
+  expect(completedCard).toHaveTextContent('Completed due')
+  expect(within(completedCard as HTMLElement).getByLabelText(/Was due/)).toBeInTheDocument()
+  expect(within(completedCard as HTMLElement).queryByText('Overdue')).not.toBeInTheDocument()
+  expect(within(completedCard as HTMLElement).queryByText('Due today')).not.toBeInTheDocument()
 })
 
 test('a card’s title opens the task', async () => {

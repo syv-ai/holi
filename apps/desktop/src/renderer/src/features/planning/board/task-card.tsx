@@ -6,7 +6,7 @@
  * watch), and its assignee line the first person the task is for.
  */
 import type { ComponentProps } from 'react'
-import type { Task } from '@holi/shared'
+import { stampTime, type Task } from '@holi/shared'
 import { ClockIcon } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -27,11 +27,12 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 
-type DueState = 'normal' | 'watch' | 'risk' | 'cleared'
+type DueState = 'normal' | 'watch' | 'today' | 'risk' | 'cleared'
 
 const DUE_STATE_VARIANT = {
   normal: 'info-light',
   watch: 'warning-light',
+  today: 'warning-light',
   risk: 'destructive-light',
   cleared: 'success-light',
 } as const satisfies Record<DueState, string>
@@ -40,6 +41,7 @@ const DUE_STATE_VARIANT = {
 const DUE_STATE_LABEL: Record<DueState, (date: string) => string> = {
   normal: (date) => `Due ${date}`,
   watch: (date) => `Due ${date}, soon`,
+  today: (date) => `Due today, ${date}`,
   risk: (date) => `Due ${date}, overdue`,
   cleared: (date) => `Was due ${date}`,
 }
@@ -59,7 +61,8 @@ function dueState(task: Task, context: CardContext, isDone: boolean) {
   if (isDone) return 'cleared'
   if (context.isOverdue(task)) return 'risk'
   const days = task.due !== undefined ? daysUntil(context.today, task.due) : null
-  return days !== null && days <= 2 ? 'watch' : 'normal'
+  if (days === 0) return 'today'
+  return days !== null && days > 0 && days <= 2 ? 'watch' : 'normal'
 }
 
 function DueChip({
@@ -73,7 +76,9 @@ function DueChip({
   today: string
   className?: string
 }) {
-  const date = shortDate(due, today)
+  const day = shortDate(due, today)
+  const time = stampTime(due)
+  const date = time === null ? day : `${day}, ${time}`
   return (
     <Badge
       variant={DUE_STATE_VARIANT[state]}
@@ -81,6 +86,11 @@ function DueChip({
       aria-label={DUE_STATE_LABEL[state](date)}
     >
       <ClockIcon aria-hidden="true" />
+      {state === 'today' || state === 'risk' ? (
+        <span className="shrink-0 font-semibold">
+          {state === 'today' ? 'Due today' : 'Overdue'}
+        </span>
+      ) : null}
       <span className="shrink-0 font-semibold tabular-nums">{date}</span>
     </Badge>
   )
