@@ -76,31 +76,44 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
   /** The vault a connect in flight is for, so unmounting cancels it rather
    *  than leaving a listener holding a port for the life of the app. */
   const connecting = useRef<string | null>(null)
+  const generation = useRef(0)
+  const invalidateGeneration = () => {
+    generation.current++
+  }
   /** The account a "Remove from Holi" is asking about: it revokes at
    *  Google, so it is confirmed first. */
   const [removing, setRemoving] = useState<{ sub: string; email: string } | null>(null)
 
   useEffect(() => {
-    if (visible) {
-      return () => {
-        if (connecting.current !== null) void googleCap.cancelConnect(connecting.current)
-      }
+    if (!visible) {
+      invalidateGeneration()
+      const remote = connecting.current
+      connecting.current = null
+      if (remote !== null) void googleCap.cancelConnect(remote)
+      setPhase({ kind: 'idle' })
+      setRemoving(null)
     }
-    if (connecting.current !== null) void googleCap.cancelConnect(connecting.current)
-    connecting.current = null
-    setPhase({ kind: 'idle' })
-    setRemoving(null)
+    return () => {
+      invalidateGeneration()
+      const remote = connecting.current
+      connecting.current = null
+      if (remote !== null) void googleCap.cancelConnect(remote)
+    }
   }, [visible])
 
   const connect = async () => {
     if (remote === null) return
+    const attempt = ++generation.current
+    const ownsAttempt = () => generation.current === attempt
     setPhase({ kind: 'connecting' })
     connecting.current = remote
     try {
       await googleCap.connect(remote)
+      if (!ownsAttempt()) return
       // Settles when the browser comes back, the person cancels, or the flow
       // times out: there is no IPC timeout to race.
       const result = await googleCap.awaitConnect(remote)
+      if (!ownsAttempt()) return
       if (result.kind === 'granted') {
         // Re-read what was actually granted: a person can approve Gmail and
         // decline contacts, which lands here as `granted` with scopes still
@@ -111,12 +124,13 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
         setPhase({ kind: 'idle', error: OUTCOME[result.kind] || undefined })
       }
     } catch (err) {
+      if (!ownsAttempt()) return
       setPhase({
         kind: 'idle',
         error: err instanceof Error ? err.message : 'Could not connect to Google.',
       })
     } finally {
-      connecting.current = null
+      if (ownsAttempt()) connecting.current = null
     }
   }
 

@@ -14,7 +14,7 @@ import { trpc } from '@/lib/trpc'
 import { ExternalLinkIcon } from 'lucide-react'
 import { SettingsFieldRow } from '../settings-kit'
 import { openExternal } from '@/lib/open-external'
-import { useSettingsVisible } from '../settings-view'
+import { useSettingsVisible } from '../settings-visibility'
 
 type NotesAnswer = Awaited<ReturnType<typeof trpc.updates.notes.query>>
 

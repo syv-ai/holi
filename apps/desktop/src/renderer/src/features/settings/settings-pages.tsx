@@ -31,12 +31,43 @@ import { EditorPage } from './pages/editor-page'
 import { GeneralPage } from './pages/general-page'
 import { MembersPage } from './pages/members-page'
 
+type PluginSettingsMetadata = {
+  label: string
+  description: string
+  component: ComponentType<{ remote: string; visible?: boolean }>
+}
+
+type SettingsPageProps = {
+  remote: string
+  visible?: boolean
+  plugin?: PluginSettingsMetadata
+  nested?: readonly unknown[]
+}
+
+function PluginSettingsPage({ remote, visible, plugin }: SettingsPageProps) {
+  if (plugin === undefined) return null
+  const Section = plugin.component
+  return (
+    <SettingsGroup title={plugin.label} description={plugin.description}>
+      <div className="px-4 py-3">
+        <Section remote={remote} visible={visible} />
+      </div>
+    </SettingsGroup>
+  )
+}
+
+function PluginsSettingsPage({ remote, visible, nested }: SettingsPageProps) {
+  return <PluginsPage nested={nested as never} remote={remote} visible={visible} />
+}
+
 export type SettingsPage = {
   id: string
   label: string
   icon: IconGlyph
   description: string
-  Component: ComponentType<{ remote: string; visible?: boolean }>
+  Component: ComponentType<SettingsPageProps>
+  plugin?: PluginSettingsMetadata
+  nested?: readonly unknown[]
 }
 
 export type SettingsGroup = {
@@ -136,9 +167,8 @@ export const settingsGroupsAtom = atom((get): readonly SettingsGroup[] => {
         label: 'Plugins',
         icon: PuzzleIcon,
         description: 'What this vault runs beyond the core.',
-        Component: ({ remote, visible }) => (
-          <PluginsPage nested={nested} remote={remote} visible={visible} />
-        ),
+        Component: PluginsSettingsPage,
+        nested,
       },
       // A plugin's own page draws what it likes inside one card, titled with
       // the plugin's name and what it is.
@@ -149,13 +179,12 @@ export const settingsGroupsAtom = atom((get): readonly SettingsGroup[] => {
           label: section.label,
           icon: section.icon ?? CableIcon,
           description: section.description ?? '',
-          Component: ({ remote, visible }: { remote: string; visible?: boolean }) => (
-            <SettingsGroup title={info.label} description={info.description}>
-              <div className="px-4 py-3">
-                <section.Component remote={remote} visible={visible} />
-              </div>
-            </SettingsGroup>
-          ),
+          Component: PluginSettingsPage,
+          plugin: {
+            label: info.label,
+            description: info.description ?? '',
+            component: section.Component,
+          },
         })),
     ],
   }

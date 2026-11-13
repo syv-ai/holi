@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Switch } from '@/components/ui/switch'
 import { trpc } from '@/lib/trpc'
 import { SettingsFieldRow } from '../settings-kit'
-import { useSettingsVisible } from '../settings-view'
+import { useSettingsVisible } from '../settings-visibility'
 
 export function OpenAtLoginRow() {
   const [open, setOpen] = useState<boolean | null>(null)

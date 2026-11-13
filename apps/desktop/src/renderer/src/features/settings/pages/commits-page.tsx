@@ -12,7 +12,7 @@ import {
   type Choice,
 } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
-import { useSettingsVisible } from '../settings-view'
+import { useSettingsVisible } from '../settings-visibility'
 
 export function CommitsPage() {
   const visible = useSettingsVisible()

@@ -40,7 +40,7 @@ import { activeRemoteAtom } from '@/state/vaults'
 import { SettingsFieldRow, SettingsGroup, SettingsRowsLoading } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
 import { HarnessDialog, type HarnessRecord } from './harness-dialog'
-import { useSettingsVisible } from '../settings-view'
+import { useSettingsVisible } from '../settings-visibility'
 
 /** Mirrors `HarnessSummary` in the agent's main/harness/capabilities.ts. */
 interface HarnessSummary {
@@ -143,7 +143,14 @@ export function AgentsCard() {
     n: number
   }>({ harness: null, open: false, n: 0 })
   const edit = (harness: HarnessRecord | null): void =>
-    setEditing((e) => ({ harness, open: true, n: e.n + 1 }))
+    setEditing((e) => ({
+      harness,
+      open: true,
+      // Reopening the same suspended draft preserves its form state. A new
+      // target always starts with a fresh form.
+      n: !e.open && e.harness?.id === harness?.id ? e.n : e.n + 1,
+    }))
+  const closeEditor = (): void => setEditing((e) => ({ ...e, open: false, n: e.n + 1 }))
   const [removing, setRemoving] = useState<HarnessSummary | null>(null)
   const [testing, setTesting] = useState<{
     label: string
@@ -364,7 +371,7 @@ export function AgentsCard() {
       <HarnessDialog
         key={`${editing.harness?.id ?? 'new'}-${editing.n}`}
         open={visible && editing.open}
-        onOpenChange={(open) => !open && setEditing((e) => ({ ...e, open: false }))}
+        onOpenChange={(open) => !open && closeEditor()}
         harness={editing.harness}
         onSave={save}
       />

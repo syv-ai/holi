@@ -32,6 +32,9 @@ const removeAccount = vi.fn()
 const disconnectVault = vi.fn()
 const client = vi.fn()
 const setClient = vi.fn()
+const connect = vi.fn()
+const awaitConnect = vi.fn()
+const cancelConnect = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
@@ -40,6 +43,9 @@ const google: Record<string, (params: unknown) => unknown> = {
   'google.useAccount': (p) => linkAccount(p),
   'google.removeAccount': (p) => removeAccount(p),
   'google.disconnectVault': () => disconnectVault(),
+  'google.connect': (p) => connect(p),
+  'google.awaitConnect': (p) => awaitConnect(p),
+  'google.cancelConnect': (p) => cancelConnect(p),
   'google.imageSenders': async () => [],
   'google.client': () => client(),
   'google.setClient': (p) => setClient(p),
@@ -76,6 +82,9 @@ beforeEach(() => {
   disconnectVault.mockResolvedValue({ ok: true })
   client.mockResolvedValue({ id: 'holi.apps.googleusercontent.com', source: 'shipped' })
   setClient.mockResolvedValue({ ok: true })
+  connect.mockResolvedValue(undefined)
+  awaitConnect.mockResolvedValue({ kind: 'granted' })
+  cancelConnect.mockResolvedValue(undefined)
 })
 
 describe('ConnectionsSection', () => {
@@ -101,6 +110,32 @@ describe('ConnectionsSection', () => {
     )
     await userEvent.click(await screen.findByRole('button', { name: 'Use your own client…' }))
     expect(screen.getByLabelText('Client ID')).toHaveValue('unfinished-client')
+  })
+
+  it('ignores a delayed connect phase after Settings hides and returns', async () => {
+    let finishConnect!: () => void
+    connect.mockReturnValueOnce(new Promise<void>((resolve) => (finishConnect = resolve)))
+    const mounted = render()
+    const button = await screen.findByRole('button', { name: 'Connect a different account…' })
+    await userEvent.click(button)
+    expect(button).toBeDisabled()
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible={false} />
+      </Provider>,
+    )
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible />
+      </Provider>,
+    )
+    await act(async () => finishConnect())
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Connect a different account…' })).toBeEnabled(),
+    )
+    expect(awaitConnect).not.toHaveBeenCalled()
   })
 
   it('offers the accounts already connected here to a vault with none', async () => {
