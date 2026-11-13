@@ -20,7 +20,6 @@ const probes = [
     'root options',
     ['--help'],
     [
-      '--bg',
       '--name',
       '--resume',
       '--fork-session',
@@ -29,6 +28,7 @@ const probes = [
       '--mcp-config',
       '--allowedTools',
       '--disallowedTools',
+      '--',
     ],
   ],
 ]
@@ -37,7 +37,7 @@ export async function runCompatibility(
   version,
   { npm = 'npm', timeout = 10_000, installTimeout = 180_000 } = {},
 ) {
-  if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version ?? ''))
+  if (!/^\d+\.\d+\.\d+$/.test(version ?? ''))
     throw new Error('Expected exact Claude Code npm version')
   const root = await mkdtemp(join(tmpdir(), 'holi-claude-check-'))
   const install = join(root, 'package')
@@ -85,7 +85,12 @@ export async function runCompatibility(
       })
       const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
       const mismatch = checkProbe(result, expected, output)
-      if (mismatch) failures.push(`${name}: ${mismatch}; evidence=${bounded(output)}`)
+      const missingBackgroundFlag =
+        name === 'root options' && !/(^|[\s,=])--(?:bg|background)([\s,=]|$)/m.test(output)
+      if (mismatch || missingBackgroundFlag)
+        failures.push(
+          `${name}: ${mismatch ?? 'missing consumed option --bg (help may advertise --background)'}; evidence=${bounded(output)}`,
+        )
     }
     return {
       failed: failures.length > 0,

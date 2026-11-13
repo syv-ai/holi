@@ -14,9 +14,10 @@ export function isolatedEnvironment(root, path = process.env.PATH ?? '/usr/bin:/
 }
 
 export function exactVersion(output, version) {
+  if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) return false
   const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(?:^|\\b)(?:claude(?:-code)?\\s+)?${escaped}(?:\\s|$)`, 'mi').test(
-    output.trim(),
+  return new RegExp(`^(?:claude(?:-code)?\\s+)?${escaped}(?:\\s+\\(Claude Code\\))?$`, 'i').test(
+    String(output ?? '').trim(),
   )
 }
 

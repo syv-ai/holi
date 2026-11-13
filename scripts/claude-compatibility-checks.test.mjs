@@ -21,6 +21,9 @@ test('accepts exact Claude Code versions only', () => {
   assert.equal(exactVersion('2.1.319 (Claude Code)', '2.1.319'), true)
   assert.equal(exactVersion('claude-code 2.1.319', '2.1.319'), true)
   assert.equal(exactVersion('2.1.3190', '2.1.319'), false)
+  assert.equal(exactVersion('garbage 2.1.319 trailing', '2.1.319'), false)
+  assert.equal(exactVersion('2.1.319', '2.1.junk'), false)
+  assert.equal(exactVersion('2.1.319\\nClaude Code', '2.1.319'), false)
 })
 
 test('names missing commands, options, timeouts and nonzero probes', () => {
