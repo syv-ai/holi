@@ -225,10 +225,7 @@ function commandsNote(id: string, linked: LinkedCommands | null): string | null 
   return mine.map((r) => `${r.name} is not on the agent's PATH: ${r.reason}.`).join(' ')
 }
 
-/** Every plugin this vault pins or this machine has, as the settings tab
- *  lists them.
- * @public exported for its test
- */
+/** Pair each authorized row with the install snapshot it describes. */
 async function pluginEntries(
   root: string,
   deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },
@@ -254,6 +251,9 @@ async function pluginEntries(
   )
 }
 
+/** Every plugin this vault pins or this machine has, as the settings tab lists them.
+ * @public exported for its test
+ */
 export async function listPlugins(
   root: string,
   deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },
