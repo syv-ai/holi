@@ -11,6 +11,7 @@
  */
 import { snapshotTasks } from '@holi/shared'
 import type { AppCtx, Disposer } from '../../../../main/plugin-api'
+import { readVaultStatuses } from '../../../../main/plugin-api'
 import { createNotifier } from './notify'
 import { createDeliveredLog, createReminderRuntime } from './runtime'
 import type { VaultTasks } from './sweep'
@@ -25,10 +26,14 @@ export function startReminders(ctx: AppCtx): Disposer {
       const scans = await Promise.all(
         vaults.map(async (v) => {
           const snapshot = await ctx.scan(v.root).catch(() => null)
-          return snapshot ? { remote: v.remote, tasks: snapshotTasks(snapshot).items } : null
+          if (!snapshot) return null
+          const statuses = await readVaultStatuses(v.root, { failOnReadError: true }).catch(
+            () => null,
+          )
+          return { remote: v.remote, tasks: snapshotTasks(snapshot).items, statuses }
         }),
       )
-      return scans.filter((v): v is VaultTasks => v !== null)
+      return scans.flatMap((v) => (v === null ? [] : [v]))
     },
   }
   const reminders = createReminderRuntime({

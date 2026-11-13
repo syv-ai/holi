@@ -9,6 +9,7 @@
  * import anywhere on this path stops the window opening at all.
  */
 import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
+import { realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   app,
@@ -62,6 +63,7 @@ import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
 import { createActivityLog, scrubSecrets } from './activity/log'
+import { logsCapabilities } from './capabilities/logs-caps'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
 import { createTerminals } from './terminal/terminals'
 import { pathToFileURL } from 'node:url'
@@ -69,6 +71,7 @@ import { guardNavigation } from './window-guard'
 import { createRouter } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
+import { createSelectedRuntimeGate } from './vault/selected-runtime'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
 import { showNotification, type NativeNotice } from './notifications'
@@ -77,6 +80,8 @@ import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
+import { publishCliEndpoint, type CliEndpoint } from './bridge/cli-endpoint'
+import { createCliTargetResolver } from './bridge/cli-target'
 
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
@@ -296,7 +301,7 @@ async function main(): Promise<void> {
   // happened before the panel was ever opened.
   const activity = createActivityLog({ onEntry: (entry) => send('activity:entry', entry) })
   pushLog = (entry) => send('logs:entry', entry)
-  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started` })
+  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started`, global: true })
   // The bottom panel's shells. `binDir` is read lazily: the `holi` command is
   // installed below, long before anyone opens a terminal.
   const terminals = createTerminals({
@@ -305,6 +310,8 @@ async function main(): Promise<void> {
   })
 
   const bridgeEnv = createBridgeEnv()
+  /** Runtime plugin work starts only after the router's seed/open/reconcile sequence. */
+  const pluginReady = new WeakSet<object>()
   /** remote → the undo of what the open vault's env file carries. */
   const vaultEnv = new Map<string, () => void>()
   /**
@@ -369,9 +376,9 @@ async function main(): Promise<void> {
     rootFor: (remote) => rootFor(remote),
     events: eventsDeps,
     // `capabilityHost` is built below, long before any vault opens.
-    openAppDoor: (opener) => capabilityHost.openAppDoor(opener),
+    openAppDoor: (opener, remote) => capabilityHost.openAppDoor(opener, remote),
     // The bridge and the `holi` command exist before any vault can open.
-    route: (path, route) => bridge.route(path, route),
+    route: (path, route, remote) => bridge.route(path, route, remote),
     binDir: () => binDir,
     githubToken: () => session.token(),
     frameOrigin: (origin) => {
@@ -421,32 +428,47 @@ async function main(): Promise<void> {
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },
     claims: (root) => plugins.scanClaimsFor(root),
-    onSnapshot: (snapshot) => {
+    onSnapshot: (remote, snapshot) => {
+      const runtime = gate.capture(remote)
+      if (runtime === null) return
       send('vault:snapshot', snapshot)
+      // Host startup snapshots arrive before the router has seeded and
+      // reconciled plugins. The router's `opened` callback supplies the initial
+      // snapshot after that sequence; later snapshots handle hand edits.
+      if (!pluginReady.has(runtime)) return
       // A hand edit to the settings files arrives this way too: what runs
       // follows it now, not at the next open. When it changed which plugins
       // claim files, that scan used the old claims: scan again with the new
       // ones.
       plugins.invalidate()
-      void plugins.reconcile('snapshot')
-      const active = host.active()
-      if (active === null) return
-      // What the started plugins read off the files: file triggers, tasks'
-      // due moments.
-      plugins.snapshot(active.remote, snapshot)
-      void plugins.scanClaimsFor(active.root).then((claims) => {
-        const now = new Set(claims.map((c) => c.plugin))
-        const was = Object.keys(snapshot.claimed)
-        if (was.length !== now.size || was.some((id) => !now.has(id))) {
-          void active.refresh().catch((err) => console.error('[vault] rescan:', err))
-        }
-      })
+      const active = runtime
+      void plugins
+        .reconcile('snapshot')
+        .then(async () => {
+          if (!gate.isCurrent(remote, active)) return
+          // What the started plugins read off the files: file triggers, tasks'
+          // due moments. A delayed reconcile from the former selection must not
+          // feed its snapshot into whichever vault became selected meanwhile.
+          plugins.snapshot(remote, snapshot)
+          const claims = await plugins.scanClaimsFor(active.root)
+          if (!gate.isCurrent(remote, active)) return
+          const now = new Set(claims.map((c) => c.plugin))
+          const was = Object.keys(snapshot.claimed)
+          if (was.length !== now.size || was.some((id) => !now.has(id))) {
+            void active.refresh().catch((err) => console.error('[vault] rescan:', err))
+          }
+        })
+        .catch((err) => console.error('[plugins] snapshot reconcile failed:', err))
     },
-    onSyncState: (state) => send('vault:sync', state),
+    onSyncState: (remote, state) => gate.run(remote, () => send('vault:sync', state)),
     // Sync that keeps failing says so outside Holi too; inside, the activity
     // log's error line marks the Output (docs/features/vaults-sync.md).
     onSyncFailing: (remote, text) =>
-      void notifyUnfocused({ title: `${remote}: sync is failing`, body: scrubSecrets(text) }),
+      gate.run(
+        remote,
+        () =>
+          void notifyUnfocused({ title: `${remote}: sync is failing`, body: scrubSecrets(text) }),
+      ),
     // How everything inside the vault reaches us: its `bridge.local.env`,
     // with what each part of Holi contributes while the vault is open. Made
     // at open, so the file names this run's ports, which move on restart.
@@ -464,32 +486,41 @@ async function main(): Promise<void> {
     },
     // The large-file gate's held-back set (empty clears the callout). Pushed
     // every commit tick and once at open, so a vault switch resets it.
-    onHeldBack: (files) => send('vault:heldback', files),
-    onCommitted: (paths) => send('vault:committed', paths),
+    onHeldBack: (remote, files) => gate.run(remote, () => send('vault:heldback', files)),
+    onCommitted: (remote, paths) => gate.run(remote, () => send('vault:committed', paths)),
     activity: activity.write,
     // A merge (a pull, or a reconcile landing) is the only way a teammate's
     // comment arrives, so it is where a mention of the person signed in is
     // found and handed to the plugins
     // (the agent's inbox). Best-effort: a mention missed is still in the panel.
     onPulled: ({ remote, root }, { from, to }) => {
+      const runtime = gate.capture(remote)
       const login = session.viewer?.login
-      if (!login) return
+      if (!runtime || !login) return
       void pulledMentions(root, from, to, login)
-        .then((found) =>
+        .then((found) => {
+          if (!gate.isCurrent(remote, runtime)) return
           plugins.mentioned(
             remote,
             found.map(({ notePath, mention }) => ({ notePath, ...mention })),
-          ),
-        )
+          )
+        })
         .catch((err) => console.error('[comments] mentions after pull:', err))
     },
     // What plugins run in the vault stops here, the only place that still
     // holds the vault they ran in. The panel's shells were started in its
     // clone too, and stop with it.
-    onLeave: async () => {
-      await terminals.closeAll().catch((err) => console.error('[terminal] close failed:', err))
+    onLeave: async (remote) => {
+      await terminals
+        .closeRemote(remote)
+        .catch((err) => console.error('[terminal] close failed:', err))
       await plugins.stop()
     },
+  })
+
+  const gate = createSelectedRuntimeGate({
+    selected: () => host.active(),
+    get: (remote) => host.get(remote),
   })
 
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
@@ -689,6 +720,8 @@ async function main(): Promise<void> {
   const updateSkillsOnOpen = (remote: string): void => {
     const vault = host.active()
     if (vault === null || vault.remote !== remote) return
+    pluginReady.add(vault)
+    plugins.snapshot(remote, vault.snapshot())
     const stillOpen = (): boolean => host.active() === vault
     void updateOnOpen({
       root: vault.root,
@@ -748,6 +781,7 @@ async function main(): Promise<void> {
     },
   })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
+  capabilities.register(['logs'], logsCapabilities(activity))
   // Comment threads on notes, for the agent: written as the signed-in person.
   capabilities.register(
     COMMENT_NAMESPACES,
@@ -793,12 +827,14 @@ async function main(): Promise<void> {
           status.lastError !== null
             ? {
                 channel: 'app',
+                global: true,
                 level: 'warn',
                 message: 'Update check failed',
                 detail: status.lastError,
               }
             : {
                 channel: 'app',
+                global: true,
                 message:
                   status.state === 'ready'
                     ? `Holi ${status.availableVersion ?? ''} is ready to install`
@@ -884,8 +920,34 @@ async function main(): Promise<void> {
 
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
+  const targetResolver = createCliTargetResolver(registry, async (remote, root) => {
+    const active = host.active()
+    if (active?.remote !== remote) return false
+    const path = await realpath(active.root).catch(() => null)
+    return host.active() === active && path === root
+  })
+  let cliEndpoint: CliEndpoint | null = null
   const bridge = createBridgeServer({
-    cli: { dispatch, commands: () => capabilities.commands(), rootFor },
+    cli: {
+      dispatch,
+      commands: (remote) =>
+        remote === undefined ? capabilities.commands() : capabilities.commands(remote),
+      rootFor,
+      machine: {
+        token: () => cliEndpoint?.token ?? '',
+        listVaults: () => targetResolver.list(),
+        resolveTarget: async (selector, cwd) => {
+          const target = await targetResolver.resolve(selector, cwd)
+          return target === null
+            ? null
+            : {
+                remote: target.entry.remote,
+                root: target.entry.path,
+                live: target.live,
+              }
+        },
+      },
+    },
   })
   registerGitRoutes(bridge, {
     rootFor,
@@ -898,6 +960,14 @@ async function main(): Promise<void> {
       dispatch({ door: 'ui', remote, name: 'agent.message', params: { session: job, text } }),
   })
   await bridge.start()
+  try {
+    const port = bridge.port()
+    if (port === null) throw new Error('CLI bridge did not bind a port')
+    cliEndpoint = await publishCliEndpoint(join(app.getPath('userData'), 'cli-endpoint.json'), port)
+  } catch (error) {
+    await bridge.stop().catch(() => {})
+    throw error
+  }
   const binDir = dirname(holiCliPath)
 
   // Opened at login, Holi starts out of sight: the window loads (so the
@@ -1023,7 +1093,6 @@ async function main(): Promise<void> {
       await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
       await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
       await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
-      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
       // Quit is a leave point: commit the flushed buffer, then get it
       // off-machine before the window closes. Best-effort with a 1s budget:
       // an unreachable remote must not hang quit, and the next launch drains
@@ -1035,7 +1104,15 @@ async function main(): Promise<void> {
       }
       // `close()` commits the open vault again (a clean no-op) before letting
       // go of it.
-      await host.close()
+      await host.closeAll()
+      // Final commits and their hooks still need the bridge. Revoke machine
+      // discovery only after settlement, then stop accepting bridge requests.
+      const endpoint = cliEndpoint
+      cliEndpoint = null
+      await endpoint
+        ?.dispose()
+        .catch((err) => console.error('[quit] CLI endpoint cleanup failed:', err))
+      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
       channel.cancel?.()
