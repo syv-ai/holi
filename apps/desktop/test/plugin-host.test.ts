@@ -312,6 +312,61 @@ describe('the plugin host', () => {
     )
   })
 
+  it('preserves provider finalization across overlapping stop requests', async () => {
+    let releaseProvider: () => void = () => {}
+    let providerEntered: () => void = () => {}
+    const gated = new Promise<void>((resolve) => (releaseProvider = resolve))
+    const entered = new Promise<void>((resolve) => (providerEntered = resolve))
+    let providerStops = 0
+    let dependantStops = 0
+    const commits: string[] = []
+    const provider: MainPlugin = {
+      info: { id: 'provider', label: 'Provider', default: true },
+      activate(ctx) {
+        ctx.register(['probe'], {
+          'probe.final': cap({
+            doors: ['ui'],
+            params: noParams,
+            run: async () => {
+              await ctx.head()
+              providerEntered()
+              await gated
+              await ctx.commitNow()
+              return 'finalized'
+            },
+          }),
+        })
+        return () => {
+          providerStops += 1
+        }
+      },
+    }
+    const dependant: MainPlugin = {
+      info: { id: 'dependant', label: 'Dependant', default: true, requires: ['provider'] },
+      activate(ctx) {
+        return async () => {
+          expect(await ctx.call('probe.final', {})).toBe('finalized')
+          dependantStops += 1
+        }
+      },
+    }
+    const { host, enter } = rig({ plugins: [provider, dependant] })
+    const root = await tempDir()
+    const vault = openVault('o/r', root)
+    vault.commitNow = async () => void commits.push('commit')
+    await enter(vault)
+
+    const firstStop = host.stop('o/r')
+    await entered
+    const overlappingStop = host.stop('o/r')
+    releaseProvider()
+    await Promise.all([firstStop, overlappingStop])
+
+    expect(commits).toEqual(['commit'])
+    expect(dependantStops).toBe(1)
+    expect(providerStops).toBe(1)
+  })
+
   it('allows a dependent disposer to call its provider while settings disable both', async () => {
     const order: string[] = []
     let providerCtx: PluginCtx | null = null
