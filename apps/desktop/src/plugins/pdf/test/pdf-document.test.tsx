@@ -1280,3 +1280,20 @@ test('keeps the text and says why when an ask is refused', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('That session has ended.')
   expect(field).toHaveValue('Look at this')
 })
+
+test('a retained hidden PDF leaves another view’s key handler intact', async () => {
+  mount({ visible: false })
+  await screen.findByTestId('pdf')
+  const editor = document.createElement('div')
+  const onKey = vi.fn()
+  editor.addEventListener('keydown', onKey)
+  document.body.append(editor)
+  try {
+    fireEvent.keyDown(editor, { key: 'h' })
+    expect(onKey).toHaveBeenCalledTimes(1)
+    expect(seam.seen).not.toContain('h')
+    expect(seam.keyboardExecutions).toEqual([])
+  } finally {
+    editor.remove()
+  }
+})

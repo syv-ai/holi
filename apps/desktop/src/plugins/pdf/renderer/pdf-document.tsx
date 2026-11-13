@@ -672,6 +672,9 @@ export function PdfDocument({
       const path = event.composedPath()
       const owner = [...displayedPdfHosts].find((shown) => path.includes(shown))
       if (owner !== undefined && owner !== host) return
+      // Unowned keys must reach the other view's target handlers first. The
+      // bubbling guard still precedes this viewer's native document listener.
+      if (owner === undefined && event.eventPhase === Event.CAPTURING_PHASE) return
 
       const target = path[0]
       if (
@@ -701,7 +704,11 @@ export function PdfDocument({
     // A later-opened PDF's guard must run before an earlier viewer's native
     // document listener, irrespective of the order their effects registered.
     document.addEventListener('keydown', guard, true)
-    return () => document.removeEventListener('keydown', guard, true)
+    document.addEventListener('keydown', guard)
+    return () => {
+      document.removeEventListener('keydown', guard, true)
+      document.removeEventListener('keydown', guard)
+    }
   }, [])
 
   useEffect(() => {
