@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { PassThrough } from 'node:stream'
 import { rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { launchPlan, spawnProgram } from './launch'
 
 /**
@@ -41,11 +41,17 @@ export function spawnOwnedProgram(
     return failed
   }
   const encoded = Buffer.from(WINDOWS_ADAPTER, 'utf16le').toString('base64')
+  const systemRoot =
+    [process.env.SystemRoot, process.env.WINDIR].find(
+      (value) => value && win32.isAbsolute(value),
+    ) ?? 'C:\\Windows'
+  const helperDirectory = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0')
   const child = spawn(
-    'powershell.exe',
+    join(helperDirectory, 'powershell.exe'),
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
     {
       ...options,
+      cwd: helperDirectory,
       env: { ...launchEnv, ...(traceEnabled ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
       detached: false,
       windowsHide: true,
@@ -73,6 +79,15 @@ export function spawnOwnedProgram(
     env: { ...launchEnv, ...plan.env },
     parentPid,
     stopFile,
+  })
+  child.stdin!.on('error', () => {
+    // This private channel can fail independently of ChildProcess's spawn error.
+    // Bypass the cooperative stop-file override so the helper cannot outlive us.
+    try {
+      ChildProcess.prototype.kill.call(child)
+    } catch {
+      // The child may already have exited or failed to spawn.
+    }
   })
   child.stdin!.write(`${spec}\n`)
   const keepsStdinOpen =
