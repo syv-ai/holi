@@ -21,10 +21,7 @@ export function useSelectionReport(
   // clears what this document reported, never another's.
   const setEditorSelection = useSetAtom(editorSelectionAtom)
   useEffect(() => {
-    if (!editor || !active) {
-      setEditorSelection((was) => (was?.path === path ? null : was))
-      return
-    }
+    if (!editor || !active) return
     let timer: number | undefined
     const report = () => {
       window.clearTimeout(timer)
@@ -41,6 +38,7 @@ export function useSelectionReport(
         })
       }, SELECTION_DELAY_MS)
     }
+    report()
     editor.on('selectionUpdate', report)
     return () => {
       editor.off('selectionUpdate', report)

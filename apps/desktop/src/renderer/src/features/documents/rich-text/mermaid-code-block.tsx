@@ -1,3 +1,4 @@
+import { EditorActivityContext, useEditorActivity } from '@/hooks/use-editor-activity'
 import CodeBlock from '@tiptap/extension-code-block'
 import {
   NodeViewContent,
@@ -16,6 +17,7 @@ import { MermaidDiagram } from './mermaid-diagram'
 import { useMermaidLabelEditing } from './use-mermaid-label-editing'
 
 function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
+  const activity = useEditorActivity(editor)
   const [editable, setEditable] = useState(() => editor.isEditable)
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const openButton = useRef<HTMLButtonElement>(null)
@@ -59,62 +61,68 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const showDiagram = isMermaid && !active && source.trim() !== ''
   const editSource = useCallback(() => {
     const position = currentPosition()
-    if (typeof position === 'number') {
+    if (activity.focused && typeof position === 'number') {
       editor.commands.setTextSelection(Math.min(position + 1, position + node.nodeSize - 1))
       editor.view.focus()
     }
-  }, [currentPosition, editor, node.nodeSize])
+  }, [currentPosition, editor, node.nodeSize, activity])
 
   return (
-    <NodeViewWrapper className="tiptap-code-block">
-      {showDiagram ? (
-        <div className="group/media relative max-w-fit" data-media-root="" contentEditable={false}>
-          <RenderedMediaToolbar editor={editor}>
-            {editable ? (
-              <>
-                {labels.targets.length > 0 ? (
-                  <RenderedMediaAction onClick={labels.toggleEditing}>
-                    {labels.editing ? 'Done' : 'Edit labels'}
-                  </RenderedMediaAction>
-                ) : null}
-                <RenderedMediaAction onClick={editSource}>Edit source</RenderedMediaAction>
-              </>
-            ) : null}
-            <RenderedMediaAction
-              ref={openButton}
-              aria-label="Open Mermaid diagram"
-              onClick={() => setLightboxOpen(true)}
-            >
-              Open larger
-            </RenderedMediaAction>
-          </RenderedMediaToolbar>
-          <div onDoubleClick={() => setLightboxOpen(true)}>
-            <MermaidDiagram source={source} theme={theme} onRendered={labels.onRendered} />
-          </div>
-          <RenderedMediaLightbox
-            title="Mermaid diagram"
-            open={lightboxOpen}
-            onOpenChange={setLightboxOpen}
-            restoreFocus={() => openButton.current?.focus()}
-            preview={
-              <MermaidDiagram
-                source={source}
-                theme={theme}
-                enlarged
-                className="flex min-h-24 w-full max-w-full items-center justify-center overflow-auto [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:w-full [&_svg]:max-w-full"
-              />
-            }
+    <EditorActivityContext value={activity}>
+      <NodeViewWrapper className="tiptap-code-block">
+        {showDiagram ? (
+          <div
+            className="group/media relative max-w-fit"
+            data-media-root=""
+            contentEditable={false}
           >
-            {null}
-          </RenderedMediaLightbox>
-        </div>
-      ) : null}
-      {labels.editor}
-      <NodeViewContent
-        className={showDiagram ? 'hidden' : undefined}
-        data-mermaid-source={isMermaid ? '' : undefined}
-      />
-    </NodeViewWrapper>
+            <RenderedMediaToolbar editor={editor}>
+              {editable ? (
+                <>
+                  {labels.targets.length > 0 ? (
+                    <RenderedMediaAction onClick={labels.toggleEditing}>
+                      {labels.editing ? 'Done' : 'Edit labels'}
+                    </RenderedMediaAction>
+                  ) : null}
+                  <RenderedMediaAction onClick={editSource}>Edit source</RenderedMediaAction>
+                </>
+              ) : null}
+              <RenderedMediaAction
+                ref={openButton}
+                aria-label="Open Mermaid diagram"
+                onClick={() => setLightboxOpen(true)}
+              >
+                Open larger
+              </RenderedMediaAction>
+            </RenderedMediaToolbar>
+            <div onDoubleClick={() => setLightboxOpen(true)}>
+              <MermaidDiagram source={source} theme={theme} onRendered={labels.onRendered} />
+            </div>
+            <RenderedMediaLightbox
+              title="Mermaid diagram"
+              open={lightboxOpen}
+              onOpenChange={setLightboxOpen}
+              restoreFocus={() => openButton.current?.focus()}
+              preview={
+                <MermaidDiagram
+                  source={source}
+                  theme={theme}
+                  enlarged
+                  className="flex min-h-24 w-full max-w-full items-center justify-center overflow-auto [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:w-full [&_svg]:max-w-full"
+                />
+              }
+            >
+              {null}
+            </RenderedMediaLightbox>
+          </div>
+        ) : null}
+        {labels.editor}
+        <NodeViewContent
+          className={showDiagram ? 'hidden' : undefined}
+          data-mermaid-source={isMermaid ? '' : undefined}
+        />
+      </NodeViewWrapper>
+    </EditorActivityContext>
   )
 }
 

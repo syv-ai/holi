@@ -18,6 +18,7 @@ import {
   type FindRequest,
 } from '../../composites/find-bar'
 import { findCount, findQuery } from './document-find'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 
 export type { FindRequest }
 
@@ -30,6 +31,7 @@ export function DocumentFindBar({
   request: FindRequest
   onClose: () => void
 }) {
+  const activity = useEditorActivity(editor)
   const [options, setOptions] = useState<FindOptions>({
     ...EMPTY_FIND_OPTIONS,
     search: request.text ?? '',
@@ -47,6 +49,7 @@ export function DocumentFindBar({
 
   // Each ⌘F: the selection's line, if any, and the field to type in.
   useEffect(() => {
+    if (!activity.focused) return
     anchor.current = editor.state.selection.from
     if (request.text !== null) {
       const text = request.text
@@ -54,12 +57,12 @@ export function DocumentFindBar({
     }
     inputRef.current?.focus()
     inputRef.current?.select()
-  }, [editor, request])
+  }, [editor, request, activity])
 
   // The query in force follows the bar; a new one selects its first match
   // from the anchor, wrapping, and scrolls to it.
   useEffect(() => {
-    if (editor.isDestroyed) return
+    if (editor.isDestroyed || !activity.focused) return
     const { state } = editor
     const next = findQuery(options)
     const tr = setSearchState(state.tr, next)
@@ -70,7 +73,7 @@ export function DocumentFindBar({
       }
     }
     editor.view.dispatch(tr)
-  }, [editor, options])
+  }, [editor, options, activity])
 
   // Closing clears the highlights.
   useEffect(
@@ -100,7 +103,7 @@ export function DocumentFindBar({
       onReplaceAll={() => run(replaceAll)}
       onClose={() => {
         onClose()
-        editor.commands.focus()
+        if (activity.focused) editor.commands.focus()
       }}
     />
   )

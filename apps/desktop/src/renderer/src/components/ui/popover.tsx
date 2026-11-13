@@ -1,3 +1,4 @@
+import { OverlayActivityContext, useActivityOpen, useOverlayAutoFocus } from "@/hooks/use-editor-activity"
 "use client"
 
 import * as React from "react"
@@ -7,7 +8,9 @@ import { Popover as PopoverPrimitive } from "radix-ui"
 function Popover({
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+  const { open, defaultOpen, onOpenChange, ...rest } = props
+  const overlay = useActivityOpen(open, defaultOpen, onOpenChange)
+  return <OverlayActivityContext value={overlay.valid}><PopoverPrimitive.Root data-slot="popover" {...rest} open={overlay.open} onOpenChange={overlay.onOpenChange} /></OverlayActivityContext>
 }
 
 function PopoverTrigger({
@@ -26,6 +29,8 @@ function PopoverContent({
   /** `flush` drops the padding and gap, for a list or menu that draws its own edges. */
   variant?: "default" | "flush"
 }) {
+  const openAutoFocus = useOverlayAutoFocus(props.onOpenAutoFocus)
+  const closeAutoFocus = useOverlayAutoFocus(props.onCloseAutoFocus)
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
@@ -38,6 +43,8 @@ function PopoverContent({
           className
         )}
         {...props}
+        onOpenAutoFocus={openAutoFocus}
+        onCloseAutoFocus={closeAutoFocus}
       />
     </PopoverPrimitive.Portal>
   )

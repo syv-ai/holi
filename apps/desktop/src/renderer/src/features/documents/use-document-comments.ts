@@ -5,6 +5,7 @@
  * quotes the file, so the file has to be what is shown.
  */
 import { useEffect, useRef, useState } from 'react'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { isResolved, type CommentAnchor } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import type { Editor } from '@tiptap/react'
@@ -40,6 +41,7 @@ export function useDocumentComments({
   head: React.RefObject<string>
   save: () => Promise<void>
 }) {
+  const activity = useEditorActivity(editor)
   // The note's comment threads: the panel, and their passages in the text.
   const threadsLoad = useAtomValue(threadsLoadAtom)(path)
   const refreshThreads = useSetAtom(refreshThreadsAtom)
@@ -83,6 +85,7 @@ export function useDocumentComments({
 
   /** The panel's thread, its passage scrolled into view. */
   function showThread(id: string) {
+    if (!activity.focused) return
     setActiveThread(id)
     const thread = threads?.find((t) => t.id === id)
     if (!editor || !thread) return
@@ -94,9 +97,11 @@ export function useDocumentComments({
   }
 
   async function commentOnSelection() {
-    if (!editor || !commentable) return
+    if (!activity.focused || !editor || !commentable) return
+    const current = activity.capture()
     // The anchor quotes the file, so the file has to be what is shown.
     await save()
+    if (!current() || editor.isDestroyed) return
     const anchor = selectionAnchor(editor, head.current)
     if (anchor === null) {
       toast.error('That passage can’t take a comment', {
@@ -123,6 +128,7 @@ export function useDocumentComments({
 
   /** A tint pressed in the text opens the panel on its thread. */
   const pressThread = (id: string) => {
+    if (!activity.displayed) return
     setCommentsOpen(true)
     setActiveThread(id)
   }

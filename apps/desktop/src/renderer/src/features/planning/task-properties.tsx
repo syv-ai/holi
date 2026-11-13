@@ -1,3 +1,4 @@
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 /**
  * An open task's properties: the same fields as New task, labelled, each
  * change written to the file at once. Where they sit is the person's
@@ -72,6 +73,7 @@ export function TaskProperties({
   onMoved?: (from: string, to: string) => void
   className?: string
 }) {
+  const activity = useEditorActivity()
   const task = useAtomValue(tasksAtom).get(path)
   const statuses = useAtomValue(statusesAtom)
   const today = useAtomValue(todayAtom)
@@ -92,12 +94,15 @@ export function TaskProperties({
 
   /** A rename that gives the task a new path, followed by whatever shows it. */
   const renamed = async (rename: () => Promise<string | null>) => {
+    const current = activity.capture()
     await beforeWrite()
     const to = await rename()
-    if (to !== null && to !== path) onMoved?.(path, to)
+    if (current() && to !== null && to !== path) onMoved?.(path, to)
   }
 
   const write = async (change: TaskFieldChange) => {
+    if (!activity.focused) return
+    const current = activity.capture()
     try {
       if (change.field === 'shared') {
         if (change.value === !isPrivateTask(path)) return
@@ -109,7 +114,7 @@ export function TaskProperties({
       if (change.field === 'folder') {
         if (change.value === parentOf(path)) return
         const to = await move(path, change.value)
-        if (to !== null && to !== path) onMoved?.(path, to)
+        if (current() && to !== null && to !== path) onMoved?.(path, to)
       } else {
         await patch(path, patchOf(change))
       }
