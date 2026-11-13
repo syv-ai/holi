@@ -13,6 +13,7 @@ import {
   type KeyContext,
 } from '@/lib/shortcuts'
 import { useShortcutDispatcher, useShortcutHandlers } from '@/hooks/use-shortcuts'
+import { dialogOpen } from '@/lib/dialog-open'
 import { shortcutsDialogOpenAtom, type ShortcutHandler } from '@/state/shortcuts'
 
 const ev = (init: Partial<KeyboardEvent>): KeyboardEvent =>
@@ -156,6 +157,23 @@ describe('the dispatcher', () => {
     fireEvent.keyDown(screen.getByLabelText('field'), { key: '?', shiftKey: true })
     fireEvent.keyDown(screen.getByLabelText('editable'), { key: '?', shiftKey: true })
     expect(show).toHaveBeenCalledTimes(1)
+  })
+
+  test('the shared dialog guard keeps the dispatcher from taking keys from a modal', () => {
+    const search = vi.fn()
+    render(
+      <Provider store={createStore()}>
+        <Host handlers={{ 'tab.new': search }} />
+      </Provider>,
+    )
+    const modal = document.createElement('div')
+    modal.setAttribute('role', 'dialog')
+    modal.setAttribute('data-state', 'open')
+    document.body.append(modal)
+    expect(dialogOpen()).toBe(true)
+    fireEvent.keyDown(document.body, { key: 't', metaKey: true })
+    expect(search).not.toHaveBeenCalled()
+    modal.remove()
   })
 
   test('a handler unmounted is no longer run', () => {

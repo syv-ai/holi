@@ -238,6 +238,184 @@ describe('htmlToText', () => {
 })
 
 describe('listThreads', () => {
+  it('summarizes replies and latest incoming recipient and automation facts', async () => {
+    const messages = [
+      {
+        id: 'in',
+        internalDate: '1000',
+        labelIds: ['INBOX'],
+        payload: { headers: [header('To', 'Ada <ada@example.com>')] },
+      },
+      { id: 'sent', internalDate: '2000', labelIds: ['SENT'], payload: { headers: [] } },
+      {
+        id: 'followup',
+        internalDate: '3000',
+        labelIds: ['INBOX'],
+        payload: {
+          headers: [
+            header('Cc', 'ADA@example.com'),
+            header('Auto-Submitted', 'auto-replied'),
+            header('List-Id', 'list.example'),
+          ],
+        },
+      },
+    ]
+    const { api } = gmail([{ id: 't1' }], { t1: { id: 't1', messages } })
+    const summary = (await listThreads(api, {}, ['ada@example.com'])).threads[0]!
+
+    expect(summary).toMatchObject({
+      replied: true,
+      lastReplyAt: new Date(2000).toISOString(),
+      addressedAs: 'cc',
+      automated: true,
+      answered: false,
+    })
+  })
+
+  it.each([
+    ['comment after bare mailbox', 'ada@example.com (Ada Holm)', 'to'],
+    ['group mailbox', 'team: Ada <ada@example.com>;', 'to'],
+    ['escaped quoted display name', '"Ada \\\"A\\\" Holm" <ada@example.com>', 'to'],
+    ['colon in quoted display name', '"Support: Ada" <ada@example.com>', 'to'],
+    ['escaped comma in quoted display name', '"Ada \\\\, Holm" <ada@example.com>', 'to'],
+    ['To wins over Cc', 'ada@example.com', 'to'],
+  ])('extracts RFC mailbox addresses (%s)', async (_name, to, expected) => {
+    const { api } = gmail([{ id: 'address' }], {
+      address: {
+        id: 'address',
+        messages: [
+          {
+            id: 'incoming',
+            internalDate: '1000',
+            labelIds: ['INBOX'],
+            payload: { headers: [header('To', to), header('Cc', 'ada@example.com')] },
+          },
+        ],
+      },
+    })
+    expect((await listThreads(api, {}, ['ada@example.com'])).threads[0]!.addressedAs).toBe(expected)
+  })
+
+  it('does not treat drafts as incoming messages or replies', async () => {
+    const ownDraft = {
+      id: 'd',
+      internalDate: '2000',
+      labelIds: ['DRAFT'],
+      payload: { headers: [] },
+    }
+    const sentOnly = { id: 's', internalDate: '1000', labelIds: ['SENT'], payload: { headers: [] } }
+    const { api } = gmail([{ id: 't1' }], { t1: { id: 't1', messages: [sentOnly, ownDraft] } })
+    const summary = (await listThreads(api, {}, ['me@example.com'])).threads[0]!
+    expect(summary).toMatchObject({
+      answered: false,
+      replied: false,
+      lastReplyAt: null,
+      addressedAs: null,
+      automated: false,
+    })
+  })
+
+  it.each([
+    ['empty Auto-Submitted', [header('Auto-Submitted', '')]],
+    ['invalid Auto-Submitted', [header('Auto-Submitted', 'no; parameter')]],
+    ['empty list headers', [header('List-Unsubscribe', ' '), header('List-Id', '')]],
+    ['invalid list id', [header('List-Id', 'example.com')]],
+    ['calendar subtype lookalike', [header('Content-Type', 'text/calendar-bogus; method=REQUEST')]],
+    [
+      'plain content with calendar mention',
+      [header('Content-Type', 'text/plain; name=text/calendar')],
+    ],
+    ['calendar publish', [header('Content-Type', 'text/calendar; method=PUBLISH')]],
+  ])('does not infer automation from %s', async (_name, headers) => {
+    const { api } = gmail([{ id: 't1' }], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'in', internalDate: '1000', labelIds: ['INBOX'], payload: { headers } }],
+      },
+    })
+    expect((await listThreads(api, {}, ['me@example.com'])).threads[0]!.automated).toBe(false)
+  })
+
+  const automationFor = async (headers: { name: string; value: string }[]) => {
+    const { api } = gmail([{ id: 'fact' }], {
+      fact: {
+        id: 'fact',
+        messages: [
+          { id: 'incoming', internalDate: '1000', labelIds: ['INBOX'], payload: { headers } },
+        ],
+      },
+    })
+    return (await listThreads(api, {}, ['me@example.com'])).threads[0]!.automated
+  }
+
+  it.each([
+    ['bare qualified', '<list.example.org>', true],
+    ['descriptive', 'Project discussion <project.example.org>', true],
+    ['commented', '(project discussion) <project.example.org>', true],
+    ['unqualified', '<not-an-id>', false],
+    ['email-shaped', '<team@example.org>', false],
+    ['empty segment', '<project..example.org>', false],
+  ])('validates list ids (%s)', async (_name, listId, expected) => {
+    expect(await automationFor([header('List-Id', listId)])).toBe(expected)
+  })
+
+  it.each([
+    ['actual quoted method', 'text/calendar; method="REQUEST"', true],
+    [
+      'fake method in quoted filename',
+      'text/calendar; name="calendar; method=REQUEST; other.ics"; method=PUBLISH',
+      false,
+    ],
+    ['quoted semicolon and escaped quote', 'text/calendar; name="a; \\\"b"; method="REPLY"', true],
+    ['unmatched quote', 'text/calendar; method="REQUEST', false],
+    ['missing equals', 'text/calendar; method', false],
+    ['malformed unrelated parameter', 'text/calendar; method=REQUEST; !!!', false],
+    ['duplicate method', 'text/calendar; method=REQUEST; method=CANCEL', false],
+  ])('parses complete calendar parameters (%s)', async (_name, contentType, expected) => {
+    expect(await automationFor([header('Content-Type', contentType)])).toBe(expected)
+  })
+
+  it.each([
+    ['valid generated token with parameter', 'Auto-Generated; type=vacation', true],
+    ['valid replied token with quoted semicolon', 'auto-replied; note="x;y"', true],
+    ['invalid punctuation token', 'auto-replied!!!', false],
+    ['malformed parameter syntax', 'auto-replied; !!!', false],
+    ['missing parameter value', 'auto-replied; type=', false],
+    ['unterminated parameter quote', 'auto-replied; note="oops', false],
+  ])('parses complete Auto-Submitted parameters (%s)', async (_name, value, expected) => {
+    expect(await automationFor([header('Auto-Submitted', value)])).toBe(expected)
+  })
+
+  it.each([
+    ['valid HTTP', '<https://example.org/unsubscribe>', true],
+    ['malformed HTTP', '<http://[>', false],
+    ['malformed mailto', '<mailto:not-an-address>', false],
+  ])('validates List-Unsubscribe URI (%s)', async (_name, value, expected) => {
+    expect(await automationFor([header('List-Unsubscribe', value)])).toBe(expected)
+  })
+
+  it.each([
+    ['uppercase scheme', '<HTTPS://EXAMPLE.ORG/unsubscribe>', 'HTTPS://EXAMPLE.ORG/unsubscribe'],
+    ['legacy malformed URL', '<http://[>', 'http://['],
+  ])('preserves the existing unsubscribe URL (%s)', async (_name, value, expected) => {
+    const { api } = gmail([{ id: 'legacy' }], {
+      legacy: {
+        id: 'legacy',
+        messages: [
+          {
+            id: 'incoming',
+            internalDate: '1000',
+            labelIds: ['INBOX'],
+            payload: { headers: [header('List-Unsubscribe', value)] },
+          },
+        ],
+      },
+    })
+    expect((await listThreads(api, {}, ['me@example.com'])).threads[0]!.unsubscribeUrl).toBe(
+      expected,
+    )
+  })
+
   const thread = {
     id: 't1',
     messages: [
@@ -708,11 +886,43 @@ describe('listThreads', () => {
       'Cc',
       'Reply-To',
       'List-Unsubscribe',
+      'Auto-Submitted',
+      'List-Id',
+      'Content-Type',
     ])
   })
 })
 
 describe('readThread', () => {
+  it('keeps escaped quotes, commas and colons inside a display name', async () => {
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              headers: [
+                header('From', 'ada@syv.ai'),
+                header('To', '"Ada \\"A, B: C\\" Holm" <ada@syv.ai>, "Bob Smith" <bob@syv.ai>'),
+                header('Cc', '"Carol, Jones: Esq." <carol@syv.ai>'),
+              ],
+              mimeType: 'text/plain',
+            },
+          },
+        ],
+      },
+    })
+
+    const [message] = (await readThread(api, 't1')).messages
+
+    expect(message!.to).toEqual([
+      { name: 'Ada "A, B: C" Holm', email: 'ada@syv.ai' },
+      { name: 'Bob Smith', email: 'bob@syv.ai' },
+    ])
+    expect(message!.cc).toEqual([{ name: 'Carol, Jones: Esq.', email: 'carol@syv.ai' }])
+  })
+
   it('returns each message with its text body, sender and recipients', async () => {
     const { api } = gmail([], {
       t1: {
@@ -939,6 +1149,93 @@ describe('readThread', () => {
 })
 
 describe('textOnly', () => {
+  it('keeps an HTML bottom-posted reply after a bounded forwarded quote', async () => {
+    const html =
+      '<p>-----Original Message-----</p><p>From: Ada</p><p>Date: Tue</p><p>Subject: Plan</p><blockquote><p>Old proposal.</p><p>Old dates.</p></blockquote><p>The dates work for me.</p>'
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+      },
+    })
+
+    const thread = await readThread(api, 't1')
+    expect(textOnly(thread).messages[0]!.body).toBe('The dates work for me.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(thread.messages[0]!.body)
+    expect(thread.messages[0]!.html).toBe(html)
+  })
+
+  it('cleans complete HTML quote spans only for the CLI and leaves the original projection intact', async () => {
+    const html =
+      '<p>On Tuesday Ada wrote:</p><blockquote><p>Old first paragraph.</p><p>Old second paragraph.</p><blockquote><p>Nested older history.</p></blockquote></blockquote><p>New bottom-posted answer.</p>'
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+      },
+    })
+    const thread = await readThread(api, 't1')
+    const before = structuredClone(thread)
+    // The pre-existing HTML-to-text reader representation must not gain quote markers.
+    expect(thread.messages[0]!.body).toBe(
+      'On Tuesday Ada wrote:\n\nOld first paragraph.\n\nOld second paragraph.\n\nNested older history.\n\nNew bottom-posted answer.',
+    )
+    expect(textOnly(thread).messages[0]!.body).toBe('New bottom-posted answer.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(thread.messages[0]!.body)
+    expect(thread).toEqual(before)
+    expect(thread.messages[0]!.html).toBe(html)
+  })
+
+  it('prefers plain originals over HTML alternatives and retains ambiguous malformed HTML', async () => {
+    const plain = 'The complete authored plain message.\r\n--\r\nKeep this separator.'
+    const html = '<p>On Tuesday Ada wrote:</p><blockquote><p>Old quoted text.</p>'
+    const { api } = gmail([], {
+      t1: {
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              mimeType: 'multipart/alternative',
+              parts: [
+                { mimeType: 'text/plain', body: { data: b64(plain) } },
+                { mimeType: 'text/html', body: { data: b64(html) } },
+              ],
+            },
+          },
+          { id: 'm2', payload: { mimeType: 'text/html', body: { data: b64(html) } } },
+        ],
+      },
+    })
+    const thread = await readThread(api, 't1')
+    const result = textOnly(thread)
+    expect(result.messages.map(({ id }) => id)).toEqual(['m1', 'm2'])
+    expect(result.messages[0]!.body).toBe(plain.replace(/\r\n/g, '\n'))
+    expect(result.messages[1]!.body).toContain('Old quoted text.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(plain)
+  })
+
+  it('drops recognized quoted history by default and preserves the complete body with full', () => {
+    const thread = {
+      id: 't1',
+      subject: 'Plan',
+      webUrl: 'https://mail.google.com/…',
+      messages: [
+        {
+          id: 'm1',
+          from: 'Jane',
+          to: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: 'The plan is ready.\n\nOn Tue, Jane wrote:\n> previous message',
+          html: null,
+        },
+      ],
+    } as never
+    expect(textOnly(thread).messages[0]!.body).toBe('The plan is ready.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(
+      'The plan is ready.\n\nOn Tue, Jane wrote:\n> previous message',
+    )
+  })
+
   it('drops html entirely, so the agent never receives markup', () => {
     // The shape the agent's JSON had before senders became addresses: the
     // projection passes each field through as it finds it.
