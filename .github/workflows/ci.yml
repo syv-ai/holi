@@ -147,7 +147,8 @@ jobs:
       - name: Install Electron and rebuild the native PTY
         run: |
           node apps/desktop/node_modules/electron/install.js
-          pnpm --filter @holi/desktop run rebuild:natives
+          # electron-builder uses the locked rebuild toolchain that supports VS 2026.
+          pnpm --filter @holi/desktop exec electron-builder install-app-deps
 
       - name: Check native PTY under Electron
         shell: pwsh

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
-import { join, resolve, relative } from 'node:path'
+import { join, relative } from 'node:path'
 import { app, BrowserWindow } from 'electron'
 import { launchPlan, spawnProgram, execProgram } from '../src/main/launch'
 import { resolveBin } from '../src/main/bin'
@@ -167,7 +167,7 @@ if(args[0]==='--pty') {
   await runtime.kill()
   await until(() => pids.every((pid) => !alive(pid)))
   checks.push(
-    'real ConPTY exact argv, stdin/output, resize and AgentRuntime Stop terminate root and descendant',
+    `real ${process.platform === 'win32' ? 'ConPTY' : 'PTY'} exact argv, stdin/output, resize and AgentRuntime Stop terminate root and descendant`,
   )
 
   const managed = spawnOwnedProgram(plan.file, [script, '--pty'], {
@@ -186,7 +186,9 @@ if(args[0]==='--pty') {
     managed.once('error', reject)
     managed.once('close', resolve)
   })
+  managed.stdin!.write('ping\n')
   await until(() => managedOutput.includes('READY'))
+  await until(() => managedOutput.includes('INPUT:ping'))
   const managedPids = await readPids()
   if (process.platform === 'win32') managed.kill()
   else process.kill(-managed.pid!, 'SIGKILL')
