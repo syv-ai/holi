@@ -90,10 +90,17 @@ test('discovers all provider package mappings from npm latest', async () => {
   assert.equal(requested.length, 3)
   assert.deepEqual(
     result.providers.map(({ releaseNotesUrl, npmUrl }) => [releaseNotesUrl, npmUrl]),
-    providers.map(({ releaseNotesUrl, package: name }) => [
-      releaseNotesUrl,
-      `https://www.npmjs.com/package/${name}`,
-    ]),
+    [
+      [
+        'https://github.com/anthropics/claude-code/releases',
+        'https://www.npmjs.com/package/@anthropic-ai/claude-code',
+      ],
+      ['https://github.com/openai/codex/releases', 'https://www.npmjs.com/package/@openai/codex'],
+      [
+        'https://github.com/earendil-works/pi/releases',
+        'https://www.npmjs.com/package/@earendil-works/pi-coding-agent',
+      ],
+    ],
   )
 })
 

@@ -18,7 +18,7 @@ export const providers = [
     id: 'pi',
     name: 'Pi',
     package: '@earendil-works/pi-coding-agent',
-    releaseNotesUrl: 'https://github.com/badlogic/pi-mono/releases',
+    releaseNotesUrl: 'https://github.com/earendil-works/pi/releases',
   },
 ]
 
