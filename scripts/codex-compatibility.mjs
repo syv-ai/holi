@@ -40,7 +40,7 @@ export async function runCompatibility(version, { npm = 'npm', timeout = 10_000 
           'tui.notifications=["approval-requested"]',
           '--help',
         ],
-        ['-c', 'notify', 'tui.notifications'],
+        ['-c'],
       ],
       [
         'terminal resume',
@@ -52,7 +52,7 @@ export async function runCompatibility(version, { npm = 'npm', timeout = 10_000 
           'resume',
           '--help',
         ],
-        ['-c', 'notify', 'tui.notifications', 'resume'],
+        ['-c', 'resume'],
       ],
       [
         'job exec',
@@ -101,7 +101,8 @@ export async function runCompatibility(version, { npm = 'npm', timeout = 10_000 
           'resume',
           '--help',
         ],
-        ['exec', '--json', '--skip-git-repo-check', '-C', '--sandbox', '-c', '-m', 'resume'],
+        // Parent exec options are parsed before resume, but omitted from resume's help.
+        ['--json', '--skip-git-repo-check', '-c', '-m', 'resume'],
       ],
       [
         'fenced terminal',

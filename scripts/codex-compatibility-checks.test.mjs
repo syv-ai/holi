@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runCompatibility } from './codex-compatibility.mjs'
@@ -63,32 +64,42 @@ mkdir -p "$install_dir/node_modules/.bin"
 cat > "$install_dir/node_modules/.bin/codex" <<'CODEX'
 #!/bin/sh
 if [ "$1" = "--version" ]; then echo 'codex-cli 0.169.0'; exit 0; fi
-printf '%s\\n' "$@"
+# Resume help omits the parent exec options even when they were accepted.
+case " $* " in
+  *' resume '*) echo 'Usage: codex resume --json --skip-git-repo-check -c -m';;
+  *) echo 'Usage: codex exec --json --skip-git-repo-check -C --sandbox -c -m';;
+esac
 CODEX
 chmod +x "$install_dir/node_modules/.bin/codex"
 `
   try {
     await writeFile(npm, body)
     await chmod(npm, 0o755)
-    const inherited = { GH_TOKEN: process.env.GH_TOKEN, OPENAI_API_KEY: process.env.OPENAI_API_KEY }
-    process.env.GH_TOKEN = 'must-not-reach-child'
-    process.env.OPENAI_API_KEY = 'must-not-reach-child'
-    let result
-    try {
-      result = await runCompatibility('0.169.0', { npm, timeout: 5_000 })
-    } finally {
-      for (const [key, value] of Object.entries(inherited)) {
-        if (value === undefined) delete process.env[key]
-        else process.env[key] = value
-      }
-    }
-    const stdout = JSON.stringify({ checks: result.checks })
-    assert.doesNotThrow(() => JSON.parse(stdout))
-    assert.equal(result.failed, false, JSON.stringify(result.checks))
+    const runner = new URL('./codex-compatibility.mjs', import.meta.url).href
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `import { runCompatibility } from ${JSON.stringify(runner)};
+         const result = await runCompatibility('0.169.0', { npm: ${JSON.stringify(npm)}, timeout: 5000 });
+         process.stdout.write(JSON.stringify({ checks: result.checks }));
+         process.exitCode = result.failed ? 1 : 0;`,
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 30_000,
+        env: {
+          ...process.env,
+          GH_TOKEN: 'must-not-reach-child',
+          OPENAI_API_KEY: 'must-not-reach-child',
+        },
+      },
+    )
+    assert.equal(child.status, 0, child.stderr || child.stdout)
+    const result = JSON.parse(child.stdout)
     assert.equal(result.checks[0].outcome, 'pass')
-    assert.equal(stdout.includes('install banner'), false)
-    const npmSource = await readFile(npm, 'utf8')
-    assert.match(npmSource, /printf/)
+    assert.equal(child.stdout.includes('install banner'), false)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
