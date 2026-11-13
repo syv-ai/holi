@@ -45,12 +45,18 @@ const LEGACY_STATUS_LINE = [
 const STATUS_FORMATTER = `let s=\"\";process.stdin.setEncoding(\"utf8\");process.stdin.on(\"data\",c=>s+=c);process.stdin.on(\"end\",()=>{try{const x=JSON.parse(s);const m=x?.model?.display_name;const n=x?.context_window?.used_percentage;const a=[];if(typeof m===\"string\"&&m)a.push(m);if(typeof n===\"number\"&&Number.isFinite(n))a.push(Math.floor(n+0.5)+\"% context\");process.stdout.write(a.join(\" · \"))}catch{}})`
 
 /** @public exported for its test */
-export const STATUS_LINE = [
+export const POSIX_STATUS_LINE = LEGACY_STATUS_LINE
+
+/** @public exported for its cross-platform shell fixture */
+export const WINDOWS_STATUS_LINE = [
   'input=$(cat)',
   `if command -v jq >/dev/null 2>&1; then printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")' 2>/dev/null; else printf '%s' "$input" | node -e '${STATUS_FORMATTER}'; fi`,
   `${shellJobId('win32')}; case "$job" in ???????? ) case "$job" in *[!0-9a-f]* ) job= ;; esac ;; *) job= ;; esac; if [ -n "$job" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=$job" >/dev/null 2>&1 & fi; fi`,
   'true',
 ].join('; ')
+
+/** @public exported for its test */
+export const STATUS_LINE = process.platform === 'win32' ? WINDOWS_STATUS_LINE : POSIX_STATUS_LINE
 
 /** Claude Code's bundled skills a vault agent has no use for: code review,
  *  app launching, API and workflow authoring, Claude Code configuration, and
@@ -224,6 +230,7 @@ export const agentSettings = (
   fragments: readonly SettingsFragment[],
   has: (rel: string) => boolean,
   read?: (rel: string) => string | null,
+  platform: NodeJS.Platform = process.platform,
 ): string | null => {
   let migrated = existing
   if (existing !== null) {
@@ -238,8 +245,12 @@ export const agentSettings = (
       ) {
         const statusLine = (parsed as { statusLine: { type?: unknown; command?: unknown } })
           .statusLine
-        if (statusLine.type === 'command' && statusLine.command === LEGACY_STATUS_LINE) {
-          statusLine.command = STATUS_LINE
+        if (
+          platform === 'win32' &&
+          statusLine.type === 'command' &&
+          statusLine.command === LEGACY_STATUS_LINE
+        ) {
+          statusLine.command = WINDOWS_STATUS_LINE
           migrated = JSON.stringify(parsed)
         }
       }
@@ -247,7 +258,8 @@ export const agentSettings = (
       // Keep malformed settings untouched; Claude Code owns their interpretation.
     }
   }
-  return mergeClaudeSettings(migrated, SETTINGS_BASE, fragments, has, read)
+  const merged = mergeClaudeSettings(migrated, SETTINGS_BASE, fragments, has, read)
+  return merged ?? (migrated !== existing ? migrated : null)
 }
 
 export const claudeSeed: SeedContribution = {
@@ -274,6 +286,7 @@ export const claudeSeed: SeedContribution = {
         all,
         (rel) => present.has(rel),
         (rel) => replacements.get(rel) ?? null,
+        process.platform,
       )
     },
   },

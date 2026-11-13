@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installGitHook } from '../src/main/vault/large-files'
+import { installNodeFallback } from '../src/main/bridge/node-fallback'
 import { createBridgeServer } from '../src/main/bridge/server'
 import { registerAgentRoutes } from '../src/plugins/agent/main/claude/routes'
 import { STATUS_LINE } from '../src/plugins/agent/main/claude/seed'
@@ -20,14 +21,14 @@ afterEach(async () => {
 
 describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
   it('reports matching job ids and formats status without jq', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'holi-win-402-'))
+    const root = await mkdtemp(join(tmpdir(), 'holi win café 402-'))
     dirs.push(root)
     const gitPath = (await execAsync('where.exe', ['git'])).stdout.split(/\r?\n/)[0]!.trim()
     const gitRoot = resolve(dirname(gitPath), '..')
     const sh = join(gitRoot, 'bin', 'sh.exe')
     const gitTools = join(gitRoot, 'usr', 'bin')
-    const nodeDir = dirname(process.execPath)
-    const env = { ...process.env, PATH: `${gitTools};${dirname(gitPath)};${nodeDir}` }
+    const fallbackDir = await installNodeFallback(join(root, 'user data'), process.execPath)
+    const env = { ...process.env, PATH: `${gitTools};${dirname(gitPath)};${fallbackDir}` }
     const jobs: string[] = []
     const statuses: string[] = []
     const server = createBridgeServer({ log: () => {} })
@@ -67,11 +68,21 @@ describe.skipIf(!windows)('Git for Windows Claude helpers', () => {
             env: { ...env, CLAUDE_JOB_DIR: jobDir },
           })
           let output = ''
+          let errors = ''
+          const timer = setTimeout(() => {
+            child.kill()
+            reject(new Error(`sh timed out; stderr: ${errors}`))
+          }, 10_000)
           child.stdout?.on('data', (chunk: Buffer) => (output += chunk.toString()))
-          child.on('error', reject)
-          child.on('close', (code) =>
-            code === 0 ? resolve(output) : reject(new Error(`sh exited ${code}`)),
-          )
+          child.stderr?.on('data', (chunk: Buffer) => (errors += chunk.toString()))
+          child.on('error', (error) => {
+            clearTimeout(timer)
+            reject(error)
+          })
+          child.on('close', (code) => {
+            clearTimeout(timer)
+            code === 0 ? resolve(output) : reject(new Error(`sh exited ${code}; stderr: ${errors}`))
+          })
           child.stdin?.end(
             '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":41.6}}',
           )
