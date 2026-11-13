@@ -20,7 +20,7 @@ import {
   sessionTitled,
   type AgentTarget,
 } from './sessions'
-import { activeRemoteAtom, agentsSelectionAtom, appModeAtom, openSurfaceAtom } from '@/plugin-api'
+import { activeRemoteAtom, appModeAtom, openSurfaceAtom } from '@/plugin-api'
 import { newSessionProviderAtom } from './providers'
 import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
 
@@ -44,7 +44,7 @@ function landSession(get: Getter, set: Setter, sessionId: string, terminalId: st
     set(viewTerminalsAtom, (terminals) => ({ ...terminals, [sessionId]: canonicalTerminal }))
   }
   set(appModeAtom, 'agents')
-  set(agentsSelectionAtom, { owner: AGENT_SURFACE, id: sessionId })
+  set(agentsViewAtom, { kind: 'session', id: sessionId })
   focusSessionTerminal(canonicalTerminal)
 }
 
