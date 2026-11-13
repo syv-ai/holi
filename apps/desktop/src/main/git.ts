@@ -88,15 +88,18 @@ const WINDOWS = process.platform === 'win32'
 let askpassPromise: Promise<string> | null = null
 
 /** @public exported for its test */
+export function askpassScript(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32'
+    ? '@echo off\r\nsetlocal EnableDelayedExpansion\r\necho(%1 | findstr /i /c:"username" >nul\r\nif not errorlevel 1 (echo x-access-token) else (echo(!HOLI_GIT_TOKEN!)\r\n'
+    : // `case` rather than a regex: this has to be POSIX sh, not bash.
+      '#!/bin/sh\ncase "$1" in *sername*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
+}
+
 export function ensureAskpass(): Promise<string> {
   askpassPromise ??= (async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-git-'))
     const file = join(dir, WINDOWS ? 'askpass.bat' : 'askpass.sh')
-    const body = WINDOWS
-      ? '@echo off\r\nif not "%~1"=="%~1:Username=%" (echo x-access-token) else (echo %HOLI_GIT_TOKEN%)\r\n'
-      : // `case` rather than a regex: this has to be POSIX sh, not bash.
-        '#!/bin/sh\ncase "$1" in *sername*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
-    await writeFile(file, body, { mode: 0o700 })
+    await writeFile(file, askpassScript(), { mode: 0o700 })
     return file
   })()
   return askpassPromise
@@ -398,6 +401,19 @@ async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<G
           // rather than prose, but stderr still reaches error messages and logs.
           LC_ALL: 'C',
           ...opts.env,
+          // Git Credential Manager can still open a UI even when Git itself has
+          // terminal prompting disabled. Keep every configured helper available,
+          // but do not let GCM block a background sync on Windows. The Windows
+          // overrides also keep caller env from restoring interactive prompts.
+          ...(WINDOWS
+            ? {
+                GIT_TERMINAL_PROMPT: '0',
+                GIT_ASKPASS: askpass,
+                HOLI_GIT_TOKEN: opts.token?.() ?? '',
+                LC_ALL: 'C',
+                GCM_INTERACTIVE: 'never',
+              }
+            : {}),
         },
       },
       (err, stdout, stderr) => {
