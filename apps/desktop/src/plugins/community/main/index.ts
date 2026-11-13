@@ -12,15 +12,13 @@ import {
   COMMUNITY_NAMESPACES,
   communityCapabilities,
   linkRunningCommands,
-  parseServerKey,
   runChecks,
   seedRunningApps,
   unlinkWhenOff,
 } from './capabilities'
 import { createChecks } from './checks'
-import { createConsentStore } from './consent'
-import { createInstallStore, pluginsDir } from './store'
-import { createSupervisor } from './supervisor'
+import { pluginsDir } from './store'
+import { communityOwner } from './owner'
 
 export const communityMain: MainPlugin = {
   info: COMMUNITY_INFO,
@@ -34,20 +32,12 @@ export const communityMain: MainPlugin = {
     },
   },
   activate(ctx) {
-    const store = createInstallStore(ctx.userData)
-    const consent = createConsentStore(join(ctx.userData, 'plugin-consent.json'))
-    // Per activation, so per vault: switching vaults drops every answer.
+    const owner = communityOwner({ userData: ctx.userData })
+    const { store, consent, supervisor: servers } = owner
     const checks = createChecks()
-    const servers = createSupervisor({
+    const detach = owner.attach(ctx.root, ctx.remote, {
+      emit: ctx.emit,
       frameOrigin: ctx.frameOrigin,
-      // Servers run only for the open vault; one stopping as it is left has
-      // nobody to tell.
-      onState: (key, state) => {
-        const { root, id, path } = parseServerKey(key)
-        const active = ctx.active()
-        if (active !== null && active.root === root)
-          ctx.emit(active.remote, 'server', { id, path, state })
-      },
     })
     ctx.register(
       COMMUNITY_NAMESPACES,
@@ -62,6 +52,7 @@ export const communityMain: MainPlugin = {
         bridgeScript: () => null,
         scratch: join(pluginsDir(ctx.userData), '.staging'),
         checks,
+        mutate: owner.mutate,
       }),
     )
     // What runs here follows the vault: at the start, and whenever a pin or
@@ -95,7 +86,7 @@ export const communityMain: MainPlugin = {
       // Stopping stops its servers: the tabs on them are gone too. And any
       // check still running.
       checks.stop()
-      await servers.dispose()
+      await detach()
       await unlinkWhenOff(ctx.root, installedInfos())
     }
   },

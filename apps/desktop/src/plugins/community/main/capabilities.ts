@@ -125,6 +125,8 @@ export interface CommunityDeps {
   scratch: string
   /** The plugins' readiness checks' last answers. */
   checks: Checks
+  /** Serialize machine-wide install, consent, setup and removal transitions. */
+  mutate<T>(work: () => Promise<T>): Promise<T>
   /** The `PATH` the vault's agent inherits, before Holi's own folders: a
    *  plugin's command may not take a name already on it. By default
    *  `toolPath()`: a Dock-launched Holi's own `PATH` lacks the folders the
@@ -395,32 +397,33 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         if (p.expectId !== undefined) params.expectId = stringParam(p, 'expectId')
         return params
       },
-      run: async (ctx, { repo, path, version, expectId }) => {
-        const fetched = await fetchRelease(
-          {
-            repo,
-            path,
-            version,
-            ...(expectId === undefined ? {} : { expectId }),
-            scratch: deps.scratch,
-            releaseDir: deps.store.releaseDir,
-          },
-          deps.git,
-        )
-        claimFirstParty(fetched.manifest.id)
-        await deps.store.put({
-          id: fetched.manifest.id,
-          source: { kind: 'release', repo, path, tag: fetched.tag, commit: fetched.commit },
-          manifest: fetched.manifest,
-          setup: 'none',
-        })
-        deps.checks.forget(ctx.root, fetched.manifest.id)
-        // A new release of a running plugin waits for consent: its commands go
-        // until then.
-        await linkRunningCommands(ctx.root, deps)
-        const rows = await listPlugins(ctx.root, deps)
-        return rows.find((r) => r.id === fetched.manifest.id)!
-      },
+      run: async (ctx, { repo, path, version, expectId }) =>
+        deps.mutate(async () => {
+          const fetched = await fetchRelease(
+            {
+              repo,
+              path,
+              version,
+              ...(expectId === undefined ? {} : { expectId }),
+              scratch: deps.scratch,
+              releaseDir: deps.store.releaseDir,
+            },
+            deps.git,
+          )
+          claimFirstParty(fetched.manifest.id)
+          await deps.store.put({
+            id: fetched.manifest.id,
+            source: { kind: 'release', repo, path, tag: fetched.tag, commit: fetched.commit },
+            manifest: fetched.manifest,
+            setup: 'none',
+          })
+          deps.checks.forget(ctx.root, fetched.manifest.id)
+          // A new release of a running plugin waits for consent: its commands go
+          // until then.
+          await linkRunningCommands(ctx.root, deps)
+          const rows = await listPlugins(ctx.root, deps)
+          return rows.find((r) => r.id === fetched.manifest.id)!
+        }),
     }),
 
     // A folder the person works on, used in place: their own code, so no
@@ -428,20 +431,21 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.installFolder': cap({
       doors: ['ui'],
       params: (raw: unknown) => ({ folder: stringParam(paramsObject(raw), 'folder') }),
-      run: async (ctx, { folder }) => {
-        const manifest = await readManifest(folder)
-        claimFirstParty(manifest.id)
-        await deps.store.put({
-          id: manifest.id,
-          source: { kind: 'dev', folder },
-          manifest,
-          setup: 'none',
-        })
-        deps.checks.forget(ctx.root, manifest.id)
-        await linkRunningCommands(ctx.root, deps)
-        const rows = await listPlugins(ctx.root, deps)
-        return rows.find((r) => r.id === manifest.id)!
-      },
+      run: async (ctx, { folder }) =>
+        deps.mutate(async () => {
+          const manifest = await readManifest(folder)
+          claimFirstParty(manifest.id)
+          await deps.store.put({
+            id: manifest.id,
+            source: { kind: 'dev', folder },
+            manifest,
+            setup: 'none',
+          })
+          deps.checks.forget(ctx.root, manifest.id)
+          await linkRunningCommands(ctx.root, deps)
+          const rows = await listPlugins(ctx.root, deps)
+          return rows.find((r) => r.id === manifest.id)!
+        }),
     }),
 
     'community.consent': cap({
@@ -450,48 +454,50 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         const p = paramsObject(raw)
         return { id: stringParam(p, 'id'), commit: stringParam(p, 'commit') }
       },
-      run: async (_ctx, { id, commit }) => {
-        const install = await installOf(id)
-        // The commit the dialog showed: a re-fetch in between asks again.
-        if (installCommit(install) !== commit)
-          throw new CapabilityError('BAD_REQUEST', `${id} changed since it was shown; look again`)
-        await deps.consent.grant(id, commit)
-      },
+      run: async (_ctx, { id, commit }) =>
+        deps.mutate(async () => {
+          const install = await installOf(id)
+          // The commit the dialog showed: a re-fetch in between asks again.
+          if (installCommit(install) !== commit)
+            throw new CapabilityError('BAD_REQUEST', `${id} changed since it was shown; look again`)
+          await deps.consent.grant(id, commit)
+        }),
     }),
 
     // Run the manifest's setup, its output streaming as `setup-log` events.
     'community.setup': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) => {
-        const install = await installOf(id)
-        const commit = installCommit(install)
-        if (commit !== null && !(await deps.consent.has(id, commit)))
-          throw new CapabilityError('FORBIDDEN', `nobody here has agreed to run ${id} ${commit}`)
-        if (install.manifest.setup === undefined) {
-          await deps.store.setSetup(id, 'ok')
-          await seedRunningApps(ctx.root, deps)
-          await linkRunningCommands(ctx.root, deps)
-          await checkAfterSetup(ctx.root, id)
-          return true
-        }
-        deps.emit(ctx.remote, 'setup-log', { id, line: null })
-        const ok = await runSetup({
-          argv: expandCommand(install.manifest.setup, { vault: ctx.root }),
-          cwd: deps.store.codeDir(install),
-          logPath: deps.store.setupLog(id),
-          onLine: (line) => deps.emit(ctx.remote, 'setup-log', { id, line }),
-        })
-        await deps.store.setSetup(id, ok ? 'ok' : 'failed')
-        // Set up in a vault that runs it: its apps and commands arrive now, not
-        // at the next open.
-        if (ok) {
-          await seedRunningApps(ctx.root, deps)
-          await linkRunningCommands(ctx.root, deps)
-          await checkAfterSetup(ctx.root, id)
-        }
-        return ok
-      },
+      run: async (ctx, { id }) =>
+        deps.mutate(async () => {
+          const install = await installOf(id)
+          const commit = installCommit(install)
+          if (commit !== null && !(await deps.consent.has(id, commit)))
+            throw new CapabilityError('FORBIDDEN', `nobody here has agreed to run ${id} ${commit}`)
+          if (install.manifest.setup === undefined) {
+            await deps.store.setSetup(id, 'ok')
+            await seedRunningApps(ctx.root, deps)
+            await linkRunningCommands(ctx.root, deps)
+            await checkAfterSetup(ctx.root, id)
+            return true
+          }
+          deps.emit(ctx.remote, 'setup-log', { id, line: null })
+          const ok = await runSetup({
+            argv: expandCommand(install.manifest.setup, { vault: ctx.root }),
+            cwd: deps.store.codeDir(install),
+            logPath: deps.store.setupLog(id),
+            onLine: (line) => deps.emit(ctx.remote, 'setup-log', { id, line }),
+          })
+          await deps.store.setSetup(id, ok ? 'ok' : 'failed')
+          // Set up in a vault that runs it: its apps and commands arrive now, not
+          // at the next open.
+          if (ok) {
+            await seedRunningApps(ctx.root, deps)
+            await linkRunningCommands(ctx.root, deps)
+            await checkAfterSetup(ctx.root, id)
+          }
+          return ok
+        }),
     }),
 
     // Ask a running plugin's readiness check again, for its settings row and
@@ -631,19 +637,20 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.remove': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) => {
-        // Its servers first: their code is about to go.
-        await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
-        const install = await deps.store.remove(id)
-        await deps.consent.forget(id)
-        deps.checks.forget(ctx.root, id)
-        await linkRunningCommands(ctx.root, deps)
-        if (install?.source.kind === 'release')
-          await rm(join(deps.store.releaseDir(id, install.source.commit), '..'), {
-            recursive: true,
-            force: true,
-          })
-      },
+      run: async (ctx, { id }) =>
+        deps.mutate(async () => {
+          // Its servers first: their code is about to go.
+          await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
+          const install = await deps.store.remove(id)
+          await deps.consent.forget(id)
+          deps.checks.forget(ctx.root, id)
+          await linkRunningCommands(ctx.root, deps)
+          if (install?.source.kind === 'release')
+            await rm(join(deps.store.releaseDir(id, install.source.commit), '..'), {
+              recursive: true,
+              force: true,
+            })
+        }),
     }),
 
     // The server for a file a plugin opens, started if none is up. Resolves
@@ -704,7 +711,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
 }
 
 /** The vault a server key belongs to, and its file, for events. */
-export function parseServerKey(key: string): { root: string; id: string; path: string } {
+function parseServerKey(key: string): { root: string; id: string; path: string } {
   const [root, id, path] = key.split('\0')
   return { root: root!, id: id!, path: path! }
 }
