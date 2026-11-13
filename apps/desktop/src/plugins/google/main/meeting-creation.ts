@@ -6,9 +6,14 @@
  * conferenceDataVersion), calendars.get (calendar.readonly already granted),
  * and conferenceProperties.allowedConferenceSolutionTypes. */
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, open, readFile, rename } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import { CapabilityError, paramsObject, stringParam } from '../../../main/plugin-api'
+import {
+  CapabilityError,
+  optionalStringParam,
+  paramsObject,
+  stringParam,
+} from '../../../main/plugin-api'
 import { GoogleApi, GoogleApiError } from './api'
 import type { GoogleAccountsManager } from './accounts'
 
@@ -112,7 +117,7 @@ export function meetingParams(raw: unknown): MeetingInput {
     start,
     end,
     allDay,
-    location: stringParam(p, 'location').trim(),
+    location: (optionalStringParam(p, 'location') ?? '').trim(),
     guests: guests.sort(),
     meet: p.meet as boolean,
   }
@@ -233,7 +238,16 @@ export function createMeetingCreation(deps: {
 }) {
   const pathFor = (remote: string, sub: string) =>
     join(deps.userData, 'google-meetings', `${hash(JSON.stringify([remote, sub]))}.json`)
+  const assertBound = async (remote: string, sub: string) => {
+    const current = await deps.accounts.sessionFor(remote)
+    if (!current || current.accountSub !== sub)
+      throw new CapabilityError(
+        'UNAUTHORIZED',
+        'The Google account changed. Reopen the meeting in the original account.',
+      )
+  }
   const boundApi = async (remote: string, sub: string): Promise<GoogleApi> => {
+    await assertBound(remote, sub)
     const session = await deps.accounts.sessionFor(remote)
     if (!session || session.accountSub !== sub)
       throw new CapabilityError(
@@ -241,11 +255,15 @@ export function createMeetingCreation(deps: {
         'The Google account changed. Reopen the meeting in the original account.',
       )
     return new GoogleApi({
-      fetch: deps.fetch,
+      fetch: async (input, init) => {
+        // Last async account check before handing the authenticated request to transport.
+        await assertBound(remote, sub)
+        return (deps.fetch ?? globalThis.fetch)(input, init)
+      },
       accessToken: async () => {
-        const current = await deps.accounts.sessionFor(remote)
-        if (!current || current.accountSub !== sub) throw new Error('The Google account changed.')
-        return session.getAccessToken()
+        const token = await session.getAccessToken()
+        await assertBound(remote, sub)
+        return token
       },
     })
   }
@@ -292,7 +310,12 @@ export function createMeetingCreation(deps: {
       true
     )
   }
-  const recover = async (api: GoogleApi, path: string, op: MeetingOperation) => {
+  const recover = async (
+    api: GoogleApi,
+    path: string,
+    op: MeetingOperation,
+    onMissing?: () => void,
+  ) => {
     try {
       const event = await api.get<CreatedEvent>(`${BASE}/events/${op.eventId}`)
       if (!accept(op, event))
@@ -304,6 +327,7 @@ export function createMeetingCreation(deps: {
       if (!(error instanceof GoogleApiError && error.status === 404)) throw error
       // Not found is not proof that an earlier POST did not reach Google.
       // Retain the operation; only an explicit submit may retry the same id.
+      onMissing?.()
     }
     return op
   }
@@ -367,6 +391,7 @@ export function createMeetingCreation(deps: {
             'BAD_REQUEST',
             'Google Meet is not supported by this primary calendar.',
           )
+        const firstAttempt = !op
         op ??= {
           input,
           eventId: input.operation.replaceAll('-', ''),
@@ -382,24 +407,43 @@ export function createMeetingCreation(deps: {
         await write(path, op)
         // No token/client can be resolved from a newly linked account.
         await boundApi(remote, input.sub)
+        let definiteRefusal: GoogleApiError | null = null
         try {
           const event = await api.postJson<CreatedEvent>(
             `${BASE}/events?sendUpdates=${input.guests.length ? 'all' : 'none'}${input.meet ? '&conferenceDataVersion=1' : ''}`,
             bodyOf(op),
           )
           if (accept(op, event)) await write(path, op)
-        } catch {
-          // Timeout, 409 or any refusal: inspect the exact id, never insert a
-          // second event. The original exception is not proof of non-delivery.
+        } catch (error) {
+          // Only a definite Google 4xx on the very first send can be a correctable
+          // refusal. Conflicts, timeouts, transport errors and prior attempts stay uncertain.
+          if (
+            firstAttempt &&
+            error instanceof GoogleApiError &&
+            error.status >= 400 &&
+            error.status < 500 &&
+            error.status !== 408 &&
+            error.status !== 409
+          )
+            definiteRefusal = error
         }
         // Bounded read-only recovery, also covering malformed 2xx responses and
         // asynchronous conference creation. No timer, replay or new event id.
+        let recoveryFound: boolean | null = null
         if (!op.accepted || op.conference === 'pending') {
           try {
-            await recover(api, path, op)
+            await recover(api, path, op, () => {
+              recoveryFound = false
+            })
           } catch {
             /* remains recoverable */
           }
+        }
+        if (definiteRefusal && !op.accepted && recoveryFound === false) {
+          // recover() returns unresolved only when the exact event id was 404.
+          // Remove only this first, definitively refused attempt; preserve provider cause.
+          await unlink(path)
+          throw new CapabilityError('BAD_REQUEST', definiteRefusal.message)
         }
         await boundApi(remote, input.sub)
         return op
