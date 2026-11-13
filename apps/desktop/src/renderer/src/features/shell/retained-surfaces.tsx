@@ -174,7 +174,7 @@ export function useRetainedSurfaces(
           data-retained-parking=""
           aria-hidden="true"
           inert
-          className="invisible pointer-events-none absolute left-0 top-0 h-0 w-0 overflow-hidden"
+          className="invisible pointer-events-none fixed inset-0 overflow-hidden"
         />
         {displayed.map((key) =>
           createPortal(render(key, visible.has(key)), hostFor(key), identity(key)),
@@ -216,6 +216,7 @@ function SurfaceSlot({
     // Commit the state-preserving move at its parked size before the visible
     // slot's responsive size can resize embedded documents and clamp scroll.
     host.getBoundingClientRect()
+    host.style.removeProperty('position')
     host.style.removeProperty('width')
     host.style.removeProperty('height')
     host.inert = false
@@ -223,6 +224,7 @@ function SurfaceSlot({
       if (host.parentElement === destination) {
         releaseFocus(host)
         const bounds = host.getBoundingClientRect()
+        host.style.position = 'absolute'
         host.style.width = `${bounds.width}px`
         host.style.height = `${bounds.height}px`
         host.inert = true

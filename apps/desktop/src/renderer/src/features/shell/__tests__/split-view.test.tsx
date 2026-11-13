@@ -687,7 +687,8 @@ test('parked retained surfaces preserve their viewport size and restore responsi
   expect(parking.style.display).toBe('')
   expect(parking.className).toContain('invisible')
   expect(parking.className).toContain('pointer-events-none')
-  expect(parking.className).toContain('absolute')
+  expect(parking.className).toContain('fixed')
+  expect(host.style.position).toBe('absolute')
 
   f.show('one')
 
@@ -696,6 +697,7 @@ test('parked retained surfaces preserve their viewport size and restore responsi
   // are still fixed, before the visible slot can resize an embedded document.
   expect(measureHost).toHaveBeenCalledTimes(2)
   expect(settledAtParkedSize).toHaveBeenCalledWith('640px', '480px')
+  expect(host.style.position).toBe('')
   expect(host.style.width).toBe('')
   expect(host.style.height).toBe('')
   expect(host.className).toContain('w-full')
