@@ -60,6 +60,32 @@ describe('the Codex provider', () => {
 })
 
 describe('the Codex turn report', () => {
+  it('consumes an attributed Codex notify fixture and ignores additive fields', () => {
+    // Payload keys observed in rust-v0.169.0 legacy_notify.rs:
+    // https://github.com/openai/codex/blob/d32063f96c2dff1dc96af839b3952abb6acfeda4/codex-rs/hooks/src/legacy_notify.rs
+    // The fixture's type and future field are synthetic; payload keys are observed source fields.
+    const notifyFixture = {
+      type: 'agent-turn-complete',
+      'thread-id': '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+      'input-messages': ['Review the release', 'follow-up'],
+      'last-assistant-message': 'Complete',
+      future_codex_field: { ignored: true },
+    }
+    expect(readTurn(JSON.stringify(notifyFixture))).toEqual({
+      name: 'Review the release',
+      conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+    })
+    expect(readTurn(JSON.stringify({ ...notifyFixture, 'thread-id': 'not-a-uuid' }))).toEqual({
+      name: 'Review the release',
+    })
+    expect(
+      readTurn(JSON.stringify({ ...notifyFixture, 'input-messages': ['Changed ask'] })),
+    ).toEqual({
+      name: 'Changed ask',
+      conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+    })
+  })
+
   it('names the session by its first ask, and its thread', () => {
     expect(
       readTurn(

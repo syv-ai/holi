@@ -522,14 +522,18 @@ describe('the Codex job command', () => {
     expect(await readFile(join(person, 'config.toml'), 'utf8')).toBe(PERSON_CONFIG)
   })
 
-  it('reads the events it needs and nothing else', () => {
+  it('reads upstream Codex JSONL job events and tolerates additive fields', () => {
+    // Upstream event schema: https://github.com/openai/codex/blob/d32063f96c2dff1dc96af839b3952abb6acfeda4/codex-rs/exec/src/exec_events.rs (rust-v0.169.0)
+    // Added fields here are synthetic; current fields mirror the public event envelope.
     expect(
-      readJobEvent('{"type":"thread.started","thread_id":"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51"}'),
+      readJobEvent(
+        '{"type":"thread.started","thread_id":"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51","future_field":true}',
+      ),
     ).toEqual({
       kind: 'thread',
       id: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
     })
-    expect(readJobEvent('{"type":"turn.completed","usage":{}}')).toEqual({
+    expect(readJobEvent('{"type":"turn.completed","usage":{},"future_field":true}')).toEqual({
       kind: 'turn-completed',
     })
     expect(readJobEvent('{"type":"turn.failed","error":{"message":"no"}}')).toEqual({
