@@ -1936,7 +1936,7 @@ describe('mergedSettings — background sessions', () => {
       `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi; fi`,
       'true',
     ].join('; ')
-    expect(STATUS_LINE).toBe(expected)
+    expect(POSIX_STATUS_LINE).toBe(expected)
     const complete = JSON.parse(SETTINGS_SEED)
     complete.statusLine = { type: 'command', command: expected }
     expect(
