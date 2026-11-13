@@ -51,15 +51,22 @@ export async function runSetup(args: {
   cwd: string
   logPath: string
   onLine(line: string): void
+  signal?: AbortSignal
 }): Promise<boolean> {
   await mkdir(dirname(args.logPath), { recursive: true })
   const log = createWriteStream(args.logPath)
   const [command, ...rest] = args.argv
   return new Promise((resolve) => {
+    if (args.signal?.aborted) {
+      log.end()
+      resolve(false)
+      return
+    }
     const child = spawn(command!, rest, {
       cwd: args.cwd,
       env: pluginEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
     })
     const lines = splitLines(args.onLine)
     const take = (chunk: Buffer) => {
@@ -68,7 +75,11 @@ export async function runSetup(args: {
     }
     child.stdout.on('data', take)
     child.stderr.on('data', take)
+    let done = false
     const finish = (ok: boolean, why?: string) => {
+      if (done) return
+      done = true
+      args.signal?.removeEventListener('abort', stop)
       if (why !== undefined) {
         log.write(`${why}\n`)
         args.onLine(why)
@@ -77,9 +88,19 @@ export async function runSetup(args: {
       log.end()
       resolve(ok)
     }
+    const stop = () => {
+      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+        try {
+          process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          child.kill('SIGKILL')
+        }
+      }
+    }
+    args.signal?.addEventListener('abort', stop, { once: true })
     child.once('error', (err) => finish(false, `could not run ${command}: ${err.message}`))
     child.once('close', (code) =>
-      finish(code === 0, code === 0 ? undefined : `exited with ${code}`),
+      finish(code === 0 && !args.signal?.aborted, code === 0 ? undefined : `exited with ${code}`),
     )
   })
 }
