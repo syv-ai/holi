@@ -261,8 +261,14 @@ test('problems are loud: a badge in the header, and the fix under it', async () 
     }),
   )
   const health = screen.getByLabelText('Meeting health')
-  expect(within(health).getByText('1 not transcribed')).toHaveClass('bg-destructive/10')
-  expect(within(health).getByText('Topics unreachable')).toHaveClass('bg-warning/10')
+  expect(within(health).getByText('1 not transcribed')).toHaveClass(
+    'bg-destructive',
+    'text-destructive-solid-foreground',
+  )
+  expect(within(health).getByText('Topics unreachable')).toHaveClass(
+    'bg-warning',
+    'text-badge-solid-foreground',
+  )
   expect(screen.getByText('The assistant isn’t receiving the transcript.')).toBeInTheDocument()
 }, 15_000)
 

@@ -135,7 +135,7 @@ function PluginSwitches() {
             align="start"
             titleAddon={
               failure !== undefined ? (
-                <Badge variant="destructive-light">Did not start</Badge>
+                <Badge variant="destructive">Did not start</Badge>
               ) : st?.kind === 'needs' || st?.kind === 'off-here' ? (
                 <Badge variant="secondary">Not running</Badge>
               ) : null

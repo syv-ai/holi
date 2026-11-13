@@ -235,7 +235,7 @@ function MailItem({
         {(chip !== null || thread.labels.length > 0) && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {chip !== null && (
-              <Badge variant="outline" size="sm">
+              <Badge variant="secondary" size="sm">
                 {chip}
               </Badge>
             )}
@@ -561,7 +561,7 @@ export function MailList({
             </DropdownMenuContent>
           </DropdownMenu>
           {unreadCount !== null && unreadCount > 0 && (
-            <Badge radius="full" variant="outline" size="sm">
+            <Badge radius="full" variant="secondary" size="sm">
               {unreadCount}
             </Badge>
           )}

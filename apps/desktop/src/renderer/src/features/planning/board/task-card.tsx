@@ -30,10 +30,10 @@ import {
 type DueState = 'normal' | 'watch' | 'risk' | 'cleared'
 
 const DUE_STATE_VARIANT = {
-  normal: 'info-light',
-  watch: 'warning-light',
-  risk: 'destructive-light',
-  cleared: 'success-light',
+  normal: 'info',
+  watch: 'warning',
+  risk: 'destructive',
+  cleared: 'success',
 } as const satisfies Record<DueState, string>
 
 /** The chip's name, worded like `DateBadge`'s everywhere else. */
