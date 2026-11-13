@@ -243,13 +243,14 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     cb: (s: VaultSnapshot) => void
   }>()
   const snapshots = new Map<string, { snapshot: VaultSnapshot; generation: number }>()
-  /** A disposer may temporarily use established providers. This provenance
-   *  lasts only while its owning disposer lease is draining. */
+  /** A disposer call may temporarily use established providers, only while
+   *  the awaited call is active and its owning disposer lease is draining. */
   type FinalizationOperation = {
     remote: string
     root: string
     state: VaultRun
     ownerLease: Started['lease']
+    active: boolean
   }
   const finalizationOperations = new AsyncLocalStorage<FinalizationOperation>()
   const eventListeners = new Set<{
@@ -461,6 +462,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       const operation = finalizationOperations.getStore()
       return (
         operation !== undefined &&
+        operation.active &&
         operation.remote === remote &&
         operation.root === root &&
         operation.state === state &&
@@ -571,7 +573,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           inherited !== undefined && inFinalization
             ? inherited
             : draining() && state.parked
-              ? { remote, root, state, ownerLease: lease }
+              ? { remote, root, state, ownerLease: lease, active: true }
               : null
         const invoke = () =>
           deps.call!(remote, name, params, async (target) => {
@@ -580,7 +582,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
               target.remote !== remote ||
               target.root !== root ||
               (operation !== null
-                ? operation.remote !== remote ||
+                ? !operation.active ||
+                  operation.remote !== remote ||
                   operation.root !== root ||
                   operation.state !== state ||
                   operation.ownerLease.phase !== 'draining' ||
@@ -595,7 +598,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
               throw new Error(`${remote} plugin context is no longer active`)
           })
         if (operation === null) return invoke()
-        return finalizationOperations.run(operation, invoke)
+        try {
+          return await finalizationOperations.run(operation, invoke)
+        } finally {
+          if (operation !== inherited) operation.active = false
+        }
       },
       log: (level, message, detail) => {
         if (!valid() && !draining()) return

@@ -290,6 +290,9 @@ describe('the plugin host', () => {
         return async () => {
           const result = await ctx.call('probe.final', {})
           expect(result).toEqual({ head: 'sha', nested: 'sha' })
+          // Keep the owner draining while detached work tries the provider:
+          // the awaited call ended, even though its disposer has not.
+          await lateProviderRead
         }
       },
     }
