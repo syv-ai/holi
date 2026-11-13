@@ -19,11 +19,18 @@ import { usePlanningFiles } from '@/state/planning'
 import { useSettingsFollowDisk } from '@/state/settings'
 import { useVaultTheme } from '@/state/vault-theme'
 import { applyVaultSwitchAtom, leavingVaultAtom } from '@/state/vault-switch'
-import { activeRemoteAtom, openVaultAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  openedRemoteAtom,
+  openVaultAtom,
+} from '@/state/vaults'
 import { LeaveVaultDialog } from './leave-vault-dialog'
 
 export function VaultHost() {
   const activeRemote = useAtomValue(activeRemoteAtom)
+  const activeRemoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
+  const openedRemote = useAtomValue(openedRemoteAtom)
   const colorMode = useAtomValue(activeModeAtom)
   const openVault = useSetAtom(openVaultAtom)
   const leaveReasons = useAtomValue(leaveReasonsAtom)
@@ -45,14 +52,22 @@ export function VaultHost() {
 
   // Open the active vault in main, once per remote: the only caller of
   // `vaults.open`, so a cold start and a switch both open here.
-  const openedRemote = useRef<string | null>(null)
+  const attemptedOpen = useRef<{ remote: string; revision: number } | null>(null)
   useEffect(() => {
-    if (!activeRemote || openedRemote.current === activeRemote) return
-    openedRemote.current = activeRemote
+    if (
+      !activeRemote ||
+      openedRemote === activeRemote ||
+      (attemptedOpen.current?.remote === activeRemote &&
+        attemptedOpen.current.revision === activeRemoteRevision)
+    )
+      return
+    attemptedOpen.current = { remote: activeRemote, revision: activeRemoteRevision }
     // Landed: main may send the opens it held for a window that had not
     // (a clicked reminder, `holi docs open`, a Holi link).
-    void openVault(activeRemote).then(() => window.holi.vault.openReady())
-  }, [activeRemote, openVault])
+    void openVault(activeRemote).then((landed) => {
+      if (landed) window.holi.vault.openReady()
+    })
+  }, [activeRemote, activeRemoteRevision, openedRemote, openVault])
 
   /** Adding a vault opens it, leaving this one as a switch does. Asked at the
    *  trigger, before someone names a repo and waits for a clone. */

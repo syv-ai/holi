@@ -7,15 +7,17 @@
  * test and still leave deleted notes on screen forever.
  */
 import { createStore } from 'jotai'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { VaultSnapshot } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 import {
   activeRemoteAtom,
   addVaultAtom,
   createVaultAtom,
+  loadSnapshotAtom,
   loadVaultsAtom,
   openVaultAtom,
+  openedRemoteAtom,
   snapshotAtom,
   subscribeToVault,
   vaultsAtom,
@@ -70,6 +72,89 @@ describe('vaults', () => {
     // The assertion that matters. A reducer that merged frames would leave
     // `b.md` in the tree until the next vault switch.
     expect(store.get(snapshotAtom).docs.map((d) => d.path)).toEqual(['a.md'])
+  })
+
+  it('does not let an older open overwrite a newer vault selection', async () => {
+    const responses = new Map<string, (value: VaultSnapshot) => void>()
+    holi = installFakeHoli((op) => {
+      if (op.path !== 'vaults.open') return undefined
+      const remote = (op.input as { remote: string }).remote
+      return new Promise<VaultSnapshot>((resolve) => responses.set(remote, resolve))
+    })
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+
+    const alpha = store.set(openVaultAtom, 'syv-ai/alpha')
+    await vi.waitFor(() => expect(responses.has('syv-ai/alpha')).toBe(true))
+    store.set(activeRemoteAtom, 'syv-ai/beta')
+    const beta = store.set(openVaultAtom, 'syv-ai/beta')
+    await vi.waitFor(() => expect(responses.has('syv-ai/beta')).toBe(true))
+
+    responses.get('syv-ai/beta')!(snapshot('beta.md'))
+    await beta
+    responses.get('syv-ai/alpha')!(snapshot('alpha.md'))
+    await alpha
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/beta')
+    expect(store.get(snapshotAtom).docs.map((doc) => doc.path)).toEqual(['beta.md'])
+    expect(store.get(openedRemoteAtom)).toBe('syv-ai/beta')
+  })
+
+  it('rejects an open after the selection changes before another open starts', async () => {
+    let resolveOpen!: (value: VaultSnapshot) => void
+    holi = installFakeHoli(() => new Promise<VaultSnapshot>((resolve) => (resolveOpen = resolve)))
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+
+    const pending = store.set(openVaultAtom, 'syv-ai/alpha')
+    await vi.waitFor(() => expect(holi!.calls).toHaveLength(1))
+    store.set(activeRemoteAtom, 'syv-ai/beta')
+    resolveOpen(snapshot('alpha.md'))
+
+    await expect(pending).resolves.toBe(false)
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/beta')
+    expect(store.get(snapshotAtom).docs).toEqual([])
+    expect(store.get(openedRemoteAtom)).toBeNull()
+  })
+
+  it('uses the latest intent for A→B→A and overlapping same-vault opens', async () => {
+    const responses: ((value: VaultSnapshot) => void)[] = []
+    holi = installFakeHoli(() => new Promise<VaultSnapshot>((resolve) => responses.push(resolve)))
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+
+    const first = store.set(openVaultAtom, 'syv-ai/alpha')
+    await vi.waitFor(() => expect(responses).toHaveLength(1))
+    store.set(activeRemoteAtom, 'syv-ai/beta')
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    const second = store.set(openVaultAtom, 'syv-ai/alpha')
+    await vi.waitFor(() => expect(responses).toHaveLength(2))
+
+    responses[1]!(snapshot('latest.md'))
+    await expect(second).resolves.toBe(true)
+    responses[0]!(snapshot('stale.md'))
+    await expect(first).resolves.toBe(false)
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
+    expect(store.get(snapshotAtom).docs.map((doc) => doc.path)).toEqual(['latest.md'])
+    expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha')
+  })
+
+  it('does not publish a snapshot query for a no-longer-active vault', async () => {
+    let resolveSnapshot!: (value: VaultSnapshot) => void
+    holi = installFakeHoli(
+      () => new Promise<VaultSnapshot>((resolve) => (resolveSnapshot = resolve)),
+    )
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+
+    const pending = store.set(loadSnapshotAtom)
+    await vi.waitFor(() => expect(holi!.calls).toHaveLength(1))
+    store.set(activeRemoteAtom, 'syv-ai/beta')
+    resolveSnapshot(snapshot('alpha.md'))
+    await pending
+
+    expect(store.get(snapshotAtom).docs).toEqual([])
   })
 
   it('opening a vault switches the active remote and takes its snapshot', async () => {

@@ -26,9 +26,24 @@ export const vaultsAtom = atom<VaultEntry[]>([])
  *  empty list (first run) apart from a not-yet-loaded one. */
 export const vaultsLoadedAtom = atom(false)
 
+const activeRemoteValueAtom = atom<string | null>(null)
+const activeRemoteRevisionAtom = atom(0)
+
+/** Changes on every actual active-vault transition, including A→B→A. */
+export const activeRemoteRevisionValueAtom = atom((get) => get(activeRemoteRevisionAtom))
+
 /** The open vault, as `owner/repo`. A vault has no id: the remote IS the
- * identity, and the clone's path is machine-local. */
-export const activeRemoteAtom = atom<string | null>(null)
+ * identity, and the clone's path is machine-local. The revision records every
+ * actual selection change, including an A→B→A transition during async work. */
+export const activeRemoteAtom = atom(
+  (get) => get(activeRemoteValueAtom),
+  (get, set, remote: string | null) => {
+    if (get(activeRemoteValueAtom) === remote) return
+    set(activeRemoteValueAtom, remote)
+    set(activeRemoteRevisionAtom, (revision) => revision + 1)
+    set(openedRemoteAtom, null)
+  },
+)
 
 /** The remote whose main-process `vaults.open` has completed. Plugin vault
  * hooks must not run until main has finished opening that vault. */
@@ -152,7 +167,10 @@ export const loadVaultsAtom = atom(null, async (get, set) => {
 export const loadSnapshotAtom = atom(null, async (get, set) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return set(snapshotAtom, EMPTY_SNAPSHOT)
-  set(snapshotAtom, await trpc.vaults.snapshot.query({ remote }))
+  const revision = get(activeRemoteRevisionAtom)
+  const snapshot = await trpc.vaults.snapshot.query({ remote })
+  if (get(activeRemoteAtom) === remote && get(activeRemoteRevisionAtom) === revision)
+    set(snapshotAtom, snapshot)
 })
 
 /**
@@ -162,18 +180,35 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
  * A vault switch in main is a teardown: exactly one `ActiveVault` exists. Nothing
  * here may keep a snapshot keyed by remote.
  */
-export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
+const openRequestAtom = atom(0)
+
+export const openVaultAtom = atom(null, async (get, set, remote: string): Promise<boolean> => {
+  const request = get(openRequestAtom) + 1
+  set(openRequestAtom, request)
+  const selectionRevision = get(activeRemoteRevisionAtom)
+
   // A cross-vault open (`onOpen` below) arrives with the old vault's editors
   // still mounted: what was typed goes into the vault it was typed in, before
   // that one closes. A switch from the vault menu flushed already
   // (`applyVaultSwitchAtom`), and this finds nothing left to write.
   await flushAllBuffers()
-  // Nothing of the vault left carries over: its document runs ended with it.
-  set(documentRunsAtom, {})
+  // A newer selection or open request owns the main-process transition now.
+  // Do not switch the renderer or clear per-vault state for a stale request.
+  if (get(openRequestAtom) !== request || get(activeRemoteRevisionAtom) !== selectionRevision)
+    return false
+
   const snapshot = await trpc.vaults.open.mutate({ remote })
+  if (get(openRequestAtom) !== request || get(activeRemoteRevisionAtom) !== selectionRevision)
+    return false
+
+  // Publish the cross-vault document-open selection only after main has opened
+  // it. This lets VaultHost observe openedRemote alongside activeRemote and
+  // avoid starting a duplicate open for the same request.
   set(activeRemoteAtom, remote)
+  set(documentRunsAtom, {})
   set(snapshotAtom, snapshot)
   set(openedRemoteAtom, remote)
+  return true
 })
 
 /**
@@ -249,7 +284,9 @@ export function subscribeToVault(
   // heading is where the document's view puts the caret.
   const offReminder = window.holi.vault.onOpen(({ remote, path, heading }) => {
     if (remote && remote !== store.get(activeRemoteAtom)) {
-      void store.set(openVaultAtom, remote).then(() => store.set(openDocumentAtom, path, heading))
+      void store.set(openVaultAtom, remote).then((landed) => {
+        if (landed) store.set(openDocumentAtom, path, heading)
+      })
     } else {
       store.set(openDocumentAtom, path, heading)
     }
