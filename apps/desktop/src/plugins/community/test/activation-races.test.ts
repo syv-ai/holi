@@ -138,6 +138,12 @@ describe('production community activation races', () => {
     await h.call(h.activations[0]!, 'community.release', { lease: a.lease })
     expect(await fetchOrigin(replacement.port)).toBe('ok')
     await h.call(h.activations[0]!, 'community.release', { lease: replacement.lease })
+    await h.activations[0]!.dispose()
+    expect(await fetchOrigin(b.port)).toBe('ok')
+    expect(h.activations[1]!.origins.has(originB!)).toBe(true)
+    expect(await readlink(join(h.activations[1]!.root, PLUGIN_COMMANDS_DIR, commandName))).toBe(
+      await realpath(join(h.pluginDir, 'bin/sample')),
+    )
     await h.call(h.activations[1]!, 'community.release', { lease: b.lease })
   })
 
@@ -169,14 +175,29 @@ describe('production community activation races', () => {
       )
     }
     const codePath = (await h.call(h.activations[0]!, 'community.path', { id: 'sample' })) as string
-    let resolved = false
-    const removing = h.call(h.activations[1]!, 'community.remove', { id: 'sample' }).then(() => {
-      resolved = true
-    })
+    const releasing = h.call(h.activations[0]!, 'community.release', { lease: lease.lease })
     await waitFor(() => h.activations[0]!.origins.size === 0, 'origin was not revoked')
-    expect(resolved).toBe(false)
-    expect(await readFile(join(codePath, 'holi-plugin.json'), 'utf8')).toContain('sample')
-    await removing
+    // Destructive removal must join the stop already started by the last release.
+    const removeInstall = h.owner.store.remove
+    let checkedRemoval = false
+    h.owner.store.remove = async (id) => {
+      await expect(fetchOrigin(lease.port)).rejects.toThrow()
+      checkedRemoval = true
+      return removeInstall(id)
+    }
+    try {
+      let resolved = false
+      const removing = h.call(h.activations[1]!, 'community.remove', { id: 'sample' }).then(() => {
+        resolved = true
+      })
+      expect(resolved).toBe(false)
+      expect(await readFile(join(codePath, 'holi-plugin.json'), 'utf8')).toContain('sample')
+      await removing
+      await releasing
+      expect(checkedRemoval).toBe(true)
+    } finally {
+      h.owner.store.remove = removeInstall
+    }
     expect(await h.owner.store.get('sample')).toBeNull()
     expect(existsSync(join(h.userData, 'plugins', 'sample'))).toBe(false)
     expect(h.activations.every((activation) => activation.origins.size === 0)).toBe(true)
