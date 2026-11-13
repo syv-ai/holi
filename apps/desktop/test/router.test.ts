@@ -127,7 +127,13 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     pluginEnabled: async () => true,
     claims: TASKS,
   })
+  const openPastedHoliLink = vi.fn(async (url: string) =>
+    url.includes('valid')
+      ? { ok: true as const }
+      : { ok: false as const, message: 'failure', detail: 'detail' },
+  )
   const caller = createRouter({
+    openPastedHoliLink,
     seed: seedVault,
     plugins: {
       reconcile: async () => {},
@@ -146,8 +152,28 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
-  return { caller, root, registry, host, session, base, trashItem, showItemInFolder, capabilities }
+  return {
+    caller,
+    root,
+    registry,
+    host,
+    session,
+    base,
+    trashItem,
+    showItemInFolder,
+    capabilities,
+    openPastedHoliLink,
+  }
 }
+
+describe('pasted Holi links', () => {
+  it('routes the raw URL to the shared main-side opener and returns its result', async () => {
+    const { caller, openPastedHoliLink } = await rig()
+    const url = 'holi://open?valid=true'
+    await expect(caller.holiLinks.openPasted({ url })).resolves.toEqual({ ok: true })
+    expect(openPastedHoliLink).toHaveBeenCalledWith(url)
+  })
+})
 
 describe('settings', () => {
   // Reachability, not resolution: the resolver is tested on strings in
@@ -320,6 +346,37 @@ describe('vaults', () => {
     // Recoverable delete: the clone went to the OS trash, not an rm — so the
     // private vault, or one deleted by mistake, can be restored and re-ingested.
     expect(trashItem).toHaveBeenCalledWith(root)
+    expect(await caller.vaults.list()).toEqual([])
+  })
+
+  it('deleteClones closes every runtime before trashing any clone', async () => {
+    const { caller, host, registry, base, root } = await rig({ 'a.md': '# A\n' })
+    const secondRoot = join(base, 'second-clone')
+    await mkdir(secondRoot, { recursive: true })
+    await seedVault(secondRoot)
+    for (const cloneRoot of [root, secondRoot]) {
+      await plainGit(cloneRoot, ['init', '-b', 'main'])
+      await plainGit(cloneRoot, ['config', 'user.name', 'Test'])
+      await plainGit(cloneRoot, ['config', 'user.email', 'test@example.com'])
+      await plainGit(cloneRoot, ['add', '-A'])
+      await plainGit(cloneRoot, ['commit', '-m', 'seed'])
+    }
+    await registry.add({
+      remote: 'syv-ai/second',
+      path: secondRoot,
+      name: 'second',
+      lastOpenedAt: '2026-07-01T00:00:00Z',
+    })
+
+    await caller.vaults.open({ remote: REMOTE })
+    await host.getOrOpen('syv-ai/second')
+    expect(host.get(REMOTE)).not.toBeNull()
+    expect(host.get('syv-ai/second')).not.toBeNull()
+
+    await caller.vaults.deleteClones()
+
+    expect(host.get(REMOTE)).toBeNull()
+    expect(host.get('syv-ai/second')).toBeNull()
     expect(await caller.vaults.list()).toEqual([])
   })
 

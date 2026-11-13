@@ -58,6 +58,7 @@ async function open(text = markdown) {
     </Provider>,
   )
   await waitFor(() => expect(e.view.dom.querySelector('svg')).not.toBeNull())
+  await screen.findByRole('button', { name: 'Edit labels' })
   updates.mockClear()
   return { e, store, view, updates }
 }

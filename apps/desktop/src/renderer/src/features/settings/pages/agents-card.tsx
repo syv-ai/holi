@@ -189,7 +189,7 @@ export function AgentsCard() {
   return (
     <SettingsGroup
       title="Agents"
-      description="The coding agents on this machine. A new session starts in the default one; hover the Sessions + to start another."
+      description="The coding agents on this machine. A new session starts in the default one; click the Sessions + to choose an agent."
       action={
         <Button variant="outline" size="sm" onClick={() => edit(null)}>
           <PlusIcon data-icon="inline-start" aria-hidden="true" />
