@@ -27,7 +27,7 @@ import { realpath } from 'node:fs/promises'
 import type { Dispatch } from '../capabilities/dispatch'
 import type { CliCommand } from '../capabilities/registry'
 import { CapabilityError } from '../capabilities/error'
-import { refusalText, resolveArgv } from './cli'
+import { refusalText, resolveArgv, runScript } from './cli'
 import { SPILL_BYTES, spillNotice, spillOutput } from './spill'
 import { projectJsonFields } from './json-fields'
 
@@ -145,8 +145,9 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
    * answer itself, so it answers text: 200 with it (or, past `SPILL_BYTES`,
    * with where it was written, as JSON when the answer was asked for as JSON),
    * 422 with a refusal and its next step, 400 with usage (200 when usage was
-   * what was asked for), or 428, having run
-   * nothing, when the command reads a param from stdin that was not given.
+   * what was asked for), 428, having run
+   * nothing, when the command reads a param from stdin that was not given, or
+   * 202 with the shell that runs a program in the script's place (`cliRun`).
    */
   const MACHINE_LIST: CliCommand = {
     name: 'vault.list',
@@ -371,6 +372,26 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
             }
           : {}),
       })
+      // The invocation may have awaited while its machine target was closed or
+      // replaced. Fence only executable handoffs: completed commands keep their
+      // receipt, but a stale target must not receive a shell command.
+      if (result.run !== undefined && machineTarget && cli.machine) {
+        const current = await cli.machine.resolveTarget(machineTarget.remote, null)
+        if (
+          !current ||
+          current.remote.toLowerCase() !== machineTarget.remote.toLowerCase() ||
+          current.root !== machineTarget.root ||
+          !current.live
+        ) {
+          throw new CapabilityError('UNAVAILABLE', 'vault target changed or is no longer available')
+        }
+      }
+      // Recheck the capability lease after all asynchronous machine-target
+      // validation, immediately before returning the executable handoff.
+      if (result.run !== undefined) {
+        result.validateRun?.()
+        return { status: 202, body: runScript(result.run) }
+      }
       const succeeded = commandSucceeded(cli.commands(targetRemote), request.name, result.value)
       // A command that answered with its own failure: 422, the answer whole.
       if (!succeeded) return { status: 422, body: JSON.stringify(result.value, null, 2) }

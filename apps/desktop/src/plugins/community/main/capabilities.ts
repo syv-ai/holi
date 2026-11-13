@@ -1,7 +1,9 @@
 /**
- * Community plugins' capabilities, all at the UI door only: installing,
+ * Community plugins' capabilities, nearly all at the UI door only: installing,
  * consenting to and running code is the person's own act in the settings
- * tab, never something an app or the agent can ask for.
+ * tab, never something an app or the agent can ask for. At the CLI door are
+ * a running plugin's folder (`holi community path`) and its verbs
+ * (`holi plugin`, `verbs.ts`), each only for a plugin someone allowed here.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
@@ -53,8 +55,9 @@ import { linkCommands, linkedIn, unlinkCommands, type LinkedCommands } from './c
 import { expandCommand, pluginEnv, runSetup } from './setup'
 import type { Install, InstallStore } from './store'
 import type { ServerState, Supervisor } from './supervisor'
+import { resolveVerb, type RunningPlugin, type VerbAnswer } from './verbs'
 
-export const COMMUNITY_NAMESPACES = ['community'] as const
+export const COMMUNITY_NAMESPACES = ['community', 'plugin'] as const
 
 /** Where a plugin stands, for this vault on this machine, in the order the
  *  settings tab walks someone through. */
@@ -95,6 +98,9 @@ export interface PluginRow {
   apps: string[]
   /** The commands it adds to the agent's `PATH`, for the consent dialog. */
   bin: string[]
+  /** What `holi plugin <id> <verb>` runs and its verbs, for the consent
+   *  dialog; null for a plugin without verbs. */
+  cli: { run: string[]; verbs: string[] } | null
   /** Running, which of its commands the agent did not get and why, as the
    *  vault's last rebuild left them; null when it has them all. */
   commandsNote: string | null
@@ -202,6 +208,10 @@ function rowOf(
     serve: manifest.serve ?? null,
     apps: manifest.apps ?? [],
     bin: Object.keys(manifest.bin ?? {}),
+    cli:
+      manifest.cli === undefined
+        ? null
+        : { run: manifest.cli.run, verbs: Object.keys(manifest.cli.verbs) },
     commandsNote: on && status === 'ready' ? commandsNote(id, linked) : null,
     check: on && status === 'ready' && manifest.check !== undefined ? check : null,
   }
@@ -219,7 +229,7 @@ function commandsNote(id: string, linked: LinkedCommands | null): string | null 
  *  lists them.
  * @public exported for its test
  */
-export async function listPlugins(
+async function pluginEntries(
   root: string,
   deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },
 ) {
@@ -236,9 +246,19 @@ export async function listPlugins(
       const status = await statusOf(install, pin, deps.consent)
       const on = settings.plugins.vault[id] === true
       const check = deps.checks?.get(root, id) ?? null
-      return rowOf(id, install, pin, status, on, linkedIn(root), check)
+      return {
+        row: rowOf(id, install, pin, status, on, linkedIn(root), check),
+        install,
+      }
     }),
   )
+}
+
+export async function listPlugins(
+  root: string,
+  deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },
+) {
+  return (await pluginEntries(root, deps)).map(({ row }) => row)
 }
 
 const idParams = (raw: unknown) => ({ id: stringParam(paramsObject(raw), 'id') })
@@ -559,6 +579,39 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         return deps.store.codeDir(await installOf(id))
       },
       text: (dir) => dir,
+    }),
+
+    // A running plugin's verbs, `holi plugin <id> <verb> …`: read here and
+    // run by the `holi` script in its own place (`verbs.ts`). Each call asks,
+    // as any command does, until the person allows that plugin's verb.
+    'plugin.run': cap({
+      doors: ['cli'],
+      cli: {
+        args: [],
+        rest: true,
+        summary: "a running community plugin's verbs: holi plugin <id> <verb> [arguments]",
+      },
+      params: (raw): { argv: string[] } => {
+        const argv = paramsObject(raw).argv
+        if (!Array.isArray(argv) || !argv.every((w) => typeof w === 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'argv must be a list of words')
+        return { argv }
+      },
+      run: async (ctx, { argv }): Promise<VerbAnswer> => {
+        const running: RunningPlugin[] = []
+        for (const { row, install } of await pluginEntries(ctx.root, deps)) {
+          if (!row.running || install === null) continue
+          running.push({
+            id: row.id,
+            name: row.name,
+            ...(install.manifest.cli === undefined ? {} : { cli: install.manifest.cli }),
+            codeDir: deps.store.codeDir(install),
+          })
+        }
+        return resolveVerb(argv, running, ctx.root)
+      },
+      cliRun: (answer) => (answer.kind === 'run' ? answer.run : null),
+      text: (answer) => (answer.kind === 'text' ? answer.text : ''),
     }),
 
     'community.unpin': cap({
