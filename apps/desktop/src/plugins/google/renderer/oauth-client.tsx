@@ -51,12 +51,14 @@ function clientLabel(client: ClientInfo): string {
 
 export function OAuthClient({
   accountCount,
-  onChanged,
+  beforeChange,
+  disabled = false,
   visible = true,
 }: {
   /** The accounts connected on this machine: what a new client disconnects. */
   accountCount: number
-  onChanged: () => void
+  beforeChange: (change: () => Promise<void>) => Promise<string | null>
+  disabled?: boolean
   visible?: boolean
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
@@ -103,10 +105,15 @@ export function OAuthClient({
     if (remote === null) return
     setBusy(true)
     try {
-      await googleCap.setClient(remote, next)
+      const error = await beforeChange(async () => {
+        await googleCap.setClient(remote, next)
+      })
+      if (error !== null) {
+        setError(error)
+        return
+      }
       close()
       setVersion((v) => v + 1)
-      onChanged()
     } catch (err) {
       setAsking(null)
       setError(err instanceof Error ? err.message : 'Could not save the client.')
@@ -156,7 +163,7 @@ export function OAuthClient({
           <Button
             variant="outline"
             size="sm"
-            disabled={client === null}
+            disabled={client === null || disabled}
             onClick={() => setOpen(true)}
           >
             {client?.source === 'own' ? 'Change client…' : 'Use your own client…'}

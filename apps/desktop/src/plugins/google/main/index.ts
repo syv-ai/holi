@@ -13,13 +13,14 @@ import { join } from 'node:path'
 import { pluginSettingValue } from '@holi/shared'
 import { readVaultSettings, writePluginSettings, type MainPlugin } from '../../../main/plugin-api'
 import { GOOGLE_INFO } from '../info'
-import { GoogleApi } from './api'
 import { openGoogleCache, type GoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
 import { GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
+import { accountApi } from './account-api'
 import { googleSeed } from './seed'
 import { startGoogleTriggers } from './triggers'
+import type { GoogleSession } from './session'
 
 export const googleMain: MainPlugin = {
   info: GOOGLE_INFO,
@@ -34,7 +35,9 @@ export const googleMain: MainPlugin = {
     /** Each account's data, memoized while the plugin runs: one cache file
      *  per account, which outlives it, so a later start does not re-fetch. */
     const bySub = new Map<string, { data: GoogleData; cache: GoogleCache }>()
-    const dataForSub = (sub: string): GoogleData => {
+    const dataForSession = (session: GoogleSession): GoogleData => {
+      const sub = session.accountSub
+      if (sub === null) throw new Error('that Google account is no longer connected')
       const held = bySub.get(sub)
       if (held !== undefined) return held.data
       // `sub` becomes a filename. It is a numeric string from Google today, but
@@ -43,16 +46,9 @@ export const googleMain: MainPlugin = {
       const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
       cache.ensureShape()
       const data = createGoogleData({
-        // Bound to THIS account's session, not to whatever vault is active:
-        // the cache and the client it fills from have to be the same account.
-        api: () =>
-          new GoogleApi({
-            accessToken: () => {
-              const session = accounts.sessionForSub(sub)
-              if (session === null) throw new Error('that Google account is no longer connected')
-              return session.getAccessToken()
-            },
-          }),
+        // Resolve the current session rather than retaining the one present
+        // when this per-account cache was first created; reconnect replaces it.
+        api: accountApi(sub, (accountSub) => accounts.sessionForSub(accountSub)),
         cache,
       })
       bySub.set(sub, { data, cache })
@@ -73,8 +69,8 @@ export const googleMain: MainPlugin = {
     })
 
     const dataFor = async (remote: string): Promise<GoogleData | null> => {
-      const sub = (await accounts.sessionFor(remote))?.accountSub ?? null
-      return sub === null ? null : dataForSub(sub)
+      const session = await accounts.sessionFor(remote)
+      return session === null ? null : dataForSession(session)
     }
     // The vault's own Google settings, in its local plugins file: the agenda
     // view, an app, the agent and the triggers all read through them.
@@ -91,6 +87,7 @@ export const googleMain: MainPlugin = {
       googleCapabilities({
         accounts,
         dataFor,
+        dataForSession,
         settings: {
           read: readSettings,
           write: async (root, values) => {
