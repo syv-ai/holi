@@ -36,7 +36,7 @@ export type SettingsPage = {
   label: string
   icon: IconGlyph
   description: string
-  Component: ComponentType<{ remote: string }>
+  Component: ComponentType<{ remote: string; visible?: boolean }>
 }
 
 export type SettingsGroup = {
@@ -136,7 +136,9 @@ export const settingsGroupsAtom = atom((get): readonly SettingsGroup[] => {
         label: 'Plugins',
         icon: PuzzleIcon,
         description: 'What this vault runs beyond the core.',
-        Component: ({ remote }) => <PluginsPage nested={nested} remote={remote} />,
+        Component: ({ remote, visible }) => (
+          <PluginsPage nested={nested} remote={remote} visible={visible} />
+        ),
       },
       // A plugin's own page draws what it likes inside one card, titled with
       // the plugin's name and what it is.
@@ -147,10 +149,10 @@ export const settingsGroupsAtom = atom((get): readonly SettingsGroup[] => {
           label: section.label,
           icon: section.icon ?? CableIcon,
           description: section.description ?? '',
-          Component: ({ remote }: { remote: string }) => (
+          Component: ({ remote, visible }: { remote: string; visible?: boolean }) => (
             <SettingsGroup title={info.label} description={info.description}>
               <div className="px-4 py-3">
-                <section.Component remote={remote} />
+                <section.Component remote={remote} visible={visible} />
               </div>
             </SettingsGroup>
           ),

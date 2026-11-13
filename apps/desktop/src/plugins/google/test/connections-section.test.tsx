@@ -14,14 +14,15 @@ import { activeRemoteAtom } from '@/plugin-api'
 
 /** A fresh jotai store per test: the google atoms are module level, so one
  *  case's answer would otherwise still be held when the next one renders. */
-const render = () => {
+const render = (visible = true) => {
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/vault')
-  return rtlRender(
+  const result = rtlRender(
     <Provider store={store}>
-      <ConnectionsSection />
+      <ConnectionsSection visible={visible} />
     </Provider>,
   )
+  return { ...result, store }
 }
 
 const status = vi.fn()
@@ -78,6 +79,30 @@ beforeEach(() => {
 })
 
 describe('ConnectionsSection', () => {
+  it('closes the OAuth dialog when its Settings page is hidden and preserves its draft', async () => {
+    const mounted = render()
+    await screen.findByRole('button', { name: 'Use your own client…' })
+    await userEvent.click(screen.getByRole('button', { name: 'Use your own client…' }))
+    const id = screen.getByLabelText('Client ID')
+    await userEvent.type(id, 'unfinished-client')
+    expect(screen.getByRole('dialog', { name: 'Your own OAuth client' })).toBeInTheDocument()
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible={false} />
+      </Provider>,
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible />
+      </Provider>,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: 'Use your own client…' }))
+    expect(screen.getByLabelText('Client ID')).toHaveValue('unfinished-client')
+  })
+
   it('offers the accounts already connected here to a vault with none', async () => {
     render()
 

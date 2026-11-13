@@ -6,7 +6,7 @@
  * agent's Edit opens on that agent.
  */
 import { Provider, createStore } from 'jotai'
-import { act } from 'react'
+import { act, useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
   VAULT_SETTING_DEFAULTS,
@@ -21,7 +21,7 @@ import { openSettingsSectionAtom } from '@/state/settings-section'
 import { vaultSettingsAtom } from '@/state/settings'
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
-import { entryIds, selectEntry } from '@/state/shell-workspace'
+import { closeTab as closeShellTab, entryIds, selectEntry } from '@/state/shell-workspace'
 import { parseTabKey, SETTINGS_KEY, tabKey } from '@/state/tab-descriptor'
 import { EditorPage } from '../pages/editor-page'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
@@ -152,7 +152,7 @@ const CONNECTIONS: RendererPlugin = {
       label: 'Connections',
       headings: [],
       files: [],
-      Component: () => <p>Connect a Google account</p>,
+      Component: ConnectionsSettings,
     },
   ],
 }
@@ -162,6 +162,16 @@ const AGENT_PLUGIN = {
   info: { id: 'stand-in', label: 'Stand-in', default: true },
   agent: { name: 'Claude' },
 } as never
+
+function ConnectionsSettings() {
+  const [draft, setDraft] = useState('')
+  return (
+    <label>
+      Connection draft
+      <input value={draft} onChange={(event) => setDraft(event.target.value)} />
+    </label>
+  )
+}
 
 function mount({ agent = false }: { agent?: boolean } = {}) {
   const store = createStore()
@@ -249,7 +259,7 @@ test("Open Connections lands on the plugin's own page", async () => {
   const store = mount()
   act(() => store.set(openSettingsSectionAtom, 'connections'))
   expect(await screen.findByRole('heading', { level: 1, name: 'Connections' })).toBeTruthy()
-  expect(screen.getByText('Connect a Google account')).toBeTruthy()
+  expect(screen.getByLabelText('Connection draft')).toBeTruthy()
   const nav = screen.getByRole('navigation', { name: 'Settings' })
   expect(within(nav).getByRole('button', { name: 'Connections' })).toHaveAttribute(
     'aria-current',
@@ -407,4 +417,82 @@ test("an agent's Edit opens on that agent, every time, and saves it", async () =
     paramsJson: string
   }
   expect(JSON.parse(saved.paramsJson)).toMatchObject({ harness: { id: 'aider' }, create: false })
+})
+
+test('the current settings page keeps its draft across tab switches', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  const draft = await screen.findByLabelText('Connection draft')
+  fireEvent.change(draft, { target: { value: 'unfinished connection' } })
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  expect(screen.getByLabelText('Connection draft').closest('[inert]')).not.toBeNull()
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(await screen.findByLabelText('Connection draft')).toHaveValue('unfinished connection')
+})
+
+test('changing settings pages and closing Settings reset page-local drafts', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  fireEvent.change(await screen.findByLabelText('Connection draft'), {
+    target: { value: 'unfinished connection' },
+  })
+
+  act(() => store.set(openSettingsSectionAtom, 'editor'))
+  expect(await screen.findByRole('heading', { level: 1, name: 'Editor' })).toBeTruthy()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  expect(await screen.findByLabelText('Connection draft')).toHaveValue('')
+  fireEvent.change(screen.getByLabelText('Connection draft'), {
+    target: { value: 'discard on close' },
+  })
+
+  act(() => store.set(shellWorkspaceAtom, (workspace) => closeShellTab(workspace, SETTINGS_KEY)))
+  fireEvent.keyDown(window, { key: ',', metaKey: true })
+  expect(await screen.findByLabelText('Connection draft')).toHaveValue('')
+})
+
+test('a settings dialog closes when its tab is hidden and stays closed on return', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'account'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+  expect(await screen.findByRole('alertdialog')).toBeTruthy()
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.queryByRole('alertdialog')).toBeNull()
+})
+
+test('a settings menu closes and releases focus when its tab is hidden', async () => {
+  const store = mount({ agent: true })
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  fireEvent.keyDown(await screen.findByRole('button', { name: 'More for Aider' }), {
+    key: 'Enter',
+  })
+  expect(await screen.findByRole('menuitem', { name: 'Edit' })).toBeTruthy()
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull()
+})
+
+test('disabling a plugin releases its settings page and falls back to General', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  expect(await screen.findByLabelText('Connection draft')).toBeTruthy()
+  act(() =>
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: {
+        ...SETTINGS,
+        plugins: {
+          ...SETTINGS.plugins,
+          vault: { ...SETTINGS.plugins.vault, google: false },
+        },
+      },
+    }),
+  )
+  expect(await screen.findByRole('heading', { level: 1, name: 'General' })).toBeTruthy()
+  expect(screen.queryByLabelText('Connection draft')).toBeNull()
 })

@@ -18,6 +18,7 @@ import { ExternalLinkIcon, FolderOpenIcon, ShieldCheckIcon } from 'lucide-react'
 import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from '../settings-kit'
 import { AgentsCard } from './agents-card'
 import { openExternal } from '@/lib/open-external'
+import { useSettingsVisible } from '../settings-view'
 
 const githubUrl = (path: string) => `https://github.com/${path}`
 
@@ -34,7 +35,8 @@ const SYNC_BADGE: Record<SyncLabel['tone'], 'success-light' | 'info-light' | 'wa
  * says it is waiting rather than guess.
  */
 function RepoSizeRow({ remote }: { remote: string }) {
-  const sizeKb = useRepoSize(remote)
+  const visible = useSettingsVisible()
+  const sizeKb = useRepoSize(visible ? remote : null)
   const percent = sizeKb === null ? null : repoUsagePercent(sizeKb)
   return (
     <SettingsFieldRow

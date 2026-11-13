@@ -414,6 +414,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       ) {
         return true
       }
+      if (descriptor?.kind === 'settings') return true
       return (
         descriptor?.kind === 'session' &&
         (running

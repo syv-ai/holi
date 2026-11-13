@@ -87,7 +87,7 @@ export function TabView({
       )
     }
     case 'settings':
-      return <SettingsView navHidden={!settingsNavInSidebar} />
+      return <SettingsView navHidden={!settingsNavInSidebar} visible={visible} />
     case 'app': {
       const AppView = apps.find((app) => app.id === descriptor.id)?.render
       if (AppView === undefined) {

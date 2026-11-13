@@ -60,7 +60,7 @@ const OUTCOME: Record<string, string> = {
   cancelled: '',
 }
 
-export function ConnectionsSection(): React.JSX.Element {
+export function ConnectionsSection({ visible = true }: { visible?: boolean }): React.JSX.Element {
   const {
     account,
     loading,
@@ -81,10 +81,16 @@ export function ConnectionsSection(): React.JSX.Element {
   const [removing, setRemoving] = useState<{ sub: string; email: string } | null>(null)
 
   useEffect(() => {
-    return () => {
-      if (connecting.current !== null) void googleCap.cancelConnect(connecting.current)
+    if (visible) {
+      return () => {
+        if (connecting.current !== null) void googleCap.cancelConnect(connecting.current)
+      }
     }
-  }, [])
+    if (connecting.current !== null) void googleCap.cancelConnect(connecting.current)
+    connecting.current = null
+    setPhase({ kind: 'idle' })
+    setRemoving(null)
+  }, [visible])
 
   const connect = async () => {
     if (remote === null) return
@@ -297,12 +303,12 @@ export function ConnectionsSection(): React.JSX.Element {
           ))}
 
           {/* Machine-wide: the client every account here was granted to. */}
-          <OAuthClient accountCount={accounts.length} onChanged={refreshGoogle} />
+          <OAuthClient accountCount={accounts.length} onChanged={refreshGoogle} visible={visible} />
         </div>
       </FramePanel>
 
       <ConfirmDialog
-        open={removing !== null}
+        open={visible && removing !== null}
         onOpenChange={(open) => {
           if (!open) setRemoving(null)
         }}
