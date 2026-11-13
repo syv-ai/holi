@@ -74,10 +74,13 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
     const metrics = port.getMetrics()
     const pageChanged = page.getCurrentPage() !== target.page
     const scale = zoom.forDocument(target.documentId).getState().currentZoomLevel
+    // Rectangle lookup takes a zero-based index. Visibility coordinates already
+    // follow the rotated layout, so do not rotate the anchor a second time.
     const anchor = page.getRectPositionForPage(
-      target.page,
+      target.page - 1,
       { origin: { x: target.x, y: target.y }, size: { width: 0, height: 0 } },
       scale,
+      0,
     )
     if (pageChanged) page.scrollToPage({ pageNumber: target.page, behavior: 'instant' })
     if (anchor !== null) {

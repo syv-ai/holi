@@ -94,6 +94,22 @@ function viewportFixture() {
   const scrollToPage = vi.fn(({ pageNumber }: { pageNumber: number }) => {
     page = pageNumber
   })
+  const getRectPositionForPage = vi.fn(
+    (
+      pageIndex: number,
+      rect: { origin: { x: number; y: number } },
+      targetScale = scale,
+      rotation = 1,
+    ) => ({
+      origin: {
+        x: (rotation === 0 ? rect.origin.x : pageHeight - rect.origin.y) * targetScale,
+        y:
+          (pageTop(pageIndex + 1) / scale) * targetScale +
+          (rotation === 0 ? rect.origin.y : rect.origin.x) * targetScale,
+      },
+      size: { width: 0, height: 0 },
+    }),
+  )
   const scroll = {
     forDocument: () => ({
       getCurrentPage: () => page,
@@ -128,17 +144,7 @@ function viewportFixture() {
         startSpacing: 0,
         endSpacing: 0,
       }),
-      getRectPositionForPage: (
-        pageNumber: number,
-        rect: { origin: { x: number; y: number } },
-        targetScale = scale,
-      ) => ({
-        origin: {
-          x: rect.origin.x * targetScale,
-          y: (pageTop(pageNumber) / scale) * targetScale + rect.origin.y * targetScale,
-        },
-        size: { width: 0, height: 0 },
-      }),
+      getRectPositionForPage,
     }),
   }
   let resized = () => {}
@@ -166,6 +172,7 @@ function viewportFixture() {
     metrics,
     scrollTo,
     scrollToPage,
+    getRectPositionForPage,
     resize: () => resized(),
     zoomAndResize: (nextScale: number) => {
       scale = nextScale
@@ -274,6 +281,12 @@ test('keeps the same page-relative point when responsive layout changes scale', 
 
   // Page 3 starts at 2 * (500 + 20); retain the original 413.5-point
   // in-page offset at the current scale instead of restoring old screen pixels.
+  expect(viewport.getRectPositionForPage).toHaveBeenCalledWith(
+    2,
+    { origin: { x: 20, y: 413.5 }, size: { width: 0, height: 0 } },
+    2,
+    0,
+  )
   expect(viewport.scrollTo).toHaveBeenLastCalledWith({ x: 40, y: 2907, behavior: 'instant' })
   expect(viewport.metrics.scrollTop).toBe(2907)
 })
