@@ -127,12 +127,10 @@ export function resolveArgv(
         : root !== undefined
           ? `usage: ${commandLine(root)} [--json] [--fields <paths>]\n${root.cli.summary}\n--fields selects comma-separated dotted fields and requires --json.`
           : usageText(commands)
-    const command = commands.find((c) => c.name === `${argv[0]}.${argv[1]}`)
-    const root = argv[0] === undefined ? undefined : standaloneByNamespace.get(argv[0])
-    const target = command ?? root
+    const target = named ?? root
     let vault: string | null = null
     if (target !== undefined) {
-      const rest = argv.slice(command === undefined ? 1 : 2)
+      const rest = argv.slice(named === undefined ? 1 : 2)
       let options = true
       for (let i = 0; i < rest.length; i++) {
         const word = rest[i]!
