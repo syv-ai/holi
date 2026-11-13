@@ -125,6 +125,8 @@ export function NewTaskDialog({
         className="sm:max-w-xl"
         onOpenAutoFocus={(event) => !focused && event.preventDefault()}
         onCloseAutoFocus={(event) => (!visible || !focused) && event.preventDefault()}
+        onFocusOutside={(event) => !focused && event.preventDefault()}
+        onInteractOutside={(event) => !focused && event.preventDefault()}
       >
         <div
           className="flex flex-col gap-6"
