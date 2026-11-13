@@ -32,10 +32,13 @@ import {
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeSplit, focusedTab, isSplit, openTab, splitActive } from '@/state/shell-workspace'
 import { vaultSettingsAtom } from '@/state/settings'
+import { Overview } from '@/features/planning/overview'
 import { tabDragAtom } from '@/features/shell/use-tab-drag'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { agentsSelectionAtom } from '@/state/agents-slots'
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import { activeRemoteAtom, historyEpochsAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+
+const historyActivityQuery = vi.hoisted(() => vi.fn(async () => []))
 
 const graphQuery = vi.hoisted(() => vi.fn())
 
@@ -69,13 +72,15 @@ vi.mock('@/lib/trpc', () => {
           ? []
           : name === 'settings.read'
             ? SETTINGS
-            : name === 'settings.pluginFailures'
-              ? {}
-              : name === 'github.collaborators'
-                ? { visibility: 'private', collaborators: [] }
-                : ['activity.entries', 'logs.entries', 'terminal.list'].includes(name)
-                  ? []
-                  : null
+            : name === 'history.activity'
+              ? historyActivityQuery()
+              : name === 'settings.pluginFailures'
+                ? {}
+                : name === 'github.collaborators'
+                  ? { visibility: 'private', collaborators: [] }
+                  : ['activity.entries', 'logs.entries', 'terminal.list'].includes(name)
+                    ? []
+                    : null
   const procedure = (name: string) => ({
     query: async () => answer(name),
     mutate: name === 'settings.write' ? write : async () => ({ ok: true }),
@@ -738,6 +743,96 @@ test('retained surfaces mount only after first display and close/reopen starts f
   expect(await screen.findByRole('textbox', { name: 'State one' })).not.toBe(first)
   expect(screen.getByRole('textbox', { name: 'State one' })).toHaveValue('initial')
   expect(f.acquired.mock.calls.filter(([id]) => id === 'one')).toHaveLength(2)
+})
+
+test('the visited Planning board retains its view and unfinished dialog across tab switches', async () => {
+  const store = mount()
+  const board = tabKey({ kind: 'board' })
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, board)))
+
+  const view = await screen.findByLabelText('Search tasks')
+  const host = view.closest<HTMLElement>('[data-pane-host]')!
+  fireEvent.change(view, { target: { value: 'retain this search' } })
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
+  expect(view.isConnected).toBe(true)
+  expect(host.parentElement).toHaveAttribute('data-retained-parking')
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, board)))
+  expect(await screen.findByLabelText('Search tasks')).toBe(view)
+  expect(view).toHaveValue('retain this search')
+
+  fireEvent.click(within(host).getAllByRole('button', { name: 'New task' }).at(-1)!)
+  const title = await screen.findByPlaceholderText('Task title')
+  fireEvent.change(title, { target: { value: 'an unfinished draft' } })
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
+  expect(screen.queryByRole('heading', { name: 'New task' })).toBeNull()
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, board)))
+  expect(await screen.findByDisplayValue('an unfinished draft')).toBeTruthy()
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, board)))
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, board)))
+  expect(await screen.findByLabelText('Search tasks')).not.toBe(view)
+  // The shared Planning filter atoms intentionally outlive a tab instance.
+  expect(screen.getByLabelText('Search tasks')).toHaveValue('retain this search')
+})
+
+test('Planning stays displayed but unfocused in a split without losing its host', async () => {
+  const store = mount()
+  const board = tabKey({ kind: 'board' })
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, board)))
+  const input = await screen.findByLabelText('Search tasks')
+  const host = input.closest<HTMLElement>('[data-pane-host]')!
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, 'A.md')))
+
+  expect(input.isConnected).toBe(true)
+  expect(host.parentElement).not.toHaveAttribute('data-retained-parking')
+  expect(activeSplit(store.get(shellWorkspaceAtom))?.views).toContain(board)
+  expect(activeSplit(store.get(shellWorkspaceAtom))?.focused).toBe('A.md')
+})
+
+test('Planning pauses and refreshes recent activity while its tab is hidden', async () => {
+  historyActivityQuery.mockClear()
+  const store = createStore()
+  const props = {
+    projectState: {
+      state: 'ready' as const,
+      project: { status: 'planning' as const, milestones: [], about: '' },
+    },
+    fallbackName: 'Notes',
+    tasks: [],
+    tasksLoading: false,
+    statuses: [],
+    now: '2026-10-23T10:00:00.000Z',
+    today: '2026-10-23',
+    members: [],
+    onEditProject: () => {},
+    onRetryProject: () => {},
+    onOpenTask: () => {},
+    onShowStatus: () => {},
+    onNewTask: () => {},
+  }
+  const view = render(
+    <Provider store={store}>
+      <Overview {...props} visible />
+    </Provider>,
+  )
+  await waitFor(() => expect(historyActivityQuery).toHaveBeenCalledTimes(1))
+
+  view.rerender(
+    <Provider store={store}>
+      <Overview {...props} visible={false} />
+    </Provider>,
+  )
+  act(() => store.set(historyEpochsAtom, { all: 1, byPath: {} }))
+  expect(historyActivityQuery).toHaveBeenCalledTimes(1)
+
+  view.rerender(
+    <Provider store={store}>
+      <Overview {...props} visible />
+    </Provider>,
+  )
+  await waitFor(() => expect(historyActivityQuery).toHaveBeenCalledTimes(2))
 })
 
 test('parked retained surfaces preserve their viewport size and restore responsive sizing', async () => {

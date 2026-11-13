@@ -126,7 +126,7 @@ interface EventCalendarCallbacks<TData = unknown> {
     }
   ) => void
   onSlotClick?: (slot: EventCalendarSlotInfo, e: React.MouseEvent) => void
-  onSelectSlot?: (slot: EventCalendarSlotDraft) => void
+  onSelectSlot?: (slot: EventCalendarSlotDraft, event?: PointerEvent) => void
   canSelectSlot?: (slot: EventCalendarSlotDraft) => boolean
   onRangeChange?: (info: EventCalendarRangeInfo) => void
   onViewChange?: (view: CalendarView) => void
@@ -1554,7 +1554,7 @@ interface EventCalendarViewConfig<TData = unknown> {
   renderMoreContent?: (props: {
     day: Date
     segments: EventCalendarSegment<TData>[]
-    close: () => void
+    close: (options?: { restoreFocus?: boolean }) => void
   }) => ReactNode
   /**
    * Agenda-only expandable details. When it returns a node for an occurrence,

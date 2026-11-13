@@ -259,7 +259,7 @@ export interface SettingsSection {
   /** Shown inside core's Plugins page, under its label, rather than as a
    *  section of its own: a plugin's settings about plugins. */
   within?: 'plugins'
-  Component: (props: { remote: string }) => React.JSX.Element
+  Component: (props: { remote: string; visible?: boolean }) => React.JSX.Element
 }
 
 /** The renderer's one store, as an event handler gets it. */

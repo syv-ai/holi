@@ -32,8 +32,44 @@ jobs:
           node scripts/harness-monitor.mjs discover > report.json
           echo "report=$(cat report.json | base64 -w0)" >> "$GITHUB_OUTPUT"
 
-  report:
+  codex-check:
     needs: discover
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace for consumer fixtures
+        run: pnpm install --frozen-lockfile
+      - name: Probe exact npm Codex version without credentials
+        env:
+          MONITOR_REPORT: ${{ needs.discover.outputs.report }}
+        run: |
+          echo "$MONITOR_REPORT" | base64 --decode > report.json
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('report.json')).providers.find(p => p.id === 'codex').version)")
+          mkdir -p "$RUNNER_TEMP/codex"
+          node scripts/codex-compatibility.mjs "$VERSION" > "$RUNNER_TEMP/codex/cli.json" || true
+          if pnpm --filter @holi/desktop exec vitest run src/plugins/agent/test/codex-provider.test.ts src/plugins/agent/test/agent-jobs.test.ts; then
+            echo '{"name":"fixture consumers","outcome":"pass","detail":"Codex notify and job-event production consumers exercised by attributed fixtures; no provider execution."}' > "$RUNNER_TEMP/codex/fixtures.json"
+          else
+            echo '{"name":"fixture consumers","outcome":"mismatch","detail":"Codex production-consumer fixture tests failed."}' > "$RUNNER_TEMP/codex/fixtures.json"
+          fi
+          node -e "const fs=require('fs'); const cli=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/codex/cli.json')); const fixture=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/codex/fixtures.json')); fs.writeFileSync(process.env.RUNNER_TEMP+'/codex/checks.json', JSON.stringify([...cli.checks,fixture]))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-checks
+          path: ${{ runner.temp }}/codex/checks.json
+          if-no-files-found: error
+
+  report:
+    needs: [discover, codex-check]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -43,6 +79,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: codex-checks
+          path: codex-checks
       - name: Reconcile tracking issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -50,6 +90,5 @@ jobs:
           MONITOR_REPORT: ${{ needs.discover.outputs.report }}
         run: |
           echo "$MONITOR_REPORT" | base64 --decode > report.json
-          # This job only reports registry metadata and unverified checks. It never
-          # installs or executes a provider; future compatibility runs need a separate job.
-          node scripts/harness-monitor.mjs report report.json
+          node scripts/harness-monitor.mjs merge-codex report.json codex-checks/checks.json > normalized-report.json
+          node scripts/harness-monitor.mjs report normalized-report.json

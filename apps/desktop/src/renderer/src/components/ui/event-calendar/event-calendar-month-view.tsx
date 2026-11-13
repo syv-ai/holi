@@ -1117,6 +1117,7 @@ function EventCalendarMoreIndicator({
   const visible = useEventCalendarVisible()
   const [open, setOpen] = useState(false)
   useEffect(() => { if (!visible) setOpen(false) }, [visible])
+  const suppressCloseRestore = useRef(false)
   const headerId = useId()
 
   // Grabbing a chip from this list starts a drag; close the popover so it does
@@ -1174,6 +1175,10 @@ function EventCalendarMoreIndicator({
       </PopoverTrigger>
       <PopoverContent
         data-slot="event-calendar-more-popover"
+        onCloseAutoFocus={(event) => {
+          if (suppressCloseRestore.current) event.preventDefault()
+          suppressCloseRestore.current = false
+        }}
         align={viewConfig.morePopoverAlign}
         // The popover is a dialog, so it needs a name. The built-in body already
         // renders the day header this list belongs to, so point at that; a
@@ -1202,7 +1207,10 @@ function EventCalendarMoreIndicator({
           viewConfig.renderMoreContent({
             day,
             segments,
-            close: () => setOpen(false),
+            close: (options) => {
+              suppressCloseRestore.current = options?.restoreFocus === false
+              setOpen(false)
+            },
           })
         ) : (
           <EventCalendarMoreDefaultContent
