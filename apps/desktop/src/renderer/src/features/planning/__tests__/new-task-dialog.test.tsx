@@ -3,10 +3,11 @@
  * (docs/features/tasks.md), and the choice rides along with the create.
  */
 import { DEFAULT_STATUSES, emptyVaultSnapshot } from '@holi/shared'
+import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { createStore, Provider } from 'jotai'
 import { expect, test, vi } from 'vitest'
-import { render, screen, waitFor } from '@/test/render'
+import { fireEvent, render, screen, waitFor } from '@/test/render'
 import { snapshotAtom } from '@/state/vaults'
 import { NewTaskDialog } from '../new-task-dialog'
 
@@ -84,6 +85,40 @@ test('an unedited open draft follows the asynchronously loaded default status', 
     </Provider>,
   )
   expect(screen.getByRole('button', { name: 'Status: In progress' })).toBeInTheDocument()
+})
+
+test('Cancel survives focus changing during pointer down', async () => {
+  const store = createStore()
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const onOpenChange = vi.fn()
+  function Harness() {
+    const [focused, setFocused] = useState(false)
+    return (
+      <div onPointerDown={() => setFocused(true)}>
+        <NewTaskDialog
+          open
+          focused={focused}
+          onOpenChange={onOpenChange}
+          statuses={DEFAULT_STATUSES}
+          defaultStatus="todo"
+          today="2026-10-25"
+          onCreate={vi.fn(() => Promise.resolve())}
+        />
+      </div>
+    )
+  }
+  render(
+    <Provider store={store}>
+      <Harness />
+    </Provider>,
+  )
+
+  await userEvent.type(screen.getByPlaceholderText('Task title'), 'Keep this draft')
+  const cancel = screen.getByRole('button', { name: 'Cancel' })
+  fireEvent.pointerDown(cancel)
+  expect(document.body.style.pointerEvents).not.toBe('none')
+  await userEvent.click(cancel)
+  expect(onOpenChange).toHaveBeenCalledWith(false)
 })
 
 test('Cancel resets on reopen while temporarily hiding preserves the live draft', async () => {

@@ -105,6 +105,16 @@ export function EditProjectDialog({
   const [draft, setDraft] = useState<Draft>(() => draftOf(project))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const presentationFocused = useRef(focused)
+  const wasPresented = useRef(false)
+  const presented = open && visible
+  if (presented && !wasPresented.current) {
+    presentationFocused.current = focused
+    wasPresented.current = true
+  } else if (!presented) {
+    wasPresented.current = false
+  }
+  const dialogFocused = presentationFocused.current
   const wasOpen = useRef(false)
   const edited = useRef(false)
   useEffect(() => {
@@ -144,8 +154,8 @@ export function EditProjectDialog({
 
   return (
     <Dialog
-      modal={focused}
-      open={open && visible}
+      modal={dialogFocused}
+      open={presented}
       onOpenChange={(next) => {
         if (!next) setDraft(draftOf(project))
         onOpenChange(next)
@@ -153,10 +163,10 @@ export function EditProjectDialog({
     >
       <DialogContent
         className="sm:max-w-lg"
-        onOpenAutoFocus={(event) => !focused && event.preventDefault()}
-        onCloseAutoFocus={(event) => (!visible || !focused) && event.preventDefault()}
-        onFocusOutside={(event) => !focused && event.preventDefault()}
-        onInteractOutside={(event) => !focused && event.preventDefault()}
+        onOpenAutoFocus={(event) => !dialogFocused && event.preventDefault()}
+        onCloseAutoFocus={(event) => (!visible || !dialogFocused) && event.preventDefault()}
+        onFocusOutside={(event) => !dialogFocused && event.preventDefault()}
+        onInteractOutside={(event) => !dialogFocused && event.preventDefault()}
       >
         <div
           className="flex max-h-160 flex-col gap-6 overflow-y-auto"
