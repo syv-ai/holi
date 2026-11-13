@@ -143,26 +143,26 @@ test('restores the last reading position when a move resets metrics before its c
   expect(viewport.scrollToPage).toHaveBeenCalledWith({ pageNumber: 3, behavior: 'instant' })
 })
 
-test('restores the reading position after responsive sidebar resize settles', async () => {
+test('restores the reading position after responsive resize without a connected move', async () => {
   const viewport = viewportFixture()
   const ref = createRef<PDFViewerRef>()
   const ready = vi.fn()
   const mounted = render(<PdfViewerAdapter ref={ref} onReady={ready} />)
   await waitFor(() => expect(ready).toHaveBeenCalled())
-  const element = ref.current!.container!
   act(() => {
-    customElements.get('holi-pdf-container')!.prototype.connectedMoveCallback.call(element)
-    // The remounted search sidebar scrolls to its selected hit.
-    viewport.metrics.scrollTop = 0
+    // Split layout reuses the host; only a viewport resize is reported.
     viewport.resize()
+    // The remounted search sidebar scrolls to its selected hit afterwards.
+    viewport.searchHitScroll()
   })
   await waitFor(() =>
-    expect(viewport.scrollTo).toHaveBeenCalledExactlyOnceWith({
+    expect(viewport.scrollTo).toHaveBeenCalledWith({
       x: 20,
       y: 1453.5,
       behavior: 'instant',
     }),
   )
+  expect(viewport.scrollToPage).toHaveBeenCalledWith({ pageNumber: 3, behavior: 'instant' })
   mounted.unmount()
   expect(viewport.unsubscribe).toHaveBeenCalledTimes(2)
 })
@@ -191,7 +191,7 @@ test.each(['pointerdown', 'keydown', 'wheel'])(
   },
 )
 
-test('keeps page and offset through delayed search replay, then releases the layout guard', async () => {
+test('keeps page and offset through delayed search after resize, then releases the layout guard', async () => {
   const viewport = viewportFixture()
   const ref = createRef<PDFViewerRef>()
   const ready = vi.fn()
@@ -199,11 +199,7 @@ test('keeps page and offset through delayed search replay, then releases the lay
   await waitFor(() => expect(ready).toHaveBeenCalled())
   vi.useFakeTimers()
   try {
-    act(() => {
-      customElements
-        .get('holi-pdf-container')!
-        .prototype.connectedMoveCallback.call(ref.current!.container!)
-    })
+    act(() => viewport.resize())
     for (let replay = 0; replay < 2; replay++) {
       await act(() => vi.advanceTimersByTimeAsync(300))
       act(() => viewport.searchHitScroll())
