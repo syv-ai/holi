@@ -34,6 +34,8 @@ export interface Launch {
   /** Windows: `args` is already a `cmd.exe` command line, not to be quoted
    *  again (`windowsVerbatimArguments`). */
   verbatim: boolean
+  /** Per-child environment additions required to run Electron as Node. */
+  env?: NodeJS.ProcessEnv
 }
 
 const BATCH = /\.(cmd|bat)$/i
@@ -56,22 +58,6 @@ function npmShimScript(file: string): string | null {
   } catch {
     return null
   }
-}
-
-/** One argument as `cmd.exe` reads it from a `/s /c "…"` line: quoted for the
- *  program's own argument parser, then every character `cmd.exe` itself acts
- *  on escaped with `^`. A line break cannot be part of a `cmd.exe` command
- *  line at all, so it becomes a space. `twice` escapes a second time, for
- *  an argument a batch file passes on with `%*`: `cmd.exe` parses that line
- *  again, and a `"` in the argument turns quoting off for what follows it.
- * @public exported for its test */
-export function quoteForCmd(arg: string, twice = false): string {
-  const quoted = `"${arg
-    .replace(/\r?\n/g, ' ')
-    .replace(/(\\*)"/g, '$1$1\\"')
-    .replace(/(\\+)$/, '$1$1')}"`
-  const escaped = quoted.replace(/([()%!^"<>&|])/g, '^$1')
-  return twice ? escaped.replace(/([()%!^"<>&|])/g, '^$1') : escaped
 }
 
 function comspec(env: NodeJS.ProcessEnv): string {
@@ -108,18 +94,34 @@ export function launchPlan(
   // JavaScript entrypoint. Bypass the wrapper so Windows receives argv through
   // CreateProcess rather than cmd.exe's lossy second parse.
   const script = npmShimScript(target)
-  if (script) return { file: process.execPath, args: [script, ...args], verbatim: false }
+  if (script) {
+    const colocatedNode = join(dirname(target), 'node.exe')
+    const callerNode = look('node', env)
+    const electronIsNode = /(?:^|[\\/])electron(?:\.exe)?$/i.test(process.execPath)
+    const node = existsSync(colocatedNode) ? colocatedNode : callerNode ?? process.execPath
+    const useElectron = node === process.execPath && electronIsNode
+    return {
+      file: node,
+      args: [script, ...args],
+      verbatim: false,
+      ...(useElectron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}),
+    }
+  }
 
   // cmd.exe cannot represent arbitrary argv: % expansion happens even inside
   // quotes, delayed expansion can consume !, and line breaks are commands. Do
   // not silently alter these inputs or risk executing them as shell syntax.
-  const unsafe = args.find((arg) => /[^\x20-\x7e]|[%!^&|<>"]/u.test(arg))
-  if (unsafe !== undefined) {
+  const unsafe = args.find((arg) => /[\r\n\0]|[%!^&|<>]/u.test(arg))
+  if (unsafe !== undefined || /[%!^&|<>\r\n]/u.test(target)) {
     throw new Error(
       `Cannot pass this argument safely to batch file ${target}; install a Node-based CLI shim or use an executable instead.`,
     )
   }
-  const line = [`"${target}"`, ...args.map((arg) => `"${arg}"`)].join(' ')
+  const quote = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`
+  const line = [quote(target), ...args.map(quote)].join(' ')
+  if (line.length > 8191) {
+    throw new Error(`Cannot pass this command to batch file ${target}: Windows cmd.exe command limit is 8191 characters.`)
+  }
   return { file: comspec(env), args: ['/d', '/s', '/c', `"${line}"`], verbatim: true }
 }
 
@@ -143,11 +145,27 @@ export function spawnProgram(
   options: SpawnOptions,
   launch: LaunchOptions = {},
 ): ChildProcess {
-  const plan = launchPlan(file, args, { env: options.env ?? process.env, ...launch })
+  let plan: Launch
   const platform = launch.platform ?? process.platform
+  try {
+    plan = launchPlan(file, args, { env: options.env ?? process.env, ...launch })
+  } catch (failure) {
+    if (platform !== 'win32') throw failure
+    const child = new ChildProcess()
+    const out = new PassThrough()
+    const err = new PassThrough()
+    child.stdout = out
+    child.stderr = err
+    child.stdin = new PassThrough()
+    out.end()
+    err.end()
+    process.nextTick(() => child.emit('error', failure))
+    return child
+  }
   try {
     return spawn(plan.file, plan.args, {
       ...options,
+      ...(plan.env ? { env: { ...process.env, ...options.env, ...plan.env } } : {}),
       // No console to share with a child that has none of its own: a
       // detached child on Windows would open a window for a console
       // grandchild (the `node` behind `claude.cmd`). Its tree is stopped by
@@ -192,7 +210,14 @@ export function execProgram(
   done: (err: ExecFileException | null, stdout: string, stderr: string) => void,
   launch: LaunchOptions = {},
 ): ChildProcess {
-  const plan = launchPlan(file, args, { env: options.env, ...launch })
+  let plan: Launch
+  try {
+    plan = launchPlan(file, args, { env: options.env, ...launch })
+  } catch (failure) {
+    const error = failure as ExecFileException
+    process.nextTick(() => done(error, '', ''))
+    return new ChildProcess()
+  }
   const own = plan.verbatim
   let timedOut = false
   const child = execFile(
@@ -200,7 +225,7 @@ export function execProgram(
     plan.args,
     {
       cwd: options.cwd,
-      env: options.env,
+      env: plan.env ? { ...options.env, ...plan.env } : options.env,
       maxBuffer: options.maxBuffer,
       encoding: options.encoding,
       windowsHide: true,

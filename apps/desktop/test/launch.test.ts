@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { commandLine, launchPlan, quoteForCmd, spawnProgram } from '../src/main/launch'
+import { commandLine, launchPlan, spawnProgram } from '../src/main/launch'
 import { defaultProbePid, killChildTree, killTree } from '../src/main/process-group'
 
 const WIN = { platform: 'win32' } as const
@@ -50,7 +50,6 @@ describe('launchPlan', () => {
       'a>b',
       'a"b',
       'line\r\nfeed',
-      '☃',
     ]) {
       expect(() => launchPlan('x.BAT', [unsafe], { ...WIN, env: {} })).toThrow(/safely/)
     }
@@ -67,13 +66,19 @@ describe('launchPlan', () => {
     const shim = join(dir, 'fixture.cmd')
     await writeFile(
       shim,
-      '@ECHO off\r\nIF EXIST "%dp0%\\node.exe" SET _prog="%dp0%\\node.exe"\r\n"%dp0%\\node_modules\\fixture\\cli.js" %*\r\n',
+      '@ECHO off\r\nIF EXIST "%~dp0%\\node.exe" (SET "_prog=%~dp0%\\node.exe") ELSE (SET "_prog=node")\r\n"%_prog%" "%~dp0%\\node_modules\\fixture\\cli.js" %*\r\n',
     )
     expect(launchPlan(shim, ['line one\r\nline two', '%PATH%', ''], WIN)).toEqual({
       file: process.execPath,
       args: [script, 'line one\r\nline two', '%PATH%', ''],
       verbatim: false,
     })
+  })
+
+  it('carries Unicode through an opaque batch argument without rewriting it', () => {
+    const plan = launchPlan('x.cmd', ['snowman ☃'], { ...WIN, env: {} })
+    expect(plan.verbatim).toBe(true)
+    expect(plan.args[3]).toContain('snowman ☃')
   })
 
   it('looks a bare name up first, and runs what it finds the way its file needs', () => {
@@ -91,25 +96,6 @@ describe('launchPlan', () => {
     expect(commandLine(plan)).toBe(`/d /s /c ""C:\\n\\claude.cmd" \"a\""`)
     const posix = launchPlan('/n/claude', ['a'], { platform: 'linux' })
     expect(commandLine(posix)).toEqual(['a'])
-  })
-})
-
-describe('quoteForCmd', () => {
-  it('quotes for the program and escapes what cmd.exe itself acts on', () => {
-    expect(quoteForCmd('plain')).toBe('^"plain^"')
-    expect(quoteForCmd('a b')).toBe('^"a b^"')
-    expect(quoteForCmd('a&b|c')).toBe('^"a^&b^|c^"')
-    expect(quoteForCmd('%PATH%')).toBe('^"^%PATH^%^"')
-    expect(quoteForCmd('say "hi"')).toBe(String.raw`^"say \^"hi\^"^"`)
-    expect(quoteForCmd('')).toBe('^"^"')
-  })
-
-  it('doubles the backslashes that would otherwise escape a closing quote', () => {
-    expect(quoteForCmd('C:\\dir\\')).toBe('^"C:\\dir\\\\^"')
-  })
-
-  it('turns a line break into a space, since cmd.exe cannot carry one', () => {
-    expect(quoteForCmd('one\r\ntwo\nthree')).toBe('^"one two three^"')
   })
 })
 
@@ -151,7 +137,7 @@ describe('a real .cmd on Windows', () => {
       const shim = join(dir, 'Ada Lovelace', 'tool.cmd')
       await writeFile(
         shim,
-        '@ECHO off\r\nIF EXIST "%dp0%\\node.exe" SET _prog="%dp0%\\node.exe"\r\n"%dp0%\\node_modules\\fixture\\cli.js" %*\r\n',
+        '@ECHO off\r\nIF EXIST "%~dp0%\\node.exe" (SET "_prog=%~dp0%\\node.exe") ELSE (SET "_prog=node")\r\n"%_prog%" "%~dp0%\\node_modules\\fixture\\cli.js" %*\r\n',
       )
       for (const args of NASTY) {
         const plan = launchPlan(shim, args, WIN)
@@ -159,7 +145,7 @@ describe('a real .cmd on Windows', () => {
           const child = execFile(
             plan.file,
             plan.args,
-            { cwd: dir, windowsVerbatimArguments: true, windowsHide: true },
+            { cwd: dir, windowsVerbatimArguments: plan.verbatim, windowsHide: true },
             (err, stdout) => (err ? reject(err) : resolve(stdout)),
           )
           child.stdin?.end()
