@@ -90,20 +90,36 @@ function useGraph(displayed: boolean): { scan: Scan; retry: () => void; attempt:
   )
   const [scan, setScan] = useState<Scan>(null)
   const [attempt, setAttempt] = useState(0)
-  const started = useRef<string | null>(null)
+  const startedScope = useRef<string | null>(null)
+  const startedToken = useRef<string | null>(null)
+  const immediate = useRef(false)
+  const displayedRef = useRef(displayed)
+  displayedRef.current = displayed
   const scope = remote === null ? null : `${remote}\n${hidden}`
   const token = scope === null ? null : `${scope}\n${fingerprint}`
 
   useEffect(() => {
-    if (!displayed || remote === null || token === null) return
-    const fresh = started.current === null || !started.current.startsWith(`${scope}\n`)
-    if (fresh) setScan(null)
-    if (started.current === token) return
+    if (remote === null) {
+      startedScope.current = null
+      startedToken.current = null
+      setScan(null)
+      return
+    }
+    if (!displayed || token === null || scope === null) return
+    const freshScope = startedScope.current !== scope
+    if (freshScope) {
+      startedScope.current = scope
+      startedToken.current = null
+      setScan(null)
+    }
+    const forceImmediate = immediate.current
+    immediate.current = false
+    if (startedToken.current === token && !forceImmediate) return
     let live = true
     let settled = false
     const timer = window.setTimeout(
       () => {
-        started.current = token
+        startedToken.current = token
         trpc.notes.graph.query({ remote, hidden }).then(
           (graph) => {
             settled = true
@@ -115,17 +131,17 @@ function useGraph(displayed: boolean): { scan: Scan; retry: () => void; attempt:
           },
         )
       },
-      fresh ? 0 : SETTLE_MS,
+      freshScope || forceImmediate ? 0 : SETTLE_MS,
     )
     return () => {
       live = false
       window.clearTimeout(timer)
-      if (!settled && started.current === token) started.current = null
+      if (!settled && !displayedRef.current) immediate.current = true
     }
   }, [displayed, remote, hidden, scope, token, attempt])
 
   const retry = useCallback(() => {
-    started.current = null
+    immediate.current = true
     setScan(null)
     setAttempt((n) => n + 1)
   }, [])
