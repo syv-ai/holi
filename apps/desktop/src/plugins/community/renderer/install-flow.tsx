@@ -152,6 +152,20 @@ function ConsentDialog({
                 as programs on this machine like the commands above.
               </p>
             )}
+            {row.cli !== null && (
+              <div>
+                <p>
+                  Each time you or the agent run{' '}
+                  <span className="font-mono text-foreground">
+                    holi plugin {row.id} {row.cli.verbs.join('|')}
+                  </span>
+                  , with what follows the verb added:
+                </p>
+                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs text-foreground">
+                  {shown(row.cli.run)}
+                </pre>
+              </div>
+            )}
             <p>Holi asks again when the vault moves to another version.</p>
           </div>
         ) : (

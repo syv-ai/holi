@@ -106,6 +106,79 @@ describe('machine CLI bridge', () => {
     expect(listVaults).toHaveBeenCalledTimes(2)
   })
 
+  it('validates the scoped lease after the final machine target check', async () => {
+    let finish!: (target: { remote: string; root: string; live: boolean }) => void
+    const pending = new Promise<{ remote: string; root: string; live: boolean }>((resolve) => {
+      finish = resolve
+    })
+    let checks = 0
+    const dispatch = vi.fn<Dispatch>(async () => ({
+      value: 'ok',
+      text: '',
+      writes: false,
+      run: { cwd: '/plugin', argv: ['/plugin/run'], env: {} },
+      validateRun: () => {
+        throw new Error('stale scoped lease')
+      },
+    }))
+    const r = await rig({
+      live: true,
+      dispatch,
+      resolve: async () =>
+        ++checks === 1 ? { remote: 'owner/one', root: '/vault/one', live: true } : pending,
+    })
+    const reply = send(r.port, r.token, argv('docs', 'read', 'file.md', '--vault', 'owner/one'))
+    await vi.waitFor(() => expect(checks).toBe(2))
+    finish({ remote: 'owner/one', root: '/vault/one', live: true })
+    const result = await reply
+    expect(result.status).toBe(422)
+    expect(result.body).not.toContain('exec ')
+  })
+
+  it('rejects a handoff when its resolved vault target changes while dispatch is pending', async () => {
+    let root = '/vault/one'
+    const dispatch = vi.fn<Dispatch>(async () => {
+      root = '/vault/replaced'
+      return {
+        value: 'ok',
+        text: '',
+        writes: false,
+        run: { cwd: '/plugin', argv: ['/plugin/run'], env: {} },
+      }
+    })
+    const r = await rig({ targetRoot: () => root, dispatch })
+    const reply = await send(
+      r.port,
+      r.token,
+      argv('docs', 'read', 'file.md', '--vault', 'owner/one'),
+    )
+    expect(reply.status).toBe(422)
+    expect(reply.body).not.toContain('exec ')
+    expect(dispatch).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a handoff when its vault closes while dispatch is pending', async () => {
+    let live = true
+    const dispatch = vi.fn<Dispatch>(async () => {
+      live = false
+      return {
+        value: 'ok',
+        text: '',
+        writes: false,
+        run: { cwd: '/plugin', argv: ['/plugin/run'], env: {} },
+      }
+    })
+    const resolve = vi.fn(async () => ({ remote: 'owner/one', root: '/vault/one', live }))
+    const r = await rig({ resolve, dispatch })
+    const reply = await send(
+      r.port,
+      r.token,
+      argv('docs', 'read', 'file.md', '--vault', 'owner/one'),
+    )
+    expect(reply.status).toBe(422)
+    expect(reply.body).not.toContain('exec ')
+  })
+
   it('rejects vault selection for list and legacy credential enumeration', async () => {
     const r = await rig()
     expect(
