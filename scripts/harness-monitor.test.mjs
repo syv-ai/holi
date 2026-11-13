@@ -79,9 +79,6 @@ test('discovers all provider package mappings from npm latest', async () => {
         json: async () => ({
           name: provider.package,
           'dist-tags': { latest: '2.3.4' },
-          ...(provider.id === 'claude-code'
-            ? { homepage: 'https://github.com/org/repo#readme' }
-            : { repository: { url: 'git+https://github.com/org/repo.git' } }),
         }),
       }
     },
@@ -91,7 +88,13 @@ test('discovers all provider package mappings from npm latest', async () => {
     providers.map(({ package: name }) => [name, '2.3.4']),
   )
   assert.equal(requested.length, 3)
-  assert.equal(result.providers[0].releaseNotesUrl, 'https://github.com/org/repo/releases')
+  assert.deepEqual(
+    result.providers.map(({ releaseNotesUrl, npmUrl }) => [releaseNotesUrl, npmUrl]),
+    providers.map(({ releaseNotesUrl, package: name }) => [
+      releaseNotesUrl,
+      `https://www.npmjs.com/package/${name}`,
+    ]),
+  )
 })
 
 test('registry failures and missing latest fail discovery visibly', async () => {
@@ -144,12 +147,19 @@ test('version changes update the existing provider issue without duplicate issue
   assert.equal(adapter.comments.length, 1)
 })
 
-test('unchanged observations create neither duplicate issues nor comments', async () => {
+test('unchanged observations persist newest metadata without comments and reject delayed runs', async () => {
   const adapter = fakeAdapter()
-  await reconcile(report('codex'), adapter)
-  await reconcile(report('codex'), adapter)
+  await reconcile(report('codex', '1.0.0', 1), adapter)
+  const latest = report('codex', '1.0.0', 3)
+  latest.sha = 'newest-sha'
+  await reconcile(latest, adapter)
+  await reconcile(report('codex', '1.0.0', 2, 'pass'), adapter)
+  const issue = [...adapter.issues.values()][0]
   assert.equal(adapter.issues.size, 1)
   assert.equal(adapter.comments.length, 0)
+  assert.match(issue.body, /<!-- holi-harness-run:3 -->/)
+  assert.match(issue.body, /Holi commit: newest-sha/)
+  assert.equal(issue.state, 'open')
 })
 
 test('mismatches stay open and update the tracking issue', async () => {
@@ -179,6 +189,47 @@ test('a mixed report cannot close an issue even when one check passes', async ()
   pass.checks.push({ name: 'platform coverage', outcome: 'unverified' })
   await reconcile({ ...report('pi', '1.0.0', 2), providers: [pass] }, adapter)
   assert.equal([...adapter.issues.values()][0].state, 'open')
+})
+
+test('missing required checks are unverified and cannot close an issue', async () => {
+  const adapter = fakeAdapter()
+  await reconcile(report('pi'), adapter)
+  const omitted = report('pi', '1.0.0', 2, 'pass')
+  omitted.providers[0].checks = []
+  await reconcile(omitted, adapter)
+  const issue = [...adapter.issues.values()][0]
+  assert.equal(issue.state, 'open')
+  assert.match(issue.body, /compatibility: unverified/)
+})
+
+test('failed reopening is retried even after report body succeeds', async () => {
+  const adapter = fakeAdapter()
+  await reconcile(report('codex', '1.0.0', 1), adapter)
+  await reconcile(report('codex', '1.0.0', 2, 'pass'), adapter)
+  const issue = [...adapter.issues.values()][0]
+  assert.equal(issue.state, 'closed')
+  const reopenIssue = adapter.reopenIssue
+  let failOnce = true
+  adapter.reopenIssue = async (number) => {
+    if (failOnce) {
+      failOnce = false
+      throw new Error('reopen failed')
+    }
+    return reopenIssue(number)
+  }
+  await assert.rejects(reconcile(report('codex', '1.0.0', 3, 'mismatch'), adapter), /reopen failed/)
+  assert.match(issue.body, /<!-- holi-harness-run:3 -->/)
+  await reconcile(report('codex', '1.0.0', 3, 'mismatch'), adapter)
+  assert.equal(issue.state, 'open')
+})
+
+test('closed unverified issues reopen even when report content is unchanged', async () => {
+  const adapter = fakeAdapter()
+  await reconcile(report('codex'), adapter)
+  const issue = [...adapter.issues.values()][0]
+  issue.state = 'closed'
+  await reconcile(report('codex'), adapter)
+  assert.equal(issue.state, 'open')
 })
 
 test('close failures surface instead of claiming a completed pass', async () => {

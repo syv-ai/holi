@@ -2,10 +2,31 @@ import { execFileSync } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 
 export const providers = [
-  { id: 'claude-code', name: 'Claude Code', package: '@anthropic-ai/claude-code' },
-  { id: 'codex', name: 'Codex', package: '@openai/codex' },
-  { id: 'pi', name: 'Pi', package: '@earendil-works/pi-coding-agent' },
+  {
+    id: 'claude-code',
+    name: 'Claude Code',
+    package: '@anthropic-ai/claude-code',
+    releaseNotesUrl: 'https://github.com/anthropics/claude-code/releases',
+  },
+  {
+    id: 'codex',
+    name: 'Codex',
+    package: '@openai/codex',
+    releaseNotesUrl: 'https://github.com/openai/codex/releases',
+  },
+  {
+    id: 'pi',
+    name: 'Pi',
+    package: '@earendil-works/pi-coding-agent',
+    releaseNotesUrl: 'https://github.com/badlogic/pi-mono/releases',
+  },
 ]
+
+const requiredChecks = {
+  'claude-code': ['compatibility'],
+  codex: ['compatibility'],
+  pi: ['compatibility'],
+}
 
 const issueMarker = (id) => `<!-- holi-harness-monitor:${id} -->`
 const runMarker = (run) => `<!-- holi-harness-run:${run} -->`
@@ -28,20 +49,11 @@ export async function discover({ fetchImpl = fetch, sha, runNumber, runUrl }) {
         ...provider,
         version,
         npmUrl: `https://www.npmjs.com/package/${provider.package}`,
-        releaseNotesUrl: releaseNotesUrl(metadata),
+        releaseNotesUrl: provider.releaseNotesUrl,
       }
     }),
   )
   return { sha, runNumber: Number(runNumber), runUrl, providers: observations }
-}
-
-function releaseNotesUrl(metadata) {
-  const source = (metadata.repository?.url || metadata.homepage)
-    ?.replace(/^git\+/, '')
-    .replace(/\.git$/, '')
-  const githubRepo = source?.match(/^https:\/\/github\.com\/([^/]+\/[^/#?]+)/)
-  if (githubRepo) return `https://github.com/${githubRepo[1]}/releases`
-  return metadata.homepage || `https://www.npmjs.com/package/${metadata.name}`
 }
 
 export function normalizeReport(observation, checks = observation.checks ?? []) {
@@ -49,18 +61,17 @@ export function normalizeReport(observation, checks = observation.checks ?? []) 
   for (const check of checks) {
     if (!allowed.has(check.outcome) || !check.name) throw new Error('Invalid normalized check')
   }
-  return {
-    ...observation,
-    checks: checks.length
-      ? checks
-      : [
-          {
-            name: 'compatibility',
-            outcome: 'unverified',
-            detail: 'No compatibility checks are included in this monitoring-only run.',
-          },
-        ],
+  const normalizedChecks = [...checks]
+  for (const name of requiredChecks[observation.id] ?? []) {
+    if (!normalizedChecks.some((check) => check.name === name)) {
+      normalizedChecks.push({
+        name,
+        outcome: 'unverified',
+        detail: 'Required check coverage is missing from this report.',
+      })
+    }
   }
+  return { ...observation, checks: normalizedChecks }
 }
 
 export async function reconcile(report, adapter) {
@@ -91,37 +102,34 @@ export async function reconcile(report, adapter) {
       !previous ||
       previous.version !== provider.version ||
       previous.reportKey !== reportKey(normalized)
-    if (!changed) {
-      if (
-        allPass &&
-        previous?.version === provider.version &&
-        normalized.runNumber >= previous.runNumber &&
-        tracked.state !== 'closed'
-      ) {
-        await adapter.closeIssue(tracked.number)
-      }
-      continue
+    const sameRelease = previous?.version === provider.version
+    const currentRun = normalized.runNumber >= (previous?.runNumber ?? 0)
+    if (changed || currentRun) {
+      // Persist newest run metadata even when checks are unchanged, preventing a
+      // delayed older observation from replacing the evidence.
+      await adapter.updateIssue(tracked.number, {
+        title: `${provider.name} compatibility: ${provider.version}`,
+        body,
+      })
     }
 
-    await adapter.updateIssue(tracked.number, {
-      title: `${provider.name} compatibility: ${provider.version}`,
-      body,
-    })
-    if (tracked.state === 'closed' && !allPass) await adapter.reopenIssue(tracked.number)
-    if (
-      allPass &&
-      previous?.version === provider.version &&
-      normalized.runNumber >= previous.runNumber
-    ) {
+    // Reconcile state independently of content changes so a failed state mutation
+    // can be retried after the body edit has already succeeded.
+    if (!allPass) {
+      if (tracked.state === 'closed') await adapter.reopenIssue(tracked.number)
+    } else if (sameRelease && currentRun) {
       if (tracked.state !== 'closed') await adapter.closeIssue(tracked.number)
-    } else if (allPass && previous?.version !== provider.version) {
+    } else if (tracked.state === 'closed') {
       // A passing report for a newly observed release cannot inherit old checks.
       await adapter.reopenIssue(tracked.number)
     }
-    await adapter.commentIssue(
-      tracked.number,
-      `<!-- holi-harness-report:${reportKey(normalized)} -->\nUpdated ${provider.name} to ${provider.version}; monitoring report: ${report.runUrl}`,
-    )
+
+    if (changed) {
+      await adapter.commentIssue(
+        tracked.number,
+        `<!-- holi-harness-report:${reportKey(normalized)} -->\nUpdated ${provider.name} to ${provider.version}; monitoring report: ${report.runUrl}`,
+      )
+    }
   }
 }
 
