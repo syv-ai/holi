@@ -58,8 +58,8 @@ function AppHeaderActions({ id }: { id?: string }): React.JSX.Element | null {
   )
 }
 
-function AppSurface({ id }: { id?: string }): React.JSX.Element | null {
-  return id === undefined ? null : <AppFrame path={id} />
+function AppSurface({ id, visible }: { id?: string; visible: boolean }): React.JSX.Element | null {
+  return id === undefined ? null : <AppFrame path={id} visible={visible} />
 }
 
 export const APP_SURFACE: Surface = {
@@ -68,6 +68,7 @@ export const APP_SURFACE: Surface = {
   label: (id) => (id === undefined ? 'App' : appName(id)),
   icon: AppIcon,
   render: AppSurface,
+  keepMounted: true,
   instances: appInstancesAtom,
   // The manifest's `description`, which is there for the launchers.
   describe: (remote, id) => appsCap.describe(remote, { bundle: id }).then((r) => r.description),

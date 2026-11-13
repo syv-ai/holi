@@ -141,6 +141,7 @@ test('lazy editors retain selection, scroll, undo and Vim through tab and split 
   const store = fixture()
   const one = await cmFor()
   expect(editor('src/two.ts')).toBeNull()
+  await waitFor(() => expect(getCM(one)).not.toBeNull())
   const initialReads = read.mock.calls.filter(([input]) => input.path === 'src/one.ts').length
   await act(async () => {
     one.focus()
