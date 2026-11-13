@@ -79,6 +79,7 @@ async function run() {
   const packageDir = join(bin, 'node_modules', 'fixture')
   await mkdir(packageDir, { recursive: true })
   const script = join(packageDir, 'cli.js')
+  const stateFile = join(root, 'terminal-state.json')
   await writeFile(
     script,
     `
@@ -87,11 +88,13 @@ if(require.main!==module)throw new Error('not the CLI entrypoint');
 if(process.env.HOLI_NODE_PTY_SPEC || process.env.HOLI_NODE_PTY_EXEC)throw new Error('private launch transport leaked');
 const args=process.argv.slice(2);
 if(args[0]==='--pty') {
+ fs.writeFileSync(${JSON.stringify(stateFile)},JSON.stringify({input:!!process.stdin.isTTY,output:!!process.stdout.isTTY}));
+ if(process.stdin.isTTY)process.stdin.setRawMode(true);
  fs.writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(args.slice(1)));
  const c=cp.spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:'ignore',windowsHide:true,env:process.env});
  fs.writeFileSync(${JSON.stringify(pidFile)},JSON.stringify([process.pid,c.pid]));
  process.stdout.write('READY\\n');
- let input=''; process.stdin.on('data',d=>{input+=d;let n;while((n=input.indexOf('\\n'))>=0){const line=input.slice(0,n).replace(/\\r/g,'');input=input.slice(n+1);process.stdout.write(line==='size'?'SIZE:'+process.stdout.getWindowSize().join('x')+'\\n':'INPUT:'+line+'\\n')}});
+ let input=''; process.stdin.on('data',d=>{input+=d.toString().replace(/\\r/g,'\\n');let n;while((n=input.indexOf('\\n'))>=0){const line=input.slice(0,n).replace(/\\r/g,'');input=input.slice(n+1);process.stdout.write(line==='size'?'SIZE:'+process.stdout.getWindowSize().join('x')+'\\n':'INPUT:'+line+'\\n')}});
 } else { console.log(JSON.stringify(args)); }
 `,
   )
@@ -159,6 +162,7 @@ if(args[0]==='--pty') {
   })
   runtime.start({ bin: shim, args: ['--pty', ...args], cwd: vault, env, cols: 100, rows: 30 })
   await until(() => output.includes('READY'))
+  assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')), { input: true, output: true })
   const pids = await readPids()
   assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), args)
   runtime.write('ping\r')
@@ -205,6 +209,7 @@ if(args[0]==='--pty') {
     })
     await until(() => fallbackOutput.includes('READY'))
     assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), args)
+    assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')), { input: true, output: true })
     const fallbackPids = await readPids()
     fallbackRuntime.write('ping\r')
     await until(() => fallbackOutput.includes('INPUT:ping'))
@@ -234,6 +239,7 @@ if(args[0]==='--pty') {
   managed.stdin!.write('ping\n')
   await until(() => managedOutput.includes('READY'))
   await until(() => managedOutput.includes('INPUT:ping'))
+  assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')), { input: false, output: false })
   const managedPids = await readPids()
   if (process.platform === 'win32') managed.kill()
   else process.kill(-managed.pid!, 'SIGKILL')
