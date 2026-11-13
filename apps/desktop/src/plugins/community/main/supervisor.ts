@@ -49,7 +49,10 @@ export interface SupervisorDeps {
 export interface Supervisor {
   /** The server for `key`, started with `spec` if none is up; resolves when it
    *  is ready. Each call is one reference. */
-  acquire(key: string, spec: ServeSpec): Promise<{ port: number; release(): Promise<void> }>
+  acquire(
+    key: string,
+    spec: ServeSpec,
+  ): Promise<{ port: number; release(): Promise<void>; isCurrentAndRunning(): boolean }>
   /** Drop one reference; the last stops the server. */
   release(key: string): Promise<void>
   /** Stop every server whose key `which` accepts (all, without it),
@@ -71,6 +74,7 @@ interface Server {
   unframe: () => void
   /** Set once it is stopped: a start still in flight gives up. */
   stopped: boolean
+  stopping: Promise<void> | null
 }
 
 function canConnect(port: number, host: string): Promise<boolean> {
@@ -104,6 +108,7 @@ async function findFreePort(taken: ReadonlySet<number>, from = FIRST_PORT): Prom
 
 export function createSupervisor(deps: SupervisorDeps): Supervisor {
   const servers = new Map<string, Server>()
+  const instances = new Map<Server, string>()
   let disposed = false
   let disposal: Promise<void> | null = null
   const readyTimeout = deps.readyTimeoutMs ?? 60_000
@@ -151,17 +156,28 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
    *  fresh acquire, can replace it while it starts. */
   const current = (key: string, server: Server) => servers.get(key) === server
 
-  const stop = async (key: string, server: Server) => {
-    if (current(key, server)) servers.delete(key)
+  const stop = (key: string, server: Server, reason?: string): Promise<void> => {
+    if (server.stopping !== null) return server.stopping
     server.stopped = true
+    if (current(key, server)) {
+      if (reason !== undefined && server.state.state === 'running')
+        set(key, server, { state: 'exited', log: [...server.log], message: reason })
+      servers.delete(key)
+    }
     server.unframe()
     server.unframe = () => {}
     const child = server.child
-    if (child === null) return
-    signal(child, 'SIGTERM')
-    const timer = setTimeout(() => signal(child, 'SIGKILL'), grace)
-    await server.exited
-    clearTimeout(timer)
+    server.stopping = (async () => {
+      if (child === null) {
+        await server.ready.catch(() => {})
+        return
+      }
+      signal(child, 'SIGTERM')
+      const timer = setTimeout(() => signal(child, 'SIGKILL'), grace)
+      await server.exited
+      clearTimeout(timer)
+    })().finally(() => instances.delete(server))
+    return server.stopping
   }
 
   const start = async (key: string, server: Server, spec: ServeSpec): Promise<{ port: number }> => {
@@ -192,13 +208,16 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         resolve()
       })
       child.once('exit', (code, sig) => {
-        remember.flush()
         exitMessage ??= sig !== null ? `stopped by ${sig}` : `exited with ${code}`
+      })
+      child.once('close', () => {
+        remember.flush()
         resolve()
       })
     })
     void server.exited.then(() => {
       reserved.delete(port)
+      if (server.stopping === null) instances.delete(server)
       // A server that dies on its own while still wanted says so; one that
       // was stopped is no longer the key's.
       if (!current(key, server)) return
@@ -247,6 +266,8 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         return existing.ready.then(({ port }) => ({
           port,
           release: () => releaseServer(key, existing),
+          isCurrentAndRunning: () =>
+            current(key, existing) && !existing.stopped && existing.state.state === 'running',
         }))
       }
       const server: Server = {
@@ -259,13 +280,20 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         exited: Promise.resolve(),
         unframe: () => {},
         stopped: false,
+        stopping: null,
       }
+      instances.set(server, key)
       servers.set(key, server)
       deps.onState(key, server.state)
       server.ready = start(key, server, spec)
       // A failure is reported through `onState`; whoever awaits sees it too.
       server.ready.catch(() => {})
-      return server.ready.then(({ port }) => ({ port, release: () => releaseServer(key, server) }))
+      return server.ready.then(({ port }) => ({
+        port,
+        release: () => releaseServer(key, server),
+        isCurrentAndRunning: () =>
+          current(key, server) && !server.stopped && server.state.state === 'running',
+      }))
     },
     async release(key) {
       const server = servers.get(key)
@@ -273,16 +301,22 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     },
     async stopAll(which = () => true) {
       await Promise.all(
-        [...servers].filter(([key]) => which(key)).map(([key, server]) => stop(key, server)),
+        [...instances]
+          .filter(([, key]) => which(key))
+          .map(([server, key]) =>
+            stop(key, server, 'server stopped because its installation changed'),
+          ),
       )
     },
     dispose() {
       if (disposal !== null) return disposal
       // Close synchronously, before yielding to stop() or its child-exit waits.
       disposed = true
-      disposal = Promise.all([...servers].map(([key, server]) => stop(key, server))).then(
-        () => undefined,
-      )
+      disposal = Promise.all(
+        [...instances].map(([server, key]) =>
+          stop(key, server, 'server stopped because its vault closed'),
+        ),
+      ).then(() => undefined)
       return disposal
     },
     state: (key) => servers.get(key)?.state ?? null,
