@@ -353,6 +353,7 @@ export function refusalText(request: { label: string; usage: string }, error: un
 const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`
 
 const SCRIPT = (descriptorPath: string, platform: NodeJS.Platform) => {
+  const regexQuote = platform === 'win32' ? '"' : '\\"'
   const jobField =
     platform === 'win32'
       ? `${shellJobId(platform)}\n[ -n "$job" ] && set -- "$@" --data-urlencode "job=$job"`
@@ -376,8 +377,8 @@ fi
 parsed=\$(awk '
   NR == 1 && \$0 == "{" { next }
   NR == 2 && \$0 == "  \\"host\\": \\"127.0.0.1\\"," { host=1; next }
-  NR == 3 && \$0 ~ /^  \\"port\\": [0-9]+,\$/ { port=\$0; sub(/^  \\"port\\": /, "", port); sub(/,\$/, "", port); next }
-  NR == 4 && \$0 ~ /^  \\"token\\": \\"[0-9a-f]+\\"\$/ { token=\$0; sub(/^  \\"token\\": \\"/, "", token); sub(/\\"\$/, "", token); next }
+  NR == 3 && \$0 ~ /^  ${regexQuote}port${regexQuote}: [0-9]+,\$/ { port=\$0; sub(/^  ${regexQuote}port${regexQuote}: /, "", port); sub(/,\$/, "", port); next }
+  NR == 4 && \$0 ~ /^  ${regexQuote}token${regexQuote}: ${regexQuote}[0-9a-f]+${regexQuote}\$/ { token=\$0; sub(/^  ${regexQuote}token${regexQuote}: ${regexQuote}/, "", token); sub(/${regexQuote}\$/, "", token); next }
   NR == 5 && \$0 == "}" { closed=1; next }
   { bad=1 }
   END {
