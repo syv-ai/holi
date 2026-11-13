@@ -504,6 +504,7 @@ describe('the calendar view', () => {
     await screen.findAllByText('Focus block')
     await user.click(screen.getByRole('button', { name: 'New event' }))
     await user.type(await screen.findByRole('textbox', { name: 'Title' }), 'Lunch with Ada')
+    expect(screen.getByRole('img', { name: 'About all-day events' })).toBeInTheDocument()
     await user.type(screen.getByRole('textbox', { name: 'Location' }), 'Café')
     await user.click(screen.getByRole('button', { name: 'Add event' }))
     await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))

@@ -638,6 +638,7 @@ function EventForm({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span
+                      role="img"
                       tabIndex={0}
                       aria-label="About all-day events"
                       className="text-muted-foreground/70 hover:text-muted-foreground focus-visible:ring-ring inline-flex cursor-help rounded-full outline-none focus-visible:ring-2"
