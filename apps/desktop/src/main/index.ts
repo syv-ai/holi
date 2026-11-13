@@ -9,7 +9,7 @@
  * import anywhere on this path stops the window opening at all.
  */
 import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
-import { stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   app,
@@ -63,6 +63,7 @@ import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
 import { createActivityLog, scrubSecrets } from './activity/log'
+import { logsCapabilities } from './capabilities/logs-caps'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
 import { createTerminals } from './terminal/terminals'
 import { pathToFileURL } from 'node:url'
@@ -79,6 +80,8 @@ import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
+import { publishCliEndpoint, type CliEndpoint } from './bridge/cli-endpoint'
+import { createCliTargetResolver } from './bridge/cli-target'
 
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
@@ -298,7 +301,7 @@ async function main(): Promise<void> {
   // happened before the panel was ever opened.
   const activity = createActivityLog({ onEntry: (entry) => send('activity:entry', entry) })
   pushLog = (entry) => send('logs:entry', entry)
-  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started` })
+  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started`, global: true })
   // The bottom panel's shells. `binDir` is read lazily: the `holi` command is
   // installed below, long before anyone opens a terminal.
   const terminals = createTerminals({
@@ -373,9 +376,9 @@ async function main(): Promise<void> {
     rootFor: (remote) => rootFor(remote),
     events: eventsDeps,
     // `capabilityHost` is built below, long before any vault opens.
-    openAppDoor: (opener) => capabilityHost.openAppDoor(opener),
+    openAppDoor: (opener, remote) => capabilityHost.openAppDoor(opener, remote),
     // The bridge and the `holi` command exist before any vault can open.
-    route: (path, route) => bridge.route(path, route),
+    route: (path, route, remote) => bridge.route(path, route, remote),
     binDir: () => binDir,
     githubToken: () => session.token(),
     frameOrigin: (origin) => {
@@ -798,6 +801,7 @@ async function main(): Promise<void> {
     },
   })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
+  capabilities.register(['logs'], logsCapabilities(activity))
   // Comment threads on notes, for the agent: written as the signed-in person.
   capabilities.register(
     COMMENT_NAMESPACES,
@@ -843,12 +847,14 @@ async function main(): Promise<void> {
           status.lastError !== null
             ? {
                 channel: 'app',
+                global: true,
                 level: 'warn',
                 message: 'Update check failed',
                 detail: status.lastError,
               }
             : {
                 channel: 'app',
+                global: true,
                 message:
                   status.state === 'ready'
                     ? `Holi ${status.availableVersion ?? ''} is ready to install`
@@ -933,8 +939,34 @@ async function main(): Promise<void> {
 
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
+  const targetResolver = createCliTargetResolver(registry, async (remote, root) => {
+    const active = host.active()
+    if (active?.remote !== remote) return false
+    const path = await realpath(active.root).catch(() => null)
+    return host.active() === active && path === root
+  })
+  let cliEndpoint: CliEndpoint | null = null
   const bridge = createBridgeServer({
-    cli: { dispatch, commands: () => capabilities.commands(), rootFor },
+    cli: {
+      dispatch,
+      commands: (remote) =>
+        remote === undefined ? capabilities.commands() : capabilities.commands(remote),
+      rootFor,
+      machine: {
+        token: () => cliEndpoint?.token ?? '',
+        listVaults: () => targetResolver.list(),
+        resolveTarget: async (selector, cwd) => {
+          const target = await targetResolver.resolve(selector, cwd)
+          return target === null
+            ? null
+            : {
+                remote: target.entry.remote,
+                root: target.entry.path,
+                live: target.live,
+              }
+        },
+      },
+    },
   })
   registerGitRoutes(bridge, {
     rootFor,
@@ -947,6 +979,14 @@ async function main(): Promise<void> {
       dispatch({ door: 'ui', remote, name: 'agent.message', params: { session: job, text } }),
   })
   await bridge.start()
+  try {
+    const port = bridge.port()
+    if (port === null) throw new Error('CLI bridge did not bind a port')
+    cliEndpoint = await publishCliEndpoint(join(app.getPath('userData'), 'cli-endpoint.json'), port)
+  } catch (error) {
+    await bridge.stop().catch(() => {})
+    throw error
+  }
   const binDir = dirname(holiCliPath)
 
   // Opened at login, Holi starts out of sight: the window loads (so the
@@ -1072,7 +1112,6 @@ async function main(): Promise<void> {
       await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
       await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
       await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
-      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
       // Quit is a leave point: commit the flushed buffer, then get it
       // off-machine before the window closes. Best-effort with a 1s budget:
       // an unreachable remote must not hang quit, and the next launch drains
@@ -1085,6 +1124,14 @@ async function main(): Promise<void> {
       // `close()` commits the open vault again (a clean no-op) before letting
       // go of it.
       await host.closeAll()
+      // Final commits and their hooks still need the bridge. Revoke machine
+      // discovery only after settlement, then stop accepting bridge requests.
+      const endpoint = cliEndpoint
+      cliEndpoint = null
+      await endpoint
+        ?.dispose()
+        .catch((err) => console.error('[quit] CLI endpoint cleanup failed:', err))
+      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
       channel.cancel?.()

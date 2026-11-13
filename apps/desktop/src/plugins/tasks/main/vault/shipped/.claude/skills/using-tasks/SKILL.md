@@ -9,6 +9,29 @@ description: Read and write this vault's tasks: the frontmatter a task file hold
 markdown with frontmatter, living anywhere in the vault. Create one by writing the
 file; change one by editing it. The board reads the files.
 
+## Finding tasks
+
+Use `holi tasks list`, not grep or glob: filesystem search can silently miss
+private tasks. The CLI includes both shared and private tasks on this machine.
+
+```sh
+holi tasks list
+holi tasks list --due today
+holi tasks list --overdue
+holi tasks list --due today --json
+```
+
+Plain output shows status, title, path, optional `due <stamp>`, and `private` for a
+private task. `--json` returns an array of task objects: `path`, `title`, `status`,
+`tags`, `assignees`, and optional `due`, `start`, `priority`, `estimate`, `reminder`,
+`recurrence`, `order`, and `description`. Privacy comes from the path's `.local.`
+marker, not a JSON `private` field.
+
+`--due today` matches the local calendar day, including tasks with a due time or a
+closed status. `--overdue` shows only late open tasks, using the stamp rules below.
+With both flags, only overdue open tasks due today remain. Without filters, all
+tasks are listed, including closed tasks and tasks without a due date.
+
 ## Private and shared tasks
 
 **A new task is private unless the user says to share it.** A private task is
@@ -158,10 +181,6 @@ the same pass.
 
 ## Tips
 
-- **Finding tasks is a grep.** They are files: `task.*.md` with `status: todo` in the
-  frontmatter, private ones included (`task.*.local.md` matches the same glob). Your
-  search tool may skip gitignored files, so look for private tasks explicitly, or use
-  `holi tasks list`. There is no index to query.
 - Writing a whole task file at once is fine and is the fastest way to create one.
   Use the title's slug for the filename: lowercase, dashes for spaces, æ ø å written as
   ae oe aa, other accents dropped, no punctuation ("Møde med Bo" is

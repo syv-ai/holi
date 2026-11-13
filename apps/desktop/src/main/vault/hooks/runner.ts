@@ -127,5 +127,21 @@ export async function runPreCommit(
  *  *removed* (archive-done moves files) is staged as the deletion it is, and
  *  `--` so a path that looks like a flag is still a path. */
 async function restage(root: string, paths: string[]): Promise<void> {
-  await exec('git', ['add', '-A', '--', ...paths], { cwd: root })
+  // Ask only about rewritten paths: listing every ignored file can overflow
+  // stdout in a vault with dependencies. --others leaves tracked files eligible,
+  // even when a later ignore rule matches them.
+  const literalPaths = paths.map((path) => `:(literal)${path}`)
+  const ignoredResult = await exec(
+    'git',
+    ['ls-files', '--others', '--ignored', '--exclude-standard', '-z', '--', ...literalPaths],
+    { cwd: root },
+  )
+  const ignored = new Set(ignoredResult.stdout.split('\0'))
+  const restagePaths = paths.filter((path) => !ignored.has(path))
+
+  if (restagePaths.length > 0) {
+    await exec('git', ['add', '-A', '--', ...restagePaths.map((path) => `:(literal)${path}`)], {
+      cwd: root,
+    })
+  }
 }
