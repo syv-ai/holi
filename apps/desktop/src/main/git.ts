@@ -78,9 +78,10 @@ const WINDOWS = process.platform === 'win32'
  * either. Writing it at runtime sidesteps both, and works identically under
  * vitest, `electron-vite dev`, and a packaged app.
  *
- * **Why a shell script and not node.** It must run with no interpreter
- * assumptions: git executes this directly, and a `#!/usr/bin/env node` shebang
- * depends on a working `node` on PATH, which is not a given.
+ * **Why a shell script and not node.** Git for Windows supplies the `sh.exe`
+ * interpreter used for askpass scripts, while POSIX systems provide `/bin/sh`.
+ * A `#!/usr/bin/env node` shebang would instead depend on Node being on PATH,
+ * which is not a given in a packaged Electron app.
  *
  * The directory comes from `mkdtemp`, so it is 0700 and unpredictable — no other
  * user can pre-create the path and have git execute their script instead.
@@ -89,16 +90,18 @@ let askpassPromise: Promise<string> | null = null
 
 /** @public exported for its test */
 export function askpassScript(platform: NodeJS.Platform = process.platform): string {
-  return platform === 'win32'
-    ? '@echo off\r\nsetlocal EnableDelayedExpansion\r\necho(%1 | findstr /i /c:"username" >nul\r\nif not errorlevel 1 (echo x-access-token) else (echo(!HOLI_GIT_TOKEN!)\r\n'
-    : // `case` rather than a regex: this has to be POSIX sh, not bash.
-      '#!/bin/sh\ncase "$1" in *sername*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
+  if (platform !== 'win32') {
+    return '#!/bin/sh\ncase "$1" in *sername*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
+  }
+  // Git for Windows provides sh.exe and runs shebang scripts, avoiding CMD's
+  // unsafe interpolation of the prompt argument into batch syntax.
+  return '#!/bin/sh\ncase "$1" in [Uu][Ss][Ee][Rr][Nn][Aa][Mm][Ee]*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
 }
 
 export function ensureAskpass(): Promise<string> {
   askpassPromise ??= (async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-git-'))
-    const file = join(dir, WINDOWS ? 'askpass.bat' : 'askpass.sh')
+    const file = join(dir, 'askpass.sh')
     await writeFile(file, askpassScript(), { mode: 0o700 })
     return file
   })()
@@ -383,6 +386,35 @@ export async function tryGit(cwd: string, args: string[], opts: RunOpts = {}): P
 async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<GitOutcome> {
   const gitPath = opts.gitPath ?? 'git'
   const askpass = await ensureAskpass()
+  const token = opts.token?.() ?? ''
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: askpass,
+    HOLI_GIT_TOKEN: token,
+    LC_ALL: 'C',
+    ...opts.env,
+  }
+  if (WINDOWS) {
+    for (const key of [
+      'GIT_TERMINAL_PROMPT',
+      'GIT_ASKPASS',
+      'HOLI_GIT_TOKEN',
+      'LC_ALL',
+      'GCM_INTERACTIVE',
+    ]) {
+      for (const existing of Object.keys(env)) {
+        if (existing.toLowerCase() === key.toLowerCase()) delete env[existing]
+      }
+    }
+    Object.assign(env, {
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_ASKPASS: askpass,
+      HOLI_GIT_TOKEN: token,
+      LC_ALL: 'C',
+      GCM_INTERACTIVE: 'never',
+    })
+  }
   return new Promise((resolve, reject) => {
     const child = execFile(
       gitPath,
@@ -390,31 +422,7 @@ async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<G
       {
         cwd,
         maxBuffer: MAX_BUFFER,
-        env: {
-          ...process.env,
-          // Never block on an interactive prompt: there is no terminal attached
-          // to an Electron main process, so a prompt is a permanent hang.
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_ASKPASS: askpass,
-          HOLI_GIT_TOKEN: opts.token?.() ?? '',
-          // Stable messages regardless of the user's locale. We parse porcelain
-          // rather than prose, but stderr still reaches error messages and logs.
-          LC_ALL: 'C',
-          ...opts.env,
-          // Git Credential Manager can still open a UI even when Git itself has
-          // terminal prompting disabled. Keep every configured helper available,
-          // but do not let GCM block a background sync on Windows. The Windows
-          // overrides also keep caller env from restoring interactive prompts.
-          ...(WINDOWS
-            ? {
-                GIT_TERMINAL_PROMPT: '0',
-                GIT_ASKPASS: askpass,
-                HOLI_GIT_TOKEN: opts.token?.() ?? '',
-                LC_ALL: 'C',
-                GCM_INTERACTIVE: 'never',
-              }
-            : {}),
-        },
+        env,
       },
       (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {

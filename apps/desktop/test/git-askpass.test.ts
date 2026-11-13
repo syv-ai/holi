@@ -1,21 +1,43 @@
 import { execFile } from 'node:child_process'
-import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { GitError, askpassScript, ensureAskpass, runGit } from '../src/main/git'
+import { askpassScript, ensureAskpass, runGit } from '../src/main/git'
 
 const exec = promisify(execFile)
 
 describe('Windows askpass', () => {
-  it('generates a batch answerer that safely handles all prompt classes', () => {
+  it('answers prompts without interpreting arguments or token text as shell syntax', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'holi askpass København '))
+    const marker = join(directory, 'executed')
+    const helper = join(directory, 'credential helper.sh')
     const script = askpassScript('win32')
+    const token = 'quote " !&^()%<>%VAR% ; $(touch marker)'
+    const runHelper = (prompt: string) =>
+      exec('sh', [helper, prompt], {
+        env: { ...process.env, HOLI_GIT_TOKEN: token },
+        timeout: 5_000,
+        windowsHide: true,
+      }).then(({ stdout }) => stdout.replace(/[\r\n]+$/, ''))
 
-    expect(script).toContain('findstr /i /c:"username"')
-    expect(script).toContain('echo(!HOLI_GIT_TOKEN!)')
-    expect(script).not.toContain('echo %HOLI_GIT_TOKEN%')
+    await writeFile(helper, script, { mode: 0o700 })
+    try {
+      expect((await runHelper('uSeRnAmE: prompt')).trimEnd()).toBe('x-access-token')
+      expect(await runHelper("Password for 'https://myusername@example.test/path'")).toBe(token)
+      expect(await runHelper(`Password: \\"$(touch ${marker})\\"`)).toBe(token)
+      expect(
+        await exec('sh', [helper, 'Password: empty'], {
+          env: { ...process.env, HOLI_GIT_TOKEN: '' },
+          timeout: 5_000,
+        }).then(({ stdout }) => stdout),
+      ).toBe('\n')
+      await expect(rm(marker)).rejects.toThrow()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it.skipIf(process.platform !== 'win32')(
@@ -24,12 +46,11 @@ describe('Windows askpass', () => {
       const [generatedPath, concurrentPath] = await Promise.all([ensureAskpass(), ensureAskpass()])
       expect(concurrentPath).toBe(generatedPath)
       const spacedDirectory = await mkdtemp(join(tmpdir(), 'holi askpass space '))
-      const path = join(spacedDirectory, 'credential helper.bat')
-      await copyFile(generatedPath, path)
+      const path = join(spacedDirectory, 'credential helper.sh')
+      await writeFile(path, askpassScript('win32'), { mode: 0o700 })
       const answer = (prompt: string, token: string) =>
-        exec(path, [prompt], {
+        exec('sh', [path, prompt], {
           env: { ...process.env, HOLI_GIT_TOKEN: token },
-          shell: true,
           timeout: 5_000,
           windowsHide: true,
         }).then(({ stdout }) => stdout.trimEnd())
@@ -60,59 +81,70 @@ describe('Windows askpass', () => {
     30_000,
   )
 
-  it.skipIf(process.platform !== 'win32')(
-    'authenticates real Git against a local endpoint',
-    async () => {
-      const received: string[] = []
-      const server = createServer((request, response) => {
-        const authorization = request.headers.authorization
-        if (authorization) {
-          const decoded = Buffer.from(authorization.replace(/^Basic /, ''), 'base64').toString()
-          received.push(decoded)
-          if (decoded === 'x-access-token:synthetic !&^()%!') {
-            response.writeHead(200, {
-              'content-type': 'application/x-git-upload-pack-advertisement',
-            })
-            response.end('001f# service=git-upload-pack\n0000')
-            return
-          }
+  it('authenticates real Git against a local endpoint', async () => {
+    const received: string[] = []
+    const directory = await mkdtemp(join(tmpdir(), 'holi askpass endpoint '))
+    const helper =
+      process.platform === 'win32' ? await ensureAskpass() : join(directory, 'credential helper.sh')
+    if (process.platform !== 'win32') {
+      await writeFile(helper, askpassScript('win32'), { mode: 0o700 })
+    }
+    const server = createServer((request, response) => {
+      const authorization = request.headers.authorization
+      if (authorization) {
+        const decoded = Buffer.from(authorization.replace(/^Basic /, ''), 'base64').toString()
+        received.push(decoded)
+        if (decoded === 'configured-username:synthetic !&^()%!') {
+          response.writeHead(200, {
+            'content-type': 'application/x-git-upload-pack-advertisement',
+          })
+          response.end('001e# service=git-upload-pack\n00000000')
+          return
         }
-        response.writeHead(401, { 'www-authenticate': 'Basic realm="local test"' })
-        response.end()
-      })
-      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-      const address = server.address()
-      if (!address || typeof address === 'string') throw new Error('Local test server did not bind')
-      const url = `http://127.0.0.1:${address.port}/repo.git`
-
-      try {
-        const output = await runGit(process.cwd(), ['-c', 'credential.helper=', 'ls-remote', url], {
-          token: () => 'synthetic !&^()%!',
-          env: { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: 'NUL' },
-        })
-        expect(output).toBe('')
-        expect(received).toContain('x-access-token:synthetic !&^()%!')
-
-        received.length = 0
-        const failure = await runGit(
-          process.cwd(),
-          ['-c', 'credential.helper=', 'ls-remote', url],
-          {
-            token: () => '',
-            env: { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: 'NUL' },
-          },
-        ).catch((error) => error)
-        expect(failure).toBeInstanceOf(GitError)
-        expect(received.length).toBeGreaterThan(0)
-        expect(received.every((credential) => credential === 'x-access-token:')).toBe(true)
-      } finally {
-        await new Promise<void>((resolve, reject) =>
-          server.close((error) => (error ? reject(error) : resolve())),
-        )
       }
-    },
-    30_000,
-  )
+      response.writeHead(401, { 'www-authenticate': 'Basic realm="local test"' })
+      response.end()
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Local test server did not bind')
+    const url = `http://configured-username@127.0.0.1:${address.port}/repo.git`
+
+    try {
+      const gitArgs = ['-c', 'credential.helper=', 'ls-remote', url]
+      const gitEnv = {
+        ...process.env,
+        GIT_ASKPASS: helper,
+        GIT_TERMINAL_PROMPT: '0',
+        HOLI_GIT_TOKEN: 'synthetic !&^()%!',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
+      }
+      const { stdout: output } = await exec('git', gitArgs, {
+        env: gitEnv,
+        timeout: 10_000,
+        windowsHide: true,
+      })
+      expect(output).toBe('')
+      expect(received).toContain('configured-username:synthetic !&^()%!')
+
+      received.length = 0
+      const failure = await exec('git', gitArgs, {
+        env: { ...gitEnv, HOLI_GIT_TOKEN: '' },
+        timeout: 10_000,
+        windowsHide: true,
+      }).catch((error) => error)
+      expect(failure).toBeInstanceOf(Error)
+      expect(received.length).toBeGreaterThan(0)
+      expect(received.every((credential) => credential === 'configured-username:')).toBe(true)
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      )
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
 
   it.skipIf(process.platform !== 'win32')(
     'forces background Git settings without disabling helpers',
@@ -126,6 +158,8 @@ describe('Windows askpass', () => {
           GIT_CONFIG_COUNT: '1',
           GIT_CONFIG_KEY_0: 'credential.helper',
           GIT_CONFIG_VALUE_0: 'synthetic-helper',
+          git_askpass: 'unsafe-lowercase-override',
+          gcm_interactive: 'always-lowercase',
         },
       })
 
