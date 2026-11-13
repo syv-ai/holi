@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { registerAgentRoutes } from '../src/plugins/agent/main/claude/routes'
-import { STATUS_LINE } from '../src/plugins/agent/main/claude/seed'
+import { WINDOWS_STATUS_LINE } from '../src/plugins/agent/main/claude/seed'
 import { BRIDGE_ENV_FILE, createBridgeEnv } from '../src/main/bridge/env-file'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
@@ -266,7 +266,7 @@ describe('turn-signal.mjs', () => {
 
 describe('the seeded status line', () => {
   /** Run as Claude Code runs it: the settings command, through a shell. */
-  const command = STATUS_LINE
+  const command = WINDOWS_STATUS_LINE
   const status = { model: { display_name: 'Opus 5.5' }, context_window: { used_percentage: 41.6 } }
   const statusLine = (env: NodeJS.ProcessEnv, input: string) =>
     run('/bin/sh', ['-c', command], env, input)
