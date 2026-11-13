@@ -7,7 +7,15 @@ import { lazy, Suspense } from 'react'
 
 const PdfDocument = lazy(() => import('./pdf-document').then((m) => ({ default: m.PdfDocument })))
 
-export function PdfViewer({ path }: { path: string }) {
+export function PdfViewer({
+  path,
+  visible = true,
+  focused = visible,
+}: {
+  path: string
+  visible?: boolean
+  focused?: boolean
+}) {
   const name = path.slice(path.lastIndexOf('/') + 1)
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background" data-pdf-viewer={path}>
@@ -18,7 +26,7 @@ export function PdfViewer({ path }: { path: string }) {
           </div>
         }
       >
-        <PdfDocument path={path} />
+        {visible ? <PdfDocument path={path} visible={visible} focused={focused} /> : null}
       </Suspense>
     </div>
   )
