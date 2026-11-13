@@ -58,28 +58,41 @@ export function initializeHandoff({
   button,
   navigate,
   setTimeout,
+  addEventListener,
+  getFragment,
 }) {
-  const target = handoffTarget(fragment)
-  const label = destinationLabel(fragment)
   if (!destination || !message || !button) return
-  if (!target || !label) {
-    destination.textContent = 'This sharing link is invalid or incomplete.'
-    message.textContent = 'Ask the sender for a new Holi link.'
-    return
+  let revision = 0
+  const update = (currentFragment) => {
+    const currentRevision = ++revision
+    const target = handoffTarget(currentFragment)
+    const label = destinationLabel(currentFragment)
+    if (!target || !label) {
+      destination.textContent = 'This sharing link is invalid or incomplete.'
+      message.textContent = 'Ask the sender for a new Holi link.'
+      button.href = ''
+      button.hidden = true
+      return
+    }
+    destination.textContent = label
+    button.href = target
+    button.hidden = false
+    message.textContent = 'Trying to open Holi. If nothing happens, use the button.'
+    // Scheme navigation may be rejected by a browser; the explicit link remains available.
+    try {
+      navigate(target)
+    } catch {
+      message.textContent = 'Holi did not open? Use the button to try again.'
+    }
+    setTimeout(() => {
+      if (currentRevision === revision)
+        message.textContent = 'Holi did not open? Use the button to try again.'
+    }, 1200)
   }
-  destination.textContent = label
-  button.href = target
-  button.hidden = false
-  message.textContent = 'Trying to open Holi. If nothing happens, use the button.'
-  // Scheme navigation may be rejected by a browser; the explicit link remains available.
-  try {
-    navigate(target)
-  } catch {
-    message.textContent = 'Holi did not open? Use the button to try again.'
+  update(fragment)
+  if (addEventListener && getFragment) {
+    addEventListener('hashchange', () => update(getFragment()))
   }
-  setTimeout(() => {
-    message.textContent = 'Holi did not open? Use the button to try again.'
-  }, 1200)
 }
 
 if (typeof document !== 'undefined') {
@@ -92,6 +105,8 @@ if (typeof document !== 'undefined') {
       location.href = target
     },
     setTimeout: window.setTimeout.bind(window),
+    addEventListener: window.addEventListener.bind(window),
+    getFragment: () => location.hash,
   })
 }
 

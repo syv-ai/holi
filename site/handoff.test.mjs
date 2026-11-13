@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { destinationLabel, handoffTarget, initializeHandoff } from './handoff.js'
+import { pathToFileURL } from 'node:url'
+import { resolve } from 'node:path'
 
 test('builds fixed holi destination preserving unicode and reserved characters', () => {
   const fragment =
@@ -87,6 +89,69 @@ test('invalid destination stays on the page without attempting launch', () => {
   assert.equal(elements.destination.textContent, 'This sharing link is invalid or incomplete.')
   assert.equal(elements.button.hidden, true)
   assert.equal(launched, false)
+})
+
+test('browser bootstrap refreshes the current fragment on hash changes', async () => {
+  const elements = {
+    destination: { textContent: '' },
+    message: { textContent: '' },
+    button: { href: '', hidden: true },
+  }
+  const listeners = new Map()
+  const timers = []
+  const launches = []
+  const location = {
+    hash: '#vault=a/b&path=notes/one.md',
+    set href(target) {
+      launches.push(target)
+    },
+  }
+  globalThis.document = {
+    querySelector: (selector) =>
+      ({
+        '#destination': elements.destination,
+        '#message': elements.message,
+        '#open': elements.button,
+      })[selector],
+  }
+  globalThis.location = location
+  globalThis.window = {
+    addEventListener: (name, callback) => listeners.set(name, callback),
+    setTimeout: (callback, delay) => timers.push({ callback, delay }),
+  }
+
+  try {
+    await import(`${pathToFileURL(resolve('site/handoff.js')).href}?bootstrap-test`)
+    assert.equal(listeners.has('hashchange'), true)
+    const hashchange = listeners.get('hashchange')
+    assert.equal(elements.destination.textContent, 'a/b · notes/one.md')
+    assert.equal(elements.button.href, handoffTarget(location.hash))
+
+    location.hash = '#vault=a/b&path=notes/two.md'
+    hashchange()
+    assert.equal(elements.destination.textContent, 'a/b · notes/two.md')
+    assert.equal(elements.button.href, handoffTarget(location.hash))
+    assert.equal(launches.at(-1), handoffTarget(location.hash))
+
+    location.hash = '#vault=a/b&path=%FF'
+    hashchange()
+    assert.equal(elements.destination.textContent, 'This sharing link is invalid or incomplete.')
+    assert.equal(elements.button.hidden, true)
+    assert.equal(elements.button.href, '')
+    const invalidMessage = elements.message.textContent
+    timers[0].callback()
+    assert.equal(elements.message.textContent, invalidMessage)
+
+    location.hash = '#vault=c/d&path=notes/three.md'
+    hashchange()
+    assert.equal(elements.destination.textContent, 'c/d · notes/three.md')
+    assert.equal(elements.button.hidden, false)
+    assert.equal(elements.button.href, handoffTarget(location.hash))
+  } finally {
+    delete globalThis.document
+    delete globalThis.location
+    delete globalThis.window
+  }
 })
 
 test('a rejected automatic launch leaves the visible fallback working', () => {
