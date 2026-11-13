@@ -19,6 +19,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 const hooks = vi.hoisted(() => ({
   beforeTempOpen: undefined as (() => Promise<void>) | undefined,
   failCheckAttr: false,
+  failBlobRead: false,
 }))
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
@@ -26,6 +27,9 @@ vi.mock('node:child_process', async (importOriginal) => {
     ...actual,
     spawn: (...args: Parameters<typeof actual.spawn>) => {
       const commandArgs = args[1]
+      if (hooks.failBlobRead && Array.isArray(commandArgs) && commandArgs[0] === 'cat-file') {
+        throw new Error('unexpected raw blob read')
+      }
       if (!hooks.failCheckAttr || !Array.isArray(commandArgs) || commandArgs[0] !== 'check-attr')
         return actual.spawn(...args)
       const child = new EventEmitter() as ReturnType<typeof actual.spawn>
@@ -65,6 +69,23 @@ const updatedShipped = previousShipped.replace(/^[^\n]*/, '# updated shipped lin
 const contents = { ...appsSeed, shipped: { [shippedPath]: updatedShipped } }
 
 describe('prepareManagedClone', () => {
+  it('does not load Git blobs for binary assets or already-LF text', async () => {
+    const root = await makeClone(await makeRemote(), 'no-blob-candidates')
+    const binary = Buffer.from([0, 13, 10, 42])
+    await writeFile(join(root, 'asset.bin'), binary)
+    await writeFile(join(root, 'note.md'), 'already LF\n')
+    await plainGit(root, ['add', '-A'])
+    await plainGit(root, ['commit', '-m', 'assets and clean text'])
+    hooks.failBlobRead = true
+    try {
+      await expect(prepareManagedClone(root)).resolves.toBeUndefined()
+      expect(await readFile(join(root, 'asset.bin'))).toEqual(binary)
+      expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('already LF\n')
+    } finally {
+      hooks.failBlobRead = false
+    }
+  })
+
   it('consumes stdin errors when Git exits before reading a large path list', async () => {
     const root = await makeClone(await makeRemote(), 'early-git-exit')
     const paths = Array.from({ length: 200 }, (_, index) => `candidate-${index}.md`)

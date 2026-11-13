@@ -136,10 +136,6 @@ async function prepare(root: string): Promise<void> {
     .map((entry) => entry.path)
   if (paths.length === 0) return
   const candidateSet = new Set(paths)
-  const blobs = await rawBlobs(root, [
-    ...new Set(stageZero.filter((entry) => candidateSet.has(entry.path)).map((entry) => entry.oid)),
-  ])
-
   const attrOutput = await git(
     root,
     [
@@ -164,20 +160,32 @@ async function prepare(root: string): Promise<void> {
     if (!values) attrs.set(path, (values = new Map()))
     values.set(fields[i + 1]!.toString('ascii'), fields[i + 2]!.toString('utf8'))
   }
+  const candidates: {
+    entry: IndexEntry
+    file: string
+    worktree: Buffer
+    attributes: Map<string, string>
+  }[] = []
   for (const entry of stageZero) {
     if (!candidateSet.has(entry.path) || unmergedPaths.has(entry.path)) continue
+    const attributes = attrs.get(entry.path)
+    if (!attributes || !safeTextAttributes(attributes)) continue
     const file = await safeRegularPath(root, entry.path)
     if (file === null) continue
     const worktree = await readFile(file).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return null
       throw error
     })
-    if (worktree === null || !containsCrLf(worktree)) continue
+    if (worktree === null || !containsCrLf(worktree) || hasNul(worktree)) continue
+    candidates.push({ entry, file, worktree, attributes })
+  }
+  // Only potential text conversions need their index blobs. Asset-heavy vaults
+  // must not load every tracked image or PDF into memory on each cold open.
+  const blobs = await rawBlobs(root, [...new Set(candidates.map(({ entry }) => entry.oid))])
+  for (const { entry, file, worktree, attributes } of candidates) {
     const blob = blobs.get(entry.oid)!
     if (!sameAfterCrlfToLf(worktree, blob) || hasNul(blob)) continue
-    const attr = attrs.get(entry.path)
-    if (!safeTextAttributes(attr)) continue
-    await refresh(root, entry, file, blob, worktree, attr)
+    await refresh(root, entry, file, blob, worktree, attributes)
   }
 }
 
