@@ -411,6 +411,15 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     memberBody,
     (key) => {
       const descriptor = parseTabKey(key)
+      // TabView routes every markdown document to DocumentView before claims
+      // or file-kind dispatch, so retention must use that exact same rule.
+      if (
+        descriptor?.kind === 'doc' &&
+        vaultFiles.some((file) => file.path === descriptor.path) &&
+        /\.md$/i.test(descriptor.path)
+      ) {
+        return true
+      }
       if (
         descriptor?.kind === 'doc' &&
         vaultFiles.some((file) => file.path === descriptor.path) &&
