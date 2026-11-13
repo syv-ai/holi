@@ -30,6 +30,7 @@ const write = vi.fn(async (_input: unknown) => ({
   ok: true as const,
   warnings: [] as string[],
 }))
+const githubCollaborators = vi.hoisted(() => vi.fn())
 
 const SETTINGS: ResolvedVaultSettings = {
   ...VAULT_SETTING_DEFAULTS,
@@ -107,7 +108,7 @@ vi.mock('@/lib/trpc', () => {
             ? { sizeKb: 7 * 1024 * 1024 }
             : null
   const procedure = (name: string) => ({
-    query: async () => answer(name),
+    query: async () => (name === 'github.collaborators' ? githubCollaborators() : answer(name)),
     mutate:
       name === 'settings.write' ? write : name === 'cap.run' ? capRun : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
@@ -197,7 +198,11 @@ function mount({ agent = false }: { agent?: boolean } = {}) {
 
 beforeEach(() => {
   write.mockClear()
-  capRun.mockClear()
+  capRun.mockReset()
+  capRun.mockImplementation(async (input: { name: string }) =>
+    input.name === 'agent.harnesses' ? AGENTS : { ok: true },
+  )
+  githubCollaborators.mockResolvedValue({ visibility: 'private', collaborators: [] })
 })
 
 test('the machine-wide Vim switch works while vault settings load and never writes vault settings', async () => {
@@ -449,6 +454,92 @@ test('changing settings pages and closing Settings reset page-local drafts', asy
   act(() => store.set(shellWorkspaceAtom, (workspace) => closeShellTab(workspace, SETTINGS_KEY)))
   fireEvent.keyDown(window, { key: ',', metaKey: true })
   expect(await screen.findByLabelText('Connection draft')).toHaveValue('')
+})
+
+test('the file-size picker closes when Settings is hidden and stays closed on return', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'commits'))
+  const picker = await screen.findByRole('combobox', { name: 'Largest file to commit' })
+  fireEvent.click(picker)
+  expect(await screen.findByRole('option', { name: '100 MB' })).toBeTruthy()
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('option', { name: '100 MB' })).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.queryByRole('option', { name: '100 MB' })).toBeNull()
+})
+
+test('a late agent test response cannot reopen its dialog after Settings is hidden', async () => {
+  const store = mount()
+  let resolveTest!: () => void
+  capRun.mockImplementation(async (input: { name: string }) => {
+    if (input.name === 'agent.harnessTest') {
+      return new Promise((resolve) => {
+        resolveTest = () => resolve({ ok: true, output: 'finished' } as never)
+      })
+    }
+    return input.name === 'agent.harnesses' ? AGENTS : { ok: true }
+  })
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  fireEvent.click(
+    await screen.findAllByRole('button', { name: 'Test' }).then((buttons) => buttons[0]!),
+  )
+  expect(await screen.findByRole('dialog', { name: 'Test Claude Code' })).toBeTruthy()
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  await act(async () => resolveTest())
+  expect(screen.queryByRole('dialog')).toBeNull()
+})
+
+test('agent rows remain mounted while their list refreshes after returning to Settings', async () => {
+  let refresh!: (value: typeof AGENTS) => void
+  let reads = 0
+  capRun.mockImplementation(async (input: { name: string }) => {
+    if (input.name !== 'agent.harnesses') return { ok: true }
+    reads++
+    return reads === 1
+      ? AGENTS
+      : new Promise((resolve) => {
+          refresh = resolve
+        })
+  })
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  expect(await screen.findByText('Claude Code')).toBeTruthy()
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.getAllByText('Claude Code').length).toBeGreaterThan(0)
+  expect(screen.queryByRole('status', { name: 'Reading the agents' })).toBeNull()
+  await act(async () => refresh(AGENTS))
+})
+
+test('member rows remain mounted while GitHub refreshes after returning to Settings', async () => {
+  const collaborator = {
+    accountId: 7,
+    login: 'reader',
+    avatarUrl: '',
+    permission: 'read',
+  }
+  let refresh!: (value: unknown) => void
+  let reads = 0
+  githubCollaborators.mockImplementation(() => {
+    reads++
+    return reads === 1
+      ? { visibility: 'private', collaborators: [collaborator] }
+      : new Promise((resolve) => {
+          refresh = resolve
+        })
+  })
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'members'))
+  expect(await screen.findByText('reader')).toBeTruthy()
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.getByText('reader')).toBeTruthy()
+  expect(screen.queryByRole('status', { name: 'Reading the members' })).toBeNull()
+  await act(async () => refresh({ visibility: 'private', collaborators: [collaborator] }))
 })
 
 test('a settings dialog closes when its tab is hidden and stays closed on return', async () => {

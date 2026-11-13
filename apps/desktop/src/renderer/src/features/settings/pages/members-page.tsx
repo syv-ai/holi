@@ -25,7 +25,6 @@ export function MembersPage() {
   const read = useCallback(() => {
     if (remote === null || !visible) return () => {}
     let live = true
-    setState({ kind: 'loading' })
     trpc.github.collaborators
       .query({ remote })
       .then(

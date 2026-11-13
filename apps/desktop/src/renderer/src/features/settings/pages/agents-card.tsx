@@ -129,7 +129,12 @@ export function AgentsCard() {
   const [resetting, setResetting] = useState(false)
   const [state, setState] = useState<ListState>({ kind: 'loading' })
   const request = useRef(0)
+  const testRequest = useRef(0)
   const pageVisible = useRef(true)
+  const invalidateRequests = () => {
+    request.current++
+    testRequest.current++
+  }
   // The dialog mounts afresh each time it opens (`key`), so its form is
   // filled from the agent it opens on; `open` false keeps it while it closes.
   const [editing, setEditing] = useState<{
@@ -148,7 +153,7 @@ export function AgentsCard() {
   const read = useCallback(() => {
     if (remote === null) return
     const current = ++request.current
-    setState({ kind: 'loading' })
+    setState((current) => (current.kind === 'ready' ? current : { kind: 'loading' }))
     agentCall<HarnessListing>(remote, 'agent.harnesses', {})
       .then((listing) => {
         if (request.current !== current || !pageVisible.current) return
@@ -167,13 +172,14 @@ export function AgentsCard() {
   useEffect(() => {
     if (!visible) {
       pageVisible.current = false
-      request.current++
+      invalidateRequests()
       return
     }
     pageVisible.current = true
     read()
     return () => {
       pageVisible.current = false
+      invalidateRequests()
     }
   }, [read, visible])
 
@@ -183,6 +189,7 @@ export function AgentsCard() {
     setResetting(false)
     setEditing((current) => ({ ...current, open: false }))
     setRemoving(null)
+    testRequest.current++
     setTesting(null)
   }, [visible])
 
@@ -204,6 +211,7 @@ export function AgentsCard() {
 
   const test = async (h: HarnessRecord): Promise<void> => {
     if (remote === null) return
+    const current = ++testRequest.current
     setTesting({ label: h.label, result: null })
     const result = await agentCall<TestResult>(remote, 'agent.harnessTest', { id: h.id }).catch(
       (err: unknown): TestResult => ({
@@ -212,7 +220,9 @@ export function AgentsCard() {
         output: '',
       }),
     )
-    setTesting({ label: h.label, result })
+    if (testRequest.current === current && pageVisible.current) {
+      setTesting({ label: h.label, result })
+    }
   }
 
   const save = async (harness: HarnessRecord, create: boolean): Promise<void> => {

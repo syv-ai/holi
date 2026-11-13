@@ -8,7 +8,7 @@
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites/settings-ui'
-import { openDialogAtom } from '@/plugin-api'
+import { closePluginDialogAtom, openDialogAtom } from '@/plugin-api'
 import { communityCap, setPluginSwitch } from './community-cap'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -68,13 +68,22 @@ export function PluginsSettings({
 }): React.JSX.Element {
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
+  const closePluginDialog = useSetAtom(closePluginDialogAtom)
+  const visibleRef = useRef(visible)
+  const dialogRenderer = useRef<((close: () => void) => React.ReactNode) | null>(null)
+  visibleRef.current = visible
   const rows = useAtomValue(rowsAtom)?.rows ?? []
   const updates = useAtomValue(updatesAtom)
 
   // Opening the section asks GitHub now rather than trusting the hourly check.
   useEffect(() => {
-    if (visible) void refreshUpdates(remote, store, true)
-  }, [remote, store, visible])
+    if (visible) {
+      void refreshUpdates(remote, store, true)
+      return
+    }
+    if (dialogRenderer.current !== null) closePluginDialog(dialogRenderer.current)
+    dialogRenderer.current = null
+  }, [remote, store, visible, closePluginDialog])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [acting, setActing] = useState<string | null>(null)
@@ -83,7 +92,11 @@ export function PluginsSettings({
   const flow: InstallFlow = {
     remote,
     store,
-    openDialog: (render) => openDialog({ id: 'plugin', size: 'md', render }),
+    openDialog: (render) => {
+      if (!visibleRef.current) return
+      dialogRenderer.current = render
+      openDialog({ id: 'plugin', size: 'md', render })
+    },
   }
 
   const act = async (id: string, fn: () => Promise<string | null | void>) => {
@@ -294,7 +307,7 @@ export function PluginsSettings({
         </SettingsList>
       )}
 
-      <AddPlugin flow={flow} busy={busy} acting={acting} act={act} />
+      <AddPlugin flow={flow} busy={busy} acting={acting} visible={visible} act={act} />
       {error !== null && (
         <p role="alert" className="mt-2 text-xs text-pretty break-words text-destructive">
           {error}
@@ -308,11 +321,13 @@ function AddPlugin({
   flow,
   busy,
   acting,
+  visible,
   act,
 }: {
   flow: InstallFlow
   busy: boolean
   acting: string | null
+  visible: boolean
   act: (id: string, fn: () => Promise<string | null | void>) => Promise<void>
 }): React.JSX.Element {
   const addFolder = async () => {
@@ -332,6 +347,7 @@ function AddPlugin({
           <PluginSearch
             remote={flow.remote}
             disabled={busy}
+            visible={visible}
             onChoose={(c) =>
               void act('add:install', () =>
                 installAndAsk(flow, { repo: c.repo, path: c.path, version: c.latest }, (row) =>
