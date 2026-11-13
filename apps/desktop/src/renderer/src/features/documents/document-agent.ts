@@ -226,11 +226,24 @@ export function useDocumentAgent(path: string, focused = true) {
     if (focused) return
     setRuns((all) => {
       const current = all[path]
-      return current === undefined || !isRunLive(current) || current.away
+      return current === undefined || current.away
         ? all
         : { ...all, [path]: { ...current, away: true } }
     })
-  }, [focused, path, setRuns])
+  }, [focused, path, setRuns, run])
+
+  useEffect(
+    () => () => {
+      if (store.get(activeRemoteAtom) !== remote) return
+      setRuns((all) => {
+        const current = all[path]
+        return current === undefined || current.away
+          ? all
+          : { ...all, [path]: { ...current, away: true } }
+      })
+    },
+    [path, setRuns, store, remote],
+  )
 
   // A write that ended without removing its marker leaves no trace of it.
   useEffect(() => {
@@ -238,10 +251,17 @@ export function useDocumentAgent(path: string, focused = true) {
     void clearMarker(remote, path)
   }, [run, remote, path])
 
-  const start = async (kind: AgentRunKind, request: string, passage?: string) => {
-    if (remote === null) return
+  const start = async (
+    kind: AgentRunKind,
+    request: string,
+    passage?: string,
+    currentVisit: () => boolean = () => focused,
+  ) => {
+    if (remote === null || store.get(activeRemoteAtom) !== remote) return
     if (kind === 'vault-app') {
-      await store.set(startVaultAppAtom, path)
+      const starting = store.set(startVaultAppAtom, path)
+      if (!currentVisit()) update({ away: true })
+      await starting
       return
     }
     const name = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')
@@ -255,6 +275,7 @@ export function useDocumentAgent(path: string, focused = true) {
         provider: 'claude',
         sessionId: null,
         status: 'starting',
+        away: !currentVisit(),
         seenWorking: false,
       },
     }))
@@ -263,7 +284,7 @@ export function useDocumentAgent(path: string, focused = true) {
     try {
       const settings = await loadSettings()
       if (settings === null) throw new Error('No vault is open.')
-      if (remoteRef.current !== remote) {
+      if (remoteRef.current !== remote || store.get(activeRemoteAtom) !== remote) {
         update({ status: 'stopped', message: 'The active vault changed before the agent started.' })
         return
       }

@@ -417,7 +417,11 @@ function PickList({
   onPick,
   render = (option) => option,
   emptyOption,
+  query,
+  setQuery,
 }: {
+  query: string
+  setQuery: (query: string) => void
   placeholder: string
   options: string[]
   selected: string[]
@@ -427,7 +431,6 @@ function PickList({
   /** A first item meaning "none", like the vault root for a project. */
   emptyOption?: { label: string; value: string }
 }) {
-  const [query, setQuery] = useState('')
   const typed = query.trim()
   const isNew =
     typed !== '' && !options.some((option) => option.toLowerCase() === typed.toLowerCase())
@@ -489,6 +492,7 @@ function LabelsField({
   value: string[]
   onChange: (tags: string[]) => void
 }) {
+  const [query, setQuery] = useState('')
   const known = useAtomValue(taskTagsAtom)
   const options = [...new Set([...known, ...value])]
   return (
@@ -513,6 +517,8 @@ function LabelsField({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64">
         <PickList
+          query={query}
+          setQuery={setQuery}
           placeholder="Find or add a label…"
           options={options}
           selected={value}
@@ -536,6 +542,7 @@ function ProjectField({
   onChange: (folder: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const projects = useProjects()
   const options = value !== '' && !projects.includes(value) ? [...projects, value] : projects
   return (
@@ -552,6 +559,8 @@ function ProjectField({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72">
         <PickList
+          query={query}
+          setQuery={setQuery}
           placeholder="Find or name a project…"
           options={options}
           selected={[value]}
@@ -586,6 +595,11 @@ function EstimateField({
 }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(value ?? '')
+  const [savedValue, setSavedValue] = useState(value)
+  if (savedValue !== value) {
+    setSavedValue(value)
+    setDraft(value ?? '')
+  }
   const bad = draft.trim() !== '' && !isEstimate(draft.trim())
   const commit = (next: string) => {
     const trimmed = next.trim()
@@ -594,13 +608,7 @@ function EstimateField({
     setOpen(false)
   }
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        if (next) setDraft(value ?? '')
-        setOpen(next)
-      }}
-    >
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <FieldTrigger
           layout={layout}

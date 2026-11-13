@@ -6,6 +6,7 @@ import { pendingHeadingAtom } from '@/state/open-document'
 import { useViewMemory } from '@/state/view-memory'
 
 import { landOnHeading } from './document-headings'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 
 /**
  * Where the reader is in the document: a tab switched back to opens with the
@@ -32,6 +33,7 @@ export function useDocumentPosition({
   // A tab switched back to opens where it was left: the caret and the
   // scroll, kept as they move (`view-memory.ts`). A link to a heading
   // lands on the heading instead.
+  const activity = useEditorActivity(editor)
   const memory = useViewMemory()
   const [pendingHeading, setPendingHeading] = useAtom(pendingHeadingAtom)
   const headingWaiting = pendingHeading?.path === path
@@ -39,7 +41,8 @@ export function useDocumentPosition({
     const scroller = scrollerRef.current
     if (!editor || editor.isDestroyed || remote === null || scroller === null) return
     const spot = memory.get(remote, path)
-    if (spot !== undefined && !headingWaiting) {
+    let frame: number | undefined
+    if (activity.displayed && spot !== undefined && !headingWaiting) {
       const size = editor.state.doc.content.size
       const clamp = (at: number) => Math.min(Math.max(at, 1), size - 1)
       try {
@@ -52,7 +55,9 @@ export function useDocumentPosition({
       }
       scroller.scrollTop = spot.scrollTop
       // Again once the page has laid out, should it not have yet.
-      requestAnimationFrame(() => {
+      const current = activity.capture()
+      frame = requestAnimationFrame(() => {
+        if (!current() || editor.isDestroyed) return
         scroller.scrollTop = spot.scrollTop
       })
     }
@@ -64,12 +69,13 @@ export function useDocumentPosition({
     editor.on('selectionUpdate', noteSelection)
     scroller.addEventListener('scroll', noteScroll, { passive: true })
     return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
       editor.off('selectionUpdate', noteSelection)
       scroller.removeEventListener('scroll', noteScroll)
     }
     // Once per editor: a heading arriving later is the effect below's.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, remote, path, memory])
+  }, [editor, remote, path, memory, activity])
 
   // A Holi link that named a heading lands the caret on it once the
   // document is in the editor.

@@ -92,6 +92,12 @@ import { DocumentFormatBubble } from './document-format-bubble'
 import { DocumentHeader, type SaveState } from './document-header'
 import { documentTitle, joinDocument, splitDocument } from './markdown'
 import { ErrorState } from '@/composites/empty-state'
+import {
+  bindEditorActivity,
+  EditorActivityContext,
+  useDocumentActivity,
+  useEditorActivity,
+} from '@/hooks/use-editor-activity'
 
 function isTaskPath(path: string): boolean {
   return /(?:^|\/)task\.[^/]+\.md$/.test(path)
@@ -137,6 +143,7 @@ export function DocumentView({
   /** Whether it owns keyboard focus and may publish active UI state. */
   focused?: boolean
 }) {
+  const activity = useDocumentActivity(visible, visible && focused)
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const docs = snapshot.docs
@@ -180,18 +187,20 @@ export function DocumentView({
     )
 
   return (
-    <DocumentEditor
-      key={path}
-      path={path}
-      remote={remote}
-      initial={load}
-      mtime={mtime}
-      docs={docs}
-      onOpen={onOpen}
-      onMoved={onMoved}
-      visible={visible}
-      focused={focused}
-    />
+    <EditorActivityContext value={activity}>
+      <DocumentEditor
+        key={`${remote}:${path}`}
+        path={path}
+        remote={remote}
+        initial={load}
+        mtime={mtime}
+        docs={docs}
+        onOpen={onOpen}
+        onMoved={onMoved}
+        visible={visible}
+        focused={visible && focused}
+      />
+    </EditorActivityContext>
   )
 }
 
@@ -216,6 +225,7 @@ function DocumentEditor({
   visible: boolean
   focused: boolean
 }) {
+  const activity = useEditorActivity()
   const agent = useDocumentAgent(path, focused)
   const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const agentLabelRef = useRef(agentLabel)
@@ -255,6 +265,9 @@ function DocumentEditor({
     box.className = 'my-1'
     return box
   })
+  useEffect(() => {
+    promptBox.hidden = !focused
+  }, [promptBox, focused])
   const pageRef = useRef<HTMLDivElement>(null)
   /** The page's scroller, whose place a tab switch keeps. */
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -289,6 +302,8 @@ function DocumentEditor({
   }, [])
   const lockedRef = useRef(locked)
   lockedRef.current = locked
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
   const focusedRef = useRef(focused)
   focusedRef.current = focused
 
@@ -301,7 +316,7 @@ function DocumentEditor({
     pluginItems: (): readonly RichTextSlashItem[] => [],
   })
   handlers.current.openLink = (target) => {
-    if (!focusedRef.current) return
+    if (!activity.displayed) return
     const found = resolveLink(target, path, docs)
     if (found) onOpen(found)
   }
@@ -310,6 +325,9 @@ function DocumentEditor({
     () => [
       Extension.create({
         name: 'saveFreeze',
+        onBeforeCreate() {
+          bindEditorActivity(this.editor, activity)
+        },
         addProseMirrorPlugins: () => [
           new Plugin({
             filterTransaction: (transaction) =>
@@ -341,7 +359,7 @@ function DocumentEditor({
         labelSource,
       }),
     ],
-    [path, promptBox, labelSource],
+    [path, promptBox, labelSource, activity],
   )
 
   const editor = useEditor(
@@ -510,7 +528,9 @@ function DocumentEditor({
         undefined,
         (value) => {
           frozen.current = value
-          editor?.setEditable(!value && !doneFreeze.current && !lockedRef.current)
+          editor?.setEditable(
+            !value && visibleRef.current && !doneFreeze.current && !lockedRef.current,
+          )
         },
       ),
     [editor],
@@ -594,15 +614,15 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked && focused && !frozen.current && !doneFreeze.current)
-  }, [editor, locked, focused])
+    editor.setEditable(!locked && visible && !frozen.current && !doneFreeze.current)
+  }, [editor, locked, visible])
 
   // A finished edit clears its pill on its own. A finished vault app opens
   // when the document is still the tab in front and was never left while it
   // ran; otherwise it waits on the pill's Open.
   useEffect(() => {
     const run = agent.run
-    if (!run || run.status !== 'done') return
+    if (!focused || !activity.focused || !run || run.status !== 'done') return
     if (run.kind === 'vault-app') {
       // A partial copy stays on the pill until the person has seen what was left out.
       if (run.away || run.opened || run.appPath === undefined || run.message !== undefined) return
@@ -615,7 +635,7 @@ function DocumentEditor({
     return () => window.clearTimeout(timer)
     // `onOpen` is the shell's, new each render; the run is what changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.run, agent.dismiss, path, store])
+  }, [agent.run, agent.dismiss, path, store, focused, activity])
 
   /**
    * The whole page takes a press. Below the last line it starts a new one
@@ -670,6 +690,7 @@ function DocumentEditor({
     if (remoteAtStart !== remote || entryOf(workspaceAtStart, key) === null || !isTaskPath(path))
       return
 
+    const currentVisit = activity.capture()
     doneInFlight.current = true
     doneFreeze.current = true
     editor.setEditable(false)
@@ -683,6 +704,7 @@ function DocumentEditor({
       // A vault switch or any workspace change while the write was pending
       // makes the original close stale. Never act on the newly active workspace.
       if (
+        !currentVisit() ||
         store.get(activeRemoteAtom) !== remoteAtStart ||
         store.get(shellWorkspaceAtom) !== workspaceAtStart ||
         frozen.current ||
@@ -700,7 +722,7 @@ function DocumentEditor({
       doneInFlight.current = false
       if (!editor.isDestroyed) {
         doneFreeze.current = false
-        editor.setEditable(!lockedRef.current && focusedRef.current && !frozen.current)
+        editor.setEditable(!lockedRef.current && activity.displayed && !frozen.current)
       }
       setDonePending(false)
     }
@@ -757,6 +779,7 @@ function DocumentEditor({
               beneath the line, not under the header. */}
           <DocumentHeader
             editor={editor}
+            visible={visible && focused}
             path={path}
             title={documentTitle(path)}
             saveState={saveState}
@@ -804,8 +827,14 @@ function DocumentEditor({
             >
               {/* The find bar floats at the page's top right, over the text,
                 and stays there as it scrolls. */}
-              {editor && find && focused ? (
-                <div className="sticky top-2 z-40 flex h-0 items-start justify-end px-4">
+              {editor && find ? (
+                <div
+                  hidden={!focused}
+                  className={cn(
+                    'sticky top-2 z-40 flex h-0 items-start justify-end px-4',
+                    !focused && 'hidden',
+                  )}
+                >
                   <DocumentFindBar editor={editor} request={find} onClose={() => setFind(null)} />
                 </div>
               ) : null}
@@ -859,7 +888,7 @@ function DocumentEditor({
                 ) : (
                   <DocumentSkeleton />
                 )}
-                {editor && focused ? (
+                {editor ? (
                   <>
                     <DocumentFormatBubble
                       editor={editor}
@@ -972,11 +1001,7 @@ function DocumentEditor({
           </div>
         ) : null}
       </div>
-      <DeleteTableDialog
-        editor={editor}
-        open={deleteTableOpen && visible && focused}
-        onOpenChange={setDeleteTableOpen}
-      />
+      <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </TooltipProvider>
   )
 }
