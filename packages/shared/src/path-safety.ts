@@ -134,6 +134,9 @@ export const OS_JUNK_FILES: readonly string[] = ['.DS_Store', 'Thumbs.db']
  */
 export const VAULT_MARKER_FILE = '.holi/vault'
 
+/** The canonical per-vault local scratchpad, opened as an ordinary document. */
+export const SCRATCHPAD_PATH = 'scratchpad.local.md'
+
 /**
  * The shared, committed config files whose contents configure the whole vault:
  * `.holi/settings/app.yaml` (Holi) and `.claude/settings.json` (the agent). A

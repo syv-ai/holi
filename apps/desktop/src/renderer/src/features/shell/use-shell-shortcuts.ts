@@ -38,6 +38,7 @@ export interface ShellActions {
   /** Split view (⌘\): the active tab and a New tab side by side. */
   splitRight: () => void
   newDocument: () => void
+  openScratchpad?: () => void
   toggleFiles: () => void
   /** Bring the files sidebar out: leave any app, expand the rail. */
   showFiles: () => void
@@ -127,6 +128,7 @@ export function useShellShortcuts(shell: ShellActions): void {
       if (section === 'agents' && hasAgents && newAgentSession()) return
       shell.newDocument()
     },
+    'scratchpad.open': shell.openScratchpad,
     'daily.open': () => {
       ensureDaily().then(
         (path) => {
