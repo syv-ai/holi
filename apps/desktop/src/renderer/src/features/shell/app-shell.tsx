@@ -35,6 +35,8 @@ import {
   activeSplit,
   closeTab as closeTabIn,
   entryIds,
+  entryOf,
+  entryViews,
   focusedTab,
   focusMember,
   openInSplit,
@@ -356,7 +358,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   /** One view: its header in a split, then what it shows. Focus follows a
    *  press or keyboard focus into a split's member. */
-  function memberBody(key: string, visible: boolean) {
+  function memberBody(key: string, visible: boolean, displayed: boolean) {
     const tab = key === NO_TAB ? null : key
     const isFocused = tab === focusedKey
     const focus = () => {
@@ -383,10 +385,13 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
             settingsNavInSidebar={isFocused && settingsActive && !isMobile && sidebarOpen}
             onOpen={openTabKey}
             onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
+            displayed={displayed}
             reading={
-              members
-                .map((member) => tabPath(member.key))
-                .find((path) => path !== null && path !== tab) ?? null
+              tab === null
+                ? null
+                : (entryViews(entryOf(ws, tab) ?? tab)
+                    .map((member) => tabPath(member))
+                    .find((path) => path !== null && path !== tab) ?? null)
             }
             onMoved={(from, to) => retargetTabs([{ from, to }])}
             onNewDocument={newDocument}

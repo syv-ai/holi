@@ -11,7 +11,7 @@ import { activeRemoteAtom } from '@/state/vaults'
  * Slots may change with the shell layout; the iframe's document must not. */
 export function useRetainedSurfaces(
   visibleKeys: readonly string[],
-  render: (key: string, visible: boolean) => ReactNode,
+  render: (key: string, visible: boolean, displayed: boolean) => ReactNode,
   retainsSession: (key: string) => boolean,
 ): { slot: (key: string) => ReactNode; content: ReactNode } {
   const remote = useAtomValue(activeRemoteAtom)
@@ -20,15 +20,21 @@ export function useRetainedSurfaces(
   const parking = useRef<HTMLDivElement>(null)
   const focusGuard = useRef<{
     release(host: HTMLElement): void
+    parked(): void
   } | null>(null)
   const hosts = useRef(new Map<string, HTMLDivElement>())
-  const releaseFocus = useCallback((host: HTMLElement) => focusGuard.current?.release(host), [])
+  const releaseFocus = useCallback(
+    (host: HTMLElement, parked = false) =>
+      parked ? focusGuard.current?.parked() : focusGuard.current?.release(host),
+    [],
+  )
   const [visited, setVisited] = useState({ remote, keys: [] as string[] })
   const visible = new Set(visibleKeys)
   const open = new Set(allTabs(workspace))
   const retained = (key: string) => {
     const tab = parseTabKey(key)
     return (
+      tab?.kind === 'graph' ||
       (tab?.kind === 'session' && retainsSession(key)) ||
       (tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true)
     )
@@ -108,11 +114,11 @@ export function useRetainedSurfaces(
     // A remote document can change frame focus without a parent DOM event.
     // Watch only while hosts are parked; no layout reads are needed.
     const watch = () => {
-      if (disposed || timer !== null) return
+      if (disposed || timer !== null || home.querySelector('iframe') === null) return
       timer = ownerWindow.setTimeout(() => {
         timer = null
         check()
-        if (home.childElementCount > 0) watch()
+        if (home.querySelector('iframe') !== null) watch()
       }, 250)
     }
     const focusIn = (event: FocusEvent) => {
@@ -130,6 +136,8 @@ export function useRetainedSurfaces(
         // A layout move can adopt this host into another visible slot in
         // this commit. Only reject focus if it ends up parked.
         if (host.contains(ownerDocument.activeElement)) schedule()
+      },
+      parked() {
         watch()
       },
     }
@@ -173,7 +181,11 @@ export function useRetainedSurfaces(
           className="invisible pointer-events-none absolute left-0 top-0 h-0 w-0 overflow-hidden"
         />
         {displayed.map((key) =>
-          createPortal(render(key, visible.has(key)), hostFor(key), identity(key)),
+          createPortal(
+            render(key, visible.has(key), visible.has(key)),
+            hostFor(key),
+            identity(key),
+          ),
         )}
       </>
     ),
@@ -201,7 +213,7 @@ function SurfaceSlot({
 }: {
   host: HTMLDivElement
   parking: React.RefObject<HTMLDivElement | null>
-  releaseFocus(host: HTMLElement): void
+  releaseFocus(host: HTMLElement, parked?: boolean): void
 }) {
   const slot = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -214,12 +226,13 @@ function SurfaceSlot({
     host.inert = false
     return () => {
       if (host.parentElement === destination) {
-        releaseFocus(host)
         const bounds = host.getBoundingClientRect()
         host.style.width = `${bounds.width}px`
         host.style.height = `${bounds.height}px`
+        releaseFocus(host)
         host.inert = true
         moveHost(home, host)
+        releaseFocus(host, true)
       }
     }
   }, [host, parking, releaseFocus])

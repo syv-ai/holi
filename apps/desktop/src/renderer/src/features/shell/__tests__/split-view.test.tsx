@@ -35,6 +35,8 @@ import { registerBuffer } from '@/lib/buffer-registry'
 import { agentsSelectionAtom } from '@/state/agents-slots'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
+const graphQuery = vi.hoisted(() => vi.fn())
+
 const write = vi.fn(async (_input: unknown) => ({
   ok: true as const,
   warnings: [] as string[],
@@ -56,15 +58,17 @@ const SETTINGS: ResolvedVaultSettings = {
 // nothing walking the mock can recurse forever.
 vi.mock('@/lib/trpc', () => {
   const answer = (name: string): unknown =>
-    name === 'settings.read'
-      ? SETTINGS
-      : name === 'settings.pluginFailures'
-        ? {}
-        : name === 'github.collaborators'
-          ? { visibility: 'private', collaborators: [] }
-          : ['activity.entries', 'logs.entries', 'terminal.list'].includes(name)
-            ? []
-            : null
+    name === 'notes.graph'
+      ? graphQuery()
+      : name === 'settings.read'
+        ? SETTINGS
+        : name === 'settings.pluginFailures'
+          ? {}
+          : name === 'github.collaborators'
+            ? { visibility: 'private', collaborators: [] }
+            : ['activity.entries', 'logs.entries', 'terminal.list'].includes(name)
+              ? []
+              : null
   const procedure = (name: string) => ({
     query: async () => answer(name),
     mutate: name === 'settings.write' ? write : async () => ({ ok: true }),
@@ -467,6 +471,7 @@ test('retained focus guards remove their global handlers on unmount', async () =
   const f = retainedFixture()
   f.show('one')
   const input = await screen.findByRole('textbox', { name: 'State one' })
+  input.closest('[data-pane-host]')!.append(document.createElement('iframe'))
   f.away()
   const windowFocus = addWindow.mock.calls.filter(([type]) => ['blur', 'focus'].includes(type))
   const documentFocus = addDocument.mock.calls.filter(
@@ -584,6 +589,52 @@ test('five opted-in agent terminal surfaces keep one view each and release on cl
   }
   await waitFor(() => expect(f.released).toHaveBeenCalledTimes(ids.length))
   for (const input of inputs.values()) expect(input.isConnected).toBe(false)
+})
+
+test('a parked graph highlights its own split companion, not the focused tab', async () => {
+  graphQuery.mockReset()
+  const widths = ['clientWidth', 'clientHeight'] as const
+  const previous = widths.map((name) =>
+    Object.getOwnPropertyDescriptor(HTMLElement.prototype, name),
+  )
+  for (const name of widths) {
+    Object.defineProperty(HTMLElement.prototype, name, { configurable: true, get: () => 600 })
+  }
+  graphQuery.mockResolvedValue({ nodes: ['A.md', 'B.md'], edges: [[0, 1]], total: 2 })
+  const store = mount()
+  const key = 'holi:graph'
+  act(() => store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, key)))
+  await waitFor(() => expect(document.querySelector('[data-graph-node="B.md"]')).not.toBeNull())
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
+  expect(document.querySelector('[data-graph-node="B.md"] circle')).toHaveClass('fill-primary')
+  expect(document.querySelector('[data-graph-node="A.md"] circle')).not.toHaveClass('fill-primary')
+  widths.forEach((name, i) => {
+    const descriptor = previous[i]
+    if (descriptor === undefined) delete (HTMLElement.prototype as never)[name]
+    else Object.defineProperty(HTMLElement.prototype, name, descriptor)
+  })
+})
+
+test('a visited graph stays mounted through tabs and refetches after close and reopen', async () => {
+  graphQuery.mockReset()
+  graphQuery.mockResolvedValue({ nodes: ['Plan.md'], edges: [], total: 1 })
+  const store = mount()
+  const key = 'holi:graph'
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, key)))
+  await waitFor(() => expect(document.querySelector('[data-graph-view]')).not.toBeNull())
+  const graphView = document.querySelector('[data-graph-view]')
+  expect(graphQuery).toHaveBeenCalledTimes(1)
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
+  expect(document.querySelector('[data-graph-view]')).toBe(graphView)
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, key)))
+  expect(document.querySelector('[data-graph-view]')).toBe(graphView)
+  expect(graphQuery).toHaveBeenCalledTimes(1)
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, key)))
+  await waitFor(() => expect(document.querySelector('[data-graph-view]')).toBeNull())
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, key)))
+  await waitFor(() => expect(graphQuery).toHaveBeenCalledTimes(2))
 })
 
 test('retained surfaces mount only after first display and close/reopen starts fresh', async () => {
