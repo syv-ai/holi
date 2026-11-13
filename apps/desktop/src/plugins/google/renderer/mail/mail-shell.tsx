@@ -179,6 +179,13 @@ function MailAccountShell({
     if (!visible) setCompose(null)
   }, [visible])
 
+  // An inline composer belongs to the thread it was opened in. Parking Mail
+  // keeps that thread open, but navigating away or archiving it ends ownership.
+  useEffect(() => {
+    if (inline !== null && (inline.intent.kind === 'new' || inline.intent.threadId !== mail.openId))
+      setInline(null)
+  }, [inline, mail.openId])
+
   const composer =
     inline !== null && thread !== null ? (
       <div className="pt-4">
