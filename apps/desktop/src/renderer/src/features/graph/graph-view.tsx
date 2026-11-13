@@ -136,7 +136,10 @@ function useGraph(displayed: boolean): { scan: Scan; retry: () => void; attempt:
     return () => {
       live = false
       window.clearTimeout(timer)
-      if (!settled && !displayedRef.current) immediate.current = true
+      if (!settled) {
+        if (startedToken.current === token) startedToken.current = null
+        if (!displayedRef.current) immediate.current = true
+      }
     }
   }, [displayed, remote, hidden, scope, token, attempt])
 
