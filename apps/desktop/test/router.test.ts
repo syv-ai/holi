@@ -69,7 +69,12 @@ afterEach(async () => {
   for (const h of hosts.splice(0)) await h.close().catch(() => {})
 })
 
-async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
+async function rig(
+  files: Record<string, string> = {},
+  auth?: StoredAuth,
+  onPrepare: () => Promise<void> = async () => {},
+  onSeed: typeof seedVault = seedVault,
+) {
   const base = await mkdtemp(join(tmpdir(), 'holi-rt-'))
   dirs.push(base)
   const root = join(base, 'clone')
@@ -128,7 +133,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     claims: TASKS,
   })
   const caller = createRouter({
-    seed: seedVault,
+    seed: (root) => onSeed(root),
     plugins: {
       reconcile: async () => {},
       syncBackground: async () => {},
@@ -140,6 +145,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     session,
     host,
     vaultRoot: join(base, 'Holi'),
+    prepareClone: onPrepare,
     openExternal: async () => {},
     trashItem,
     showItemInFolder,
@@ -239,6 +245,27 @@ describe('vaults', () => {
   it('lists the registry', async () => {
     const { caller } = await rig()
     expect((await caller.vaults.list()).map((v) => v.remote)).toEqual([REMOTE])
+  })
+
+  it('prepares a cold vault before seeding and skips preparation for its live runtime', async () => {
+    const order: string[] = []
+    const { caller } = await rig(
+      {},
+      undefined,
+      async () => {
+        order.push('prepare')
+      },
+      async () => {
+        order.push('seed')
+        return { written: [] }
+      },
+    )
+
+    await caller.vaults.open({ remote: REMOTE })
+    expect(order).toEqual(['prepare', 'seed'])
+    order.length = 0
+    await caller.vaults.open({ remote: REMOTE })
+    expect(order).toEqual(['seed'])
   })
 
   it('open returns the vault contents and stamps lastOpenedAt', async () => {
@@ -1614,10 +1641,22 @@ describe('github', () => {
 
 describe('vaults.add', () => {
   it('clones, seeds, registers and opens', async () => {
-    const { caller, host, base } = await rig()
+    const order: string[] = []
+    const { caller, host, base } = await rig(
+      {},
+      undefined,
+      async () => {
+        order.push('prepare')
+      },
+      async (root) => {
+        order.push('seed')
+        return seedVault(root)
+      },
+    )
     const origin = await makeRemote()
 
     const snap = await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
+    expect(order).toEqual(['prepare', 'seed'])
 
     // The repo's own content plus the once-files, because seeding happens on
     // the way in rather than at some later activation. No skills: this joins a
@@ -1642,7 +1681,8 @@ describe('vaults.add', () => {
     // directly. Adopting seeds the clone, so a plain code repo (no `.holi`
     // marker) must be refused before the seed can commit `AGENTS.md`/`.claude/`
     // into it — otherwise the next auto-push corrupts someone's codebase.
-    const { caller, base } = await rig()
+    const prepare = vi.fn(async () => {})
+    const { caller, base } = await rig({}, undefined, prepare)
     const origin = await makeNonVaultRemote()
 
     await expect(caller.vaults.add({ remote: 'syv-ai/just-code', url: origin })).rejects.toThrow(
@@ -1650,6 +1690,7 @@ describe('vaults.add', () => {
     )
 
     expect((await caller.vaults.list()).map((v) => v.remote)).toEqual([REMOTE])
+    expect(prepare).not.toHaveBeenCalled()
     // The clone made to inspect it is removed, so a refused adopt leaves nothing.
     await expect(
       readFile(join(base, 'Holi', 'syv-ai', 'just-code', 'README.md'), 'utf8'),

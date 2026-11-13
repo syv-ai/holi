@@ -62,6 +62,7 @@ import type { ActivityEntry, ActivityLog } from './activity/log'
 import type { AppLog, AppLogEntry } from './logs/app-log'
 import type { TerminalInfo, TerminalOpened, Terminals } from './terminal/terminals'
 import { ensureClone } from './vault/clone'
+import { prepareManagedClone } from './vault/prepare-clone'
 import {
   absPathFor,
   carryFolder,
@@ -163,6 +164,8 @@ export interface RouterDeps {
    *  tests. Passed in rather than read from `vaultRoot()` here so the router
    *  has no ambient dependency on the environment. */
   vaultRoot: string
+  /** Clone preparation, injectable for router tests that use non-Git fixture roots. */
+  prepareClone?: (root: string) => Promise<void>
   /**
    * Where to clone a remote *from*. Defaults to its credential-free GitHub URL.
    *
@@ -482,6 +485,9 @@ export function createRouter(deps: RouterDeps) {
         `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
       )
     }
+    if (deps.host.get(remote) === null) {
+      await (deps.prepareClone ?? prepareManagedClone)(repo.root)
+    }
     await deps.seed(repo.root)
     // A new vault's README, beside the seed so it lands in the first commit.
     // Not a once-seed file: it is written from this vault's own answer. Never
@@ -799,6 +805,9 @@ export function createRouter(deps: RouterDeps) {
          * Before `host.open`, for `addVault`'s reason: nothing can be committed
          * ahead of the `.gitignore`.
          */
+        if (deps.host.get(input.remote) === null) {
+          await (deps.prepareClone ?? prepareManagedClone)(root)
+        }
         await deps.seed(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)

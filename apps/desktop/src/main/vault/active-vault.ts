@@ -1572,7 +1572,7 @@ export interface VaultHost {
 export function createVaultHost(args: {
   registry: VaultRegistry
   /** Work required before a vault can start its plugins or agent. */
-  beforeOpen?: () => Promise<void>
+  beforeOpen?: (remote: string) => Promise<void>
   gitDeps?: GitDeps
   /** What the scanner claims in the vault at `root` (`openActiveVault`). */
   claims: (root: string) => Promise<readonly ScanClaim[]>
@@ -1719,7 +1719,7 @@ export function createVaultHost(args: {
     const pending = starts.get(remote)
     if (pending !== undefined) return pending
     const opening = (async () => {
-      if (!prepared) await args.beforeOpen?.()
+      if (!prepared) await args.beforeOpen?.(remote)
       const entry = (await args.registry.list()).find((e) => e.remote === remote)
       if (!entry) throw new Error(`no such vault: ${remote}`)
       let callbacksEnabled = true
@@ -1796,7 +1796,7 @@ export function createVaultHost(args: {
             return current
           }
           // Keep the selected runtime usable until startup prerequisites succeed.
-          await args.beforeOpen?.()
+          if (!runtimes.has(remote)) await args.beforeOpen?.(remote)
           const previous = current?.remote
           if (previous !== undefined) await serialise(previous, () => closeRuntime(previous))
           const vault = await serialise(remote, () => start(remote, true))
