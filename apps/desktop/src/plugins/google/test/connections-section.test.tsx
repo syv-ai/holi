@@ -138,6 +138,58 @@ describe('ConnectionsSection', () => {
     expect(awaitConnect).not.toHaveBeenCalled()
   })
 
+  it('keeps the current attempt cancellable when an older attempt settles late', async () => {
+    let settleFirst!: (value: { kind: 'cancelled' }) => void
+    let settleSecond!: (value: { kind: 'granted' | 'cancelled' }) => void
+    awaitConnect
+      .mockReturnValueOnce(new Promise((resolve) => (settleFirst = resolve)))
+      .mockReturnValueOnce(new Promise((resolve) => (settleSecond = resolve)))
+
+    const mounted = render()
+    const label = 'Connect a different account…'
+    await userEvent.click(await screen.findByRole('button', { name: label }))
+    await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(1))
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible={false} />
+      </Provider>,
+    )
+    expect(cancelConnect).toHaveBeenCalledTimes(1)
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible />
+      </Provider>,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: label }))
+    await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(2))
+
+    await act(async () => settleFirst({ kind: 'cancelled' }))
+    expect(screen.getByRole('button', { name: 'Connecting…' })).toBeDisabled()
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible={false} />
+      </Provider>,
+    )
+    expect(cancelConnect).toHaveBeenCalledTimes(2)
+    await act(async () => settleSecond({ kind: 'cancelled' }))
+  })
+
+  it('invalidates a pending connect when unmounted', async () => {
+    let settle!: (value: { kind: 'granted' }) => void
+    awaitConnect.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)))
+    const mounted = render()
+    const button = await screen.findByRole('button', { name: 'Connect a different account…' })
+    await userEvent.click(button)
+    await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(1))
+
+    mounted.unmount()
+    expect(cancelConnect).toHaveBeenCalledTimes(1)
+    await act(async () => settle({ kind: 'granted' }))
+    expect(status).toHaveBeenCalledTimes(1)
+  })
+
   it('offers the accounts already connected here to a vault with none', async () => {
     render()
 

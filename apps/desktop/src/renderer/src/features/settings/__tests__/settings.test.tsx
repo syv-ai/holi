@@ -155,6 +155,14 @@ const CONNECTIONS: RendererPlugin = {
       files: [],
       Component: ConnectionsSettings,
     },
+    {
+      id: 'plugin-draft',
+      label: 'Plugin draft',
+      headings: [],
+      files: [],
+      within: 'plugins',
+      Component: ConnectionsSettings,
+    },
   ],
 }
 
@@ -424,6 +432,55 @@ test("an agent's Edit opens on that agent, every time, and saves it", async () =
   expect(JSON.parse(saved.paramsJson)).toMatchObject({ harness: { id: 'aider' }, create: false })
 })
 
+test('an agent Edit draft survives hiding Settings and reopening the same target', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  const openEdit = async () => {
+    const more = await screen.findByRole('button', { name: 'More for Aider' })
+    fireEvent.keyDown(more, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+    return screen.findByRole('dialog', { name: 'Edit Aider' })
+  }
+  const dialog = await openEdit()
+  fireEvent.change(within(dialog).getByLabelText('Program'), { target: { value: 'draft-agent' } })
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  const reopened = await openEdit()
+  expect(within(reopened).getByLabelText('Program')).toHaveValue('draft-agent')
+
+  fireEvent.click(within(reopened).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  const resetAider = await openEdit()
+  expect(within(resetAider).getByLabelText('Program')).toHaveValue('aider')
+  fireEvent.click(within(resetAider).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+  const claudeMore = await screen.findByRole('button', { name: 'More for Claude Code' })
+  fireEvent.keyDown(claudeMore, { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+  const claude = await screen.findByRole('dialog', { name: 'Edit Claude Code' })
+  expect(within(claude).getByLabelText('Program')).toHaveValue('claude')
+})
+
+test('an Add agent draft survives hiding Settings and reopening Add', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Add agent' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Add an agent' })
+  fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Draft agent' } })
+  fireEvent.change(within(dialog).getByLabelText('Program'), { target: { value: 'draft-bin' } })
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Add agent' }))
+  const reopened = await screen.findByRole('dialog', { name: 'Add an agent' })
+  expect(within(reopened).getByLabelText('Name')).toHaveValue('Draft agent')
+  expect(within(reopened).getByLabelText('Program')).toHaveValue('draft-bin')
+})
+
 test('the current settings page keeps its draft across tab switches', async () => {
   const store = mount()
   act(() => store.set(openSettingsSectionAtom, 'connections'))
@@ -433,7 +490,45 @@ test('the current settings page keeps its draft across tab switches', async () =
   act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
   expect(screen.getByLabelText('Connection draft').closest('[inert]')).not.toBeNull()
   act(() => store.set(openTabAtom, { kind: 'settings' }))
-  expect(await screen.findByLabelText('Connection draft')).toHaveValue('unfinished connection')
+  const returnedDraft = await screen.findByLabelText('Connection draft')
+  expect(returnedDraft).toHaveValue('unfinished connection')
+  expect(returnedDraft).toBe(draft)
+})
+
+test('unrelated vault settings refresh keeps a plugin settings draft and its input mounted', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  const input = await screen.findByLabelText('Connection draft')
+  fireEvent.change(input, { target: { value: 'unfinished connection' } })
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  act(() =>
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: { ...SETTINGS, colorScheme: 'dark', dailyNotes: !SETTINGS.dailyNotes },
+    }),
+  )
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+
+  const returned = await screen.findByLabelText('Connection draft')
+  expect(returned).toBe(input)
+  expect(returned).toHaveValue('unfinished connection')
+})
+
+test('nested plugin settings drafts survive an unrelated Settings refresh', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'plugins'))
+  const input = await screen.findByLabelText('Connection draft')
+  fireEvent.change(input, { target: { value: 'nested plugin draft' } })
+  act(() =>
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: { ...SETTINGS, colorScheme: 'dark', dailyNotes: !SETTINGS.dailyNotes },
+    }),
+  )
+  const returned = await screen.findByLabelText('Connection draft')
+  expect(returned).toBe(input)
+  expect(returned).toHaveValue('nested plugin draft')
 })
 
 test('changing settings pages and closing Settings reset page-local drafts', async () => {
@@ -566,6 +661,19 @@ test('a settings menu closes and releases focus when its tab is hidden', async (
   await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull())
   act(() => store.set(openTabAtom, { kind: 'settings' }))
   expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull()
+})
+
+test('leaving a vault disposes its plugin settings draft', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  fireEvent.change(await screen.findByLabelText('Connection draft'), {
+    target: { value: 'vault-only draft' },
+  })
+  act(() => store.set(activeRemoteAtom, null))
+  expect(screen.queryByLabelText('Connection draft')).toBeNull()
+  act(() => store.set(activeRemoteAtom, 'mara/notes'))
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  expect(await screen.findByLabelText('Connection draft')).toHaveValue('')
 })
 
 test('disabling a plugin releases its settings page and falls back to General', async () => {

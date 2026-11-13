@@ -9,6 +9,7 @@ import type { ComponentType } from 'react'
 
 import type { IconGlyph } from '@/lib/icon-glyph'
 import { runningPluginsAtom } from '@/state/plugins'
+import type { SettingsSection } from '@/state/plugin-types'
 import {
   CableIcon,
   GitCommitHorizontalIcon,
@@ -41,7 +42,7 @@ type SettingsPageProps = {
   remote: string
   visible?: boolean
   plugin?: PluginSettingsMetadata
-  nested?: readonly unknown[]
+  nested?: readonly SettingsSection[]
 }
 
 function PluginSettingsPage({ remote, visible, plugin }: SettingsPageProps) {
@@ -57,7 +58,7 @@ function PluginSettingsPage({ remote, visible, plugin }: SettingsPageProps) {
 }
 
 function PluginsSettingsPage({ remote, visible, nested }: SettingsPageProps) {
-  return <PluginsPage nested={nested as never} remote={remote} visible={visible} />
+  return <PluginsPage nested={nested ?? []} remote={remote} visible={visible} />
 }
 
 export type SettingsPage = {
@@ -67,7 +68,7 @@ export type SettingsPage = {
   description: string
   Component: ComponentType<SettingsPageProps>
   plugin?: PluginSettingsMetadata
-  nested?: readonly unknown[]
+  nested?: readonly SettingsSection[]
 }
 
 export type SettingsGroup = {
