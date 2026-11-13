@@ -660,9 +660,9 @@ test('parked retained surfaces preserve their viewport size and restore responsi
   const input = await screen.findByRole('textbox', { name: 'State one' })
   const host = input.closest<HTMLElement>('[data-pane-host]')!
   const parking = document.querySelector<HTMLElement>('[data-retained-parking]')!
-  const settledAtParkedSize = vi.fn()
+  const measured = vi.fn()
   const measureHost = vi.spyOn(host, 'getBoundingClientRect').mockImplementation(() => {
-    if (host.parentElement !== parking) settledAtParkedSize(host.style.width, host.style.height)
+    measured(host.parentElement, host.style.width, host.style.height, host.inert)
     return {
       left: 0,
       top: 0,
@@ -687,17 +687,17 @@ test('parked retained surfaces preserve their viewport size and restore responsi
   expect(parking.style.display).toBe('')
   expect(parking.className).toContain('invisible')
   expect(parking.className).toContain('pointer-events-none')
-  expect(parking.className).toContain('fixed')
-  expect(host.style.position).toBe('absolute')
+  // Fixing dimensions and making a host inert dirties layout. Settle that
+  // layout before moving it, both into parking and back to the visible slot.
+  expect(measureHost).toHaveBeenCalledTimes(2)
+  expect(measured).toHaveBeenLastCalledWith(expect.any(HTMLElement), '640px', '480px', true)
+  expect(measured.mock.calls.at(-1)![0]).not.toBe(parking)
 
   f.show('one')
 
   expect(host.parentElement).not.toBe(parking)
-  // The state-preserving move must be laid out while its parked dimensions
-  // are still fixed, before the visible slot can resize an embedded document.
-  expect(measureHost).toHaveBeenCalledTimes(2)
-  expect(settledAtParkedSize).toHaveBeenCalledWith('640px', '480px')
-  expect(host.style.position).toBe('')
+  expect(measureHost).toHaveBeenCalledTimes(3)
+  expect(measured).toHaveBeenLastCalledWith(parking, '640px', '480px', true)
   expect(host.style.width).toBe('')
   expect(host.style.height).toBe('')
   expect(host.className).toContain('w-full')
