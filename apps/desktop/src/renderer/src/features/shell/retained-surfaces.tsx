@@ -13,7 +13,7 @@ import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 export function useRetainedSurfaces(
   visibleKeys: readonly string[],
   render: (key: string, visible: boolean) => ReactNode,
-  retainsSession: (key: string) => boolean,
+  retainKey: (key: string) => boolean = () => false,
 ): { slot: (key: string) => ReactNode; content: ReactNode } {
   const remote = useAtomValue(activeRemoteAtom)
   const workspace = useAtomValue(shellWorkspaceAtom)
@@ -31,9 +31,9 @@ export function useRetainedSurfaces(
   const retained = (key: string) => {
     const tab = parseTabKey(key)
     return (
-      (tab?.kind === 'session' && retainsSession(key)) ||
       (tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true) ||
-      (tab?.kind === 'app' && apps.find((app) => app.id === tab.id)?.keepMounted === true)
+      (tab?.kind === 'app' && apps.find((app) => app.id === tab.id)?.keepMounted === true) ||
+      retainKey(key)
     )
   }
   const keep = new Set(
