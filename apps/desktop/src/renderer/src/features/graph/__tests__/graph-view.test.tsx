@@ -6,7 +6,7 @@ import { emptyVaultSnapshot } from '@holi/shared'
 import { createStore, Provider } from 'jotai'
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from 'vitest'
 
-import { fireEvent, render, screen, waitFor } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { GraphView } from '../graph-view'
@@ -256,6 +256,58 @@ test('a query interrupted while hidden cannot publish and is resumed on display'
   expect(await screen.findByText(/1 note · 0 links/)).toBeInTheDocument()
   expect(graph).toHaveBeenCalledTimes(2)
   expect(document.querySelector('[data-graph-node="Stale.md"]')).toBeNull()
+})
+
+test('document changes debounce while an earlier graph read is unresolved', async () => {
+  vi.useFakeTimers()
+  const previousWorker = globalThis.Worker
+  globalThis.Worker = undefined as unknown as typeof Worker
+  let resolveFirst!: (value: { nodes: string[]; edges: [number, number][]; total: number }) => void
+  graph.mockImplementationOnce(
+    () => new Promise((resolve) => (resolveFirst = resolve as typeof resolveFirst)),
+  )
+  graph.mockResolvedValue({ nodes: ['Newest.md', 'Also-new.md'], edges: [], total: 2 })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const result = render(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} />
+    </Provider>,
+  )
+
+  try {
+    act(() => vi.advanceTimersByTime(0))
+    expect(graph).toHaveBeenCalledTimes(1)
+    act(() =>
+      store.set(snapshotAtom, (snapshot) => ({
+        ...snapshot,
+        docs: [{ path: 'Plan.md', kind: 'note', updatedAt: '1' }],
+      })),
+    )
+    act(() => vi.advanceTimersByTime(400))
+    act(() =>
+      store.set(snapshotAtom, (snapshot) => ({
+        ...snapshot,
+        docs: [{ path: 'Plan.md', kind: 'note', updatedAt: '2' }],
+      })),
+    )
+    act(() => vi.advanceTimersByTime(799))
+    expect(graph).toHaveBeenCalledTimes(1)
+    act(() => vi.advanceTimersByTime(1))
+    expect(graph).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+
+    await waitFor(() => expect(screen.getByText(/2 notes · 0 links/)).toBeInTheDocument())
+    act(() => resolveFirst({ nodes: ['Stale.md'], edges: [], total: 1 }))
+    await Promise.resolve()
+    expect(screen.getByText(/2 notes · 0 links/)).toBeInTheDocument()
+    expect(screen.queryByText(/1 note · 0 links/)).not.toBeInTheDocument()
+  } finally {
+    result.unmount()
+    vi.useRealTimers()
+    globalThis.Worker = previousWorker
+  }
 })
 
 test('a read that failed offers Retry, which asks again', async () => {
