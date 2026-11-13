@@ -6,6 +6,7 @@ import {
   type PluginRegistry,
   type ScrollCapability,
   type ViewportCapability,
+  type ZoomCapability,
 } from '@embedpdf/react-pdf-viewer'
 
 /**
@@ -31,15 +32,24 @@ if (!customElements.get(TAG)) customElements.define(TAG, HoliPdfContainer)
 function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegistry): () => void {
   const viewport = registry.getPlugin('viewport')?.provides?.() as ViewportCapability | undefined
   const scroll = registry.getPlugin('scroll')?.provides?.() as ScrollCapability | undefined
-  if (viewport === undefined || scroll === undefined) return () => {}
+  const zoom = registry.getPlugin('zoom')?.provides?.() as ZoomCapability | undefined
+  if (viewport === undefined || scroll === undefined || zoom === undefined) return () => {}
   type ReadingPosition = { documentId: string; page: number; x: number; y: number }
   const readPosition = (documentId: string): ReadingPosition => {
     const metrics = viewport.forDocument(documentId).getMetrics()
+    const page = scroll.forDocument(documentId).getCurrentPage()
+    const scale = zoom.forDocument(documentId).getState().currentZoomLevel
+    const visible = scroll
+      .forDocument(documentId)
+      .getMetrics(metrics)
+      .pageVisibilityMetrics.find((item) => item.pageNumber === page)
     return {
       documentId,
-      page: scroll.forDocument(documentId).getCurrentPage(),
-      x: metrics.scrollLeft,
-      y: metrics.scrollTop,
+      page,
+      // Express the viewport's top-left in the visible page's PDF coordinate
+      // space. EmbedPDF's layout/zoom owns the conversion back to scroll pixels.
+      x: visible === undefined ? 0 : visible.original.pageX - visible.viewportX / scale,
+      y: visible === undefined ? 0 : visible.original.pageY - visible.viewportY / scale,
     }
   }
   let lastPosition: ReadingPosition | null = null
@@ -63,13 +73,18 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
     const port = viewport.forDocument(target.documentId)
     const metrics = port.getMetrics()
     const pageChanged = page.getCurrentPage() !== target.page
+    const scale = zoom.forDocument(target.documentId).getState().currentZoomLevel
+    const anchor = page.getRectPositionForPage(
+      target.page,
+      { origin: { x: target.x, y: target.y }, size: { width: 0, height: 0 } },
+      scale,
+    )
     if (pageChanged) page.scrollToPage({ pageNumber: target.page, behavior: 'instant' })
-    if (
-      pageChanged ||
-      Math.abs(metrics.scrollLeft - target.x) > 0.5 ||
-      Math.abs(metrics.scrollTop - target.y) > 0.5
-    ) {
-      port.scrollTo({ x: target.x, y: target.y, behavior: 'instant' })
+    if (anchor !== null) {
+      const { x, y } = anchor.origin
+      if (Math.abs(metrics.scrollLeft - x) > 0.5 || Math.abs(metrics.scrollTop - y) > 0.5) {
+        port.scrollTo({ x, y, behavior: 'instant' })
+      }
     }
   }
   const settle = () => {

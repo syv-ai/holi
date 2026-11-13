@@ -78,15 +78,73 @@ function viewportFixture() {
   const scrollTo = vi.fn(({ x, y }: { x: number; y: number }) => {
     metrics.scrollLeft = x
     metrics.scrollTop = y
+    updatePageFromOffset()
   })
   let page = 3
+  let scale = 1
+  const pageHeight = 500
+  const pageGap = 20
+  const pageTop = (pageNumber: number) => (pageNumber - 1) * (pageHeight + pageGap) * scale
+  const updatePageFromOffset = () => {
+    page = Math.max(
+      1,
+      Math.min(10, Math.floor(metrics.scrollTop / ((pageHeight + pageGap) * scale)) + 1),
+    )
+  }
   const scrollToPage = vi.fn(({ pageNumber }: { pageNumber: number }) => {
     page = pageNumber
   })
-  const scroll = { forDocument: () => ({ getCurrentPage: () => page, scrollToPage }) }
+  const scroll = {
+    forDocument: () => ({
+      getCurrentPage: () => page,
+      scrollToPage,
+      getMetrics: () => ({
+        currentPage: page,
+        visiblePages: [page],
+        pageVisibilityMetrics: [
+          {
+            pageNumber: page,
+            viewportX: 0,
+            viewportY: 0,
+            visiblePercentage: 100,
+            original: {
+              pageX: Math.max(0, metrics.scrollLeft / scale),
+              pageY: Math.max(0, (metrics.scrollTop - pageTop(page)) / scale),
+              visibleWidth: metrics.width / scale,
+              visibleHeight: metrics.height / scale,
+              scale: 1,
+            },
+            scaled: {
+              pageX: Math.max(0, metrics.scrollLeft - pageTop(page)),
+              pageY: Math.max(0, metrics.scrollTop - pageTop(page)),
+              visibleWidth: metrics.width,
+              visibleHeight: metrics.height,
+              scale,
+            },
+          },
+        ],
+        renderedPageIndexes: [page - 1],
+        scrollOffset: { x: metrics.scrollLeft, y: metrics.scrollTop },
+        startSpacing: 0,
+        endSpacing: 0,
+      }),
+      getRectPositionForPage: (
+        pageNumber: number,
+        rect: { origin: { x: number; y: number } },
+        targetScale = scale,
+      ) => ({
+        origin: {
+          x: rect.origin.x * targetScale,
+          y: (pageTop(pageNumber) / scale) * targetScale + rect.origin.y * targetScale,
+        },
+        size: { width: 0, height: 0 },
+      }),
+    }),
+  }
   let resized = () => {}
   let scrolled = () => {}
   const unsubscribe = vi.fn()
+  const zoom = { forDocument: () => ({ getState: () => ({ currentZoomLevel: scale }) }) }
   const viewport = {
     forDocument: () => ({ getMetrics: () => metrics, scrollTo }),
     onScrollChange: (listener: () => void) => {
@@ -99,7 +157,9 @@ function viewportFixture() {
     },
   }
   lifecycle.registry = Promise.resolve({
-    getPlugin: (id: string) => ({ provides: () => (id === 'viewport' ? viewport : scroll) }),
+    getPlugin: (id: string) => ({
+      provides: () => ({ viewport, scroll, zoom })[id as 'viewport' | 'scroll' | 'zoom'],
+    }),
     getStore: () => ({ getState: () => ({ core: { activeDocumentId: 'pdf' } }) }),
   })
   return {
@@ -107,6 +167,15 @@ function viewportFixture() {
     scrollTo,
     scrollToPage,
     resize: () => resized(),
+    zoomAndResize: (nextScale: number) => {
+      scale = nextScale
+      // Simulate layout's own approximate scroll adjustment before the adapter
+      // settles; preserving the old raw pixels would move this to another page.
+      metrics.scrollTop = 2700
+      metrics.scrollLeft = 40
+      updatePageFromOffset()
+      resized()
+    },
     setInitialZeroSize: () => {
       metrics.width = 0
       metrics.height = 0
@@ -192,6 +261,21 @@ test('restores the reading position after responsive resize without a connected 
   expect(viewport.scrollToPage).toHaveBeenCalledWith({ pageNumber: 3, behavior: 'instant' })
   mounted.unmount()
   expect(viewport.unsubscribe).toHaveBeenCalledTimes(2)
+})
+
+test('keeps the same page-relative point when responsive layout changes scale', async () => {
+  const viewport = viewportFixture()
+  const ready = vi.fn()
+  render(<PdfViewerAdapter onReady={ready} />)
+  await waitFor(() => expect(ready).toHaveBeenCalled())
+
+  act(() => viewport.zoomAndResize(2))
+  await waitFor(() => expect(viewport.scrollTo).toHaveBeenCalled())
+
+  // Page 3 starts at 2 * (500 + 20); retain the original 413.5-point
+  // in-page offset at the current scale instead of restoring old screen pixels.
+  expect(viewport.scrollTo).toHaveBeenLastCalledWith({ x: 40, y: 2907, behavior: 'instant' })
+  expect(viewport.metrics.scrollTop).toBe(2907)
 })
 
 test.each(['pointerdown', 'keydown', 'wheel'])(
