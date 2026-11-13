@@ -2,15 +2,17 @@
  * A vault's Google data: the one place caching is decided.
  *
  * Every door reads and writes through here (`capabilities.ts`): the views,
- * an app and the agent. Nothing it answers is stale: mail is the cache brought
- * up to date by a delta, and the agenda is always fetched. A write calls
+ * an app and the agent. Nothing it answers is stale: ordinary mail lists are
+ * brought up to date by a delta, explicit searches are fetched fresh, and the
+ * agenda is always fetched. A write calls
  * Google first and then moves the cache, so a thread the agent archived
  * leaves the list the view paints from at the same moment it leaves Gmail.
  *
  * The two surfaces are cached differently because the APIs differ:
  *
- * - **Mail** goes through `syncThreads`: cache plus a `history.list` delta, so
- *   the answer is both instant and current, for one request instead of 26.
+ * - **Mail** goes through `syncThreads`: ordinary lists use a cached
+ *   `history.list` delta; explicit Gmail searches fetch a fresh first page so
+ *   their results and pagination token stay current.
  * - **Calendar** gets a cache for *paint*, and always refetches. Google's
  *   `syncToken` cannot be combined with `timeMin`/`timeMax`, so an incremental
  *   agenda would mean mirroring every event at every date to serve a 7-day
@@ -54,7 +56,7 @@ export interface GoogleData {
   fetchAgenda(window: AgendaWindow, overrides: CalendarOverrides): Promise<CalendarEvent[]>
   /** The last agenda for this exact question, or `null`. Never a request. */
   cachedAgenda(window: AgendaWindow, overrides: CalendarOverrides): CalendarEvent[] | null
-  /** Threads, served from the cache and brought up to date by a delta. */
+  /** Ordinary lists use a delta; explicit searches fetch a fresh page. */
   threads(options: ListThreadsOptions): Promise<MailPage>
   /**
    * The address book, fetched **once per connected account**.
@@ -203,8 +205,17 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       return cache.readAgenda(agendaKey(window, overrides))
     },
 
-    threads(options) {
-      return syncThreads(api(), cache, options)
+    async threads(options) {
+      let knownAddresses: string[] | undefined
+      try {
+        knownAddresses = await (aliases ??= listSendAs(api()).catch((error: unknown) => {
+          aliases = null
+          throw error
+        }))
+      } catch {
+        // Without account-authenticated addresses, classifying a message as neither would be false certainty.
+      }
+      return syncThreads(api(), cache, options, knownAddresses)
     },
 
     contacts() {

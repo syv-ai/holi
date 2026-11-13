@@ -44,15 +44,17 @@ export function createReminderRuntime(deps: ReminderRuntimeDeps): ReminderRuntim
     if (closed) return
     const vaults = await deps.corpus.all()
     if (closed) return // a sweep begun before `close()` must not fire after it
-    const { event, marks } = sweep(
+    const { event, marks, fallbackMarks } = sweep(
       vaults,
       now(),
       (remote) => deps.delivered.read(remote),
       deps.viewerLogin?.() ?? null,
+      deps.delivered.fallbackReceipts(),
     )
     if (!event) return
     deps.notifier.fire(event)
     for (const m of marks) deps.delivered.markDelivered(m.remote, m.path, m.fireAt)
+    for (const m of fallbackMarks) deps.delivered.markFallback(m.remote, m.path, m.fireAt)
   }
 
   return {

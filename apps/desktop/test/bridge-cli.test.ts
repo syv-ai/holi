@@ -6,14 +6,17 @@
  * a quoting bug in it does not fail loudly, it sends a different argument.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
 import { installHoliCli, resolveArgv } from '../src/main/bridge/cli'
+import { publishCliEndpoint, type CliEndpoint } from '../src/main/bridge/cli-endpoint'
+import { createActivityLog } from '../src/main/activity/log'
+import { logsCapabilities } from '../src/main/capabilities/logs-caps'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { SPILL_BYTES } from '../src/main/bridge/spill'
 import { OUT_DIR } from '../src/main/vault/out-files'
@@ -84,6 +87,7 @@ function recording(called: Called): Record<string, AnyCapability> {
       liveRemote: () => null,
       commitNow: async () => null,
     }),
+    ...logsCapabilities(createActivityLog()),
   }
   return Object.fromEntries(
     Object.entries(real).map(([name, entry]) => [
@@ -92,6 +96,7 @@ function recording(called: Called): Record<string, AnyCapability> {
         ...entry,
         params: (raw: unknown) => raw,
         run: (_ctx, p) => called(name, p),
+        cliValue: (result) => result,
         text: (r: { text: string }) => r.text,
       },
     ]),
@@ -101,6 +106,7 @@ function recording(called: Called): Record<string, AnyCapability> {
 let dir: string
 let bin: string
 let server: BridgeServer
+let endpoint: CliEndpoint | undefined
 let env: NodeJS.ProcessEnv
 let capability: ReturnType<typeof vi.fn<Called>>
 
@@ -118,8 +124,26 @@ function bridge(table: Record<string, AnyCapability>, namespaces: string[]): Bri
         pluginEnabled: async () => true,
         claims: async () => [],
       }).dispatch,
-      commands: () => registry.commands(),
+      commands: (remote) => registry.commands(remote),
       rootFor: async () => dir,
+      machine: {
+        token: () => endpoint?.token ?? '',
+        listVaults: async () => [{ remote: 'owner/repo', name: 'repo', live: true }],
+        resolveTarget: async (selector, cwd) => {
+          const root = await realpath(dir)
+          const physicalCwd = cwd === null ? null : await realpath(cwd).catch(() => cwd)
+          const fromCwd = physicalCwd === null ? null : relative(root, physicalCwd)
+          const cwdMatches =
+            physicalCwd !== null &&
+            isAbsolute(physicalCwd) &&
+            (fromCwd === '' ||
+              (fromCwd !== '..' && !fromCwd.startsWith(`..${sep}`) && !isAbsolute(fromCwd)))
+          return (selector === null && !cwdMatches) ||
+            (selector !== null && selector.toLowerCase() !== 'owner/repo')
+            ? null
+            : { remote: 'owner/repo', root, live: true }
+        },
+      },
     },
   })
 }
@@ -134,12 +158,17 @@ beforeEach(async () => {
   )
   const table = recording(capability)
   server = bridge(table, [...new Set(Object.keys(table).map((n) => n.split('.')[0]!))])
-  await server.start()
+  await startBridge()
   env = { PATH: process.env.PATH ?? '' }
-  await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
 })
 
+async function startBridge() {
+  await server.start()
+  endpoint = await publishCliEndpoint(join(dir, 'cli-endpoint.json'), server.port()!)
+}
+
 afterEach(async () => {
+  await endpoint?.dispose()
   await server.stop()
   await rm(dir, { recursive: true, force: true })
 })
@@ -152,7 +181,9 @@ describe('the installed script', () => {
 
 describe('when Holi is not running', () => {
   it('exits non-zero with a sentence a human can read', async () => {
-    await writeVaultEnv(dir, null)
+    await endpoint?.dispose()
+    endpoint = undefined
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
     const res = await run(bin, ['apps', 'open', 'retro'], env)
     expect(res.code).toBe(1)
     expect(res.stderr).toMatch(/holi: Holi is not running/)
@@ -161,19 +192,67 @@ describe('when Holi is not running', () => {
   it('finds the vault from a folder inside it, and nothing outside one', async () => {
     await mkdir(join(dir, 'Notes/deep'), { recursive: true })
     expect((await run(bin, ['sync', 'status'], env, '', join(dir, 'Notes/deep'))).code).toBe(0)
-    expect((await run(bin, ['sync', 'status'], env, '', tmpdir())).code).toBe(1)
+    expect((await run(bin, ['sync', 'status'], env, '', tmpdir())).code).toBe(2)
   })
 
-  it('reads the file, never runs it', async () => {
-    // A collaborator could force-add one: a line that would run as shell must
-    // not, and a value that is not digits or hex is no value at all.
-    await writeVaultEnv(
-      dir,
-      `HOLI_BRIDGE_PORT=${server.port()}\nHOLI_BRIDGE_TOKEN=$(touch ${dir}/ran)\ntouch ${dir}/ran\n`,
-    )
+  it('uses the machine endpoint selector rather than vault-local credentials', async () => {
+    const selected = await run(bin, ['sync', 'status', '--vault=owner/repo'], env, '', tmpdir())
+    expect(selected).toMatchObject({ code: 0, stdout: 'sync.status ok\n' })
+    const missing = await run(bin, ['sync', 'status'], env, '', tmpdir())
+    expect(missing.code).toBe(2)
+    expect(missing.stderr).toContain('target required')
+  })
+
+  it('reads the endpoint descriptor, never runs it', async () => {
+    // A local file could be replaced with shell-like content: parsing it as
+    // data must neither execute it nor accept it as a credential.
+    await writeFile(join(dir, 'cli-endpoint.json'), `$(touch ${dir}/ran)\n`, { mode: 0o600 })
     const res = await run(bin, ['sync', 'status'], env)
     expect(res.code).toBe(1)
+    expect(res.stderr).toContain('CLI endpoint descriptor is malformed')
     await expect(stat(join(dir, 'ran'))).rejects.toThrow()
+  })
+})
+
+describe('legacy command option grammar', () => {
+  it('accepts undeclared value options for commands without strict metadata', () => {
+    const legacy = [
+      { name: 'google.draft', cli: { args: [], summary: 'draft' } },
+      { name: 'google.schedule', cli: { args: [], summary: 'schedule' } },
+      { name: 'browser.read', cli: { args: [], summary: 'read' } },
+      { name: 'holis.search', cli: { args: ['query', 'words'], summary: 'search' } },
+    ]
+    for (const [args, command] of [
+      [['google', 'draft', '--to', 'ada@example.test', '--subject', 'fixture'], 'google.draft'],
+      [
+        [
+          'google',
+          'schedule',
+          '--title',
+          'fixture',
+          '--start',
+          '2026-01-01T12:00:00Z',
+          '--end',
+          '2026-01-01T13:00:00Z',
+        ],
+        'google.schedule',
+      ],
+      [['browser', 'read', '--tab', 'fixture'], 'browser.read'],
+      [['holis', 'search', 'fixture', 'words', '--since', '30d'], 'holis.search'],
+    ] as const) {
+      expect(resolveArgv(args, legacy, '')).toMatchObject({ kind: 'run', name: command })
+    }
+    expect(resolveArgv(['google', 'draft', '--subject=--update'], legacy, '')).toMatchObject({
+      kind: 'run',
+      params: { subject: '--update' },
+    })
+    expect(
+      resolveArgv(
+        ['fixture', 'read', '--all=false'],
+        [{ name: 'fixture.read', cli: { args: [], flags: ['all'], summary: 'read' } }],
+        '',
+      ),
+    ).toMatchObject({ kind: 'run', params: { all: 'false' } })
   })
 })
 
@@ -200,6 +279,20 @@ describe('usage', () => {
     expect(one.stdout).toContain('usage: holi apps open <path>')
     expect(one.stdout).not.toContain('holi skills update')
     expect(capability).not.toHaveBeenCalled()
+  })
+
+  it('runs bare logs from the generated script with valued filters and specific help', async () => {
+    const help = await run(bin, ['logs', '--help'], env)
+    expect(help.code).toBe(0)
+    expect(help.stdout).toContain('usage: holi logs [--channel <channel>] [--since <since>]')
+    const result = await run(bin, ['logs', '--channel', 'google', '--since', '15m', '--json'], env)
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain('"name": "logs.list"')
+    expect(capability).toHaveBeenCalledWith('logs.list', { channel: 'google', since: '15m' })
+    const bare = await run(bin, ['logs'], env)
+    expect(bare.code).toBe(0)
+    expect(bare.stdout).toContain('logs.list ok')
+    expect(capability).toHaveBeenLastCalledWith('logs.list', {})
   })
 
   it('refuses an unknown command rather than doing something adjacent', async () => {
@@ -240,6 +333,38 @@ describe('usage', () => {
       expect(res.code, args.join(' ')).toBe(2)
     }
     expect(capability).not.toHaveBeenCalled()
+  })
+})
+
+describe('machine vault selector parsing', () => {
+  const commands = [
+    { name: 'logs.list', cli: { args: [], summary: 'logs', standalone: true } },
+    { name: 'holis.search', cli: { args: ['query'], summary: 'search' } },
+  ] as const
+
+  it('recognizes standalone selectors while preserving option values and terminators', () => {
+    expect(resolveArgv(['logs', '--vault=owner/repo'], commands, null)).toMatchObject({
+      kind: 'run',
+      vault: 'owner/repo',
+    })
+    expect(
+      resolveArgv(
+        ['holis', 'search', '--query', '--vault=not/a-vault', '--vault', 'owner/repo'],
+        commands,
+        null,
+      ),
+    ).toMatchObject({
+      kind: 'run',
+      vault: 'owner/repo',
+      params: { query: '--vault=not/a-vault' },
+    })
+    expect(
+      resolveArgv(['holis', 'search', '--', '--vault=not/a-vault'], commands, null),
+    ).toMatchObject({
+      kind: 'run',
+      vault: null,
+      params: { query: '--vault=not/a-vault' },
+    })
   })
 })
 
@@ -304,6 +429,12 @@ describe('a command', () => {
       collection: 'items',
       id: 't1',
     })
+  })
+
+  it('preserves Unicode arguments and the option terminator', async () => {
+    const res = await run(bin, ['apps', 'open', '--', 'føø/日本語.md'], env)
+    expect(res.code).toBe(0)
+    expect(capability).toHaveBeenCalledWith('apps.open', { path: 'føø/日本語.md' })
   })
 
   it('prints JSON with --json, before or after the path', async () => {
@@ -471,12 +602,13 @@ describe('a pending docs mutation receipt', () => {
   })
 
   beforeEach(async () => {
+    await endpoint?.dispose()
+    endpoint = undefined
     await server.stop()
     result.mockClear()
     pushed = false
     server = bridge({ 'docs.create': mutation }, ['docs'])
-    await server.start()
-    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+    await startBridge()
   })
 
   it('exits 1 with the full JSON receipt on stderr and writes stdin only once', async () => {
@@ -527,11 +659,12 @@ describe('a command that reads stdin', () => {
   })
 
   beforeEach(async () => {
+    await endpoint?.dispose()
+    endpoint = undefined
     await server.stop()
     ran.mockClear()
     server = bridge({ 'x.echo': echo }, ['x'])
-    await server.start()
-    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+    await startBridge()
   })
 
   it('runs once, with stdin, preserving paths with spaces', async () => {
@@ -540,6 +673,18 @@ describe('a command that reads stdin', () => {
     // The first leg ran nothing: a write never runs without its body.
     expect(ran).toHaveBeenCalledTimes(1)
     expect(ran).toHaveBeenCalledWith({ to: 'My notes/a b.md', body: 'hello\nthere\n' })
+  })
+
+  it('keeps an explicit vault selector when stdin triggers a retry', async () => {
+    const res = await run(
+      bin,
+      ['x', 'echo', 'My notes/a b.md', '--vault=owner/repo'],
+      env,
+      'body from outside the vault',
+      tmpdir(),
+    )
+    expect(res).toMatchObject({ code: 0, stdout: 'body from outside the vault\n' })
+    expect(ran).toHaveBeenCalledWith({ to: 'My notes/a b.md', body: 'body from outside the vault' })
   })
 
   it('never reads stdin when the body is given', async () => {
@@ -576,6 +721,7 @@ describe('a command whose body is read from stdin only as `-`', () => {
   it('reads stdin for `--body -`, and takes any other value as it is', () => {
     expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, null)).toEqual({
       kind: 'stdin',
+      vault: null,
     })
     expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, '{}')).toMatchObject({
       params: { path: 'a', body: '{}' },
@@ -623,6 +769,7 @@ describe('a command whose body is read from stdin only as `-`', () => {
   it('reads stdin for `--body -`, and takes any other value as it is', () => {
     expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, null)).toEqual({
       kind: 'stdin',
+      vault: null,
     })
     expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, '{}')).toMatchObject({
       params: { path: 'a', body: '{}' },
@@ -670,16 +817,33 @@ describe('a command that acts as the calling session', () => {
   const inSession = (job: string) => ({ ...env, CLAUDE_JOB_DIR: `/Users/ada/.claude/jobs/${job}` })
 
   beforeEach(async () => {
+    await endpoint?.dispose()
+    endpoint = undefined
     await server.stop()
     ran.mockClear()
     server = bridge({ 'x.who': who }, ['x'])
-    await server.start()
-    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+    await startBridge()
   })
 
-  it('is the session the script runs in, with no flag for it', async () => {
-    const res = await run(bin, ['x', 'who'], inSession('abcd1234'))
+  it('is the session the POSIX script runs in', async () => {
+    const res = await run(bin, ['x', 'who'], {
+      ...env,
+      CLAUDE_JOB_DIR: '/Users/ada/Vault café/jobs/abcd1234',
+    })
     expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+  })
+
+  it('normalizes Windows job paths in the generated Windows adapter', async () => {
+    const generated = await installHoliCli(dir, 'win32')
+    try {
+      const res = await run(generated, ['x', 'who'], {
+        ...env,
+        CLAUDE_JOB_DIR: 'C:\\Users\\ada\\Vault café\\jobs\\abcd1234',
+      })
+      expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+    } finally {
+      await installHoliCli(dir)
+    }
   })
 
   it('refuses to name another session from inside one, in either spelling', async () => {
