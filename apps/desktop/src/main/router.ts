@@ -466,7 +466,8 @@ export function createRouter(deps: RouterDeps) {
     url: string | undefined,
     opts: { requireVault?: boolean; readme?: string } = {},
   ): Promise<VaultSnapshot> {
-    const active = await deps.host.open(remote, async () => {
+    const active = await deps.host.open(remote, async (coldStart) => {
+      if (!coldStart) return
       const { repo, outcome } = await ensureClone({
         root: deps.vaultRoot,
         remote,

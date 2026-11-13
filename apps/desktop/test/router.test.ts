@@ -253,7 +253,7 @@ describe('vaults', () => {
     let entered!: () => void
     const gate = new Promise<void>((resolve) => (release = resolve))
     const preparing = new Promise<void>((resolve) => (entered = resolve))
-    const { caller } = await rig(
+    const { caller, host } = await rig(
       {},
       undefined,
       async () => {
@@ -280,6 +280,10 @@ describe('vaults', () => {
     order.length = 0
     await caller.vaults.open({ remote: REMOTE })
     expect(order).toEqual(['seed'])
+    await host.close(REMOTE)
+    order.length = 0
+    await caller.vaults.open({ remote: REMOTE })
+    expect(order).toEqual(['prepare', 'seed'])
   })
 
   it('open returns the vault contents and stamps lastOpenedAt', async () => {
@@ -1670,6 +1674,8 @@ describe('vaults.add', () => {
     const origin = await makeRemote()
 
     const snap = await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
+    expect(order).toEqual(['prepare', 'seed'])
+    await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
     expect(order).toEqual(['prepare', 'seed'])
 
     // The repo's own content plus the once-files, because seeding happens on

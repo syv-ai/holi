@@ -424,8 +424,8 @@ async function main(): Promise<void> {
     // Do not initialise vault tools or agent sessions until the login shell's
     // PATH has settled. This promise is started at launch; the window is not
     // held behind it.
-    beforeOpen: async (remote) => {
-      await loginPath
+    beforeOpen: () => loginPath,
+    prepareClone: async (remote) => {
       const entry = (await registry.list()).find((candidate) => candidate.remote === remote)
       if (!entry) throw new Error(`no such vault: ${remote}`)
       await prepareManagedClone(entry.path)

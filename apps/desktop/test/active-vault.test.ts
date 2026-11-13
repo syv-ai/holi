@@ -3011,6 +3011,55 @@ describe('VaultHost', () => {
     }
   })
 
+  it('keeps startup prerequisites when a router supplies cold preparation', async () => {
+    const { registry } = await twoVaults()
+    const order: string[] = []
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      beforeOpen: async () => {
+        order.push('prerequisite')
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    await h.open('syv-ai/a', async () => {
+      order.push('prepare')
+    })
+    expect(order).toEqual(['prerequisite', 'prepare'])
+  })
+
+  it('closes a selected open admitted while cold preparation is pending', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const preparing = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    try {
+      const opening = h.open('syv-ai/a', async () => {
+        entered()
+        await gate
+      })
+      await preparing
+      const closing = h.close('syv-ai/a')
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      release()
+      await Promise.all([opening, closing])
+      expect(h.get('syv-ai/a')).toBeNull()
+      expect(h.active()).toBeNull()
+    } finally {
+      release()
+      await h.closeAll()
+    }
+  })
+
   it('serialises concurrent opens rather than racing two vaults into one slot', async () => {
     // Two clicks in the switcher, or a click during a slow open. Unserialised,
     // both openActiveVault calls run and only one is ever closed — leaking the

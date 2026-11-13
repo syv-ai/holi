@@ -1573,6 +1573,8 @@ export function createVaultHost(args: {
   registry: VaultRegistry
   /** Work required before a vault can start its plugins or agent. */
   beforeOpen?: (remote: string) => Promise<void>
+  /** Default cold-clone preparation when the caller does not supply seeding work. */
+  prepareClone?: (remote: string) => Promise<void>
   gitDeps?: GitDeps
   /** What the scanner claims in the vault at `root` (`openActiveVault`). */
   claims: (root: string) => Promise<readonly ScanClaim[]>
@@ -1715,13 +1717,16 @@ export function createVaultHost(args: {
     if (errors.length > 0) throw new AggregateError(errors, `Could not cleanly close ${remote}`)
   }
 
-  async function start(remote: string, prepared = false): Promise<ActiveVault> {
+  async function start(remote: string): Promise<ActiveVault> {
     const existing = runtimes.get(remote)
     if (existing !== undefined) return existing
     const pending = starts.get(remote)
     if (pending !== undefined) return pending
     const opening = (async () => {
-      if (!prepared && !preparedStarts.delete(remote)) await args.beforeOpen?.(remote)
+      if (!preparedStarts.delete(remote)) {
+        await args.beforeOpen?.(remote)
+        await args.prepareClone?.(remote)
+      }
       const entry = (await args.registry.list()).find((e) => e.remote === remote)
       if (!entry) throw new Error(`no such vault: ${remote}`)
       let callbacksEnabled = true
@@ -1783,6 +1788,11 @@ export function createVaultHost(args: {
     remote: string,
     preparation?: (coldStart: boolean) => Promise<void>,
   ): Promise<void> {
+    const starting = starts.get(remote)
+    if (starting !== undefined) {
+      await starting
+      return
+    }
     if (runtimes.has(remote)) {
       await serialise(remote, () => preparation?.(false) ?? Promise.resolve())
       return
@@ -1796,8 +1806,9 @@ export function createVaultHost(args: {
         return
       }
       if (preparedStarts.has(remote)) return
+      await args.beforeOpen?.(remote)
       if (preparation) await preparation(true)
-      else await args.beforeOpen?.(remote)
+      else await args.prepareClone?.(remote)
       preparedStarts.add(remote)
     })
     const settled = opening.finally(() => {
@@ -1816,16 +1827,27 @@ export function createVaultHost(args: {
     },
     open: (remote, preparation) => {
       const priorClose = closeQueues.get(remote) ?? Promise.resolve()
-      return admit(async () => {
-        await priorClose
-        // Cold-start prerequisites use only this remote's admission, so another
-        // vault can prepare while this one is cloning or seeding.
-        await prepareForOpen(remote, preparation)
+      return admit(() => {
+        // Prepare independent remotes concurrently, but reserve selection now so
+        // a later close cannot overtake an open still awaiting prerequisites.
+        const preparing = priorClose.then(() => prepareForOpen(remote, preparation))
+        void preparing.catch(() => {})
         return serialiseSelection(async () => {
-          if (current?.remote === remote) return current
+          await preparing
+          // An earlier selection may have closed a runtime that was live when
+          // this request's preparation was admitted. Prepare that new lifetime.
+          if (!runtimes.has(remote) && !preparedStarts.has(remote)) {
+            await prepareForOpen(remote, preparation)
+          }
+          if (current?.remote === remote) {
+            notify(() => args.onSnapshot(remote, current!.snapshot()))
+            notify(() => args.onSyncState(remote, current!.syncState()))
+            notify(() => args.onHeldBack?.(remote, current!.heldBack()))
+            return current
+          }
           const previous = current?.remote
           if (previous !== undefined) await serialise(previous, () => closeRuntime(previous))
-          const vault = await serialise(remote, () => start(remote, true))
+          const vault = await serialise(remote, () => start(remote))
           current = vault
           // Startup callbacks can precede the runtime's insertion into `runtimes`.
           // Replay its authoritative view after selection so those first updates survive.
