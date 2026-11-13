@@ -46,6 +46,11 @@ export type {
 export type { /** @public */ PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
+export {
+  /** @public */ registerBuffer,
+  /** @public */ saveBeforeClosing,
+  /** @public */ withSavedBuffers,
+} from '@/lib/buffer-registry'
 export { capClient, /** @public */ type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'

@@ -235,7 +235,7 @@ function MailItem({
         {(chip !== null || thread.labels.length > 0) && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {chip !== null && (
-              <Badge variant="outline" size="sm">
+              <Badge variant="secondary" size="sm">
                 {chip}
               </Badge>
             )}
@@ -346,8 +346,10 @@ interface MailListProps {
   mail: MailState
   /** The account menu, full width at the top of the column. */
   account: ReactNode
-  /** Switch mailbox (or the starred pill); the shell also closes any reply. */
+  /** Switch mailbox from the mailbox menu. */
   onSelectFolder: (folder: MailFolder) => void
+  /** Change inbox/unread/starred state in one navigation transaction. */
+  onSelectTab: (folder: MailFolder, unreadOnly: boolean) => void
   onCompose: () => void
   onOpenDraft: (draft: DraftSummary) => void
   onOpenConnections: () => void
@@ -358,6 +360,7 @@ export function MailList({
   mail,
   account,
   onSelectFolder,
+  onSelectTab,
   onCompose,
   onOpenDraft,
   onOpenConnections,
@@ -521,13 +524,7 @@ export function MailList({
     mail.folder === 'starred' ? 'starred' : mail.unreadOnly && filterable ? 'unread' : 'all'
 
   const selectTab = (next: FilterTab) => {
-    if (next === 'starred') {
-      if (mail.folder !== 'starred') onSelectFolder('starred')
-      mail.setUnreadOnly(false)
-      return
-    }
-    if (mail.folder !== 'inbox') onSelectFolder('inbox')
-    mail.setUnreadOnly(next === 'unread')
+    onSelectTab(next === 'starred' ? 'starred' : 'inbox', next === 'unread')
   }
 
   return (
@@ -564,7 +561,7 @@ export function MailList({
             </DropdownMenuContent>
           </DropdownMenu>
           {unreadCount !== null && unreadCount > 0 && (
-            <Badge radius="full" variant="outline" size="sm">
+            <Badge radius="full" variant="secondary" size="sm">
               {unreadCount}
             </Badge>
           )}

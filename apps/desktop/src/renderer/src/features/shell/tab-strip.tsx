@@ -162,7 +162,7 @@ export function TabStrip({
   }
   const act = (change: (w: ShellWorkspace) => ShellWorkspace) => setWs(change)
   const close = (change: (w: ShellWorkspace) => ShellWorkspace) =>
-    void saveBeforeClosing(() => setWs(change))
+    void saveBeforeClosing(() => setWs(change), true).catch(() => {})
   const split = activeSplit(ws)
   const count = ws.entries.length
   /** Whether the strip holds more tabs than it shows, which is when it says
@@ -706,10 +706,10 @@ function EntryMenu({
  *  changed while another tab was in front. Said in the tab's own label, so
  *  hidden from the reader here. */
 const TAB_STATUS = {
-  working: { variant: 'info-light', label: 'Working' },
-  'needs-you': { variant: 'warning-light', label: 'Needs you' },
-  done: { variant: 'success-light', label: 'Done' },
-  updated: { variant: 'primary-light', label: 'Updated' },
+  working: { variant: 'info', label: 'Working' },
+  'needs-you': { variant: 'warning', label: 'Needs you' },
+  done: { variant: 'success', label: 'Done' },
+  updated: { variant: 'default', label: 'Updated' },
 } as const
 
 function TabStatus({ status }: { status: NonNullable<HeaderTab['status']> }) {
