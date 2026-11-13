@@ -13,6 +13,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
+import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   pluginLabels,
   resolvePlugins,
@@ -242,6 +243,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     cb: (s: VaultSnapshot) => void
   }>()
   const snapshots = new Map<string, { snapshot: VaultSnapshot; generation: number }>()
+  /** A fresh disposer call may temporarily use established providers. The
+   *  async-local lease follows only that awaited call tree and is revoked when
+   *  it settles; it never makes a parked activation valid generally. */
+  type FinalizationOperation = { remote: string; generation: number; active: boolean }
+  const finalizationOperations = new AsyncLocalStorage<FinalizationOperation>()
   const eventListeners = new Set<{
     remote: string
     generation: number
@@ -447,6 +453,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     const eventBus = lease.events
     const valid = (): boolean => lease.phase === 'active' && state.generation === activation
     const draining = (): boolean => lease.phase === 'draining' && established
+    const finalizing = (): boolean => {
+      const operation = finalizationOperations.getStore()
+      return (
+        operation !== undefined &&
+        operation.active &&
+        operation.remote === remote &&
+        operation.generation === state.generation &&
+        state.parked &&
+        runsByRemote.get(remote) === state &&
+        established &&
+        lease.phase === 'active'
+      )
+    }
     const undos = new Set<() => void>()
     // Each undo runs once, and leaves the set when it does: a sync hold taken
     // every turn must not pile up for the life of the vault.
@@ -514,11 +533,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         return keep(pauseSync(vault, state, reason))
       },
       commitNow: async () => {
-        if (!valid() && !draining()) throw new Error(`${remote} plugin context is no longer active`)
+        if (!valid() && !draining() && !finalizing())
+          throw new Error(`${remote} plugin context is no longer active`)
         return vault.commitNow()
       },
       head: async () => {
-        if (!valid() && !draining()) throw new Error(`${remote} plugin context is no longer active`)
+        if (!valid() && !draining() && !finalizing())
+          throw new Error(`${remote} plugin context is no longer active`)
         return vault.repo.head()
       },
       onReport: (cb) => {
@@ -535,18 +556,41 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       call: async (name, params) => {
         if (deps.call === undefined) throw new Error(`no capability calls here: ${name}`)
-        const admittedDuringDrain = draining()
+        const inFinalization = finalizing()
+        const admittedDuringDrain = draining() || inFinalization
         if ((!valid() && !admittedDuringDrain) || !eventsLive)
           throw new Error(`${remote} plugin context is no longer active`)
-        return deps.call(remote, name, params, async (target) => {
-          if (
-            !eventsLive ||
-            target.remote !== remote ||
-            target.root !== root ||
-            (admittedDuringDrain ? !draining() : !valid())
-          )
-            throw new Error(`${remote} plugin context is no longer active`)
-        })
+        const inherited = finalizationOperations.getStore()
+        const operation =
+          inherited?.active && inFinalization
+            ? inherited
+            : draining()
+              ? { remote, generation: state.generation, active: true }
+              : null
+        const invoke = () =>
+          deps.call!(remote, name, params, async (target) => {
+            if (
+              !eventsLive ||
+              target.remote !== remote ||
+              target.root !== root ||
+              (operation !== null
+                ? !operation.active ||
+                  operation.generation !== state.generation ||
+                  !state.parked ||
+                  runsByRemote.get(remote) !== state ||
+                  !(draining() || finalizing())
+                : admittedDuringDrain
+                  ? !draining()
+                  : !valid())
+            )
+              throw new Error(`${remote} plugin context is no longer active`)
+          })
+        if (operation === null) return invoke()
+        try {
+          return await finalizationOperations.run(operation, invoke)
+        } finally {
+          if (operation !== inherited) operation.active = false
+        }
       },
       log: (level, message, detail) => {
         if (!valid() && !draining()) return
