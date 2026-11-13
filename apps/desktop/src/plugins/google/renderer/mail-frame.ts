@@ -22,6 +22,8 @@
  * and removes author paint declarations while retaining layout and imagery.
  */
 import { useEffect, useState } from 'react'
+import postcss, { type Declaration } from 'postcss'
+import valueParser from 'postcss-value-parser'
 
 /** The app tokens a message's page inherits, resolved to real colour values —
  *  a separate document gets no cascade, so they are copied in, not referenced. */
@@ -225,57 +227,120 @@ function normalizeDarkMail(html: string, css: string): { html: string; css: stri
     for (const attribute of ['color', 'bgcolor', 'text', 'link', 'vlink', 'alink']) {
       element.removeAttribute(attribute)
     }
-    const style = (element as HTMLElement).style
-    stripPaint(style)
-    if (style.length === 0) element.removeAttribute('style')
+    const inline = element.getAttribute('style')
+    if (inline !== null) {
+      element.setAttribute('style', normalizeDeclarations(`x{${inline}}`))
+      if (element.getAttribute('style') === '') element.removeAttribute('style')
+    }
   }
 
   return { html: parsed.body.innerHTML, css: stripStylesheetPaint(css) }
 }
 
-/** Remove authored colors but retain dimensions, display, media queries and images. */
-function stripPaint(style: CSSStyleDeclaration): void {
-  const properties = Array.from(style)
-  let backgroundImage = style.getPropertyValue('background-image')
-  const backgroundPriority = style.getPropertyPriority('background-image')
-  for (const property of properties) {
-    if (property === 'background') {
-      // A shorthand resets background-image too; retain an explicitly supplied
-      // image while removing the shorthand's authored color.
-      if (backgroundImage === '') {
-        const value = style.getPropertyValue(property)
-        backgroundImage = extractBackgroundImages(value).join(', ')
-      }
-      style.removeProperty(property)
-    } else if (property === 'background-image') {
-      continue
-    } else if (property === 'color' || property.endsWith('-color')) {
-      style.removeProperty(property)
-    }
+/** Layout keywords retained when a background shorthand loses its paint. */
+const BACKGROUND_LAYOUT_WORDS = new Set([
+  'left',
+  'right',
+  'top',
+  'bottom',
+  'center',
+  'cover',
+  'contain',
+  'repeat',
+  'no-repeat',
+  'repeat-x',
+  'repeat-y',
+  'space',
+  'round',
+  'local',
+  'fixed',
+  'scroll',
+  'border-box',
+  'padding-box',
+  'content-box',
+  'text',
+  'none',
+])
+
+function normalizeDeclarations(css: string): string {
+  try {
+    const root = postcss.parse(css)
+    root.walkDecls((declaration) => normalizeDeclaration(declaration))
+    const rule = root.first
+    return rule?.type === 'rule' ? (rule.nodes?.map((node) => node.toString()).join(';') ?? '') : ''
+  } catch {
+    // Malformed inline CSS cannot be normalized safely; discard the style.
+    return ''
   }
-  if (backgroundImage !== '')
-    style.setProperty('background-image', backgroundImage, backgroundPriority)
+}
+
+/** Strip authored paint while preserving the declaration's layout tokens. */
+function normalizeDeclaration(declaration: Declaration): void {
+  const property = declaration.prop.toLowerCase()
+  if (property === 'color' || property.endsWith('-color')) {
+    declaration.remove()
+  } else if (property === 'background') {
+    const layers: valueParser.Node[][] = [[]]
+    for (const node of valueParser(declaration.value).nodes) {
+      if (node.type === 'div' && node.value === ',') layers.push([])
+      else layers[layers.length - 1]!.push(node)
+    }
+    declaration.value = layers
+      .map((nodes) => {
+        const kept = nodes.filter((node) => {
+          if (node.type === 'function')
+            return ['url', 'calc', 'min', 'max', 'clamp', 'env'].includes(node.value.toLowerCase())
+          if (node.type !== 'word') return node.type === 'div' || node.type === 'space'
+          return (
+            BACKGROUND_LAYOUT_WORDS.has(node.value.toLowerCase()) ||
+            /^[-+]?(?:\d*\.)?\d+(?:%|[a-z]+)?$/i.test(node.value)
+          )
+        })
+        const hadGradient = nodes.some(
+          (node) => node.type === 'function' && node.value.toLowerCase().endsWith('-gradient'),
+        )
+        const hasUrl = kept.some(
+          (node) => node.type === 'function' && node.value.toLowerCase() === 'url',
+        )
+        if (hadGradient && !hasUrl) kept.unshift(valueParser('none').nodes[0]!)
+        return valueParser.stringify(kept).trim()
+      })
+      .join(', ')
+    if (declaration.value === '') declaration.remove()
+  } else if (property === 'background-image') {
+    const layers: valueParser.Node[][] = [[]]
+    for (const node of valueParser(declaration.value).nodes) {
+      if (node.type === 'div' && node.value === ',') layers.push([])
+      else layers[layers.length - 1]!.push(node)
+    }
+    declaration.value = layers
+      .map((nodes) => {
+        const images = nodes.flatMap((node): valueParser.Node[] => {
+          if (node.type !== 'function') return []
+          if (node.value.toLowerCase() === 'url') return [node]
+          if (node.value.toLowerCase().endsWith('-gradient')) return [valueParser('none').nodes[0]!]
+          return []
+        })
+        return images.length === 0 ? 'none' : valueParser.stringify(images)
+      })
+      .join(', ')
+    if (declaration.value === '') declaration.remove()
+  }
 }
 
 function stripStylesheetPaint(css: string): string {
-  // CSS declarations end at a semicolon or the containing rule's closing
-  // brace. Matching only declaration boundaries keeps selectors, at-rules,
-  // media queries and every non-paint property byte-for-byte intact.
-  return css.replace(
-    /(^|[;{])\s*(background|[-\w]*color)\s*:((?:[^;{}()]|\([^()]*\))*)(?=;|\})/gi,
-    (_declaration, separator: string, property: string, value: string) => {
-      const images = property.toLowerCase() === 'background' ? extractBackgroundImages(value) : []
-      return separator + (images.length === 0 ? '' : `background-image:${images.join(', ')}`)
-    },
-  )
-}
-
-function extractBackgroundImages(value: string): string[] {
-  return (
-    value.match(
-      /url\((?:[^()]|\([^()]*\))*\)|(?:repeating-)?(?:linear|radial|conic)-gradient\((?:[^()]|\([^()]*\))*\)/gi,
-    ) ?? []
-  )
+  // PostCSS parses nested rules, comments and functions as syntax, rather than
+  // guessing declaration boundaries with a regular expression. Its AST stays
+  // entirely in memory; sender styles never enter the app document.
+  try {
+    const root = postcss.parse(safeStylesheet(css))
+    root.walkDecls(normalizeDeclaration)
+    return root.toString()
+  } catch {
+    // Invalid CSS has no reliable declaration boundaries. Discard it in dark
+    // mode rather than risk leaving sender paint in a partially parsed sheet.
+    return ''
+  }
 }
 
 function defaults(palette: MailPalette): string {
