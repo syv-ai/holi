@@ -10,6 +10,10 @@ export interface ReminderFire {
   title: string
   /** Scheduled *local wall-clock* time, for display only. Not an instant. */
   fireAt: string
+  /** The overdue task's due stamp; explicit reminder fires leave this absent. */
+  due?: string
+  /** Distinguishes due-date notices from explicitly scheduled reminders. */
+  overdue?: true
 }
 
 export interface RemindersEvent {

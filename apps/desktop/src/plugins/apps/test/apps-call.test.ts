@@ -72,7 +72,7 @@ async function rig() {
     claims: async () => [],
   })
   // No entry here asks for an app's consent.
-  door = host.openAppDoor({ admit: async () => {} })
+  door = host.openAppDoor({ admit: async () => {} }, REMOTE)
   /** One bridge call, as `AppFrame` makes it for the frame it mounted. */
   const call = async (method: string, params?: unknown, bundle = 'Tracker.app') =>
     (
