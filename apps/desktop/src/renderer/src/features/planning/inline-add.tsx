@@ -3,7 +3,7 @@
  * a one-line title field. Enter adds and stays open for the next one, the way
  * a list is typed in; Escape, or leaving it empty, closes it.
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { PlusIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -36,9 +36,12 @@ export function InlineAdd({
     busy: false,
   })
   const current = state ?? localState
+  const currentRef = useRef(current)
+  currentRef.current = current
   const { open, title, busy } = current
   const update = (patch: Partial<InlineAddState>) => {
-    const next = { ...current, ...patch }
+    const next = { ...currentRef.current, ...patch }
+    currentRef.current = next
     setLocalState(next)
     onStateChange?.(next)
   }
@@ -75,12 +78,16 @@ export function InlineAdd({
   }
 
   const submit = async () => {
-    const text = title.trim()
+    const latest = currentRef.current
+    if (latest.busy) return
+    const text = latest.title.trim()
     if (text === '') return update({ open: false })
     update({ busy: true })
     try {
       await onAdd(text)
       update({ title: '' })
+    } catch {
+      // Keep the draft so the person can retry after a failed add.
     } finally {
       update({ busy: false })
     }
