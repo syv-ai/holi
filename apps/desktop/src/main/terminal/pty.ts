@@ -39,6 +39,7 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
   return pty.spawn(launch.file, commandLine(launch), {
     name: 'xterm-256color',
     ...opts,
+    env: launch.env ? { ...opts.env, ...launch.env } : opts.env,
   }) as unknown as PtyProcess
 }
 
