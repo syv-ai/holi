@@ -173,6 +173,7 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     let attachments: MailPart[]
     try {
       attachments = await pending.bytes
+      assertActive()
     } catch (error) {
       if (forwarded === pending) forwarded = null
       throw error
@@ -231,8 +232,11 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       return result
     },
 
-    contacts() {
-      return (addressBook ??= listContacts(api()))
+    async contacts() {
+      assertActive()
+      const result = await (addressBook ??= listContacts(api()))
+      assertActive()
+      return result
     },
 
     setRead(id, read) {
@@ -354,6 +358,8 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
  */
 async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> {
   const result = await send()
+  // The external effect may already have happened. Preserve its receipt, but
+  // never write its result into a cache retired while the request was in flight.
   record()
   return result
 }

@@ -16,7 +16,7 @@ import { GOOGLE_INFO } from '../info'
 import { GoogleApi } from './api'
 import { openGoogleCache, type GoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
-import { GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
+import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
 import { googleSeed } from './seed'
 import { startGoogleTriggers } from './triggers'
@@ -51,18 +51,17 @@ export const googleMain: MainPlugin = {
           if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
           const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
           cache.ensureShape()
+          const session = accounts.sessionForSub(sub)
+          if (session === null) throw new Error('that Google account is no longer connected')
           const data = createGoogleData({
-            // Bound to THIS account's session, not to whatever vault is active:
-            // the cache and the client it fills from have to be the same account.
-            api: () =>
-              new GoogleApi({
-                accessToken: () => {
-                  const session = accounts.sessionForSub(sub)
-                  if (session === null)
-                    throw new Error('that Google account is no longer connected')
-                  return session.getAccessToken()
-                },
-              }),
+            // Bind this handle to the grant it was created for. A reconnect of
+            // the same account retires it instead of lending it the new grant.
+            api: () => {
+              if (bySub.get(sub)?.data !== data) {
+                throw new Error('that Google account is no longer connected')
+              }
+              return new GoogleApi({ accessToken: () => session.getAccessToken() })
+            },
             cache,
           })
           bySub.set(sub, { data, cache })
@@ -106,20 +105,18 @@ export const googleMain: MainPlugin = {
       }
     }
 
-    ctx.register(
-      GOOGLE_NAMESPACES,
-      googleCapabilities({
-        accounts,
-        dataFor,
-        settings: {
-          read: readSettings,
-          write: async (root, values) => {
-            const refused = await writePluginSettings(root, GOOGLE_INFO.id, values)
-            if (refused.length > 0) console.warn(`[google] settings: ${refused.join('; ')}`)
-          },
+    const capabilities = googleCapabilities({
+      accounts,
+      dataFor,
+      settings: {
+        read: readSettings,
+        write: async (root, values) => {
+          const refused = await writePluginSettings(root, GOOGLE_INFO.id, values)
+          if (refused.length > 0) console.warn(`[google] settings: ${refused.join('; ')}`)
         },
-      }),
-    )
+      },
+    })
+    ctx.register(GOOGLE_NAMESPACES, capabilities)
 
     // Mail and the agenda for schedules that run on them, polled only while
     // one listens.
@@ -128,8 +125,12 @@ export const googleMain: MainPlugin = {
       overrides: async () => (await readSettings(ctx.root)).calendars,
     })
 
+    let stopped = false
     return () => {
+      if (stopped) return
+      stopped = true
       stopTriggers()
+      disposeGoogleCapabilities(capabilities)
     }
   },
 }

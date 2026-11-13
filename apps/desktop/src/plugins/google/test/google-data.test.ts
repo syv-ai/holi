@@ -300,15 +300,15 @@ describe('createGoogleData', () => {
       expect(theirs.calls()).toBe(2) // and asked for itself, not served mine
     })
 
-    it('is dropped on disconnect', async () => {
+    it('does not serve contacts from a retired account handle', async () => {
       const { data: subject, calls } = peopleApi()
       subject.ensureShape()
       await subject.contacts()
 
       subject.forget()
-      await subject.contacts()
 
-      expect(calls()).toBe(4)
+      await expect(subject.contacts()).rejects.toThrow('no longer connected')
+      expect(calls()).toBe(2)
     })
   })
 })
