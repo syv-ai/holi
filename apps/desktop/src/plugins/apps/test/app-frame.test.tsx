@@ -434,11 +434,36 @@ for (const replacement of ['reload', 'path', 'remote', 'mode', 'code', 'dispose'
   })
 }
 
-test('a failed consent check stays closed and offers Retry', async () => {
-  grantsMock.mockRejectedValueOnce(new Error('offline'))
+test('a failed permission check recovers when main registers the apps capability', async () => {
+  grantsMock.mockRejectedValueOnce(new Error('no such method'))
   render(<AppFrame path="Team/Retro.app" />)
-  await userEvent.click(await screen.findByRole('button', { name: 'Retry' }))
+  expect(await screen.findByText('Could not check app permissions.')).toBeTruthy()
+  expect(runningFrame()).toBeNull()
+  expect(document.querySelector('iframe')).toBeNull()
+
+  act(() =>
+    appsRenderer.events!['commands-changed']!({ remote: 'other/vault', payload: null }, store),
+  )
+  expect(grantsMock).toHaveBeenCalledTimes(1)
+
+  act(() => appsRenderer.events!['commands-changed']!({ remote: REMOTE, payload: null }, store))
   await waitFor(() => expect(runningFrame()).not.toBeNull())
+  expect(grantsMock).toHaveBeenCalledTimes(2)
+  expect(screen.queryByText('Could not check app permissions.')).toBeNull()
+})
+
+test('registration signal recovers a permission check that is still pending', async () => {
+  const pending = deferred<ReturnType<typeof status>>()
+  grantsMock.mockReturnValueOnce(pending.promise)
+  render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(grantsMock).toHaveBeenCalledTimes(1))
+
+  act(() => appsRenderer.events!['commands-changed']!({ remote: REMOTE, payload: null }, store))
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  expect(grantsMock).toHaveBeenCalledTimes(2)
+
+  await act(async () => pending.reject(new Error('no such method')))
+  expect(runningFrame()).not.toBeNull()
 })
 
 test('a refused grant rechecks the changed code instead of executing it', async () => {
