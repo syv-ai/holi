@@ -267,7 +267,8 @@ export class PiRpcRun {
     if (record.type === 'response') {
       const id = typeof record.id === 'string' ? record.id : undefined
       const command = id === undefined ? undefined : this.commands.get(id)
-      if (id !== undefined) this.commands.delete(id)
+      if (id === undefined || command === undefined) return
+      this.commands.delete(id)
       if (command === 'get_session_stats') {
         if (record.success === true && record.data && typeof record.data === 'object') {
           const data = record.data as Record<string, unknown>
@@ -302,14 +303,7 @@ export class PiRpcRun {
       }
       if (command === 'prompt') {
         const disposition = (record.data as Record<string, unknown> | undefined)?.disposition
-        if (disposition === 'handled') {
-          this.finish({
-            status: 'completed',
-            output: this.output,
-            model: this.model,
-            usage: this.usage,
-          })
-        } else if (disposition === 'followUp' && record.success !== true) {
+        if (disposition === 'followUp' && record.success !== true) {
           this.fail('Pi could not queue the follow-up prompt')
         }
       }

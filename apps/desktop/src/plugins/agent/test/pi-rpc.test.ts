@@ -73,6 +73,60 @@ describe('PiRpcRun', () => {
     expect(fakeProcess.commands[2]).toMatchObject({ streamingBehavior: 'followUp' })
   })
 
+  it('replays a constructed attributed RPC transcript across fragmented JSONL chunks', async () => {
+    // Constructed consumer fixture from Pi docs/rpc.md and src/modes/rpc/rpc-types.ts
+    // at upstream revision b4899f59ef0fba6507c2e619fd804dcde51920ba; not captured
+    // from that release and not evidence of producer emission.
+    const process = fake()
+    const run = new PiRpcRun({
+      bin: 'pi',
+      cwd: '/empty-workdir',
+      model: 'provider/model-id',
+      spawn: () => process.child,
+    })
+    const result = run.prompt('first prompt')
+    const modelCommand = process.commands[0]!
+    expect(modelCommand).toMatchObject({
+      type: 'set_model',
+      provider: 'provider',
+      modelId: 'model-id',
+    })
+    process.stdout.write(`{"type":"response","id":"${modelCommand.id}","success":true}`)
+    process.stdout.write(
+      '\n{"type":"agent_start"}\n{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hello"}}',
+    )
+    process.stdout.write(
+      '\n{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":" world"}}\n{"type":"agent_end"}\n',
+    )
+    process.stdout.write('{"type":"response","id":"')
+    process.stdout.write('holi-2","success":true,"data":{"disposition":"handled"}}\n')
+    let settled = false
+    void result.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    process.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await expect(result).resolves.toMatchObject({ status: 'completed', output: 'hello world' })
+  })
+
+  it('does not treat acknowledgement or agent_end as awaited completion', async () => {
+    const process = fake()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
+    const result = run.prompt('go')
+    process.stdout.write(
+      `{"type":"response","id":"${process.commands[0]!.id}","success":true,"data":{"disposition":"handled"}}\n{"type":"agent_end"}\n`,
+    )
+    let completed = false
+    void result.then(() => {
+      completed = true
+    })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+    process.exit()
+    await expect(result).resolves.toMatchObject({ status: 'failed', error: /exited/ })
+  })
+
   it('rejects a follow-up when the RPC process exited between turns', async () => {
     const process = fake()
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
@@ -100,6 +154,21 @@ describe('PiRpcRun', () => {
     await expect(result).resolves.toMatchObject({ status: 'failed', output: 'lon' })
   })
 
+  it('fails after repeated malformed records without treating one bad line as settlement', async () => {
+    const process = fake()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
+    const result = run.prompt('go')
+    process.stdout.write('not-json\n'.repeat(9))
+    let completed = false
+    void result.then(() => {
+      completed = true
+    })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+    process.stdout.write('still-not-json\n')
+    await expect(result).resolves.toMatchObject({ status: 'failed', error: /malformed/ })
+  })
+
   it('waits for settlement after a command acknowledgement and reuses the RPC process', async () => {
     const fakeProcess = fake()
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => fakeProcess.child })
@@ -120,7 +189,7 @@ describe('PiRpcRun', () => {
     await expect(next).resolves.toMatchObject({ status: 'completed' })
   })
 
-  it('sets models with provider and modelId, waits for the acknowledgement, and appends system text', async () => {
+  it('correlates responses by command id and appends system text', async () => {
     const fakeProcess = fake()
     let args: string[] = []
     const run = new PiRpcRun({
@@ -139,11 +208,39 @@ describe('PiRpcRun', () => {
       { type: 'set_model', provider: 'anthropic', modelId: 'claude-sonnet' },
     ])
     fakeProcess.stdout.write(
+      '{"type":"response","id":"not-holi-command","success":false,"error":"stale"}\n',
+    )
+    expect(fakeProcess.commands).toHaveLength(1)
+    fakeProcess.stdout.write(
       `{"type":"response","id":"${fakeProcess.commands[0]!.id}","command":"set_model","success":true}\n`,
     )
     expect(fakeProcess.commands.at(-1)).toMatchObject({ type: 'prompt', message: 'go' })
     fakeProcess.stdout.write('{"type":"agent_settled","aborted":false}\n')
     await expect(result).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('disables every Pi tool and resource source for no-tools runs', () => {
+    const process = fake()
+    const run = new PiRpcRun({
+      bin: 'pi',
+      cwd: '/v',
+      noTools: true,
+      spawn: (_bin, args) => {
+        expect(args).toEqual([
+          '--mode',
+          'rpc',
+          '--no-tools',
+          '--no-extensions',
+          '--no-skills',
+          '--no-prompt-templates',
+          '--no-context-files',
+          '--no-mcp',
+          '--no-approve',
+        ])
+        return process.child
+      },
+    })
+    run.close()
   })
 
   it('fails and kills the process when Pi rejects a command or aborts a turn', async () => {

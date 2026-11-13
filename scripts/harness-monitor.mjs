@@ -25,7 +25,7 @@ export const providers = [
 const requiredChecks = {
   'claude-code': ['compatibility'],
   codex: ['compatibility'],
-  pi: ['compatibility'],
+  pi: ['cli-contract', 'rpc-consumer', 'rpc-producer'],
 }
 
 const issueMarker = (id) => `<!-- holi-harness-monitor:${id} -->`
