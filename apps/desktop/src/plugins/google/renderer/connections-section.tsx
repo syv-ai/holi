@@ -41,7 +41,12 @@ import {
 } from '@/components/ui/item'
 import { IconTile } from '@/components/ui/icon-tile'
 import { pluginMark } from '@/composites/marks'
-import { activeRemoteAtom, activeVaultSettingsAtom, loadVaultSettingsAtom } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  activeVaultSettingsAtom,
+  loadVaultSettingsAtom,
+  withSavedBuffers,
+} from '@/plugin-api'
 import { useSetAtom } from 'jotai'
 import { googleCap } from './google-cap'
 import { useGoogleAccount } from './account'
@@ -77,9 +82,12 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
     accounts,
     currentSub,
     refresh: refreshGoogle,
+    refreshAndWait,
   } = useGoogleAccount()
   const remote = useAtomValue(activeRemoteAtom)
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null)
+  const [changingAccount, setChangingAccount] = useState(false)
   /** The vault a connect in flight is for, so unmounting cancels it rather
    *  than leaving a listener holding a port for the life of the app. */
   const connecting = useRef<string | null>(null)
@@ -142,16 +150,42 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
   }
 
   /** Unlink THIS vault. The account and every other vault using it survive. */
+  const changeAccount = async (
+    change: () => Promise<unknown>,
+    showLifecycleError = true,
+  ): Promise<string | null> => {
+    setChangingAccount(true)
+    setLifecycleError(null)
+    let mutationStarted = false
+    try {
+      await withSavedBuffers(async () => {
+        mutationStarted = true
+        await change()
+        await refreshAndWait()
+      })
+      return null
+    } catch (err) {
+      const detail = err instanceof Error ? ` ${err.message}` : ''
+      const message = mutationStarted
+        ? `Could not confirm the Google account change.${detail} Check the connection before retrying.`
+        : `Could not save your mail draft, so the Google account was not changed.${detail} The current account remains connected. Save or copy the draft, then retry.`
+      if (showLifecycleError) setLifecycleError(message)
+      return message
+    } finally {
+      setChangingAccount(false)
+    }
+  }
+
+  /** Unlink THIS vault. The account and every other vault using it survive. */
   const disconnect = async () => {
-    if (remote !== null) await googleCap.disconnectVault(remote).catch(() => undefined)
-    refreshGoogle()
-    setPhase({ kind: 'idle' })
+    if (remote === null) return
+    await changeAccount(() => googleCap.disconnectVault(remote))
   }
 
   /** Reuse an account already connected here. No consent: the grant exists. */
   const linkAccount = async (sub: string) => {
-    if (remote !== null) await googleCap.useAccount(remote, { sub }).catch(() => undefined)
-    refreshGoogle()
+    if (remote === null) return
+    await changeAccount(() => googleCap.useAccount(remote, { sub }))
   }
 
   /**
@@ -161,9 +195,9 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
    * account and needs a fresh consent to get back.
    */
   const removeAccount = async (sub: string) => {
-    if (remote !== null) await googleCap.removeAccount(remote, { sub }).catch(() => undefined)
-    refreshGoogle()
-    setRemoving(null)
+    if (remote === null) return
+    if ((await changeAccount(() => googleCap.removeAccount(remote, { sub }))) === null)
+      setRemoving(null)
   }
 
   /** Connected here, but not the one this vault uses. */
@@ -178,7 +212,7 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
   const connectLabel = accounts.length > 0 ? 'Connect a different account…' : 'Connect'
 
   const connected = account != null
-  const busy = phase.kind === 'connecting' || loading
+  const busy = phase.kind === 'connecting' || loading || changingAccount
   /**
    * Connected, but on a grant older than the scopes this build needs.
    *
@@ -233,6 +267,7 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                     variant="outline"
                     size="sm"
                     aria-label="Disconnect this vault"
+                    disabled={busy}
                     onClick={() => void disconnect()}
                   >
                     Disconnect
@@ -248,6 +283,7 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                       variant="outline"
                       size="sm"
                       aria-label="Forget this connection"
+                      disabled={busy}
                       onClick={() => void disconnect()}
                     >
                       Forget
@@ -257,6 +293,12 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
               )}
             </ItemActions>
           </Item>
+
+          {lifecycleError !== null && (
+            <p role="alert" className="text-sm text-pretty text-destructive">
+              {lifecycleError}
+            </p>
+          )}
 
           {readError && (
             <p role="alert" className="text-sm text-pretty text-destructive">
@@ -309,12 +351,18 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
                 <ItemDescription>Connected on this machine</ItemDescription>
               </ItemContent>
               <ItemActions>
-                <Button size="sm" variant="outline" onClick={() => void linkAccount(other.sub)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void linkAccount(other.sub)}
+                >
                   Use in this vault
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
+                  disabled={busy}
                   onClick={() => setRemoving({ sub: other.sub, email: other.email })}
                 >
                   Remove from Holi
@@ -324,7 +372,12 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
           ))}
 
           {/* Machine-wide: the client every account here was granted to. */}
-          <OAuthClient accountCount={accounts.length} onChanged={refreshGoogle} visible={visible} />
+          <OAuthClient
+            accountCount={accounts.length}
+            beforeChange={(change) => changeAccount(change, false)}
+            disabled={busy}
+            visible={visible}
+          />
         </div>
       </FramePanel>
 

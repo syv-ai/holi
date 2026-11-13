@@ -39,6 +39,7 @@ interface RigOptions {
       }>,
     ) => Promise<void>
   }
+  dataForSession?: (session: { accountSub: string | null }) => GoogleData
 }
 
 /** The capabilities over a fake data layer and accounts manager, recording
@@ -46,6 +47,7 @@ interface RigOptions {
 function rig({
   data = {},
   accounts = {},
+  dataForSession,
   settings = {
     read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
     write: async () => {},
@@ -72,8 +74,13 @@ function rig({
   registry.register(
     GOOGLE_NAMESPACES,
     googleCapabilities({
-      accounts: accounts as GoogleAccountsManager,
+      accounts: {
+        sessionFor: async () =>
+          googleData === null ? null : { accountSub: 'sub-1', getAccessToken: async () => 'token' },
+        ...accounts,
+      } as GoogleAccountsManager,
       dataFor: async () => googleData,
+      dataForSession: (session) => (dataForSession?.(session) ?? googleData) as GoogleData,
       settings,
     }),
   )
@@ -176,6 +183,148 @@ const refusal = (p: Promise<unknown>) =>
   )
 
 describe('the composer', () => {
+  it('rejects malformed expected account ids', async () => {
+    expect(
+      await refusal(rig().call('saveDraft', { mail: MAIL, expectedAccountSub: 'bad/sub' })),
+    ).toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/expectedAccountSub/i) })
+  })
+
+  it.each([
+    ['draftBody', { id: 'd-1' }],
+    ['saveDraft', { mail: MAIL }],
+    ['discardDraft', { draftId: 'd-1' }],
+    ['send', { mail: MAIL }],
+  ])(
+    'refuses %s before touching Google or account data when the account changed',
+    async (name, params) => {
+      const { call, calls } = rig({
+        accounts: { sessionFor: async () => ({ accountSub: 'sub-b' }) } as never,
+        dataForSession: () => {
+          throw new Error('account cache must not be accessed')
+        },
+      })
+      expect(await refusal(call(name, { ...params, expectedAccountSub: 'sub-a' }))).toMatchObject({
+        code: 'FORBIDDEN',
+        message: expect.stringMatching(/account changed/i),
+      })
+      expect(calls).toEqual([])
+    },
+  )
+
+  it.each([
+    ['draftBody', { id: 'd-1' }],
+    ['saveDraft', { mail: MAIL }],
+    ['discardDraft', { draftId: 'd-1' }],
+    ['send', { mail: MAIL }],
+  ])('accepts a matching expected account for %s', async (name, params) => {
+    const { call, calls } = rig()
+    if (name === 'draftBody') {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json({})),
+      )
+      try {
+        await call(name, { ...params, expectedAccountSub: 'sub-1' })
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    } else {
+      await call(name, { ...params, expectedAccountSub: 'sub-1' })
+    }
+    expect(calls.length).toBe(name === 'draftBody' ? 0 : 1)
+  })
+
+  it.each(['saveDraft', 'discardDraft', 'send'] as const)(
+    'keeps %s on the account resolved before an asynchronous handoff',
+    async (name) => {
+      let mapped = 'sub-a'
+      const routed: string[] = []
+      const forAccount = (sub: string) => ({
+        saveDraft: async () => {
+          routed.push(sub)
+          return { id: 'd-1' }
+        },
+        discardDraft: async () => {
+          routed.push(sub)
+        },
+        sendMail: async () => {
+          routed.push(sub)
+          return { id: 'm-1' }
+        },
+      })
+      const { call } = rig({
+        accounts: {
+          sessionFor: async () => ({ accountSub: mapped, getAccessToken: async () => 'token' }),
+        } as never,
+        dataForSession: (session) => {
+          const resolved = session.accountSub!
+          mapped = 'sub-b'
+          return forAccount(resolved) as unknown as GoogleData
+        },
+      })
+      const params =
+        name === 'discardDraft'
+          ? { draftId: 'd-1', expectedAccountSub: 'sub-a' }
+          : { mail: MAIL, expectedAccountSub: 'sub-a' }
+      await call(name, params)
+      expect(routed).toEqual(['sub-a'])
+    },
+  )
+
+  it('keeps draftBody on its resolved session if the vault is remapped during token refresh', async () => {
+    let mapped = { accountSub: 'sub-a', getAccessToken: async () => 'token-a' }
+    let markEntered!: () => void
+    let release!: () => void
+    const entered = new Promise<void>((resolve) => (markEntered = resolve))
+    const pending = new Promise<void>((resolve) => (release = resolve))
+    mapped.getAccessToken = async () => {
+      markEntered()
+      await pending
+      return 'token-a'
+    }
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      Response.json({ init }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    try {
+      const request = rig({ accounts: { sessionFor: async () => mapped } as never }).call(
+        'draftBody',
+        {
+          id: 'd-1',
+          expectedAccountSub: 'sub-a',
+        },
+      )
+      await entered
+      mapped = { accountSub: 'sub-b', getAccessToken: async () => 'token-b' }
+      release()
+      await request
+      expect(fetch.mock.calls[0]![1]?.headers).toMatchObject({ Authorization: 'Bearer token-a' })
+    } finally {
+      release()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps draftBody working without an expected account', async () => {
+    const fetch = vi.fn(async () => Response.json({}))
+    vi.stubGlobal('fetch', fetch)
+    try {
+      await rig().call('draftBody', { id: 'd-1' })
+      expect(fetch).toHaveBeenCalledOnce()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it.each([
+    ['saveDraft', { mail: MAIL }],
+    ['discardDraft', { draftId: 'd-1' }],
+    ['send', { mail: MAIL }],
+  ])('keeps the existing no-expectation behavior for %s', async (name, params) => {
+    const { call, calls } = rig()
+    await call(name, params)
+    expect(calls).toHaveLength(1)
+  })
   it('send passes the mail straight through to the write surface', async () => {
     const { call, calls } = rig()
     expect(await call('send', { mail: MAIL, threadId: 't1' })).toEqual({ id: 'm-1' })
