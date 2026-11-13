@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { discover, providers, reconcile } from './harness-monitor.mjs'
+import { discover, normalizeReport, providers, reconcile } from './harness-monitor.mjs'
 
 function observation(id, version = '1.0.0', runNumber = 1, outcome = 'unverified') {
   const provider = providers.find((item) => item.id === id)
@@ -9,7 +9,17 @@ function observation(id, version = '1.0.0', runNumber = 1, outcome = 'unverified
     version,
     npmUrl: `https://www.npmjs.com/package/${provider.package}`,
     releaseNotesUrl: 'https://github.com/example/repo/releases',
-    checks: [{ name: 'compatibility', outcome }],
+    checks:
+      id === 'codex' && outcome === 'pass'
+        ? [
+            { name: 'CLI surface', outcome },
+            { name: 'fixture consumers', outcome },
+            { name: 'actual notify emission', outcome },
+            { name: 'approval notifications', outcome },
+            { name: 'inference events', outcome },
+            { name: 'sandbox enforcement', outcome },
+          ]
+        : [{ name: 'compatibility', outcome }],
   }
 }
 
@@ -122,6 +132,23 @@ test('registry failures and missing latest fail discovery visibly', async () => 
       fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
     }),
     /latest is missing/,
+  )
+})
+
+test('Codex report coverage keeps CLI surface and fixture consumers distinct', () => {
+  const codex = observation('codex')
+  codex.checks = []
+  const normalized = normalizeReport(codex)
+  assert.deepEqual(
+    normalized.checks.map((check) => [check.name, check.outcome]),
+    [
+      ['CLI surface', 'unverified'],
+      ['fixture consumers', 'unverified'],
+      ['actual notify emission', 'unverified'],
+      ['approval notifications', 'unverified'],
+      ['inference events', 'unverified'],
+      ['sandbox enforcement', 'unverified'],
+    ],
   )
 })
 
