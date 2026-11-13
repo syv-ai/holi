@@ -289,6 +289,31 @@ describe('killTree', () => {
 
 describe('execProgram', () => {
   it.runIf(process.platform === 'win32')(
+    'stops an executable and its grandchild at the timeout',
+    async () => {
+      const { execProgram } = await import('../src/main/launch')
+      const script =
+        'const c=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>0,1000)"],{stdio:"ignore",windowsHide:true});console.log(c.pid);setInterval(()=>0,1000)'
+      const result = await new Promise<{ err: Error | null; out: string }>((resolve) => {
+        const child = execProgram(
+          process.execPath,
+          ['-e', script],
+          { env: process.env, timeoutMs: 3000, maxBuffer: 65536, encoding: 'utf8' },
+          (err, out) => resolve({ err, out }),
+        )
+        child.stdin?.end()
+      })
+      expect(result.err).not.toBeNull()
+      const pid = Number(result.out.trim())
+      expect(pid).toBeGreaterThan(1)
+      await vi.waitFor(() => expect(defaultProbePid(pid, 'win32')).toBe('gone'), {
+        timeout: 10_000,
+      })
+    },
+    30_000,
+  )
+
+  it.runIf(process.platform === 'win32')(
     'stops a .cmd and the program behind it at the timeout',
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-'))

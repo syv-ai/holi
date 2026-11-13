@@ -36,10 +36,33 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
   // A `.cmd` (how npm installs an agent) runs through `cmd.exe` on Windows;
   // anything else, and every file elsewhere, is started as given.
   const launch = launchPlan(file, args, { env: opts.env })
+  const env = launch.env ? { ...opts.env, ...launch.env } : opts.env
+  if (process.platform === 'win32' && launch.env?.ELECTRON_RUN_AS_NODE === '1') {
+    // Electron is a GUI executable: its Node mode attaches to its parent's
+    // console. A console parent keeps it on ConPTY rather than Holi's console.
+    // User argv travels as JSON, never as command-shell source.
+    const spec = JSON.stringify({ file: launch.args[0], args: launch.args.slice(1) })
+    if (spec.length > 30_000)
+      throw new Error(
+        'The Node fallback arguments exceed the Windows environment limit. Install Node.js to run this command.',
+      )
+    const bootstrap =
+      "const s=JSON.parse(process.env.HOLI_NODE_PTY_SPEC);delete process.env.HOLI_NODE_PTY_SPEC;delete process.env.HOLI_NODE_PTY_EXEC;process.argv=[process.execPath,s.file,...s.args];process.execArgv=[];require('node:module').runMain(s.file)"
+    const key = Object.keys(env).find((key) => key.toUpperCase() === 'COMSPEC')
+    return pty.spawn(
+      key ? env[key]! : 'cmd.exe',
+      `/d /v:off /s /c \"\"%HOLI_NODE_PTY_EXEC%\" -e \"${bootstrap}\"\"`,
+      {
+        name: 'xterm-256color',
+        ...opts,
+        env: { ...env, HOLI_NODE_PTY_EXEC: launch.file, HOLI_NODE_PTY_SPEC: spec },
+      },
+    ) as unknown as PtyProcess
+  }
   return pty.spawn(launch.file, commandLine(launch), {
     name: 'xterm-256color',
     ...opts,
-    env: launch.env ? { ...opts.env, ...launch.env } : opts.env,
+    env,
   }) as unknown as PtyProcess
 }
 

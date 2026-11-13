@@ -4,16 +4,14 @@
 const pty = require('node-pty')
 
 const child = pty.spawn(
-  process.execPath,
-  [
-    '-e',
-    'process.stdout.write("node-pty-ok\\n");process.stdin.on("data",()=>process.exit(0));process.stdin.resume()',
-  ],
-  {
-    name: 'xterm-256color',
-    cols: 80,
-    rows: 24,
-  },
+  process.platform === 'win32' ? process.env.ComSpec || 'cmd.exe' : process.execPath,
+  process.platform === 'win32'
+    ? ['/d', '/c', 'echo node-pty-ok && set /p reply=']
+    : [
+        '-e',
+        'process.stdout.write("node-pty-ok\\n");process.stdin.on("data",()=>process.exit(0));process.stdin.resume()',
+      ],
+  { name: 'xterm-256color', cols: 80, rows: 24 },
 )
 
 let output = ''

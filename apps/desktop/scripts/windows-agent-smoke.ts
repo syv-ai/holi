@@ -83,6 +83,8 @@ async function run() {
     script,
     `
 const fs=require('node:fs'),cp=require('node:child_process');
+if(require.main!==module)throw new Error('not the CLI entrypoint');
+if(process.env.HOLI_NODE_PTY_SPEC || process.env.HOLI_NODE_PTY_EXEC)throw new Error('private launch transport leaked');
 const args=process.argv.slice(2);
 if(args[0]==='--pty') {
  fs.writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(args.slice(1)));
@@ -169,6 +171,46 @@ if(args[0]==='--pty') {
   checks.push(
     `real ${process.platform === 'win32' ? 'ConPTY' : 'PTY'} exact argv, stdin/output, resize and AgentRuntime Stop terminate root and descendant`,
   )
+
+  if (process.platform === 'win32') {
+    const fallbackEnv = {
+      ...env,
+      ProgramFiles: root,
+      USERPROFILE: root,
+      HOME: root,
+      APPDATA: root,
+      LOCALAPPDATA: root,
+    }
+    for (const key of Object.keys(fallbackEnv))
+      if (key.toUpperCase() === 'PATH') delete fallbackEnv[key]
+    fallbackEnv.Path = root
+    assert.equal(launchPlan(shim, [], { env: fallbackEnv }).env?.ELECTRON_RUN_AS_NODE, '1')
+    const fallbackRuntime = new AgentRuntime()
+    active.push(fallbackRuntime)
+    let fallbackOutput = ''
+    fallbackRuntime.onData((data) => {
+      fallbackOutput += data
+      output += data
+    })
+    fallbackRuntime.start({
+      bin: shim,
+      args: ['--pty', ...args],
+      cwd: vault,
+      env: fallbackEnv,
+      cols: 100,
+      rows: 30,
+    })
+    await until(() => fallbackOutput.includes('READY'))
+    assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), args)
+    const fallbackPids = await readPids()
+    fallbackRuntime.write('ping\r')
+    await until(() => fallbackOutput.includes('INPUT:ping'))
+    await fallbackRuntime.kill()
+    await until(() => fallbackPids.every((pid) => !alive(pid)))
+    checks.push(
+      'Electron-as-Node fallback uses a real console parent, preserves argv and require.main, hides private transport, and stops its full ConPTY tree',
+    )
+  }
 
   const managed = spawnOwnedProgram(plan.file, [script, '--pty'], {
     cwd: vault,

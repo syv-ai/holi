@@ -219,11 +219,11 @@ export function spawnProgram(
 }
 
 /**
- * `execFile` through `launchPlan`. A program run through `cmd.exe` is not
- * stopped by `execFile`'s `timeout`, which ends `cmd.exe` and leaves the
- * `node` behind a `.cmd` running, and a `taskkill /T` sent after that finds no
- * root. So there the timeout is Holi's own and stops the whole tree while the
- * root is alive; everywhere else it is `execFile`'s, unchanged.
+ * `execFile` through `launchPlan`. On Windows its own timeout would end only
+ * the root, leaving descendants without a live root for `taskkill /T` to find.
+ * Holi's timer stops the tree before the root exits, for executables and batch
+ * launchers alike. Successful background launches keep their descendants.
+ * POSIX keeps `execFile`'s timeout unchanged.
  */
 export function execProgram(
   file: string,
@@ -246,7 +246,7 @@ export function execProgram(
     process.nextTick(() => done(error, '', ''))
     return new ChildProcess()
   }
-  const own = plan.verbatim
+  const ownTimeout = (launch.platform ?? process.platform) === 'win32'
   let timedOut = false
   const child = execFile(
     plan.file,
@@ -257,7 +257,8 @@ export function execProgram(
       maxBuffer: options.maxBuffer,
       encoding: options.encoding,
       windowsHide: true,
-      ...(own ? { windowsVerbatimArguments: true } : { timeout: options.timeoutMs }),
+      ...(plan.verbatim ? { windowsVerbatimArguments: true } : {}),
+      ...(!ownTimeout ? { timeout: options.timeoutMs } : {}),
     },
     (err, stdout, stderr) => {
       if (timer !== undefined) clearTimeout(timer)
@@ -273,7 +274,7 @@ export function execProgram(
     },
   )
   const timer =
-    own && child.pid !== undefined
+    ownTimeout && child.pid !== undefined
       ? setTimeout(() => {
           timedOut = true
           // `execFile`'s own timeout also closes the pipes, which is what makes

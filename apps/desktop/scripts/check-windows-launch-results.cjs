@@ -21,6 +21,7 @@ for (const name of [
   'receives every argument exactly as given',
   'really stops a program and what it started',
   'stops a .cmd and the program behind it at the timeout',
+  'stops an executable and its grandchild at the timeout',
   'terminates descendants before reporting root exit',
   'stops the entire owned job',
   'fails closed when its parent is gone',
