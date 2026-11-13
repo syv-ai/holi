@@ -302,6 +302,37 @@ function decodeCssIdentifier(identifier: string): string {
 }
 
 /** Strip authored paint while preserving the declaration's layout tokens. */
+type BackgroundToken = {
+  type: valueParser.Node['type']
+  value: string
+  nodes: valueParser.Node[]
+}
+
+/** Join only whitespace consumed by a CSS hex escape for classification. */
+function backgroundTokens(nodes: valueParser.Node[]): BackgroundToken[] {
+  const tokens: BackgroundToken[] = []
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]!
+    const previous = tokens.at(-1)
+    const next = nodes[index + 1]
+    if (
+      previous?.type === 'word' &&
+      /(?:^|[^\\])(?:\\\\)*\\[0-9a-f]{1,6}$/i.test(previous.value) &&
+      node.type === 'space' &&
+      /^(?:\\r\\n|[\\t\\n\\r\\f ])$/.test(node.value) &&
+      (next?.type === 'word' || next?.type === 'function')
+    ) {
+      previous.nodes.push(node, next)
+      previous.value += node.value + next.value
+      previous.type = next.type
+      index += 1
+      continue
+    }
+    tokens.push({ type: node.type, value: node.value, nodes: [node] })
+  }
+  return tokens
+}
+
 function normalizeDeclaration(declaration: Declaration): void {
   const property = decodeCssIdentifier(declaration.prop).toLowerCase()
   if (property === 'color' || property.endsWith('-color')) {
@@ -314,25 +345,29 @@ function normalizeDeclaration(declaration: Declaration): void {
     }
     declaration.value = layers
       .map((nodes) => {
-        const kept = nodes.filter((node) => {
-          if (node.type === 'function')
-            return ['url', 'calc', 'min', 'max', 'clamp', 'env'].includes(
-              decodeCssIdentifier(node.value).toLowerCase(),
+        const tokens = backgroundTokens(nodes)
+        const kept = tokens
+          .filter((token) => {
+            if (token.type === 'function')
+              return ['url', 'calc', 'min', 'max', 'clamp', 'env'].includes(
+                decodeCssIdentifier(token.value).toLowerCase(),
+              )
+            if (token.type !== 'word') return token.type === 'div' || token.type === 'space'
+            const identifier = decodeCssIdentifier(token.value).toLowerCase()
+            return (
+              BACKGROUND_LAYOUT_WORDS.has(identifier) ||
+              /^[-+]?(?:\d*\.)?\d+(?:%|[a-z]+)?$/i.test(identifier)
             )
-          if (node.type !== 'word') return node.type === 'div' || node.type === 'space'
-          return (
-            BACKGROUND_LAYOUT_WORDS.has(decodeCssIdentifier(node.value).toLowerCase()) ||
-            /^[-+]?(?:\d*\.)?\d+(?:%|[a-z]+)?$/i.test(node.value)
-          )
-        })
-        const hadGradient = nodes.some(
-          (node) =>
-            node.type === 'function' &&
-            decodeCssIdentifier(node.value).toLowerCase().endsWith('-gradient'),
+          })
+          .flatMap((token) => token.nodes)
+        const hadGradient = tokens.some(
+          (token) =>
+            token.type === 'function' &&
+            decodeCssIdentifier(token.value).toLowerCase().endsWith('-gradient'),
         )
-        const hasUrl = kept.some(
-          (node) =>
-            node.type === 'function' && decodeCssIdentifier(node.value).toLowerCase() === 'url',
+        const hasUrl = backgroundTokens(kept).some(
+          (token) =>
+            token.type === 'function' && decodeCssIdentifier(token.value).toLowerCase() === 'url',
         )
         if (hadGradient && !hasUrl) kept.unshift(valueParser('none').nodes[0]!)
         return valueParser.stringify(kept).trim()
@@ -347,10 +382,10 @@ function normalizeDeclaration(declaration: Declaration): void {
     }
     declaration.value = layers
       .map((nodes) => {
-        const images = nodes.flatMap((node): valueParser.Node[] => {
-          if (node.type !== 'function') return []
-          if (decodeCssIdentifier(node.value).toLowerCase() === 'url') return [node]
-          if (decodeCssIdentifier(node.value).toLowerCase().endsWith('-gradient'))
+        const images = backgroundTokens(nodes).flatMap((token): valueParser.Node[] => {
+          if (token.type !== 'function') return []
+          if (decodeCssIdentifier(token.value).toLowerCase() === 'url') return token.nodes
+          if (decodeCssIdentifier(token.value).toLowerCase().endsWith('-gradient'))
             return [valueParser('none').nodes[0]!]
           return []
         })
