@@ -26,7 +26,7 @@ jobs:
       - name: Build source
         run: pnpm --filter @holi/desktop build
       - name: Run Windows release lifecycle QA
-        run: node apps/desktop/scripts/windows-release-qa.cjs
+        run: pnpm exec node apps/desktop/scripts/windows-release-qa.cjs
       - name: Upload QA evidence
         if: always()
         uses: actions/upload-artifact@v6

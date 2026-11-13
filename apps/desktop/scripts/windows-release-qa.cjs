@@ -174,7 +174,7 @@ function writeQaEntry() {
     `
 const fs=require('node:fs'); const path=require('node:path'); const {app}=require('electron');
 const profile=process.env.HOLI_QA_PROFILE; if(!profile) throw Error('HOLI_QA_PROFILE required');
-app.setPath('userData',path.join(profile,'userData')); app.setPath('sessionData',path.join(profile,'sessionData'));
+fs.mkdirSync(path.join(profile,'userData'),{recursive:true}); fs.mkdirSync(path.join(profile,'sessionData'),{recursive:true}); app.setPath('userData',path.join(profile,'userData')); app.setPath('sessionData',path.join(profile,'sessionData'));
 app.commandLine.appendSwitch('remote-debugging-port',process.env.HOLI_QA_CDP_PORT);
 app.commandLine.appendSwitch('remote-debugging-address','127.0.0.1');
 const qaLog=process.env.HOLI_QA_EVIDENCE;
@@ -251,7 +251,7 @@ async function packageVersion(version, output) {
 }
 function findPnpmCli() {
   const candidates = [process.env.npm_execpath]
-  const { stdout } = require('node:child_process').execFileSync('where.exe', ['pnpm'], {
+  const stdout = require('node:child_process').execFileSync('where.exe', ['pnpm'], {
     encoding: 'utf8',
   })
   for (const shim of stdout.split(/\r?\n/).filter(Boolean)) {
@@ -267,11 +267,11 @@ function findPnpmCli() {
   return cli
 }
 async function install(exe, extra = []) {
-  await run(exe, ['/S', '--force-run', ...extra], {
-    windowsHide: true,
-    timeout: timeout.install,
-    maxBuffer: 8 * 1024 * 1024,
-  })
+  await ps(
+    '$ErrorActionPreference=\'Stop\'; $p=Start-Process -FilePath $env:HOLI_QA_INSTALLER -ArgumentList $env:HOLI_QA_INSTALL_ARGS -PassThru -Wait; if($p.ExitCode -ne 0){throw "installer exit $($p.ExitCode)"}',
+    { HOLI_QA_INSTALLER: exe, HOLI_QA_INSTALL_ARGS: ['/S', '--force-run', ...extra].join(' ') },
+    timeout.install,
+  )
 }
 async function registryInfo() {
   const script =
@@ -314,7 +314,7 @@ async function assertInstalled(installedPath, version) {
     JSON.stringify(linkPaths),
   )
   const handler = await ps(
-    "(Get-Item 'HKCU:\\Software\\Classes\\holi\\shell\\open\\command' -ErrorAction SilentlyContinue).GetValue('')",
+    "$key=Get-Item 'HKCU:\\Software\\Classes\\holi\\shell\\open\\command' -ErrorAction SilentlyContinue; if($key){$key.GetValue('')}",
   )
   record(
     `${version} holi protocol handler`,
@@ -327,7 +327,7 @@ function startServer(directory) {
   const requests = []
   const server = http.createServer((request, response) => {
     const pathname = new URL(request.url, `http://127.0.0.1:${port}`).pathname
-    const name = path.basename(pathname)
+    const name = path.basename(decodeURIComponent(pathname))
     requests.push({
       method: request.method,
       url: request.url,
@@ -461,7 +461,7 @@ async function uninstall(exe, foreign = null) {
       const current = await registryInfo()
       const exists = fs.existsSync(exe)
       const command = await ps(
-        "(Get-Item 'HKCU:\\Software\\Classes\\holi\\shell\\open\\command' -ErrorAction SilentlyContinue).GetValue('')",
+        "$key=Get-Item 'HKCU:\\Software\\Classes\\holi\\shell\\open\\command' -ErrorAction SilentlyContinue; if($key){$key.GetValue('')}",
       )
       const handler = command.stdout.trim()
       const shortcutCheck = await ps(
@@ -480,7 +480,7 @@ async function uninstall(exe, foreign = null) {
   )
   if (foreign) {
     const { stdout } = await ps(
-      "(Get-Item 'HKCU:\\Software\\Classes\\holi\\shell\\open\\command' -ErrorAction SilentlyContinue).GetValue('')",
+      "$key=Get-Item 'HKCU:\\Software\\Classes\\holi\\shell\\open\\command' -ErrorAction SilentlyContinue; if($key){$key.GetValue('')}",
     )
     record('foreign holi handler preserved', stdout.includes(foreign), stdout.trim())
   }
@@ -496,14 +496,18 @@ async function lifecycle(pass, custom = false) {
   const installPath = custom
     ? path.join(tmp, 'custom install location with spaces')
     : path.join(process.env.LOCALAPPDATA, 'Programs', 'Holi Windows QA')
-  const before = fs.readFileSync(path.join(evidence, 'startup.jsonl'), 'utf8').split(/\r?\n/).length
+  const before = fs
+    .readFileSync(path.join(evidence, 'startup.jsonl'), 'utf8')
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean).length
   activeInstallPath = installPath
   process.env.HOLI_QA_PROFILE = profile
   process.env.HOLI_QA_EVIDENCE = evidence
   process.env.HOLI_QA_CDP_PORT = String(cdpPort)
   process.env.HOLI_VAULT_ROOT = vault
   await install(exeA, custom ? [`/D=${installPath}`] : [])
-  const installedA = await assertInstalled(installPath, 'A')
+  const installedA = path.join(installPath, 'Holi Windows QA.exe')
   const startA = await until(
     async () => {
       const lines = fs.existsSync(path.join(evidence, 'startup.jsonl'))
@@ -539,6 +543,7 @@ async function lifecycle(pass, custom = false) {
     timeout.startup,
   )
   record('onboarding visible', onboarding.dialog, onboarding.text.slice(0, 200))
+  await assertInstalled(installPath, 'A')
   const auth = await trpc('auth.status', 'query')
   record('unauthenticated viewer null', auth.viewer === null, JSON.stringify(auth))
   const updateA = await trpc('updates.status', 'query')
@@ -611,8 +616,25 @@ async function lifecycle(pass, custom = false) {
   record(
     'real HTTP update metadata and installer requests',
     requestsSeen.some((r) => r.url.includes('dev.yml')) &&
-      requestsSeen.some((r) => r.url.includes(path.basename(exeB))),
+      requestsSeen.some((r) => decodeURIComponent(r.url).includes(path.basename(exeB))),
     JSON.stringify(requestsSeen.map((r) => r.url)),
+  )
+  const cache = yaml.parse(appUpdate).updaterCacheDirName
+  record(
+    'separate QA updater cache',
+    typeof cache === 'string' && cache.includes('holi-windows-qa'),
+    String(cache),
+  )
+  const pending = path.join(process.env.LOCALAPPDATA, cache, 'pending')
+  const downloadedInstallers = fs.readdirSync(pending).filter((name) => name.endsWith('.exe'))
+  record(
+    'downloaded installer present',
+    downloadedInstallers.length === 1,
+    JSON.stringify(downloadedInstallers),
+  )
+  record(
+    'downloaded installer SHA512 matches feed',
+    (await sha512(path.join(pending, downloadedInstallers[0]))) === feedSha,
   )
   const previousPid = startA.pid
   const installStarted = Date.now()
@@ -715,11 +737,14 @@ async function main() {
   for (const file of fs.readdirSync(evidence))
     fs.rmSync(path.join(evidence, file), { recursive: true, force: true })
   fs.writeFileSync(path.join(evidence, 'runner.log'), '')
+  fs.writeFileSync(path.join(evidence, 'startup.jsonl'), '')
   const git = (await run('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim()
   writeQaEntry()
   const hashes = {}
   for (const file of [
     'apps/desktop/electron-builder.yml',
+    'apps/desktop/build/installer.nsh',
+    'apps/desktop/src/main/updates/state.ts',
     'apps/desktop/src/main/index.ts',
     'apps/desktop/src/main/updates/updater.ts',
     'apps/desktop/src/main/router.ts',
@@ -779,6 +804,14 @@ async function main() {
     await new Promise((resolve) => server.close(resolve))
   }
   fs.writeFileSync(path.join(evidence, 'http-requests.json'), JSON.stringify(requests, null, 2))
+  fs.writeFileSync(path.join(evidence, 'assertions.json'), JSON.stringify(checks, null, 2))
+  fs.writeFileSync(
+    path.join(evidence, 'result.json'),
+    JSON.stringify({ success: true, assertions: checks.length }),
+  )
+  await ps(
+    "Remove-Item 'HKCU:\\Software\\Classes\\holi' -Recurse -Force -ErrorAction SilentlyContinue",
+  )
 }
 main()
   .catch((error) => {
