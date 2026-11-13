@@ -1,8 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import { communityOwner } from '../main/owner'
+import { communityMain } from '../main/index'
+import type { PluginCtx } from '../../../main/plugin-api'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -63,6 +65,78 @@ describe('community installation owner', () => {
     expect(a.isLive()).toBe(false)
     expect(eventsA).toHaveLength(1)
     await b.close(async () => {})
+    await owner.supervisor.dispose()
+  })
+
+  test('rejected mutations notify safely and leave later work runnable', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'holi-community-owner-'))
+    roots.push(userData)
+    const owner = communityOwner({ userData })
+    let notified = 0
+    const attachment = owner.attach('/vault/rejected', 'rejected', {
+      emit: () => {},
+      frameOrigin: () => () => {},
+    })
+    attachment.observeMutations(async () => {
+      notified++
+    })
+    await expect(
+      owner.mutate(async () => {
+        throw new Error('expected failure')
+      }),
+    ).rejects.toThrow('expected failure')
+    let laterWorkRan = false
+    await owner.mutate(async () => {
+      laterWorkRan = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(laterWorkRan).toBe(true)
+    expect(notified).toBeGreaterThan(0)
+    await attachment.close(async () => {})
+    await owner.supervisor.dispose()
+  })
+
+  test('production activation can refresh after mutation and dispose without deadlock', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'holi-community-owner-'))
+    roots.push(userData)
+    const vaults = [join(userData, 'vault-a'), join(userData, 'vault-b')]
+    await Promise.all(
+      vaults.map((vault) => mkdir(join(vault, '.holi/settings'), { recursive: true })),
+    )
+    const snapshots: (((snapshot: never) => void) | undefined)[] = []
+    const emitted = [0, 0]
+    const disposers = await Promise.all(
+      vaults.map((vault, index) =>
+        communityMain.activate!({
+          userData,
+          root: vault,
+          remote: `owner/production-test-${index}`,
+          githubToken: null,
+          register: () => () => {},
+          emit: () => {
+            emitted[index]!++
+          },
+          frameOrigin: () => () => {},
+          onSnapshot: (callback: (snapshot: never) => void) => {
+            snapshots[index] = callback
+            return () => {}
+          },
+        } as unknown as PluginCtx),
+      ),
+    )
+    const owner = communityOwner({ userData })
+    await owner.mutate(async () => {})
+    expect(emitted.every((count) => count > 0)).toBe(true)
+    await Promise.race([
+      disposers[0]!(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('dispose timed out')), 1000),
+      ),
+    ])
+    await owner.mutate(async () => {})
+    expect(emitted[1]).toBeGreaterThan(emitted[0]!)
+    snapshots[1]?.({ files: [] } as never)
+    await disposers[1]!()
     await owner.supervisor.dispose()
   })
 

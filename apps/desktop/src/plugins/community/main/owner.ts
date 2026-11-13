@@ -3,7 +3,7 @@ import { createConsentStore } from './consent'
 import { createSupervisor, type ServerState, type Supervisor } from './supervisor'
 import { createInstallStore, type InstallStore } from './store'
 
-export interface CommunityAttachment {
+interface CommunityAttachment {
   readonly signal: AbortSignal
   readonly root: string
   readonly remote: string
@@ -30,6 +30,8 @@ export interface CommunityOwner {
       frameOrigin(origin: string): () => void
     },
   ): CommunityAttachment
+  /** Serialize resource reads with machine mutations without notifying attachments. */
+  admit<T>(work: () => Promise<T>): Promise<T>
   mutate<T>(work: () => Promise<T>): Promise<T>
 }
 
@@ -48,6 +50,11 @@ export function communityOwner(args: { userData: string }): CommunityOwner {
     }
   >()
   let queue: Promise<unknown> = Promise.resolve()
+  const admit = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = queue.then(work)
+    queue = result.catch(() => undefined)
+    return result
+  }
   let owner: CommunityOwner
   const supervisor = createSupervisor({
     onState(key, state: ServerState) {
@@ -103,10 +110,12 @@ export function communityOwner(args: { userData: string }): CommunityOwner {
           if (!live) return Promise.resolve()
           if (refreshQueued) return refreshTail
           refreshQueued = true
-          const task = refreshTail.then(async () => {
-            refreshQueued = false
-            if (live) await work(controller.signal)
-          })
+          const task = refreshTail.then(() =>
+            admit(async () => {
+              refreshQueued = false
+              if (live) await work(controller.signal)
+            }),
+          )
           refreshTail = task.catch(() => {})
           pending.add(task)
           void task.finally(() => pending.delete(task)).catch(() => {})
@@ -118,8 +127,10 @@ export function communityOwner(args: { userData: string }): CommunityOwner {
           controller.abort()
           closing = (async () => {
             try {
-              await Promise.allSettled([...pending])
+              // Abort and stop synchronously-owned starts before draining tasks
+              // that may be waiting for server readiness.
               await supervisor.stopAll((key) => key.startsWith(`${root}\0`))
+              await Promise.allSettled([...pending])
               await cleanup()
             } finally {
               if (attached.get(root) === attachment) attached.delete(root)
@@ -140,17 +151,30 @@ export function communityOwner(args: { userData: string }): CommunityOwner {
       attached.set(root, attachment)
       return attachment
     },
+    admit,
     mutate<T>(work: () => Promise<T>): Promise<T> {
-      const result = queue.then(work)
-      queue = result.catch(() => undefined)
-      void result.then(() => {
-        // Observer failures must not replace the mutation's result or poison its FIFO.
-        for (const attachment of attached.values())
-          void attachment
-            .notifyMutation()
-            .catch((error) => console.error('[community] refresh:', error))
-      })
-      return result
+      const result = admit(work)
+      const notify = async () => {
+        await Promise.all(
+          [...attached.values()].map((attachment) =>
+            attachment.notifyMutation().catch((error) => {
+              console.error('[community] refresh:', error)
+            }),
+          ),
+        )
+      }
+      // Refresh only after the FIFO work releases its slot. Awaiting these
+      // observers makes removal's cross-vault link cleanup part of completion.
+      return result.then(
+        async (value) => {
+          await notify()
+          return value
+        },
+        async (error: unknown) => {
+          await notify()
+          throw error
+        },
+      )
     },
   }
   owners.set(args.userData, owner)

@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { toolPath } from '../../../main/plugin-api'
+import { defaultProbePid, toolPath } from '../../../main/plugin-api'
 
 /** What a command's `{file}`, `{vault}` and `{port}` stand for. */
 export interface CommandValues {
@@ -58,8 +58,7 @@ export async function runSetup(args: {
   const [command, ...rest] = args.argv
   return new Promise((resolve) => {
     if (args.signal?.aborted) {
-      log.end()
-      resolve(false)
+      log.end(() => resolve(false))
       return
     }
     const child = spawn(command!, rest, {
@@ -85,14 +84,17 @@ export async function runSetup(args: {
         args.onLine(why)
       }
       lines.flush()
-      log.end()
-      resolve(ok)
+      log.end(() => resolve(ok))
     }
     const stop = () => {
       if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
-        try {
-          process.kill(-child.pid, 'SIGKILL')
-        } catch {
+        if (defaultProbePid(child.pid) === 'group-leader') {
+          try {
+            process.kill(-child.pid, 'SIGKILL')
+          } catch {
+            // The leader may exit after the probe.
+          }
+        } else {
           child.kill('SIGKILL')
         }
       }
