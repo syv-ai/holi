@@ -1,14 +1,14 @@
 # Holi links
 
-A Holi link points a teammate at a note, or a heading in it, from chat or email. Clicking it opens Holi on that vault and that note.
+A Holi link points a teammate at a note, or a heading in it, from chat or email. Holi copies a clickable GitHub Pages HTTPS link; its static handoff page opens the matching Holi app link. Legacy `holi://` links continue to work.
 
 ```
-holi://open?vault=syv-ai/team-notes&path=projects/q3%20plan.md&heading=next-steps
+https://syv-ai.github.io/holi/#vault=syv-ai/team-notes&path=projects/q3%20plan.md&heading=next-steps
 ```
 
 ## How it works
 
-**Shape.** `vault` is the GitHub remote, the one name every machine shares for a vault. `path` is the vault-relative path. `heading` is optional: the heading's anchor, identical to the one GitHub gives it (`headingAnchors`), or its words. GitHub's rule: the heading's rendered text (a link as its words, code as its contents) in lower case, punctuation and symbols other than `-` and `_` dropped, and each space a hyphen, so `Next steps (Q3)` is `next-steps-q3` and `A - B` is `a---b`. A repeated anchor gets `-1`, `-2` in document order, so the second `Notes` is `notes-1`. Only ATX headings count, as everywhere in Holi, so a setext heading earlier in the file shifts GitHub's suffixes but not Holi's. Values are percent-encoded, except that `/` stays readable. Path and heading are NFC-normalised when a link is built and when it is read, and slugs compare after NFC, so an accented letter typed either way matches. `packages/shared/src/holi-link.ts` builds (`holiLink`) and reads (`parseHoliLink`) them; nothing else knows the shape.
+**Shape.** `vault` is the GitHub remote, the one name every machine shares for a vault. `path` is the vault-relative path. `heading` is optional: the heading's anchor, identical to the one GitHub gives it (`headingAnchors`), or its words. GitHub's rule: the heading's rendered text (a link as its words, code as its contents) in lower case, punctuation and symbols other than `-` and `_` dropped, and each space a hyphen, so `Next steps (Q3)` is `next-steps-q3` and `A - B` is `a---b`. A repeated anchor gets `-1`, `-2` in document order, so the second `Notes` is `notes-1`. Only ATX headings count, as everywhere in Holi, so a setext heading earlier in the file shifts GitHub's suffixes but not Holi's. Values are percent-encoded, except that `/` stays readable. Path and heading are NFC-normalised when a link is built and when it is read, and slugs compare after NFC, so an accented letter typed either way matches. `packages/shared/src/holi-link.ts` builds legacy links (`holiLink`) and HTTPS sharing links (`holiWebLink`), and reads both (`parseHoliLink`); nothing else in the app knows the shape.
 
 **Which files get one.** Local files (`.local.`, secrets) and `.holi/state/` get no link: they never sync, so a teammate's copy cannot have them (`isHoliLinkable`, the rule `parseHoliLink` refuses by). A file's row menu in the tree has **Copy Holi link**, a document's ⋯ menu has **Copy Holi link**, and the block menu beside a top-level heading has **Copy link to heading**: its GitHub anchor, worked out from the file as it saves and matched in order to the editor's top-level headings (`features/documents/document-headings.ts`).
 
@@ -18,7 +18,7 @@ holi://open?vault=syv-ai/team-notes&path=projects/q3%20plan.md&heading=next-step
 
 **Into the window.** A link goes through the same `vault:open` push as a clicked reminder and `holi docs open`. Main holds each open until a renderer has landed its vault (`vault:open-ready`), so a cold start or a window recreated from the tray does not lose it. The renderer switches to the link's vault when it is not the open one, opens the file, and the document's view puts the caret on the heading with that anchor, or the first whose words slug the same, and scrolls to it (`pendingHeadingAtom`, `landOnHeading`). It does not yet ask before leaving a vault whose leaving would cost something.
 
-**Pasting.** Copy a `holi://` link in chat or email, switch to Holi and paste while the page (not an editor, field or terminal) has focus. Holi sends the text to the same main-side checks and opens the same tab as a click. A malformed link, a vault not on this computer or a file that is missing produces the same message in an error toast; an outside click uses the native dialog. Ordinary text and paste into editable surfaces remain normal, and an open dialog suppresses link opening.
+**Pasting.** Copy a `holi://` link or HTTPS sharing link in chat or email, switch to Holi and paste while the page (not an editor, field or terminal) has focus. Holi sends the text to the same main-side checks and opens the same tab as a click. A malformed link, a vault not on this computer or a file that is missing produces the same message in an error toast; an outside click uses the native dialog. Ordinary text and paste into editable surfaces remain normal, and an open dialog suppresses link opening.
 
 ## Rules
 
@@ -26,9 +26,9 @@ holi://open?vault=syv-ai/team-notes&path=projects/q3%20plan.md&heading=next-step
 - Every check happens in main. The renderer never receives an open request that did not pass.
 - A dev build does not register the scheme: on macOS it would register the bare Electron.app, and on any machine it would take `holi:` links away from an installed Holi.
 
-## Rejected
+## Handoff
 
-- An https link to a hosted page that hands off to Holi. It needs a server Holi does not have, and a teammate who can open the note has Holi installed.
+The HTTPS page lives in `site/`, deployed from `main` through GitHub Pages. Destination data stays in the URL fragment and is not sent in the hosting request. The page has no analytics, external scripts, remote fonts, credentials, or vault-content access. It validates the expected payload and only constructs a fixed `holi://open` target; main still performs authoritative destination checks. The user must have the vault added and the target file synced. The page always offers an explicit **Open in Holi** button if the browser blocks or the user dismisses automatic launch.
 
 ## Code
 
