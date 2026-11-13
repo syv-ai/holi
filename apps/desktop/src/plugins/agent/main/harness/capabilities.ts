@@ -9,12 +9,13 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { spawn } from 'node:child_process'
 import {
   cap,
   CapabilityError,
+  killChildTree,
   noParams,
   paramsObject,
+  spawnProgram,
   stringParam,
 } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
@@ -95,7 +96,7 @@ function defaultRun(
 ): Promise<TestRun> {
   return new Promise((resolve) => {
     // A test reads nothing: its input is closed from the start.
-    const child = spawn(bin, args, {
+    const child = spawnProgram(bin, args, {
       cwd: opts.cwd,
       env: opts.env,
       detached: true,
@@ -105,13 +106,13 @@ function defaultRun(
     let read = 0
     let stopped: 'timeout' | 'over' | null = null
     let kill: NodeJS.Timeout | null = null
+    // The group may be gone already: then there is nothing to do.
     const signal = (sig: NodeJS.Signals): void => {
-      if (child.pid === undefined) return
-      try {
-        process.kill(-child.pid, sig)
-      } catch {
-        // The group is gone already.
-      }
+      if (killChildTree(child, sig) || process.platform !== 'win32') return
+      // The root has exited and a descendant holds the pipes: its tree cannot be
+      // found by pid, so the pipes are closed, which lets `close` fire.
+      child.stdout?.destroy()
+      child.stderr?.destroy()
     }
     const stop = (why: 'timeout' | 'over'): void => {
       if (stopped !== null) return
@@ -125,8 +126,8 @@ function defaultRun(
       read += chunk.length
       if (read >= TEST_READ_MAX) stop('over')
     }
-    child.stdout.on('data', take)
-    child.stderr.on('data', take)
+    child.stdout?.on('data', take)
+    child.stderr?.on('data', take)
     const timer = setTimeout(() => stop('timeout'), opts.timeoutMs)
     const done = (run: TestRun): void => {
       clearTimeout(timer)
