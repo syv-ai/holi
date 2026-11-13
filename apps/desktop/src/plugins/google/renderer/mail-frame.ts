@@ -61,7 +61,14 @@ const PAPER: MailPalette = {
   scheme: 'light',
 }
 
-const FALLBACK = PAPER
+const DARK: MailPalette = {
+  background: '#121212',
+  foreground: '#f5f5f5',
+  muted: '#a3a3a3',
+  border: '#3f3f46',
+  link: '#8ab4f8',
+  scheme: 'dark',
+}
 
 /**
  * Does this message bring its own design, or is it prose in an HTML wrapper?
@@ -120,18 +127,20 @@ function safeStylesheet(css: string): string {
 /** @public exported for its test */
 export function readMailPalette(root: HTMLElement = document.documentElement): MailPalette {
   const computed = getComputedStyle(root)
-  const read = (token: string, fallback: string): string => {
+  // The app is dark-first: `data-theme` is only stamped for light, so anything else means dark.
+  const scheme = root.dataset.theme === 'light' ? 'light' : 'dark'
+  const fallback = scheme === 'light' ? PAPER : DARK
+  const read = (token: string, fallbackValue: string): string => {
     const value = safeCssValue(computed.getPropertyValue(token))
-    return value === '' ? fallback : value
+    return value === '' ? fallbackValue : value
   }
   return {
-    background: read(TOKENS.background, FALLBACK.background),
-    foreground: read(TOKENS.foreground, FALLBACK.foreground),
-    muted: read(TOKENS.muted, FALLBACK.muted),
-    border: read(TOKENS.border, FALLBACK.border),
-    link: read(TOKENS.link, FALLBACK.link),
-    // The app is dark-first: `data-theme` is only stamped for light, so anything else means dark.
-    scheme: root.dataset.theme === 'light' ? 'light' : 'dark',
+    background: read(TOKENS.background, fallback.background),
+    foreground: read(TOKENS.foreground, fallback.foreground),
+    muted: read(TOKENS.muted, fallback.muted),
+    border: read(TOKENS.border, fallback.border),
+    link: read(TOKENS.link, fallback.link),
+    scheme,
   }
 }
 
@@ -274,7 +283,7 @@ function normalizeDeclarations(css: string): string {
   }
 }
 
-/** Strip authored paint while preserving the declaration's layout tokens. */
+/** Decode CSS escapes in an identifier. */
 function decodeCssIdentifier(identifier: string): string {
   return identifier.replace(
     /\\([0-9a-fA-F]{1,6})(?:\r\n|[\t\n\r\f ])?|\\([^\n\r\f])/g,
@@ -292,6 +301,7 @@ function decodeCssIdentifier(identifier: string): string {
   )
 }
 
+/** Strip authored paint while preserving the declaration's layout tokens. */
 function normalizeDeclaration(declaration: Declaration): void {
   const property = decodeCssIdentifier(declaration.prop).toLowerCase()
   if (property === 'color' || property.endsWith('-color')) {

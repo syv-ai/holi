@@ -284,6 +284,22 @@ describe('readMailPalette', () => {
     expect(palette.foreground).not.toBe('')
   })
 
+  it('uses dark fallbacks for unresolved tokens while keeping resolved app tokens', () => {
+    document.documentElement.style.setProperty('--card', 'oklab(0.214914 0 0)')
+    document.documentElement.style.setProperty('--card-foreground', '#eeeeee')
+    document.documentElement.style.setProperty('--primary', '#66aaff')
+    document.documentElement.dataset.theme = 'dark'
+
+    expect(readMailPalette()).toEqual({
+      background: 'oklab(0.214914 0 0)',
+      foreground: '#eeeeee',
+      muted: '#a3a3a3',
+      border: '#3f3f46',
+      link: '#66aaff',
+      scheme: 'dark',
+    })
+  })
+
   it('reads the app tokens when they are set on the root', () => {
     document.documentElement.style.setProperty('--card', '#123456')
 
@@ -294,6 +310,19 @@ describe('readMailPalette', () => {
     document.documentElement.style.setProperty('--card', 'red} body{display:none')
 
     expect(readMailPalette().background).not.toContain('}')
+  })
+
+  it('keeps paper defaults in light mode', () => {
+    document.documentElement.dataset.theme = 'light'
+
+    expect(readMailPalette()).toEqual({
+      background: '#ffffff',
+      foreground: '#1a1a1a',
+      muted: '#666666',
+      border: '#d4d4d4',
+      link: '#0b57d0',
+      scheme: 'light',
+    })
   })
 
   it('follows the light/dark mode stamped on the root', () => {
