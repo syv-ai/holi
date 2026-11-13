@@ -26,6 +26,7 @@ const seam = vi.hoisted(() => ({
   /** Shortcuts the fake viewer's `document` listener saw. */
   seen: [] as string[],
   keyboardExecutions: [] as { owner: string; id: string }[],
+  disabledCommands: {} as Record<string, string[]>,
   annotationCb: null as (() => void) | null,
   setTheme: vi.fn(),
   saveAsCopy: vi.fn(),
@@ -164,10 +165,13 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
     },
     commands: {
       getCommandByShortcut: (s: string) =>
-        s === 'h' || s === 'f+meta' || s === 'meta+p' ? { id: s } : null,
+        s === 'h' || s === 'f+meta' || s === 'meta+p' || s === 'meta+z' ? { id: s } : null,
       // ⌘P is print, which Holi disables by category; a disabled command must
       // not be claimed, or the palette never opens while a PDF is on screen.
-      resolve: (id: string) => ({ disabled: id === 'meta+p', visible: true }),
+      resolve: (id: string, owner?: string) => ({
+        disabled: id === 'meta+p' || seam.disabledCommands[owner ?? '']?.includes(id) === true,
+        visible: true,
+      }),
       execute: (id: string, documentId?: string) =>
         documentId === undefined ? seam.execute(id) : seam.execute(id, documentId),
       registerCommand: (command: unknown) => seam.registerCommand(command),
@@ -180,6 +184,11 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
         id === 'commands'
           ? {
               ...(plugins.commands as object),
+              resolve: (commandId: string) =>
+                (plugins.commands as { resolve: (id: string, owner?: string) => unknown }).resolve(
+                  commandId,
+                  owner,
+                ),
               execute: (commandId: string, documentId?: string, source?: string) => {
                 if (source === 'keyboard') seam.keyboardExecutions.push({ owner, id: commandId })
                 if (documentId === undefined) seam.execute(commandId)
@@ -306,6 +315,7 @@ beforeEach(() => {
   seam.setTheme.mockReset()
   seam.seen.length = 0
   seam.keyboardExecutions.length = 0
+  seam.disabledCommands = {}
   seam.annotationCb = null
   seam.zoomCb = null
   seam.sidebarCb = null
@@ -1071,6 +1081,41 @@ test('editable fields and unrecognized or disabled shortcuts pass through', asyn
   expect(seam.seen).toContain('j+meta')
   expect(seam.seen).toContain('meta+p')
   expect(seam.execute).not.toHaveBeenCalled()
+})
+
+test('a disabled displayed PDF shortcut cannot fall through to another viewer listener', async () => {
+  seam.disabledCommands['blob:holi/2'] = ['meta+z']
+  const mounted = render(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible={false} focused={false} quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  const viewers = await screen.findAllByTestId('pdf')
+
+  // The hidden earlier viewer can undo, but the displayed clean PDF cannot.
+  // The same mismatch can occur between two displayed split members.
+  fireEvent.keyDown(viewers[1]!, { key: 'z', metaKey: true })
+  expect(seam.keyboardExecutions).toEqual([])
+  expect(seam.seen).not.toContain('meta+z')
+
+  mounted.rerender(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible focused quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  const splitViewers = await screen.findAllByTestId('pdf')
+  delete seam.disabledCommands['blob:holi/2']
+  seam.disabledCommands['blob:holi/1'] = ['meta+z']
+  seam.seen.length = 0
+  fireEvent.keyDown(splitViewers[0]!, { key: 'z', metaKey: true })
+  expect(seam.keyboardExecutions).toEqual([])
+  expect(seam.seen).not.toContain('meta+z')
 })
 
 test('a displayed split member executes its shortcut once, regardless of focus', async () => {
