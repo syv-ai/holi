@@ -151,7 +151,13 @@ const thread = {
 beforeEach(() => {
   currentAccount = 'a'
   searchMock.mockReset().mockResolvedValue(page([summary()]))
-  threadMock.mockReset().mockResolvedValue(thread)
+  threadMock.mockReset().mockImplementation(({ id }: { id: string }) =>
+    Promise.resolve({
+      ...thread,
+      id,
+      subject: id === 't2' ? 'Second thread' : thread.subject,
+    }),
+  )
   draftsMock.mockReset().mockResolvedValue([])
   markReadMock.mockReset().mockResolvedValue({ ok: true })
   starMock.mockReset().mockResolvedValue({ ok: true })
@@ -339,6 +345,66 @@ test('switching Google accounts releases the previous account’s Mail state', a
   expect(frame.isConnected).toBe(false)
   expect(screen.queryByRole('heading', { name: 'Q2 budget' })).toBeNull()
   expect(screen.getByText('Pick a thread to read it')).toBeInTheDocument()
+})
+
+test('a parked Mail keeps its inline reply open', async () => {
+  const user = userEvent.setup()
+  const { show } = mountMailTabs()
+  const list = await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(within(list).getByText('Q2 budget'))
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  await user.click(screen.getByRole('button', { name: 'Reply all' }))
+  const composer = await screen.findByRole('region', { name: 'Compose mail' })
+
+  show(otherKey)
+  await screen.findByRole('textbox', { name: 'Other app state' })
+  expect(composer.isConnected).toBe(true)
+  show(mailKey)
+  expect(await screen.findByRole('region', { name: 'Compose mail' })).toBe(composer)
+})
+
+test('a pristine inline reply is released when its thread changes and is not restored on return', async () => {
+  const user = userEvent.setup()
+  searchMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Second thread' })]))
+  mountMailTabs()
+  const list = await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(within(list).getByText('Q2 budget'))
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  await user.click(screen.getByRole('button', { name: 'Reply all' }))
+  await screen.findByRole('region', { name: 'Compose mail' })
+
+  await user.click(within(list).getByText('Second thread'))
+  await screen.findByRole('heading', { name: 'Second thread' })
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
+  expect(await screen.findByRole('menuitem', { name: 'ada@home.test' })).not.toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
+
+  await user.keyboard('{Escape}')
+  await user.click(within(list).getByText('Q2 budget'))
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+})
+
+test('archiving a thread releases its pristine inline reply guard', async () => {
+  const user = userEvent.setup()
+  mountMailTabs()
+  const list = await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(within(list).getByText('Q2 budget'))
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  await user.click(screen.getByRole('button', { name: 'Reply all' }))
+  await screen.findByRole('region', { name: 'Compose mail' })
+
+  await user.click(screen.getByRole('button', { name: 'Archive thread' }))
+  await screen.findByText('Pick a thread to read it')
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
+  expect(await screen.findByRole('menuitem', { name: 'ada@home.test' })).not.toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
 })
 
 test('an open inline reply prevents switching accounts until its save succeeds and it closes', async () => {
