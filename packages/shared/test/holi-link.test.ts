@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import { holiLink, holiLinkInArgv, isHoliLinkable, parseHoliLink } from '../src/holi-link'
+import {
+  holiLink,
+  holiLinkInArgv,
+  holiWebLink,
+  isHoliLinkable,
+  parseHoliLink,
+} from '../src/holi-link'
 
 const parsed = (raw: string) => {
   const result = parseHoliLink(raw)
@@ -14,6 +20,28 @@ describe('holiLink and parseHoliLink', () => {
       { remote: 'a/b', path: 'notes/100% + æøå?.md', heading: 'Hvad så?' },
     ]
     for (const link of links) expect(parsed(holiLink(link))).toEqual(link)
+  })
+
+  test('the HTTPS link round-trips in a fixed origin fragment', () => {
+    const link = { remote: 'a/b', path: 'notes/Q3 plan & café.md', heading: 'Notes #1' }
+    const web = holiWebLink(link)
+    expect(web).toMatch(/^https:\/\/syv-ai\.github\.io\/holi\/#/)
+    expect(new URL(web).search).toBe('')
+    expect(parsed(web)).toEqual({ ...link, path: 'notes/Q3 plan & café.md' })
+  })
+
+  test('refuses ambiguous and unsafe HTTPS destinations', () => {
+    for (const raw of [
+      'https://syv-ai.github.io/holi/#vault=a/b&vault=c/d&path=x.md',
+      'https://syv-ai.github.io/holi/#vault=a/b&path=x.md&extra=y',
+      'https://user@syv-ai.github.io/holi/#vault=a/b&path=x.md',
+      'https://syv-ai.github.io/other/#vault=a/b&path=x.md',
+      'https://syv-ai.github.io/holi/?x=1#vault=a/b&path=x.md',
+      'https://syv-ai.github.io/holi/#vault=a/b&path=%ZZ.md',
+      'https://syv-ai.github.io/holi/#vault=a/b&path=../x.md',
+      'https://evil.example/#vault=a/b&path=x.md',
+    ])
+      expect(parseHoliLink(raw).ok, raw).toBe(false)
   })
 
   test('the vault and path stay legible', () => {
