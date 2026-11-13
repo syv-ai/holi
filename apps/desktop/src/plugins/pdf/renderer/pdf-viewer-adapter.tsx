@@ -27,7 +27,7 @@ const LAYOUT_QUIET_MS = 400
 if (!customElements.get(TAG)) customElements.define(TAG, HoliPdfContainer)
 
 /** Responsive search sidebars re-scroll their selected hit when they remount.
- * Keep the reading position while a pane move settles, unless the person acts. */
+ * Keep the reading position while a resize or pane move settles, unless the person acts. */
 function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegistry): () => void {
   const viewport = registry.getPlugin('viewport')?.provides?.() as ViewportCapability | undefined
   const scroll = registry.getPlugin('scroll')?.provides?.() as ScrollCapability | undefined
@@ -45,6 +45,8 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
   let lastPosition: ReadingPosition | null = null
   let position: ReadingPosition | null = null
   let timer: ReturnType<typeof setTimeout> | undefined
+  let resizeSuppressionTimer: ReturnType<typeof setTimeout> | undefined
+  let suppressResize = false
   const cancel = () => {
     clearTimeout(timer)
     timer = undefined
@@ -99,18 +101,47 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
     restore()
     settle()
   }
+  const resized = () => {
+    if (suppressResize) {
+      clearTimeout(resizeSuppressionTimer)
+      resizeSuppressionTimer = setTimeout(() => {
+        suppressResize = false
+        resizeSuppressionTimer = undefined
+      }, LAYOUT_QUIET_MS)
+      return
+    }
+    if (position === null) {
+      const documentId = registry.getStore().getState().core.activeDocumentId
+      if (documentId === null) return
+      // A responsive layout can reset the viewer without moving its host.
+      // Start from the position recorded before the resize, not the new metrics.
+      position = lastPosition ?? readPosition(documentId)
+    }
+    restore()
+    settle()
+  }
   const documentId = registry.getStore().getState().core.activeDocumentId
   if (documentId !== null) lastPosition = readPosition(documentId)
-  const unsubscribeResize = viewport.onViewportResize(changed)
+  const unsubscribeResize = viewport.onViewportResize(resized)
   const unsubscribeScroll = viewport.onScrollChange(changed)
   // Window capture precedes Holi's document-level PDF shortcut guard.
   const userInput = (event: Event) => {
-    if (event.composedPath().includes(element)) cancel()
+    if (!event.composedPath().includes(element)) return
+    if (position !== null) {
+      suppressResize = true
+      clearTimeout(resizeSuppressionTimer)
+      resizeSuppressionTimer = setTimeout(() => {
+        suppressResize = false
+        resizeSuppressionTimer = undefined
+      }, LAYOUT_QUIET_MS)
+    }
+    cancel()
   }
   for (const event of ['pointerdown', 'keydown', 'wheel'])
     window.addEventListener(event, userInput, true)
   return () => {
     cancel()
+    clearTimeout(resizeSuppressionTimer)
     element.afterMove = undefined
     unsubscribeResize()
     unsubscribeScroll()
