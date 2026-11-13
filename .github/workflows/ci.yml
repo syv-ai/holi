@@ -96,6 +96,27 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
         run: node scripts/check-commit-msg.mjs --message "$TITLE"
 
+  windows-askpass:
+    name: Windows askpass
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Exercise the generated Windows helper
+        run: pnpm --filter @holi/desktop exec vitest run test/git-askpass.test.ts
+
   windows-helpers:
     name: Windows helper portability
     runs-on: windows-2025

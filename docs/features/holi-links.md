@@ -14,14 +14,16 @@ holi://open?vault=syv-ai/team-notes&path=projects/q3%20plan.md&heading=next-step
 
 **Arriving at the OS.** The packaged app claims the `holi` scheme (`protocols:` in `electron-builder.yml`, and `setAsDefaultProtocolClient`). macOS hands a click to `open-url`, which can fire before the app is ready, so main listens from its first line and holds links until it can answer. Windows and Linux pass the link in argv: at launch, and to the running Holi through `second-instance`, since only one Holi runs.
 
-**Opening.** Main treats the link as untrusted. `parseHoliLink` refuses a malformed remote, a path `vaultRelPath` rejects, a local or machine-state path, a path under `.git/` or `node_modules/` (`IGNORED_DIRS`, the same folders the vault store never walks), and an over-long heading. Then the vault must be in this machine's registry (remotes compare case-insensitively, as GitHub's do) and the file must exist in its clone, checked with `exactPath` so a symlink or case alias cannot reach outside it. Anything that fails is a native dialog saying why, with the window brought forward first so a minimised or tray-hidden window cannot swallow it; a vault that is not cloned here says to add it with Add vault… and click again. A link only ever opens a tab.
+**Opening.** Main treats the link as untrusted. `parseHoliLink` refuses a malformed remote, a path `vaultRelPath` rejects, a local or machine-state path, a path under `.git/` or `node_modules/` (`IGNORED_DIRS`, the same folders the vault store never walks), and an over-long heading. Then the vault must be in this machine's registry (remotes compare case-insensitively, as GitHub's do) and the file must exist in its clone, checked with `exactPath` so a symlink or case alias cannot reach outside it. A failed outside click is a native dialog saying why, with the window brought forward first so a minimised or tray-hidden window cannot swallow it; a vault that is not cloned here says to add it with Add vault… and click again. A pasted link reports the same failure in an error toast instead. A link only ever opens a tab.
 
 **Into the window.** A link goes through the same `vault:open` push as a clicked reminder and `holi docs open`. Main holds each open until a renderer has landed its vault (`vault:open-ready`), so a cold start or a window recreated from the tray does not lose it. The renderer switches to the link's vault when it is not the open one, opens the file, and the document's view puts the caret on the heading with that anchor, or the first whose words slug the same, and scrolls to it (`pendingHeadingAtom`, `landOnHeading`). It does not yet ask before leaving a vault whose leaving would cost something.
+
+**Pasting.** Copy a `holi://` link in chat or email, switch to Holi and paste while the page (not an editor, field or terminal) has focus. Holi sends the text to the same main-side checks and opens the same tab as a click. A malformed link, a vault not on this computer or a file that is missing produces the same message in an error toast; an outside click uses the native dialog. Ordinary text and paste into editable surfaces remain normal, and an open dialog suppresses link opening.
 
 ## Rules
 
 - The vault is named by its remote, never by a clone path or a generated id.
-- Every check happens in main. The renderer never receives a link that did not pass.
+- Every check happens in main. The renderer never receives an open request that did not pass.
 - A dev build does not register the scheme: on macOS it would register the bare Electron.app, and on any machine it would take `holi:` links away from an installed Holi.
 
 ## Rejected
