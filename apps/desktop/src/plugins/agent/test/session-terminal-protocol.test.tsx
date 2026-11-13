@@ -35,7 +35,21 @@ vi.mock('@xterm/xterm', async (original) => {
         const textarea = document.createElement('textarea')
         Object.defineProperty(term, 'textarea', { get: () => textarea })
         term.open = (mount) => {
-          mount.append(textarea)
+          const screen = document.createElement('div')
+          screen.className = 'xterm-screen'
+          mount.append(screen, textarea)
+          term.resize(98, 24)
+          vi.spyOn(screen, 'getBoundingClientRect').mockReturnValue({
+            left: 10,
+            top: 20,
+            right: 794.5,
+            bottom: 404.25,
+            width: 784.5,
+            height: 384.25,
+            x: 10,
+            y: 20,
+            toJSON: () => ({}),
+          } as DOMRect)
         }
         term.focus = () => textarea.focus()
         term.loadAddon = () => {}
@@ -96,9 +110,9 @@ test('Pi fullscreen wheel routing sends accumulated native SGR events only in mo
     left: 10,
     top: 20,
     right: 810,
-    bottom: 420,
+    bottom: 419,
     width: 800,
-    height: 400,
+    height: 399,
     x: 10,
     y: 20,
     toJSON: () => ({}),
@@ -107,14 +121,24 @@ test('Pi fullscreen wheel routing sends accumulated native SGR events only in mo
   act(() => receivePtyData({ id: 'wheel-terminal', data: '\x1b[?1049' }))
   act(() => receivePtyData({ id: 'wheel-terminal', data: 'h\x1b[?1000' }))
   act(() => receivePtyData({ id: 'wheel-terminal', data: 'h\x1b[?1006h' }))
+  const beforeXtermProcessesOutput = new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    deltaY: 40,
+    clientX: 51,
+    clientY: 37,
+  })
+  act(() => mount.dispatchEvent(beforeXtermProcessesOutput))
+  expect(beforeXtermProcessesOutput.defaultPrevented).toBe(false)
+  await waitFor(() => expect(fixture.terminals[0]!.buffer.active.type).toBe('alternate'))
   const wheel = (deltaY: number, deltaMode: number = WheelEvent.DOM_DELTA_PIXEL) =>
     new WheelEvent('wheel', {
       bubbles: true,
       cancelable: true,
       deltaY,
       deltaMode,
-      clientX: 110,
-      clientY: 120,
+      clientX: 51,
+      clientY: 37,
     })
   const first = wheel(20)
   const second = wheel(20)
@@ -125,7 +149,27 @@ test('Pi fullscreen wheel routing sends accumulated native SGR events only in mo
   expect(first.defaultPrevented).toBe(true)
   expect(second.defaultPrevented).toBe(true)
   const sentWheel = () => fixture.send.mock.calls.map(([, event]) => event.payload?.data)
-  expect(sentWheel()).toContain('\x1b[<65;11;7M')
+  expect(sentWheel()).toContain('\x1b[<65;6;2M')
+  const topLeft = new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    deltaY: 40,
+    clientX: 11,
+    clientY: 21,
+  })
+  act(() => mount.dispatchEvent(topLeft))
+  expect(sentWheel()).toContain('\x1b[<65;1;1M')
+  const scrollbarGap = new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    deltaY: 40,
+    clientX: 795,
+    clientY: 37,
+  })
+  const writesBeforeScrollbar = sentWheel().length
+  act(() => mount.dispatchEvent(scrollbarGap))
+  expect(scrollbarGap.defaultPrevented).toBe(false)
+  expect(sentWheel()).toHaveLength(writesBeforeScrollbar)
 
   const lineUp = wheel(-1, WheelEvent.DOM_DELTA_LINE)
   const secondLineUp = wheel(-2, WheelEvent.DOM_DELTA_LINE)
@@ -133,10 +177,10 @@ test('Pi fullscreen wheel routing sends accumulated native SGR events only in mo
     mount.dispatchEvent(lineUp)
     mount.dispatchEvent(secondLineUp)
   })
-  expect(sentWheel()).toContain('\x1b[<64;11;7M')
+  expect(sentWheel()).toContain('\x1b[<64;6;2M')
   const pageDown = wheel(1, WheelEvent.DOM_DELTA_PAGE)
   act(() => mount.dispatchEvent(pageDown))
-  expect(sentWheel().filter((data) => data === '\x1b[<65;11;7M')).toHaveLength(10)
+  expect(sentWheel().filter((data) => data === '\x1b[<65;6;2M')).toHaveLength(10)
   const zoom = new WheelEvent('wheel', {
     bubbles: true,
     cancelable: true,
@@ -157,7 +201,8 @@ test('Pi fullscreen wheel routing sends accumulated native SGR events only in mo
   ui.rerender(view(true))
 
   const writesBeforeDisable = sentWheel().length
-  act(() => receivePtyData({ id: 'wheel-terminal', data: '\x1b[?1000l' }))
+  act(() => receivePtyData({ id: 'wheel-terminal', data: '\x1b[?1000l\x1b[?1049l' }))
+  await waitFor(() => expect(fixture.terminals[0]!.buffer.active.type).toBe('normal'))
   const ordinaryBuffer = wheel(80)
   act(() => mount.dispatchEvent(ordinaryBuffer))
   expect(ordinaryBuffer.defaultPrevented).toBe(false)

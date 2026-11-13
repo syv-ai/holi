@@ -255,7 +255,13 @@ export function SessionTerminal({
 
     const routeWheel = (event: WheelEvent) => {
       if (!isLive() || !visibleRef.current || !wheelRouter || !mount.isConnected) return
-      wheelRouter.onWheel(event, mount.getBoundingClientRect(), term.cols, term.rows)
+      // PTY observation leads xterm's asynchronous write queue. The live buffer
+      // is authoritative: don't capture native wheel scrolling until xterm has
+      // actually entered the alternate screen.
+      if (term.buffer.active.type !== 'alternate') return
+      const screen = mount.querySelector<HTMLElement>('.xterm-screen')
+      if (!screen) return
+      wheelRouter.onWheel(event, screen.getBoundingClientRect(), term.cols, term.rows)
     }
     mount.addEventListener('wheel', routeWheel, { capture: true, passive: false })
 
