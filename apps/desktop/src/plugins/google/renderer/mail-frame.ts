@@ -275,8 +275,25 @@ function normalizeDeclarations(css: string): string {
 }
 
 /** Strip authored paint while preserving the declaration's layout tokens. */
+function decodeCssIdentifier(identifier: string): string {
+  return identifier.replace(
+    /\\([0-9a-fA-F]{1,6})(?:\r\n|[\t\n\r\f ])?|\\([^\n\r\f])/g,
+    (_match, hex: string | undefined, escaped: string | undefined) => {
+      if (hex !== undefined) {
+        const codePoint = Number.parseInt(hex, 16)
+        return String.fromCodePoint(
+          codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)
+            ? 0xfffd
+            : codePoint,
+        )
+      }
+      return escaped ?? ''
+    },
+  )
+}
+
 function normalizeDeclaration(declaration: Declaration): void {
-  const property = declaration.prop.toLowerCase()
+  const property = decodeCssIdentifier(declaration.prop).toLowerCase()
   if (property === 'color' || property.endsWith('-color')) {
     declaration.remove()
   } else if (property === 'background') {
@@ -289,18 +306,23 @@ function normalizeDeclaration(declaration: Declaration): void {
       .map((nodes) => {
         const kept = nodes.filter((node) => {
           if (node.type === 'function')
-            return ['url', 'calc', 'min', 'max', 'clamp', 'env'].includes(node.value.toLowerCase())
+            return ['url', 'calc', 'min', 'max', 'clamp', 'env'].includes(
+              decodeCssIdentifier(node.value).toLowerCase(),
+            )
           if (node.type !== 'word') return node.type === 'div' || node.type === 'space'
           return (
-            BACKGROUND_LAYOUT_WORDS.has(node.value.toLowerCase()) ||
+            BACKGROUND_LAYOUT_WORDS.has(decodeCssIdentifier(node.value).toLowerCase()) ||
             /^[-+]?(?:\d*\.)?\d+(?:%|[a-z]+)?$/i.test(node.value)
           )
         })
         const hadGradient = nodes.some(
-          (node) => node.type === 'function' && node.value.toLowerCase().endsWith('-gradient'),
+          (node) =>
+            node.type === 'function' &&
+            decodeCssIdentifier(node.value).toLowerCase().endsWith('-gradient'),
         )
         const hasUrl = kept.some(
-          (node) => node.type === 'function' && node.value.toLowerCase() === 'url',
+          (node) =>
+            node.type === 'function' && decodeCssIdentifier(node.value).toLowerCase() === 'url',
         )
         if (hadGradient && !hasUrl) kept.unshift(valueParser('none').nodes[0]!)
         return valueParser.stringify(kept).trim()
@@ -317,8 +339,9 @@ function normalizeDeclaration(declaration: Declaration): void {
       .map((nodes) => {
         const images = nodes.flatMap((node): valueParser.Node[] => {
           if (node.type !== 'function') return []
-          if (node.value.toLowerCase() === 'url') return [node]
-          if (node.value.toLowerCase().endsWith('-gradient')) return [valueParser('none').nodes[0]!]
+          if (decodeCssIdentifier(node.value).toLowerCase() === 'url') return [node]
+          if (decodeCssIdentifier(node.value).toLowerCase().endsWith('-gradient'))
+            return [valueParser('none').nodes[0]!]
           return []
         })
         return images.length === 0 ? 'none' : valueParser.stringify(images)

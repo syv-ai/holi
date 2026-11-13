@@ -112,6 +112,40 @@ describe('mailFrameDocument — theming', () => {
     expect(authoredSheet).not.toContain('#111')
   })
 
+  it('normalizes escaped paint properties and preserves escaped background layout', () => {
+    const html = doc({
+      html: '<div style="c\\6f lor:#111!important;back\\67 round-color:#fff!important">inline</div>',
+      css: '.escaped{c\\6f lor:#111!important;back\\67 round:#fff u\\72l(https://images.test/bg.png) c\\65nter/c\\6fver n\\6f-repeat!important}.image{background\\2d image:linear-gradient(white,black),u\\72l(data:image/png;base64,AA==)}',
+      allowRemoteContent: true,
+    })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const inline = postcss.parse(
+      `x{${parsed.querySelector('div')?.getAttribute('style') ?? ''}}`,
+    ).first!
+    const stylesheet = postcss
+      .parse(parsed.querySelectorAll('style')[1]?.textContent ?? '')
+      .nodes.find(
+        (node): node is Rule => node.type === 'rule' && node.selector.includes('escaped'),
+      )!
+    const imageStylesheet = postcss
+      .parse(parsed.querySelectorAll('style')[1]?.textContent ?? '')
+      .nodes.find((node): node is Rule => node.type === 'rule' && node.selector.includes('image'))!
+    const declaration = (node: Rule, property: string) =>
+      node.nodes.find(
+        (entry): entry is postcss.Declaration => entry.type === 'decl' && entry.prop === property,
+      )
+    expect(declaration(inline as Rule, 'c\\6f lor')).toBeUndefined()
+    expect(declaration(inline as Rule, 'back\\67 round-color')).toBeUndefined()
+    expect(declaration(stylesheet, 'c\\6f lor')).toBeUndefined()
+    expect(declaration(stylesheet, 'back\\67 round')?.value).toContain(
+      'u\\72l(https://images.test/bg.png) c\\65nter/c\\6fver n\\6f-repeat',
+    )
+    expect(declaration(stylesheet, 'back\\67 round')?.important).toBe(true)
+    expect(declaration(imageStylesheet, 'background\\2d image')?.value).toBe(
+      'none, u\\72l(data:image/png;base64,AA==)',
+    )
+  })
+
   it('discards malformed inline styles instead of failing to render the message', () => {
     const html = doc({ html: '<p style="color:red;background:bad}">message</p>' })
     const parsed = new DOMParser().parseFromString(html, 'text/html')
