@@ -173,7 +173,7 @@ if(args[0]==='--pty') {
   const managed = spawnOwnedProgram(plan.file, [script, '--pty'], {
     cwd: vault,
     env: { ...env, ...plan.env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: 'pipe',
   })
   let managedOutput = ''
   managed.stdout!.on('data', (d) => {
