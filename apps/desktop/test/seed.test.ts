@@ -16,7 +16,8 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
-import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
+import { claudeSeed, agentSettings, STATUS_LINE } from '../src/plugins/agent/main/claude/seed'
+import { shellReadBridgeEnv } from '../src/main/bridge/env-file'
 import { appsSeed } from '../src/plugins/apps/main/seed'
 import { automationsSeed } from '../src/plugins/automations/main/seed'
 import { holisSeed } from '../src/plugins/holis/main/seed'
@@ -1909,6 +1910,23 @@ describe('mergedSettings — background sessions', () => {
     const mine = { type: 'command', command: 'mine.sh' }
     const kept = mergedSettings(JSON.stringify({ statusLine: mine }))
     expect(kept === null ? mine : JSON.parse(kept).statusLine).toEqual(mine)
+  })
+
+  it('migrates only the exact prior Holi status command and is idempotent', () => {
+    const prior = [
+      'input=$(cat)',
+      `printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")'`,
+      `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi; fi`,
+      'true',
+    ].join('; ')
+    const migrated = mergedSettings(
+      JSON.stringify({ statusLine: { type: 'command', command: prior } }),
+    )!
+    expect(JSON.parse(migrated).statusLine).toEqual({ type: 'command', command: STATUS_LINE })
+    expect(mergedSettings(migrated)).toBeNull()
+    const custom = { statusLine: { type: 'command', command: `${prior} ` } }
+    const kept = mergedSettings(JSON.stringify(custom))
+    expect(kept === null ? custom : JSON.parse(kept).statusLine).toEqual(custom.statusLine)
   })
 
   it('keeps background sessions in the vault itself, unless the user chose otherwise', () => {

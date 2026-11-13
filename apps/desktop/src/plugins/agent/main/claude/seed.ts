@@ -6,6 +6,7 @@
  */
 import {
   seedFolder,
+  shellJobId,
   shellReadBridgeEnv,
   type SeedContribution,
   type SettingsFragment,
@@ -33,12 +34,21 @@ const SETTINGS = '.claude/settings.json'
  * (parsed, never sourced) and keyed by the job id, the way `turn-signal.mjs`
  * does it. The post is detached with its output discarded, so a slow or absent
  * Holi never holds up the footer, and outside Holi the command only prints.
- * @public exported for its test
  */
-export const STATUS_LINE = [
+const LEGACY_STATUS_LINE = [
   'input=$(cat)',
   `printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")'`,
   `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi; fi`,
+  'true',
+].join('; ')
+
+const STATUS_FORMATTER = `let s=\"\";process.stdin.setEncoding(\"utf8\");process.stdin.on(\"data\",c=>s+=c);process.stdin.on(\"end\",()=>{try{const x=JSON.parse(s);const m=x?.model?.display_name;const n=x?.context_window?.used_percentage;const a=[];if(typeof m===\"string\"&&m)a.push(m);if(typeof n===\"number\"&&Number.isFinite(n))a.push(Math.floor(n+0.5)+\"% context\");process.stdout.write(a.join(\" · \"))}catch{}})`
+
+/** @public exported for its test */
+export const STATUS_LINE = [
+  'input=$(cat)',
+  `if command -v jq >/dev/null 2>&1; then printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")' 2>/dev/null; else printf '%s' "$input" | node -e '${STATUS_FORMATTER}'; fi`,
+  `${shellJobId('win32')}; case "$job" in ???????? ) case "$job" in *[!0-9a-f]* ) job= ;; esac ;; *) job= ;; esac; if [ -n "$job" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=$job" >/dev/null 2>&1 & fi; fi`,
   'true',
 ].join('; ')
 
@@ -214,7 +224,31 @@ export const agentSettings = (
   fragments: readonly SettingsFragment[],
   has: (rel: string) => boolean,
   read?: (rel: string) => string | null,
-): string | null => mergeClaudeSettings(existing, SETTINGS_BASE, fragments, has, read)
+): string | null => {
+  let migrated = existing
+  if (existing !== null) {
+    try {
+      const parsed: unknown = JSON.parse(existing)
+      if (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        (parsed as { statusLine?: unknown }).statusLine !== null &&
+        typeof (parsed as { statusLine?: unknown }).statusLine === 'object'
+      ) {
+        const statusLine = (parsed as { statusLine: { type?: unknown; command?: unknown } })
+          .statusLine
+        if (statusLine.type === 'command' && statusLine.command === LEGACY_STATUS_LINE) {
+          statusLine.command = STATUS_LINE
+          migrated = JSON.stringify(parsed)
+        }
+      }
+    } catch {
+      // Keep malformed settings untouched; Claude Code owns their interpretation.
+    }
+  }
+  return mergeClaudeSettings(migrated, SETTINGS_BASE, fragments, has, read)
+}
 
 export const claudeSeed: SeedContribution = {
   id: 'agent',
