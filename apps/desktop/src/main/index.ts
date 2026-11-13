@@ -491,9 +491,10 @@ async function main(): Promise<void> {
     // holds the vault they ran in. The panel's shells were started in its
     // clone too, and stop with it.
     onLeave: async () => {
+      const departing = host.active()
       await terminals.closeAll().catch((err) => console.error('[terminal] close failed:', err))
-      const remote = plugins.displayed()
-      if (remote !== null) await plugins.stop(remote)
+      if (departing !== null) await plugins.stop(departing.remote)
+      plugins.setDisplayed(null)
     },
   })
 

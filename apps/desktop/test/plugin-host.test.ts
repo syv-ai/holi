@@ -315,10 +315,17 @@ describe('the lifecycle', () => {
   it('keeps failures and dependent teardown scoped when one host runs two remotes', async () => {
     const starts: string[] = []
     const stops: string[] = []
+    const events: string[] = []
+    const contexts = new Map<string, PluginCtx>()
     const provider: MainPlugin = {
       info: { id: 'base', label: 'Base', default: true },
       activate(ctx) {
         starts.push(`base:${ctx.remote}`)
+        contexts.set(ctx.remote, ctx)
+        ctx.register(['base'], {
+          'base.ping': cap({ doors: ['ui'], params: noParams, run: async () => ctx.remote }),
+        })
+        ctx.events.on((event) => events.push(`${ctx.remote}:${event.type}`))
         if (ctx.remote === 'A' && starts.filter((entry) => entry === 'base:A').length === 1)
           throw new Error('A unavailable')
         return () => stops.push(`base:${ctx.remote}`)
@@ -333,21 +340,35 @@ describe('the lifecycle', () => {
     }
     const aRoot = await tempDir()
     const bRoot = await tempDir()
-    const { host } = rig({ plugins: [provider, dependent], roots: { A: aRoot, B: bRoot } })
+    const { host, registry } = rig({
+      plugins: [provider, dependent],
+      roots: { A: aRoot, B: bRoot },
+    })
     const a = openVault('A', aRoot)
     const b = openVault('B', bRoot)
     await host.reconcile(a, 'open')
     expect(host.failures('A')).toMatchObject({ base: 'A unavailable' })
     await host.reconcile(b, 'open')
-    expect([...(await host.serving('B'))]).toEqual(expect.arrayContaining(['base', 'face']))
+    expect([...(await host.serving(bRoot))]).toEqual(expect.arrayContaining(['base', 'face']))
     await writeVaultSettings(aRoot, { committed: { plugins: { base: true } } })
     await host.reconcile(a, 'settings')
     expect(host.failures('A')).toEqual({})
-    expect([...(await host.serving('A'))]).toEqual(expect.arrayContaining(['base', 'face']))
+    expect([...(await host.serving(aRoot))]).toEqual(expect.arrayContaining(['base', 'face']))
     await writeVaultSettings(aRoot, { committed: { plugins: { base: false } } })
     await host.reconcile(a, 'settings')
     expect(stops).toEqual(['face:A', 'base:A'])
-    expect([...(await host.serving('B'))]).toEqual(expect.arrayContaining(['base', 'face']))
+    expect([...(await host.serving(bRoot))]).toEqual(expect.arrayContaining(['base', 'face']))
+    expect(registry.has('base.ping', 'A')).toBe(false)
+    expect(registry.has('base.ping', 'B')).toBe(true)
+    contexts.get('B')!.events.emit({
+      type: 'still-running',
+      source: 'file',
+      kind: 'changed',
+      id: 'B',
+      version: '1',
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(events).toEqual(['B:still-running'])
     await host.stopAll()
   })
 
@@ -745,6 +766,7 @@ describe('the lifecycle', () => {
         return async () => {
           await context.commitNow()
           await context.head()
+          await context.call('target.read', {})
         }
       },
     }
@@ -757,11 +779,18 @@ describe('the lifecycle', () => {
       calls.push('head A')
       return 'sha-A'
     }
-    const { host, enter } = rig({ plugins: [plugin] })
+    const { host, enter } = rig({
+      plugins: [plugin],
+      call: async (remote, _name, _params, beforeInvoke) => {
+        await beforeInvoke?.({ remote, root: '/A' })
+        calls.push(`cap ${remote}`)
+        return null
+      },
+    })
     await enter(vault)
     host.setDisplayed('B')
     await host.stop('A')
-    expect(calls).toEqual(['commit A', 'head A'])
+    expect(calls).toEqual(['commit A', 'head A', 'cap A'])
     expect(ctx!.displayed()).toBe('B')
     await expect(ctx!.head()).rejects.toThrow(/no longer active/)
   })
@@ -895,7 +924,7 @@ describe('the lifecycle', () => {
     releaseB()
     expect(logB).toContain('resume')
     await host.stop('A')
-    expect(host.serving('/B')).resolves.toContain('fake')
+    await expect(host.serving('/B')).resolves.toContain('fake')
     await host.stop('B')
   })
   it('stops a plugin turned off by hand, and starts it again, seeded, when turned back on', async () => {

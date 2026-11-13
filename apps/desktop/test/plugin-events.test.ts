@@ -93,7 +93,7 @@ describe('plugin events', () => {
     expect(sent).toEqual([])
   })
 
-  it('keeps another activation moving when one remote event gate is slow', async () => {
+  it('keeps another remote moving when one event gate is slow', async () => {
     const sent: PluginEvent[] = []
     let releaseA: () => void = () => {}
     const gateA = new Promise<void>((resolve) => {
@@ -104,13 +104,12 @@ describe('plugin events', () => {
       listen: () => () => {},
       liveRemote: () => 'A',
     }
-    const a = pluginEvents(deps, 'sample', async (remote) => {
+    const bus = pluginEvents(deps, 'sample', async (remote) => {
       if (remote === 'A') await gateA
       return true
     })
-    const b = pluginEvents(deps, 'sample', async () => true)
-    a.emit('A', 'output', 'A')
-    b.emit('B', 'output', 'B')
+    bus.emit('A', 'output', 'A')
+    bus.emit('B', 'output', 'B')
     await vi.waitFor(() => expect(sent).toEqual([{ remote: 'B', name: 'output', payload: 'B' }]))
     releaseA()
     await vi.waitFor(() => expect(sent).toHaveLength(2))

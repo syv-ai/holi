@@ -179,7 +179,7 @@ export interface PluginHost {
 interface Started {
   id: string
   dispose: Disposer
-  lease: { phase: 'active' | 'draining' | 'closed'; delivery: number }
+  lease: { phase: 'active' | 'draining' | 'closed'; events: ReturnType<typeof pluginEvents> }
   establish(): void
   closeEvents(): void
   /** What it registered through its context and has not undone yet,
@@ -202,6 +202,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     generation: number
     holds: { reasons: Map<symbol, string> } | null
     stopping: Map<string, boolean>
+    leases: Set<Started['lease']>
   }
   const runsByRemote = new Map<string, VaultRun>()
   const makeRun = (vault: OpenVault): VaultRun => ({
@@ -214,6 +215,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     generation: 0,
     holds: null,
     stopping: new Map(),
+    leases: new Set(),
   })
   let displayed: string | null = null
   const displayListeners = new Set<(remote: string | null) => void>()
@@ -243,6 +245,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   const eventListeners = new Set<{
     remote: string
     generation: number
+    live(): boolean
     cb: (e: VaultEvent) => void
   }>()
   /** Cached plugin settings are keyed by vault root. */
@@ -350,22 +353,15 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   function events(
     id: string,
     remote: string,
-    activation: number,
+    root: string,
     isLive: () => boolean,
-    delivery: () => number,
   ): ReturnType<typeof pluginEvents> {
     const runs = async (at: string): Promise<boolean> => {
       if (!isLive() || at !== remote) return false
-      const root = await deps.rootFor(at)
-      return root !== null && (await serving(root)).has(id)
+      const registeredRoot = await deps.rootFor(at)
+      return registeredRoot === root && (await serving(root)).has(id)
     }
-    const stateGenerationIsCurrent = (): boolean => {
-      const state = runsByRemote.get(remote)
-      return state !== undefined && state.generation === activation
-    }
-    return pluginEvents(deps.events, id, runs, () =>
-      isLive() && stateGenerationIsCurrent() ? activation * 1_000_000 + delivery() : -1,
-    )
+    return pluginEvents(deps.events, id, runs, undefined, isLive)
   }
 
   /** What seeds the vault at `root`, read fresh: a write to its settings
@@ -442,10 +438,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     const activation = state.generation
     let established = false
     let eventsLive = true
-    const lease: Started['lease'] = { phase: 'active', delivery: 0 }
-    const isEventLive = (): boolean => lease.phase !== 'closed'
     const { remote, root } = vault
-    const eventBus = events(id, remote, activation, isEventLive, () => lease.delivery)
+    const lease: Started['lease'] = {
+      phase: 'active',
+      events: events(id, remote, root, () => lease.phase !== 'closed'),
+    }
+    state.leases.add(lease)
+    const eventBus = lease.events
     const valid = (): boolean => lease.phase === 'active' && state.generation === activation
     const draining = (): boolean => lease.phase === 'draining' && established
     const undos = new Set<() => void>()
@@ -524,7 +523,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       onReport: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
-        const entry = { remote, generation: activation, cb }
+        const entry = {
+          remote,
+          generation: activation,
+          cb: (report: UiReport) => {
+            if (valid()) cb(report)
+          },
+        }
         reportListeners.add(entry)
         return keep(() => void reportListeners.delete(entry))
       },
@@ -575,12 +580,23 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         const key = `${remote}/${from}/${name}`
         const set = heard.get(key) ?? new Set()
         heard.set(key, set)
-        set.add(handler)
-        return keep(() => void set.delete(handler))
+        const guarded = (payload: unknown): void => {
+          // Providers remain available to fresh disposer work while their
+          // dependants drain, but a stopping listener cannot restart work.
+          if (valid() || (state.parked && lease.phase === 'active' && established)) handler(payload)
+        }
+        set.add(guarded)
+        return keep(() => void set.delete(guarded))
       },
       onMention: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
-        const entry = { remote, generation: activation, cb }
+        const entry = {
+          remote,
+          generation: activation,
+          cb: (mention: NoteMention) => {
+            if (valid()) cb(mention)
+          },
+        }
         mentionListeners.add(entry)
         return keep(() => void mentionListeners.delete(entry))
       },
@@ -589,7 +605,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       window: () => deps.window?.() ?? null,
       onSnapshot: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
-        const entry = { remote, generation: activation, cb }
+        const entry = {
+          remote,
+          generation: activation,
+          cb: (snapshot: VaultSnapshot) => {
+            if (valid()) cb(snapshot)
+          },
+        }
         snapshotListeners.add(entry)
         const held = snapshots.get(remote) ?? null
         if (held !== null && held.generation === state.generation) {
@@ -603,17 +625,31 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       events: {
         // Heard after the emitter's own step, never inside it: a listener that
         // emits back must not re-enter.
-        emit: (event) =>
+        emit: (event) => {
+          const admittedDuringDrain = draining()
+          if (!valid() && !admittedDuringDrain) return
+          const scheduledGeneration = state.generation
           queueMicrotask(() => {
-            if (!valid() || runsByRemote.get(remote) !== state || (state.parked && !established))
+            if (
+              runsByRemote.get(remote) !== state ||
+              state.generation !== scheduledGeneration ||
+              (admittedDuringDrain ? !draining() : !valid())
+            )
               return
             for (const l of [...eventListeners]) {
-              if (l.remote === remote && l.generation === activation) tell(l.cb, event, 'event')
+              if (l.remote === remote && l.generation === activation && l.live())
+                tell(l.cb, event, 'event')
             }
-          }),
+          })
+        },
         on: (cb) => {
           if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
-          const entry = { remote, generation: activation, cb }
+          const entry = {
+            remote,
+            generation: activation,
+            live: () => lease.phase === 'active',
+            cb,
+          }
           eventListeners.add(entry)
           return keep(() => void eventListeners.delete(entry))
         },
@@ -648,7 +684,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       }
     } catch (err) {
       lease.phase = 'closed'
-      lease.delivery += 1
+      eventBus.cancelPending()
+      state.leases.delete(lease)
       eventsLive = false
       console.error(`[plugins] ${id} did not start:`, err)
       state.failed.set(id, err instanceof Error ? err.message : String(err))
@@ -687,17 +724,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   /** Its disposer, then what it registered. It is served until both are done. */
   async function stopOne(s: Started, state: VaultRun): Promise<void> {
     state.stopping.set(s.id, true)
+    s.lease.events.cancelPending()
     s.lease.phase = 'draining'
-    s.lease.delivery += 1
     try {
       await Promise.resolve()
         .then(s.dispose)
         .catch((err) => console.error(`[plugins] ${s.id} stop failed:`, err))
+      await s.lease.events.drain()
+    } finally {
       s.lease.phase = 'closed'
-      s.lease.delivery += 1
+      s.lease.events.cancelPending()
       s.closeEvents()
       undoAll(s.id, s.undos)
-    } finally {
+      state.leases.delete(s.lease)
       state.stopping.delete(s.id)
     }
   }
@@ -827,6 +866,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       if (state === undefined) return
       state.generation += 1
       state.parked = true
+      for (const lease of state.leases) lease.events.cancelPending()
       cacheVersions.set(state.vault.root, (cacheVersions.get(state.vault.root) ?? 0) + 1)
       cache.delete(state.vault.root)
       await queued(state, () => stopNow(remote, state))
@@ -838,6 +878,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       for (const [, state] of entries) {
         state.generation += 1
         state.parked = true
+        for (const lease of state.leases) lease.events.cancelPending()
         cacheVersions.set(state.vault.root, (cacheVersions.get(state.vault.root) ?? 0) + 1)
         cache.delete(state.vault.root)
       }
