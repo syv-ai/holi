@@ -112,6 +112,76 @@ describe('mailFrameDocument — theming', () => {
     expect(authoredSheet).not.toContain('#111')
   })
 
+  it('keeps an empty image layer when stripping background colors', () => {
+    const html = doc({
+      html: '<div style="background:url(https://images.test/hero.png), white">inline</div>',
+      css: '.layers{background:white, url(https://images.test/hero.png), white right top/20px 30px no-repeat}.reset{background:white}',
+      allowRemoteContent: true,
+    })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const inline = postcss.parse(`x{${parsed.querySelector('div')?.getAttribute('style')}}`).first!
+    const stylesheet = postcss.parse(parsed.querySelectorAll('style')[1]?.textContent ?? '')
+    const declaration = (rule: Rule, property: string) =>
+      rule.nodes.find(
+        (node): node is postcss.Declaration => node.type === 'decl' && node.prop === property,
+      )
+    const inlineBackground = declaration(inline as Rule, 'background')
+    const sheetRule = stylesheet.nodes.find(
+      (node): node is Rule => node.type === 'rule' && node.selector === '.layers',
+    )!
+    const sheetBackground = declaration(sheetRule, 'background')
+
+    expect(inlineBackground?.value).toBe('url(https://images.test/hero.png), none')
+    expect(sheetBackground?.value).toBe(
+      'none, url(https://images.test/hero.png), right top/20px 30px no-repeat',
+    )
+    expect(sheetBackground?.value.split(',')).toHaveLength(3)
+    expect(sheetBackground?.value).not.toMatch(/(?:^|,)\s*(?:,|$)/)
+    const resetRule = stylesheet.nodes.find(
+      (node): node is Rule => node.type === 'rule' && node.selector === '.reset',
+    )!
+    expect(declaration(resetRule, 'background')?.value).toBe('none')
+  })
+
+  it('preserves escaped important priority when normalizing background paint', () => {
+    const html = doc({
+      css: '.priority{background:url(https://images.test/hero.png) right top/20px 30px no-repeat !\\69mportant; background-position:left bottom}.image{background-image:url(https://images.test/hero.png) !\\69mportant; background-image:none}.comments{background:url(https://images.test/hero.png) ! /*priority*/ \\69 mportant; background-position:left bottom}',
+      allowRemoteContent: true,
+    })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const stylesheet = postcss.parse(parsed.querySelectorAll('style')[1]?.textContent ?? '')
+    const rule = (selector: string) =>
+      stylesheet.nodes.find(
+        (node): node is Rule => node.type === 'rule' && node.selector === selector,
+      )!
+    const declaration = (node: Rule, property: string) =>
+      node.nodes.find(
+        (entry): entry is postcss.Declaration => entry.type === 'decl' && entry.prop === property,
+      )
+
+    expect(declaration(rule('.priority'), 'background')?.important).toBe(true)
+    expect(declaration(rule('.priority'), 'background-position')?.value).toBe('left bottom')
+    expect(declaration(rule('.image'), 'background-image')?.important).toBe(true)
+    expect(declaration(rule('.image'), 'background-image')?.value).toBe(
+      'url(https://images.test/hero.png)',
+    )
+    expect(declaration(rule('.comments'), 'background')?.important).toBe(true)
+    expect(declaration(rule('.comments'), 'background-position')?.value).toBe('left bottom')
+  })
+
+  it('does not treat important-like quoted URL text as priority', () => {
+    const html = doc({
+      css: '.quoted{background:url("data:image/png;base64,AA==#!important")}',
+      allowRemoteContent: true,
+    })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const stylesheet = postcss.parse(parsed.querySelectorAll('style')[1]?.textContent ?? '')
+    expect(stylesheet.toString()).toContain(
+      '.quoted{background:url("data:image/png;base64,AA==#!important")}',
+    )
+    expect(stylesheet.toString()).not.toContain('!important;')
+  })
+
   it('preserves escaped background words and functions with consumed whitespace', () => {
     const html = doc({
       css: '.escaped{background:#fff u\\72 l(data:image/png;base64,AA==) r\\69 ght t\\6f p/10p\\78  20px n\\6f -repeat!important;background-image:u\\72 l(data:image/gif;base64,AA==)}',
@@ -204,7 +274,7 @@ describe('mailFrameDocument — theming', () => {
     )
 
     expect(declarations.color).toBeUndefined()
-    expect(declarations.background).toBeUndefined()
+    expect(declarations.background).toBe('none')
     expect(declarations.width).toBe('calc(100% - 2px)')
   })
 
