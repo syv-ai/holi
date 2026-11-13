@@ -16,7 +16,13 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
-import { claudeSeed, agentSettings, STATUS_LINE } from '../src/plugins/agent/main/claude/seed'
+import {
+  claudeSeed,
+  agentSettings,
+  STATUS_LINE,
+  POSIX_STATUS_LINE,
+  WINDOWS_STATUS_LINE,
+} from '../src/plugins/agent/main/claude/seed'
 import { shellReadBridgeEnv } from '../src/main/bridge/env-file'
 import { appsSeed } from '../src/plugins/apps/main/seed'
 import { automationsSeed } from '../src/plugins/automations/main/seed'
@@ -1911,6 +1917,17 @@ describe('mergedSettings — background sessions', () => {
     const kept = mergedSettings(JSON.stringify({ statusLine: mine }))
     expect(kept === null ? mine : JSON.parse(kept).statusLine).toEqual(mine)
   })
+
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'selects fresh status defaults for %s',
+    (platform) => {
+      const settings = agentSettings(null, [], () => false, undefined, platform)!
+      expect(JSON.parse(settings).statusLine).toEqual({
+        type: 'command',
+        command: platform === 'win32' ? WINDOWS_STATUS_LINE : POSIX_STATUS_LINE,
+      })
+    },
+  )
 
   it('preserves the POSIX status command bytes as the pre-Windows baseline', () => {
     const expected = [

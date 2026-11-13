@@ -258,7 +258,14 @@ export const agentSettings = (
       // Keep malformed settings untouched; Claude Code owns their interpretation.
     }
   }
-  const merged = mergeClaudeSettings(migrated, SETTINGS_BASE, fragments, has, read)
+  const base = {
+    ...SETTINGS_BASE,
+    statusLine: {
+      type: 'command',
+      command: platform === 'win32' ? WINDOWS_STATUS_LINE : POSIX_STATUS_LINE,
+    },
+  }
+  const merged = mergeClaudeSettings(migrated, base, fragments, has, read)
   return merged ?? (migrated !== existing ? migrated : null)
 }
 
