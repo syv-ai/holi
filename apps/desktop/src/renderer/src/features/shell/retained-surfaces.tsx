@@ -31,13 +31,14 @@ export function useRetainedSurfaces(
   )
   const [visited, setVisited] = useState({ remote, keys: [] as string[] })
   const visible = new Set(visibleKeys)
-  const open = new Set(allTabs(workspace))
   const apps = useSidebarApps()
+  const open = new Set(allTabs(workspace))
   const retained = (key: string) => {
     const tab = parseTabKey(key)
     return (
       tab?.kind === 'graph' ||
       (tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true) ||
+      (tab?.kind === 'vault-app' && surfaces.get('app')?.keepMounted === true) ||
       (tab?.kind === 'app' && apps.find((app) => app.id === tab.id)?.keepMounted === true) ||
       retainKey(key)
     )
@@ -210,6 +211,10 @@ function moveHost(parent: HTMLElement, host: HTMLElement): void {
     const destination = parent as HTMLElement & {
       moveBefore(node: Node, before: Node | null): void
     }
+    // Flush size/inert changes before the state-preserving move. Otherwise
+    // Chromium can apply pending responsive layout in the new parent and clamp
+    // an embedded document's scroll even though its browsing context survives.
+    host.getBoundingClientRect()
     destination.moveBefore(host, null)
   } else {
     parent.appendChild(host)

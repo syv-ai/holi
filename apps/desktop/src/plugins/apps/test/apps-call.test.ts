@@ -57,7 +57,10 @@ async function rig() {
     appsCapabilities({
       events: { emit: () => {} },
       appDoor: () => door!,
-      grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => true },
+      grants: {
+        status: async () => ({ codeHash: '', affordances: [], expiresAt: null }),
+        grant: async () => true,
+      },
       previews: { read: async () => null, save: async () => {}, forget: async () => {} },
       capture: async () => null,
     }),

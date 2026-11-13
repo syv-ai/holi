@@ -619,7 +619,7 @@ test('a visited keepMounted surface keeps its document and lease while another t
   await waitFor(() => expect(released).toHaveBeenCalledTimes(1))
 })
 
-function retainedFixture(keepMounted = true, surfaceKind = 'test-document') {
+function retainedFixture(keepMounted = true, surfaceKind = 'test-document', vaultApp = false) {
   const acquired = vi.fn()
   const released = vi.fn()
   function Document({ id, visible }: { id?: string; visible: boolean }) {
@@ -642,7 +642,10 @@ function retainedFixture(keepMounted = true, surfaceKind = 'test-document') {
   const install = (enabled: boolean) =>
     store.set(coreContributionAtom, { surfaces: enabled ? [surface] : [], rail: [], claims: [] })
   act(() => install(true))
-  const key = (id: string) => tabKey({ kind: 'surface', surface: surface.kind, id })
+  const key = (id: string) =>
+    tabKey(
+      vaultApp ? { kind: 'vault-app', path: id } : { kind: 'surface', surface: surface.kind, id },
+    )
   const show = (id: string) =>
     act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, key(id))))
   const away = () => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
@@ -838,17 +841,21 @@ test('parked retained surfaces preserve their viewport size and restore responsi
   const input = await screen.findByRole('textbox', { name: 'State one' })
   const host = input.closest<HTMLElement>('[data-pane-host]')!
   const parking = document.querySelector<HTMLElement>('[data-retained-parking]')!
-  vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({
-    left: 0,
-    top: 0,
-    width: 640,
-    height: 480,
-    right: 640,
-    bottom: 480,
-    x: 0,
-    y: 0,
-    toJSON: () => ({}),
-  } as DOMRect)
+  const measured = vi.fn()
+  const measureHost = vi.spyOn(host, 'getBoundingClientRect').mockImplementation(() => {
+    measured(host.parentElement, host.style.width, host.style.height, host.inert)
+    return {
+      left: 0,
+      top: 0,
+      width: 640,
+      height: 480,
+      right: 640,
+      bottom: 480,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect
+  })
 
   f.away()
 
@@ -861,11 +868,17 @@ test('parked retained surfaces preserve their viewport size and restore responsi
   expect(parking.style.display).toBe('')
   expect(parking.className).toContain('invisible')
   expect(parking.className).toContain('pointer-events-none')
-  expect(parking.className).toContain('absolute')
+  // Fixing dimensions and making a host inert dirties layout. Settle that
+  // layout before moving it, both into parking and back to the visible slot.
+  expect(measureHost).toHaveBeenCalledTimes(2)
+  expect(measured).toHaveBeenLastCalledWith(expect.any(HTMLElement), '640px', '480px', true)
+  expect(measured.mock.calls.at(-1)![0]).not.toBe(parking)
 
   f.show('one')
 
   expect(host.parentElement).not.toBe(parking)
+  expect(measureHost).toHaveBeenCalledTimes(3)
+  expect(measured).toHaveBeenLastCalledWith(parking, '640px', '480px', true)
   expect(host.style.width).toBe('')
   expect(host.style.height).toBe('')
   expect(host.className).toContain('w-full')
@@ -1051,6 +1064,32 @@ test('a view not open yet, dragged from the sidebar, opens in the gap', async ()
   expect(activeSplit(ws)?.views).toEqual(['C.md', 'B.md'])
   expect(ws.entries.map((e) => (typeof e === 'string' ? e : 'split'))).toEqual(['A.md', 'split'])
   vi.restoreAllMocks()
+})
+
+test('vault-app descriptors retain the registered app view through the real tab wrapper and split layout', async () => {
+  const f = retainedFixture(true, 'app', true)
+  act(() =>
+    f.store.set(shellWorkspaceAtom, (ws) => selectEntry(openTab(ws, f.key('Two.app')), 'A.md')),
+  )
+  expect(f.acquired).not.toHaveBeenCalled()
+  f.show('One.app')
+  const one = await screen.findByRole('textbox', { name: 'State One.app' })
+  expect(screen.getByRole('button', { name: 'Edit source' })).toBeTruthy()
+  f.away()
+  expect(one.isConnected).toBe(true)
+  expect(one).toHaveAttribute('data-visible', 'false')
+  f.show('One.app')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, f.key('Two.app'))))
+  const two = await screen.findByRole('textbox', { name: 'State Two.app' })
+  for (const input of [one, two]) expect(input).toHaveAttribute('data-visible', 'true')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => separate(ws, activeSplit(ws)!.id)))
+  expect(one.isConnected).toBe(true)
+  expect(two.isConnected).toBe(true)
+  f.away()
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => closeTab(ws, f.key('One.app'))))
+  expect(one.isConnected).toBe(false)
+  f.show('One.app')
+  expect(await screen.findByRole('textbox', { name: 'State One.app' })).not.toBe(one)
 })
 
 /** Real session descriptors reach this adapter through TabView's Agents mode,

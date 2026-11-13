@@ -52,10 +52,12 @@ function clientLabel(client: ClientInfo): string {
 export function OAuthClient({
   accountCount,
   onChanged,
+  visible = true,
 }: {
   /** The accounts connected on this machine: what a new client disconnects. */
   accountCount: number
   onChanged: () => void
+  visible?: boolean
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const [client, setClient] = useState<ClientInfo | null>(null)
@@ -70,7 +72,7 @@ export function OAuthClient({
   const [asking, setAsking] = useState<{ id: string; secret: string } | null>(null)
 
   useEffect(() => {
-    if (remote === null) return
+    if (remote === null || !visible) return
     let live = true
     setFailed(false)
     googleCap.client(remote).then(
@@ -80,7 +82,14 @@ export function OAuthClient({
     return () => {
       live = false
     }
-  }, [remote, version])
+  }, [remote, version, visible])
+
+  useEffect(() => {
+    if (!visible) {
+      setOpen(false)
+      setAsking(null)
+    }
+  }, [visible])
 
   const close = () => {
     setOpen(false)
@@ -155,7 +164,7 @@ export function OAuthClient({
         )}
       </ItemActions>
 
-      <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
+      <Dialog open={visible && open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
         <DialogContent className="sm:max-w-lg">
           {/* Enter in a field saves, as a form would. */}
           <div

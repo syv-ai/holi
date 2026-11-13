@@ -14,6 +14,7 @@ import { trpc } from '@/lib/trpc'
 import { ExternalLinkIcon } from 'lucide-react'
 import { SettingsFieldRow } from '../settings-kit'
 import { openExternal } from '@/lib/open-external'
+import { useSettingsVisible } from '../settings-visibility'
 
 type NotesAnswer = Awaited<ReturnType<typeof trpc.updates.notes.query>>
 
@@ -24,9 +25,13 @@ type NotesAnswer = Awaited<ReturnType<typeof trpc.updates.notes.query>>
  */
 export function ReleaseNotesRow({ version, title }: { version: string; title: string }) {
   const [open, setOpen] = useState(false)
+  const visible = useSettingsVisible()
   const [answer, setAnswer] = useState<NotesAnswer | undefined>(undefined)
   useEffect(() => {
-    if (!open || answer !== undefined) return
+    if (!visible) setOpen(false)
+  }, [visible])
+  useEffect(() => {
+    if (!visible || !open || answer !== undefined) return
     let live = true
     trpc.updates.notes
       .query({ version })
@@ -35,7 +40,7 @@ export function ReleaseNotesRow({ version, title }: { version: string; title: st
     return () => {
       live = false
     }
-  }, [open, answer, version])
+  }, [open, answer, version, visible])
 
   const url = answer?.kind === 'found' ? openableUrl(answer.notes.url) : null
   return (
@@ -44,7 +49,7 @@ export function ReleaseNotesRow({ version, title }: { version: string; title: st
         Release notes
       </Button>
       <Dialog
-        open={open}
+        open={visible && open}
         onOpenChange={(next) => {
           setOpen(next)
           // Unanswered is asked again when shown again.
