@@ -22,12 +22,13 @@ import {
   startSessionAtom,
   stopSessionAtom,
 } from '../renderer/state/send'
-import { registerSessionTerminal } from '../renderer/lib/session-terminals'
+import { receivePtyData, registerSessionTerminal } from '../renderer/lib/session-terminals'
 import { agentsViewAtom, viewTerminalsAtom } from '../renderer/state/agents-view'
 import { showSessionAtom } from '../renderer/state/session-view'
 import {
   activeRemoteAtom,
   activeSurfaceIdAtom,
+  agentsSelectionAtom,
   appModeAtom,
   closeSurfaceTabAtom,
   openSurfaceAtom,
@@ -73,7 +74,7 @@ vi.mock('../renderer/agent-cap', () => ({
 beforeEach(() => {
   for (const fn of [open, start, send, stop, duplicate, detach]) fn.mockReset()
   open.mockResolvedValue({ ok: true, terminalId: 'opened' })
-  start.mockResolvedValue({ ok: true, sessionId: 'newnew00', terminalId: 'started' })
+  start.mockResolvedValue({ ok: true, sessionId: 'p0123456789ab', terminalId: 'started' })
   send.mockResolvedValue({ ok: true, terminalId: 'sent' })
   stop.mockResolvedValue({ ok: true })
   duplicate.mockResolvedValue({ ok: true, sessionId: 'copy0000', terminalId: 'copied' })
@@ -97,7 +98,11 @@ test('opening a session reuses the window Holi opened for it', async () => {
   await store.set(openSessionAtom, 'aaaaaaaa')
 
   expect(open).not.toHaveBeenCalled()
-  expect(shown(store)).toBe('t-a')
+  expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 't-a' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
+  expect(shown(store)).toBeNull()
 })
 
 test('opening a stopped Pi conversation uses its own terminal rather than Claude respawn', async () => {
@@ -116,13 +121,18 @@ test('opening a session with no window attaches a new one', async () => {
   await store.set(openSessionAtom, 'aaaaaaaa')
 
   expect(open).toHaveBeenCalledWith({ attach: 'aaaaaaaa', cols: 80, rows: 24 })
-  expect(shown(store)).toBe('opened')
+  expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 'opened' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
+  expect(shown(store)).toBeNull()
 })
 
 test('an ask goes to main unsent, and its window comes forward with the keyboard', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
   const focus = vi.fn()
-  const unregister = registerSessionTerminal('sent', { focus, write: () => {} })
+  const write = vi.fn()
+  const unregister = registerSessionTerminal('sent', { focus, write })
 
   const res = await store.set(sendToAgentAtom, { text: 'look at this', target: 'aaaaaaaa' })
 
@@ -133,9 +143,40 @@ test('an ask goes to main unsent, and its window comes forward with the keyboard
     cols: 80,
     rows: 24,
   })
-  expect(shown(store)).toBe('sent')
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 'sent' })
+  expect(shown(store)).toBeNull()
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
   expect(focus).toHaveBeenCalled()
+  receivePtyData({ id: 'sent', data: 'Ask response' })
+  expect(write).toHaveBeenCalledWith('Ask response')
   unregister()
+})
+
+test('an existing session tab keeps its canonical terminal when another window is returned', async () => {
+  const store = storeWith([session({ id: 'aaaaaaaa' })], [terminal('t-session', 'aaaaaaaa')])
+  store.set(viewTerminalsAtom, { aaaaaaaa: 't-session' })
+  const focusCanonical = vi.fn()
+  const focusReturned = vi.fn()
+  const unregisterCanonical = registerSessionTerminal('t-session', {
+    focus: focusCanonical,
+    write: () => {},
+  })
+  const unregisterReturned = registerSessionTerminal('sent', {
+    focus: focusReturned,
+    write: () => {},
+  })
+
+  await store.set(sendToAgentAtom, { text: 'look at this', target: 'aaaaaaaa' })
+
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 't-session' })
+  expect(focusCanonical).toHaveBeenCalled()
+  expect(focusReturned).not.toHaveBeenCalled()
+  unregisterCanonical()
+  unregisterReturned()
 })
 
 test('a refused ask says why and opens nothing, so the sender keeps the text', async () => {
@@ -153,7 +194,11 @@ test('starting a session opens its window', async () => {
   await store.set(startSessionAtom, { name: 'Tidy' })
 
   expect(start).toHaveBeenCalledWith({ name: 'Tidy', cols: 80, rows: 24 })
-  expect(shown(store)).toBe('started')
+  expect(store.get(viewTerminalsAtom)).toEqual({ p0123456789ab: 'started' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'p0123456789ab' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:p0123456789ab' })
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
+  expect(shown(store)).toBeNull()
 })
 
 test('stop goes to main and answers what it said', async () => {
