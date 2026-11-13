@@ -13,6 +13,7 @@
  * would flash its items on every launch.
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
+import { useEffect } from 'react'
 import { unwrap } from 'jotai/utils'
 import { activeRemoteAtom } from '@/plugin-api'
 import { googleCap } from './google-cap'
@@ -47,14 +48,34 @@ interface Connection {
   currentSub: string | null
 }
 
-const refreshNonceAtom = atom(0)
-const retryTimers = new Set<() => void>()
-const lifecycleAtom = atom(0)
-lifecycleAtom.onMount = () => () => {
-  for (const cancel of retryTimers) cancel()
+interface LifecycleState {
+  generation: number
+  cancelRequests: Set<() => void>
 }
-const lastGoodConnections = new Map<string, Connection>()
 
+const refreshNonceAtom = atom(0)
+const lifecycleAtom = atom<LifecycleState | null>(null)
+// Atom state belongs to each Jotai store, so this preserves only the latest
+// successful remote in that store without sharing results across windows.
+const lastGoodConnectionAtom = atom<Connection | undefined>(undefined)
+lifecycleAtom.onMount = (set) => {
+  let mountedState!: LifecycleState
+  set((previous) => {
+    mountedState = {
+      generation: (previous?.generation ?? 0) + 1,
+      cancelRequests: new Set(),
+    }
+    return mountedState
+  })
+  return () => {
+    // The lifecycle state is local to the Jotai store. Its request owners are
+    // canceled whether fetching or waiting, without touching another store.
+    for (const cancel of mountedState.cancelRequests) cancel()
+  }
+}
+
+// Initial request plus at most two retries: 250 ms and then 1 second. When
+// those three reads fail, Connections exposes Retry; there is no polling.
 const retryDelays = [250, 1_000]
 
 /**
@@ -63,10 +84,17 @@ const retryDelays = [250, 1_000]
  */
 export const refreshGoogleAtom = atom(null, (_get, set) => set(refreshNonceAtom, (n) => n + 1))
 
-const connectionAtom = atom(async (get, { signal }): Promise<Connection | undefined> => {
+interface ConnectionRead {
+  remote: string | null
+  connection?: Connection
+  request: number
+  error: boolean
+}
+
+const connectionAtom = atom(async (get, { signal }): Promise<ConnectionRead> => {
   const remote = get(activeRemoteAtom)
-  get(refreshNonceAtom)
-  get(lifecycleAtom)
+  const request = get(refreshNonceAtom)
+  const lifecycle = get(lifecycleAtom)
   const none: Connection = {
     remote,
     account: null,
@@ -75,31 +103,57 @@ const connectionAtom = atom(async (get, { signal }): Promise<Connection | undefi
     accounts: [],
     currentSub: null,
   }
-  if (remote === null) return none
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      const [status, connected] = await Promise.all([
-        googleCap.status(remote),
-        googleCap.allAccounts(remote),
-      ])
-      if (signal.aborted) return undefined
-      const connection: Connection = {
-        remote,
-        account: status.account,
-        missingScopes: status.missingScopes,
-        needsReconnect: status.needsReconnect === true,
-        accounts: connected.accounts,
-        currentSub: connected.current,
-      }
-      lastGoodConnections.set(remote, connection)
-      return connection
-    } catch {
-      if (signal.aborted) return undefined
-      const delay = retryDelays[attempt]
-      if (delay === undefined || !(await waitForRetry(delay, signal))) {
-        return lastGoodConnections.get(remote)
+  if (remote === null) return { remote, connection: none, request, error: false }
+  if (lifecycle === null) return { remote, request, error: false }
+
+  const owner = new AbortController()
+  const cancel = () => owner.abort()
+  lifecycle.cancelRequests.add(cancel)
+  const abortOnRefresh = () => owner.abort()
+  signal.addEventListener('abort', abortOnRefresh, { once: true })
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const [status, connected] = await Promise.all([
+          googleCap.status(remote),
+          googleCap.allAccounts(remote),
+        ])
+        if (owner.signal.aborted || signal.aborted || get(lifecycleAtom) !== lifecycle) {
+          return { remote, request, error: false }
+        }
+        const connection: Connection = {
+          remote,
+          account: status.account,
+          missingScopes: status.missingScopes,
+          needsReconnect: status.needsReconnect === true,
+          accounts: connected.accounts,
+          currentSub: connected.current,
+        }
+        return { remote, connection, request, error: false }
+      } catch {
+        // An abandoned request belongs to an earlier lifecycle. In particular,
+        // do not schedule a retry after its last subscriber has gone away.
+        if (owner.signal.aborted || signal.aborted || get(lifecycleAtom) !== lifecycle) {
+          return { remote, request, error: false }
+        }
+        const delay = retryDelays[attempt]
+        if (delay === undefined || !(await waitForRetry(delay, owner.signal))) {
+          if (owner.signal.aborted || signal.aborted || get(lifecycleAtom) !== lifecycle) {
+            return { remote, request, error: false }
+          }
+          const lastGood = get(lastGoodConnectionAtom)
+          return {
+            remote,
+            connection: lastGood?.remote === remote ? lastGood : undefined,
+            request,
+            error: true,
+          }
+        }
       }
     }
+  } finally {
+    signal.removeEventListener('abort', abortOnRefresh)
+    lifecycle.cancelRequests.delete(cancel)
   }
 })
 
@@ -108,12 +162,10 @@ function waitForRetry(delay: number, signal: AbortSignal): Promise<boolean> {
     const finish = (shouldRetry: boolean) => {
       clearTimeout(timeout)
       signal.removeEventListener('abort', onAbort)
-      retryTimers.delete(onAbort)
       resolve(shouldRetry)
     }
     const onAbort = () => finish(false)
     const timeout = setTimeout(() => finish(true), delay)
-    retryTimers.add(onAbort)
     signal.addEventListener('abort', onAbort, { once: true })
     if (signal.aborted) onAbort()
   })
@@ -121,18 +173,18 @@ function waitForRetry(delay: number, signal: AbortSignal): Promise<boolean> {
 
 /** The last answer while a refresh is in flight, so a refresh never flashes
  *  the nav menu's items away; `undefined` before the first. */
-const heldConnectionAtom = unwrap(connectionAtom, (previous) => previous)
+const heldConnectionReadAtom = unwrap(connectionAtom, (previous) => previous)
 
 /** The held answer, if it is for the open vault: another vault's answer is
  *  not this one's, so a switch reads as "not asked yet" until it lands. */
-const currentConnectionAtom = atom((get): Connection | undefined => {
-  const held = get(heldConnectionAtom)
+const currentConnectionReadAtom = atom((get): ConnectionRead | undefined => {
+  const held = get(heldConnectionReadAtom)
   return held !== undefined && held.remote === get(activeRemoteAtom) ? held : undefined
 })
 
 /** `undefined`: not asked yet. `null`: asked, nothing connected. */
 const googleAccountAtom = atom(
-  (get): GoogleAccount | null | undefined => get(currentConnectionAtom)?.account,
+  (get): GoogleAccount | null | undefined => get(currentConnectionReadAtom)?.connection?.account,
 )
 
 /** Mail and the agenda show once Google is connected; "not asked yet" hides
@@ -142,6 +194,10 @@ export const googleConnectedAtom = atom((get) => get(googleAccountAtom) != null)
 export interface GoogleAccountState {
   /** `undefined`: not asked yet. `null`: asked, nothing connected. */
   account: GoogleAccount | null | undefined
+  /** The initial read or an explicit refresh is still in progress. */
+  loading: boolean
+  /** All bounded reads failed; this is not an authoritative disconnected result. */
+  readError: boolean
   missingScopes: string[]
   needsReconnect: boolean
   /** Every account connected on this machine. */
@@ -153,10 +209,21 @@ export interface GoogleAccountState {
 }
 
 export function useGoogleAccount(): GoogleAccountState {
-  const connection = useAtomValue(currentConnectionAtom)
+  const result = useAtomValue(currentConnectionReadAtom)
   const refresh = useSetAtom(refreshGoogleAtom)
+  const setLastGood = useSetAtom(lastGoodConnectionAtom)
+  const request = useAtomValue(refreshNonceAtom)
+  const connection = result?.connection
+  useEffect(() => {
+    if (connection !== undefined && result?.error === false) setLastGood(connection)
+  }, [connection, result?.error, setLastGood])
   return {
     account: connection?.account,
+    loading:
+      result === undefined ||
+      result.request !== request ||
+      (connection === undefined && !result.error),
+    readError: result?.error ?? false,
     missingScopes: connection?.missingScopes ?? [],
     needsReconnect: connection?.needsReconnect ?? false,
     accounts: connection?.accounts ?? [],
