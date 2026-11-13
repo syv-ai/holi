@@ -10,7 +10,9 @@ function fixture({
   issues = [],
   notesMissing = [],
   registryFailures = {},
+  registryResponses = {},
   pages = [],
+  nextLink = '<https://api.github.com/repos/syv-ai/holi/issues?page=2>; rel="next"',
 } = {}) {
   const calls = []
   const fetch = async (url, options = {}) => {
@@ -19,10 +21,11 @@ function fixture({
     if (parsed.hostname === 'registry.npmjs.org') {
       const name = decodeURIComponent(parsed.pathname.slice(1))
       if (registryFailures[name]) return response(503, {})
+      if (registryResponses[name]) return registryResponses[name]
       const version = versions[name] ?? '1.2.3'
       return response(200, {
         'dist-tags': { latest: version },
-        versions: { [version]: { time: '2026-11-13T09:00:00Z' } },
+        time: { [version]: '2026-11-13T09:00:00Z' },
       })
     }
     if (parsed.hostname === 'api.github.com' && parsed.pathname.includes('/releases/tags/')) {
@@ -42,13 +45,7 @@ function fixture({
     if (parsed.pathname === '/repos/syv-ai/holi/issues') {
       const page = parsed.searchParams.get('page')
       if (page) return response(200, pages[Number(page) - 2] ?? [], { link: '' })
-      return response(
-        200,
-        pages.length ? pages[0] : issues,
-        pages.length
-          ? { link: '<https://api.github.com/repos/syv-ai/holi/issues?page=2>; rel="next"' }
-          : {},
-      )
+      return response(200, pages.length ? pages[0] : issues, pages.length ? { link: nextLink } : {})
     }
     throw new Error(`Unexpected request ${options.method ?? 'GET'} ${url}`)
   }
@@ -86,6 +83,13 @@ test('creates a stable report for all three fixed package identities', async () 
       .filter((call) => call.url.includes('registry.npmjs.org'))
       .every((call) => !call.headers.Authorization),
   )
+  assert.deepEqual(
+    f.calls
+      .filter((call) => call.url.includes('/releases/tags/'))
+      .map((call) => decodeURIComponent(new URL(call.url).pathname.split('/tags/')[1])),
+    ['v1.2.3', 'rust-v1.2.3', 'v1.2.3'],
+  )
+  assert.ok(f.calls.every((call) => call.redirect === 'manual'))
 })
 
 test('does not write for an unchanged stable discovery despite a different run URL', async () => {
@@ -178,6 +182,75 @@ test('rejects malformed npm metadata and distinguishes missing notes from failed
     .map((call) => JSON.parse(call.body).body)
   assert.ok(reports.some((body) => body.includes('Release notes: unavailable for this version.')))
   assert.equal(reports.length, 2)
+})
+
+test('does not reopen a closed report when only notes or publication evidence changes', async () => {
+  const packageName = HARNESS[0].package
+  const body = `${packageName} **1.2.3** is the stable npm latest release.\nPublished: old\nRelease notes: old\nWorkflow run: old\n<!-- holi-harness-release: claude-code -->`
+  const f = fixture({
+    issues: [
+      {
+        number: 1,
+        title: 'Harness release: claude-code',
+        body,
+        state: 'closed',
+        user: { login: 'github-actions[bot]' },
+      },
+    ],
+  })
+  await watch({ ...f, token, runUrl })
+  const patch = f.calls.find((call) => call.method === 'PATCH')
+  assert.ok(patch)
+  assert.equal(JSON.parse(patch.body).state, undefined)
+})
+
+test('rejects prerelease and non-canonical versions without creating a report', async () => {
+  for (const version of ['1.2.3-beta.1', '01.2.3', '1.02.3', '1.2.03', '1.2']) {
+    const f = fixture({ versions: { '@anthropic-ai/claude-code': version } })
+    await assert.rejects(watch({ ...f, token, runUrl }), /Malformed npm metadata/)
+    assert.equal(f.calls.filter((call) => call.method === 'POST').length, 2)
+    assert.equal(f.calls.filter((call) => call.method === 'PATCH').length, 0)
+  }
+})
+
+test('rejects oversized streamed registry responses at the registry-specific cap', async () => {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(25 * 1024 * 1024))
+      controller.enqueue(new Uint8Array(1))
+      controller.close()
+    },
+  })
+  const f = fixture({
+    registryResponses: {
+      '@openai/codex': {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        body,
+      },
+    },
+  })
+  await assert.rejects(watch({ ...f, token, runUrl }), /Response exceeded 26214400 bytes/)
+})
+
+test('rejects hostile authenticated pagination links and detects cycles', async () => {
+  for (const nextLink of [
+    '<https://evil.example/repos/syv-ai/holi/issues?page=2>; rel="next"',
+    '<https://api.github.com.evil.example/repos/syv-ai/holi/issues?page=2>; rel="next"',
+    '<https://user@api.github.com/repos/syv-ai/holi/issues?page=2>; rel="next"',
+    '<https://api.github.com:444/repos/syv-ai/holi/issues?page=2>; rel="next"',
+    '<https://api.github.com/repos/other/repo/issues?page=2>; rel="next"',
+  ]) {
+    const f = fixture({ pages: [[]], nextLink })
+    await assert.rejects(watch({ ...f, token, runUrl }), /unsafe GitHub issue pagination/)
+    assert.equal(f.calls.length, 1)
+  }
+  const cycle =
+    '<https://api.github.com/repos/syv-ai/holi/issues?state=all&per_page=100>; rel="next"'
+  const f = fixture({ pages: [[]], nextLink: cycle })
+  await assert.rejects(watch({ ...f, token, runUrl }), /pagination cycle/)
+  assert.equal(f.calls.length, 1)
 })
 
 test('only sends the credential to fixed GitHub API origins', async () => {
