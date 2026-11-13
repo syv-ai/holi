@@ -98,7 +98,7 @@ interface EventCardProps {
   onOpenChange: (open: boolean) => void
   onEdit: () => void
   /** Save what the form holds: the draft it was opened with, as edited. */
-  onSave: (draft: EventDraft) => void
+  onSave: (draft: EventDraft) => Promise<void>
   onDelete: () => Promise<void>
   onCreateTask: () => Promise<void>
   onOpenExternal: (url: string) => void
@@ -234,6 +234,7 @@ export function EventCard({
   }, [anchor])
   const escapeClose = useRef(false)
   const explicitClose = useRef(false)
+  const successfulAction = useRef(false)
   const isForm = state?.mode === 'edit' || state?.mode === 'create'
   const label = isForm ? (state?.mode === 'edit' ? 'Edit event' : 'New event') : state?.draft.title
   return (
@@ -265,12 +266,16 @@ export function EventCard({
               origin.matches('button:not(:disabled),a[href],input:not(:disabled),[tabindex]')
                 ? origin
                 : anchor.fallback
-            if ((escapeClose.current || explicitClose.current) && target?.isConnected) {
+            if (
+              (escapeClose.current || explicitClose.current || successfulAction.current) &&
+              target?.isConnected
+            ) {
               event.preventDefault()
               target.focus()
             }
             escapeClose.current = false
             explicitClose.current = false
+            successfulAction.current = false
           }}
         >
           <span role="status" className="sr-only">
@@ -283,7 +288,10 @@ export function EventCard({
               mode={state.mode as 'edit' | 'create'}
               error={error}
               saving={saving}
-              onSave={onSave}
+              onSave={async (draft) => {
+                await onSave(draft)
+                successfulAction.current = true
+              }}
               onDelete={onDelete}
               onClose={() => {
                 explicitClose.current = true
@@ -547,7 +555,7 @@ function EventForm({
   mode: 'edit' | 'create'
   error: string | null
   saving: boolean
-  onSave: (draft: EventDraft) => void
+  onSave: (draft: EventDraft) => Promise<void>
   onDelete: () => Promise<void>
   onClose: () => void
 }) {
