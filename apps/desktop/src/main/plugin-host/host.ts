@@ -243,10 +243,14 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     cb: (s: VaultSnapshot) => void
   }>()
   const snapshots = new Map<string, { snapshot: VaultSnapshot; generation: number }>()
-  /** A fresh disposer call may temporarily use established providers. The
-   *  async-local lease follows only that awaited call tree and is revoked when
-   *  it settles; it never makes a parked activation valid generally. */
-  type FinalizationOperation = { remote: string; generation: number; active: boolean }
+  /** A disposer may temporarily use established providers. This provenance
+   *  lasts only while its owning disposer lease is draining. */
+  type FinalizationOperation = {
+    remote: string
+    root: string
+    state: VaultRun
+    ownerLease: Started['lease']
+  }
   const finalizationOperations = new AsyncLocalStorage<FinalizationOperation>()
   const eventListeners = new Set<{
     remote: string
@@ -457,9 +461,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       const operation = finalizationOperations.getStore()
       return (
         operation !== undefined &&
-        operation.active &&
         operation.remote === remote &&
-        operation.generation === state.generation &&
+        operation.root === root &&
+        operation.state === state &&
+        operation.ownerLease.phase === 'draining' &&
+        state.leases.has(operation.ownerLease) &&
         state.parked &&
         runsByRemote.get(remote) === state &&
         established &&
@@ -562,10 +568,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           throw new Error(`${remote} plugin context is no longer active`)
         const inherited = finalizationOperations.getStore()
         const operation =
-          inherited?.active && inFinalization
+          inherited !== undefined && inFinalization
             ? inherited
             : draining() && state.parked
-              ? { remote, generation: state.generation, active: true }
+              ? { remote, root, state, ownerLease: lease }
               : null
         const invoke = () =>
           deps.call!(remote, name, params, async (target) => {
@@ -574,8 +580,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
               target.remote !== remote ||
               target.root !== root ||
               (operation !== null
-                ? !operation.active ||
-                  operation.generation !== state.generation ||
+                ? operation.remote !== remote ||
+                  operation.root !== root ||
+                  operation.state !== state ||
+                  operation.ownerLease.phase !== 'draining' ||
+                  !state.leases.has(operation.ownerLease) ||
                   !state.parked ||
                   runsByRemote.get(remote) !== state ||
                   !(draining() || finalizing())
@@ -586,11 +595,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
               throw new Error(`${remote} plugin context is no longer active`)
           })
         if (operation === null) return invoke()
-        try {
-          return await finalizationOperations.run(operation, invoke)
-        } finally {
-          if (operation !== inherited) operation.active = false
-        }
+        return finalizationOperations.run(operation, invoke)
       },
       log: (level, message, detail) => {
         if (!valid() && !draining()) return
