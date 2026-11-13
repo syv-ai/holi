@@ -95,7 +95,7 @@ export function askpassScript(platform: NodeJS.Platform = process.platform): str
   }
   // Git for Windows provides sh.exe and runs shebang scripts, avoiding CMD's
   // unsafe interpolation of the prompt argument into batch syntax.
-  return '#!/bin/sh\ncase "$1" in [Uu][Ss][Ee][Rr][Nn][Aa][Mm][Ee]*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
+  return '#!/bin/sh\ncase "$1" in [Uu][Ss][Ee][Rr][Nn][Aa][Mm][Ee]*) echo "x-access-token";; *) printf "%s\\n" "$HOLI_GIT_TOKEN";; esac\n'
 }
 
 export function ensureAskpass(): Promise<string> {
