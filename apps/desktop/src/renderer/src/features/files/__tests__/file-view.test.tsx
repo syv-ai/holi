@@ -19,7 +19,7 @@ import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
-import { FileView } from '../file-view'
+import { FileView, isCoreTextFilePath } from '../file-view'
 
 let lastStore: ReturnType<typeof createStore>
 const read = vi.fn()
@@ -91,6 +91,22 @@ async function typeInto(text: string) {
     changes: { from: 0, to: view.state.doc.length, insert: text },
   })
 }
+
+test('only paths actually routed to the core text editor are retainable', () => {
+  const pdfClaim = {
+    match: (path: string) => path.endsWith('.pdf'),
+    view: () => null,
+  }
+  const nonViewerClaim = { match: (path: string) => path.endsWith('.custom') }
+
+  expect(isCoreTextFilePath('extensionless', [])).toBe(true)
+  expect(isCoreTextFilePath('data.json', [])).toBe(true)
+  expect(isCoreTextFilePath('note.md', [])).toBe(false)
+  expect(isCoreTextFilePath('photo.png', [])).toBe(false)
+  expect(isCoreTextFilePath('archive.docx', [])).toBe(false)
+  expect(isCoreTextFilePath('paper.pdf', [pdfClaim])).toBe(false)
+  expect(isCoreTextFilePath('item.custom', [nonViewerClaim])).toBe(true)
+})
 
 test('an image opens as an image', () => {
   setup('assets/logo.png')

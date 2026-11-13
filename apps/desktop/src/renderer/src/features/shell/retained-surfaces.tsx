@@ -12,6 +12,7 @@ import { activeRemoteAtom } from '@/state/vaults'
 export function useRetainedSurfaces(
   visibleKeys: readonly string[],
   render: (key: string, visible: boolean) => ReactNode,
+  retainKey: (key: string) => boolean = () => false,
 ): { slot: (key: string) => ReactNode; content: ReactNode } {
   const remote = useAtomValue(activeRemoteAtom)
   const workspace = useAtomValue(shellWorkspaceAtom)
@@ -27,7 +28,9 @@ export function useRetainedSurfaces(
   const open = new Set(allTabs(workspace))
   const retained = (key: string) => {
     const tab = parseTabKey(key)
-    return tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true
+    return (
+      (tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true) || retainKey(key)
+    )
   }
   const keep = new Set(
     visited.remote === remote ? visited.keys.filter((key) => open.has(key) && retained(key)) : [],

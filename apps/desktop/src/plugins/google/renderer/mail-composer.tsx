@@ -74,6 +74,7 @@ const COMPOSE_VIEWS = [
 interface LoadedDraft {
   to: MailAddress[]
   cc: MailAddress[]
+  bcc: MailAddress[]
   subject: string
   markdown: string
   foreign: boolean
@@ -131,7 +132,9 @@ export function MailComposer({
 
   const [to, setTo] = useState<MailAddress[]>(opening.to)
   const [cc, setCc] = useState<MailAddress[]>(opening.cc)
+  const [bcc, setBcc] = useState<MailAddress[]>([])
   const [showCc, setShowCc] = useState(opening.cc.length > 0)
+  const [showBcc, setShowBcc] = useState(false)
   const [subject, setSubject] = useState(opening.subject)
   const [markdown, setMarkdown] = useState(opening.body)
   /** Bumped when a draft loads: the editor reads its text only at mount, so a
@@ -158,15 +161,18 @@ export function MailComposer({
 
   /** The current values, readable from inside an async save without capturing
    *  a stale closure. */
-  const latest = useRef({ to, cc, subject, markdown })
-  latest.current = { to, cc, subject, markdown }
+  const latest = useRef({ to, cc, bcc, subject, markdown })
+  latest.current = { to, cc, bcc, subject, markdown }
 
   // ---- loading an existing draft -----------------------------------------
 
   const applyLoaded = (draft: LoadedDraft): void => {
     setTo(draft.to)
+    const loadedBcc = draft.bcc ?? []
     setCc(draft.cc)
+    setBcc(loadedBcc)
     setShowCc(draft.cc.length > 0)
+    setShowBcc(loadedBcc.length > 0)
     setSubject(draft.subject)
     setMarkdown(draft.markdown)
     setLoads((n) => n + 1)
@@ -195,6 +201,7 @@ export function MailComposer({
         applyLoaded({
           to: draft.to,
           cc: draft.cc,
+          bcc: draft.bcc,
           subject: draft.subject,
           markdown: body,
           foreign: draft.foreign,
@@ -221,6 +228,7 @@ export function MailComposer({
     return {
       to: current.to.map((address) => address.email),
       ...(current.cc.length === 0 ? {} : { cc: current.cc.map((address) => address.email) }),
+      ...(current.bcc.length === 0 ? {} : { bcc: current.bcc.map((address) => address.email) }),
       subject: current.subject,
       body: current.markdown,
       // Same pure function on the same input as the preview, differing only in
@@ -305,7 +313,7 @@ export function MailComposer({
     if (!dirtyRef.current) return
     const timer = setTimeout(() => void save(), AUTOSAVE_IDLE_MS)
     return () => clearTimeout(timer)
-  }, [to, cc, subject, markdown, save])
+  }, [to, cc, bcc, subject, markdown, save])
 
   /**
    * A forced save on the way out, so a dismissed composer leaves its text in
@@ -427,6 +435,11 @@ export function MailComposer({
             Cc
           </Button>
         )}
+        {!showBcc && (
+          <Button variant="ghost" size="sm" onClick={() => setShowBcc(true)}>
+            Bcc
+          </Button>
+        )}
       </div>
 
       {showCc && (
@@ -437,6 +450,21 @@ export function MailComposer({
             value={cc}
             onChange={(next) => {
               setCc(next)
+              markDirty()
+            }}
+            suggestions={suggestions}
+          />
+        </div>
+      )}
+
+      {showBcc && (
+        <div className="flex items-baseline gap-2">
+          <span className="w-12 shrink-0 text-xs text-muted-foreground">Bcc</span>
+          <ChipInput
+            label="Bcc"
+            value={bcc}
+            onChange={(next) => {
+              setBcc(next)
               markDirty()
             }}
             suggestions={suggestions}
