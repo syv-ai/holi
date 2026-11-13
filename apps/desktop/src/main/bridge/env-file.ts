@@ -128,6 +128,12 @@ export function createBridgeEnv(
  * is not digits or hex. Never sources the file. One command per line, each
  * safe to join with `; `, and safe under `set -eu`.
  */
+export function shellJobId(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32'
+    ? `job=$(printf '%s' "\${CLAUDE_JOB_DIR:-}" | tr '\\134' '/' | sed 's|.*/||')`
+    : 'job=${CLAUDE_JOB_DIR##*/}'
+}
+
 export function shellReadBridgeEnv(keys: readonly string[]): string[] {
   for (const key of keys) if (!KEY.test(key)) throw new Error(`${key} is not a HOLI_ key`)
   return [
