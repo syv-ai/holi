@@ -26,7 +26,14 @@ import {
   typeIntoTerminal,
   updateTerminalAppearance,
 } from './lib/session-terminals'
-import { activeRemoteAtom, cn, openDocumentAtom, snapshotAtom, vaultsAtom } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  activeSurfaceIdAtom,
+  cn,
+  openDocumentAtom,
+  snapshotAtom,
+  vaultsAtom,
+} from '@/plugin-api'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
  * second one at the buffer end. Ink's init re-enables it (`\x1b[?25h`), hence
@@ -45,8 +52,11 @@ export function SessionTerminal({
   visible,
   onGeometry,
   provider,
+  focusId = terminalId,
 }: {
   terminalId: string
+  /** The owning tab, when its selection names a session rather than a terminal. */
+  focusId?: string
   /** This terminal's tab is the one showing. Drives the deferred build and the
    *  refit; the host is hidden rather than unmounted when false. */
   visible: boolean
@@ -73,6 +83,12 @@ export function SessionTerminal({
   // The vault this terminal is in: every byte and resize says which, so main
   // can drop one that outlived a vault switch.
   const remote = useAtomValue(activeRemoteAtom)
+  const focused = useAtomValue(activeSurfaceIdAtom('agent')) === focusId
+  const focusedRef = useRef(focused)
+  focusedRef.current = focused
+  const lifetimeRef = useRef<{ remote: string; live: boolean } | null>(null)
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
   const remoteRef = useRef(remote)
   remoteRef.current = remote
   // What a path in the output may link to: the vault's files, and its clone's
@@ -89,31 +105,34 @@ export function SessionTerminal({
   const openDocument = useSetAtom(openDocumentAtom)
   const openRef = useRef(openDocument)
   openRef.current = openDocument
-  const type = useCallback(
-    (data: string) => {
-      if (remoteRef.current !== null) typeIntoTerminal(remoteRef.current, terminalId, data)
+  /** Refit and tell the PTY the new geometry — xterm's cols/rows are the truth. */
+  const syncSize = useCallback(
+    (lifetime = lifetimeRef.current) => {
+      if (
+        !lifetime?.live ||
+        lifetimeRef.current !== lifetime ||
+        remoteRef.current !== lifetime.remote ||
+        !visibleRef.current
+      )
+        return
+      const term = termRef.current
+      const fit = fitRef.current
+      const mount = mountRef.current
+      if (!term || !fit || !mount?.isConnected) return
+      if (mount.clientWidth < MIN_FITTABLE_PX || mount.clientHeight < MIN_FITTABLE_PX) return
+      try {
+        fit.fit()
+      } catch {
+        return // not laid out yet
+      }
+      const { cols, rows } = term
+      if (cols === lastSizeRef.current.cols && rows === lastSizeRef.current.rows) return // a redundant resize is a SIGWINCH → full TUI redraw
+      lastSizeRef.current = { cols, rows }
+      geometryRef.current?.(cols, rows)
+      resizeTerminal(lifetime.remote, terminalId, cols, rows)
     },
     [terminalId],
   )
-
-  /** Refit and tell the PTY the new geometry — xterm's cols/rows are the truth. */
-  const syncSize = useCallback(() => {
-    const term = termRef.current
-    const fit = fitRef.current
-    const mount = mountRef.current
-    if (!term || !fit || !mount?.isConnected) return
-    if (mount.clientWidth < MIN_FITTABLE_PX || mount.clientHeight < MIN_FITTABLE_PX) return
-    try {
-      fit.fit()
-    } catch {
-      return // not laid out yet
-    }
-    const { cols, rows } = term
-    if (cols === lastSizeRef.current.cols && rows === lastSizeRef.current.rows) return // a redundant resize is a SIGWINCH → full TUI redraw
-    lastSizeRef.current = { cols, rows }
-    geometryRef.current?.(cols, rows)
-    if (remoteRef.current !== null) resizeTerminal(remoteRef.current, terminalId, cols, rows)
-  }, [terminalId])
 
   /**
    * Build the terminal on FIRST SHOW, not on mount.
@@ -129,7 +148,21 @@ export function SessionTerminal({
    */
   const build = useCallback(() => {
     const mount = mountRef.current
-    if (!mount || termRef.current) return
+    if (!mount || termRef.current || remote === null) return
+    const lifetime = { remote, live: true }
+    lifetimeRef.current = lifetime
+    const isLive = () =>
+      lifetime.live && lifetimeRef.current === lifetime && remoteRef.current === remote
+    // onData includes xterm's automatic protocol replies. Keep those flowing
+    // while hidden; disable only the textarea and our native input shortcuts.
+    const sendData = (data: string) => {
+      if (isLive()) typeIntoTerminal(remote, terminalId, data)
+    }
+    const type = (data: string) => {
+      if (visibleRef.current) sendData(data)
+    }
+    selectionRef.current = ''
+    lastSizeRef.current = { cols: 0, rows: 0 }
     const term = new Terminal({
       fontSize: 13,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
@@ -165,15 +198,19 @@ export function SessionTerminal({
     // visible effect below misses.
     const filterPiOutput = provider === 'pi' ? createPiMouseSelectionFilter() : undefined
     const writeOutput = (data: string) => {
+      if (!isLive()) return
       const filtered = filterPiOutput ? filterPiOutput(data) : data
       if (filtered) term.write(filtered)
     }
     const unregister = registerSessionTerminal(terminalId, {
-      focus: () => term.focus(),
+      focus: () => {
+        if (isLive() && visibleRef.current) term.focus()
+      },
       write: writeOutput,
     })
 
     const selection = term.onSelectionChange(() => {
+      if (!isLive()) return
       const selected = term.getSelection()
       if (selected) selectionRef.current = selected
     })
@@ -188,6 +225,7 @@ export function SessionTerminal({
      * on the hidden textarea and the key would be sent a second time.
      */
     term.attachCustomKeyEventHandler((e) => {
+      if (!isLive() || !visibleRef.current) return false
       const selected = term.getSelection() || selectionRef.current
       const action = terminalKeyAction(e, Boolean(selected), provider)
       if (!action) return true
@@ -213,7 +251,7 @@ export function SessionTerminal({
     })
 
     const stopColorQueries = suppressTerminalColorQueries(term)
-    const typed = term.onData(type)
+    const typed = term.onData(sendData)
 
     // A vault path in the output opens the file in a pane.
     const links = term.registerLinkProvider({
@@ -236,10 +274,8 @@ export function SessionTerminal({
     // Replay what main's mirror recorded (output from before this terminal
     // existed), THEN start taking live data.
     void (async () => {
-      const state =
-        remoteRef.current === null
-          ? ''
-          : await agentCap.attach(remoteRef.current, { id: terminalId })
+      const state = await agentCap.attach(remote, { id: terminalId })
+      if (!isLive()) return
       if (state) writeOutput(state)
       term.write(HIDE_CURSOR)
     })()
@@ -248,26 +284,27 @@ export function SessionTerminal({
     // session that has only just spawned: its mirror is empty, the replay above
     // writes nothing, and Ink's `\x1b[?25h` arrives afterwards. Without this a
     // fresh tab shows xterm's cursor beside Claude's for the life of the session.
-    const reHide = setTimeout(() => term.write(HIDE_CURSOR), 500)
+    const reHide = setTimeout(() => {
+      if (isLive()) term.write(HIDE_CURSOR)
+    }, 500)
 
-    const observer = new ResizeObserver(() => syncSize())
+    const observer = new ResizeObserver(() => syncSize(lifetime))
     observer.observe(mount)
     const syncAppearance = (theme: ReturnType<typeof terminalTheme>): void => {
+      if (!isLive()) return
       term.options.theme = theme
-      const at = remoteRef.current
-      if (at !== null) {
-        const { foreground, background, ...palette } = theme
-        updateTerminalAppearance(at, terminalId, {
-          foreground,
-          background,
-          ...palette,
-        })
-      }
+      const { foreground, background, ...palette } = theme
+      updateTerminalAppearance(remote, terminalId, {
+        foreground,
+        background,
+        ...palette,
+      })
     }
     syncAppearance(terminalTheme(mount))
     const stopWatchingTheme = watchTerminalTheme(mount, syncAppearance)
 
     disposeRef.current = () => {
+      lifetime.live = false
       clearTimeout(reHide)
       unregister()
       typed.dispose()
@@ -281,35 +318,69 @@ export function SessionTerminal({
       fitRef.current = null
       disposeRef.current = null
     }
-  }, [terminalId, provider, syncSize, type])
+  }, [terminalId, provider, syncSize, remote])
 
-  useEffect(() => () => disposeRef.current?.(), [])
+  useEffect(() => () => disposeRef.current?.(), [remote, terminalId, provider])
 
   // Becoming visible is what builds it the first time and refits it every time:
   // the host was `display:none` a tick ago and has no final size yet, so wait
   // for flex layout to resolve (two rAFs) before measuring.
   useEffect(() => {
-    if (!visible) return
+    if (!visible) {
+      if (termRef.current?.textarea) termRef.current.textarea.disabled = true
+      return
+    }
+    const initiatingControl = document.activeElement
     build()
+    if (termRef.current?.textarea) termRef.current.textarea.disabled = false
     const term = termRef.current
     term?.write(DISABLE_FOCUS_REPORTING)
-    term?.focus()
-    const id = requestAnimationFrame(() => requestAnimationFrame(() => syncSize()))
+    const lifetime = lifetimeRef.current
+    let live = true
+    const refit = () => {
+      if (live) syncSize(lifetime)
+    }
+    let innerFrame = 0
+    const id = requestAnimationFrame(() => {
+      if (!live) return
+      innerFrame = requestAnimationFrame(() => {
+        refit()
+        // A newly shown active tab gets the keyboard, unless the person has
+        // already focused a foreground control while layout was settling.
+        const active = document.activeElement
+        // Radix selects during mouse-down, before native focus reaches the
+        // selected shell-tab trigger. That is still the opening gesture.
+        const selectedTab = active?.closest('[role="tab"][aria-selected="true"]')
+        const tabHandoff = Boolean(selectedTab?.closest('[data-slot="site-header"]'))
+        if (
+          live &&
+          lifetime?.live &&
+          remoteRef.current === lifetime.remote &&
+          visibleRef.current &&
+          focusedRef.current &&
+          (active === initiatingControl ||
+            tabHandoff ||
+            active === document.body ||
+            hostRef.current?.contains(active))
+        )
+          term?.focus()
+      })
+    })
     // A fit before xterm has measured its cells (a just-built terminal, a font
     // still loading) does nothing, and a pane that keeps its size never fires
     // the observer again: the program would stay at the 80×24 it opened at.
     // So fit again once the fonts are in and after the first output. A fit
     // that changes nothing sends nothing.
-    let live = true
-    void document.fonts?.ready.then(() => live && syncSize())
+    void document.fonts?.ready.then(refit)
     const firstOutput = term?.onWriteParsed(() => {
       firstOutput?.dispose()
-      if (live) syncSize()
+      refit()
     })
-    const late = window.setTimeout(() => syncSize(), 500)
+    const late = window.setTimeout(refit, 500)
     return () => {
       live = false
       cancelAnimationFrame(id)
+      cancelAnimationFrame(innerFrame)
       window.clearTimeout(late)
       firstOutput?.dispose()
     }
