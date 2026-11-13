@@ -135,8 +135,8 @@ export function AgentsCard() {
     request.current++
     testRequest.current++
   }
-  // The dialog mounts afresh each time it opens (`key`), so its form is
-  // filled from the agent it opens on; `open` false keeps it while it closes.
+  // Hiding suspends the current draft; an explicit close or a different
+  // agent gives the dialog a fresh form through its key.
   const [editing, setEditing] = useState<{
     harness: HarnessRecord | null
     open: boolean
