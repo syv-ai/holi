@@ -387,7 +387,9 @@ export interface SidebarApp {
   icon: IconGlyph
   /** Its place among every plugin's apps, lowest first. */
   order: number
-  render: ComponentType
+  render: ComponentType<{ visible?: boolean }>
+  /** Keep this app's mounted view while its tab is hidden. */
+  keepMounted?: boolean
   /** Listed only while true (an account it needs is connected). */
   visible?: Atom<boolean>
 }

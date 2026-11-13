@@ -57,6 +57,17 @@ test('reports a missing file', async () => {
   expect(showPath).not.toHaveBeenCalled()
 })
 
+test('opens the HTTPS sharing format through the same authoritative checks', async () => {
+  const { deps, entry, showPath } = await fixture()
+  await expect(
+    openHoliLink(
+      'https://syv-ai.github.io/holi/#vault=syv-ai/team-notes&path=notes%2FTopic.md&heading=the-heading',
+      deps,
+    ),
+  ).resolves.toEqual({ ok: true })
+  expect(showPath).toHaveBeenCalledWith(entry.remote, 'notes/Topic.md', { heading: 'the-heading' })
+})
+
 test('matches remote case and forwards path and heading to the shared route', async () => {
   const { deps, entry, showPath } = await fixture()
   await expect(
