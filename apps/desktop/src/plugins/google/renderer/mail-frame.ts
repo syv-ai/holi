@@ -18,8 +18,8 @@
  * `document.write` rather than `srcdoc` gives the app the document handle on
  * the same tick instead of after a load event.
  *
- * Two canvases: mail usually declares its ink and inherits white paper, so
- * `bringsOwnDesign` picks `PAPER` or the app theme per block.
+ * Light mode preserves sender-designed paper. Dark mode uses the app palette
+ * and removes author paint declarations while retaining layout and imagery.
  */
 import { useEffect, useState } from 'react'
 
@@ -47,14 +47,8 @@ const TOKENS: Record<Exclude<keyof MailPalette, 'scheme'>, string> = {
 }
 
 /**
- * The canvas mail was designed for: white paper, dark ink.
- *
- * A deliberate second mode: mail sets its text colour and leaves the
- * background to the client, which has always been white, so on a dark surface
- * it and its transparent logos disappear. See `bringsOwnDesign`.
- *
- * Also the fallback when a token reads empty (tests have no stylesheet), which
- * would otherwise leave the frame transparent.
+ * The canvas mail was designed for: white paper, dark ink. It remains the
+ * fallback when a token reads empty (tests have no stylesheet).
  */
 const PAPER: MailPalette = {
   background: '#ffffff',
@@ -93,7 +87,9 @@ export function bringsOwnDesign(html: string): boolean {
 /** The canvas one block of HTML renders on: its own if it brought one, the
  *  app's theme if it did not. */
 export function canvasFor(html: string, themed: MailPalette): MailPalette {
-  return bringsOwnDesign(html) ? PAPER : themed
+  // Authored colors assume a light canvas. Keep that design in light mode;
+  // dark mode preserves the app surface and normalizes authored paint below.
+  return themed.scheme === 'dark' || !bringsOwnDesign(html) ? themed : PAPER
 }
 
 /**
@@ -198,9 +194,18 @@ export function mailFrameDocument({
     "form-action 'none'",
   ].join('; ')
 
+  // Dark mode strips only authored paint (not layout rules) before writing the
+  // content into this isolated document. Images and the strict frame policy
+  // are unaffected. Light mode retains sender styling as before.
+  const content = palette.scheme === 'dark' ? normalizeDarkMail(html, css) : { html, css }
+
   // Order matters: defaults the message may override, the message, then the
   // rules it may not.
-  const sheets = [defaults(palette), css === '' ? '' : safeStylesheet(css), INVARIANTS]
+  const sheets = [
+    defaults(palette),
+    content.css === '' ? '' : safeStylesheet(content.css),
+    INVARIANTS,
+  ]
     .filter((sheet) => sheet !== '')
     .map((sheet) => `<style>${sheet}</style>`)
     .join('\n')
@@ -210,11 +215,69 @@ export function mailFrameDocument({
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 ${sheets}
-</head><body>${html}</body></html>`
+</head><body>${content.html}</body></html>`
 }
 
-/** Defaults for mail that brings none: first and specificity-free, so a
- *  message's own rules win. */
+/** Defaults for normalized content, first so sender layout rules still win. */
+function normalizeDarkMail(html: string, css: string): { html: string; css: string } {
+  const parsed = new DOMParser().parseFromString(html, 'text/html')
+  for (const element of parsed.body.querySelectorAll('body, body *')) {
+    for (const attribute of ['color', 'bgcolor', 'text', 'link', 'vlink', 'alink']) {
+      element.removeAttribute(attribute)
+    }
+    const style = (element as HTMLElement).style
+    stripPaint(style)
+    if (style.length === 0) element.removeAttribute('style')
+  }
+
+  return { html: parsed.body.innerHTML, css: stripStylesheetPaint(css) }
+}
+
+/** Remove authored colors but retain dimensions, display, media queries and images. */
+function stripPaint(style: CSSStyleDeclaration): void {
+  const properties = Array.from(style)
+  let backgroundImage = style.getPropertyValue('background-image')
+  const backgroundPriority = style.getPropertyPriority('background-image')
+  for (const property of properties) {
+    if (property === 'background') {
+      // A shorthand resets background-image too; retain an explicitly supplied
+      // image while removing the shorthand's authored color.
+      if (backgroundImage === '') {
+        const value = style.getPropertyValue(property)
+        backgroundImage = extractBackgroundImages(value).join(', ')
+      }
+      style.removeProperty(property)
+    } else if (property === 'background-image') {
+      continue
+    } else if (property === 'color' || property.endsWith('-color')) {
+      style.removeProperty(property)
+    }
+  }
+  if (backgroundImage !== '')
+    style.setProperty('background-image', backgroundImage, backgroundPriority)
+}
+
+function stripStylesheetPaint(css: string): string {
+  // CSS declarations end at a semicolon or the containing rule's closing
+  // brace. Matching only declaration boundaries keeps selectors, at-rules,
+  // media queries and every non-paint property byte-for-byte intact.
+  return css.replace(
+    /(^|[;{])\s*(background|[-\w]*color)\s*:((?:[^;{}()]|\([^()]*\))*)(?=;|\})/gi,
+    (_declaration, separator: string, property: string, value: string) => {
+      const images = property.toLowerCase() === 'background' ? extractBackgroundImages(value) : []
+      return separator + (images.length === 0 ? '' : `background-image:${images.join(', ')}`)
+    },
+  )
+}
+
+function extractBackgroundImages(value: string): string[] {
+  return (
+    value.match(
+      /url\((?:[^()]|\([^()]*\))*\)|(?:repeating-)?(?:linear|radial|conic)-gradient\((?:[^()]|\([^()]*\))*\)/gi,
+    ) ?? []
+  )
+}
+
 function defaults(palette: MailPalette): string {
   return `
 html { color-scheme: ${palette.scheme}; }
@@ -225,9 +288,8 @@ body {
   overflow-wrap: break-word;
 }
 img { max-width: 100%; height: auto; }
-table { max-width: 100%; }
-a { color: ${palette.link}; }
-blockquote {
+table { max-width: 100%; }  a { color: ${palette.link}; }
+  blockquote {
   margin: 0.5em 0; padding-left: 0.75em;
   border-left: 2px solid ${palette.border}; color: ${palette.muted};
 }
