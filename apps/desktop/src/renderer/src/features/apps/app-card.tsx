@@ -47,13 +47,14 @@ type Description = { kind: 'loading' } | { kind: 'ready'; text: string | null } 
 function useDescription(
   describe: (() => Promise<string | null>) | undefined,
   stamp: string,
+  visible: boolean,
 ): [Description, () => void] {
   const [state, setState] = useState<Description>(
     describe === undefined ? { kind: 'ready', text: null } : { kind: 'loading' },
   )
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
-    if (describe === undefined) return
+    if (describe === undefined || !visible) return
     let live = true
     describe().then(
       (text) => live && setState({ kind: 'ready', text }),
@@ -65,7 +66,7 @@ function useDescription(
     // `describe` is a fresh closure every render; the app and its files are
     // what decide when to read again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stamp, attempt])
+  }, [stamp, attempt, visible])
   return [
     state,
     () => {
@@ -84,13 +85,15 @@ function usePreview(
   preview: (() => Promise<string | null>) | undefined,
   stamp: string,
   version: number,
+  visible: boolean,
 ): Preview {
   const [state, setState] = useState<Preview>(
     preview === undefined ? { kind: 'ready', url: null } : { kind: 'loading' },
   )
   useEffect(() => {
-    if (preview === undefined) return
+    if (preview === undefined || !visible) return
     let live = true
+    setState({ kind: 'loading' })
     preview().then(
       (url) => live && setState({ kind: 'ready', url }),
       () => live && setState({ kind: 'ready', url: null }),
@@ -101,7 +104,7 @@ function usePreview(
     // `preview` is a fresh closure every render; the app's files and its
     // picture being taken again are what decide when to read again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stamp, version])
+  }, [stamp, version, visible])
   return state
 }
 
@@ -125,6 +128,7 @@ export function AppCard({
   describe,
   preview: readPreview,
   previewVersion = 0,
+  visible = true,
   archived = false,
   onOpen,
   actions,
@@ -139,13 +143,19 @@ export function AppCard({
   preview?: () => Promise<string | null>
   /** Moves when its picture is taken again or let go. */
   previewVersion?: number
+  /** Whether its async card content should be read now. */
+  visible?: boolean
   archived?: boolean
   onOpen: () => void
   actions?: AppCardActions
 }) {
-  const [description, retry] = useDescription(describe, stamp)
-  const preview = usePreview(readPreview, stamp, previewVersion)
+  const [description, retry] = useDescription(describe, stamp, visible)
+  const preview = usePreview(readPreview, stamp, previewVersion, visible)
   const leaving = useRef(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  useEffect(() => {
+    if (!visible) setMenuOpen(false)
+  }, [visible])
   const slash = path.lastIndexOf('/')
   const folder = slash === -1 ? null : path.slice(0, slash)
   const personal = isLocalOnlyPath(path)
@@ -222,59 +232,61 @@ export function AppCard({
     run()
   }
   return (
-    <ContextMenu>
+    <ContextMenu open={visible && menuOpen} onOpenChange={setMenuOpen}>
       <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
-      <ContextMenuContent
-        className="w-56"
-        aria-label={`${name} actions`}
-        onCloseAutoFocus={(event) => {
-          if (leaving.current) event.preventDefault()
-          leaving.current = false
-        }}
-      >
-        <ContextMenuItem onSelect={away(onOpen)}>
-          <ArrowRightIcon aria-hidden="true" />
-          Open
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={away(actions.onOpenBeside)}>
-          <SquareSplitHorizontalIcon aria-hidden="true" />
-          Open beside
-        </ContextMenuItem>
-        {actions.onAsk !== undefined ? (
-          <ContextMenuItem onSelect={away(actions.onAsk)}>
-            <SparklesIcon aria-hidden="true" />
-            Ask about this app
+      {visible ? (
+        <ContextMenuContent
+          className="w-56"
+          aria-label={`${name} actions`}
+          onCloseAutoFocus={(event) => {
+            if (leaving.current || !visible) event.preventDefault()
+            leaving.current = false
+          }}
+        >
+          <ContextMenuItem onSelect={away(onOpen)}>
+            <ArrowRightIcon aria-hidden="true" />
+            Open
           </ContextMenuItem>
-        ) : null}
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={away(actions.onReveal)}>
-          <FolderTreeIcon aria-hidden="true" />
-          Reveal in Files
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={actions.onCopyPath}>
-          <CopyIcon aria-hidden="true" />
-          Copy path
-        </ContextMenuItem>
-        {actions.onRefreshPreview !== undefined ? (
-          <ContextMenuItem onSelect={actions.onRefreshPreview}>
-            <ImageIcon aria-hidden="true" />
-            Refresh preview
+          <ContextMenuItem onSelect={away(actions.onOpenBeside)}>
+            <SquareSplitHorizontalIcon aria-hidden="true" />
+            Open beside
           </ContextMenuItem>
-        ) : null}
-        {actions.onArchive !== undefined ? (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={actions.onArchive}>
-              {archived ? (
-                <ArchiveRestoreIcon aria-hidden="true" />
-              ) : (
-                <ArchiveIcon aria-hidden="true" />
-              )}
-              {archived ? 'Unarchive' : 'Archive'}
+          {actions.onAsk !== undefined ? (
+            <ContextMenuItem onSelect={away(actions.onAsk)}>
+              <SparklesIcon aria-hidden="true" />
+              Ask about this app
             </ContextMenuItem>
-          </>
-        ) : null}
-      </ContextMenuContent>
+          ) : null}
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={away(actions.onReveal)}>
+            <FolderTreeIcon aria-hidden="true" />
+            Reveal in Files
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={actions.onCopyPath}>
+            <CopyIcon aria-hidden="true" />
+            Copy path
+          </ContextMenuItem>
+          {actions.onRefreshPreview !== undefined ? (
+            <ContextMenuItem onSelect={actions.onRefreshPreview}>
+              <ImageIcon aria-hidden="true" />
+              Refresh preview
+            </ContextMenuItem>
+          ) : null}
+          {actions.onArchive !== undefined ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onSelect={actions.onArchive}>
+                {archived ? (
+                  <ArchiveRestoreIcon aria-hidden="true" />
+                ) : (
+                  <ArchiveIcon aria-hidden="true" />
+                )}
+                {archived ? 'Unarchive' : 'Archive'}
+              </ContextMenuItem>
+            </>
+          ) : null}
+        </ContextMenuContent>
+      ) : null}
     </ContextMenu>
   )
 }
