@@ -3,7 +3,7 @@
  * embedpdf, its worker and the PDFium wasm are their own chunk; until it
  * arrives the pane shows the file name.
  */
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 
 const PdfDocument = lazy(() => import('./pdf-document').then((m) => ({ default: m.PdfDocument })))
 
@@ -16,6 +16,9 @@ export function PdfViewer({
   visible?: boolean
   focused?: boolean
 }) {
+  const [wasVisible, setWasVisible] = useState(visible)
+  if (visible && !wasVisible) setWasVisible(true)
+  const mounted = wasVisible || visible
   const name = path.slice(path.lastIndexOf('/') + 1)
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background" data-pdf-viewer={path}>
@@ -26,7 +29,7 @@ export function PdfViewer({
           </div>
         }
       >
-        {visible ? <PdfDocument path={path} visible={visible} focused={focused} /> : null}
+        {mounted ? <PdfDocument path={path} visible={visible} focused={focused} /> : null}
       </Suspense>
     </div>
   )
