@@ -18,10 +18,12 @@
  * `document.write` rather than `srcdoc` gives the app the document handle on
  * the same tick instead of after a load event.
  *
- * Two canvases: mail usually declares its ink and inherits white paper, so
- * `bringsOwnDesign` picks `PAPER` or the app theme per block.
+ * Light mode preserves sender-designed paper. Dark mode uses the app palette
+ * and removes author paint declarations while retaining layout and imagery.
  */
 import { useEffect, useState } from 'react'
+import postcss, { type Declaration } from 'postcss'
+import valueParser from 'postcss-value-parser'
 
 /** The app tokens a message's page inherits, resolved to real colour values —
  *  a separate document gets no cascade, so they are copied in, not referenced. */
@@ -47,14 +49,8 @@ const TOKENS: Record<Exclude<keyof MailPalette, 'scheme'>, string> = {
 }
 
 /**
- * The canvas mail was designed for: white paper, dark ink.
- *
- * A deliberate second mode: mail sets its text colour and leaves the
- * background to the client, which has always been white, so on a dark surface
- * it and its transparent logos disappear. See `bringsOwnDesign`.
- *
- * Also the fallback when a token reads empty (tests have no stylesheet), which
- * would otherwise leave the frame transparent.
+ * The canvas mail was designed for: white paper, dark ink. It remains the
+ * fallback when a token reads empty (tests have no stylesheet).
  */
 const PAPER: MailPalette = {
   background: '#ffffff',
@@ -93,7 +89,9 @@ export function bringsOwnDesign(html: string): boolean {
 /** The canvas one block of HTML renders on: its own if it brought one, the
  *  app's theme if it did not. */
 export function canvasFor(html: string, themed: MailPalette): MailPalette {
-  return bringsOwnDesign(html) ? PAPER : themed
+  // Authored colors assume a light canvas. Keep that design in light mode;
+  // dark mode preserves the app surface and normalizes authored paint below.
+  return themed.scheme === 'dark' || !bringsOwnDesign(html) ? themed : PAPER
 }
 
 /**
@@ -198,9 +196,18 @@ export function mailFrameDocument({
     "form-action 'none'",
   ].join('; ')
 
+  // Dark mode strips only authored paint (not layout rules) before writing the
+  // content into this isolated document. Images and the strict frame policy
+  // are unaffected. Light mode retains sender styling as before.
+  const content = palette.scheme === 'dark' ? normalizeDarkMail(html, css) : { html, css }
+
   // Order matters: defaults the message may override, the message, then the
   // rules it may not.
-  const sheets = [defaults(palette), css === '' ? '' : safeStylesheet(css), INVARIANTS]
+  const sheets = [
+    defaults(palette),
+    content.css === '' ? '' : safeStylesheet(content.css),
+    INVARIANTS,
+  ]
     .filter((sheet) => sheet !== '')
     .map((sheet) => `<style>${sheet}</style>`)
     .join('\n')
@@ -210,11 +217,132 @@ export function mailFrameDocument({
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 ${sheets}
-</head><body>${html}</body></html>`
+</head><body>${content.html}</body></html>`
 }
 
-/** Defaults for mail that brings none: first and specificity-free, so a
- *  message's own rules win. */
+/** Normalize authored paint while retaining the message's structure and layout. */
+function normalizeDarkMail(html: string, css: string): { html: string; css: string } {
+  const parsed = new DOMParser().parseFromString(html, 'text/html')
+  for (const element of parsed.body.querySelectorAll('body, body *')) {
+    for (const attribute of ['color', 'bgcolor', 'text', 'link', 'vlink', 'alink']) {
+      element.removeAttribute(attribute)
+    }
+    const inline = element.getAttribute('style')
+    if (inline !== null) {
+      element.setAttribute('style', normalizeDeclarations(`x{${inline}}`))
+      if (element.getAttribute('style') === '') element.removeAttribute('style')
+    }
+  }
+
+  return { html: parsed.body.innerHTML, css: stripStylesheetPaint(css) }
+}
+
+/** Layout keywords retained when a background shorthand loses its paint. */
+const BACKGROUND_LAYOUT_WORDS = new Set([
+  'left',
+  'right',
+  'top',
+  'bottom',
+  'center',
+  'cover',
+  'contain',
+  'repeat',
+  'no-repeat',
+  'repeat-x',
+  'repeat-y',
+  'space',
+  'round',
+  'local',
+  'fixed',
+  'scroll',
+  'border-box',
+  'padding-box',
+  'content-box',
+  'text',
+  'none',
+])
+
+function normalizeDeclarations(css: string): string {
+  try {
+    const root = postcss.parse(css)
+    root.walkDecls((declaration) => normalizeDeclaration(declaration))
+    const rule = root.first
+    return rule?.type === 'rule' ? (rule.nodes?.map((node) => node.toString()).join(';') ?? '') : ''
+  } catch {
+    // Malformed inline CSS cannot be normalized safely; discard the style.
+    return ''
+  }
+}
+
+/** Strip authored paint while preserving the declaration's layout tokens. */
+function normalizeDeclaration(declaration: Declaration): void {
+  const property = declaration.prop.toLowerCase()
+  if (property === 'color' || property.endsWith('-color')) {
+    declaration.remove()
+  } else if (property === 'background') {
+    const layers: valueParser.Node[][] = [[]]
+    for (const node of valueParser(declaration.value).nodes) {
+      if (node.type === 'div' && node.value === ',') layers.push([])
+      else layers[layers.length - 1]!.push(node)
+    }
+    declaration.value = layers
+      .map((nodes) => {
+        const kept = nodes.filter((node) => {
+          if (node.type === 'function')
+            return ['url', 'calc', 'min', 'max', 'clamp', 'env'].includes(node.value.toLowerCase())
+          if (node.type !== 'word') return node.type === 'div' || node.type === 'space'
+          return (
+            BACKGROUND_LAYOUT_WORDS.has(node.value.toLowerCase()) ||
+            /^[-+]?(?:\d*\.)?\d+(?:%|[a-z]+)?$/i.test(node.value)
+          )
+        })
+        const hadGradient = nodes.some(
+          (node) => node.type === 'function' && node.value.toLowerCase().endsWith('-gradient'),
+        )
+        const hasUrl = kept.some(
+          (node) => node.type === 'function' && node.value.toLowerCase() === 'url',
+        )
+        if (hadGradient && !hasUrl) kept.unshift(valueParser('none').nodes[0]!)
+        return valueParser.stringify(kept).trim()
+      })
+      .join(', ')
+    if (declaration.value === '') declaration.remove()
+  } else if (property === 'background-image') {
+    const layers: valueParser.Node[][] = [[]]
+    for (const node of valueParser(declaration.value).nodes) {
+      if (node.type === 'div' && node.value === ',') layers.push([])
+      else layers[layers.length - 1]!.push(node)
+    }
+    declaration.value = layers
+      .map((nodes) => {
+        const images = nodes.flatMap((node): valueParser.Node[] => {
+          if (node.type !== 'function') return []
+          if (node.value.toLowerCase() === 'url') return [node]
+          if (node.value.toLowerCase().endsWith('-gradient')) return [valueParser('none').nodes[0]!]
+          return []
+        })
+        return images.length === 0 ? 'none' : valueParser.stringify(images)
+      })
+      .join(', ')
+    if (declaration.value === '') declaration.remove()
+  }
+}
+
+function stripStylesheetPaint(css: string): string {
+  // PostCSS parses nested rules, comments and functions as syntax, rather than
+  // guessing declaration boundaries with a regular expression. Its AST stays
+  // entirely in memory; sender styles never enter the app document.
+  try {
+    const root = postcss.parse(safeStylesheet(css))
+    root.walkDecls(normalizeDeclaration)
+    return root.toString()
+  } catch {
+    // Invalid CSS has no reliable declaration boundaries. Discard it in dark
+    // mode rather than risk leaving sender paint in a partially parsed sheet.
+    return ''
+  }
+}
+
 function defaults(palette: MailPalette): string {
   return `
 html { color-scheme: ${palette.scheme}; }

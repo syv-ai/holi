@@ -4,6 +4,7 @@
  * styling winning inside its page. What markup survives is `mail-html.test.tsx`.
  */
 import { renderHook, act } from '@testing-library/react'
+import postcss, { type Rule } from 'postcss'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   bringsOwnDesign,
@@ -78,10 +79,97 @@ describe('mailFrameDocument — theming', () => {
     expect(html).toContain('color-scheme: dark')
   })
 
-  it('puts its defaults before the message, so the sender’s own styling wins', () => {
-    const html = doc({ html: '<style>body{background:#fff}</style><p>hi</p>' })
+  it('neutralizes authored paint in dark mode without changing structure', () => {
+    const raw =
+      '<style>.card{background:#fff!important;color:#111!important;width:80%;background-image:url(data:image/gif;base64,AA==)}' +
+      '.hero{background:#fff url(data:image/png;base64,AA==) center/cover}' +
+      'a{color:#000!important}blockquote{color:#111!important}' +
+      '@media (min-width:480px){.col{color:#000!important;width:65%!important}}</style>' +
+      '<ta' +
+      'ble bgcolor="#fff"><tr><td style="color:#000!important;background-color:#fff!important">' +
+      '<font color="#000">hello</font></td></tr></ta' +
+      'ble>'
+    const sanitized = sanitizeMailHtml(raw)
+    const html = doc({ html: sanitized.html, css: sanitized.css })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const cell = parsed.querySelector('td')
 
-    expect(html.indexOf('color-scheme')).toBeLessThan(html.indexOf('body{background:#fff}'))
+    expect(cell?.hasAttribute('style')).toBe(false)
+    expect(parsed.querySelector('table')?.hasAttribute('bgcolor')).toBe(false)
+    const authoredSheet = parsed.head.querySelectorAll('style')[1]?.textContent ?? ''
+    expect(parsed.body.querySelector('td')?.textContent).toBe('hello')
+    expect(parsed.querySelector('font')?.hasAttribute('color')).toBe(false)
+    expect(authoredSheet).toContain('width:80%')
+    expect(authoredSheet).toContain('@media (min-width:480px)')
+    expect(authoredSheet).toContain('width:65%!important')
+    expect(authoredSheet).toContain('background-image:url(data:image/gif;base64,AA==)')
+    expect(authoredSheet).toContain('background:url(data:image/png;base64,AA==) center/cover')
+    expect(authoredSheet).not.toMatch(/(?:^|[;{])\s*(?:color|background-color)\s*:/i)
+    const defaults = parsed.head.querySelector('style')?.textContent ?? ''
+    expect(defaults).toContain('a { color: #66aaff; }')
+    expect(defaults).toContain('color: #888888')
+    expect(authoredSheet).not.toContain('#fff')
+    expect(authoredSheet).not.toContain('#111')
+  })
+
+  it('discards malformed inline styles instead of failing to render the message', () => {
+    const html = doc({ html: '<p style="color:red;background:bad}">message</p>' })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+
+    expect(parsed.querySelector('p')?.hasAttribute('style')).toBe(false)
+  })
+
+  it('parses commented declarations and nested color functions without leaving dark text', () => {
+    const html = doc({
+      css: '.card{/* authored ink */ color: color-mix(in srgb, white, var(--ink)); background: var(--paper); width:calc(100% - 2px)}',
+    })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const rule = postcss
+      .parse(parsed.querySelectorAll('style')[1]?.textContent ?? '')
+      .nodes.find((node): node is Rule => node.type === 'rule' && node.selector === '.card')!
+    const declarations = Object.fromEntries(
+      rule.nodes.filter((node) => node.type === 'decl').map((node) => [node.prop, node.value]),
+    )
+
+    expect(declarations.color).toBeUndefined()
+    expect(declarations.background).toBeUndefined()
+    expect(declarations.width).toBe('calc(100% - 2px)')
+  })
+
+  it('removes gradient paint while retaining CSS background URLs and layout priorities', () => {
+    const html = doc({
+      html: '<div style="background:linear-gradient(white, #eee) url(https://images.test/hero.png) calc(100% - 2px) top/cover no-repeat!important">hero</div>',
+      css: '.hero { background: linear-gradient(white, #eee) center / cover repeat-x !important; background-image: linear-gradient(white, #eee), url(data:image/png;base64,AA==); background-position: right top, left bottom !important; background-size: cover, 10px 20px; background-repeat: repeat-x, no-repeat; width: 80% }',
+      allowRemoteContent: true,
+    })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const hero = parsed.querySelector('div') as HTMLDivElement
+    const inlineCss = postcss.parse(`x{${hero.getAttribute('style')}}`).first!
+    const rule = postcss
+      .parse(parsed.querySelectorAll('style')[1]?.textContent ?? '')
+      .nodes.find(
+        (candidate): candidate is Rule =>
+          candidate.type === 'rule' && candidate.selector === '.hero',
+      )!
+    const declarations = (node: Rule) =>
+      Object.fromEntries(
+        node.nodes.filter((entry) => entry.type === 'decl').map((entry) => [entry.prop, entry]),
+      )
+    const inlineProperties = declarations(inlineCss as typeof rule)
+    const stylesheet = declarations(rule)
+
+    expect(inlineProperties.background?.value).toContain('url(https://images.test/hero.png)')
+    expect(inlineProperties.background?.value).not.toContain('gradient')
+    expect(inlineProperties.background?.value).toContain('calc(100% - 2px) top/cover no-repeat')
+    expect(inlineProperties.background?.important).toBe(true)
+    expect(stylesheet.background?.value).toContain('center / cover repeat-x')
+    expect(stylesheet.background?.important).toBe(true)
+    expect(stylesheet['background-image']?.value).toBe('none, url(data:image/png;base64,AA==)')
+    expect(stylesheet['background-position']?.value).toBe('right top, left bottom')
+    expect(stylesheet['background-position']?.important).toBe(true)
+    expect(stylesheet['background-size']?.value).toBe('cover, 10px 20px')
+    expect(stylesheet['background-repeat']?.value).toBe('repeat-x, no-repeat')
+    expect(stylesheet.width?.value).toBe('80%')
   })
 })
 
@@ -133,12 +221,10 @@ describe('mailFrameDocument — the message’s own stylesheet', () => {
     const html = doc({ css: '}</style><img src=x onerror=alert(1)><style>' })
     const parsed = new DOMParser().parseFromString(html, 'text/html')
 
-    // The payload survives as inert text; what matters is that no <img>
-    // element exists.
+    // The malformed sheet is discarded rather than risking active declarations
+    // that the parser cannot reliably identify.
+    expect(parsed.querySelectorAll('style')).toHaveLength(2)
     expect(parsed.querySelector('img')).toBeNull()
-    expect(parsed.querySelectorAll('style')).toHaveLength(3)
-    const sheets = [...parsed.querySelectorAll('style')]
-    expect(sheets.some((sheet) => sheet.textContent?.includes('onerror'))).toBe(true)
   })
 
   /**
@@ -206,6 +292,23 @@ describe('useMailPalette', () => {
 
     // Identity matters: the palette is a frame effect dependency.
     expect(result.current).toBe(second)
+
+    await act(async () => {
+      document.documentElement.dataset.theme = 'light'
+      await Promise.resolve()
+    })
+    expect(result.current.scheme).toBe('light')
+    expect(canvasFor('<p style="color:#000">hello</p>', result.current)).toMatchObject({
+      background: '#ffffff',
+      scheme: 'light',
+    })
+
+    await act(async () => {
+      document.documentElement.dataset.theme = 'dark'
+      await Promise.resolve()
+    })
+    expect(result.current.scheme).toBe('dark')
+    expect(canvasFor('<p style="color:#000">hello</p>', result.current)).toBe(result.current)
   })
 })
 
@@ -224,49 +327,61 @@ describe('openableLink', () => {
 })
 
 /**
- * Which canvas a block of HTML renders on. Mail declares its ink and assumes
- * white paper, so any sign of design means paper: a wrong white block is
- * ordinary, a wrong dark canvas is unreadable.
+ * Dark-mode canvas and author paint normalization, including light-mode fidelity.
  */
 describe('canvasFor', () => {
+  const LIGHT_PALETTE: MailPalette = { ...PALETTE, scheme: 'light' }
   const paper = { background: '#ffffff', scheme: 'light' }
 
-  it('gives the app’s theme to prose that brought no design', () => {
-    expect(canvasFor('<p>hello, here is the plan</p>', PALETTE)).toBe(PALETTE)
+  it('gives the app’s palette to every message in dark mode, including designed mail', () => {
+    expect(canvasFor('<p style="color:#333333">hello</p><img src="logo.png">', PALETTE)).toBe(
+      PALETTE,
+    )
   })
 
-  it('gives paper to a message that sets a text colour', () => {
-    // Ink declared, paper assumed.
-    expect(canvasFor('<p style="color:#333333">hello</p>', PALETTE)).toMatchObject(paper)
+  it('rebuilds one open message dark/light/dark from its original authored source', () => {
+    const source =
+      '<div style="color:white;background:linear-gradient(white,#eee) center/cover">hello</div>'
+    const css =
+      '.mail{/* sender paint */color:white;background:linear-gradient(white,#eee) center/cover!important;width:80%}'
+    const darkAgain = doc({ html: source, css, palette: PALETTE })
+    const light = doc({ html: source, css, palette: { ...PALETTE, scheme: 'light' } })
+    const dark = doc({ html: source, css, palette: PALETTE })
+
+    expect(darkAgain).toContain('width:80%')
+    expect(darkAgain).not.toContain('linear-gradient')
+    expect(light).toContain('linear-gradient(white,#eee)')
+    expect(light).toContain('color:white')
+    expect(dark).toBe(darkAgain)
   })
 
-  it.each([
-    ['a background', '<td style="background-color:#f5f5f5">x</td>'],
-    ['a bgcolor attribute', '<table bgcolor="#ffffff"><tr><td>x</td></tr></table>'],
-    ['a font tag', '<font color="#000000">x</font>'],
-    ['an image', '<p>hi</p><img src="https://cdn.test/logo.png">'],
-  ])('gives paper to a message carrying %s', (_what, html) => {
-    expect(canvasFor(html, PALETTE)).toMatchObject(paper)
+  it('preserves sender design and authored colors in light mode', () => {
+    const source = '<p style="color:#333333;background:#fff!important">hello</p>'
+    expect(canvasFor(source, LIGHT_PALETTE)).toMatchObject(paper)
+    expect(canvasFor('<p>plain mail</p>', LIGHT_PALETTE)).toBe(LIGHT_PALETTE)
+    const lightHtml = mailFrameDocument({
+      html: source,
+      css: '.card{color:#111!important;background:#fff}',
+      palette: canvasFor(source, LIGHT_PALETTE),
+      allowRemoteContent: false,
+    })
+    expect(lightHtml).toContain('color:#333333;background:#fff!important')
+    expect(lightHtml).toContain('.card{color:#111!important;background:#fff}')
   })
 
-  it('counts an image even with no colour anywhere', () => {
-    // Images were drawn to sit on white.
-    expect(bringsOwnDesign('<img src="https://cdn.test/logo.png">')).toBe(true)
-  })
-
-  it('does not change its mind when the images are unblocked', () => {
-    // Read from the raw html, so "Load images" cannot flip the canvas.
+  it('keeps image markup and image permissions separate from canvas choice', () => {
     const html = '<p style="color:#222">hi</p><img src="https://cdn.test/logo.png">'
     const blocked = '<p style="color:#222">hi</p><img>'
 
     expect(bringsOwnDesign(html)).toBe(bringsOwnDesign(blocked))
+    expect(canvasFor(html, PALETTE)).toBe(PALETTE)
   })
 
   it('sets color-scheme to light with the paper, so the frame’s own defaults follow', () => {
     // Or scrollbars and controls stay dark on a white page.
     const html = mailFrameDocument({
       html: '<p>x</p>',
-      palette: canvasFor('<p style="color:#333">x</p>', PALETTE),
+      palette: canvasFor('<p style="color:#333">x</p>', { ...PALETTE, scheme: 'light' }),
       allowRemoteContent: false,
     })
 
