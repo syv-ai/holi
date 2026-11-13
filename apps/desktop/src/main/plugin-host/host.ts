@@ -179,7 +179,7 @@ export interface PluginHost {
 interface Started {
   id: string
   dispose: Disposer
-  lease: { phase: 'active' | 'draining' | 'closed' }
+  lease: { phase: 'active' | 'draining' | 'closed'; delivery: number }
   establish(): void
   closeEvents(): void
   /** What it registered through its context and has not undone yet,
@@ -352,6 +352,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     remote: string,
     activation: number,
     isLive: () => boolean,
+    delivery: () => number,
   ): ReturnType<typeof pluginEvents> {
     const runs = async (at: string): Promise<boolean> => {
       if (!isLive() || at !== remote) return false
@@ -363,7 +364,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       return state !== undefined && state.generation === activation
     }
     return pluginEvents(deps.events, id, runs, () =>
-      isLive() && stateGenerationIsCurrent() ? activation : -1,
+      isLive() && stateGenerationIsCurrent() ? activation * 1_000_000 + delivery() : -1,
     )
   }
 
@@ -441,10 +442,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     const activation = state.generation
     let established = false
     let eventsLive = true
-    const lease: Started['lease'] = { phase: 'active' }
+    const lease: Started['lease'] = { phase: 'active', delivery: 0 }
     const isEventLive = (): boolean => lease.phase !== 'closed'
     const { remote, root } = vault
-    const eventBus = events(id, remote, activation, isEventLive)
+    const eventBus = events(id, remote, activation, isEventLive, () => lease.delivery)
     const valid = (): boolean => lease.phase === 'active' && state.generation === activation
     const draining = (): boolean => lease.phase === 'draining' && established
     const undos = new Set<() => void>()
@@ -479,12 +480,14 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       emit: (at, name, payload) => {
         if (valid() || draining()) eventBus.emit(at, name, payload)
       },
-      on: (name, handler) =>
-        keep(
+      on: (name, handler) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+        return keep(
           eventBus.on(name, (at, payload) => {
-            if ((valid() || draining()) && eventsLive) handler(at, payload)
+            if (valid() && eventsLive) handler(at, payload)
           }),
-        ),
+        )
+      },
       openAppDoor: (opener) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const door = deps.openAppDoor(opener, remote)
@@ -644,6 +647,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         undos,
       }
     } catch (err) {
+      lease.phase = 'closed'
+      lease.delivery += 1
       eventsLive = false
       console.error(`[plugins] ${id} did not start:`, err)
       state.failed.set(id, err instanceof Error ? err.message : String(err))
@@ -683,11 +688,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   async function stopOne(s: Started, state: VaultRun): Promise<void> {
     state.stopping.set(s.id, true)
     s.lease.phase = 'draining'
+    s.lease.delivery += 1
     try {
       await Promise.resolve()
         .then(s.dispose)
         .catch((err) => console.error(`[plugins] ${s.id} stop failed:`, err))
       s.lease.phase = 'closed'
+      s.lease.delivery += 1
       s.closeEvents()
       undoAll(s.id, s.undos)
     } finally {
