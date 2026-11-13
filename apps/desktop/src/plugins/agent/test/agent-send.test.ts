@@ -74,7 +74,7 @@ vi.mock('../renderer/agent-cap', () => ({
 beforeEach(() => {
   for (const fn of [open, start, send, stop, duplicate, detach]) fn.mockReset()
   open.mockResolvedValue({ ok: true, terminalId: 'opened' })
-  start.mockResolvedValue({ ok: true, sessionId: 'newnew00', terminalId: 'started' })
+  start.mockResolvedValue({ ok: true, sessionId: 'p0123456789ab', terminalId: 'started' })
   send.mockResolvedValue({ ok: true, terminalId: 'sent' })
   stop.mockResolvedValue({ ok: true })
   duplicate.mockResolvedValue({ ok: true, sessionId: 'copy0000', terminalId: 'copied' })
@@ -99,7 +99,9 @@ test('opening a session reuses the window Holi opened for it', async () => {
 
   expect(open).not.toHaveBeenCalled()
   expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 't-a' })
-  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'aaaaaaaa' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
   expect(shown(store)).toBeNull()
 })
 
@@ -120,7 +122,9 @@ test('opening a session with no window attaches a new one', async () => {
 
   expect(open).toHaveBeenCalledWith({ attach: 'aaaaaaaa', cols: 80, rows: 24 })
   expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 'opened' })
-  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'aaaaaaaa' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
   expect(shown(store)).toBeNull()
 })
 
@@ -139,7 +143,8 @@ test('an ask goes to main unsent, and its window comes forward with the keyboard
     cols: 80,
     rows: 24,
   })
-  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'aaaaaaaa' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
   expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 'sent' })
   expect(shown(store)).toBeNull()
   expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
@@ -165,7 +170,8 @@ test('an existing session tab keeps its canonical terminal when another window i
 
   await store.set(sendToAgentAtom, { text: 'look at this', target: 'aaaaaaaa' })
 
-  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'aaaaaaaa' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:aaaaaaaa' })
   expect(store.get(viewTerminalsAtom)).toEqual({ aaaaaaaa: 't-session' })
   expect(focusCanonical).toHaveBeenCalled()
   expect(focusReturned).not.toHaveBeenCalled()
@@ -188,8 +194,10 @@ test('starting a session opens its window', async () => {
   await store.set(startSessionAtom, { name: 'Tidy' })
 
   expect(start).toHaveBeenCalledWith({ name: 'Tidy', cols: 80, rows: 24 })
-  expect(store.get(viewTerminalsAtom)).toEqual({ newnew00: 'started' })
-  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'newnew00' })
+  expect(store.get(viewTerminalsAtom)).toEqual({ p0123456789ab: 'started' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'p0123456789ab' })
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:p0123456789ab' })
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
   expect(shown(store)).toBeNull()
 })
 
