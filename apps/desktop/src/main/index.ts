@@ -359,7 +359,7 @@ async function main(): Promise<void> {
       ipcMain.on(channel, listener)
       return () => void ipcMain.removeListener(channel, listener)
     },
-    liveRemote: () => host.active()?.remote ?? null,
+    liveRemote: () => plugins.displayed(),
   }
 
   // Every capability, from every door. Created ahead of the vault host so
@@ -387,8 +387,8 @@ async function main(): Promise<void> {
     },
     // One plugin's main side calling another's, at the UI door its renderer
     // would use. `capabilityHost` is built below, before any vault opens.
-    call: async (remote, name, params) =>
-      (await capabilityHost.dispatch({ door: 'ui', remote, name, params })).value,
+    call: async (remote, name, params, beforeInvoke) =>
+      (await capabilityHost.dispatch({ door: 'ui', remote, name, params, beforeInvoke })).value,
     activity: activity.write,
     // A plugin's notification is the reminders' kind, kept off a Holi that
     // has focus. A click brings the window forward before the plugin acts.
@@ -440,10 +440,10 @@ async function main(): Promise<void> {
       // follows it now, not at the next open. When it changed which plugins
       // claim files, that scan used the old claims: scan again with the new
       // ones.
-      plugins.invalidate()
+      plugins.invalidate(remote)
       const active = runtime
       void plugins
-        .reconcile('snapshot')
+        .reconcile(active, 'snapshot')
         .then(async () => {
           if (!gate.isCurrent(remote, active)) return
           // What the started plugins read off the files: file triggers, tasks'
@@ -514,7 +514,8 @@ async function main(): Promise<void> {
       await terminals
         .closeRemote(remote)
         .catch((err) => console.error('[terminal] close failed:', err))
-      await plugins.stop()
+      await plugins.stop(remote)
+      if (plugins.displayed() === remote) plugins.setDisplayed(null)
     },
   })
 
@@ -1091,7 +1092,7 @@ async function main(): Promise<void> {
       // Stop the work across vaults and in the active vault only after dirty
       // buffers are safe on disk.
       await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
-      await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
+      await plugins.stopAll().catch((err) => console.error('[quit] plugins stop failed:', err))
       await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
       // Quit is a leave point: commit the flushed buffer, then get it
       // off-machine before the window closes. Best-effort with a 1s budget:

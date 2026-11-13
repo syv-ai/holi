@@ -32,6 +32,7 @@ import {
   isHiddenPath,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
+import type { OpenVault } from './plugin-host/host'
 import { searchBodies, type SearchHit } from './vault/search'
 import { CapabilityError, trpcCodeOf } from './capabilities/error'
 import { createCapabilityHost, type CapabilityHost } from './capabilities/dispatch'
@@ -152,7 +153,9 @@ export interface RouterDeps {
    * looks again at what runs across vaults, after a vault leaves the registry.
    */
   plugins: {
-    reconcile(why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    reconcile(vault: OpenVault, why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    invalidate(remote?: string): void
+    setDisplayed(remote: string | null): void
     syncBackground(): Promise<void>
     failures(remote: string): Record<string, string>
     scanClaimsFor(root: string): Promise<readonly ScanClaim[]>
@@ -504,7 +507,8 @@ export function createRouter(deps: RouterDeps) {
       lastOpenedAt: now(),
     })
     const active = await deps.host.open(remote)
-    await deps.plugins.reconcile('open')
+    deps.plugins.setDisplayed(remote)
+    await deps.plugins.reconcile(active, 'open')
     deps.opened?.(remote)
     return active.snapshot()
   }
@@ -806,7 +810,8 @@ export function createRouter(deps: RouterDeps) {
         await deps.seed(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
-        await deps.plugins.reconcile('open')
+        deps.plugins.setDisplayed(input.remote)
+        await deps.plugins.reconcile(active, 'open')
         deps.opened?.(input.remote)
         return active.snapshot()
       }),
@@ -1746,8 +1751,10 @@ export function createRouter(deps: RouterDeps) {
         // A plugin just turned on gets its files and starts now, and one
         // turned off stops now, not at the vault's next open.
         if ('plugins' in committed.patch || 'plugins' in local.patch) {
+          deps.plugins.invalidate(input.remote)
           if (deps.host.active()?.remote === input.remote) {
-            await deps.plugins.reconcile('settings')
+            const active = deps.host.active()
+            if (active !== null) await deps.plugins.reconcile(active, 'settings')
           } else {
             await deps.seed(root)
           }
