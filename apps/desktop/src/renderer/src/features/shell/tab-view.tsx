@@ -24,6 +24,7 @@ import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 export function TabView({
   tab,
   visible = true,
+  focused = visible,
   settingsNavInSidebar,
   onOpen,
   onOpenBeside,
@@ -33,8 +34,10 @@ export function TabView({
   onOpenSearch,
 }: {
   tab: string | null
-  /** Whether this tab is the visible/focused split member. */
+  /** Whether this tab is displayed; all split members are visible together. */
   visible?: boolean
+  /** Whether this is the focused member that may publish active UI state. */
+  focused?: boolean
   /** Whether the sidebar carries Settings' nav for this tab; otherwise the
    *  view draws its own. */
   settingsNavInSidebar: boolean
@@ -64,7 +67,7 @@ export function TabView({
     case 'board':
       return <PlanningView onOpenTask={onOpen} />
     case 'graph':
-      return <GraphView onOpen={onOpenBeside} reading={reading} />
+      return <GraphView onOpen={onOpenBeside} reading={reading} displayed={visible} />
     case 'apps':
       return <AppsView onOpen={onOpen} />
     case 'surface': {
@@ -84,7 +87,7 @@ export function TabView({
       )
     }
     case 'settings':
-      return <SettingsView navHidden={!settingsNavInSidebar} />
+      return <SettingsView navHidden={!settingsNavInSidebar} visible={visible} />
     case 'app': {
       const AppView = apps.find((app) => app.id === descriptor.id)?.render
       if (AppView === undefined) {
@@ -105,7 +108,7 @@ export function TabView({
       // away: once per switch, keyed on the tab.
       return (
         <div key={tab} className="motion-in-rise flex min-h-0 flex-1 flex-col">
-          <AppView />
+          <AppView visible={visible} />
         </div>
       )
     }
@@ -128,6 +131,7 @@ export function TabView({
       return (
         <AgentsMain
           key={tab}
+          visible={visible}
           selection={
             descriptor.kind === 'session' ? { owner: descriptor.owner, id: descriptor.id } : null
           }
@@ -136,14 +140,21 @@ export function TabView({
     case 'vault-app':
       // A vault app is the `app` surface, by its bundle's path, under its
       // header (Reload, the log, Edit source).
-      return <VaultAppTab key={tab} path={descriptor.path} onOpenSearch={onOpenSearch} />
+      return (
+        <VaultAppTab
+          key={tab}
+          path={descriptor.path}
+          visible={visible}
+          onOpenSearch={onOpenSearch}
+        />
+      )
     case 'doc':
       if (/\.md$/i.test(descriptor.path)) {
         return <DocumentView key={tab} path={descriptor.path} onOpen={onOpen} onMoved={onMoved} />
       }
       // Any other file: css, yaml, json, an image, a PDF.
       if (vaultFiles.some((file) => file.path === descriptor.path)) {
-        return <FileView key={tab} path={descriptor.path} />
+        return <FileView key={tab} path={descriptor.path} visible={visible} focused={focused} />
       }
       return (
         <IconStackEmpty

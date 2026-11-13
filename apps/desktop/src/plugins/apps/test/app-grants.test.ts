@@ -190,3 +190,23 @@ describe('commitLogin', () => {
     expect(commitLogin(by('Ada Holm', 'ada@syv.ai'), ['adaholm'])).toBeNull()
   })
 })
+
+it('reports the next live grant expiry, never an expired, personal or stale-code deadline', async () => {
+  await put('Mail.app/app.yaml', 'dangerously-allow: [mail, calendar]\n')
+  const g = grants()
+  expect((await g.status('o/r', root, 'Mail.app')).expiresAt).toBeNull()
+  await approve(g, 'Mail.app', ['mail'])
+  const first = clock + GRANT_TTL_MS
+  clock += 1000
+  await approve(g, 'Mail.app', ['calendar'])
+  expect((await g.status('o/r', root, 'Mail.app')).expiresAt).toBe(first)
+  clock = first
+  expect((await g.status('o/r', root, 'Mail.app')).expiresAt).toBe(first + 1000)
+  clock += 1000
+  expect((await g.status('o/r', root, 'Mail.app')).expiresAt).toBeNull()
+  await approve(g, 'Mail.app', ['mail', 'calendar'])
+  await put('Mail.app/index.html', 'new code')
+  expect((await g.status('o/r', root, 'Mail.app')).expiresAt).toBeNull()
+  await put('Mine.local.app/app.yaml', 'dangerously-allow: [mail]\n')
+  expect((await g.status('o/r', root, 'Mine.local.app')).expiresAt).toBeNull()
+})

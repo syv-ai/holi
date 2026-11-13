@@ -39,9 +39,35 @@ import { replyTarget, useMail, type DraftSummary } from './use-mail'
  *  changes it. */
 const keepOpen = () => undefined
 
-export function MailShell({ className }: { className?: string }) {
+export function MailShell({
+  className,
+  visible = true,
+}: {
+  className?: string
+  visible?: boolean
+}) {
   const { currentSub } = useGoogleAccount()
-  const mail = useMail(currentSub)
+  return (
+    <MailAccountShell
+      key={currentSub ?? 'disconnected'}
+      account={currentSub}
+      className={className}
+      visible={visible}
+    />
+  )
+}
+
+function MailAccountShell({
+  account,
+  className,
+  visible,
+}: {
+  account: string | null
+  className?: string
+  visible: boolean
+}) {
+  const { currentSub } = useGoogleAccount()
+  const mail = useMail(account)
   const remote = useAtomValue(activeRemoteAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   const openNote = useSetAtom(openDocumentAtom)
@@ -290,6 +316,7 @@ export function MailShell({ className }: { className?: string }) {
         open
         onOpenChange={keepOpen}
         className={cn('relative h-full min-h-0', className)}
+        inert={!visible}
         style={
           {
             '--sidebar-width': '440px',
@@ -300,7 +327,11 @@ export function MailShell({ className }: { className?: string }) {
         }
       >
         {/* The list column, with the account and the mailbox menu atop it */}
-        <AppSidebar expanded={expanded} onToggle={() => setExpanded((value) => !value)}>
+        <AppSidebar
+          expanded={expanded}
+          onToggle={() => setExpanded((value) => !value)}
+          visible={visible}
+        >
           <MailList
             mail={guardedMail}
             account={
@@ -308,6 +339,8 @@ export function MailShell({ className }: { className?: string }) {
                 onManage={openConnections}
                 onError={mail.reportError}
                 onBeforeChange={() => navigate(() => undefined)}
+                visible={visible}
+                canSwitchAccount={composition === null || composition.intent.kind === 'new'}
               />
             }
             onSelectFolder={(folder) => {
@@ -322,6 +355,7 @@ export function MailShell({ className }: { className?: string }) {
             onCompose={() => startCompose()}
             onOpenDraft={openDraft}
             onOpenConnections={openConnections}
+            visible={visible}
           />
         </AppSidebar>
 
@@ -332,12 +366,14 @@ export function MailShell({ className }: { className?: string }) {
               composition?.intent.kind === 'new' ? { ...guardedMail, openId: null } : guardedMail
             }
             commands={commands}
+            visible={visible}
           />
           <MailReader
             mail={guardedMail}
             composer={inlineComposer}
             onCompose={() => startCompose()}
             standaloneComposer={standaloneComposer}
+            visible={visible}
           />
         </div>
       </SidebarProvider>

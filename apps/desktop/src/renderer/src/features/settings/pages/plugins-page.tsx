@@ -29,14 +29,17 @@ import { activeRemoteAtom } from '@/state/vaults'
 
 import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
+import { useSettingsVisible } from '../settings-visibility'
 
 export function PluginsPage({
   nested,
   remote,
+  visible = true,
 }: {
   /** Running plugins' settings about plugins, each drawn as its own card. */
   nested: readonly SettingsSection[]
   remote: string
+  visible?: boolean
 }) {
   return (
     <>
@@ -44,7 +47,7 @@ export function PluginsPage({
       {nested.map(({ id, label, description, Component }) => (
         <SettingsGroup key={id} title={label} description={description}>
           <div className="py-3">
-            <Component remote={remote} />
+            <Component remote={remote} visible={visible} />
           </div>
         </SettingsGroup>
       ))}
@@ -53,6 +56,7 @@ export function PluginsPage({
 }
 
 function PluginSwitches() {
+  const visible = useSettingsVisible()
   const { resolved, write } = useVaultSettings()
   const installed = useAtomValue(installedPluginsAtom)
   const reasons = useAtomValue(leaveReasonByPluginAtom)
@@ -69,7 +73,7 @@ function PluginSwitches() {
   const [failures, setFailures] = useState<Record<string, string>>({})
   const plugins = resolved?.plugins
   useEffect(() => {
-    if (remote === null) return
+    if (remote === null || !visible) return
     let live = true
     trpc.settings.pluginFailures
       .query({ remote })
@@ -78,7 +82,11 @@ function PluginSwitches() {
     return () => {
       live = false
     }
-  }, [remote, plugins])
+  }, [remote, plugins, visible])
+
+  useEffect(() => {
+    if (!visible) setAsking(null)
+  }, [visible])
 
   const infos = installed.map((plugin) => plugin.info)
 
@@ -157,7 +165,7 @@ function PluginSwitches() {
       })}
 
       <ConfirmDialog
-        open={asking !== null}
+        open={visible && asking !== null}
         onOpenChange={(open) => {
           if (!open) setAsking(null)
         }}

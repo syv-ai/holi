@@ -20,7 +20,7 @@ import {
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { toast } from 'sonner'
-import { GITKEEP, holiLink, TASKS_CLAIM } from '@holi/shared'
+import { GITKEEP, holiWebLink, TASKS_CLAIM } from '@holi/shared'
 import { cn } from '@/lib/cn'
 
 import { ConfirmDialog } from '@/composites/confirm-dialog'
@@ -452,7 +452,17 @@ export function FilesSection({
   /** A deck's row: its chevron expands it, the rest opens it, where the
    *  tree's own press would do both. */
   function onLabelClick(item: ItemInstance<TreeItemData>, event: MouseEvent<HTMLElement>) {
-    if (!browsable.has(item.getId()) || event.shiftKey || event.metaKey || event.ctrlKey) return
+    const path = item.getId()
+    const openable = !item.isFolder() || browsable.has(path)
+    const primaryModifier = event.metaKey || event.ctrlKey
+    if (openable && !event.shiftKey && primaryModifier) {
+      event.preventDefault()
+      item.setFocused()
+      tree.updateDomFocus()
+      openTab(tabForPath(path), { beside: true })
+      return
+    }
+    if (!browsable.has(path) || event.shiftKey || event.metaKey || event.ctrlKey) return
     event.stopPropagation()
     tree.setSelectedItems([item.getId()])
     item.setFocused()
@@ -629,7 +639,7 @@ export function FilesSection({
         copyPath,
         copyLink: (path) => {
           if (files.remote !== null)
-            void copyText(holiLink({ remote: files.remote, path }), 'Holi link copied', path)
+            void copyText(holiWebLink({ remote: files.remote, path }), 'Holi link copied', path)
         },
         rename: (path) => {
           renameNext.current = path

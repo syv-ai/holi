@@ -218,9 +218,9 @@ test('readable mail metadata uses opaque semantic colors for rows, drafts, and a
     expect(row.querySelector('[style*="opacity"]')).toBeNull()
   }
   const unread = within(unreadRow).getByText('Jane Doe')
-  const unreadDate = unreadRow.querySelector('time') ?? within(unreadRow).getByText(/Aug/)
+  const unreadDate = unreadRow.querySelector('.tabular-nums')
   expect(unread).toHaveClass('text-foreground')
-  expect(unreadDate).toHaveClass('text-foreground')
+  expect(unreadDate).toHaveClass('text-muted-foreground')
   expect(within(unreadRow).getByText('Q2 budget')).toHaveClass('text-foreground')
   expect(within(unreadRow).getByText('Numbers attached')).toHaveClass('text-muted-foreground')
   expect(within(readRow).getByText('Jane Doe')).toHaveClass('text-foreground')
@@ -234,7 +234,7 @@ test('readable mail metadata uses opaque semantic colors for rows, drafts, and a
   const draftList = await screen.findByRole('list', { name: 'Drafts' })
   const draftRow = within(draftList).getByRole('listitem')
   expect(within(draftRow).getByText('Grace Hopper')).toHaveClass('text-foreground')
-  expect(within(draftRow).getByText(/Aug/)).toHaveClass('text-muted-foreground')
+  expect(draftRow.querySelector('.tabular-nums')).toHaveClass('text-muted-foreground')
   expect(within(draftRow).getByText('Compiler notes')).toHaveClass('text-foreground')
   expect(within(draftRow).getByText('Still working on the draft')).toHaveClass(
     'text-muted-foreground',
@@ -393,7 +393,7 @@ test('the account menu switches the vault to another connected account', async (
 
 test('compose opens the existing composer inline in the reader', async () => {
   const user = userEvent.setup()
-  render(<MailShell />)
+  render(<MailShell visible />)
   await screen.findByRole('list', { name: 'Inbox' })
 
   await user.click(screen.getByRole('button', { name: 'Compose new email' }))

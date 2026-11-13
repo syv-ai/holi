@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { emptyVaultSnapshot } from '@holi/shared'
+import { resolveArgv } from '../../../main/bridge/cli'
 import type { CapabilityError } from '../../../main/capabilities/error'
 import { createCapabilityRegistry, type Door } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
@@ -78,8 +79,23 @@ function rig({ data = {}, accounts = {}, dataForSession }: RigOptions = {}) {
     (await run(name, params, remote, 'ui')).value
   /** The agent's `holi google <name>`: the value `--json` prints, and the text. */
   const cli = (name: string, params?: unknown) => run(name, params, 'owner/repo', 'cli')
-  return { call, cli, calls }
+  return { call, cli, calls, commands: registry.commands() }
 }
+
+it('lists --full in the generated usage for google read', () => {
+  const read = googleCapabilities({
+    accounts: {} as GoogleAccountsManager,
+    dataFor: async () => null,
+    settings: { read: async () => ({ calendars: {}, imageSenders: [] }), write: async () => {} },
+  })['google.read']
+  const usage = resolveArgv(
+    ['google', 'read', '--help'],
+    [{ name: 'google.read', cli: read.cli! }],
+    null,
+  )
+  if (usage.kind !== 'help') throw new Error('expected generated CLI help')
+  expect(usage.text).toContain('[--full]')
+})
 
 const refusal = (p: Promise<unknown>) =>
   p.then(
@@ -244,8 +260,44 @@ describe('the composer', () => {
     expect((calls[0]!.input as { mail: { html: string } }).mail.html).toBe('<p>Here it is.</p>')
   })
 
+  it('saveDraft and send preserve Bcc recipients through the UI door', async () => {
+    const { call, calls } = rig()
+    const mail = { ...MAIL, bcc: ['hidden@example.com'] }
+
+    await call('saveDraft', { draftId: 'd-1', mail })
+    await call('send', { draftId: 'd-1', mail })
+
+    expect(calls).toEqual([
+      { name: 'saveDraft', input: { draftId: 'd-1', mail } },
+      { name: 'sendMail', input: { draftId: 'd-1', mail } },
+    ])
+  })
+
   it('saveDraft returns the draft id the composer needs to update in place', async () => {
     expect(await rig().call('saveDraft', { mail: MAIL })).toEqual({ id: 'd-1' })
+  })
+
+  it('refuses CLI Bcc after parsing but before reaching the send surface', async () => {
+    const { cli, commands, calls } = rig()
+    const request = resolveArgv(
+      [
+        'google',
+        'send',
+        '--to',
+        'ada@example.com',
+        '--bcc',
+        'hidden@example.com',
+        '--subject',
+        'Private copy',
+      ],
+      commands,
+      'Body',
+    )
+    expect(request.kind).toBe('run')
+    if (request.kind !== 'run') throw new Error('expected parsed send command')
+
+    expect(await refusal(cli('send', request.params))).toMatchObject({ code: 'BAD_REQUEST' })
+    expect(calls).toEqual([])
   })
 
   it('discardDraft carries the thread so the cached chip can go', async () => {
@@ -485,12 +537,41 @@ describe('what other people wrote, at the CLI door', () => {
     labels: [],
     unsubscribeUrl: null,
     hasInvite: false,
+    replied: true,
+    lastReplyAt: '2026-10-21T08:00:00Z',
+    addressedAs: 'to' as const,
+    automated: false,
   }
   const page = { threads: [INJECTED], nextPageToken: null, syncedAt: '2026-10-21T08:00:00Z' }
 
   it('fences a search for the agent, in --json and in text, and leaves the UI its values', async () => {
-    const { call, cli } = rig({ data: { threads: async () => page } })
-    const { value, text } = await cli('search', { query: 'is:unread' })
+    const requested: unknown[] = []
+    const { call, cli, commands } = rig({
+      data: {
+        threads: async (options) => {
+          requested.push(options)
+          return page
+        },
+      },
+    })
+    const { value, text } = await cli('search', { query: 'in:inbox is:unread' })
+    const projected = value as typeof page
+    expect(projected).toMatchObject({
+      nextPageToken: null,
+      syncedAt: page.syncedAt,
+      threads: [{ id: INJECTED.id, from: { email: INJECTED.from.email } }],
+    })
+    expect(projected.threads[0]!.from.name).toMatch(/^<untrusted /)
+    expect(JSON.parse(text)).toEqual(projected.threads)
+    const request = resolveArgv(
+      ['google', 'search', 'in:inbox newer_than:7d', '--pageToken', 'next', '--json'],
+      commands,
+      null,
+    )
+    expect(request).toMatchObject({ kind: 'run', name: 'google.search', json: true })
+    if (request.kind !== 'run') throw new Error('the documented search command must run')
+    await cli('search', request.params)
+    expect(requested.at(-1)).toMatchObject({ query: 'in:inbox newer_than:7d', pageToken: 'next' })
     const snippet = (value as typeof page).threads[0]!.snippet
     expect(snippet).toMatch(/^<untrusted id="[0-9a-f]+" source="mail" from="mallory@example.com">/)
     expect(closesOnlyAtTheEnd(snippet)).toBe(true)
@@ -498,6 +579,103 @@ describe('what other people wrote, at the CLI door', () => {
     // The id is what the agent passes back to `read`: never fenced.
     expect((value as typeof page).threads[0]!.id).toBe('t-evil')
     expect(await call('search', { query: 'is:unread' })).toEqual(page)
+  })
+
+  it('cleans search snippets only at the CLI door before fencing them', async () => {
+    const raw = { ...INJECTED, snippet: '\u200bHello&nbsp;&amp; &#x1F642;' }
+    const { call, cli } = rig({ data: { threads: async () => ({ ...page, threads: [raw] }) } })
+    const result = (await cli('search')).value as typeof page
+    expect(result.threads[0]!.snippet).toContain('Hello & 🙂')
+    expect(result.threads[0]!.snippet).not.toContain('\u200b')
+    expect(await call('search')).toEqual({ ...page, threads: [raw] })
+  })
+
+  it('cleans realistic plain and HTML replies only at the CLI seam and preserves --full', async () => {
+    const plain =
+      'Thanks for checking.\n\nOn Tue, Bob wrote:\n> Can we move the review?\nThursday works for me.'
+    const html =
+      '<p>Oui, jeudi me convient.</p><p>On Tue, Claire wrote:</p><blockquote><p>Bonjour Ada, pouvons-nous déplacer la revue ?</p></blockquote><p>Merci !</p>'
+    const bottomPostedHtml =
+      '<p>Bonjour Claire, le dossier est prêt.</p><p>On Tue, Claire wrote:</p><blockquote><p>Peux-tu vérifier les chiffres ?</p></blockquote><p>Les totaux correspondent au rapport.</p>'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 't-read',
+          messages: [
+            {
+              id: 'm-plain',
+              internalDate: '1000',
+              payload: {
+                headers: [
+                  { name: 'From', value: 'Bob <bob@example.com>' },
+                  { name: 'Subject', value: 'Read test' },
+                ],
+                mimeType: 'text/plain',
+                body: { data: Buffer.from(plain).toString('base64url') },
+              },
+            },
+            {
+              id: 'm-html',
+              internalDate: '2000',
+              payload: {
+                headers: [{ name: 'From', value: 'Claire <claire@example.fr>' }],
+                mimeType: 'text/html',
+                body: { data: Buffer.from(html).toString('base64url') },
+              },
+            },
+            {
+              id: 'm-html-bottom',
+              internalDate: '3000',
+              payload: {
+                headers: [{ name: 'From', value: 'Ada <ada@example.com>' }],
+                mimeType: 'text/html',
+                body: { data: Buffer.from(bottomPostedHtml).toString('base64url') },
+              },
+            },
+          ],
+        }),
+        text: async () => '',
+      })),
+    )
+    try {
+      const { call, cli } = rig({
+        accounts: {
+          sessionFor: async () => ({ getAccessToken: async () => 'token' }),
+        } as unknown as Partial<GoogleAccountsManager>,
+      })
+      const ui = (await call('thread', { id: 't-read' })) as {
+        messages: { id: string; body: string }[]
+      }
+      const uiBeforeCliRead = structuredClone(ui)
+      const clean = (await cli('read', { id: 't-read' })).value as {
+        messages: { id: string; body: string }[]
+      }
+      const full = (await cli('read', { id: 't-read', full: true })).value as {
+        messages: { id: string; body: string }[]
+      }
+      expect(ui.messages.map(({ id }) => id)).toEqual(['m-plain', 'm-html', 'm-html-bottom'])
+      expect(ui.messages[0]!.body).toBe(plain)
+      expect(ui.messages[1]!.body).toContain('Bonjour Ada')
+      expect(clean.messages.map(({ id }) => id)).toEqual(['m-plain', 'm-html', 'm-html-bottom'])
+      expect(clean.messages[0]!.body).toContain('Thursday works for me.')
+      expect(clean.messages[0]!.body).not.toContain('move the review')
+      expect(clean.messages[1]!.body).toContain('Oui, jeudi me convient.')
+      expect(clean.messages[1]!.body).toContain('Merci !')
+      expect(clean.messages[1]!.body).not.toContain('Bonjour Ada')
+      expect(clean.messages[2]!.body).toContain('Bonjour Claire')
+      expect(clean.messages[2]!.body).toContain('Les totaux correspondent au rapport.')
+      expect(clean.messages[2]!.body).not.toContain('vérifier les chiffres')
+      expect(clean.messages.every(({ body }) => body.startsWith('<untrusted id='))).toBe(true)
+      expect(full.messages[0]!.body).toContain('move the review')
+      expect(full.messages[1]!.body).toContain('Bonjour Ada')
+      expect(full.messages[2]!.body).toContain('vérifier les chiffres')
+      expect(ui).toEqual(uiBeforeCliRead)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it("fences `read`'s bodies, each with its sender, so a planted close cannot end one early", () => {
@@ -547,7 +725,10 @@ describe('what other people wrote, at the CLI door', () => {
       recurring: false,
     }
     const { call, cli } = rig({ data: { agenda: async () => [event] } })
-    const [fenced] = (await cli('agenda')).value as (typeof event)[]
+    const agenda = await cli('agenda')
+    expect(Array.isArray(agenda.value)).toBe(true)
+    expect(JSON.parse(agenda.text)).toEqual(agenda.value)
+    const [fenced] = agenda.value as (typeof event)[]
     for (const prose of [
       fenced!.title,
       fenced!.description,

@@ -31,10 +31,14 @@ export function NavUser({
   onManage,
   onError,
   onBeforeChange,
+  visible,
+  canSwitchAccount,
 }: {
   onManage: () => void
   onError: (message: string) => void
   onBeforeChange?: () => Promise<boolean>
+  visible: boolean
+  canSwitchAccount: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const store = useStore()
@@ -46,7 +50,12 @@ export function NavUser({
   const others = accounts.filter((a) => a.sub !== currentSub)
 
   const use = async (sub: string) => {
-    if (remote === null || (onBeforeChange !== undefined && !(await onBeforeChange()))) return
+    if (
+      remote === null ||
+      !canSwitchAccount ||
+      (onBeforeChange !== undefined && !(await onBeforeChange()))
+    )
+      return
     if (
       store.get(activeRemoteAtom) !== remote ||
       liveContext.current.remote !== remote ||
@@ -65,7 +74,7 @@ export function NavUser({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu key={`account-${visible ? 'visible' : 'hidden'}`}>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
@@ -114,10 +123,15 @@ export function NavUser({
                 <DropdownMenuLabel className="text-muted-foreground text-xs">
                   Read mail from
                 </DropdownMenuLabel>
+                {!canSwitchAccount && (
+                  <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+                    Close your reply before switching accounts.
+                  </DropdownMenuLabel>
+                )}
                 {accounts.map((a) => (
                   <DropdownMenuItem
                     key={a.sub}
-                    disabled={switching}
+                    disabled={switching || (a.sub !== currentSub && !canSwitchAccount)}
                     onSelect={() => {
                       if (a.sub !== currentSub) void use(a.sub)
                     }}

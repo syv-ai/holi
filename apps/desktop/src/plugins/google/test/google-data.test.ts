@@ -25,7 +25,7 @@ const WINDOW = { timeMin: '2026-08-04T00:00:00Z', timeMax: '2026-08-11T00:00:00Z
  * a key is asserting the key's *format*, which is nobody's contract, instead of
  * "the thing the cache wrote under is the thing this reads back".
  */
-const INBOX_KEY = threadsCacheKey({})
+const INBOX_KEY = `${threadsCacheKey({})}|identity:unknown`
 
 let dir: string
 let path: string
@@ -107,6 +107,54 @@ describe('createGoogleData', () => {
     // The one that matters. Disconnect revokes the grant and clears the
     // keychain; leaving a readable inbox on disk would make the button a lie.
     expect(existsSync(path)).toBe(false)
+  })
+
+  it('reclassifies cached mail when send-as identity lookup recovers', async () => {
+    let identitiesAvailable = false
+    let threadFetches = 0
+    const fetchImpl = vi.fn(async (url: string) => {
+      const path_ = new URL(url).pathname
+      if (path_.includes('/threads/t1')) threadFetches++
+      const body = path_.endsWith('/settings/sendAs')
+        ? identitiesAvailable
+          ? { sendAs: [{ sendAsEmail: 'me@example.com' }] }
+          : null
+        : path_.endsWith('/labels')
+          ? { labels: [] }
+          : path_.endsWith('/profile')
+            ? { historyId: '1' }
+            : path_.endsWith('/threads')
+              ? { threads: [{ id: 't1' }] }
+              : path_.includes('/threads/')
+                ? {
+                    id: 't1',
+                    messages: [
+                      {
+                        id: 'm1',
+                        internalDate: '1000',
+                        labelIds: ['INBOX'],
+                        payload: { headers: [{ name: 'To', value: 'me@example.com' }] },
+                      },
+                    ],
+                  }
+                : {}
+      return {
+        ok: identitiesAvailable || !path_.endsWith('/settings/sendAs'),
+        status: identitiesAvailable || !path_.endsWith('/settings/sendAs') ? 200 : 503,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }
+    }) as unknown as typeof globalThis.fetch
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache,
+    })
+    subject.ensureShape()
+
+    expect((await subject.threads({})).threads[0]!.addressedAs).toBe('unknown')
+    identitiesAvailable = true
+    expect((await subject.threads({})).threads[0]!.addressedAs).toBe('to')
+    expect(threadFetches).toBe(2)
   })
 
   it('a cached agenda is served before Google answers', async () => {

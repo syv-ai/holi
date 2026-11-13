@@ -28,7 +28,7 @@
  * to approve that (`dangerously-allow`; the approval is kept in main).
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { type AppPush, type AppResponse } from '../shared/bridge'
 import { appHost, appName } from '../shared/bundle'
 import { type AppAffordance } from '../shared/manifest'
@@ -52,7 +52,8 @@ import {
   previewRequestsAtom,
   previewTakenAtom,
 } from './app-previews'
-import { appOpensAtom, appPathsAtom } from './apps'
+import { appCodeGenerationsAtom, appOpensAtom, appPathsAtom } from './apps'
+import { commandsChangedAtom } from './commands'
 import { appsCap } from './apps-cap'
 import { hostBridgeMessage } from './bridge-host'
 
@@ -82,12 +83,16 @@ function usePreviewCapture(
   frameRef: React.RefObject<HTMLIFrameElement | null>,
   path: string,
   loaded: string | null,
+  visible: boolean,
 ): void {
   const remote = useAtomValue(activeRemoteAtom)
   const request = useAtomValue(previewRequestsAtom)[path] ?? 0
   const taken = useSetAtom(previewTakenAtom)
+  const completed = useRef<string | null>(null)
   useEffect(() => {
-    if (loaded === null || remote === null) return
+    if (!visible || loaded === null || remote === null) return
+    const captureKey = JSON.stringify([remote, path, loaded, request])
+    if (completed.current === captureKey) return
     let live = true
     let idle: number | null = null
     const take = (): void => {
@@ -97,8 +102,14 @@ function usePreviewCapture(
       // 2px in from each edge, so a pane's separator beside it is not kept.
       const rect = { x: r.left + 2, y: r.top + 2, width: r.width - 4, height: r.height - 4 }
       appsCap.capturePreview(remote, { bundle: path, rect }).then(
-        (res) => live && res.saved && taken(path),
-        (e: unknown) => console.warn('[apps] preview:', e),
+        (res) => {
+          if (!live || !res.saved) return
+          completed.current = captureKey
+          taken(path)
+        },
+        (e: unknown) => {
+          if (live) console.warn('[apps] preview:', e)
+        },
       )
     }
     const timer = window.setTimeout(() => {
@@ -113,34 +124,94 @@ function usePreviewCapture(
       window.clearTimeout(timer)
       if (idle !== null) window.cancelIdleCallback(idle)
     }
-  }, [frameRef, path, loaded, remote, request, taken])
+  }, [frameRef, path, loaded, remote, request, taken, visible])
 }
 
-export function AppFrame({ path }: { path: string }): React.JSX.Element {
+export function AppFrame({
+  path,
+  visible = true,
+}: {
+  path: string
+  visible?: boolean
+}): React.JSX.Element {
   const appPaths = useAtomValue(appPathsAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const codeGeneration = useAtomValue(appCodeGenerationsAtom)[remote ?? '']?.[path] ?? 0
   const mode = useAtomValue(activeModeAtom)
-  const closeTab = useSetAtom(closeSurfaceTabAtom)
-  // Read when an app calls, not on every render: the registry and the
-  // snapshot change far more often than an app opens anything.
-  const store = useStore()
+  const commandsChanged = useAtomValue(commandsChangedAtom)
   const reloads = useAtomValue(appOpensAtom)[path] ?? 0
-  const frameRef = useRef<HTMLIFrameElement>(null)
-  const exists = appPaths.includes(path)
-  const name = appName(path)
+  const closeTab = useSetAtom(closeSurfaceTabAtom)
+  const [revision, setRevision] = useState(0)
+  const recheck = useCallback(() => setRevision((n) => n + 1), [])
+  if (!appPaths.includes(path)) {
+    return (
+      <EmptyState
+        icon={AppWindow}
+        title={`${appName(path)} was deleted.`}
+        action={{ label: 'Close tab', onClick: () => closeTab('app', path) }}
+      />
+    )
+  }
+  if (remote === null) return <></>
+  // A new identity unmounts the old document in this render, not in an
+  // effect after new source might already have run with the old approval.
+  return (
+    <AppLoad
+      key={JSON.stringify([remote, path, mode, reloads, codeGeneration, revision])}
+      path={path}
+      remote={remote}
+      mode={mode}
+      visible={visible}
+      commandsChanged={commandsChanged}
+      recheck={recheck}
+    />
+  )
+}
 
+/** One exact vault, bundle generation, mode and reload. All async work is
+ * scoped to this load; retaining it changes visibility, never its identity. */
+function AppLoad({
+  path,
+  remote,
+  mode,
+  visible,
+  commandsChanged,
+  recheck,
+}: {
+  path: string
+  remote: string
+  mode: string
+  visible: boolean
+  commandsChanged: number
+  recheck: () => void
+}): React.JSX.Element {
+  const store = useStore()
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  const live = useRef(false)
+  useLayoutEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+    }
+  }, [])
+  const name = appName(path)
   // Every message from the frame we mounted is answered as any frame of
   // this app's code is (`bridge-host.ts`), with the bundle it was mounted
   // with and the vault open now.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const onMessage = (event: MessageEvent): void => {
       const frame = frameRef.current
-      if (frame === null || event.source !== frame.contentWindow) return
+      if (!live.current || frame === null || event.source !== frame.contentWindow) return
+      const target = frame.contentWindow
       hostBridgeMessage(event.data, {
         store,
         remote,
         bundle: path,
-        reply: (response: AppResponse) => frame.contentWindow?.postMessage(response, '*'),
+        reply: (response: AppResponse) => {
+          if (live.current && frameRef.current === frame && frame.contentWindow === target) {
+            target?.postMessage(response, '*')
+          }
+        },
       })
     }
     window.addEventListener('message', onMessage)
@@ -175,62 +246,102 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   // The app's own words for why it asks, from its manifest.
   const [reasons, setReasons] = useState<Partial<Record<AppAffordance, string>>>({})
   const [gateOpen, setGateOpen] = useState(false)
-  // Bumped when an approval comes back refused because the code changed while
-  // the dialog was up: the new code is asked about, not waved through.
-  const [recheck, setRecheck] = useState(0)
+  const [error, setError] = useState(false)
+  const [expiresAt, setExpiresAt] = useState<number | null>(null)
+  const permissionCheck = useRef<'checking' | 'ready' | 'error'>('checking')
+  const previousCommandsChanged = useRef(commandsChanged)
   useEffect(() => {
-    if (remote === null || !exists) return
-    let live = true
-    setGateOpen(false)
-    appsCap
-      .grants(remote, { bundle: path })
-      .then((status) => {
-        if (!live) return
+    if (previousCommandsChanged.current === commandsChanged) return
+    previousCommandsChanged.current = commandsChanged
+    // Main emits this after registering apps capabilities. Recover a failed or
+    // still-pending first check, but don't reload an app already running.
+    if (permissionCheck.current !== 'ready') recheck()
+  }, [commandsChanged, recheck])
+  useEffect(() => {
+    let current = true
+    appsCap.grants(remote, { bundle: path }).then(
+      (status) => {
+        if (!current || !live.current) return
         const ungranted = status.affordances.filter((s) => !s.granted).map((s) => s.affordance)
         setAsk(ungranted.length > 0 ? { affordances: ungranted, codeHash: status.codeHash } : null)
         setAuthorship({ added: status.added ?? null, last: status.lastChange ?? null })
         setReasons(status.reasons ?? {})
+        setExpiresAt(status.expiresAt ?? null)
         setGateOpen(ungranted.length === 0)
-      })
-      .catch(() => live && setGateOpen(true))
+        permissionCheck.current = 'ready'
+      },
+      () => {
+        if (current && live.current) {
+          permissionCheck.current = 'error'
+          setError(true)
+        }
+      },
+    )
     return () => {
-      live = false
+      current = false
     }
-  }, [remote, path, exists, reloads, recheck])
+  }, [remote, path])
 
-  // Which document the frame holds: the fade-in waits for this one's load.
-  const documentKey = `${path}\n${reloads}\n${mode}`
+  useEffect(() => {
+    if (expiresAt === null) return
+    // Grants use main's wall-clock deadline. Check on wake as well as on a
+    // timer: a suspended Electron renderer must not keep yesterday's approval.
+    const remaining = () => expiresAt - Date.now()
+    const check = () => {
+      if (live.current && remaining() <= 0) recheck()
+    }
+    let timer: number
+    const schedule = () => {
+      timer = window.setTimeout(
+        () => {
+          if (remaining() <= 0) check()
+          else schedule()
+        },
+        Math.max(0, Math.min(remaining(), 2_147_483_647)),
+      )
+    }
+    schedule()
+    window.addEventListener('focus', check)
+    document.addEventListener('visibilitychange', check)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('focus', check)
+      document.removeEventListener('visibilitychange', check)
+    }
+  }, [expiresAt, recheck])
+
   const [loaded, setLoaded] = useState<string | null>(null)
-  usePreviewCapture(frameRef, path, gateOpen && loaded === documentKey ? loaded : null)
+  usePreviewCapture(frameRef, path, gateOpen ? loaded : null, visible)
 
   const decide = (allow: boolean): void => {
     const shown = ask
     setAsk(null)
-    if (!allow || remote === null || shown === null) {
+    if (!live.current || shown === null) return
+    if (!allow) {
       setGateOpen(true)
       return
     }
     appsCap.grant(remote, { bundle: path, ...shown }).then(
-      (recorded) => {
-        if (!recorded) {
-          setRecheck((n) => n + 1)
-          return
-        }
-        setGateOpen(true)
+      () => {
+        if (!live.current) return
+        // Re-read a refused or successful grant: main supplies the expiry and checks
+        // whether the code still matches. No new source runs before that read.
+        recheck()
       },
       (e: unknown) => {
+        if (!live.current) return
         console.warn('[apps] grant failed:', e)
         setGateOpen(true)
       },
     )
   }
 
-  if (!exists) {
+  if (error) {
     return (
       <EmptyState
         icon={AppWindow}
-        title={`${name} was deleted.`}
-        action={{ label: 'Close tab', onClick: () => closeTab('app', path) }}
+        title="Could not check app permissions."
+        action={{ label: 'Retry', onClick: recheck }}
       />
     )
   }
@@ -238,7 +349,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const reads = (ask?.affordances ?? []).map((a) => AFFORDANCE_TEXT[a]).join(' and ')
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div inert={!visible} aria-hidden={!visible} className="relative flex h-full min-h-0 flex-col">
       {ask !== null && (
         // The app as its markup and styles draw it, blurred behind the question:
         // what is being approved, seen. No scripts (`sandbox=""`), so nothing
@@ -261,7 +372,9 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           aria-modal="false"
           aria-labelledby="app-approval-title"
           tabIndex={-1}
-          ref={(card) => card?.focus()}
+          ref={(card) => {
+            if (visible) card?.focus()
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Escape') decide(false)
           }}
@@ -282,7 +395,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
                 <AppsWords asked={ask.affordances} reasons={reasons} />
                 <p>Holi asks again in 30 days, or sooner if the app changes.</p>
               </div>
-              <WrittenBy path={path} authorship={authorship} />
+              {visible && <WrittenBy path={path} authorship={authorship} />}
             </div>
           </CardContent>
           <CardFooter className="justify-end">
@@ -304,7 +417,6 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           // fresh start, and it is the only way a frame sheds what it has loaded.
           // The pane header's reload button and the agent's `holi apps open` both
           // bump the count (`appOpensAtom`).
-          key={reloads}
           ref={frameRef}
           // The mode in force goes in the URL, since main themes the document and
           // cannot see the renderer. A mode change reloads the frame.
@@ -313,6 +425,8 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           // iframe and is the one the gate bans (it is a browser tooltip on every
           // other element), so the label goes on aria-label.
           aria-label={name}
+          aria-hidden={!visible}
+          tabIndex={visible ? 0 : -1}
           // Never `allow-same-origin`: it would let the app remove its own
           // sandbox and give it a real origin, which is the isolation this whole
           // feature rests on. `allow-popups` only lets a `target=_blank` link
@@ -321,10 +435,12 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           // Hidden until its document has loaded, then faded in: a frame paints
           // whatever it has as it goes, and an app half-styled for a frame or
           // two reads as a glitch. A reload or a mode change starts it over.
-          onLoad={() => setLoaded(documentKey)}
+          onLoad={(event) => {
+            if (live.current && event.currentTarget === frameRef.current) setLoaded(path)
+          }}
           className={cn(
             'min-h-0 flex-1 border-0',
-            loaded === documentKey ? 'motion-in-fade' : 'opacity-0',
+            loaded !== null ? 'motion-in-fade' : 'opacity-0',
           )}
         />
       )}

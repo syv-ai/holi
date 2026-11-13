@@ -353,6 +353,7 @@ interface MailListProps {
   onCompose: () => void
   onOpenDraft: (draft: DraftSummary) => void
   onOpenConnections: () => void
+  visible: boolean
 }
 
 export function MailList({
@@ -363,6 +364,7 @@ export function MailList({
   onCompose,
   onOpenDraft,
   onOpenConnections,
+  visible,
 }: MailListProps) {
   const [query, setQuery] = useState('')
   /** Starred is a pill on the inbox, so the title still says Inbox. */
@@ -533,7 +535,7 @@ export function MailList({
       {/* ── Header: the mailbox is the title's menu ── */}
       <div className="border-border flex h-(--header-height) shrink-0 items-center justify-between border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
-          <DropdownMenu>
+          <DropdownMenu key={`mailbox-${visible ? 'visible' : 'hidden'}`}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
@@ -579,12 +581,13 @@ export function MailList({
                 <RefreshCwIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Refresh</TooltipContent>
+            {visible && <TooltipContent>Refresh</TooltipContent>}
           </Tooltip>
 
           {/* Gmail's tabs: the inbox's own subdivisions */}
           {inbox && (
             <DropdownMenu
+              key={`category-${visible ? 'visible' : 'hidden'}`}
               onOpenChange={(open) => {
                 if (open && mail.categoryCounts === null) mail.loadCategoryCounts()
               }}
@@ -650,7 +653,7 @@ export function MailList({
                 <SquarePenIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Compose</TooltipContent>
+            {visible && <TooltipContent>Compose</TooltipContent>}
           </Tooltip>
         </div>
       </div>

@@ -34,6 +34,7 @@ export const googleRenderer: RendererPlugin = {
       icon: Mail,
       order: 10,
       render: MailShell,
+      keepMounted: true,
       visible: googleConnectedAtom,
     },
     {
