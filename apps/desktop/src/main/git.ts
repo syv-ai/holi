@@ -78,9 +78,10 @@ const WINDOWS = process.platform === 'win32'
  * either. Writing it at runtime sidesteps both, and works identically under
  * vitest, `electron-vite dev`, and a packaged app.
  *
- * **Why a shell script and not node.** It must run with no interpreter
- * assumptions: git executes this directly, and a `#!/usr/bin/env node` shebang
- * depends on a working `node` on PATH, which is not a given.
+ * **Why a shell script and not node.** Git for Windows supplies the `sh.exe`
+ * interpreter used for askpass scripts, while POSIX systems provide `/bin/sh`.
+ * A `#!/usr/bin/env node` shebang would instead depend on Node being on PATH,
+ * which is not a given in a packaged Electron app.
  *
  * The directory comes from `mkdtemp`, so it is 0700 and unpredictable — no other
  * user can pre-create the path and have git execute their script instead.
@@ -88,15 +89,21 @@ const WINDOWS = process.platform === 'win32'
 let askpassPromise: Promise<string> | null = null
 
 /** @public exported for its test */
+export function askpassScript(platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') {
+    return '#!/bin/sh\ncase "$1" in *sername*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
+  }
+  // Git for Windows provides sh.exe and runs shebang scripts, avoiding CMD's
+  // unsafe interpolation of the prompt argument into batch syntax.
+  return '#!/bin/sh\ncase "$1" in [Uu][Ss][Ee][Rr][Nn][Aa][Mm][Ee]*) echo "x-access-token";; *) printf "%s\\n" "$HOLI_GIT_TOKEN";; esac\n'
+}
+
+/** @public exported for its test */
 export function ensureAskpass(): Promise<string> {
   askpassPromise ??= (async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-git-'))
-    const file = join(dir, WINDOWS ? 'askpass.bat' : 'askpass.sh')
-    const body = WINDOWS
-      ? '@echo off\r\nif not "%~1"=="%~1:Username=%" (echo x-access-token) else (echo %HOLI_GIT_TOKEN%)\r\n'
-      : // `case` rather than a regex: this has to be POSIX sh, not bash.
-        '#!/bin/sh\ncase "$1" in *sername*) echo "x-access-token";; *) echo "$HOLI_GIT_TOKEN";; esac\n'
-    await writeFile(file, body, { mode: 0o700 })
+    const file = join(dir, 'askpass.sh')
+    await writeFile(file, askpassScript(), { mode: 0o700 })
     return file
   })()
   return askpassPromise
@@ -380,6 +387,35 @@ export async function tryGit(cwd: string, args: string[], opts: RunOpts = {}): P
 async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<GitOutcome> {
   const gitPath = opts.gitPath ?? 'git'
   const askpass = await ensureAskpass()
+  const token = opts.token?.() ?? ''
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: askpass,
+    HOLI_GIT_TOKEN: token,
+    LC_ALL: 'C',
+    ...opts.env,
+  }
+  if (WINDOWS) {
+    for (const key of [
+      'GIT_TERMINAL_PROMPT',
+      'GIT_ASKPASS',
+      'HOLI_GIT_TOKEN',
+      'LC_ALL',
+      'GCM_INTERACTIVE',
+    ]) {
+      for (const existing of Object.keys(env)) {
+        if (existing.toLowerCase() === key.toLowerCase()) delete env[existing]
+      }
+    }
+    Object.assign(env, {
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_ASKPASS: askpass,
+      HOLI_GIT_TOKEN: token,
+      LC_ALL: 'C',
+      GCM_INTERACTIVE: 'never',
+    })
+  }
   return new Promise((resolve, reject) => {
     const child = execFile(
       gitPath,
@@ -387,18 +423,7 @@ async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<G
       {
         cwd,
         maxBuffer: MAX_BUFFER,
-        env: {
-          ...process.env,
-          // Never block on an interactive prompt: there is no terminal attached
-          // to an Electron main process, so a prompt is a permanent hang.
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_ASKPASS: askpass,
-          HOLI_GIT_TOKEN: opts.token?.() ?? '',
-          // Stable messages regardless of the user's locale. We parse porcelain
-          // rather than prose, but stderr still reaches error messages and logs.
-          LC_ALL: 'C',
-          ...opts.env,
-        },
+        env,
       },
       (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -929,11 +954,23 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   async function commitFileNoVerify(path: string): Promise<string | null> {
-    await runGit(root, ['add', '--', path], opts)
-    if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
+    // `--only` commits this working-tree path without consuming unrelated
+    // staged entries. Literal pathspecs keep bracketed names exact.
+    if (!(await status()).dirtyPaths.includes(path)) return null
+    await runGit(root, ['--literal-pathspecs', 'add', '-A', '--', path], opts)
     await runGit(
       root,
-      [...(await identityArgs()), 'commit', '--no-verify', '-m', `Add ${path}`],
+      [
+        '--literal-pathspecs',
+        ...(await identityArgs()),
+        'commit',
+        '--only',
+        '--no-verify',
+        '-m',
+        `Add ${path}`,
+        '--',
+        path,
+      ],
       opts,
     )
     return runGit(root, ['rev-parse', 'HEAD'], opts)
@@ -943,9 +980,18 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * decides for itself. An untracked file listed here stops being dirty, so it
    * leaves the held-back set on its own. */
   async function excludeLocally(path: string): Promise<void> {
+    const tracked = await tryGit(
+      root,
+      ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', path],
+      opts,
+    )
+    if (tracked.ok) throw new Error('A tracked file cannot be kept local')
     const excludeFile = join(root, '.git', 'info', 'exclude')
     await mkdir(dirname(excludeFile), { recursive: true })
-    await appendFile(excludeFile, `${path}\n`, 'utf8')
+    // One file, not a pattern: anchored to the root so a same-named file in
+    // another folder keeps syncing, and its glob characters escaped.
+    const literal = path.replace(/[\\*?[\]]/g, '\\$&').replace(/ $/, '\\ ')
+    await appendFile(excludeFile, `/${literal}\n`, 'utf8')
   }
 
   /**

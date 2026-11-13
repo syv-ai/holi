@@ -1,4 +1,4 @@
-import { SETTINGS_FILE, syncLabel } from '@holi/shared'
+import { SETTINGS_FILE, syncLabel, type VaultSnapshot } from '@holi/shared'
 import { taskClaim } from '@holi/shared'
 /**
  * The open vault: what it sees, when it commits, and when it syncs.
@@ -14,7 +14,7 @@ import { taskClaim } from '@holi/shared'
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GitError, openRepo } from '../src/main/git'
 import * as vaultWatcher from '../src/main/vault/watcher'
 import * as vaultStore from '../src/main/vault/vault-store'
@@ -79,8 +79,8 @@ const QUIESCE = 150
 const open: ActiveVault[] = []
 afterEach(async () => {
   for (const v of open.splice(0)) await v.close().catch(() => {})
+  await cleanupFixtures()
 })
-afterAll(cleanupFixtures)
 
 /** Collects the snapshots pushed to the renderer. */
 function snapshots() {
@@ -125,19 +125,86 @@ async function vault(timings?: Parameters<typeof openActiveVault>[0]['timings'])
   const dir = await makeClone(origin)
   await sleep(QUIESCE)
   const snaps = snapshots()
+  const committed: (string[] | null)[] = []
   const active = await openActiveVault({
     claims: CLAIMS,
     remote: 'syv-ai/notes',
     repo: openRepo(dir),
     onSnapshot: snaps.push,
     onSyncState: () => {},
+    onCommitted: (paths) => committed.push(paths),
     timings,
   })
   open.push(active)
-  return { active, snaps, dir, origin }
+  return { active, snaps, dir, origin, committed }
 }
 
 describe('ActiveVault — snapshot', () => {
+  it('drains a failed held-back override before commitNow returns', async () => {
+    const { active, dir } = await vault({
+      rescanDebounceMs: 60_000,
+      commitQuietMs: 60_000,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    await writeFile(join(dir, 'large.bin'), Buffer.alloc(10 * 1024 * 1024 + 1))
+    await active.commitNow()
+    await waitFor('the file to be held back', () =>
+      active.heldBack().some((file) => file.path === 'large.bin'),
+    )
+
+    let release!: () => void
+    let entered!: () => void
+    const insideCommit = new Promise<void>((resolve) => (entered = resolve))
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const commit = vi.spyOn(active.repo, 'commitFileNoVerify').mockImplementation(async () => {
+      entered()
+      await blocked
+      throw new Error('override failed')
+    })
+    const override = active.commitHeldBack('large.bin')
+    await insideCommit
+
+    let drained = false
+    const drain = active.commitNow().then((sha) => {
+      drained = true
+      return sha
+    })
+    await sleep(100)
+    expect(drained).toBe(false)
+
+    release()
+    await expect(override).rejects.toThrow('override failed')
+    expect(await drain).not.toBe('busy')
+    commit.mockRestore()
+  })
+
+  it('commits an override through history events and the scheduled remote push', async () => {
+    const { active, dir, origin, committed } = await vault({
+      rescanDebounceMs: 60_000,
+      commitQuietMs: 60_000,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+      pushQuietMs: 100,
+    })
+    await writeFile(join(dir, 'large.bin'), Buffer.alloc(10 * 1024 * 1024 + 1))
+    await active.commitNow()
+    await waitFor('the file to be held back', () =>
+      active.heldBack().some((file) => file.path === 'large.bin'),
+    )
+
+    await active.commitHeldBack('large.bin')
+
+    expect(committed).toContainEqual(['large.bin'])
+    await waitFor('the scheduled push', async () => {
+      const remote = await plainGit(origin, ['rev-parse', 'refs/heads/main']).catch(() => '')
+      return remote !== '' && remote === (await active.repo.head())
+    })
+    expect(await plainGit(origin, ['cat-file', '-s', 'HEAD:large.bin'])).toBe(
+      String(10 * 1024 * 1024 + 1),
+    )
+  })
+
   it('scans on open, before any event fires', async () => {
     const { active } = await vault()
     expect(paths(active.snapshot())).toEqual(['README.md'])
@@ -398,8 +465,8 @@ describe('ActiveVault — commit', () => {
     // coalesced push not due yet.
     expect((await active.repo.status()).dirtyPaths).toEqual(['big.bin'])
     expect(active.syncState()).toEqual({ kind: 'unsynced', ahead: 1, behind: 0 })
-    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000 }])
-    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
+    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000, limit: 1024 }])
+    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000, limit: 1024 }])
     await expect(readFile(join(dir, 'big.bin'), 'utf8')).resolves.toHaveLength(2000)
     // Listed for the agent's prompt hook, and gone once nothing is held back.
     expect(JSON.parse(await readFile(join(dir, HELD_BACK_FILE), 'utf8'))).toEqual({
@@ -431,7 +498,7 @@ describe('ActiveVault — commit', () => {
     await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
     await active.commitNow()
 
-    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000 }])
+    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000, limit: 1024 }])
     await expect(readFile(join(dir, '.git/hooks/pre-commit'), 'utf8')).resolves.toContain(
       'limit=1024',
     )
@@ -506,9 +573,11 @@ describe('ActiveVault — commit', () => {
   })
 
   it('names a count in the message when several changed', async () => {
-    const { dir } = await vault({ rescanDebounceMs: 30, commitQuietMs: 120 })
+    // Committed at once rather than by the quiet timer: on a slow machine the
+    // gap between two writes can outlast it, and the files land in two commits.
+    const { active, dir } = await vault({ commitQuietMs: 60_000, healIntervalMs: 60_000 })
     for (const n of ['a', 'b', 'c']) await writeFile(join(dir, `${n}.md`), `${n}\n`, 'utf8')
-    await waitFor('the commit', async () => (await subject(dir)) !== 'seed')
+    await active.commitNow()
 
     expect(await subject(dir)).toBe('Update 3 files')
   })
@@ -2018,6 +2087,93 @@ describe('ActiveVault — sync', () => {
     expect(await readFile(join(dir, 'on-main.md'), 'utf8').catch(() => null)).toBeNull()
   })
 
+  it('detaches the bridge and closes a watcher when startup callback throws, then retries', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    let attached = 0
+    let detached = 0
+    let watcherClosed = 0
+    const bridgeEnv = {
+      attach: async () => {
+        attached++
+      },
+      detach: async () => {
+        detached++
+      },
+    }
+    const actualWatch = vaultWatcher.watchVault
+    const watchSpy = vi.spyOn(vaultWatcher, 'watchVault').mockImplementation(async (options) => {
+      const watcher = await actualWatch(options)
+      return {
+        close: async () => {
+          watcherClosed++
+          await watcher.close()
+        },
+      }
+    })
+    try {
+      await expect(
+        openActiveVault({
+          claims: CLAIMS,
+          remote: 'syv-ai/retry',
+          repo: openRepo(dir),
+          onSnapshot: () => {},
+          onSyncState: () => {
+            throw new Error('startup callback')
+          },
+          bridgeEnv,
+          timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+        }),
+      ).rejects.toThrow('startup callback')
+      expect(attached).toBe(1)
+      expect(detached).toBe(1)
+      expect(watcherClosed).toBe(1)
+
+      const active = await openActiveVault({
+        claims: CLAIMS,
+        remote: 'syv-ai/retry',
+        repo: openRepo(dir),
+        onSnapshot: () => {},
+        onSyncState: () => {},
+        bridgeEnv,
+        timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+      })
+      open.push(active)
+      expect(attached).toBe(2)
+    } finally {
+      watchSpy.mockRestore()
+    }
+  })
+
+  it('detaches an attached bridge when watcher startup fails', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    let detached = 0
+    const watchSpy = vi
+      .spyOn(vaultWatcher, 'watchVault')
+      .mockRejectedValue(new Error('watch failed'))
+    try {
+      await expect(
+        openActiveVault({
+          claims: CLAIMS,
+          remote: 'syv-ai/watch-failure',
+          repo: openRepo(dir),
+          onSnapshot: () => {},
+          onSyncState: () => {},
+          bridgeEnv: {
+            attach: async () => {},
+            detach: async () => {
+              detached++
+            },
+          },
+        }),
+      ).rejects.toThrow('watch failed')
+      expect(detached).toBe(1)
+    } finally {
+      watchSpy.mockRestore()
+    }
+  })
+
   it('does not pause when the branch changes under an open vault', async () => {
     // A checkout in the terminal is followed, not refused: the state is
     // derived fresh from `git status` and the branch is not part of it.
@@ -2056,9 +2212,69 @@ describe('VaultHost', () => {
     return { registry, a, b }
   }
 
+  it('drains a held-back override before switching vaults', async () => {
+    const { registry, a } = await twoVaults()
+    const heldBackUpdates: string[][] = []
+    const host = createVaultHost({
+      registry,
+      claims: async () => CLAIMS(),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onHeldBack: (_remote, files) => heldBackUpdates.push(files.map((file) => file.path)),
+      timings: {
+        rescanDebounceMs: 60_000,
+        commitQuietMs: 60_000,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+        pushBudgetMs: 100,
+      },
+    })
+    hosts.push(host)
+    const active = await host.open('syv-ai/a')
+    await active.pushNow()
+    await writeFile(join(a, 'large.bin'), Buffer.alloc(10 * 1024 * 1024 + 1))
+    await active.commitNow()
+    await waitFor('the file to be held back', () =>
+      active.heldBack().some((file) => file.path === 'large.bin'),
+    )
+
+    const updatesBeforeOverride = heldBackUpdates.length
+    let release!: () => void
+    let entered!: () => void
+    const insideCommit = new Promise<void>((resolve) => (entered = resolve))
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const commit = vi.spyOn(active.repo, 'commitFileNoVerify').mockImplementation(async (path) => {
+      entered()
+      await blocked
+      return openRepo(a).commitFileNoVerify(path)
+    })
+    const override = active.commitHeldBack('large.bin')
+    await insideCommit
+
+    let switched = false
+    const switching = host.open('syv-ai/b').then(() => {
+      switched = true
+    })
+    await sleep(500)
+    expect(switched).toBe(false)
+
+    release()
+    await override
+    await switching
+    commit.mockRestore()
+    expect(host.active()?.remote).toBe('syv-ai/b')
+    expect(heldBackUpdates.at(-1)).toEqual([])
+    expect(
+      heldBackUpdates
+        .slice(updatesBeforeOverride)
+        .flat()
+        .some((path) => path === 'large.bin'),
+    ).toBe(false)
+  })
+
   const hosts: VaultHost[] = []
   afterEach(async () => {
-    for (const h of hosts.splice(0)) await h.close().catch(() => {})
+    for (const h of hosts.splice(0)) await h.closeAll().catch(() => {})
   })
 
   function host(registry: VaultRegistry, timings: Partial<SyncTimings> = {}) {
@@ -2066,7 +2282,7 @@ describe('VaultHost', () => {
     const h = createVaultHost({
       claims: CLAIMS,
       registry,
-      onSnapshot: snaps.push,
+      onSnapshot: (_remote, snapshot) => snaps.push(snapshot),
       onSyncState: () => {},
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, ...timings },
     })
@@ -2093,7 +2309,7 @@ describe('VaultHost', () => {
       claims: CLAIMS,
       registry,
       onSnapshot: () => {},
-      onSyncState: (s) => seen.push(s.kind),
+      onSyncState: (_remote, s) => seen.push(s.kind),
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
     })
     hosts.push(h)
@@ -2115,13 +2331,13 @@ describe('VaultHost', () => {
       registry,
       onSnapshot: () => {},
       onSyncState: () => {},
-      onHeldBack: (f) => held.push(f),
+      onHeldBack: (_remote, f) => held.push(f),
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
     })
     hosts.push(h)
 
     await h.open('syv-ai/a')
-    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
+    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000, limit: 1024 }])
   })
 
   it('waits for startup prerequisites before opening a vault', async () => {
@@ -2273,6 +2489,457 @@ describe('VaultHost', () => {
 
     expect(snaps.count).toBe(before)
     expect(h.active()).toBeNull()
+  })
+
+  it('replays the selected runtime after a non-selecting start and isolates background callbacks', async () => {
+    const { registry } = await twoVaults()
+    const seen: Array<{ remote: string; snapshot: VaultSnapshot }> = []
+    const states: string[] = []
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: (remote, snapshot) => seen.push({ remote, snapshot }),
+      onSyncState: (remote, state) => states.push(`${remote}:${state.kind}`),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const a = await h.getOrOpen('syv-ai/a')
+    const count = seen.length
+    await h.open('syv-ai/b')
+    expect(seen.at(-1)?.remote).toBe('syv-ai/b')
+    const afterSelection = seen.length
+    await a.refresh()
+    expect(seen.length).toBe(afterSelection + 1)
+    expect(seen.at(-1)?.remote).toBe('syv-ai/a')
+    expect(states).toContain('syv-ai/b:up-to-date')
+  })
+
+  it('keeps the selected runtime when preparation for a switch fails', async () => {
+    const { registry } = await twoVaults()
+    let fail = false
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      beforeOpen: async () => {
+        if (fail) throw new Error('preparation failed')
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const selected = await h.open('syv-ai/a')
+    fail = true
+    await expect(h.open('syv-ai/b')).rejects.toThrow('preparation failed')
+    expect(h.active()).toBe(selected)
+    expect(h.get('syv-ai/a')).toBe(selected)
+  })
+
+  it('opens despite a failed best-effort bridge attach and cleans partial work', async () => {
+    const { registry } = await twoVaults()
+    let detached = 0
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      bridgeEnv: {
+        attach: async () => {
+          throw new Error('partial attach')
+        },
+        detach: async () => {
+          detached++
+        },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    await expect(h.open('syv-ai/a')).resolves.toMatchObject({ remote: 'syv-ai/a' })
+    expect(detached).toBeGreaterThan(0)
+  })
+
+  it('opens runtimes independently and closes only the requested remote', async () => {
+    const { registry, a } = await twoVaults()
+    const { h, snaps } = host(registry, { rescanDebounceMs: 30 })
+    const first = await h.getOrOpen('syv-ai/a')
+    const second = await h.getOrOpen('syv-ai/b')
+    expect(h.active()).toBeNull()
+    expect(h.get('syv-ai/a')).toBe(first)
+    expect(h.get('syv-ai/b')).toBe(second)
+    await h.open('syv-ai/b')
+    await h.close('syv-ai/a')
+    expect(h.active()).toBe(second)
+    const before = snaps.count
+    await writeFile(join(a, 'orphan.md'), 'closed runtime\\n', 'utf8')
+    await sleep(SETTLE)
+    expect(snaps.count).toBe(before)
+    expect(h.get('syv-ai/a')).toBeNull()
+    expect(h.get('syv-ai/b')).toBe(second)
+  })
+
+  it('coalesces concurrent starts for the same remote', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    const [first, second] = await Promise.all([h.getOrOpen('syv-ai/a'), h.getOrOpen('syv-ai/a')])
+    expect(first).toBe(second)
+    expect(h.get('syv-ai/a')).toBe(first)
+  })
+
+  it('does not let a slow remote start block a different remote', async () => {
+    const { registry, a, b } = await twoVaults()
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const h = createVaultHost({
+      registry,
+      claims: async (root) => {
+        if (root === a) {
+          entered()
+          await gate
+        }
+        return CLAIMS()
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    try {
+      const slowA = h.getOrOpen('syv-ai/a')
+      await started
+      const fastB = await h.getOrOpen('syv-ai/b')
+      expect(fastB.remote).toBe('syv-ai/b')
+      release()
+      expect((await slowA).remote).toBe('syv-ai/a')
+    } finally {
+      release()
+    }
+  })
+
+  it('closeAll closes starts admitted before it and rejects starts during drain', async () => {
+    const { registry, a } = await twoVaults()
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const h = createVaultHost({
+      registry,
+      claims: async (root) => {
+        if (root === a) {
+          entered()
+          await gate
+        }
+        return CLAIMS()
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    try {
+      const pending = h.getOrOpen('syv-ai/a')
+      await started
+      const draining = h.closeAll()
+      await expect(h.getOrOpen('syv-ai/b')).rejects.toThrow(/closing/)
+      release()
+      await pending
+      await draining
+      expect(h.get('syv-ai/a')).toBeNull()
+      await expect(h.getOrOpen('syv-ai/b')).resolves.toMatchObject({ remote: 'syv-ai/b' })
+    } finally {
+      release()
+    }
+  })
+
+  it('orders targeted close and reopen behind a visible open awaiting preparation', async () => {
+    const { registry } = await twoVaults()
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let preparing = true
+    const h = createVaultHost({
+      registry,
+      beforeOpen: async () => {
+        if (preparing) {
+          preparing = false
+          entered()
+          await gate
+        }
+      },
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    try {
+      const visibleOpen = h.open('syv-ai/a')
+      await started
+      const close = h.close('syv-ai/a')
+      const reopen = h.open('syv-ai/a')
+      release()
+      await visibleOpen
+      await close
+      const reopened = await reopen
+      expect(h.get('syv-ai/a')).toBe(reopened)
+      expect(h.active()).toBe(reopened)
+    } finally {
+      release()
+    }
+  })
+
+  it('makes non-selecting starts wait for an admitted targeted close', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    const old = await h.getOrOpen('syv-ai/a')
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const dispose = old.close.bind(old)
+    old.close = async () => {
+      entered()
+      await gate
+      await dispose()
+    }
+    try {
+      const closing = h.close('syv-ai/a')
+      await started
+      const reopening = h.getOrOpen('syv-ai/a')
+      expect(h.get('syv-ai/a')).toBeNull()
+      release()
+      await closing
+      const replacement = await reopening
+      expect(replacement).not.toBe(old)
+      expect(h.get('syv-ai/a')).toBe(replacement)
+    } finally {
+      release()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
+  it('keeps independent targeted closes from serializing globally', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    const a = await h.getOrOpen('syv-ai/a')
+    const b = await h.getOrOpen('syv-ai/b')
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const disposeA = a.close.bind(a)
+    a.close = async () => {
+      entered()
+      await gate
+      await disposeA()
+    }
+    try {
+      const closingA = h.close('syv-ai/a')
+      await started
+      await h.close('syv-ai/b')
+      expect(h.get('syv-ai/b')).toBeNull()
+      expect(h.get('syv-ai/a')).toBeNull()
+      release()
+      await closingA
+    } finally {
+      release()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
+  it('keeps non-selecting reopen ordered through visible preparation and close', async () => {
+    const { registry } = await twoVaults()
+    let releasePreparation!: () => void
+    let enteredPreparation!: () => void
+    let releaseDispose!: () => void
+    let enteredDispose!: () => void
+    const preparation = new Promise<void>((resolve) => {
+      releasePreparation = resolve
+    })
+    const preparing = new Promise<void>((resolve) => {
+      enteredPreparation = resolve
+    })
+    const disposal = new Promise<void>((resolve) => {
+      releaseDispose = resolve
+    })
+    const disposing = new Promise<void>((resolve) => {
+      enteredDispose = resolve
+    })
+    let blockPreparation = false
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      beforeOpen: async () => {
+        if (blockPreparation) {
+          blockPreparation = false
+          enteredPreparation()
+          await preparation
+        }
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    try {
+      const runtime = await h.getOrOpen('syv-ai/a')
+      blockPreparation = true
+      const runtimeDispose = runtime.close.bind(runtime)
+      runtime.close = async () => {
+        enteredDispose()
+        await disposal
+        await runtimeDispose()
+      }
+      const visible = h.open('syv-ai/b')
+      await preparing
+      const closing = h.close('syv-ai/a')
+      const reopening = h.getOrOpen('syv-ai/a')
+      releasePreparation()
+      await visible
+      await disposing
+      releaseDispose()
+      await closing
+      const replacement = await reopening
+      expect(replacement).not.toBe(runtime)
+      expect(h.active()?.remote).toBe('syv-ai/b')
+      expect(h.get('syv-ai/a')).toBe(replacement)
+    } finally {
+      releasePreparation()
+      releaseDispose()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
+  it('closeAll drains an already-running targeted close', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    const runtime = await h.getOrOpen('syv-ai/a')
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const close = runtime.close.bind(runtime)
+    runtime.close = async () => {
+      entered()
+      await gate
+      await close()
+    }
+    try {
+      const targeted = h.close('syv-ai/a')
+      await started
+      let allDone = false
+      const all = h.closeAll().then(() => {
+        allDone = true
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(allDone).toBe(false)
+      release()
+      await Promise.all([targeted, all])
+      expect(allDone).toBe(true)
+    } finally {
+      release()
+    }
+  })
+
+  it('isolates throwing selection replay observers and keeps the runtime closable', async () => {
+    const { registry } = await twoVaults()
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {
+        throw new Error('renderer observer failed')
+      },
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    await expect(h.open('syv-ai/a')).resolves.toMatchObject({ remote: 'syv-ai/a' })
+    expect(h.active()?.remote).toBe('syv-ai/a')
+    await h.close('syv-ai/a')
+    expect(h.get('syv-ai/a')).toBeNull()
+  })
+
+  it('coalesces concurrent closeAll and closes remaining runtimes after one teardown fails', async () => {
+    const { registry } = await twoVaults()
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      activity: ({ message }) => {
+        if (message === 'Closed syv-ai/a') throw new Error('activity failed')
+      },
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const a = await h.getOrOpen('syv-ai/a')
+    const b = await h.getOrOpen('syv-ai/b')
+    const first = h.closeAll()
+    const second = h.closeAll()
+    expect(second).toBe(first)
+    await expect(first).rejects.toThrow(/Could not close all/)
+    expect(h.get('syv-ai/a')).toBeNull()
+    expect(h.get('syv-ai/b')).toBeNull()
+    expect(a).not.toBe(b)
+  })
+
+  it('continues teardown of every runtime when one push throws', async () => {
+    const { registry } = await twoVaults()
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const a = await h.getOrOpen('syv-ai/a')
+    const b = await h.getOrOpen('syv-ai/b')
+    let closedA = false
+    let closedB = false
+    const closeA = a.close.bind(a)
+    const closeB = b.close.bind(b)
+    a.pushNow = async () => {
+      throw new Error('push failed')
+    }
+    a.close = async () => {
+      closedA = true
+      await closeA()
+    }
+    b.close = async () => {
+      closedB = true
+      await closeB()
+    }
+
+    await expect(h.closeAll()).rejects.toThrow(/Could not close all/)
+    expect(closedA).toBe(true)
+    expect(closedB).toBe(true)
   })
 
   it('serialises concurrent opens rather than racing two vaults into one slot', async () => {

@@ -58,6 +58,7 @@ async function open(text = markdown) {
     </Provider>,
   )
   await waitFor(() => expect(e.view.dom.querySelector('svg')).not.toBeNull())
+  await screen.findByRole('button', { name: 'Edit labels' })
   updates.mockClear()
   return { e, store, view, updates }
 }
@@ -138,6 +139,36 @@ describe('editing labels in the rendered Mermaid drawing', () => {
     fireEvent.click(button)
     expect(e.state.selection.toJSON()).toEqual(selection)
     expect(await screen.findByRole('button', { name: 'Alpha' })).toBeInTheDocument()
+  })
+
+  it.each([
+    ['rounded rectangle', '(Alpha)'],
+    ['diamond', '{Alpha}'],
+    ['circle', '((Alpha))'],
+    ['stadium', '([Alpha])'],
+    ['subroutine', '[[Alpha]]'],
+    ['cylinder', '[(Alpha)]'],
+    ['hexagon', '{{Alpha}}'],
+  ])('applies and cancels a %s edit through autosave and undo', async (_name, shape) => {
+    const source = markdown.replace('A[Alpha]', `A${shape}`)
+    const { e, updates } = await open(source)
+    const original = e.getMarkdown()
+    const field = await labelField('Alpha')
+    fireEvent.change(field, { target: { value: 'Gamma' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(updates).toHaveBeenCalledOnce())
+    expect(e.getMarkdown()).toContain('A' + shape.replace('Alpha', 'Gamma'))
+    expect(e.can().undo()).toBe(true)
+    act(() => e.commands.undo())
+    expect(e.getMarkdown()).toBe(original)
+
+    updates.mockClear()
+    const beforeCancel = e.state.doc
+    const cancelField = await labelField('Alpha')
+    fireEvent.change(cancelField, { target: { value: 'Discarded' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(e.state.doc).toBe(beforeCancel)
+    expect(updates).not.toHaveBeenCalled()
   })
 
   it('applies only the label, serializes Markdown and keeps the drawing visible', async () => {

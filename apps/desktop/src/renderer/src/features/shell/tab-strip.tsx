@@ -44,6 +44,7 @@ import { cn } from '@/lib/cn'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { openingBeside } from '@/state/alt-open'
 import { activeRemoteAtom } from '@/state/vaults'
 import {
   activeSplit,
@@ -69,7 +70,7 @@ import {
 } from '@/state/shell-workspace'
 
 import { useTabLook } from './tab-look'
-import { TabSwitcher, type SwitcherRow } from './tab-switcher'
+import { TabSwitcher, TabSwitcherButton, type SwitcherRow } from './tab-switcher'
 import { TAB_MIME, stripDropZone, tabDragAtom, useTabDragSource } from './use-tab-drag'
 
 export type HeaderTab = {
@@ -133,6 +134,20 @@ export function TabStrip({
   /** The member of a split's pill that was right-clicked, whose own
    *  actions its menu offers: a member has no header of its own. */
   const [menuMember, setMenuMember] = useState<string | null>(null)
+  /** Radix also changes the controlled value on pointer press and focus.
+   *  Only keyboard interaction may select before the click handler. */
+  const keyboardNavigation = useRef(false)
+  useEffect(() => {
+    const clearKeyboardNavigation = () => {
+      keyboardNavigation.current = false
+    }
+    window.addEventListener('keyup', clearKeyboardNavigation, true)
+    window.addEventListener('blur', clearKeyboardNavigation)
+    return () => {
+      window.removeEventListener('keyup', clearKeyboardNavigation, true)
+      window.removeEventListener('blur', clearKeyboardNavigation)
+    }
+  }, [])
   /** A member's part of the pill drags that member alone (out to the
    *  strip, onto another view), not the whole split. */
   const memberDrag = (key: string) => {
@@ -294,7 +309,9 @@ export function TabStrip({
       >
         <Tabs
           value={ws.active ?? ''}
-          onValueChange={(id) => act((w) => selectEntry(w, id))}
+          onValueChange={(id) => {
+            if (keyboardNavigation.current) act((w) => selectEntry(w, id))
+          }}
           className="min-w-0 flex-1 items-center data-horizontal:flex-row"
         >
           {count > 0 ? (
@@ -302,9 +319,15 @@ export function TabStrip({
               ref={listRef}
               variant="line"
               aria-label="Tabs"
+              onKeyDownCapture={() => {
+                keyboardNavigation.current = true
+              }}
+              onPointerDownCapture={() => {
+                keyboardNavigation.current = false
+              }}
               // No bar: the app's would take 10px of the strip's height. It
               // still scrolls, and the tab count says when it holds more.
-              className="no-scrollbar min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
+              className="no-scrollbar min-w-0 flex-1 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
               onDragOver={(event) => {
                 const drop = stripDrop(event)
                 const at = drop?.kind === 'reorder' ? drop.index : null
@@ -388,11 +411,34 @@ export function TabStrip({
                           data-combine-preview={targetPreview || undefined}
                           aria-label={label}
                           onClick={(event) => {
-                            // A member's part of the pill focuses that member.
                             const member = (event.target as HTMLElement)
                               .closest<HTMLElement>('[data-member]')
                               ?.getAttribute('data-member')
+                            const key = member ?? id
+                            const wholeGroup = ws.entries.some(
+                              (candidate) => isSplit(candidate) && candidate.id === id,
+                            )
+                            // A primary-modifier click opens the clicked view
+                            // beside the active one rather than selecting it.
+                            if (event.altKey) openingBeside()
+                            if (
+                              !event.shiftKey &&
+                              (event.metaKey || event.ctrlKey || event.altKey)
+                            ) {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              if ((wholeGroup && member === null) || !isViewKey(key)) {
+                                const sourceGroup = entry as ShellSplit
+                                if (ws.active !== sourceGroup.id) {
+                                  act(() => combineOnStrip(ws, sourceGroup.id, ws.active ?? ''))
+                                }
+                              } else {
+                                act((w) => openInSplit(w, key))
+                              }
+                              return
+                            }
                             if (member) act((w) => focusMember(w, id, member))
+                            else if (ws.active !== id) act((w) => selectEntry(w, id))
                           }}
                           variant="tab"
                         >
@@ -473,6 +519,16 @@ export function TabStrip({
               })}
             </TabsList>
           ) : null}
+          {count > 0 && overflowing ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabSwitcherButton variant="quiet" size="xs">
+                  {count === 1 ? '1 tab' : `${count} tabs`}
+                </TabSwitcherButton>
+              </TooltipTrigger>
+              <TooltipContent>Switch tab (⌃Tab)</TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-sm" aria-label="New tab" onClick={onNewTab}>
@@ -483,11 +539,6 @@ export function TabStrip({
           </Tooltip>
         </Tabs>
 
-        {count > 0 && overflowing ? (
-          <span className="text-muted-foreground text-xs whitespace-nowrap tabular-nums">
-            {count === 1 ? '1 tab' : `${count} tabs`}
-          </span>
-        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon-sm" aria-label="Tab options">

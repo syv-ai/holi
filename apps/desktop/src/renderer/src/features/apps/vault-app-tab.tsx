@@ -13,7 +13,15 @@ import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import { surfacesAtom } from '@/state/plugins'
 import { openTabAtom } from '@/state/shell-tabs'
 
-export function VaultAppTab({ path, onOpenSearch }: { path: string; onOpenSearch: () => void }) {
+export function VaultAppTab({
+  path,
+  visible = true,
+  onOpenSearch,
+}: {
+  path: string
+  visible?: boolean
+  onOpenSearch: () => void
+}) {
   const surface = useAtomValue(surfacesAtom).get('app')
   const openTab = useSetAtom(openTabAtom)
 
@@ -57,7 +65,7 @@ export function VaultAppTab({ path, onOpenSearch }: { path: string; onOpenSearch
           {Actions !== undefined ? <Actions id={path} /> : null}
         </div>
       </ViewHeader>
-      <App key={path} id={path} visible />
+      <App key={path} id={path} visible={visible} />
     </div>
   )
 }

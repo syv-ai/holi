@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   metaFromValues,
   missingRequired,
+  fieldValuesFor,
   parseFrontmatter,
   prefillValues,
 } from '../shared/pdf-fields'
@@ -114,5 +115,63 @@ describe('prefillValues', () => {
   it('never seeds a key the template does not declare (no leak)', () => {
     const fields = [field({ key: 'title', type: 'text' })]
     expect(prefillValues(fields, { title: 'T', recipient: 'ACME' }, today)).toEqual({ title: 'T' })
+  })
+})
+
+describe('fieldValuesFor: derived fields', () => {
+  const today = '2026-08-04'
+  const fields = [field({ key: 'title' }), field({ key: 'client' })]
+  const fill = (text: string, path = 'note.md') => fieldValuesFor(fields, path, text, today)
+
+  it('prefills an opening ATX H1 after frontmatter', () => {
+    expect(fill('---\nx: 1\n---\n\n# Market analysis ##\n')).toMatchObject({
+      title: 'Market analysis',
+    })
+  })
+
+  it('prefills an opening Setext H1', () => {
+    expect(fill('Setext report\n============\n\nBody\n').title).toBe('Setext report')
+  })
+
+  it.each(['    # shell comment\n\nBody\n', '\t# shell comment\n'])(
+    'does not mistake indented code for an H1: %j',
+    (text) => expect(fill(text).title).toBe(''),
+  )
+
+  it('retains indentation when frontmatter precedes an indented code block', () => {
+    expect(fill('---\nx: 1\n---\n\n    # shell comment\n', 'kunder/Acme/note.md')).toEqual({
+      title: '',
+      client: 'Acme',
+    })
+    expect(fill('---\nx: 1\n---\n\n\t# shell comment\n').title).toBe('')
+  })
+
+  it('uses only the opening H1 and takes the direct kunder child as client', () => {
+    expect(fill('Intro\n\n# Later\n', 'kunder/Acme/reports/a.md')).toEqual({
+      title: '',
+      client: 'Acme',
+    })
+    expect(fill('', 'kunder/a.md').client).toBe('')
+    expect(fill('', 'notes/kunder/Acme/a.md').client).toBe('')
+  })
+
+  it('keeps frontmatter precedence and restricts derived values to eligible fields', () => {
+    const eligible = [field({ key: 'title' }), field({ key: 'client' })]
+    expect(
+      fieldValuesFor(eligible, 'kunder/Acme/a.md', '---\ntitle: Explicit\n---\n# Heading\n', today),
+    ).toEqual({
+      title: 'Explicit',
+      client: 'Acme',
+    })
+    const restricted = [
+      field({ key: 'title', default: 'Fixed' }),
+      field({ key: 'client', type: 'number' }),
+      field({ key: 'other', type: 'textarea' }),
+    ]
+    expect(fieldValuesFor(restricted, 'kunder/Acme/a.md', '# Heading\n', today)).toEqual({
+      title: 'Fixed',
+      client: '',
+      other: '',
+    })
   })
 })

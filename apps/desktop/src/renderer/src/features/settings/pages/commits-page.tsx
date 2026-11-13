@@ -2,6 +2,7 @@
 import { useAtomValue } from 'jotai'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { Switch } from '@/components/ui/switch'
+import { megabytes } from '@/lib/megabytes'
 import { settingDescriptorsAtom } from '@/state/plugins'
 import {
   OptionSelect,
@@ -11,10 +12,10 @@ import {
   type Choice,
 } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
-
-const MB = 1024 * 1024
+import { useSettingsVisible } from '../settings-visibility'
 
 export function CommitsPage() {
+  const visible = useSettingsVisible()
   const { resolved, write } = useVaultSettings()
   const descriptors = useAtomValue(settingDescriptorsAtom)
   const limit = descriptors.find((d) => d.key === 'maxCommittedFileBytes')
@@ -44,7 +45,7 @@ export function CommitsPage() {
         ...sizes,
         {
           value: current,
-          label: `${Math.round(resolved.maxCommittedFileBytes / MB)} MB`,
+          label: megabytes(resolved.maxCommittedFileBytes),
         },
       ]
 
@@ -64,6 +65,7 @@ export function CommitsPage() {
             label="Largest file to commit"
             value={current}
             choices={sizeChoices}
+            visible={visible}
             onChange={(bytes) => void write('maxCommittedFileBytes', Number(bytes))}
           />
         </SettingsFieldRow>

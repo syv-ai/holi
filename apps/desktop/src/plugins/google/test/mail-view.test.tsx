@@ -1305,21 +1305,17 @@ test('offers nothing to remember when the sender could not be parsed', async () 
   expect(within(article).queryByRole('button', { name: /always from this sender/i })).toBeNull()
 })
 
-/**
- * The canvas a message renders on.
- *
- * Mail declares its ink and inherits its paper (see `canvasFor`), so a message
- * that brings any design of its own gets white.
- */
-test('a designed message renders on paper, not on the dark theme', async () => {
+/** Dark mode keeps the app canvas and discards author colors without losing content. */
+test('a designed message keeps the dark theme while its body remains readable', async () => {
   withMessage({ body: 'hello', html: '<p style="color:#333333">the quarterly plan</p>' })
 
   const article = await openThread()
   const frame = await frameOf(article)
 
   const style = frame.querySelector('style')?.textContent ?? ''
-  expect(style).toContain('background: #ffffff')
-  expect(style).toContain('color-scheme: light')
+  expect(style).toContain('color-scheme: dark')
+  expect(frame.querySelector('p')?.getAttribute('style')).toBeNull()
+  expect(frame.querySelector('p')?.textContent).toBe('the quarterly plan')
 })
 
 test('prose that brought no design keeps the app’s own theme', async () => {

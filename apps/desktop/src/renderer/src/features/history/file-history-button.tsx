@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useAtomValue } from 'jotai'
 import { HistoryIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { ignoredPathsAtom } from '@/state/vaults'
 
 import { HistoryDialog } from './history-dialog'
 import { commitAge, shortSha } from './commit-format'
@@ -10,13 +12,25 @@ import { useFileAuthors, useFileHistory } from './use-file-history'
 /**
  * A file header's history, as GitHub puts it above a file: its latest
  * commit (`4a14110 · 2 months ago`) and History, which opens the commits
- * dialog. The same for a document and for code.
+ * dialog. The same for a document and for code. A local file with no
+ * commits shows Local instead.
  */
-export function FileHistoryButton({ path }: { path: string }) {
+export function FileHistoryButton({ path, visible = true }: { path: string; visible?: boolean }) {
   const { history, retry } = useFileHistory(path)
   const authors = useFileAuthors(path)
   const [open, setOpen] = useState(false)
   const latest = history.kind === 'ready' ? history.commits[0] : undefined
+  const unsynced = useAtomValue(ignoredPathsAtom).has(path)
+
+  useEffect(() => {
+    if (!visible) setOpen(false)
+  }, [visible])
+
+  // A file git ignores has no history to show unless it was committed before
+  // it was ignored: it says where it lives instead.
+  if (unsynced && latest === undefined) {
+    return <span className="text-muted-foreground shrink-0 text-xs">Local</span>
+  }
 
   return (
     <div className="flex shrink-0 items-center gap-2">

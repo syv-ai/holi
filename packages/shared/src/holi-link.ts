@@ -18,6 +18,7 @@ import {
 } from './path-safety'
 
 export const HOLI_LINK_SCHEME = 'holi'
+export const HOLI_LINK_WEB_BASE = 'https://syv-ai.github.io/holi/'
 
 export interface HoliLink {
   /** The vault, `owner/repo`. */
@@ -51,10 +52,20 @@ export function isHoliLinkable(path: string): boolean {
 }
 
 /** The link to `path` in `remote`, and to `heading` in it when given. */
-export function holiLink({ remote, path, heading }: HoliLink): string {
+function payload({ remote, path, heading }: HoliLink): string {
   const query = [`vault=${encode(remote)}`, `path=${encode(nfc(path))}`]
   if (heading !== undefined && heading !== '') query.push(`heading=${encode(nfc(heading))}`)
-  return `${HOLI_LINK_SCHEME}://open?${query.join('&')}`
+  return query.join('&')
+}
+
+/** The legacy app link retained for OS protocol handlers and internal handoff. */
+export function holiLink(link: HoliLink): string {
+  return `${HOLI_LINK_SCHEME}://open?${payload(link)}`
+}
+
+/** Clickable static Pages URL; destination data stays in the fragment. */
+export function holiWebLink(link: HoliLink): string {
+  return `${HOLI_LINK_WEB_BASE}#${payload(link)}`
 }
 
 export type ParsedHoliLink = { ok: true; link: HoliLink } | { ok: false; reason: string }
@@ -69,17 +80,42 @@ export function parseHoliLink(raw: string): ParsedHoliLink {
   } catch {
     return refuse('This is not a Holi link.')
   }
-  if (url.protocol !== `${HOLI_LINK_SCHEME}:` || url.hostname !== 'open') {
+  let params: URLSearchParams
+  try {
+    decodeURIComponent(url.protocol === `${HOLI_LINK_SCHEME}:` ? url.search : url.hash)
+  } catch {
+    return refuse('The link is not encoded correctly.')
+  }
+  if (url.protocol === `${HOLI_LINK_SCHEME}:` && url.hostname === 'open') {
+    if (url.pathname !== '' && url.pathname !== '/')
+      return refuse('Holi does not know this kind of link.')
+    if (url.hash !== '') return refuse('Holi does not know this kind of link.')
+    params = url.searchParams
+  } else if (
+    url.protocol === 'https:' &&
+    url.origin === 'https://syv-ai.github.io' &&
+    url.pathname === '/holi/' &&
+    url.search === '' &&
+    url.username === '' &&
+    url.password === ''
+  ) {
+    if (!url.hash.startsWith('#') || url.hash.length < 2)
+      return refuse('The link does not name a vault.')
+    if (/%(?![0-9a-f]{2})/i.test(url.hash)) return refuse('The link is not encoded correctly.')
+    params = new URLSearchParams(url.hash.slice(1))
+  } else {
     return refuse('Holi does not know this kind of link.')
   }
-  if (url.pathname !== '' && url.pathname !== '/') {
+  const keys = [...params.keys()]
+  if (keys.some((key) => !['vault', 'path', 'heading'].includes(key)))
     return refuse('Holi does not know this kind of link.')
-  }
-  const remote = url.searchParams.get('vault') ?? ''
+  if (['vault', 'path', 'heading'].some((key) => params.getAll(key).length > 1))
+    return refuse('The link repeats a destination value.')
+  const remote = params.get('vault') ?? ''
   if (!isRemote(remote)) return refuse('The link does not name a vault.')
   let path: string
   try {
-    path = vaultRelPath(nfc(url.searchParams.get('path') ?? ''))
+    path = vaultRelPath(nfc(params.get('path') ?? ''))
   } catch {
     return refuse('The link does not name a file in the vault.')
   }
@@ -90,7 +126,7 @@ export function parseHoliLink(raw: string): ParsedHoliLink {
   }
   // Git's own files and installed packages are not vault content at all.
   if (isInIgnoredDir(path)) return refuse('The link does not name a file in the vault.')
-  const heading = nfc(url.searchParams.get('heading') ?? '').trim()
+  const heading = nfc(params.get('heading') ?? '').trim()
   if (heading.length > MAX_HEADING) return refuse('The link names a heading Holi cannot read.')
   return { ok: true, link: heading === '' ? { remote, path } : { remote, path, heading } }
 }

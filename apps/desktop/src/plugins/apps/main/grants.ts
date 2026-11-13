@@ -46,6 +46,8 @@ interface AffordanceStatus {
 }
 
 interface GrantStatus {
+  /** Earliest live approval deadline; null for personal apps or no live grant. */
+  expiresAt: number | null
   /** The code the answer is about, to send back with an approval. */
   codeHash: string
   /** One entry per affordance the app's manifest declares. */
@@ -205,36 +207,41 @@ function parseGrants(parsed: unknown): GrantFile {
   return out
 }
 
-export function createAppGrants(path: string, now: () => number = Date.now): AppGrants {
+export function createAppGrants(
+  path: string,
+  now: () => number = Date.now,
+  codeHashOf: typeof bundleCodeHash = bundleCodeHash,
+): AppGrants {
   const store = jsonFileStore(path, parseGrants)
 
   return {
     async status(remote, root, bundle) {
       const [declared, codeHash] = await Promise.all([
         declaredAffordances(root, bundle),
-        bundleCodeHash(root, bundle),
+        codeHashOf(root, bundle),
       ])
-      if (declared.length === 0) return { codeHash, affordances: [] }
+      if (declared.length === 0) return { codeHash, affordances: [], expiresAt: null }
       if (await isPersonal(root, bundle)) {
         return {
           codeHash,
+          expiresAt: null,
           affordances: declared.map((affordance) => ({ affordance, granted: true })),
         }
       }
       const file = await store.read()
-      return {
-        codeHash,
-        affordances: declared.map((affordance) => {
-          const record = file[keyOf(remote, bundle, affordance)]
-          const granted =
-            record !== undefined && record.expiresAt > now() && record.codeHash === codeHash
-          return { affordance, granted }
-        }),
-      }
+      let expiresAt: number | null = null
+      const affordances = declared.map((affordance) => {
+        const record = file[keyOf(remote, bundle, affordance)]
+        const granted =
+          record !== undefined && record.expiresAt > now() && record.codeHash === codeHash
+        if (granted) expiresAt = Math.min(expiresAt ?? Infinity, record.expiresAt)
+        return { affordance, granted }
+      })
+      return { codeHash, affordances, expiresAt }
     },
 
     async grant(remote, root, bundle, affordances, shownHash) {
-      const codeHash = await bundleCodeHash(root, bundle)
+      const codeHash = await codeHashOf(root, bundle)
       if (codeHash !== shownHash) return false
       const declared = await declaredAffordances(root, bundle)
       const chosen = declared.filter((a) => affordances.includes(a))
