@@ -77,7 +77,8 @@ async function rig(
     cli: {
       machine,
       dispatch,
-      commands: () => options.commands ?? [READ, PLUGIN_READ, CHANGE],
+      commands: (remote) =>
+        options.commands ?? (remote === undefined ? [READ, CHANGE] : [READ, PLUGIN_READ, CHANGE]),
       rootFor: async () => null,
     },
     log: () => {},
@@ -126,15 +127,19 @@ describe('machine CLI bridge', () => {
   })
 
   it('resolves targeted plugin help without requiring execution arguments', async () => {
-    const r = await rig()
-    const result = await send(
-      r.port,
-      r.token,
-      argv('google', 'read', '--vault', 'owner/one', '--help'),
-    )
-    expect(result.status).toBe(200)
-    expect(result.body).toContain('usage: holi google read <threadId>')
-    expect(r.dispatch).not.toHaveBeenCalled()
+    for (const options of [
+      ['--vault', 'owner/one', '--help'],
+      ['--help', '--vault', 'owner/one'],
+      ['--json', '--vault=owner/one', '--help'],
+      ['--fields', 'threadId', '--vault=owner/one', '--help'],
+    ]) {
+      const r = await rig()
+      const result = await send(r.port, r.token, argv('google', 'read', ...options))
+      expect(result.status).toBe(200)
+      expect(result.body).toContain('usage: holi google read <threadId>')
+      expect(r.machine.resolveTarget).toHaveBeenCalledWith('owner/one', null)
+      expect(r.dispatch).not.toHaveBeenCalled()
+    }
   })
 
   it('discovers selectors after option values that look like --vault', async () => {
@@ -175,7 +180,7 @@ describe('machine CLI bridge', () => {
     const dispatch = vi.fn<Dispatch>(async () => ({ value: 'read', text: 'read', writes: false }))
     const r = await rig({ dispatch })
     expect((await send(r.port, r.token, argv('docs', 'read', 'note.md'))).status).toBe(200)
-    expect((await send(r.port, r.token, argv('links', 'read'))).status).toBe(422)
+    expect((await send(r.port, r.token, argv('google', 'read', 'thread-1'))).status).toBe(422)
     expect(dispatch).toHaveBeenCalledTimes(1)
   })
 

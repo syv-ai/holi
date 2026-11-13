@@ -138,10 +138,11 @@ export function resolveArgv(
           options = false
           continue
         }
-        if (!options || !word.startsWith('--')) continue
+        if (!options || HELP.has(word) || !word.startsWith('--')) continue
         const eq = word.indexOf('=')
         const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
         const takesValue =
+          name === 'fields' ||
           target.cli.values?.includes(name) === true ||
           target.cli.many?.includes(name) === true ||
           target.cli.args.some((arg) => argName(arg) === name) ||
@@ -152,7 +153,7 @@ export function resolveArgv(
         if (name === 'vault') {
           const value = eq < 0 ? rest[++i] : word.slice(eq + 1)
           if (value && isRemote(value)) vault = value
-        } else if (eq < 0 && takesValue) {
+        } else if (eq < 0 && name !== 'json' && takesValue) {
           i++
         }
       }
