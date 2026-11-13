@@ -42,6 +42,7 @@ export interface OutgoingMail {
    */
   body: string
   cc?: string[]
+  bcc?: string[]
   /** The RFC-822 `Message-ID` of the message being answered. */
   inReplyTo?: string
   /** The thread's `Message-ID` chain, oldest first, including `inReplyTo`. */
@@ -305,6 +306,7 @@ export function buildRfc822(
 ): string {
   for (const address of mail.to) assertNoNewline(address, 'to')
   for (const address of mail.cc ?? []) assertNoNewline(address, 'cc')
+  for (const address of mail.bcc ?? []) assertNoNewline(address, 'bcc')
   assertNoNewline(mail.subject, 'subject')
   if (mail.inReplyTo !== undefined) assertNoNewline(mail.inReplyTo, 'inReplyTo')
   for (const reference of mail.references ?? []) assertNoNewline(reference, 'references')
@@ -323,6 +325,7 @@ export function buildRfc822(
 
   const headers: [string, string][] = [['To', mail.to.join(', ')]]
   if (mail.cc !== undefined && mail.cc.length > 0) headers.push(['Cc', mail.cc.join(', ')])
+  if (mail.bcc !== undefined && mail.bcc.length > 0) headers.push(['Bcc', mail.bcc.join(', ')])
   headers.push(['Subject', encodeHeaderWord(mail.subject)])
   if (mail.inReplyTo !== undefined) headers.push(['In-Reply-To', mail.inReplyTo])
   // Space-separated, per RFC 5322, not commas.

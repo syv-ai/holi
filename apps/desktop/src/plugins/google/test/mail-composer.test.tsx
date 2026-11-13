@@ -754,6 +754,43 @@ describe('sending', () => {
   })
 })
 
+describe('an existing draft with Bcc recipients', () => {
+  it('shows Bcc and carries it through autosave and send', async () => {
+    draftQuery.mockResolvedValue({
+      draftId: 'd-1',
+      threadId: null,
+      to: [{ name: 'Bo', email: 'bo@example.com' }],
+      cc: [],
+      bcc: [{ name: 'Archive', email: 'hidden@example.com' }],
+      subject: 'Draft',
+      markdown: 'Body',
+      html: '<p>Body</p>',
+      text: 'Body',
+      foreign: false,
+    })
+    const user = setup()
+    mount({ intent: { kind: 'new' }, draftId: 'd-1' })
+
+    await screen.findByRole('textbox', { name: 'Bcc' })
+    expect(screen.getByText('hidden@example.com')).toBeInTheDocument()
+
+    await user.type(subjectField(), '!')
+    await vi.advanceTimersByTimeAsync(2_000)
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled())
+    expect(saveDraft.mock.calls[0]?.[0]).toMatchObject({
+      draftId: 'd-1',
+      mail: { bcc: ['hidden@example.com'] },
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(send).toHaveBeenCalled())
+    expect(send.mock.calls.at(-1)?.[0]).toMatchObject({
+      draftId: 'd-1',
+      mail: { bcc: ['hidden@example.com'] },
+    })
+  })
+})
+
 describe('a draft written outside Holi', () => {
   it('converts it, says so, and leaves it editable', async () => {
     // No draft is ever read-only.

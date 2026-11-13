@@ -11,7 +11,7 @@
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { VAULT_SETTING_DEFAULTS, vaultRelPath } from '@holi/shared'
-import { shellReadBridgeEnv } from '../bridge/env-file'
+import { shellJobId, shellReadBridgeEnv } from '../bridge/env-file'
 import { writeAtomic } from './vault-files'
 
 /** The default cap when `.holi/settings/app.yaml` sets no `maxCommittedFileBytes`.
@@ -86,9 +86,17 @@ export async function writeHeldBackFile(root: string, files: HeldBackFile[]): Pr
  * line-based read is a backstop (a filename with a newline is not handled), fine
  * because Holi's own commit path uses NUL and this only catches direct-git slips.
  */
-export async function installGitHook(root: string, threshold: number): Promise<void> {
+export async function installGitHook(
+  root: string,
+  threshold: number,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
   const hooksDir = join(root, '.git', 'hooks')
   await mkdir(hooksDir, { recursive: true })
+  const jobId =
+    platform === 'win32'
+      ? `${shellJobId(platform)}\n  case "$job" in\n    ???????? ) case "$job" in *[!0-9a-f]* ) job= ;; esac ;;\n    *) job= ;;\n  esac\n  [ -n "$job" ] && job="&job=$job"`
+      : `job=\n  [ -n "\${CLAUDE_JOB_DIR:-}" ] && job="&job=\${CLAUDE_JOB_DIR##*/}"`
   const script = `#!/bin/sh
 # Holi large-file guard (auto-generated; set maxCommittedFileBytes in .holi/settings/app.yaml).
 limit=${threshold}
@@ -121,8 +129,7 @@ ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('\n')}
 if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then
   # A commit an agent session made names the session (its job id), so what
   # the transforms say goes back to it.
-  job=
-  [ -n "\${CLAUDE_JOB_DIR:-}" ] && job="&job=\${CLAUDE_JOB_DIR##*/}"
+  ${jobId}
   # --max-time is not optional: a commit that blocks for thirty seconds has
   # failed, as far as the person waiting on it is concerned.
   curl -sS --max-time 10 -X POST \\

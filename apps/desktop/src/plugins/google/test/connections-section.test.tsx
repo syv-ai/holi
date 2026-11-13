@@ -5,23 +5,24 @@
  * Reusing the first as the second is a mapping and no consent, and unlinking a
  * vault is not the same act as removing an account.
  */
-import { render as rtlRender, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectionsSection } from '../renderer/connections-section'
 import { activeRemoteAtom } from '@/plugin-api'
 
 /** A fresh jotai store per test: the google atoms are module level, so one
  *  case's answer would otherwise still be held when the next one renders. */
-const render = () => {
+const render = (visible = true) => {
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/vault')
-  return rtlRender(
+  const result = rtlRender(
     <Provider store={store}>
-      <ConnectionsSection />
+      <ConnectionsSection visible={visible} />
     </Provider>,
   )
+  return { ...result, store }
 }
 
 const status = vi.fn()
@@ -31,6 +32,9 @@ const removeAccount = vi.fn()
 const disconnectVault = vi.fn()
 const client = vi.fn()
 const setClient = vi.fn()
+const connect = vi.fn()
+const awaitConnect = vi.fn()
+const cancelConnect = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
@@ -39,6 +43,9 @@ const google: Record<string, (params: unknown) => unknown> = {
   'google.useAccount': (p) => linkAccount(p),
   'google.removeAccount': (p) => removeAccount(p),
   'google.disconnectVault': () => disconnectVault(),
+  'google.connect': (p) => connect(p),
+  'google.awaitConnect': (p) => awaitConnect(p),
+  'google.cancelConnect': (p) => cancelConnect(p),
   'google.imageSenders': async () => [],
   'google.client': () => client(),
   'google.setClient': (p) => setClient(p),
@@ -61,6 +68,8 @@ vi.mock('@/lib/trpc', () => ({
 const ADA = { sub: 'sub-1', email: 'ada@syv.ai' }
 const WORK = { sub: 'sub-2', email: 'work@syv.ai' }
 
+afterEach(() => vi.useRealTimers())
+
 beforeEach(() => {
   vi.clearAllMocks()
   status.mockResolvedValue({ account: null, missingScopes: [] })
@@ -73,15 +82,156 @@ beforeEach(() => {
   disconnectVault.mockResolvedValue({ ok: true })
   client.mockResolvedValue({ id: 'holi.apps.googleusercontent.com', source: 'shipped' })
   setClient.mockResolvedValue({ ok: true })
+  connect.mockResolvedValue(undefined)
+  awaitConnect.mockResolvedValue({ kind: 'granted' })
+  cancelConnect.mockResolvedValue(undefined)
 })
 
 describe('ConnectionsSection', () => {
+  it('closes the OAuth dialog when its Settings page is hidden and preserves its draft', async () => {
+    const mounted = render()
+    await screen.findByRole('button', { name: 'Use your own client…' })
+    await userEvent.click(screen.getByRole('button', { name: 'Use your own client…' }))
+    const id = screen.getByLabelText('Client ID')
+    await userEvent.type(id, 'unfinished-client')
+    expect(screen.getByRole('dialog', { name: 'Your own OAuth client' })).toBeInTheDocument()
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible={false} />
+      </Provider>,
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible />
+      </Provider>,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: 'Use your own client…' }))
+    expect(screen.getByLabelText('Client ID')).toHaveValue('unfinished-client')
+  })
+
+  it('ignores a delayed connect phase after Settings hides and returns', async () => {
+    let finishConnect!: () => void
+    connect.mockReturnValueOnce(new Promise<void>((resolve) => (finishConnect = resolve)))
+    const mounted = render()
+    const button = await screen.findByRole('button', { name: 'Connect a different account…' })
+    await userEvent.click(button)
+    expect(button).toBeDisabled()
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible={false} />
+      </Provider>,
+    )
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible />
+      </Provider>,
+    )
+    await act(async () => finishConnect())
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Connect a different account…' })).toBeEnabled(),
+    )
+    expect(awaitConnect).not.toHaveBeenCalled()
+  })
+
+  it('keeps the current attempt cancellable when an older attempt settles late', async () => {
+    let settleFirst!: (value: { kind: 'cancelled' }) => void
+    let settleSecond!: (value: { kind: 'granted' | 'cancelled' }) => void
+    awaitConnect
+      .mockReturnValueOnce(new Promise((resolve) => (settleFirst = resolve)))
+      .mockReturnValueOnce(new Promise((resolve) => (settleSecond = resolve)))
+
+    const mounted = render()
+    const label = 'Connect a different account…'
+    await userEvent.click(await screen.findByRole('button', { name: label }))
+    await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(1))
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible={false} />
+      </Provider>,
+    )
+    expect(cancelConnect).toHaveBeenCalledTimes(1)
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible />
+      </Provider>,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: label }))
+    await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(2))
+
+    await act(async () => settleFirst({ kind: 'cancelled' }))
+    expect(screen.getByRole('button', { name: 'Connecting…' })).toBeDisabled()
+
+    mounted.rerender(
+      <Provider store={mounted.store}>
+        <ConnectionsSection visible={false} />
+      </Provider>,
+    )
+    expect(cancelConnect).toHaveBeenCalledTimes(2)
+    await act(async () => settleSecond({ kind: 'cancelled' }))
+  })
+
+  it('invalidates a pending connect when unmounted', async () => {
+    let settle!: (value: { kind: 'granted' }) => void
+    awaitConnect.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)))
+    const mounted = render()
+    const button = await screen.findByRole('button', { name: 'Connect a different account…' })
+    await userEvent.click(button)
+    await waitFor(() => expect(awaitConnect).toHaveBeenCalledTimes(1))
+
+    mounted.unmount()
+    expect(cancelConnect).toHaveBeenCalledTimes(1)
+    await act(async () => settle({ kind: 'granted' }))
+    expect(status).toHaveBeenCalledTimes(1)
+  })
+
   it('offers the accounts already connected here to a vault with none', async () => {
     render()
 
     expect(await screen.findByText('ada@syv.ai')).toBeInTheDocument()
     expect(screen.getByText('work@syv.ai')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Use in this vault' })).toHaveLength(2)
+  })
+
+  it('exposes a failed status read with Retry and recovers without switching vaults', async () => {
+    vi.useFakeTimers()
+    status.mockRejectedValue(new Error('main is still starting'))
+    render()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_250)
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not read/i)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^Connect$/ })).toBeEnabled()
+
+    status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_250)
+    })
+    expect(screen.getByText(/Mail and Calendar, as/)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('treats a successful disconnected read as authoritative, not a read error', async () => {
+    let finishRead!: (value: { account: null; missingScopes: string[] }) => void
+    status.mockReturnValueOnce(new Promise((resolve) => (finishRead = resolve)))
+    accounts.mockResolvedValue({ accounts: [], current: null })
+    render()
+    const connect = screen.getByRole('button', { name: /^Connect$/ })
+    expect(connect).toBeDisabled()
+    await act(async () => finishRead({ account: null, missingScopes: [] }))
+    await waitFor(() => expect(connect).toBeEnabled())
+    expect(status).toHaveBeenCalledTimes(1)
+    expect(accounts).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   })
 
   it('says plainly "Connect" when there is no account on this machine to differ from', async () => {

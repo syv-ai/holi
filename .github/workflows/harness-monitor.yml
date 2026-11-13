@@ -1,0 +1,55 @@
+name: Harness release monitor
+
+on:
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-monitor
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    outputs:
+      report: ${{ steps.discovery.outputs.report }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Discover npm latest versions
+        id: discovery
+        env:
+          HOLI_SHA: ${{ github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          node scripts/harness-monitor.mjs discover > report.json
+          echo "report=$(cat report.json | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+  report:
+    needs: discover
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Reconcile tracking issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          MONITOR_REPORT: ${{ needs.discover.outputs.report }}
+        run: |
+          echo "$MONITOR_REPORT" | base64 --decode > report.json
+          # This job only reports registry metadata and unverified checks. It never
+          # installs or executes a provider; future compatibility runs need a separate job.
+          node scripts/harness-monitor.mjs report report.json

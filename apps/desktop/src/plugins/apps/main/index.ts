@@ -13,6 +13,7 @@ import type { AppDoor, MainPlugin } from '../../../main/plugin-api'
 import type { PreviewRect } from './capabilities'
 import { APPS_INFO } from '../info'
 import { appsCapabilities, storeCapabilities } from './capabilities'
+import { createAppCode } from './code'
 import { envCapabilities, ENV_NAMESPACES } from './env'
 import { admitApps, createAppGrants } from './grants'
 import { createAppPreviews } from './previews'
@@ -21,6 +22,8 @@ import { appsSeed } from './seed'
 
 /** The widest a preview is kept: a card's plate at twice its size. */
 const PREVIEW_WIDTH = 720
+/** Bound healing work even when record writes cause frequent vault scans. */
+const CODE_HEAL_MS = 30_000
 
 /**
  * The window's pixels inside an app's frame, as a small JPEG. The frame is
@@ -54,7 +57,16 @@ export const appsMain: MainPlugin = {
   activate(ctx) {
     // Kept in main, never the renderer, which is the process running the
     // apps' code.
-    const grants = createAppGrants(join(ctx.userData, 'app-grants.json'))
+    const code = createAppCode(ctx.root, (bundle, codeHash) => {
+      ctx.emit(ctx.remote, 'code-changed', { bundle, codeHash })
+    })
+    let nextHeal = 0
+    const stopHealing = ctx.onSnapshot(() => {
+      if (Date.now() < nextHeal) return
+      nextHeal = Date.now() + CODE_HEAL_MS
+      void code.scan().catch((error: unknown) => console.error('[apps] code scan:', error))
+    })
+    const grants = createAppGrants(join(ctx.userData, 'app-grants.json'), Date.now, code.read)
     // The app door's one opener: the approvals an entry's `appGrant` asks for.
     const door: AppDoor = ctx.openAppDoor({ admit: admitApps(grants) })
     const previews = createAppPreviews(join(ctx.userData, 'app-previews'))
@@ -67,6 +79,9 @@ export const appsMain: MainPlugin = {
     // The renderer may have asked for the slash commands before they were
     // registered: tell it they answer now.
     ctx.emit(ctx.remote, 'commands-changed', null)
-    return () => {}
+    return async () => {
+      stopHealing()
+      await code.close()
+    }
   },
 }

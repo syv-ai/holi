@@ -6,8 +6,8 @@
  * the terminal geometry and the workspace, and a third module keeps
  * `agent.ts` free of both.
  *
- * **Every window lands through `land`**: its tab comes forward and its
- * terminal takes the keyboard.
+ * **Every window lands through one of the landing helpers**: its tab comes
+ * forward and its terminal takes the keyboard.
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { agentCap } from '../agent-cap'
@@ -33,6 +33,19 @@ function land(set: Setter, terminalId: string): void {
   // Deduped by id: two views over one PTY would both be attached to it.
   set(openSurfaceAtom, AGENT_SURFACE, terminalId)
   focusSessionTerminal(terminalId)
+}
+
+/** Land session-owned PTYs on the shell's canonical session tab. A surface
+ *  tab would mount a second xterm for the same terminal and replace its output
+ *  registry handle while the retained session tab was parked. */
+function landSession(get: Getter, set: Setter, sessionId: string, terminalId: string): void {
+  const canonicalTerminal = get(viewTerminalsAtom)[sessionId] ?? terminalId
+  if (get(viewTerminalsAtom)[sessionId] === undefined) {
+    set(viewTerminalsAtom, (terminals) => ({ ...terminals, [sessionId]: canonicalTerminal }))
+  }
+  set(appModeAtom, 'agents')
+  set(agentsViewAtom, { kind: 'session', id: sessionId })
+  focusSessionTerminal(canonicalTerminal)
 }
 
 const geometry = (get: Getter) => get(agentGeometryAtom)
@@ -92,14 +105,14 @@ export const openSessionAtom = atom(null, async (get, set, id: string): Promise<
     terminals.find((t) => sessionTitled(t, sessions)?.id === id) ??
     terminals.find((t) => t.launchedFor === id)
   if (existing !== undefined) {
-    land(set, existing.id)
+    landSession(get, set, id, existing.id)
     return { ok: true }
   }
   const res = await inVault(get, (remote) =>
     agentCap.open(remote, { attach: id, ...geometry(get) }),
   )
   if (!res.ok) return res
-  land(set, res.terminalId)
+  landSession(get, set, id, res.terminalId)
   return { ok: true }
 })
 
@@ -114,7 +127,7 @@ export const startSessionAtom = atom(
       agentCap.start(remote, { ...opts, ...geometry(get) }),
     )
     if (!res.ok) return res
-    land(set, res.terminalId)
+    landSession(get, set, res.sessionId, res.terminalId)
     return { ok: true }
   },
 )
@@ -144,7 +157,8 @@ export const sendToAgentAtom = atom(
       }),
     )
     if (!res.ok) return res
-    land(set, res.terminalId)
+    if (args.target === 'new') land(set, res.terminalId)
+    else landSession(get, set, args.target, res.terminalId)
     return { ok: true }
   },
 )

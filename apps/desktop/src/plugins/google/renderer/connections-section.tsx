@@ -60,9 +60,11 @@ const OUTCOME: Record<string, string> = {
   cancelled: '',
 }
 
-export function ConnectionsSection(): React.JSX.Element {
+export function ConnectionsSection({ visible = true }: { visible?: boolean }): React.JSX.Element {
   const {
     account,
+    loading,
+    readError,
     missingScopes,
     needsReconnect,
     accounts,
@@ -74,25 +76,44 @@ export function ConnectionsSection(): React.JSX.Element {
   /** The vault a connect in flight is for, so unmounting cancels it rather
    *  than leaving a listener holding a port for the life of the app. */
   const connecting = useRef<string | null>(null)
+  const generation = useRef(0)
+  const invalidateGeneration = () => {
+    generation.current++
+  }
   /** The account a "Remove from Holi" is asking about: it revokes at
    *  Google, so it is confirmed first. */
   const [removing, setRemoving] = useState<{ sub: string; email: string } | null>(null)
 
   useEffect(() => {
-    return () => {
-      if (connecting.current !== null) void googleCap.cancelConnect(connecting.current)
+    if (!visible) {
+      invalidateGeneration()
+      const remote = connecting.current
+      connecting.current = null
+      if (remote !== null) void googleCap.cancelConnect(remote)
+      setPhase({ kind: 'idle' })
+      setRemoving(null)
     }
-  }, [])
+    return () => {
+      invalidateGeneration()
+      const remote = connecting.current
+      connecting.current = null
+      if (remote !== null) void googleCap.cancelConnect(remote)
+    }
+  }, [visible])
 
   const connect = async () => {
     if (remote === null) return
+    const attempt = ++generation.current
+    const ownsAttempt = () => generation.current === attempt
     setPhase({ kind: 'connecting' })
     connecting.current = remote
     try {
       await googleCap.connect(remote)
+      if (!ownsAttempt()) return
       // Settles when the browser comes back, the person cancels, or the flow
       // times out: there is no IPC timeout to race.
       const result = await googleCap.awaitConnect(remote)
+      if (!ownsAttempt()) return
       if (result.kind === 'granted') {
         // Re-read what was actually granted: a person can approve Gmail and
         // decline contacts, which lands here as `granted` with scopes still
@@ -103,12 +124,13 @@ export function ConnectionsSection(): React.JSX.Element {
         setPhase({ kind: 'idle', error: OUTCOME[result.kind] || undefined })
       }
     } catch (err) {
+      if (!ownsAttempt()) return
       setPhase({
         kind: 'idle',
         error: err instanceof Error ? err.message : 'Could not connect to Google.',
       })
     } finally {
-      connecting.current = null
+      if (ownsAttempt()) connecting.current = null
     }
   }
 
@@ -149,7 +171,7 @@ export function ConnectionsSection(): React.JSX.Element {
   const connectLabel = accounts.length > 0 ? 'Connect a different account…' : 'Connect'
 
   const connected = account != null
-  const busy = phase.kind === 'connecting' || account === undefined
+  const busy = phase.kind === 'connecting' || loading
   /**
    * Connected, but on a grant older than the scopes this build needs.
    *
@@ -179,6 +201,8 @@ export function ConnectionsSection(): React.JSX.Element {
                   'Waiting for your browser…'
                 ) : needsReconnect ? (
                   'Google stopped accepting this connection. Connect again, or forget it.'
+                ) : loading ? (
+                  'Checking your Google connection…'
                 ) : (
                   'Read and triage your Gmail, read your Calendar. This vault only.'
                 )}
@@ -226,6 +250,15 @@ export function ConnectionsSection(): React.JSX.Element {
               )}
             </ItemActions>
           </Item>
+
+          {readError && (
+            <p role="alert" className="text-sm text-pretty text-destructive">
+              Could not read the Google connection.{' '}
+              <Button size="sm" variant="text" onClick={refreshGoogle}>
+                Retry
+              </Button>
+            </p>
+          )}
 
           {connected &&
             (needsReconsent ? (
@@ -284,12 +317,12 @@ export function ConnectionsSection(): React.JSX.Element {
           ))}
 
           {/* Machine-wide: the client every account here was granted to. */}
-          <OAuthClient accountCount={accounts.length} onChanged={refreshGoogle} />
+          <OAuthClient accountCount={accounts.length} onChanged={refreshGoogle} visible={visible} />
         </div>
       </FramePanel>
 
       <ConfirmDialog
-        open={removing !== null}
+        open={visible && removing !== null}
         onOpenChange={(open) => {
           if (!open) setRemoving(null)
         }}

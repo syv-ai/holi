@@ -259,7 +259,7 @@ export interface SettingsSection {
   /** Shown inside core's Plugins page, under its label, rather than as a
    *  section of its own: a plugin's settings about plugins. */
   within?: 'plugins'
-  Component: (props: { remote: string }) => React.JSX.Element
+  Component: (props: { remote: string; visible?: boolean }) => React.JSX.Element
 }
 
 /** The renderer's one store, as an event handler gets it. */
@@ -387,7 +387,9 @@ export interface SidebarApp {
   icon: IconGlyph
   /** Its place among every plugin's apps, lowest first. */
   order: number
-  render: ComponentType
+  render: ComponentType<{ visible?: boolean }>
+  /** Keep this app's mounted view while its tab is hidden. */
+  keepMounted?: boolean
   /** Listed only while true (an account it needs is connected). */
   visible?: Atom<boolean>
 }
@@ -412,7 +414,9 @@ export interface AgentsMode {
   sidebar: ComponentType
   /** The mode's main view for one tab: `selection` is what the tab shows
    *  (null for the mode's home), so two tabs can show two sessions. */
-  main: ComponentType<{ selection: { owner: string; id: string } | null }>
+  main: ComponentType<{ selection: { owner: string; id: string } | null; visible?: boolean }>
+  /** Whether this selection is a live view whose state should survive tab switches. */
+  keepsSelectionMounted?: (selection: { owner: string; id: string }) => boolean
   status: Atom<AgentsStatus>
   /** How a session tab looks (`AgentsTabLook`), by the selection it shows;
    *  undefined for one the mode does not know (yet). */
