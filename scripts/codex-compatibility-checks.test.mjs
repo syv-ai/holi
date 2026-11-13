@@ -1,5 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { runCompatibility } from './codex-compatibility.mjs'
 import { checkProbe, exactVersion, isolatedEnvironment } from './codex-compatibility-checks.mjs'
 
 test('drops inherited credentials and config variables', () => {
@@ -32,10 +36,109 @@ test('matches only the exact CLI version', () => {
   assert.equal(exactVersion('codex-cli 10.169.0', '0.169.0'), false)
 })
 
-test('rejects removed options, timeouts and nonzero help probes', () => {
-  const flags = ['--json', '-C', '--sandbox']
-  assert.match(checkProbe({ status: 0 }, flags, 'Usage: codex exec'), /missing consumed options/)
-  assert.equal(checkProbe({ status: null, error: { code: 'ETIMEDOUT' } }, flags, ''), 'timed out')
-  assert.equal(checkProbe({ status: 2 }, flags, ''), 'exit 2')
-  assert.equal(checkProbe({ status: 0 }, flags, ' --json -C --sandbox'), null)
+test('classifies missing options, timeouts and nonzero probes', () => {
+  assert.match(
+    checkProbe({ status: 0 }, ['--json'], 'Usage: codex exec'),
+    /missing consumed options/,
+  )
+  assert.equal(checkProbe({ status: null, error: { code: 'ETIMEDOUT' } }, [], ''), 'timed out')
+  assert.equal(checkProbe({ status: 2 }, [], ''), 'exit 2')
+  assert.equal(checkProbe({ status: 0 }, ['--json'], ' --json'), null)
+})
+
+test('runs isolated install and CLI probes without leaking install output into JSON', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-codex-runner-test-'))
+  const npm = join(root, 'npm')
+  const body = `#!/bin/sh
+case "$*" in *install*) ;; *) exit 41 ;; esac
+[ -z "\${GH_TOKEN:-}" ] && [ -z "\${OPENAI_API_KEY:-}" ] || exit 42
+case "$HOME" in *holi-codex-check-*/home) ;; *) exit 43 ;; esac
+printf '%s\\n' 'install banner that is not JSON'
+install_dir=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then shift; install_dir=$1; fi
+  shift
+done
+mkdir -p "$install_dir/node_modules/.bin"
+cat > "$install_dir/node_modules/.bin/codex" <<'CODEX'
+#!/bin/sh
+if [ "$1" = "--version" ]; then echo 'codex-cli 0.169.0'; exit 0; fi
+printf '%s\\n' "$@"
+CODEX
+chmod +x "$install_dir/node_modules/.bin/codex"
+`
+  try {
+    await writeFile(npm, body)
+    await chmod(npm, 0o755)
+    const inherited = { GH_TOKEN: process.env.GH_TOKEN, OPENAI_API_KEY: process.env.OPENAI_API_KEY }
+    process.env.GH_TOKEN = 'must-not-reach-child'
+    process.env.OPENAI_API_KEY = 'must-not-reach-child'
+    let result
+    try {
+      result = await runCompatibility('0.169.0', { npm, timeout: 5_000 })
+    } finally {
+      for (const [key, value] of Object.entries(inherited)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+    const stdout = JSON.stringify({ checks: result.checks })
+    assert.doesNotThrow(() => JSON.parse(stdout))
+    assert.equal(result.failed, false, JSON.stringify(result.checks))
+    assert.equal(result.checks[0].outcome, 'pass')
+    assert.equal(stdout.includes('install banner'), false)
+    const npmSource = await readFile(npm, 'utf8')
+    assert.match(npmSource, /printf/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('classifies wrong versions, removed options and nonzero probes through the runner', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-codex-classify-test-'))
+  const npm = join(root, 'npm')
+  try {
+    const scenarios = [
+      ['wrong version', "echo 'codex-cli 9.9.9'", /expected 0.169.0/],
+      [
+        'removed option',
+        'if [ "$1" = "--version" ]; then echo "codex-cli 0.169.0"; else echo exec; fi',
+        /missing consumed options/,
+      ],
+      [
+        'nonzero',
+        'if [ "$1" = "--version" ]; then echo "codex-cli 0.169.0"; else exit 7; fi',
+        /exit 7/,
+      ],
+    ]
+    for (const [name, behavior, expected] of scenarios) {
+      await writeFile(
+        npm,
+        `#!/bin/sh\ninstall_dir=\nwhile [ "$#" -gt 0 ]; do if [ "$1" = "--prefix" ]; then shift; install_dir=$1; fi; shift; done\nmkdir -p "$install_dir/node_modules/.bin"\ncat > "$install_dir/node_modules/.bin/codex" <<'CODEX'\n#!/bin/sh\n${behavior}\nCODEX\nchmod +x "$install_dir/node_modules/.bin/codex"\n`,
+      )
+      await chmod(npm, 0o755)
+      const result = await runCompatibility('0.169.0', { npm, timeout: 1_000 })
+      assert.equal(result.failed, true, name)
+      assert.match(result.checks[0].detail, expected, name)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('classifies a timed-out installed CLI through the runner', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-codex-timeout-test-'))
+  const npm = join(root, 'npm')
+  try {
+    await writeFile(
+      npm,
+      `#!/bin/sh\ninstall_dir=\nwhile [ "$#" -gt 0 ]; do if [ "$1" = "--prefix" ]; then shift; install_dir=$1; fi; shift; done\nmkdir -p "$install_dir/node_modules/.bin"\nprintf '#!/bin/sh\\nsleep 2\\n' > "$install_dir/node_modules/.bin/codex"\nchmod +x "$install_dir/node_modules/.bin/codex"\n`,
+    )
+    await chmod(npm, 0o755)
+    const result = await runCompatibility('0.169.0', { npm, timeout: 30 })
+    assert.equal(result.failed, true)
+    assert.match(result.checks[0].detail, /timed out/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
