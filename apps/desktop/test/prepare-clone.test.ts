@@ -1,8 +1,57 @@
 import { execFile } from 'node:child_process'
-import { chmod, lstat, mkdir, readFile, readlink, stat, symlink, writeFile } from 'node:fs/promises'
+import { EventEmitter } from 'node:events'
+import { PassThrough, Writable } from 'node:stream'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  readlink,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
+
+const hooks = vi.hoisted(() => ({
+  beforeTempOpen: undefined as (() => Promise<void>) | undefined,
+  failCheckAttr: false,
+}))
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    spawn: (...args: Parameters<typeof actual.spawn>) => {
+      const commandArgs = args[1]
+      if (!hooks.failCheckAttr || !Array.isArray(commandArgs) || commandArgs[0] !== 'check-attr')
+        return actual.spawn(...args)
+      const child = new EventEmitter() as ReturnType<typeof actual.spawn>
+      child.stdout = new PassThrough()
+      child.stderr = new PassThrough()
+      child.stdin = new Writable({
+        write(_chunk, _encoding, callback) {
+          callback(Object.assign(new Error('broken pipe'), { code: 'EPIPE' }))
+        },
+      })
+      setImmediate(() => child.emit('close', 1))
+      return child
+    },
+  }
+})
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args)
+      if (String(args[0]).includes('.holi-line-ending-')) await hooks.beforeTempOpen?.()
+      return handle
+    },
+  }
+})
 import { updateShipped } from '../src/main/vault/seed/update'
 import { prepareManagedClone } from '../src/main/vault/prepare-clone'
 import { appsSeed } from '../src/plugins/apps/main/seed'
@@ -16,6 +65,115 @@ const updatedShipped = previousShipped.replace(/^[^\n]*/, '# updated shipped lin
 const contents = { ...appsSeed, shipped: { [shippedPath]: updatedShipped } }
 
 describe('prepareManagedClone', () => {
+  it('consumes stdin errors when Git exits before reading a large path list', async () => {
+    const root = await makeClone(await makeRemote(), 'early-git-exit')
+    const paths = Array.from({ length: 200 }, (_, index) => `candidate-${index}.md`)
+    for (const path of paths) await writeFile(join(root, path), 'base\n')
+    await plainGit(root, ['add', '-A'])
+    await plainGit(root, ['commit', '-m', 'candidate files'])
+    await plainGit(root, ['config', '--local', 'core.autocrlf', 'true'])
+    for (const path of paths) await writeFile(join(root, path), 'base\r\n')
+    hooks.failCheckAttr = true
+    try {
+      await expect(prepareManagedClone(root)).rejects.toThrow(/git exited 1/)
+    } finally {
+      hooks.failCheckAttr = false
+    }
+  })
+
+  it('rechecks staged state after the replacement file is written', async () => {
+    const root = await makeClone(await makeRemote(), 'late-stage')
+    const path = 'candidate.md'
+    const original = Buffer.from('base\n')
+    await writeFile(join(root, path), original)
+    await plainGit(root, ['add', path])
+    await plainGit(root, ['commit', '-m', 'candidate'])
+    await plainGit(root, ['config', '--local', 'core.autocrlf', 'true'])
+    const crlf = Buffer.from('base\r\n')
+    await writeFile(join(root, path), crlf)
+
+    let release!: () => void
+    let entered!: () => void
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    const opened = new Promise<void>((resolve) => (entered = resolve))
+    hooks.beforeTempOpen = async () => {
+      entered()
+      await barrier
+    }
+    try {
+      const preparing = prepareManagedClone(root)
+      await opened
+      await writeFile(join(root, path), 'new staged content\n')
+      await plainGit(root, ['add', path])
+      await writeFile(join(root, path), crlf)
+      release()
+      await preparing
+      expect(await readFile(join(root, path))).toEqual(crlf)
+      expect(await plainGit(root, ['diff', '--cached', '--name-only'])).toBe(path)
+    } finally {
+      release()
+      hooks.beforeTempOpen = undefined
+    }
+  })
+
+  it('skips filter, encoding, ident, and explicit text attributes', async () => {
+    const root = await makeClone(await makeRemote(), 'attribute-skips')
+    const paths = ['filtered.md', 'encoded.md', 'identified.md', 'explicit.md']
+    for (const path of paths) await writeFile(join(root, path), `${path}\n`)
+    await plainGit(root, ['add', '-A'])
+    await plainGit(root, ['commit', '-m', 'attribute fixtures'])
+    await writeFile(
+      join(root, '.git', 'info', 'attributes'),
+      'filtered.md filter=custom\nencoded.md working-tree-encoding=UTF-16LE\nidentified.md ident\nexplicit.md -text\n',
+    )
+    await plainGit(root, ['config', '--local', 'core.autocrlf', 'true'])
+    for (const path of paths) await writeFile(join(root, path), `${path}\r\n`)
+
+    await prepareManagedClone(root)
+
+    for (const path of paths) expect(await readFile(join(root, path), 'utf8')).toBe(`${path}\r\n`)
+  })
+
+  it('does not follow a symlinked ancestor outside the clone', async () => {
+    const root = await makeClone(await makeRemote(), 'symlink-ancestor')
+    const relative = 'parent/candidate.md'
+    await mkdir(join(root, 'parent'))
+    await writeFile(join(root, relative), 'candidate\n')
+    await plainGit(root, ['add', relative])
+    await plainGit(root, ['commit', '-m', 'candidate'])
+    await plainGit(root, ['config', '--local', 'core.autocrlf', 'true'])
+    const outside = await tmp('holi-outside-')
+    const target = join(outside, 'candidate.md')
+    const externalBytes = Buffer.from('outside\r\n')
+    await writeFile(target, externalBytes)
+    await rm(join(root, 'parent'), { recursive: true })
+    await symlink(outside, join(root, 'parent'))
+
+    await prepareManagedClone(root)
+
+    expect(await readFile(target)).toEqual(externalBytes)
+  })
+
+  it('leaves an unmerged file unchanged', async () => {
+    const root = await makeClone(await makeRemote(), 'unmerged')
+    await writeFile(join(root, 'conflict.md'), 'base\n')
+    await plainGit(root, ['add', 'conflict.md'])
+    await plainGit(root, ['commit', '-m', 'base'])
+    await plainGit(root, ['checkout', '-b', 'other'])
+    await writeFile(join(root, 'conflict.md'), 'other\n')
+    await plainGit(root, ['commit', '-am', 'other'])
+    await plainGit(root, ['checkout', 'main'])
+    await writeFile(join(root, 'conflict.md'), 'main\n')
+    await plainGit(root, ['commit', '-am', 'main'])
+    await expect(plainGit(root, ['merge', 'other'])).rejects.toThrow()
+    const conflict = await readFile(join(root, 'conflict.md'))
+
+    await prepareManagedClone(root)
+
+    expect(await readFile(join(root, 'conflict.md'))).toEqual(conflict)
+    expect(await plainGit(root, ['ls-files', '--unmerged', '--', 'conflict.md'])).not.toBe('')
+  })
+
   it('prepares an empty clone with an unborn branch', async () => {
     const root = await tmp('holi-empty-clone-')
     await plainGit(root, ['init', '-b', 'main'])
