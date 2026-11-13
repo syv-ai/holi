@@ -112,6 +112,26 @@ describe('mailFrameDocument — theming', () => {
     expect(authoredSheet).not.toContain('#111')
   })
 
+  it('preserves escaped background words and functions with consumed whitespace', () => {
+    const html = doc({
+      css: '.escaped{background:#fff u\\72 l(data:image/png;base64,AA==) r\\69 ght t\\6f p/10p\\78  20px n\\6f -repeat!important;background-image:u\\72 l(data:image/gif;base64,AA==)}',
+    })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const stylesheet = postcss.parse(parsed.querySelectorAll('style')[1]?.textContent ?? '')
+    const rule = stylesheet.nodes.find(
+      (node): node is Rule => node.type === 'rule' && node.selector === '.escaped',
+    )!
+    const declarations = Object.fromEntries(
+      rule.nodes.filter((node) => node.type === 'decl').map((node) => [node.prop, node]),
+    )
+
+    expect(declarations.background?.value).toBe(
+      'u\\72 l(data:image/png;base64,AA==) r\\69 ght t\\6f p/10p\\78  20px n\\6f -repeat',
+    )
+    expect(declarations.background?.important).toBe(true)
+    expect(declarations['background-image']?.value).toBe('u\\72 l(data:image/gif;base64,AA==)')
+  })
+
   it('normalizes escaped paint properties and preserves escaped background layout', () => {
     const html = doc({
       html: '<div style="c\\6f lor:#111!important;back\\67 round-color:#fff!important">inline</div>',
