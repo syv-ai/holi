@@ -12,6 +12,10 @@ const PLUGIN_READ: CliCommand = {
   name: 'google.read',
   cli: { args: ['threadId'], summary: 'plugin read', values: ['query'] },
 }
+const PLUGIN_SEARCH: CliCommand = {
+  name: 'google.search',
+  cli: { args: ['query?'], summary: 'plugin search' },
+}
 const CHANGE: CliCommand = {
   name: 'store.put',
   cli: { args: [], stdin: 'content', summary: 'put' },
@@ -78,7 +82,8 @@ async function rig(
       machine,
       dispatch,
       commands: (remote) =>
-        options.commands ?? (remote === undefined ? [READ, CHANGE] : [READ, PLUGIN_READ, CHANGE]),
+        options.commands ??
+        (remote === undefined ? [READ, CHANGE] : [READ, PLUGIN_READ, PLUGIN_SEARCH, CHANGE]),
       rootFor: async () => null,
     },
     log: () => {},
@@ -148,10 +153,16 @@ describe('machine CLI bridge', () => {
       const result = await send(
         r.port,
         r.token,
-        argv('google', 'read', '--query', '--vault', ...selector),
+        argv('google', 'search', '--query', '--vault', ...selector),
       )
-      expect(result.status).toBe(400)
-      expect(result.body).toContain('threadId is missing')
+      expect(result.status).toBe(200)
+      expect(r.dispatch).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          remote: 'owner/one',
+          name: 'google.search',
+          params: { query: '--vault' },
+        }),
+      )
     }
   })
 
