@@ -154,6 +154,56 @@ test('an install finishing after Settings hides cannot hand off to consent', asy
   expect(store.get(shownDialogAtom)).toBeNull()
 })
 
+test('an install finishing after Settings hides and returns cannot hand off to consent', async () => {
+  const { store, rerender } = openSettings([row('dash', 'not-installed')])
+  let finishInstall!: () => void
+  mocks.install.mockImplementation(async (flow) => {
+    await new Promise<void>((resolve) => {
+      finishInstall = resolve
+    })
+    flow.openDialog(() => <div>late consent</div>)
+    return null
+  })
+  fireEvent.click(await screen.findByRole('button', { name: 'Install 1.0.0' }))
+  rerender(
+    <Provider store={store}>
+      <PluginsSettings remote="synthetic/vault" visible={false} />
+    </Provider>,
+  )
+  rerender(
+    <Provider store={store}>
+      <PluginsSettings remote="synthetic/vault" visible />
+    </Provider>,
+  )
+  await act(async () => finishInstall())
+  expect(store.get(shownDialogAtom)).toBeNull()
+})
+
+test('an install finishing after Settings unmounts cannot hand off to consent', async () => {
+  const { store, unmount } = openSettings([row('dash', 'not-installed')])
+  let finishInstall!: () => void
+  mocks.install.mockImplementation(async (flow) => {
+    await new Promise<void>((resolve) => {
+      finishInstall = resolve
+    })
+    flow.openDialog(() => <div>late consent</div>)
+    return null
+  })
+  fireEvent.click(await screen.findByRole('button', { name: 'Install 1.0.0' }))
+  unmount()
+  await act(async () => finishInstall())
+  expect(store.get(shownDialogAtom)).toBeNull()
+})
+
+test('unmounting Settings closes its open consent dialog', async () => {
+  const { store, unmount } = openSettings([row('dash', 'needs-consent')])
+  mocks.ask.mockImplementation((flow) => flow.openDialog(() => <div>consent body</div>))
+  fireEvent.click(await screen.findByRole('button', { name: 'Review and allow…' }))
+  expect(store.get(shownDialogAtom)).not.toBeNull()
+  unmount()
+  expect(store.get(shownDialogAtom)).toBeNull()
+})
+
 test('Settings keeps its update accessible name while the label is visually hidden', async () => {
   openSettings()
   await act(async () => {})
