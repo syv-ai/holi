@@ -24,6 +24,7 @@ export interface FakeHoli {
   pushSyncState(state: SyncState): void
   pushHeldBack(files: HeldBackFile[]): void
   pushCommitted(paths: string[] | null): void
+  pushOpen(request: { remote: string; path: string; heading?: string }): void
   /** Main emitting `name` for the plugin `id`. */
   pushPluginEvent(id: string, event: { remote: string; name: string; payload: unknown }): void
   /** What the renderer sent each plugin's main side, in order. */
@@ -135,6 +136,9 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     },
     pushCommitted: (paths) => {
       for (const cb of committedSubs) cb(paths)
+    },
+    pushOpen: (request) => {
+      for (const cb of openSubs) cb(request)
     },
     pushPluginEvent: (id, event) => {
       for (const cb of pluginSubs.get(id) ?? []) cb(event)
