@@ -124,19 +124,22 @@ function rig(
     activity: (entry) => activity.push(entry),
     call:
       opts.call ??
-      ((remote, name, params, beforeInvoke) =>
-        capabilities.dispatch({
-          door: 'ui',
-          remote,
-          name,
-          params,
-          beforeInvoke,
-        })),
+      (async (remote, name, params, beforeInvoke) =>
+        (
+          await capabilities.dispatch({
+            door: 'ui',
+            remote,
+            name,
+            params,
+            beforeInvoke,
+          })
+        ).value),
   })
   let root = ''
   const capabilities = createCapabilityHost({
     registry,
-    rootFor: async () => root,
+    rootFor: async (remote) =>
+      opts.roots?.[remote] ?? (remote === (opts.remote ?? 'o/r') ? root : null),
     active: () => null,
     core: noCoreServices,
     pluginEnabled: async (plugin, at) => (await host.serving(at)).has(plugin),
@@ -269,7 +272,7 @@ describe('the plugin host', () => {
               lateProviderRead = new Promise((resolve) => {
                 setImmediate(() => void ctx.head().then(resolve, () => resolve('rejected')))
               })
-              return { head, nested: nested.value }
+              return { head, nested }
             },
           }),
           'probe.nested': cap({
@@ -286,7 +289,7 @@ describe('the plugin host', () => {
       activate(ctx) {
         return async () => {
           const result = await ctx.call('probe.final', {})
-          expect(result.value).toEqual({ head: 'sha', nested: 'sha' })
+          expect(result).toEqual({ head: 'sha', nested: 'sha' })
         }
       },
     }
@@ -307,6 +310,60 @@ describe('the plugin host', () => {
     await expect(providerCtx!.call('probe.final', {})).rejects.toThrow(
       'plugin context is no longer active',
     )
+  })
+
+  it('allows a dependent disposer to call its provider while settings disable both', async () => {
+    const order: string[] = []
+    let providerCtx: PluginCtx | null = null
+    const provider: MainPlugin = {
+      info: { id: 'provider', label: 'Provider', default: true },
+      activate(ctx) {
+        providerCtx = ctx
+        ctx.register(['provider'], {
+          'provider.final': cap({
+            doors: ['ui'],
+            params: noParams,
+            run: async () => ({
+              head: await ctx.head(),
+              nested: await ctx.call('provider.nested', {}),
+            }),
+          }),
+          'provider.nested': cap({
+            doors: ['ui'],
+            params: noParams,
+            run: async () => ctx.head(),
+          }),
+        })
+        return () => void order.push('provider')
+      },
+    }
+    const dependent: MainPlugin = {
+      info: { id: 'dependent', label: 'Dependent', default: true, requires: ['provider'] },
+      activate(ctx) {
+        return async () => {
+          order.push('dependent dispose')
+          expect(await ctx.call('provider.final', {})).toEqual({ head: 'sha', nested: 'sha' })
+          order.push('dependent')
+        }
+      },
+    }
+    const { host, enter, reconcile, registry } = rig({ plugins: [provider, dependent] })
+    const root = await tempDir()
+    await enter(openVault('o/r', root))
+    expect(registry.has('provider.final', 'o/r')).toBe(true)
+
+    await writeVaultSettings(root, {
+      committed: { plugins: { provider: false, dependent: false } },
+    })
+    await reconcile('settings')
+
+    expect(order).toEqual(['dependent dispose', 'dependent', 'provider'])
+    expect(registry.has('provider.final', 'o/r')).toBe(false)
+    await expect(providerCtx!.head()).rejects.toThrow('plugin context is no longer active')
+    await expect(providerCtx!.call('provider.final', {})).rejects.toThrow(
+      'plugin context is no longer active',
+    )
+    await host.stop('o/r')
   })
 
   it('does not start a plugin the vault has off', async () => {

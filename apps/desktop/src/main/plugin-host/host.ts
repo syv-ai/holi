@@ -564,7 +564,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         const operation =
           inherited?.active && inFinalization
             ? inherited
-            : draining()
+            : draining() && state.parked
               ? { remote, generation: state.generation, active: true }
               : null
         const invoke = () =>
