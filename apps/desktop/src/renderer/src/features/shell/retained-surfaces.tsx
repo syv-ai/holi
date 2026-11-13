@@ -6,13 +6,14 @@ import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { allTabs } from '@/state/shell-workspace'
 import { parseTabKey } from '@/state/tab-descriptor'
 import { activeRemoteAtom } from '@/state/vaults'
+import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 
 /** One vault's visited surfaces, behind stable, connected portal hosts.
  * Slots may change with the shell layout; the iframe's document must not. */
 export function useRetainedSurfaces(
   visibleKeys: readonly string[],
-  render: (key: string, visible: boolean, displayed: boolean) => ReactNode,
-  retainsSession: (key: string) => boolean,
+  render: (key: string, visible: boolean) => ReactNode,
+  retainKey: (key: string) => boolean = () => false,
 ): { slot: (key: string) => ReactNode; content: ReactNode } {
   const remote = useAtomValue(activeRemoteAtom)
   const workspace = useAtomValue(shellWorkspaceAtom)
@@ -31,12 +32,14 @@ export function useRetainedSurfaces(
   const [visited, setVisited] = useState({ remote, keys: [] as string[] })
   const visible = new Set(visibleKeys)
   const open = new Set(allTabs(workspace))
+  const apps = useSidebarApps()
   const retained = (key: string) => {
     const tab = parseTabKey(key)
     return (
       tab?.kind === 'graph' ||
-      (tab?.kind === 'session' && retainsSession(key)) ||
-      (tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true)
+      (tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true) ||
+      (tab?.kind === 'app' && apps.find((app) => app.id === tab.id)?.keepMounted === true) ||
+      retainKey(key)
     )
   }
   const keep = new Set(
@@ -192,11 +195,7 @@ export function useRetainedSurfaces(
           className="invisible pointer-events-none absolute left-0 top-0 h-0 w-0 overflow-hidden"
         />
         {displayed.map((key) =>
-          createPortal(
-            render(key, visible.has(key), visible.has(key)),
-            hostFor(key),
-            identity(key),
-          ),
+          createPortal(render(key, visible.has(key)), hostFor(key), identity(key)),
         )}
       </>
     ),
