@@ -24,7 +24,14 @@ export const providers = [
 
 const requiredChecks = {
   'claude-code': ['compatibility'],
-  codex: ['compatibility'],
+  codex: [
+    'CLI surface',
+    'fixture consumers',
+    'actual notify emission',
+    'approval notifications',
+    'inference events',
+    'sandbox enforcement',
+  ],
   pi: ['compatibility'],
 }
 
@@ -153,7 +160,7 @@ function renderBody(report) {
   )
   const mismatches = report.checks.filter((check) => check.outcome === 'mismatch')
   return [
-    `Monitoring-only observation for **${report.name}** (\`${report.package}\`). No harness was installed or executed.`,
+    `Monitoring-only observation for **${report.name}** (\`${report.package}\`).`,
     '',
     `Observed npm latest: \`${report.version}\``,
     `npm: ${report.npmUrl}`,
@@ -236,7 +243,14 @@ export function githubAdapter() {
   }
 }
 
-if (process.argv[2] === 'discover') {
+if (process.argv[2] === 'merge-codex') {
+  const report = JSON.parse(await readFile(process.argv[3], 'utf8'))
+  const checks = JSON.parse(await readFile(process.argv[4], 'utf8'))
+  const codex = report.providers.find((provider) => provider.id === 'codex')
+  if (!codex) throw new Error('Codex observation is missing')
+  codex.checks = checks
+  process.stdout.write(JSON.stringify(report))
+} else if (process.argv[2] === 'discover') {
   const report = await discover({
     sha: process.env.HOLI_SHA,
     runNumber: process.env.RUN_NUMBER,

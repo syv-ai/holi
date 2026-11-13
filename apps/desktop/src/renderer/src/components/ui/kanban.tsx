@@ -192,6 +192,8 @@ export interface KanbanRootProps<T> extends Omit<
   onDragEnd?: (event: DragEndEvent) => void
   onDragCancel?: (event: DragCancelEvent) => void
   accessibility?: React.ComponentProps<typeof DndContext>["accessibility"]
+  /** Cancel a sensor's release when its owner became unavailable mid-drag. */
+  cancelDrop?: React.ComponentProps<typeof DndContext>["cancelDrop"]
   asChild?: boolean
   modifiers?: Modifiers
 }
@@ -210,6 +212,7 @@ function Kanban<T>({
   onDragEnd,
   onDragCancel,
   accessibility,
+  cancelDrop,
   modifiers,
   ...props
 }: KanbanRootProps<T>) {
@@ -664,6 +667,7 @@ function Kanban<T>({
         sensors={sensors}
         modifiers={modifiers}
         accessibility={accessibility}
+        cancelDrop={cancelDrop}
         measuring={MEASURING_CONFIG}
         collisionDetection={collisionDetection}
         onDragStart={handleDragStart}

@@ -8,10 +8,16 @@ import { ExternalLinkIcon } from 'lucide-react'
 import { SettingsGroup, SettingsFieldRow } from '../settings-kit'
 import { SignOutConfirm } from './sign-out-confirm'
 import { openExternal } from '@/lib/open-external'
+import { useEffect } from 'react'
+import { useSettingsVisible } from '../settings-visibility'
 
 export function AccountPage() {
   const viewer = useAtomValue(sessionAtom)
+  const visible = useSettingsVisible()
   const [confirming, setConfirming] = useState(false)
+  useEffect(() => {
+    if (!visible) setConfirming(false)
+  }, [visible])
   const name = viewer?.name ?? viewer?.login ?? ''
 
   return (
@@ -51,7 +57,7 @@ export function AccountPage() {
           </Button>
         </div>
       </SettingsFieldRow>
-      <SignOutConfirm open={confirming} onOpenChange={setConfirming} />
+      <SignOutConfirm open={visible && confirming} onOpenChange={setConfirming} />
     </SettingsGroup>
   )
 }
