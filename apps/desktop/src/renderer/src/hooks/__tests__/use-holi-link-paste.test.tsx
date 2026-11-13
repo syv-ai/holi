@@ -31,14 +31,20 @@ beforeEach(() => {
   document.body.innerHTML = ''
 })
 
-test('routes a trimmed Holi link from page paste and prevents its text insertion', async () => {
-  render(<Listener />)
-  const event = paste(document.body, '  holi://open?vault=a/b&path=a.md  ', { ctrlKey: true })
-  expect(event.defaultPrevented).toBe(true)
-  expect(mocks.mutate).toHaveBeenCalledWith({ url: 'holi://open?vault=a/b&path=a.md' })
-  await new Promise<void>((resolve) => queueMicrotask(resolve))
-  expect(mocks.toast).not.toHaveBeenCalled()
-})
+test.each([
+  'holi://open?vault=a/b&path=a.md',
+  'https://syv-ai.github.io/holi/#vault=a/b&path=a.md',
+])(
+  'routes a trimmed Holi link from page paste and prevents its text insertion: %s',
+  async (url) => {
+    render(<Listener />)
+    const event = paste(document.body, `  ${url}  `, { ctrlKey: true })
+    expect(event.defaultPrevented).toBe(true)
+    expect(mocks.mutate).toHaveBeenCalledWith({ url })
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    expect(mocks.toast).not.toHaveBeenCalled()
+  },
+)
 
 test('does not intercept ordinary text or an already-handled paste', () => {
   render(<Listener />)
