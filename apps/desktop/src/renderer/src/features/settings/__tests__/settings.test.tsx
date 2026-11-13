@@ -6,7 +6,7 @@
  * agent's Edit opens on that agent.
  */
 import { Provider, createStore } from 'jotai'
-import { act } from 'react'
+import { act, useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
   VAULT_SETTING_DEFAULTS,
@@ -21,7 +21,7 @@ import { openSettingsSectionAtom } from '@/state/settings-section'
 import { vaultSettingsAtom } from '@/state/settings'
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
-import { entryIds, selectEntry } from '@/state/shell-workspace'
+import { closeTab as closeShellTab, entryIds, selectEntry } from '@/state/shell-workspace'
 import { parseTabKey, SETTINGS_KEY, tabKey } from '@/state/tab-descriptor'
 import { EditorPage } from '../pages/editor-page'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
@@ -30,6 +30,7 @@ const write = vi.fn(async (_input: unknown) => ({
   ok: true as const,
   warnings: [] as string[],
 }))
+const githubCollaborators = vi.hoisted(() => vi.fn())
 
 const SETTINGS: ResolvedVaultSettings = {
   ...VAULT_SETTING_DEFAULTS,
@@ -107,7 +108,7 @@ vi.mock('@/lib/trpc', () => {
             ? { sizeKb: 7 * 1024 * 1024 }
             : null
   const procedure = (name: string) => ({
-    query: async () => answer(name),
+    query: async () => (name === 'github.collaborators' ? githubCollaborators() : answer(name)),
     mutate:
       name === 'settings.write' ? write : name === 'cap.run' ? capRun : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
@@ -152,7 +153,15 @@ const CONNECTIONS: RendererPlugin = {
       label: 'Connections',
       headings: [],
       files: [],
-      Component: () => <p>Connect a Google account</p>,
+      Component: ConnectionsSettings,
+    },
+    {
+      id: 'plugin-draft',
+      label: 'Plugin draft',
+      headings: [],
+      files: [],
+      within: 'plugins',
+      Component: ConnectionsSettings,
     },
   ],
 }
@@ -162,6 +171,16 @@ const AGENT_PLUGIN = {
   info: { id: 'stand-in', label: 'Stand-in', default: true },
   agent: { name: 'Claude' },
 } as never
+
+function ConnectionsSettings() {
+  const [draft, setDraft] = useState('')
+  return (
+    <label>
+      Connection draft
+      <input value={draft} onChange={(event) => setDraft(event.target.value)} />
+    </label>
+  )
+}
 
 function mount({ agent = false }: { agent?: boolean } = {}) {
   const store = createStore()
@@ -187,7 +206,11 @@ function mount({ agent = false }: { agent?: boolean } = {}) {
 
 beforeEach(() => {
   write.mockClear()
-  capRun.mockClear()
+  capRun.mockReset()
+  capRun.mockImplementation(async (input: { name: string }) =>
+    input.name === 'agent.harnesses' ? AGENTS : { ok: true },
+  )
+  githubCollaborators.mockResolvedValue({ visibility: 'private', collaborators: [] })
 })
 
 test('the machine-wide Vim switch works while vault settings load and never writes vault settings', async () => {
@@ -249,7 +272,7 @@ test("Open Connections lands on the plugin's own page", async () => {
   const store = mount()
   act(() => store.set(openSettingsSectionAtom, 'connections'))
   expect(await screen.findByRole('heading', { level: 1, name: 'Connections' })).toBeTruthy()
-  expect(screen.getByText('Connect a Google account')).toBeTruthy()
+  expect(screen.getByLabelText('Connection draft')).toBeTruthy()
   const nav = screen.getByRole('navigation', { name: 'Settings' })
   expect(within(nav).getByRole('button', { name: 'Connections' })).toHaveAttribute(
     'aria-current',
@@ -407,4 +430,268 @@ test("an agent's Edit opens on that agent, every time, and saves it", async () =
     paramsJson: string
   }
   expect(JSON.parse(saved.paramsJson)).toMatchObject({ harness: { id: 'aider' }, create: false })
+})
+
+test('an agent Edit draft survives hiding Settings and reopening the same target', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  const openEdit = async () => {
+    const more = await screen.findByRole('button', { name: 'More for Aider' })
+    fireEvent.keyDown(more, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+    return screen.findByRole('dialog', { name: 'Edit Aider' })
+  }
+  const dialog = await openEdit()
+  fireEvent.change(within(dialog).getByLabelText('Program'), { target: { value: 'draft-agent' } })
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  const reopened = await openEdit()
+  expect(within(reopened).getByLabelText('Program')).toHaveValue('draft-agent')
+
+  fireEvent.click(within(reopened).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  const resetAider = await openEdit()
+  expect(within(resetAider).getByLabelText('Program')).toHaveValue('aider')
+  fireEvent.click(within(resetAider).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+  const claudeMore = await screen.findByRole('button', { name: 'More for Claude Code' })
+  fireEvent.keyDown(claudeMore, { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+  const claude = await screen.findByRole('dialog', { name: 'Edit Claude Code' })
+  expect(within(claude).getByLabelText('Program')).toHaveValue('claude')
+})
+
+test('an Add agent draft survives hiding Settings and reopening Add', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Add agent' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Add an agent' })
+  fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Draft agent' } })
+  fireEvent.change(within(dialog).getByLabelText('Program'), { target: { value: 'draft-bin' } })
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Add agent' }))
+  const reopened = await screen.findByRole('dialog', { name: 'Add an agent' })
+  expect(within(reopened).getByLabelText('Name')).toHaveValue('Draft agent')
+  expect(within(reopened).getByLabelText('Program')).toHaveValue('draft-bin')
+})
+
+test('the current settings page keeps its draft across tab switches', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  const draft = await screen.findByLabelText('Connection draft')
+  fireEvent.change(draft, { target: { value: 'unfinished connection' } })
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  expect(screen.getByLabelText('Connection draft').closest('[inert]')).not.toBeNull()
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  const returnedDraft = await screen.findByLabelText('Connection draft')
+  expect(returnedDraft).toHaveValue('unfinished connection')
+  expect(returnedDraft).toBe(draft)
+})
+
+test('unrelated vault settings refresh keeps a plugin settings draft and its input mounted', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  const input = await screen.findByLabelText('Connection draft')
+  fireEvent.change(input, { target: { value: 'unfinished connection' } })
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  act(() =>
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: { ...SETTINGS, colorScheme: 'dark', dailyNotes: !SETTINGS.dailyNotes },
+    }),
+  )
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+
+  const returned = await screen.findByLabelText('Connection draft')
+  expect(returned).toBe(input)
+  expect(returned).toHaveValue('unfinished connection')
+})
+
+test('nested plugin settings drafts survive an unrelated Settings refresh', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'plugins'))
+  const input = await screen.findByLabelText('Connection draft')
+  fireEvent.change(input, { target: { value: 'nested plugin draft' } })
+  act(() =>
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: { ...SETTINGS, colorScheme: 'dark', dailyNotes: !SETTINGS.dailyNotes },
+    }),
+  )
+  const returned = await screen.findByLabelText('Connection draft')
+  expect(returned).toBe(input)
+  expect(returned).toHaveValue('nested plugin draft')
+})
+
+test('changing settings pages and closing Settings reset page-local drafts', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  fireEvent.change(await screen.findByLabelText('Connection draft'), {
+    target: { value: 'unfinished connection' },
+  })
+
+  act(() => store.set(openSettingsSectionAtom, 'editor'))
+  expect(await screen.findByRole('heading', { level: 1, name: 'Editor' })).toBeTruthy()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  expect(await screen.findByLabelText('Connection draft')).toHaveValue('')
+  fireEvent.change(screen.getByLabelText('Connection draft'), {
+    target: { value: 'discard on close' },
+  })
+
+  act(() => store.set(shellWorkspaceAtom, (workspace) => closeShellTab(workspace, SETTINGS_KEY)))
+  fireEvent.keyDown(window, { key: ',', metaKey: true })
+  expect(await screen.findByLabelText('Connection draft')).toHaveValue('')
+})
+
+test('the file-size picker closes when Settings is hidden and stays closed on return', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'commits'))
+  const picker = await screen.findByRole('combobox', { name: 'Largest file to commit' })
+  fireEvent.click(picker)
+  expect(await screen.findByRole('option', { name: '100 MB' })).toBeTruthy()
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('option', { name: '100 MB' })).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.queryByRole('option', { name: '100 MB' })).toBeNull()
+})
+
+test('a late agent test response cannot reopen its dialog after Settings is hidden', async () => {
+  const store = mount()
+  let resolveTest!: () => void
+  capRun.mockImplementation(async (input: { name: string }) => {
+    if (input.name === 'agent.harnessTest') {
+      return new Promise((resolve) => {
+        resolveTest = () => resolve({ ok: true, output: 'finished' } as never)
+      })
+    }
+    return input.name === 'agent.harnesses' ? AGENTS : { ok: true }
+  })
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  fireEvent.click(
+    await screen.findAllByRole('button', { name: 'Test' }).then((buttons) => buttons[0]!),
+  )
+  expect(await screen.findByRole('dialog', { name: 'Test Claude Code' })).toBeTruthy()
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  await act(async () => resolveTest())
+  expect(screen.queryByRole('dialog')).toBeNull()
+})
+
+test('agent rows remain mounted while their list refreshes after returning to Settings', async () => {
+  let refresh!: (value: typeof AGENTS) => void
+  let reads = 0
+  capRun.mockImplementation(async (input: { name: string }) => {
+    if (input.name !== 'agent.harnesses') return { ok: true }
+    reads++
+    return reads === 1
+      ? AGENTS
+      : new Promise((resolve) => {
+          refresh = resolve
+        })
+  })
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  expect(await screen.findByText('Claude Code')).toBeTruthy()
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.getAllByText('Claude Code').length).toBeGreaterThan(0)
+  expect(screen.queryByRole('status', { name: 'Reading the agents' })).toBeNull()
+  await act(async () => refresh(AGENTS))
+})
+
+test('member rows remain mounted while GitHub refreshes after returning to Settings', async () => {
+  const collaborator = {
+    accountId: 7,
+    login: 'reader',
+    avatarUrl: '',
+    permission: 'read',
+  }
+  let refresh!: (value: unknown) => void
+  let reads = 0
+  githubCollaborators.mockImplementation(() => {
+    reads++
+    return reads === 1
+      ? { visibility: 'private', collaborators: [collaborator] }
+      : new Promise((resolve) => {
+          refresh = resolve
+        })
+  })
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'members'))
+  expect(await screen.findByText('reader')).toBeTruthy()
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.getByText('reader')).toBeTruthy()
+  expect(screen.queryByRole('status', { name: 'Reading the members' })).toBeNull()
+  await act(async () => refresh({ visibility: 'private', collaborators: [collaborator] }))
+})
+
+test('a settings dialog closes when its tab is hidden and stays closed on return', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'account'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+  expect(await screen.findByRole('alertdialog')).toBeTruthy()
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.queryByRole('alertdialog')).toBeNull()
+})
+
+test('a settings menu closes and releases focus when its tab is hidden', async () => {
+  const store = mount({ agent: true })
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  fireEvent.keyDown(await screen.findByRole('button', { name: 'More for Aider' }), {
+    key: 'Enter',
+  })
+  expect(await screen.findByRole('menuitem', { name: 'Edit' })).toBeTruthy()
+
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'mail' }))
+  await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull())
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull()
+})
+
+test('leaving a vault disposes its plugin settings draft', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  fireEvent.change(await screen.findByLabelText('Connection draft'), {
+    target: { value: 'vault-only draft' },
+  })
+  act(() => store.set(activeRemoteAtom, null))
+  expect(screen.queryByLabelText('Connection draft')).toBeNull()
+  act(() => store.set(activeRemoteAtom, 'mara/notes'))
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  expect(await screen.findByLabelText('Connection draft')).toHaveValue('')
+})
+
+test('disabling a plugin releases its settings page and falls back to General', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'connections'))
+  expect(await screen.findByLabelText('Connection draft')).toBeTruthy()
+  act(() =>
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: {
+        ...SETTINGS,
+        plugins: {
+          ...SETTINGS.plugins,
+          vault: { ...SETTINGS.plugins.vault, google: false },
+        },
+      },
+    }),
+  )
+  expect(await screen.findByRole('heading', { level: 1, name: 'General' })).toBeTruthy()
+  expect(screen.queryByLabelText('Connection draft')).toBeNull()
 })

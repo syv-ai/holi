@@ -24,10 +24,12 @@ type Results =
 export function PluginSearch({
   remote,
   disabled,
+  visible = true,
   onChoose,
 }: {
   remote: string
   disabled: boolean
+  visible?: boolean
   /** A plugin with a release was chosen. */
   onChoose(candidate: Candidate & { latest: string }): void
 }): React.JSX.Element {
@@ -37,6 +39,11 @@ export function PluginSearch({
   const anchor = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    if (!visible) {
+      setResults({ kind: 'idle' })
+      setOpen(false)
+      return
+    }
     const typed = query.trim()
     if (typed === '') {
       setResults({ kind: 'idle' })
@@ -56,7 +63,7 @@ export function PluginSearch({
       live = false
       clearTimeout(timer)
     }
-  }, [remote, query])
+  }, [remote, query, visible])
 
   const choose = (c: Candidate) => {
     if (c.latest === null || c.problem !== null) return
@@ -68,7 +75,7 @@ export function PluginSearch({
   return (
     // cmdk ranks nothing here: the order is main's, plugins first.
     <Command shouldFilter={false} className="h-auto overflow-visible bg-transparent">
-      <Popover open={open && query.trim() !== ''} onOpenChange={setOpen}>
+      <Popover open={visible && open && query.trim() !== ''} onOpenChange={setOpen}>
         <PopoverAnchor asChild>
           <div ref={anchor} className="rounded-md bg-muted">
             <CommandInput
