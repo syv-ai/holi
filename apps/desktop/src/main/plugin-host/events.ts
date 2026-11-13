@@ -65,18 +65,40 @@ export function pluginEvents(
   id: string,
   runs?: (remote: string) => Promise<boolean>,
   generation?: () => number,
+  allowed: () => boolean = () => true,
 ): PluginEvents {
   const channel = `plugin:${id}`
-  const outbound = queue(`${id} event`)
-  const inbound = queue(`${id} message`)
+  const outboundByRemote = new Map<string, (step: () => Promise<void>) => void>()
+  const inboundByRemote = new Map<string, (step: () => Promise<void>) => void>()
+  const channelQueue = (
+    queues: Map<string, (step: () => Promise<void>) => void>,
+    remote: string,
+    label: string,
+  ) => {
+    let run = queues.get(remote)
+    if (run === undefined) {
+      run = queue(`${id} ${label} ${remote}`)
+      queues.set(remote, run)
+    }
+    return run
+  }
   return {
     emit(remote, name, payload) {
       checkName(name)
       const event = { remote, name, payload }
       if (runs === undefined) return deps.send(channel, event)
       const at = generation?.()
-      outbound(async () => {
-        if ((generation === undefined || generation() === at) && (await runs(remote))) {
+      channelQueue(
+        outboundByRemote,
+        remote,
+        'event',
+      )(async () => {
+        if (!allowed() || (generation !== undefined && generation() !== at)) return
+        if (
+          (await runs(remote)) &&
+          allowed() &&
+          (generation === undefined || generation() === at)
+        ) {
           deps.send(channel, event)
         }
       })
@@ -89,11 +111,16 @@ export function pluginEvents(
         // not reach the vault that replaced it.
         if (message.remote !== deps.liveRemote()) return
         const at = generation?.()
-        inbound(async () => {
-          if (message.remote !== deps.liveRemote()) return
+        channelQueue(
+          inboundByRemote,
+          message.remote,
+          'message',
+        )(async () => {
+          if (!allowed() || message.remote !== deps.liveRemote()) return
           if (generation !== undefined && generation() !== at) return
           if (runs === undefined || (await runs(message.remote))) {
             if (
+              allowed() &&
               message.remote === deps.liveRemote() &&
               (generation === undefined || generation() === at)
             ) {

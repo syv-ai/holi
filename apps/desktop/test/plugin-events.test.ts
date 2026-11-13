@@ -34,6 +34,65 @@ describe('plugin events', () => {
     expect(handled).not.toHaveBeenCalled()
   })
 
+  it('drops inbound work queued before an activation closes during its async gate', async () => {
+    let live = true
+    let receive: ((message: unknown) => void) | undefined
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const handled = vi.fn()
+    const bus = pluginEvents(
+      {
+        send: () => {},
+        listen: (_channel, handler) => {
+          receive = handler
+          return () => {}
+        },
+        liveRemote: () => 'A',
+      },
+      'sample',
+      async () => {
+        await gate
+        return true
+      },
+      () => (live ? 1 : -1),
+    )
+    bus.on('input', handled)
+    receive!({ remote: 'A', name: 'input', payload: 'stale' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    live = false
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(handled).not.toHaveBeenCalled()
+  })
+
+  it('drops outbound delivery when its activation closes during the async gate', async () => {
+    let live = true
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const sent: PluginEvent[] = []
+    const bus = pluginEvents(
+      {
+        send: (_channel, event) => sent.push(event),
+        listen: () => () => {},
+        liveRemote: () => 'A',
+      },
+      'sample',
+      async () => {
+        await gate
+        return true
+      },
+      () => (live ? 1 : -1),
+    )
+    bus.emit('A', 'output', 'stale')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    live = false
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(sent).toEqual([])
+  })
+
   it('keeps another activation moving when one remote event gate is slow', async () => {
     const sent: PluginEvent[] = []
     let releaseA: () => void = () => {}
