@@ -653,7 +653,7 @@ export function createRouter(deps: RouterDeps) {
    */
   async function removeClone(remote: string): Promise<void> {
     const root = await rootFor(remote)
-    if (deps.host.active()?.remote === remote) await deps.host.close()
+    await deps.host.close(remote)
     await deps.trashItem(root)
     await deps.registry.remove(remote)
     await deps.plugins.syncBackground()
@@ -897,7 +897,9 @@ export function createRouter(deps: RouterDeps) {
     // best-effort: one that won't trash stays on disk AND in the registry, never
     // orphaned.
     deleteClones: t.procedure.mutation(async (): Promise<{ ok: true }> => {
-      await deps.host.close()
+      // Every registered clone may have a runtime: background runtimes keep
+      // their own watcher and timers even when another vault is selected.
+      await deps.host.closeAll()
       for (const e of await deps.registry.list()) {
         try {
           await deps.trashItem(e.path)
