@@ -9,7 +9,7 @@
 import { lstat, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
-import { exactPath, resolveRelative } from '@holi/shared/path-safety-node'
+import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   commentThreads,
   isCommentableNote,
@@ -547,9 +547,8 @@ export function createRouter(deps: RouterDeps) {
    * replacing it with the atomic writer. Missing leaves remain valid writes. */
   async function guardScratchpadLink(root: string, rel: VaultRelPath): Promise<void> {
     if (rel.toLowerCase() !== SCRATCHPAD_PATH.toLowerCase()) return
-    const canonical = await exactPath(root, rel)
     const info = await lstat(join(root, rel)).catch(() => null)
-    if (info?.isSymbolicLink() && canonical === null) {
+    if (info?.isSymbolicLink()) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'scratchpad path cannot be a symlink' })
     }
   }
