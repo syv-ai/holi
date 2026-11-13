@@ -47,6 +47,10 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
   let timer: ReturnType<typeof setTimeout> | undefined
   let resizeSuppressionTimer: ReturnType<typeof setTimeout> | undefined
   let suppressResize = false
+  const hasLayout = (documentId: string) => {
+    const metrics = viewport.forDocument(documentId).getMetrics()
+    return metrics.width > 0 && metrics.height > 0
+  }
   const cancel = () => {
     clearTimeout(timer)
     timer = undefined
@@ -95,10 +99,9 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
   const changed = () => {
     if (position === null) {
       const documentId = registry.getStore().getState().core.activeDocumentId
-      if (documentId !== null) lastPosition = readPosition(documentId)
+      if (documentId !== null && hasLayout(documentId)) lastPosition = readPosition(documentId)
       return
     }
-    restore()
     settle()
   }
   const resized = () => {
@@ -112,16 +115,22 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
     }
     if (position === null) {
       const documentId = registry.getStore().getState().core.activeDocumentId
-      if (documentId === null) return
+      if (documentId === null || !hasLayout(documentId)) return
+      // The viewer reports zero-sized resize events while opening; those are
+      // initialization, not a layout change to undo. Establish a baseline once
+      // the viewport has real dimensions, then preserve it across later resizes.
+      if (lastPosition === null) {
+        lastPosition = readPosition(documentId)
+        return
+      }
       // A responsive layout can reset the viewer without moving its host.
       // Start from the position recorded before the resize, not the new metrics.
-      position = lastPosition ?? readPosition(documentId)
+      position = lastPosition
     }
-    restore()
     settle()
   }
   const documentId = registry.getStore().getState().core.activeDocumentId
-  if (documentId !== null) lastPosition = readPosition(documentId)
+  if (documentId !== null && hasLayout(documentId)) lastPosition = readPosition(documentId)
   const unsubscribeResize = viewport.onViewportResize(resized)
   const unsubscribeScroll = viewport.onScrollChange(changed)
   // Window capture precedes Holi's document-level PDF shortcut guard.

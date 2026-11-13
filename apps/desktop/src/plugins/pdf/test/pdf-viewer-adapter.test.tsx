@@ -74,7 +74,7 @@ test('a disposed viewer cannot publish a late registry', async () => {
 })
 
 function viewportFixture() {
-  const metrics = { scrollTop: 1453.5, scrollLeft: 20 }
+  const metrics = { scrollTop: 1453.5, scrollLeft: 20, width: 1000, height: 700 }
   const scrollTo = vi.fn(({ x, y }: { x: number; y: number }) => {
     metrics.scrollLeft = x
     metrics.scrollTop = y
@@ -107,6 +107,14 @@ function viewportFixture() {
     scrollTo,
     scrollToPage,
     resize: () => resized(),
+    setInitialZeroSize: () => {
+      metrics.width = 0
+      metrics.height = 0
+    },
+    finishInitialLayout: () => {
+      metrics.width = 1000
+      metrics.height = 700
+    },
     resetBeforeMove: () => {
       page = 1
       metrics.scrollTop = 0
@@ -120,6 +128,25 @@ function viewportFixture() {
     unsubscribe,
   }
 }
+
+test('does not restore zero-sized startup metrics over the initial fit-width layout', async () => {
+  const viewport = viewportFixture()
+  viewport.setInitialZeroSize()
+  const ready = vi.fn()
+  render(<PdfViewerAdapter onReady={ready} />)
+  await waitFor(() => expect(ready).toHaveBeenCalled())
+
+  act(() => viewport.resize())
+  expect(viewport.scrollTo).not.toHaveBeenCalled()
+  expect(viewport.scrollToPage).not.toHaveBeenCalled()
+
+  act(() => {
+    viewport.finishInitialLayout()
+    viewport.resize()
+  })
+  expect(viewport.scrollTo).not.toHaveBeenCalled()
+  expect(viewport.scrollToPage).not.toHaveBeenCalled()
+})
 
 test('restores the last reading position when a move resets metrics before its callback', async () => {
   const viewport = viewportFixture()
@@ -203,13 +230,18 @@ test('keeps page and offset through delayed search after resize, then releases t
     for (let replay = 0; replay < 2; replay++) {
       await act(() => vi.advanceTimersByTimeAsync(300))
       act(() => viewport.searchHitScroll())
-      expect(viewport.scrollToPage).toHaveBeenLastCalledWith({ pageNumber: 3, behavior: 'instant' })
-      expect(viewport.metrics).toEqual({ scrollTop: 1453.5, scrollLeft: 20 })
+      expect(viewport.scrollToPage).not.toHaveBeenCalled()
+      expect(viewport.metrics.scrollTop).toBe(0)
     }
-    expect(viewport.scrollToPage).toHaveBeenCalledTimes(2)
+    await act(() => vi.advanceTimersByTimeAsync(400))
+    expect(viewport.scrollToPage).toHaveBeenCalledExactlyOnceWith({
+      pageNumber: 3,
+      behavior: 'instant',
+    })
+    expect(viewport.metrics).toMatchObject({ scrollTop: 1453.5, scrollLeft: 20 })
     await act(() => vi.advanceTimersByTimeAsync(1000))
     act(() => viewport.searchHitScroll())
-    expect(viewport.scrollToPage).toHaveBeenCalledTimes(2)
+    expect(viewport.scrollToPage).toHaveBeenCalledTimes(1)
     expect(viewport.metrics.scrollTop).toBe(0)
   } finally {
     vi.useRealTimers()
