@@ -98,8 +98,6 @@ describe('PiRpcRun', () => {
     process.stdout.write(
       '\n{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":" world"}}\n{"type":"agent_end"}\n',
     )
-    process.stdout.write('{"type":"response","id":"')
-    process.stdout.write('holi-2","success":true,"data":{"disposition":"handled"}}\n')
     let settled = false
     void result.then(() => {
       settled = true
@@ -110,12 +108,12 @@ describe('PiRpcRun', () => {
     await expect(result).resolves.toMatchObject({ status: 'completed', output: 'hello world' })
   })
 
-  it('does not treat acknowledgement or agent_end as awaited completion', async () => {
+  it('keeps ordinary acknowledgements and agent_end pending until settlement', async () => {
     const process = fake()
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
     const result = run.prompt('go')
     process.stdout.write(
-      `{"type":"response","id":"${process.commands[0]!.id}","success":true,"data":{"disposition":"handled"}}\n{"type":"agent_end"}\n`,
+      `{"type":"response","id":"${process.commands[0]!.id}","success":true}\n{"type":"agent_end"}\n`,
     )
     let completed = false
     void result.then(() => {
@@ -123,8 +121,8 @@ describe('PiRpcRun', () => {
     })
     await Promise.resolve()
     expect(completed).toBe(false)
-    process.exit()
-    await expect(result).resolves.toMatchObject({ status: 'failed', error: /exited/ })
+    process.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await expect(result).resolves.toMatchObject({ status: 'completed' })
   })
 
   it('rejects a follow-up when the RPC process exited between turns', async () => {
@@ -169,22 +167,62 @@ describe('PiRpcRun', () => {
     await expect(result).resolves.toMatchObject({ status: 'failed', error: /malformed/ })
   })
 
-  it('waits for settlement after a command acknowledgement and reuses the RPC process', async () => {
+  it('does not let a handled queued steer settle the active turn', async () => {
+    const process = fake()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
+    const result = run.prompt('active')
+    process.stdout.write('{"type":"agent_start"}\n')
+    run.steer('queued')
+    const queued = process.commands.at(-1)!
+    process.stdout.write(
+      JSON.stringify({
+        type: 'response',
+        id: queued.id,
+        command: 'prompt',
+        success: true,
+        data: { disposition: 'handled' },
+      }) + '\n',
+    )
+    let completed = false
+    void result.then(() => {
+      completed = true
+    })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+    process.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await expect(result).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('completes a handled no-run prompt and reuses the process', async () => {
     const fakeProcess = fake()
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => fakeProcess.child })
     const result = run.prompt('/handled')
+    const prompt = fakeProcess.commands[0]!
     fakeProcess.stdout.write(
-      '{"type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}\n',
+      JSON.stringify({
+        type: 'response',
+        id: prompt.id,
+        command: 'prompt',
+        success: true,
+        data: { disposition: 'handled' },
+      }) + '\n',
     )
-    let resolved = false
-    void result.then(() => {
-      resolved = true
+    await expect(result).resolves.toMatchObject({ status: 'completed', output: '' })
+    const next = run.prompt('again')
+    const nextPrompt = fakeProcess.commands.at(-1)!
+    fakeProcess.stdout.write(
+      JSON.stringify({ type: 'response', id: nextPrompt.id, command: 'prompt', success: true }) +
+        '\n',
+    )
+    let completed = false
+    void next.then(() => {
+      completed = true
     })
     await Promise.resolve()
-    expect(resolved).toBe(false)
-    fakeProcess.stdout.write('{"type":"agent_settled","aborted":false}\n')
-    await expect(result).resolves.toMatchObject({ status: 'completed' })
-    const next = run.prompt('again')
+    expect(completed).toBe(false)
+    fakeProcess.stdout.write('{"type":"agent_end"}\n')
+    await Promise.resolve()
+    expect(completed).toBe(false)
     fakeProcess.stdout.write('{"type":"agent_settled","aborted":false}\n')
     await expect(next).resolves.toMatchObject({ status: 'completed' })
   })
