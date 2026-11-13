@@ -32,7 +32,18 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
   const viewport = registry.getPlugin('viewport')?.provides?.() as ViewportCapability | undefined
   const scroll = registry.getPlugin('scroll')?.provides?.() as ScrollCapability | undefined
   if (viewport === undefined || scroll === undefined) return () => {}
-  let position: { documentId: string; page: number; x: number; y: number } | null = null
+  type ReadingPosition = { documentId: string; page: number; x: number; y: number }
+  const readPosition = (documentId: string): ReadingPosition => {
+    const metrics = viewport.forDocument(documentId).getMetrics()
+    return {
+      documentId,
+      page: scroll.forDocument(documentId).getCurrentPage(),
+      x: metrics.scrollLeft,
+      y: metrics.scrollTop,
+    }
+  }
+  let lastPosition: ReadingPosition | null = null
+  let position: ReadingPosition | null = null
   let timer: ReturnType<typeof setTimeout> | undefined
   const cancel = () => {
     clearTimeout(timer)
@@ -69,7 +80,9 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
     const documentId = registry.getStore().getState().core.activeDocumentId
     if (documentId === null) return
     const metrics = viewport.forDocument(documentId).getMetrics()
-    position ??= {
+    // moveBefore invokes this after the DOM move, by which point layout may
+    // already have reset the viewer's page and viewport metrics.
+    position ??= lastPosition ?? {
       documentId,
       page: scroll.forDocument(documentId).getCurrentPage(),
       x: metrics.scrollLeft,
@@ -78,10 +91,16 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
     settle()
   }
   const changed = () => {
-    if (position === null) return
+    if (position === null) {
+      const documentId = registry.getStore().getState().core.activeDocumentId
+      if (documentId !== null) lastPosition = readPosition(documentId)
+      return
+    }
     restore()
     settle()
   }
+  const documentId = registry.getStore().getState().core.activeDocumentId
+  if (documentId !== null) lastPosition = readPosition(documentId)
   const unsubscribeResize = viewport.onViewportResize(changed)
   const unsubscribeScroll = viewport.onScrollChange(changed)
   // Window capture precedes Holi's document-level PDF shortcut guard.
