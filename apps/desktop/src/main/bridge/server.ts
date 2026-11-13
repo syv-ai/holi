@@ -208,12 +208,14 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       }
       const candidates = requestedVaultCandidates(argv)
       let targetError: unknown
+      let targetUsage: Reply | undefined
       for (const candidate of candidates) {
         try {
           const target = await cli.machine.resolveTarget(candidate, requestCwd)
           if (!target) continue
           const targetCommands = [...cli.commands(target.remote), MACHINE_LIST]
           const request = resolveArgv(argv, targetCommands, form.get('stdin'), form.get('job'))
+          if (request.kind === 'usage') targetUsage ??= { status: 400, body: request.text }
           const selectorRequest =
             request.kind === 'help'
               ? resolveArgv(helpArgv, targetCommands, form.get('stdin'), form.get('job'))
@@ -239,6 +241,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         }
       }
       if (!machineTarget) {
+        if (targetUsage !== undefined) return targetUsage
         if (targetError !== undefined)
           return {
             status: candidates.length === 0 ? 400 : 422,
