@@ -98,6 +98,7 @@ export function askpassScript(platform: NodeJS.Platform = process.platform): str
   return '#!/bin/sh\ncase "$1" in [Uu][Ss][Ee][Rr][Nn][Aa][Mm][Ee]*) echo "x-access-token";; *) printf "%s\\n" "$HOLI_GIT_TOKEN";; esac\n'
 }
 
+/** @public exported for its test */
 export function ensureAskpass(): Promise<string> {
   askpassPromise ??= (async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-git-'))
