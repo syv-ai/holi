@@ -20,8 +20,17 @@ import {
   type TaskStatus,
 } from '@holi/shared'
 
-export async function readVaultStatuses(root: string): Promise<StatusDef[]> {
-  const text = await readFile(join(root, STATUSES_FILE), 'utf8').catch(() => null)
+export async function readVaultStatuses(
+  root: string,
+  options: { failOnReadError?: boolean } = {},
+): Promise<StatusDef[]> {
+  let text: string | null
+  try {
+    text = await readFile(join(root, STATUSES_FILE), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && options.failOnReadError) throw error
+    text = null
+  }
   return parseStatusesFile(text).statuses
 }
 

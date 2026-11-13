@@ -75,6 +75,7 @@ import type { OutgoingMail } from './mime'
 import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
+import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 
 /** Longest calendar window one call may ask for. */
@@ -241,6 +242,7 @@ function composeParams(raw: unknown): ComposeWrite {
     throw new CapabilityError('BAD_REQUEST', 'mail.html must be a string')
   }
   const cc = addressesParam(m, 'cc')
+  const bcc = addressesParam(m, 'bcc')
   // A forward names the message whose attachments travel with it, never the
   // files: main fetches the bytes, so nothing base64 crosses the IPC seam.
   let forwardOf: { messageId: string } | undefined
@@ -257,6 +259,7 @@ function composeParams(raw: unknown): ComposeWrite {
     mail: {
       to: addressesParam(m, 'to'),
       ...(cc.length === 0 ? {} : { cc }),
+      ...(bcc.length === 0 ? {} : { bcc }),
       subject: text('subject'),
       body: text('body'),
       ...(typeof html === 'string' ? { html } : {}),
@@ -265,13 +268,34 @@ function composeParams(raw: unknown): ComposeWrite {
 }
 
 /** The CLI's message: `--to`, `--subject`, `--cc` and the body from stdin. */
-function cliMail(p: Record<string, unknown>): OutgoingMail {
+function cliMail(
+  p: Record<string, unknown>,
+  { allowBcc = true }: { allowBcc?: boolean } = {},
+): OutgoingMail {
+  const repeated = (key: string): string[] => {
+    const value = p[key]
+    const values = value === undefined ? [] : typeof value === 'string' ? [value] : value
+    if (!Array.isArray(values) || !values.every((entry) => typeof entry === 'string')) {
+      throw new CapabilityError('BAD_REQUEST', `${key} must be addresses`)
+    }
+    return values.flatMap((entry) =>
+      entry
+        .split(',')
+        .map((address) => address.trim())
+        .filter(Boolean),
+    )
+  }
   const to = addressesParam(p, 'to')
   if (to.length === 0) throw new CapabilityError('BAD_REQUEST', 'to is required')
-  const cc = addressesParam(p, 'cc')
+  const cc = repeated('cc')
+  if (!allowBcc && p.bcc !== undefined) {
+    throw new CapabilityError('BAD_REQUEST', '--bcc is only available when creating a draft')
+  }
+  const bcc = allowBcc ? repeated('bcc') : []
   return {
     to,
     ...(cc.length === 0 ? {} : { cc }),
+    ...(bcc.length === 0 ? {} : { bcc }),
     subject: stringParam(p, 'subject'),
     body: typeof p.body === 'string' ? p.body : '',
   }
@@ -324,7 +348,7 @@ function sendParams(raw: unknown): ComposeWrite & { attach?: string[] } {
     }
     return { draftId: draft, mail: { to: [], subject: '', body: '' } }
   }
-  return { mail: cliMail(p), attach: attachParam(p) }
+  return { mail: cliMail(p, { allowBcc: false }), attach: attachParam(p) }
 }
 
 /** `schedule`'s and `reschedule`'s event fields. */
@@ -628,13 +652,25 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.search': cap({
       doors: ['ui', 'cli', 'app'],
       appGrant: 'mail',
-      cli: { args: ['query?'], summary: "threads matching Gmail's search grammar (the inbox)" },
+      cli: {
+        args: ['query?'],
+        summary:
+          "threads matching Gmail's search grammar (the inbox); summaries include replied (a SENT message after incoming mail), lastReplyAt (ISO or null), addressedAs (latest incoming To/Cc/neither/unknown; null without incoming), and automated (recognized automation evidence on latest incoming only)",
+      },
       params: searchParams,
       run: async (ctx, options) => {
         const data = await dataOf(ctx.remote)
         return google(() => data.threads(options))
       },
-      cliValue: (page) => ({ ...page, threads: fenceThreads(page.threads) }),
+      cliValue: (page) => ({
+        ...page,
+        threads: fenceThreads(
+          page.threads.map((thread) => ({
+            ...thread,
+            snippet: cleanSearchSnippet(thread.snippet),
+          })),
+        ),
+      }),
       text: (page) => json(page.threads),
     }),
 
@@ -671,10 +707,17 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
      */
     'google.read': cap({
       doors: ['cli'],
-      cli: { args: ['id'], summary: 'one thread, as text' },
-      params: idParams,
-      run: async (ctx, { id }) =>
-        google(async () => textOnly(await readThread(apiOf(ctx.remote), id))),
+      cli: {
+        args: ['id'],
+        flags: ['full'],
+        summary: 'one thread, as text (--full: include quoted history and boilerplate)',
+      },
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return { ...idParams(p), full: flagParam(p, 'full') }
+      },
+      run: async (ctx, { id, full }) =>
+        google(async () => textOnly(await readThread(apiOf(ctx.remote), id), { full })),
       cliValue: fenceThread,
     }),
 
@@ -827,21 +870,22 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       cli: {
         args: [],
         summary:
-          'draft a message: --to, --subject, [--cc], [--thread], [--attach <path>]...; the body on stdin',
+          'draft or update a message: --to, --subject, [--cc/--bcc]... [--thread] [--update <draftId>]; body on stdin',
         stdin: 'body',
-        many: ['attach'],
+        many: ['attach', 'cc', 'bcc'],
       },
       params: (raw) => {
         const p = paramsObject(raw)
         return {
           mail: cliMail(p),
           thread: optionalStringParam(p, 'thread'),
+          update: optionalStringParam(p, 'update'),
           attach: attachParam(p),
         }
       },
-      run: async (ctx, { mail, thread, attach }) => {
+      run: async (ctx, { mail, thread, update, attach }) => {
         const attached = await withAttachments(ctx, mail, attach)
-        return google(() => createDraft(apiOf(ctx.remote), attached, thread))
+        return google(() => createDraft(apiOf(ctx.remote), attached, thread, update))
       },
     }),
 
@@ -859,7 +903,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           'send a message (--to, --subject, [--cc], [--attach <path>]...; the body on stdin), or --draft <id>; asks first',
         stdin: 'body',
         stdinUnless: 'draft',
-        many: ['attach'],
+        many: ['attach', 'cc', 'bcc'],
       },
       params: sendParams,
       run: async (ctx, { attach, ...input }) => {

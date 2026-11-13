@@ -70,9 +70,9 @@ export interface PluginHostDeps {
   events: PluginEventsDeps
   /** The capability host's app door, which one plugin opens and the host
    *  closes when that plugin stops. */
-  openAppDoor(opener: AppDoorOpener): AppDoor
+  openAppDoor(opener: AppDoorOpener, remote: string): AppDoor
   /** Serve a path on the bridge. Returns the undo. */
-  route(path: string, route: BridgeRoute): () => void
+  route(path: string, route: BridgeRoute, remote: string): () => void
   /** Where the `holi` command lives. */
   binDir(): string
   /** The signed-in GitHub token, or null. */
@@ -410,11 +410,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       root,
       userData: deps.userData,
       active: deps.active,
-      register: (namespaces, table) => keep(deps.registry.register(namespaces, table, id)),
+      register: (namespaces, table) => keep(deps.registry.register(namespaces, table, id, remote)),
       emit: events(id).emit,
       on: (name, handler) => keep(events(id).on(name, handler)),
       openAppDoor: (opener) => {
-        const door = deps.openAppDoor(opener)
+        const door = deps.openAppDoor(opener, remote)
         keep(() => door.close())
         return door
       },
@@ -422,7 +422,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         quitGuards.add(check)
         return keep(() => void quitGuards.delete(check))
       },
-      route: (path, route) => keep(deps.route(path, route)),
+      route: (path, route) => keep(deps.route(path, route, remote)),
       binDir: deps.binDir,
       githubToken: deps.githubToken,
       frameOrigin: (origin) => keep(deps.frameOrigin(origin)),
@@ -446,6 +446,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           level,
           message: id === 'agent' ? message : `${plugin.info.label}: ${message}`,
           remote,
+          plugin: id,
           ...(detail === undefined ? {} : { detail }),
         }),
       publish: (name, payload) => {
@@ -515,6 +516,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         message: `${plugin.info.label} did not start`,
         detail: err instanceof Error ? err.message : String(err),
         remote,
+        plugin: id,
       })
       undoAll(id, undos)
       return null
