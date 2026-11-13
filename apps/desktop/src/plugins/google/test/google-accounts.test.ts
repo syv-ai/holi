@@ -18,6 +18,7 @@ import {
   resolveClient,
   type GoogleClient,
   type GoogleClientStore,
+  createClientStore,
 } from '../main/credentials'
 import { createVaultAccounts } from '../main/vault-accounts'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../main/token-store'
@@ -408,6 +409,18 @@ describe('the client credentials', () => {
     expect(exchange.calls[0]?.client_secret).toBe('own-secret')
   })
 
+  it('serializes simultaneous replacements through the encrypted client store', async () => {
+    const clients = createClientStore(join(dir, 'google-client.enc'), storage)
+    const accounts = await productionManager({ calls: [] }, clients)
+    const one = { id: 'one.apps.googleusercontent.com', secret: 'one-secret' }
+    const two = { id: 'two.apps.googleusercontent.com', secret: 'two-secret' }
+
+    await Promise.all([accounts.setClient(one), accounts.setClient(two)])
+
+    expect(accounts.client()).toEqual({ id: two.id, source: 'own' })
+    expect(await clients.read()).toEqual(two)
+  })
+
   it('removes every account, revoking each, when the client changes', async () => {
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }))
     const accounts = await manager(
@@ -442,6 +455,64 @@ describe('the client credentials', () => {
 })
 
 describe('a grant that lands after it was let go', () => {
+  it('keeps a later consent flow when an earlier listener is created asynchronously', async () => {
+    let releaseFirst!: (server: LoopbackServer) => void
+    let releaseSecond!: (server: LoopbackServer) => void
+    let listeners = 0
+    let firstListening!: () => void
+    let secondListening!: () => void
+    const atFirstListen = new Promise<void>((resolve) => (firstListening = resolve))
+    const atSecondListen = new Promise<void>((resolve) => (secondListening = resolve))
+    let firstClosed = 0
+    let secondClosed = 0
+    const server = (which: number): LoopbackServer => ({
+      port: 45123 + which,
+      waitForRedirect: () => new Promise(() => {}),
+      close: () => {
+        if (which === 1) firstClosed += 1
+        else secondClosed += 1
+      },
+    })
+    const accounts = await createGoogleAccounts({
+      store,
+      vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+      clients: memoryClients(null),
+      env: {},
+      listen: () => {
+        listeners += 1
+        return new Promise<LoopbackServer>((resolve) => {
+          if (listeners === 1) {
+            releaseFirst = resolve
+            firstListening()
+          } else {
+            releaseSecond = resolve
+            secondListening()
+          }
+        })
+      },
+      openBrowser: async () => {},
+      fetch: (async () => new Response('{}')) as unknown as typeof globalThis.fetch,
+      now: () => NOW,
+    })
+
+    const earlierPromise = accounts.connect(VAULT)
+    await atFirstListen
+    accounts.cancelConnect()
+    const laterPromise = accounts.connect(WORK)
+    await atSecondListen
+    releaseSecond(server(2))
+    const later = await laterPromise
+    releaseFirst(server(1))
+    const earlier = await earlierPromise
+
+    earlier.cancel()
+    expect(firstClosed).toBe(1)
+    expect(secondClosed).toBe(0)
+    accounts.cancelConnect()
+    expect(secondClosed).toBe(1)
+    later.cancel()
+  })
+
   const TOKEN_URL = 'https://oauth2.googleapis.com/token'
   const REVOKE = 'https://oauth2.googleapis.com/revoke'
 
@@ -510,6 +581,36 @@ describe('a grant that lands after it was let go', () => {
     expect(await rig.accounts.sessionFor(VAULT)).toBeNull()
   })
 
+  it('discards consent whose token write was already queued when the client changed', async () => {
+    const rig = await hangingExchange()
+    const originalWrite = store.write.bind(store)
+    let releaseWrite!: () => void
+    let writeStarted!: () => void
+    const atWrite = new Promise<void>((resolve) => (writeStarted = resolve))
+    let gated = false
+    store.write = async (value) => {
+      if (!gated) {
+        gated = true
+        writeStarted()
+        await new Promise<void>((resolve) => (releaseWrite = resolve))
+      }
+      await originalWrite(value)
+    }
+    const flow = await rig.accounts.connect(VAULT)
+    const outcome = flow.wait()
+    await rig.atGoogle
+    rig.release()
+    await atWrite
+
+    await rig.accounts.setClient({ id: 'replacement.apps.googleusercontent.com', secret: 's' })
+    releaseWrite()
+
+    expect(await outcome).toEqual({ kind: 'cancelled' })
+    expect(rig.accounts.list()).toEqual([])
+    expect(await store.read()).toEqual({})
+    expect(rig.revoked).toEqual(['rt-new'])
+  })
+
   it('revokes the grant of a connect overtaken by a client change', async () => {
     const rig = await hangingExchange()
     const flow = await rig.accounts.connect(VAULT)
@@ -522,6 +623,166 @@ describe('a grant that lands after it was let go', () => {
     expect(await outcome).toEqual({ kind: 'cancelled' })
     expect(rig.revoked).toEqual(['rt-new'])
     expect(rig.accounts.list()).toEqual([])
+  })
+
+  it('does not accept consent for an account removed before it was stored', async () => {
+    const rig = await hangingExchange()
+    const flow = await rig.accounts.connect(VAULT)
+    const outcome = flow.wait()
+    await rig.atGoogle
+
+    await rig.accounts.removeAccount('sub-9')
+    rig.release()
+
+    expect(await outcome).toEqual({ kind: 'cancelled' })
+    expect(rig.revoked).toEqual(['rt-new'])
+    expect(rig.accounts.list()).toEqual([])
+    expect(await store.read()).toEqual({})
+  })
+
+  it('does not let a stale expiry remove a same-token reconnect or its vault link', async () => {
+    let state = ''
+    let releaseRefresh!: () => void
+    let refreshStarted!: () => void
+    const atRefresh = new Promise<void>((resolve) => (refreshStarted = resolve))
+    await store.write({ 'sub-1': auth({ expiresAt: NOW - 1 }) })
+    const seeded = await createGoogleAccounts({
+      store,
+      vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+      clients: memoryClients(null),
+      env: {},
+      listen: async () => ({
+        port: 45123,
+        waitForRedirect: async () => ({ code: 'code', state }),
+        close: () => {},
+      }),
+      openBrowser: async (url) => {
+        state = new URL(url).searchParams.get('state') ?? ''
+      },
+      fetch: (async (_url: string, init: RequestInit) => {
+        const params = new URLSearchParams(String(init.body))
+        if (params.get('grant_type') === 'refresh_token') {
+          refreshStarted()
+          await new Promise<void>((resolve) => (releaseRefresh = resolve))
+          return new Response('{"error":"invalid_grant"}', { status: 400 })
+        }
+        return new Response(
+          JSON.stringify({
+            access_token: 'at-reconnected',
+            refresh_token: 'rt-1',
+            expires_in: 3600,
+            scope: 'openid',
+            id_token: `header.${Buffer.from(JSON.stringify({ sub: 'sub-1', email: 'ada@syv.ai' })).toString('base64url')}.signature`,
+          }),
+          { status: 200 },
+        )
+      }) as unknown as typeof globalThis.fetch,
+      now: () => NOW,
+    })
+    await seeded.link(VAULT, 'sub-1')
+    const refresh = seeded.sessionForSub('sub-1')!.getAccessToken()
+    await atRefresh
+    const reconnect = await seeded.connect(WORK)
+    await reconnect.wait()
+    releaseRefresh()
+
+    await expect(refresh).rejects.toThrow(/expired or been revoked/)
+    expect(seeded.list()).toEqual([{ sub: 'sub-1', email: 'ada@syv.ai' }])
+    expect(await store.read()).toMatchObject({
+      'sub-1': { refreshToken: 'rt-1', accessToken: 'at-reconnected' },
+    })
+    expect(await seeded.sessionFor(VAULT)).not.toBeNull()
+    expect(await seeded.sessionFor(WORK)).not.toBeNull()
+  })
+
+  it('keeps later account writes after an earlier queued store write fails', async () => {
+    await store.write({
+      'sub-1': auth({ expiresAt: NOW - 1 }),
+      'sub-2': auth({
+        sub: 'sub-2',
+        email: 'work@syv.ai',
+        refreshToken: 'rt-2',
+        expiresAt: NOW - 1,
+      }),
+    })
+    const realWrite = store.write.bind(store)
+    let failOnce = true
+    vi.spyOn(store, 'write').mockImplementation(async (value) => {
+      if (failOnce) {
+        failOnce = false
+        throw new Error('synthetic disk failure')
+      }
+      await realWrite(value)
+    })
+    const accounts = await createGoogleAccounts({
+      store,
+      vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+      clients: memoryClients(null),
+      env: {},
+      listen: async () => ({
+        port: 1,
+        waitForRedirect: () => new Promise(() => {}),
+        close: () => {},
+      }),
+      openBrowser: async () => {},
+      fetch: (async () =>
+        new Response(JSON.stringify({ access_token: 'at-refreshed', expires_in: 3600 }), {
+          status: 200,
+        })) as unknown as typeof globalThis.fetch,
+      now: () => NOW,
+    })
+    const first = accounts.sessionForSub('sub-1')!.getAccessToken()
+    const second = accounts.sessionForSub('sub-2')!.getAccessToken()
+
+    await expect(first).rejects.toThrow('synthetic disk failure')
+    await expect(second).resolves.toBe('at-refreshed')
+    expect(await store.read()).toMatchObject({ 'sub-2': { accessToken: 'at-refreshed' } })
+  })
+
+  it('preserves independent refreshes while links and unlinks run concurrently', async () => {
+    let startedOne!: () => void
+    let startedTwo!: () => void
+    const atOne = new Promise<void>((resolve) => (startedOne = resolve))
+    const atTwo = new Promise<void>((resolve) => (startedTwo = resolve))
+    let releaseOne!: () => void
+    let releaseTwo!: () => void
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      const token = new URLSearchParams(String(init.body)).get('refresh_token')
+      if (token === 'rt-1') {
+        startedOne()
+        await new Promise<void>((resolve) => (releaseOne = resolve))
+      } else {
+        startedTwo()
+        await new Promise<void>((resolve) => (releaseTwo = resolve))
+      }
+      return new Response(JSON.stringify({ access_token: `at-${token}`, expires_in: 3600 }), {
+        status: 200,
+      })
+    }) as unknown as typeof globalThis.fetch
+    const accounts = await manager(
+      [
+        auth({ expiresAt: NOW - 1 }),
+        auth({ sub: 'sub-2', email: 'work@syv.ai', refreshToken: 'rt-2', expiresAt: NOW - 1 }),
+      ],
+      fetchImpl,
+    )
+    await accounts.link(VAULT, 'sub-1')
+    await accounts.link(WORK, 'sub-2')
+    const one = accounts.sessionForSub('sub-1')!.getAccessToken()
+    const two = accounts.sessionForSub('sub-2')!.getAccessToken()
+    await Promise.all([atOne, atTwo])
+    const remapping = accounts.link(VAULT, 'sub-2')
+    const unlinking = accounts.unlinkVault(WORK)
+    releaseOne()
+    releaseTwo()
+
+    await Promise.all([one, two, remapping, unlinking])
+    expect(await store.read()).toMatchObject({
+      'sub-1': { accessToken: 'at-rt-1' },
+      'sub-2': { accessToken: 'at-rt-2' },
+    })
+    expect(await accounts.sessionFor(VAULT)).toBe(accounts.sessionForSub('sub-2'))
+    expect(await accounts.sessionFor(WORK)).toBeNull()
   })
 
   it('does not bring back an account removed while it was refreshing', async () => {
@@ -543,7 +804,7 @@ describe('a grant that lands after it was let go', () => {
     await atGoogle
     await accounts.removeAccount('sub-1')
     release()
-    await token
+    await expect(token).rejects.toThrow(/expired or been revoked/)
 
     expect(accounts.list()).toEqual([])
     expect(await store.read()).toEqual({})
