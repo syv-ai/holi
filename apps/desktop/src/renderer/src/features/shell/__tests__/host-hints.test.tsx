@@ -218,6 +218,28 @@ test('covered and moved targets are invalidated before a label can run', async (
   expect(hints()).toHaveLength(0)
 })
 
+test('SVG graph-node links receive hints and bubble a mouse click from their painted child', async () => {
+  const open = vi.fn()
+  setup(
+    <>
+      <Button>Start</Button>
+      <svg>
+        <g role="link" tabIndex={0} aria-label="Open graph note" onClick={open}>
+          <circle data-testid="graph-dot" cx="20" cy="20" r="10" />
+        </g>
+      </svg>
+    </>,
+  )
+  const node = screen.getByRole('link')
+  layout.place(node, 300, 100, 24, 24)
+  layout.place(screen.getByTestId('graph-dot'), 300, 100, 24, 24)
+  screen.getByRole('button').focus()
+  await userEvent.keyboard('f')
+  await choose('Open graph note')
+  expect(open).toHaveBeenCalledTimes(1)
+  expect(node).toHaveFocus()
+})
+
 test('stock switch toggles exactly once through its native click', async () => {
   function Fixture() {
     const [checked, set] = useState(false)

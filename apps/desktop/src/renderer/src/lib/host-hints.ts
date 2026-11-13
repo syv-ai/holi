@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom'
 const PRESSABLE = [
   'button',
   'a[href]',
+  '[role="link"]',
   'summary',
   'input[type="button"]',
   'input[type="submit"]',
@@ -32,7 +33,7 @@ export function requestHostHints(source: HTMLElement): void {
 }
 
 export interface HostHintTarget {
-  element: HTMLElement
+  element: Element
   label: string
   x: number
   y: number
@@ -47,7 +48,7 @@ export function discoverHostHintTargets(root: HTMLElement): HostHintTarget[] {
   const overlay = topOverlay()
   const scope = overlay ?? document.body
   const targets: HostHintTarget[] = []
-  for (const element of scope.querySelectorAll<HTMLElement>(PRESSABLE)) {
+  for (const element of scope.querySelectorAll<Element>(PRESSABLE)) {
     const pane = element.closest('[data-pane]')
     if (!overlay && pane !== null && pane !== root) continue
     if (!eligible(element)) continue
@@ -60,6 +61,7 @@ export function discoverHostHintTargets(root: HTMLElement): HostHintTarget[] {
 }
 
 const alphabet = 'asdfghjklqwertyuiopzxcvbnm'
+/** Prefix-free label allocation, exported for its test. @public */
 export function hintLabel(index: number, targetCount = index + 1): string {
   let width = 1
   while (alphabet.length ** width < targetCount) width++
@@ -105,7 +107,7 @@ export function activateHostHint(target: HostHintTarget): boolean {
     return false
   const element = target.element
   const hit = document.elementFromPoint(target.x, target.y)
-  const pressed = hit instanceof HTMLElement ? hit : (hit?.parentElement ?? element)
+  const pressed = hit ?? element
   const init = {
     bubbles: true,
     cancelable: true,
@@ -122,17 +124,21 @@ export function activateHostHint(target: HostHintTarget): boolean {
     down = pressed.dispatchEvent(new PointerEvent('pointerdown', pointer))
   })
   if (down && pressed.dispatchEvent(new MouseEvent('mousedown', init))) {
-    element.focus({ preventScroll: true })
+    if (element instanceof HTMLElement || element instanceof SVGElement)
+      element.focus({ preventScroll: true })
   }
   pressed.dispatchEvent(new PointerEvent('pointerup', { ...pointer, buttons: 0 }))
   pressed.dispatchEvent(new MouseEvent('mouseup', { ...init, buttons: 0 }))
   // click() supplies native defaults (checkboxes, anchors, form buttons). A Radix
   // select item selects on mouse pointerup and ignores its mouse click itself.
-  if (pressed.isConnected) pressed.click()
+  if (pressed.isConnected) {
+    if (pressed instanceof HTMLElement) pressed.click()
+    else pressed.dispatchEvent(new MouseEvent('click', { ...init, buttons: 0 }))
+  }
   return true
 }
 
-function accessibleLabel(element: HTMLElement): string {
+function accessibleLabel(element: Element): string {
   return (
     element.getAttribute('aria-label') ||
     element
@@ -148,7 +154,7 @@ function accessibleLabel(element: HTMLElement): string {
   )
 }
 
-function eligible(element: HTMLElement): boolean {
+function eligible(element: Element): boolean {
   return (
     !element.matches(':disabled,[disabled],[data-disabled]') &&
     element.closest(
@@ -158,14 +164,14 @@ function eligible(element: HTMLElement): boolean {
 }
 
 /** Clip before hit-testing: a visible edge still counts when a centre is covered. */
-function hitPoint(element: HTMLElement, pressable = true): { x: number; y: number } | null {
+function hitPoint(element: Element, pressable = true): { x: number; y: number } | null {
   if (!element.isConnected) return null
   const rect = element.getBoundingClientRect()
   let left = Math.max(0, rect.left),
     right = Math.min(innerWidth, rect.right)
   let top = Math.max(0, rect.top),
     bottom = Math.min(innerHeight, rect.bottom)
-  for (let parent: HTMLElement | null = element; parent; parent = parent.parentElement) {
+  for (let parent: Element | null = element; parent; parent = parent.parentElement) {
     const style = getComputedStyle(parent)
     if (
       style.display === 'none' ||
