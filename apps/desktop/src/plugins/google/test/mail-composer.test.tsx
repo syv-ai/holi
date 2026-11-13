@@ -381,6 +381,7 @@ describe('Bcc recipients', () => {
   it('autosaves and sends committed Bcc recipients in the payload', async () => {
     const user = setup()
     mount({ intent: { kind: 'new' } })
+    await user.type(subjectField(), 'Bcc payload')
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
     await user.click(screen.getByRole('button', { name: 'Bcc' }))
     await user.type(screen.getByRole('textbox', { name: 'Bcc' }), 'hidden@example.com{Enter}')
@@ -423,6 +424,7 @@ describe('Bcc recipients', () => {
     let resolveSend!: (value: { id: string }) => void
     send.mockImplementationOnce(() => new Promise((resolve) => (resolveSend = resolve)))
     mount({ intent: { kind: 'new' } })
+    await user.type(subjectField(), 'Bcc send guard')
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
     await user.click(screen.getByRole('button', { name: 'Bcc' }))
     const bcc = screen.getByRole('textbox', { name: 'Bcc' })
