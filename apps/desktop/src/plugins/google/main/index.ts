@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { pluginSettingValue } from '@holi/shared'
 import { readVaultSettings, writePluginSettings, type MainPlugin } from '../../../main/plugin-api'
 import { GOOGLE_INFO } from '../info'
-import { GoogleApi } from './api'
+import { accountApi } from './account-api'
 import { openGoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
 import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
@@ -24,7 +24,7 @@ import { startGoogleTriggers } from './triggers'
 
 type GoogleOwner = {
   accounts: Awaited<ReturnType<typeof import('./electron').createGoogleAccountsManager>>
-  dataForSub: (sub: string) => GoogleData
+  dataForSession: (session: GoogleSession) => GoogleData
 }
 
 // Google credentials and mail cache belong to this Electron process, not to a
@@ -44,25 +44,26 @@ export const googleMain: MainPlugin = {
         const { createGoogleAccountsManager } = await import('./electron')
         const accounts = await createGoogleAccountsManager(ctx.userData)
         const bySub = new Map<string, { data: GoogleData; session: GoogleSession }>()
-        const dataForSub = (sub: string): GoogleData => {
+        const dataForSession = (session: GoogleSession): GoogleData => {
+          const sub = session.accountSub
+          if (sub === null || accounts.sessionForSub(sub) !== session)
+            throw new Error('that Google account is no longer connected')
           const held = bySub.get(sub)
           if (held !== undefined) return held.data
           // `sub` becomes a filename. It is a numeric string from Google today, but
           // build a path out of it only after saying so.
           if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
-          const session = accounts.sessionForSub(sub)
-          if (session === null) throw new Error('that Google account is no longer connected')
           const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
           cache.ensureShape()
           const data = createGoogleData({
             // Bind this handle to the grant it was created for. A reconnect of
             // the same account retires it instead of lending it the new grant.
-            api: () => {
-              if (bySub.get(sub)?.data !== data) {
-                throw new Error('that Google account is no longer connected')
-              }
-              return new GoogleApi({ accessToken: () => session.getAccessToken() })
-            },
+            api: accountApi(sub, (accountSub) =>
+              bySub.get(accountSub)?.session === session &&
+              accounts.sessionForSub(accountSub) === session
+                ? session
+                : null,
+            ),
             cache,
           })
           bySub.set(sub, { data, session })
@@ -81,12 +82,12 @@ export const googleMain: MainPlugin = {
           const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
           retired.retire()
         })
-        return { accounts, dataForSub }
+        return { accounts, dataForSession }
       })()
       owners.set(ctx.userData, ownerPromise)
       void ownerPromise.catch(() => owners.delete(ctx.userData))
     }
-    const { accounts, dataForSub } = await ownerPromise
+    const { accounts, dataForSession } = await ownerPromise
 
     /**
      * Keep a removed account's cache off the disk. On `onChange` rather than
@@ -95,8 +96,8 @@ export const googleMain: MainPlugin = {
      * hold" as a button press.
      */
     const dataFor = async (remote: string): Promise<GoogleData | null> => {
-      const sub = (await accounts.sessionFor(remote))?.accountSub ?? null
-      return sub === null ? null : dataForSub(sub)
+      const session = await accounts.sessionFor(remote)
+      return session === null ? null : dataForSession(session)
     }
     // The vault's own Google settings, in its local plugins file: the agenda
     // view, an app, the agent and the triggers all read through them.
@@ -111,6 +112,7 @@ export const googleMain: MainPlugin = {
     const capabilities = googleCapabilities({
       accounts,
       dataFor,
+      dataForSession,
       settings: {
         read: readSettings,
         write: async (root, values) => {

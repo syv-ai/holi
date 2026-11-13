@@ -209,6 +209,38 @@ describe('createGoogleData', () => {
     expect(data.cachedAgenda(WINDOW, { jane: true })).toBeNull()
   })
 
+  it('uses the current account session after reconnect while retaining its cache', async () => {
+    let session: { accessToken: string } = { accessToken: 'before-reconnect' }
+    const authorization: string[] = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      authorization.push(new Headers(init?.headers).get('authorization') ?? '')
+      const path_ = new URL(url).pathname
+      const body = path_.endsWith('/calendarList')
+        ? { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] }
+        : { items: [] }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }
+    }) as unknown as typeof globalThis.fetch
+    const cached = createGoogleData({
+      // Mirrors the per-account cache's lookup: retain the account identity,
+      // but resolve its replaceable session whenever a request is created.
+      api: () => new GoogleApi({ accessToken: async () => session.accessToken, fetch: fetchImpl }),
+      cache,
+    })
+    cached.ensureShape()
+
+    await cached.agenda(WINDOW, {})
+    session = { accessToken: 'after-reconnect' }
+    await cached.agenda({ timeMin: '2026-08-11T00:00:00Z', timeMax: '2026-08-18T00:00:00Z' }, {})
+
+    expect(authorization).toContain('Bearer before-reconnect')
+    expect(authorization).toContain('Bearer after-reconnect')
+  })
+
   it('serves the second mail load from the cache, for one request', async () => {
     const g = google()
     const cached = createGoogleData({ api: g.api, cache })

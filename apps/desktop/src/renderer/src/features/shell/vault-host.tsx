@@ -7,7 +7,7 @@
  *
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AppShell } from '@/features/shell/app-shell'
 import { Toaster } from '@/components/ui/sonner'
 import { OnboardingRitual } from '@/features/onboarding/onboarding-ritual'
@@ -19,11 +19,18 @@ import { usePlanningFiles } from '@/state/planning'
 import { useSettingsFollowDisk } from '@/state/settings'
 import { useVaultTheme } from '@/state/vault-theme'
 import { applyVaultSwitchAtom, leavingVaultAtom } from '@/state/vault-switch'
-import { activeRemoteAtom, openVaultAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  selectedVaultOpenAttemptedAtom,
+  openVaultAtom,
+} from '@/state/vaults'
 import { LeaveVaultDialog } from './leave-vault-dialog'
 
 export function VaultHost() {
   const activeRemote = useAtomValue(activeRemoteAtom)
+  const activeRemoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
+  const openAttempted = useAtomValue(selectedVaultOpenAttemptedAtom)
   const colorMode = useAtomValue(activeModeAtom)
   const openVault = useSetAtom(openVaultAtom)
   const leaveReasons = useAtomValue(leaveReasonsAtom)
@@ -43,16 +50,16 @@ export function VaultHost() {
     return () => clearInterval(id)
   }, [tickNow])
 
-  // Open the active vault in main, once per remote: the only caller of
-  // `vaults.open`, so a cold start and a switch both open here.
-  const openedRemote = useRef<string | null>(null)
+  // Open each selected vault once. Document intents and recovery also own
+  // opens, so their attempts live in vault state, not a shell-local ref.
   useEffect(() => {
-    if (!activeRemote || openedRemote.current === activeRemote) return
-    openedRemote.current = activeRemote
+    if (!activeRemote || openAttempted) return
     // Landed: main may send the opens it held for a window that had not
     // (a clicked reminder, `holi docs open`, a Holi link).
-    void openVault(activeRemote).then(() => window.holi.vault.openReady())
-  }, [activeRemote, openVault])
+    void openVault(activeRemote).then((landed) => {
+      if (landed) window.holi.vault.openReady()
+    })
+  }, [activeRemote, activeRemoteRevision, openAttempted, openVault])
 
   /** Adding a vault opens it, leaving this one as a switch does. Asked at the
    *  trigger, before someone names a repo and waits for a clone. */
