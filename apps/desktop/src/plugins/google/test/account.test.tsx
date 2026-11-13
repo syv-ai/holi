@@ -4,6 +4,7 @@
  * not disagree.
  */
 import { Provider, createStore } from 'jotai'
+import { StrictMode } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { act, render, waitFor } from '@/test/render'
 import { googleConnectedAtom, refreshGoogleAtom, useGoogleAccount } from '../renderer/account'
@@ -117,6 +118,160 @@ test('a persistent read failure stays unknown after bounded retries', async () =
   expect(getByTestId('account').textContent).toBe('unknown')
   expect(statusMock).toHaveBeenCalledTimes(3)
   expect(vi.getTimerCount()).toBe(0)
+})
+
+test('an exhausted read is an error and an explicit refresh starts a fresh sequence', async () => {
+  vi.useFakeTimers()
+  statusMock.mockRejectedValue(new Error('Google is unavailable'))
+  const { getByTestId, store } = renderProbe()
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_250)
+    await Promise.resolve()
+  })
+  expect(getByTestId('account').textContent).toBe('unknown')
+  statusMock.mockResolvedValue({ account: { email: 'recovered@syv.ai' }, missingScopes: [] })
+  store.set(refreshGoogleAtom)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_250)
+    await Promise.resolve()
+  })
+  expect(getByTestId('account').textContent).toBe('recovered@syv.ai')
+  expect(statusMock).toHaveBeenCalledTimes(4)
+})
+
+test('remount after cancelling a retry starts a fresh request in the same store', async () => {
+  vi.useFakeTimers()
+  statusMock.mockRejectedValue(new Error('Google is unavailable'))
+  const { unmount, store } = renderProbe(createStore(), 'syv-ai/remount-test')
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(statusMock).toHaveBeenCalledTimes(1)
+  unmount()
+  statusMock.mockResolvedValue({ account: { email: 'remounted@syv.ai' }, missingScopes: [] })
+  const view = renderProbe(store, 'syv-ai/remount-test')
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_250)
+  })
+  expect(view.getByTestId('account').textContent).toBe('remounted@syv.ai')
+  expect(statusMock).toHaveBeenCalledTimes(2)
+})
+
+test('late rejection after unmount cannot start retries', async () => {
+  vi.useFakeTimers()
+  let rejectOld!: (error: Error) => void
+  statusMock.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        rejectOld = reject
+      }),
+  )
+  const { unmount } = renderProbe()
+  expect(statusMock).toHaveBeenCalledTimes(1)
+  unmount()
+  expect(statusMock).toHaveBeenCalledTimes(1)
+  await act(async () => {
+    rejectOld(new Error('late failure'))
+    await vi.advanceTimersByTimeAsync(1_250)
+  })
+  expect(statusMock).toHaveBeenCalledTimes(1)
+})
+
+test('Google account reads safely under React StrictMode', async () => {
+  statusMock.mockResolvedValue({ account: { email: 'strict@syv.ai' }, missingScopes: [] })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'strict/remount')
+  const view = render(
+    <StrictMode>
+      <Provider store={store}>
+        <Probe />
+      </Provider>
+    </StrictMode>,
+  )
+  await waitFor(() => expect(view.getByTestId('account').textContent).toBe('strict@syv.ai'))
+  expect(statusMock).toHaveBeenCalled()
+})
+
+test('independent stores do not share a same-vault result', async () => {
+  statusMock
+    .mockResolvedValueOnce({ account: { email: 'first@syv.ai' }, missingScopes: [] })
+    .mockResolvedValueOnce({ account: { email: 'second@syv.ai' }, missingScopes: [] })
+  const first = renderProbe(createStore(), 'same/remote')
+  const second = renderProbe(createStore(), 'same/remote')
+  await waitFor(() =>
+    expect(first.container.querySelector('[data-testid="account"]')?.textContent).toBe(
+      'first@syv.ai',
+    ),
+  )
+  await waitFor(() =>
+    expect(second.container.querySelector('[data-testid="account"]')?.textContent).toBe(
+      'second@syv.ai',
+    ),
+  )
+  expect(statusMock).toHaveBeenCalledTimes(2)
+})
+
+test('unmounting one store does not cancel another same-remote request', async () => {
+  vi.useFakeTimers()
+  let rejectFirst!: (error: Error) => void
+  let resolveSecond!: (value: { account: { email: string }; missingScopes: string[] }) => void
+  statusMock
+    .mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectFirst = reject
+        }),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve
+        }),
+    )
+  const first = renderProbe(createStore(), 'same/remote')
+  const second = renderProbe(createStore(), 'same/remote')
+  expect(statusMock).toHaveBeenCalledTimes(2)
+  first.unmount()
+  await act(async () => {
+    resolveSecond({ account: { email: 'second@syv.ai' }, missingScopes: [] })
+    await Promise.resolve()
+  })
+  expect(second.container.querySelector('[data-testid="account"]')?.textContent).toBe(
+    'second@syv.ai',
+  )
+  await act(async () => {
+    rejectFirst(new Error('late failure'))
+    await vi.advanceTimersByTimeAsync(1_250)
+  })
+  expect(statusMock).toHaveBeenCalledTimes(2)
+})
+
+test('unmounting one of several same-store readers does not cancel the other', async () => {
+  vi.useFakeTimers()
+  statusMock
+    .mockRejectedValueOnce(new Error('temporary'))
+    .mockResolvedValue({ account: null, missingScopes: [] })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'same/store')
+  const first = render(
+    <Provider store={store}>
+      <Probe />
+    </Provider>,
+  )
+  const second = render(
+    <Provider store={store}>
+      <Probe />
+    </Provider>,
+  )
+  await act(async () => {
+    await Promise.resolve()
+  })
+  first.unmount()
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(250)
+  })
+  expect(second.getByTestId('account').textContent).toBe('none')
+  expect(statusMock).toHaveBeenCalledTimes(2)
 })
 
 test('asks once, however many components read it', async () => {
