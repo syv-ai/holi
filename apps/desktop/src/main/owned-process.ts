@@ -23,9 +23,12 @@ export function spawnOwnedProgram(
     return spawnProgram(bin, [...args], { ...options, detached: true })
   }
 
+  const launchEnv = { ...(options.env ?? process.env) }
+  const traceEnabled = launchEnv.HOLI_OWNED_PROCESS_TRACE === '1'
+  delete launchEnv.HOLI_OWNED_PROCESS_TRACE
   let plan
   try {
-    plan = launchPlan(bin, args, { env: options.env ?? process.env, platform: 'win32' })
+    plan = launchPlan(bin, args, { env: launchEnv, platform: 'win32' })
   } catch (error) {
     const failed = new ChildProcess()
     failed.stdin = new PassThrough()
@@ -43,6 +46,7 @@ export function spawnOwnedProgram(
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
     {
       ...options,
+      env: { ...launchEnv, ...(traceEnabled ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
       detached: false,
       windowsHide: true,
       stdio: [
@@ -151,11 +155,20 @@ public static class HoliOwnedProcess {
     if(v==-1) throw new Exception("missing launch specification");
     return Encoding.UTF8.GetString(b.ToArray()).TrimEnd('\r');
   }
+  static bool Tracing { get { return Environment.GetEnvironmentVariable("HOLI_OWNED_PROCESS_TRACE") == "1"; } }
+  static void Trace(string phase, int rootPid=-1, string state="-") {
+    if(!Tracing) return;
+    Console.Error.WriteLine("[holi-owned-process] phase="+phase+" helperPid="+Process.GetCurrentProcess().Id+" rootPid="+rootPid+" state="+state);
+    Console.Error.Flush();
+  }
   public static int Run() {
     IntPtr job=IntPtr.Zero, parent=IntPtr.Zero; PROCESS_INFORMATION pi=new PROCESS_INFORMATION(); bool safelyFinished=false, stopped=false;
     try {
+      Trace("before-json-record");
       var data=(System.Collections.Generic.Dictionary<string,object>)new JavaScriptSerializer().DeserializeObject(ReadSpec());
+      Trace("after-json-record");
       int parentPid=Convert.ToInt32(data["parentPid"]);
+      Trace("before-parent-validation");
       parent=OpenProcess(0x00101000, false, parentPid);
       if(parent==IntPtr.Zero) throw new Exception("cannot hold the Holi process handle");
       if(WaitForSingleObject(parent,0)!=0x102) throw new Exception("Holi exited before ownership was established");
@@ -163,6 +176,7 @@ public static class HoliOwnedProcess {
       Check(GetProcessTimes(parent,out parentCreated,out ignored,out ignored,out ignored));
       using(var self=Process.GetCurrentProcess()) Check(GetProcessTimes(self.Handle,out selfCreated,out ignored,out ignored,out ignored));
       if(parentCreated>selfCreated) throw new Exception("Holi process identity changed");
+      Trace("after-parent-validation");
       if(File.Exists((string)data["stopFile"])) return 1;
       job=CreateJobObject(IntPtr.Zero,null); if(job==IntPtr.Zero) Check(false);
       var limits=new JOBOBJECT_EXTENDED_LIMIT_INFORMATION(); limits.BasicLimitInformation.LimitFlags=0x2000;
@@ -175,11 +189,15 @@ public static class HoliOwnedProcess {
       IntPtr env=IntPtr.Zero;
       var vars=data["env"] as System.Collections.Generic.Dictionary<string,object>;
       if(vars!=null) { var eb=new StringBuilder(); var keys=new System.Collections.Generic.List<string>(vars.Keys); keys.Sort(StringComparer.OrdinalIgnoreCase); foreach(string key in keys) if(vars[key]!=null) eb.Append(key).Append('=').Append(Convert.ToString(vars[key])).Append('\0'); eb.Append('\0'); env=Marshal.StringToHGlobalUni(eb.ToString()); }
+      Trace("before-suspended-root-creation");
       Check(CreateProcess(bin,cmd,IntPtr.Zero,IntPtr.Zero,true,0x4|0x400,env,data.ContainsKey("cwd")?(string)data["cwd"]:null,ref si,out pi));
+      Trace("after-suspended-root-creation",pi.dwProcessId);
       if(env!=IntPtr.Zero) Marshal.FreeHGlobal(env);
+      Trace("before-job-assignment",pi.dwProcessId);
       Check(AssignProcessToJobObject(job,pi.hProcess));
+      Trace("after-job-assignment",pi.dwProcessId);
       if(File.Exists((string)data["stopFile"]) || WaitForSingleObject(parent,0)!=0x102) { Check(TerminateJobObject(job,1)); stopped=true; }
-      else if(ResumeThread(pi.hThread)==0xffffffff) Check(false);
+      else { Trace("before-root-resume",pi.dwProcessId); if(ResumeThread(pi.hThread)==0xffffffff) Check(false); Trace("after-root-resume",pi.dwProcessId); }
       while(true) {
         uint wait=WaitForSingleObject(pi.hProcess,100);
         if(WaitForSingleObject(parent,0)==0 || File.Exists((string)data["stopFile"])) { TerminateJobObject(job,1); stopped=true; break; }
@@ -187,19 +205,24 @@ public static class HoliOwnedProcess {
         if(wait!=0x102) Check(false);
       }
       uint code; Check(GetExitCodeProcess(pi.hProcess,out code));
+      Trace("root-exit",pi.dwProcessId,code.ToString());
+      Trace("before-job-termination",pi.dwProcessId);
       Check(TerminateJobObject(job,1));
+      Trace("after-job-termination",pi.dwProcessId);
       while(true) {
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION counts;
         Check(QueryInformationJobObject(job,1,out counts,(uint)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION)),IntPtr.Zero));
-        if(counts.ActiveProcesses==0) { safelyFinished=true; return stopped ? 1 : unchecked((int)code); }
+        if(counts.ActiveProcesses==0) { Trace("job-drain-complete",pi.dwProcessId,"active=0"); safelyFinished=true; int result=stopped ? 1 : unchecked((int)code); Trace("helper-return",pi.dwProcessId,result.ToString()); return result; }
         if(WaitForSingleObject(parent,0)==0 || File.Exists((string)data["stopFile"])) { TerminateJobObject(job,1); stopped=true; }
         Thread.Sleep(50);
       }
-    } catch(Exception e) { Console.Error.WriteLine("Holi could not establish managed process ownership: "+e.Message); return 125; }
+    } catch(Exception e) { Console.Error.WriteLine("Holi could not establish managed process ownership: "+e.Message); Trace("helper-return",pi.dwProcessId,"125"); return 125; }
     finally { if(!safelyFinished) { if(job!=IntPtr.Zero) TerminateJobObject(job,1); if(pi.hProcess!=IntPtr.Zero) TerminateProcess(pi.hProcess,1); } if(pi.hThread!=IntPtr.Zero) CloseHandle(pi.hThread); if(pi.hProcess!=IntPtr.Zero) CloseHandle(pi.hProcess); if(job!=IntPtr.Zero) CloseHandle(job); if(parent!=IntPtr.Zero) CloseHandle(parent); }
   }
 }
 '@
+if ($env:HOLI_OWNED_PROCESS_TRACE -eq '1') { [Console]::Error.WriteLine('[holi-owned-process] phase=before-add-type helperPid=' + $PID + ' rootPid=-1 state=-'); [Console]::Error.Flush() }
 Add-Type -TypeDefinition $source -ReferencedAssemblies System.Web.Extensions
+if ($env:HOLI_OWNED_PROCESS_TRACE -eq '1') { [Console]::Error.WriteLine('[holi-owned-process] phase=after-add-type helperPid=' + $PID + ' rootPid=-1 state=-'); [Console]::Error.Flush() }
 exit [HoliOwnedProcess]::Run()
 `
