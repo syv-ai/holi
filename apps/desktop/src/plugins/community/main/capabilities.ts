@@ -721,7 +721,12 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             JSON.stringify(current.source) === JSON.stringify(admitted.install.source) &&
             current.manifest.version === admitted.install.manifest.version &&
             deps.store.codeDir(current) === deps.store.codeDir(admitted.install)
-          if (!same || deps.live?.() === false || deps.signal?.aborted) {
+          if (
+            !same ||
+            !acquired.isCurrentAndRunning() ||
+            deps.live?.() === false ||
+            deps.signal?.aborted
+          ) {
             await acquired.release()
             throw new CapabilityError('FORBIDDEN', 'community installation changed while starting')
           }
