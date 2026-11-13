@@ -107,6 +107,11 @@ function viewportFixture() {
     scrollTo,
     scrollToPage,
     resize: () => resized(),
+    resetBeforeMove: () => {
+      page = 1
+      metrics.scrollTop = 0
+      metrics.scrollLeft = 0
+    },
     searchHitScroll: () => {
       page = 1
       metrics.scrollTop = 0
@@ -115,6 +120,28 @@ function viewportFixture() {
     unsubscribe,
   }
 }
+
+test('restores the last reading position when a move resets metrics before its callback', async () => {
+  const viewport = viewportFixture()
+  const ref = createRef<PDFViewerRef>()
+  const ready = vi.fn()
+  render(<PdfViewerAdapter ref={ref} onReady={ready} />)
+  await waitFor(() => expect(ready).toHaveBeenCalled())
+  const element = ref.current!.container!
+  act(() => {
+    // Chromium reports connectedMoveCallback after layout has reset the viewer.
+    viewport.resetBeforeMove()
+    customElements.get('holi-pdf-container')!.prototype.connectedMoveCallback.call(element)
+  })
+  await waitFor(() =>
+    expect(viewport.scrollTo).toHaveBeenCalledWith({
+      x: 20,
+      y: 1453.5,
+      behavior: 'instant',
+    }),
+  )
+  expect(viewport.scrollToPage).toHaveBeenCalledWith({ pageNumber: 3, behavior: 'instant' })
+})
 
 test('restores the reading position after responsive sidebar resize settles', async () => {
   const viewport = viewportFixture()
