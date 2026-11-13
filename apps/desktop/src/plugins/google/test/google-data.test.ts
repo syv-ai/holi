@@ -97,6 +97,36 @@ afterEach(async () => {
 })
 
 describe('createGoogleData', () => {
+  it('does not return or cache an agenda response after the account is retired', async () => {
+    let release!: (response: Response) => void
+    let started!: () => void
+    const waiting = new Promise<Response>((resolve) => (release = resolve))
+    const requestStarted = new Promise<void>((resolve) => (started = resolve))
+    const fetchImpl = (async (url: string) => {
+      if (url.startsWith(CAL_LIST))
+        return Response.json({ items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] })
+      started()
+      return waiting
+    }) as typeof globalThis.fetch
+    const retiredCache = openGoogleCache(join(dir, 'retired.db'))
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache: retiredCache,
+    })
+    subject.ensureShape()
+    const result = subject.agenda(WINDOW, {})
+    await requestStarted
+    subject.forget()
+    release({
+      ok: true,
+      status: 200,
+      json: async () => ({ items: [] }),
+      text: async () => '{"items":[]}',
+    } as Response)
+    await expect(result).rejects.toThrow(/no longer connected/)
+    expect(existsSync(join(dir, 'retired.db'))).toBe(false)
+  })
+
   it('disconnect deletes the cached mail', async () => {
     await data.threads({})
     await data.agenda(WINDOW, {})

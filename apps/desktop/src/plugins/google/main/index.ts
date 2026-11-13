@@ -69,9 +69,15 @@ export const googleMain: MainPlugin = {
           return data
         }
         accounts.onChange((sub) => {
-          if (sub === null || accounts.sessionForSub(sub) !== null) return
+          if (sub === null) return
+          // An old request can still finish after reconnecting the same account.
+          // Retire its data handle and cache so it cannot return or persist stale rows.
           bySub.get(sub)?.data.forget()
           bySub.delete(sub)
+          if (!/^[A-Za-z0-9_-]+$/.test(sub)) return
+          // Also erase accounts that never opened a data handle this process.
+          const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
+          retired.retire()
         })
         return { accounts, dataForSub }
       })()
