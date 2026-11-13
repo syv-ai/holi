@@ -629,7 +629,12 @@ export function MailComposer({
           </Button>
         )}
         {!showBcc && (
-          <Button variant="ghost" size="sm" onClick={() => setShowBcc(true)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={loadingRef.current || sending || departing || discarding}
+            onClick={() => setShowBcc(true)}
+          >
             Bcc
           </Button>
         )}
@@ -655,10 +660,10 @@ export function MailComposer({
           <span className="w-12 shrink-0 text-xs text-muted-foreground">Bcc</span>
           <ChipInput
             label="Bcc"
+            disabled={loadingRef.current || sending || departing || discarding}
             value={bcc}
             onChange={(next) => {
-              setBcc(next)
-              markDirty()
+              if (markDirty({ bcc: next })) setBcc(next)
             }}
             suggestions={suggestions}
           />

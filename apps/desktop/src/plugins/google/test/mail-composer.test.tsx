@@ -377,6 +377,106 @@ describe('leaving the composer', () => {
   })
 })
 
+describe('Bcc recipients', () => {
+  it('autosaves and sends committed Bcc recipients in the payload', async () => {
+    const user = setup()
+    mount({ intent: { kind: 'new' } })
+    await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Bcc' }))
+    await user.type(screen.getByRole('textbox', { name: 'Bcc' }), 'hidden@example.com{Enter}')
+
+    await vi.advanceTimersByTimeAsync(2000)
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledOnce())
+    expect(saveDraft.mock.calls[0]![0]).toMatchObject({ mail: { bcc: ['hidden@example.com'] } })
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(send).toHaveBeenCalledOnce())
+    expect(send.mock.calls[0]![0]).toMatchObject({ mail: { bcc: ['hidden@example.com'] } })
+  })
+
+  it('keeps the Bcc reveal button disabled while a draft is loading', async () => {
+    let resolveDraft!: (draft: unknown) => void
+    draftQuery.mockImplementationOnce(() => new Promise((resolve) => (resolveDraft = resolve)))
+    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+
+    const reveal = screen.getByRole('button', { name: 'Bcc' })
+    expect(reveal).toBeDisabled()
+    await setup().click(reveal)
+    expect(screen.queryByRole('textbox', { name: 'Bcc' })).not.toBeInTheDocument()
+
+    resolveDraft({
+      draftId: 'd-7',
+      threadId: null,
+      to: [],
+      cc: [],
+      bcc: [],
+      subject: '',
+      markdown: '',
+      html: null,
+      foreign: false,
+    })
+    await waitFor(() => expect(reveal).not.toBeDisabled())
+  })
+
+  it('does not accept Bcc edits while sending', async () => {
+    const user = setup()
+    let resolveSend!: (value: { id: string }) => void
+    send.mockImplementationOnce(() => new Promise((resolve) => (resolveSend = resolve)))
+    mount({ intent: { kind: 'new' } })
+    await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Bcc' }))
+    const bcc = screen.getByRole('textbox', { name: 'Bcc' })
+    await user.type(bcc, 'hidden@example.com{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => expect(bcc).toBeDisabled())
+    expect(send.mock.calls[0]![0]).toMatchObject({ mail: { bcc: ['hidden@example.com'] } })
+    resolveSend({ id: 'm-9' })
+  })
+
+  it('does not accept Bcc edits while departure saves are pending', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let resolveSave!: (value: { id: string }) => void
+    saveDraft.mockImplementationOnce(() => new Promise((resolve) => (resolveSave = resolve)))
+    mount({ intent: { kind: 'new' }, ref: handle })
+    await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Bcc' }))
+    await user.type(screen.getByRole('textbox', { name: 'Bcc' }), 'hidden@example.com{Enter}')
+
+    const leaving = handle.current!.prepareToLeave()
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Bcc' })).toBeDisabled())
+    expect(saveDraft.mock.calls[0]![0]).toMatchObject({ mail: { bcc: ['hidden@example.com'] } })
+    resolveSave({ id: 'd-1' })
+    expect(await leaving).toBe(true)
+  })
+
+  it('does not accept Bcc edits while discarding a draft', async () => {
+    const user = setup()
+    let resolveDiscard!: () => void
+    discardDraft.mockImplementationOnce(() => new Promise((resolve) => (resolveDiscard = resolve)))
+    draftQuery.mockResolvedValueOnce({
+      draftId: 'd-7',
+      threadId: null,
+      to: [{ email: 'bo@example.com', name: 'bo@example.com' }],
+      cc: [],
+      bcc: [{ email: 'hidden@example.com', name: 'hidden@example.com' }],
+      subject: 'Subject',
+      markdown: '',
+      html: null,
+      foreign: false,
+    })
+    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    const bcc = await screen.findByRole('textbox', { name: 'Bcc' })
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+
+    await waitFor(() => expect(bcc).toBeDisabled())
+    expect(bcc).toHaveValue('')
+    resolveDiscard()
+  })
+})
+
 describe('autosave', () => {
   it('saves once after the idle wait, not on every keystroke', async () => {
     const user = setup()
