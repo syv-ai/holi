@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["@nativescript/types"],
+    "experimentalDecorators": true,
+    "noEmit": true
+  },
+  "include": ["app/**/*.ts", "nativescript.config.ts"]
+}

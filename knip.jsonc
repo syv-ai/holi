@@ -58,6 +58,18 @@
       // A system binary one community-plugin test shells out to.
       "ignoreBinaries": ["pgrep"],
     },
+    "apps/mobile": {
+      "entry": [
+        "nativescript.config.ts!",
+        "webpack.config.js!",
+        // The native verification driver is also a production check entry.
+        "scripts/ios-simulator.mjs!",
+        "test/*.test.mjs",
+      ],
+      "project": ["app/**/*.ts!", "scripts/*.{mjs,cjs}!", "test/*.test.mjs"],
+      // NativeScript discovers the pinned platform runtime, not a JS import.
+      "ignoreDependencies": ["@nativescript/ios"],
+    },
     "packages/shared": {
       "project": ["src/**/*.ts!", "test/**/*.ts"],
     },
