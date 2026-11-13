@@ -8,7 +8,7 @@
  * parent (`h-full`) and brings its own folder rail and list column. Not
  * mounted yet; see the plugin's `index.tsx` for the surfaces that are.
  */
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -39,9 +39,34 @@ import { replyTarget, useMail, type DraftSummary } from './use-mail'
  *  changes it. */
 const keepOpen = () => undefined
 
-export function MailShell({ className }: { className?: string }) {
+export function MailShell({
+  className,
+  visible = true,
+}: {
+  className?: string
+  visible?: boolean
+}) {
   const { currentSub } = useGoogleAccount()
-  const mail = useMail(currentSub)
+  return (
+    <MailAccountShell
+      key={currentSub ?? 'disconnected'}
+      account={currentSub}
+      className={className}
+      visible={visible}
+    />
+  )
+}
+
+function MailAccountShell({
+  account,
+  className,
+  visible,
+}: {
+  account: string | null
+  className?: string
+  visible: boolean
+}) {
+  const mail = useMail(account)
   const remote = useAtomValue(activeRemoteAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   const openNote = useSetAtom(openDocumentAtom)
@@ -147,6 +172,20 @@ export function MailShell({ className }: { className?: string }) {
     mail.reloadDrafts()
   }
 
+  // Closing the dialog unmounts MailComposer, whose cleanup saves an in-progress
+  // draft. Clear the request as well: retaining it while hidden would reopen a
+  // fresh composer when Mail returns, creating a duplicate draft.
+  useEffect(() => {
+    if (!visible) setCompose(null)
+  }, [visible])
+
+  // An inline composer belongs to the thread it was opened in. Parking Mail
+  // keeps that thread open, but navigating away or archiving it ends ownership.
+  useEffect(() => {
+    if (inline !== null && (inline.intent.kind === 'new' || inline.intent.threadId !== mail.openId))
+      setInline(null)
+  }, [inline, mail.openId])
+
   const composer =
     inline !== null && thread !== null ? (
       <div className="pt-4">
@@ -173,6 +212,7 @@ export function MailShell({ className }: { className?: string }) {
         open
         onOpenChange={keepOpen}
         className={cn('relative h-full min-h-0', className)}
+        inert={!visible}
         style={
           {
             '--sidebar-width': '440px',
@@ -183,10 +223,22 @@ export function MailShell({ className }: { className?: string }) {
         }
       >
         {/* The list column, with the account and the mailbox menu atop it */}
-        <AppSidebar expanded={expanded} onToggle={() => setExpanded((value) => !value)}>
+        <AppSidebar
+          expanded={expanded}
+          onToggle={() => setExpanded((value) => !value)}
+          visible={visible}
+        >
           <MailList
             mail={mail}
-            account={<NavUser onManage={openConnections} onError={mail.reportError} />}
+            account={
+              <NavUser
+                onManage={openConnections}
+                onError={mail.reportError}
+                visible={visible}
+                canSwitchAccount={inline === null}
+              />
+            }
+            visible={visible}
             onSelectFolder={(folder) => {
               mail.setFolder(folder)
               setInline(null)
@@ -199,7 +251,7 @@ export function MailShell({ className }: { className?: string }) {
 
         {/* No fill of its own: the window's surface shows through. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <AppHeader mail={mail} commands={commands} />
+          <AppHeader mail={mail} commands={commands} visible={visible} />
           <MailReader
             mail={mail}
             composer={
@@ -210,20 +262,23 @@ export function MailShell({ className }: { className?: string }) {
                 : null
             }
             onCompose={() => startCompose()}
+            visible={visible}
           />
         </div>
       </SidebarProvider>
 
-      <ComposeDialog
-        request={compose}
-        sendAs={mail.sendAs}
-        contacts={mail.contacts}
-        onReconnect={openConnections}
-        onClose={() => {
-          setCompose(null)
-          mail.reloadDrafts()
-        }}
-      />
+      {visible ? (
+        <ComposeDialog
+          request={compose}
+          sendAs={mail.sendAs}
+          contacts={mail.contacts}
+          onReconnect={openConnections}
+          onClose={() => {
+            setCompose(null)
+            mail.reloadDrafts()
+          }}
+        />
+      ) : null}
     </TooltipProvider>
   )
 }

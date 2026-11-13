@@ -5,10 +5,10 @@
  * Reusing the first as the second is a mapping and no consent, and unlinking a
  * vault is not the same act as removing an account.
  */
-import { render as rtlRender, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectionsSection } from '../renderer/connections-section'
 import { activeRemoteAtom } from '@/plugin-api'
 
@@ -61,6 +61,8 @@ vi.mock('@/lib/trpc', () => ({
 const ADA = { sub: 'sub-1', email: 'ada@syv.ai' }
 const WORK = { sub: 'sub-2', email: 'work@syv.ai' }
 
+afterEach(() => vi.useRealTimers())
+
 beforeEach(() => {
   vi.clearAllMocks()
   status.mockResolvedValue({ account: null, missingScopes: [] })
@@ -82,6 +84,42 @@ describe('ConnectionsSection', () => {
     expect(await screen.findByText('ada@syv.ai')).toBeInTheDocument()
     expect(screen.getByText('work@syv.ai')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Use in this vault' })).toHaveLength(2)
+  })
+
+  it('exposes a failed status read with Retry and recovers without switching vaults', async () => {
+    vi.useFakeTimers()
+    status.mockRejectedValue(new Error('main is still starting'))
+    render()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_250)
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not read/i)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^Connect$/ })).toBeEnabled()
+
+    status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_250)
+    })
+    expect(screen.getByText(/Mail and Calendar, as/)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('treats a successful disconnected read as authoritative, not a read error', async () => {
+    let finishRead!: (value: { account: null; missingScopes: string[] }) => void
+    status.mockReturnValueOnce(new Promise((resolve) => (finishRead = resolve)))
+    accounts.mockResolvedValue({ accounts: [], current: null })
+    render()
+    const connect = screen.getByRole('button', { name: /^Connect$/ })
+    expect(connect).toBeDisabled()
+    await act(async () => finishRead({ account: null, missingScopes: [] }))
+    await waitFor(() => expect(connect).toBeEnabled())
+    expect(status).toHaveBeenCalledTimes(1)
+    expect(accounts).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   })
 
   it('says plainly "Connect" when there is no account on this machine to differ from', async () => {
