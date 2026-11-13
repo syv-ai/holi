@@ -108,10 +108,16 @@ describe('ConnectionsSection', () => {
   })
 
   it('treats a successful disconnected read as authoritative, not a read error', async () => {
-    status.mockResolvedValue({ account: null, missingScopes: [] })
+    let finishRead!: (value: { account: null; missingScopes: string[] }) => void
+    status.mockReturnValueOnce(new Promise((resolve) => (finishRead = resolve)))
     accounts.mockResolvedValue({ accounts: [], current: null })
     render()
-    expect(await screen.findByRole('button', { name: /^Connect$/ })).toBeEnabled()
+    const connect = screen.getByRole('button', { name: /^Connect$/ })
+    expect(connect).toBeDisabled()
+    await act(async () => finishRead({ account: null, missingScopes: [] }))
+    await waitFor(() => expect(connect).toBeEnabled())
+    expect(status).toHaveBeenCalledTimes(1)
+    expect(accounts).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   })
