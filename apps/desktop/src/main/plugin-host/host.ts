@@ -179,6 +179,7 @@ export interface PluginHost {
 interface Started {
   id: string
   dispose: Disposer
+  lease: { phase: 'active' | 'draining' | 'closed' }
   establish(): void
   closeEvents(): void
   /** What it registered through its context and has not undone yet,
@@ -216,6 +217,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   })
   let displayed: string | null = null
   const displayListeners = new Set<(remote: string | null) => void>()
+  const onDisplayChange = (cb: (remote: string | null) => void): (() => void) => {
+    displayListeners.add(cb)
+    return () => void displayListeners.delete(cb)
+  }
   const reportListeners = new Set<{
     remote: string
     generation: number
@@ -353,7 +358,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       const root = await deps.rootFor(at)
       return root !== null && (await serving(root)).has(id)
     }
-    return pluginEvents(deps.events, id, runs, () => (isLive() ? activation : -1))
+    const stateGenerationIsCurrent = (): boolean => {
+      const state = runsByRemote.get(remote)
+      return state !== undefined && state.generation === activation
+    }
+    return pluginEvents(deps.events, id, runs, () =>
+      isLive() && stateGenerationIsCurrent() ? activation : -1,
+    )
   }
 
   /** What seeds the vault at `root`, read fresh: a write to its settings
@@ -430,10 +441,12 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     const activation = state.generation
     let established = false
     let eventsLive = true
-    const isEventLive = (): boolean => eventsLive
+    const lease: Started['lease'] = { phase: 'active' }
+    const isEventLive = (): boolean => lease.phase !== 'closed'
     const { remote, root } = vault
     const eventBus = events(id, remote, activation, isEventLive)
-    const valid = (): boolean => state.generation === activation || established
+    const valid = (): boolean => lease.phase === 'active' && state.generation === activation
+    const draining = (): boolean => lease.phase === 'draining' && established
     const undos = new Set<() => void>()
     // Each undo runs once, and leaves the set when it does: a sync hold taken
     // every turn must not pile up for the life of the vault.
@@ -445,64 +458,90 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       undos.add(once)
       return once
     }
-    const open = (): OpenVault => {
-      if (runsByRemote.get(remote) !== state || state.parked)
-        throw new Error(`${remote} is not running`)
-      return vault
-    }
     const ctx: PluginCtx = {
       remote,
       root,
       userData: deps.userData,
+      displayed: () => displayed,
+      onDisplayChange: (cb) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+        return keep(
+          onDisplayChange((at) => {
+            if (valid()) cb(at)
+          }),
+        )
+      },
       active: () => vault,
       register: (namespaces, table) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(deps.registry.register(namespaces, table, id, remote))
       },
       emit: (at, name, payload) => {
-        if (valid()) eventBus.emit(at, name, payload)
+        if (valid() || draining()) eventBus.emit(at, name, payload)
       },
       on: (name, handler) =>
         keep(
           eventBus.on(name, (at, payload) => {
-            if (valid() && eventsLive) handler(at, payload)
+            if ((valid() || draining()) && eventsLive) handler(at, payload)
           }),
         ),
       openAppDoor: (opener) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const door = deps.openAppDoor(opener, remote)
         keep(() => door.close())
         return door
       },
       guardQuit: (check) => {
-        quitGuards.add(check)
-        return keep(() => void quitGuards.delete(check))
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+        const guarded = (): QuitQuestion | null => (valid() ? check() : null)
+        quitGuards.add(guarded)
+        return keep(() => void quitGuards.delete(guarded))
       },
-      route: (path, route) => keep(deps.route(path, route, remote)),
+      route: (path, route) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+        return keep(deps.route(path, route, remote))
+      },
       binDir: deps.binDir,
       githubToken: deps.githubToken,
-      frameOrigin: (origin) => keep(deps.frameOrigin(origin)),
-      pauseSync: (reason) => keep(pauseSync(vault, state, reason)),
-      commitNow: async () => open().commitNow(),
-      head: async () => open().repo.head(),
+      frameOrigin: (origin) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+        return keep(deps.frameOrigin(origin))
+      },
+      pauseSync: (reason) => {
+        if (!valid()) throw new Error(`${remote} plugin context is no longer active`)
+        return keep(pauseSync(vault, state, reason))
+      },
+      commitNow: async () => {
+        if (!valid() && !draining()) throw new Error(`${remote} plugin context is no longer active`)
+        return vault.commitNow()
+      },
+      head: async () => {
+        if (!valid() && !draining()) throw new Error(`${remote} plugin context is no longer active`)
+        return vault.repo.head()
+      },
       onReport: (cb) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const entry = { remote, generation: activation, cb }
         reportListeners.add(entry)
         return keep(() => void reportListeners.delete(entry))
       },
       call: async (name, params) => {
         if (deps.call === undefined) throw new Error(`no capability calls here: ${name}`)
-        if (!valid() || !eventsLive) throw new Error(`${remote} plugin context is no longer active`)
+        const admittedDuringDrain = draining()
+        if ((!valid() && !admittedDuringDrain) || !eventsLive)
+          throw new Error(`${remote} plugin context is no longer active`)
         return deps.call(remote, name, params, async (target) => {
           if (
             !eventsLive ||
             target.remote !== remote ||
             target.root !== root ||
-            (state.generation !== activation && !state.stopping.has(id))
+            (admittedDuringDrain ? !draining() : !valid())
           )
             throw new Error(`${remote} plugin context is no longer active`)
         })
       },
-      log: (level, message, detail) =>
+      log: (level, message, detail) => {
+        if (!valid() && !draining()) return
         deps.activity?.({
           // The agent's lines are a channel of their own; every other
           // plugin's share one.
@@ -512,15 +551,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           remote,
           plugin: id,
           ...(detail === undefined ? {} : { detail }),
-        }),
+        })
+      },
       publish: (name, payload) => {
-        if (
-          !valid() ||
-          !eventsLive ||
-          runsByRemote.get(remote) !== state ||
-          (state.parked && !established)
-        )
-          return
+        if ((!valid() && !draining()) || !eventsLive || runsByRemote.get(remote) !== state) return
         for (const handler of heard.get(`${remote}/${id}/${name}`) ?? []) {
           try {
             handler(payload)
@@ -530,6 +564,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         }
       },
       hear: (from, name, handler) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         // Only what it builds on: a plugin's news is for those that require it.
         if (!(plugin.info.requires ?? []).includes(from)) {
           throw new Error(`${id} hears ${from}, which it does not require`)
@@ -541,14 +576,16 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         return keep(() => void set.delete(handler))
       },
       onMention: (cb) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const entry = { remote, generation: activation, cb }
         mentionListeners.add(entry)
         return keep(() => void mentionListeners.delete(entry))
       },
-      notify: deps.notify,
+      notify: (notice) => (valid() || draining() ? deps.notify(notice) : false),
       focused: deps.focused,
       window: () => deps.window?.() ?? null,
       onSnapshot: (cb) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const entry = { remote, generation: activation, cb }
         snapshotListeners.add(entry)
         const held = snapshots.get(remote) ?? null
@@ -572,6 +609,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
             }
           }),
         on: (cb) => {
+          if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
           const entry = { remote, generation: activation, cb }
           eventListeners.add(entry)
           return keep(() => void eventListeners.delete(entry))
@@ -582,6 +620,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       return {
         id,
         dispose: () => {},
+        lease,
         establish: () => {
           established = true
         },
@@ -595,6 +634,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       return {
         id,
         dispose,
+        lease,
         establish: () => {
           established = true
         },
@@ -642,10 +682,12 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   /** Its disposer, then what it registered. It is served until both are done. */
   async function stopOne(s: Started, state: VaultRun): Promise<void> {
     state.stopping.set(s.id, true)
+    s.lease.phase = 'draining'
     try {
       await Promise.resolve()
         .then(s.dispose)
         .catch((err) => console.error(`[plugins] ${s.id} stop failed:`, err))
+      s.lease.phase = 'closed'
       s.closeEvents()
       undoAll(s.id, s.undos)
     } finally {
@@ -675,6 +717,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   async function reconcileNow(
     vault: OpenVault,
     why: 'open' | 'settings' | 'snapshot',
+    scheduledGeneration: number,
   ): Promise<void> {
     const { remote, root } = vault
     let state = runsByRemote.get(remote)
@@ -684,6 +727,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     } else {
       state.vault = vault
     }
+    if (state.generation !== scheduledGeneration) return
     if (why === 'open') state.parked = false
     else if (state.parked) return
     const activation = state.generation
@@ -767,7 +811,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       const state = runsByRemote.get(vault.remote) ?? makeRun(vault)
       runsByRemote.set(vault.remote, state)
       state.vault = vault
-      return queued(state, () => reconcileNow(vault, why))
+      const scheduledGeneration = state.generation
+      return queued(state, () => reconcileNow(vault, why, scheduledGeneration))
     },
 
     async stop(remote) {
@@ -801,10 +846,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       displayed = remote
       for (const cb of [...displayListeners]) tell(cb, remote, 'display')
     },
-    onDisplayChange(cb) {
-      displayListeners.add(cb)
-      return () => void displayListeners.delete(cb)
-    },
+    onDisplayChange,
 
     failures: (remote) => Object.fromEntries(runsByRemote.get(remote)?.failed ?? []),
 

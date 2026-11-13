@@ -59,6 +59,7 @@ function rig(
     bridge?: BridgeServer
     appDoor?: boolean
     call?: Parameters<typeof createPluginHost>[0]['call']
+    rootFor?: (remote: string) => Promise<string | null>
   } = {},
 ) {
   const calls = { started: 0, stopped: 0 }
@@ -99,7 +100,7 @@ function rig(
     userData: '/nowhere',
     coreSeeds: [coreSeed(plugins.map((p) => p.info))],
     active: () => open,
-    rootFor: async (remote) => opts.roots?.[remote] ?? null,
+    rootFor: opts.rootFor ?? (async (remote) => opts.roots?.[remote] ?? null),
     events: {
       send: (channel, event) => void sent.push({ channel, event }),
       listen: (channel, handler) => {
@@ -340,6 +341,167 @@ describe('the lifecycle', () => {
     expect(log).toEqual(['stop A'])
     await host.stop('B')
     expect(log).toEqual(['stop A', 'stop B'])
+  })
+
+  it('does not activate a reconcile queued before stop, then reopens exactly once', async () => {
+    let starts = 0
+    const plugin = logged([], 'fake', {}, () => {
+      starts += 1
+      return () => {}
+    })
+    const { host } = rig({ plugins: [plugin] })
+    const vault = openVault('A', '/A')
+    const opening = host.reconcile(vault, 'open')
+    const stopping = host.stop('A')
+    await Promise.all([opening, stopping])
+    expect(starts).toBe(0)
+    await host.reconcile(vault, 'open')
+    expect(starts).toBe(1)
+    await host.stop('A')
+  })
+
+  it('revokes an old context on reactivation and exposes display changes through ctx', async () => {
+    const contexts: PluginCtx[] = []
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        contexts.push(ctx)
+        return () => {}
+      },
+    }
+    const root = await tempDir()
+    const { host, enter, reconcile } = rig({ plugins: [plugin] })
+    await enter(openVault('A', root))
+    const old = contexts[0]!
+    const displayed: (string | null)[] = []
+    old.onDisplayChange((remote) => displayed.push(remote))
+    host.setDisplayed('B')
+    expect(old.displayed()).toBe('B')
+    expect(displayed).toEqual(['B'])
+
+    await turn(root, false)
+    await reconcile('settings')
+    await turn(root, true)
+    await reconcile('settings')
+    const current = contexts[1]!
+    host.setDisplayed('C')
+    expect(displayed).toEqual(['B'])
+    expect(() => old.register(['fake'], {})).toThrow(/activation was cancelled/)
+    expect(() => old.pauseSync('stale')).toThrow(/no longer active/)
+    old.publish('stale', null)
+    expect(current.displayed()).toBe('C')
+    current.publish('live', null)
+    await host.stop('A')
+  })
+
+  it('drops host-routed output queued before stop after its async gate', async () => {
+    let ctx: PluginCtx | null = null
+    let release: () => void = () => {}
+    let releaseDispose: () => void = () => {}
+    let waiting: () => void = () => {}
+    let disposing: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const disposeGate = new Promise<void>((resolve) => (releaseDispose = resolve))
+    const entered = new Promise<void>((resolve) => (waiting = resolve))
+    const disposeEntered = new Promise<void>((resolve) => (disposing = resolve))
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(context) {
+        ctx = context
+        return async () => {
+          disposing()
+          await disposeGate
+        }
+      },
+    }
+    const { host, sent, enter } = rig({
+      plugins: [plugin],
+      rootFor: async () => {
+        waiting()
+        await gate
+        return '/A'
+      },
+    })
+    await enter(openVault('A', '/A'))
+    ctx!.emit('A', 'stale', null)
+    await entered
+    const stopping = host.stop('A')
+    await disposeEntered
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(sent).toEqual([])
+    releaseDispose()
+    await stopping
+  })
+
+  it('keeps disposal commit and head bound to its vault while another is displayed', async () => {
+    let ctx: PluginCtx | null = null
+    const calls: string[] = []
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(context) {
+        ctx = context
+        return async () => {
+          await context.commitNow()
+          await context.head()
+        }
+      },
+    }
+    const vault = openVault('A', '/A', calls)
+    vault.commitNow = async () => {
+      calls.push('commit A')
+      return null
+    }
+    vault.repo.head = async () => {
+      calls.push('head A')
+      return 'sha-A'
+    }
+    const { host, enter } = rig({ plugins: [plugin] })
+    await enter(vault)
+    host.setDisplayed('B')
+    await host.stop('A')
+    expect(calls).toEqual(['commit A', 'head A'])
+    expect(ctx!.displayed()).toBe('B')
+    await expect(ctx!.head()).rejects.toThrow(/no longer active/)
+  })
+
+  it('rejects a pre-stop queued capability before invocation during disposer drain', async () => {
+    let ctx: PluginCtx | null = null
+    let enterDispose: () => void = () => {}
+    let releaseDispose: () => void = () => {}
+    let releaseCall: () => void = () => {}
+    const disposing = new Promise<void>((resolve) => (enterDispose = resolve))
+    const disposeGate = new Promise<void>((resolve) => (releaseDispose = resolve))
+    const callGate = new Promise<void>((resolve) => (releaseCall = resolve))
+    let invocations = 0
+    const plugin: MainPlugin = {
+      info: { id: 'caller', label: 'Caller', default: true },
+      activate(context) {
+        ctx = context
+        return async () => {
+          enterDispose()
+          await disposeGate
+        }
+      },
+    }
+    const { host, enter } = rig({
+      plugins: [plugin],
+      call: async (remote, _name, _params, beforeInvoke) => {
+        await callGate
+        await beforeInvoke?.({ remote, root: '/A' })
+        invocations += 1
+        return 'invoked'
+      },
+    })
+    await enter(openVault('A', '/A'))
+    const delayed = ctx!.call('target.read', {})
+    const stopping = host.stop('A')
+    await disposing
+    releaseCall()
+    await expect(delayed).rejects.toThrow(/context is no longer active/)
+    expect(invocations).toBe(0)
+    releaseDispose()
+    await stopping
   })
 
   it('rechecks a delayed ctx capability call after its caller stops', async () => {
