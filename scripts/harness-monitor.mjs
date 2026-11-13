@@ -23,7 +23,14 @@ export const providers = [
 ]
 
 const requiredChecks = {
-  'claude-code': ['compatibility'],
+  'claude-code': [
+    'CLI surface',
+    'fixture consumers',
+    'historical-session inclusion',
+    'actual hook emission',
+    'permissions',
+    'messaging',
+  ],
   codex: [
     'CLI surface',
     'fixture consumers',
@@ -243,12 +250,13 @@ export function githubAdapter() {
   }
 }
 
-if (process.argv[2] === 'merge-codex') {
+if (process.argv[2] === 'merge-codex' || process.argv[2] === 'merge-claude') {
   const report = JSON.parse(await readFile(process.argv[3], 'utf8'))
   const checks = JSON.parse(await readFile(process.argv[4], 'utf8'))
-  const codex = report.providers.find((provider) => provider.id === 'codex')
-  if (!codex) throw new Error('Codex observation is missing')
-  codex.checks = checks
+  const id = process.argv[2] === 'merge-codex' ? 'codex' : 'claude-code'
+  const provider = report.providers.find((item) => item.id === id)
+  if (!provider) throw new Error(`${id} observation is missing`)
+  provider.checks = checks
   process.stdout.write(JSON.stringify(report))
 } else if (process.argv[2] === 'discover') {
   const report = await discover({

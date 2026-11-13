@@ -1,4 +1,6 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -34,6 +36,23 @@ const LIVE = {
 const listing = (rows: unknown[]): string => JSON.stringify(rows, null, 2) + '\n'
 
 describe('parseListing', () => {
+  it('consumes the attributed constructed compatibility listing, including history', async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        resolve(
+          fileURLToPath(new URL('.', import.meta.url)),
+          'fixtures/claude-compatibility/agents-2.1.319.json',
+        ),
+        'utf8',
+      ),
+    ) as { sourceVersion: string; provenance: string; rows: unknown[] }
+    expect(fixture).toMatchObject({ sourceVersion: '2.1.319', provenance: 'constructed' })
+    const rows = parseListing(listing(fixture.rows), '/fixture/vault')
+    expect(rows.map((row) => row.id)).toEqual(['20c9f6e8', '7b1e0c42'])
+    expect(isLive(rows[0]!)).toBe(true)
+    expect(isLive(rows[1]!)).toBe(false)
+  })
+
   it('reads a background row keyed by its job id', () => {
     expect(parseListing(listing([LIVE]), ROOT)).toEqual([
       {
