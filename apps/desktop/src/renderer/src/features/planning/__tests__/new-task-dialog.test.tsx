@@ -51,3 +51,81 @@ test('Shared with vault makes a committed task', async () => {
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ shared: true })),
   )
 })
+
+test('an unedited open draft follows the asynchronously loaded default status', async () => {
+  const store = createStore()
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const { rerender } = render(
+    <Provider store={store}>
+      <NewTaskDialog
+        open
+        onOpenChange={() => {}}
+        statuses={DEFAULT_STATUSES}
+        defaultStatus="todo"
+        today="2026-10-25"
+        onCreate={vi.fn(() => Promise.resolve())}
+      />
+    </Provider>,
+  )
+
+  expect(screen.getByRole('button', { name: 'Status: To do' })).toBeInTheDocument()
+  // The project/status snapshot can arrive after this always-mounted dialog.
+  // An untouched draft adopts its new default.
+  rerender(
+    <Provider store={store}>
+      <NewTaskDialog
+        open
+        onOpenChange={() => {}}
+        statuses={DEFAULT_STATUSES}
+        defaultStatus="doing"
+        today="2026-10-25"
+        onCreate={vi.fn(() => Promise.resolve())}
+      />
+    </Provider>,
+  )
+  expect(screen.getByRole('button', { name: 'Status: In progress' })).toBeInTheDocument()
+})
+
+test('Cancel resets on reopen while temporarily hiding preserves the live draft', async () => {
+  const store = createStore()
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const props = {
+    onOpenChange: vi.fn(),
+    statuses: DEFAULT_STATUSES,
+    defaultStatus: 'todo',
+    today: '2026-10-25',
+    onCreate: vi.fn(() => Promise.resolve()),
+  }
+  const view = render(
+    <Provider store={store}>
+      <NewTaskDialog open {...props} />
+    </Provider>,
+  )
+
+  await userEvent.type(screen.getByPlaceholderText('Task title'), 'Keep this draft')
+  view.rerender(
+    <Provider store={store}>
+      <NewTaskDialog open visible={false} {...props} />
+    </Provider>,
+  )
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  view.rerender(
+    <Provider store={store}>
+      <NewTaskDialog open {...props} />
+    </Provider>,
+  )
+  expect(screen.getByPlaceholderText('Task title')).toHaveValue('Keep this draft')
+
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  view.rerender(
+    <Provider store={store}>
+      <NewTaskDialog open={false} {...props} />
+    </Provider>,
+  )
+  view.rerender(
+    <Provider store={store}>
+      <NewTaskDialog open {...props} />
+    </Provider>,
+  )
+  expect(screen.getByPlaceholderText('Task title')).toHaveValue('')
+})

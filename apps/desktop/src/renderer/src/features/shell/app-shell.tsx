@@ -418,6 +418,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       ) {
         return true
       }
+      if (descriptor?.kind === 'board') return true
       return (
         descriptor?.kind === 'session' &&
         (running

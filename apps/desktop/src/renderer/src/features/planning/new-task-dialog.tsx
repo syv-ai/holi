@@ -4,7 +4,7 @@
  * file, in the chosen project's folder (the vault root without one). Private
  * unless Sharing says otherwise, as every new task is (docs/features/tasks.md).
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { StatusDef, Task } from '@holi/shared'
 
 import { Button } from '@/components/ui/button'
@@ -36,6 +36,8 @@ function emptyDraft(status: string, folder: string): TaskFieldValues {
 
 export function NewTaskDialog({
   open,
+  visible = true,
+  focused = visible,
   onOpenChange,
   statuses,
   defaultStatus,
@@ -44,6 +46,8 @@ export function NewTaskDialog({
   onCreate,
 }: {
   open: boolean
+  visible?: boolean
+  focused?: boolean
   onOpenChange: (open: boolean) => void
   statuses: readonly StatusDef[]
   defaultStatus: string
@@ -56,6 +60,20 @@ export function NewTaskDialog({
   const [fields, setFields] = useState(() => emptyDraft(defaultStatus, defaultFolder))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const wasOpen = useRef(false)
+  const edited = useRef(false)
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      setTitle('')
+      setDescription('')
+      setFields(emptyDraft(defaultStatus, defaultFolder))
+      setError(null)
+      edited.current = false
+    } else if (open && !edited.current) {
+      setFields(emptyDraft(defaultStatus, defaultFolder))
+    }
+    wasOpen.current = open
+  }, [open, defaultStatus, defaultFolder])
 
   const reset = () => {
     setTitle('')
@@ -96,13 +114,18 @@ export function NewTaskDialog({
 
   return (
     <Dialog
-      open={open}
+      modal={focused}
+      open={open && visible}
       onOpenChange={(next) => {
         if (!next) reset()
         onOpenChange(next)
       }}
     >
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent
+        className="sm:max-w-xl"
+        onOpenAutoFocus={(event) => !focused && event.preventDefault()}
+        onCloseAutoFocus={(event) => (!visible || !focused) && event.preventDefault()}
+      >
         <div
           className="flex flex-col gap-6"
           onKeyDown={(event) => {
@@ -130,9 +153,12 @@ export function NewTaskDialog({
               </FieldLabel>
               <Input
                 id="new-task-title"
-                autoFocus
+                autoFocus={focused}
                 value={title}
-                onChange={(event) => setTitle(event.target.value)}
+                onChange={(event) => {
+                  edited.current = true
+                  setTitle(event.target.value)
+                }}
                 placeholder="Task title"
               />
             </Field>
@@ -143,7 +169,10 @@ export function NewTaskDialog({
               <Textarea
                 id="new-task-description"
                 value={description}
-                onChange={(event) => setDescription(event.target.value)}
+                onChange={(event) => {
+                  edited.current = true
+                  setDescription(event.target.value)
+                }}
                 placeholder="Add a description (optional)"
                 className="min-h-24"
               />
@@ -152,18 +181,26 @@ export function NewTaskDialog({
               values={fields}
               statuses={statuses}
               today={today}
-              onChange={(change) =>
+              onChange={(change) => {
+                edited.current = true
                 setFields((current) => ({
                   ...current,
                   [change.field]: change.value,
                 }))
-              }
+              }}
             />
             {error !== null ? <FieldError>{error}</FieldError> : null}
           </FieldGroup>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                reset()
+                onOpenChange(false)
+              }}
+            >
               Cancel
             </Button>
             <Button
