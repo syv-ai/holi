@@ -61,7 +61,7 @@ test('a hidden retained terminal answers real xterm protocol queries without ena
   store.set(openTabAtom, { kind: 'surface', surface: 'agent', id: 'protocol-terminal' })
   const view = (visible: boolean) => (
     <Provider store={store}>
-      <SessionTerminal terminalId="protocol-terminal" visible={visible} />
+      <SessionTerminal terminalId="protocol-terminal" provider="pi" visible={visible} />
     </Provider>
   )
   const ui = render(view(true))
@@ -77,4 +77,93 @@ test('a hidden retained terminal answers real xterm protocol queries without ena
   })
   expect(fixture.terminals[0]!.textarea).toBeDisabled()
   expect(fixture.terminals[0]!.options.disableStdin).toBe(false)
+})
+
+test('Pi fullscreen wheel routing sends accumulated native SGR events only in mouse mode', async () => {
+  vi.stubGlobal('holi', { plugin: { send: fixture.send } })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'fixture/wheel')
+  store.set(openTabAtom, { kind: 'surface', surface: 'agent', id: 'wheel-terminal' })
+  const view = (visible: boolean) => (
+    <Provider store={store}>
+      <SessionTerminal terminalId="wheel-terminal" provider="pi" visible={visible} />
+    </Provider>
+  )
+  const ui = render(view(true))
+  await waitFor(() => expect(fixture.terminals).toHaveLength(1))
+  const mount = ui.container.querySelector('[data-session-terminal] > div')!
+  vi.spyOn(mount, 'getBoundingClientRect').mockReturnValue({
+    left: 10,
+    top: 20,
+    right: 810,
+    bottom: 420,
+    width: 800,
+    height: 400,
+    x: 10,
+    y: 20,
+    toJSON: () => ({}),
+  } as DOMRect)
+
+  act(() => receivePtyData({ id: 'wheel-terminal', data: '\x1b[?1049' }))
+  act(() => receivePtyData({ id: 'wheel-terminal', data: 'h\x1b[?1000' }))
+  act(() => receivePtyData({ id: 'wheel-terminal', data: 'h\x1b[?1006h' }))
+  const wheel = (deltaY: number, deltaMode: number = WheelEvent.DOM_DELTA_PIXEL) =>
+    new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      deltaY,
+      deltaMode,
+      clientX: 110,
+      clientY: 120,
+    })
+  const first = wheel(20)
+  const second = wheel(20)
+  act(() => {
+    mount.dispatchEvent(first)
+    mount.dispatchEvent(second)
+  })
+  expect(first.defaultPrevented).toBe(true)
+  expect(second.defaultPrevented).toBe(true)
+  const sentWheel = () => fixture.send.mock.calls.map(([, event]) => event.payload?.data)
+  expect(sentWheel()).toContain('\x1b[<65;11;7M')
+
+  const lineUp = wheel(-1, WheelEvent.DOM_DELTA_LINE)
+  const secondLineUp = wheel(-2, WheelEvent.DOM_DELTA_LINE)
+  act(() => {
+    mount.dispatchEvent(lineUp)
+    mount.dispatchEvent(secondLineUp)
+  })
+  expect(sentWheel()).toContain('\x1b[<64;11;7M')
+  const pageDown = wheel(1, WheelEvent.DOM_DELTA_PAGE)
+  act(() => mount.dispatchEvent(pageDown))
+  expect(sentWheel().filter((data) => data === '\x1b[<65;11;7M')).toHaveLength(10)
+  const zoom = new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    deltaY: 80,
+    ctrlKey: true,
+    clientX: 110,
+    clientY: 120,
+  })
+  const writesBeforeZoom = sentWheel().length
+  act(() => mount.dispatchEvent(zoom))
+  expect(zoom.defaultPrevented).toBe(false)
+  expect(sentWheel()).toHaveLength(writesBeforeZoom)
+
+  ui.rerender(view(false))
+  const hidden = wheel(80)
+  act(() => mount.dispatchEvent(hidden))
+  expect(hidden.defaultPrevented).toBe(false)
+  ui.rerender(view(true))
+
+  const writesBeforeDisable = sentWheel().length
+  act(() => receivePtyData({ id: 'wheel-terminal', data: '\x1b[?1000l' }))
+  const ordinaryBuffer = wheel(80)
+  act(() => mount.dispatchEvent(ordinaryBuffer))
+  expect(ordinaryBuffer.defaultPrevented).toBe(false)
+  expect(sentWheel()).toHaveLength(writesBeforeDisable)
+  ui.unmount()
+  const disposed = wheel(80)
+  act(() => mount.dispatchEvent(disposed))
+  expect(disposed.defaultPrevented).toBe(false)
 })
