@@ -19,6 +19,7 @@ import {
   useEventCalendarSettings,
   useEventCalendarViewConfig,
   useEventCalendarViewSettings,
+  useEventCalendarVisible,
   useEventCalendarWeek,
 } from "@/components/ui/event-calendar/event-calendar"
 import {
@@ -1113,7 +1114,9 @@ function EventCalendarMoreIndicator({
 }: EventCalendarMoreIndicatorProps) {
   const settings = useEventCalendarSettings()
   const viewConfig = useEventCalendarViewConfig()
+  const visible = useEventCalendarVisible()
   const [open, setOpen] = useState(false)
+  useEffect(() => { if (!visible) setOpen(false) }, [visible])
   const headerId = useId()
 
   // Grabbing a chip from this list starts a drag; close the popover so it does
@@ -1126,7 +1129,7 @@ function EventCalendarMoreIndicator({
   }, [isDragging])
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={visible && open} onOpenChange={setOpen}>
       <PopoverTrigger
         data-slot="event-calendar-more"
         data-drop-into={dropInto ? "" : undefined}

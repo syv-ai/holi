@@ -447,6 +447,19 @@ describe('the calendar view', () => {
     expect((await screen.findAllByText('Focus block')).length).toBeGreaterThan(0)
   })
 
+  test('parking closes calendar menus but retains the selected view and range', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const switcher = screen.getByRole('button', { name: 'Select view' })
+    await user.click(switcher)
+    expect(await screen.findByRole('menu')).toBeInTheDocument()
+    view.rerender(<CalendarView visible={false} />)
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    view.rerender(<CalendarView visible />)
+    expect(screen.getByRole('button', { name: 'Select view' })).toHaveTextContent('Week')
+  })
+
   test('without a connection it offers Connections', async () => {
     const refusal = Object.assign(new Error('Google is not connected'), {
       data: { code: 'UNAUTHORIZED' },

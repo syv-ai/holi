@@ -208,10 +208,12 @@ function tidy(p: MeetingProfile): MeetingProfile {
 
 export function ProfileDialog({
   profile,
+  visible = true,
   onClose,
 }: {
   /** The profile to edit; absent makes a new one. */
   profile?: MeetingProfile
+  visible?: boolean
   onClose: () => void
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
@@ -271,7 +273,7 @@ export function ProfileDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={visible} modal={visible} onOpenChange={(open) => visible && !open && onClose()}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>

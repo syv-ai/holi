@@ -14,7 +14,7 @@ import type { PickableHoli } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useId, useState } from 'react'
 import { toast } from 'sonner'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field, FieldLabel, FieldTitle } from '@/components/ui/field'
@@ -40,6 +40,7 @@ import {
   type Topic,
 } from '../shared/meeting'
 import { useAgentName } from './agent-name'
+import { useMeetingsDisplayed } from './displayed'
 import { clock } from '../shared/scribe-prompt'
 import { meetingCap } from './meeting-cap'
 import { SendButton } from './send-button'
@@ -278,6 +279,7 @@ export function SendPanel({
   meeting: MeetingState
   holis: readonly PickableHoli[]
 }): React.JSX.Element {
+  const displayed = useMeetingsDisplayed()
   const [open, setOpen] = useAtom(sendPanelAtom)
   const found =
     open?.meetingId === meeting.id ? meeting.topics.find((t) => t.id === open.topicId) : undefined
@@ -293,13 +295,25 @@ export function SendPanel({
     topic === found ? 1 : meeting.topics.filter((t) => (t.joinedTo ?? t.id) === topic?.id).length
   const title = suggestion?.title ?? (topic === undefined ? '' : topicName(topic))
   return (
-    <Sheet modal={false} open={topic !== undefined} onOpenChange={(o) => !o && setOpen(null)}>
+    <Sheet
+      modal={false}
+      open={displayed && topic !== undefined}
+      onOpenChange={(o) => displayed && !o && setOpen(null)}
+    >
       {topic !== undefined && (
         <SheetContent
           side="right"
           // The stock sheet's own width rule is `data-[side=right]:sm:max-w-sm`;
           // only the same variant outranks it.
-          className="data-[side=right]:sm:max-w-xl"
+          className={cn(
+            'data-[side=right]:sm:max-w-xl',
+            !displayed && 'invisible pointer-events-none',
+          )}
+          aria-hidden={!displayed}
+          inert={!displayed}
+          onCloseAutoFocus={(event) => {
+            if (!displayed) event.preventDefault()
+          }}
           // Beside the meeting, not over it.
           onInteractOutside={(e) => e.preventDefault()}
         >

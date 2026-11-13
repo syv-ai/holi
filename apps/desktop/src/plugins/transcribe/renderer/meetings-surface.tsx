@@ -9,6 +9,7 @@
  * not recorded yet and Stop while it records.
  */
 import { useAtomValue } from 'jotai'
+import { DisplayedContext } from './displayed'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/composites/empty-state'
 import { meetingName } from './meeting-claim'
@@ -18,30 +19,44 @@ import { PastMeetings } from './past-meetings'
 import { recorderAtom } from './recorder'
 import { meetingsAtom, shownMeetingIdAtom } from './state'
 
-export function MeetingsSurface({ id }: { id?: string; visible?: boolean }): React.JSX.Element {
+export function MeetingsSurface({
+  id,
+  visible = true,
+}: {
+  id?: string
+  visible?: boolean
+}): React.JSX.Element {
   const shown = useAtomValue(shownMeetingIdAtom)
   // The shell gives a tab opened without an id `id=''` (`tab-view.tsx`): that
   // is the list, not a meeting folder at ''.
-  if (id !== undefined && id !== '') return <MeetingFolder path={id} />
+  if (id !== undefined && id !== '') {
+    return (
+      <DisplayedContext.Provider value={visible}>
+        <MeetingFolder path={id} visible={visible} />
+      </DisplayedContext.Provider>
+    )
+  }
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <MeetingHeader />
-      {shown === null ? (
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          <div className="mx-auto max-w-2xl">
-            <PastMeetings />
+    <div inert={!visible} className="flex h-full min-h-0 flex-col">
+      <DisplayedContext.Provider value={visible}>
+        <MeetingHeader visible={visible} />
+        {shown === null ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+            <div className="mx-auto max-w-2xl">
+              <PastMeetings />
+            </div>
           </div>
-        </div>
-      ) : (
-        <MeetingScreen key={shown} meetingId={shown} />
-      )}
+        ) : (
+          <MeetingScreen key={shown} meetingId={shown} />
+        )}
+      </DisplayedContext.Provider>
     </div>
   )
 }
 
 /** The meeting whose folder is `path`: its setup until it records, then the
  *  meeting itself. */
-function MeetingFolder({ path }: { path: string }): React.JSX.Element {
+function MeetingFolder({ path, visible }: { path: string; visible: boolean }): React.JSX.Element {
   const list = useAtomValue(meetingsAtom)
   const rec = useAtomValue(recorderAtom)
   // A meeting that moved away or was deleted is not this folder's, whatever
@@ -57,9 +72,13 @@ function MeetingFolder({ path }: { path: string }): React.JSX.Element {
   }
   const recordingHere = meeting !== undefined && rec.meetingId === meeting.id
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div inert={!visible} className="flex h-full min-h-0 flex-col">
       {(meeting === undefined || recordingHere) && (
-        <MeetingHeader path={path} {...(meeting === undefined ? {} : { meetingId: meeting.id })} />
+        <MeetingHeader
+          visible={visible}
+          path={path}
+          {...(meeting === undefined ? {} : { meetingId: meeting.id })}
+        />
       )}
       {meeting === undefined ? (
         <div className="mx-auto w-full max-w-2xl px-4 py-6">

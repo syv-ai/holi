@@ -11,7 +11,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { SquareArrowOutUpRight } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { activeRemoteAtom, openPathAtom, showAgentSessionAtom } from '@/plugin-api'
+import { activeRemoteAtom, cn, openPathAtom, showAgentSessionAtom } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -29,6 +29,7 @@ import {
   type SendTarget,
 } from '../shared/meeting'
 import { useAgentName } from './agent-name'
+import { useMeetingsDisplayed } from './displayed'
 import { CardFields, draftOf, type CardDraft } from './card-fields'
 import { clock } from '../shared/scribe-prompt'
 import { meetingCap, type CardPatch } from './meeting-cap'
@@ -258,17 +259,30 @@ export function TaskPanel({
   meeting: MeetingState
   holis: readonly PickableHoli[]
 }): React.JSX.Element {
+  const displayed = useMeetingsDisplayed()
   const [open, setOpen] = useAtom(openTaskAtom)
   const card =
     open?.meetingId === meeting.id ? meeting.cards.find((c) => c.id === open.cardId) : undefined
   return (
-    <Sheet modal={false} open={card !== undefined} onOpenChange={(o) => !o && setOpen(null)}>
+    <Sheet
+      modal={false}
+      open={displayed && card !== undefined}
+      onOpenChange={(o) => displayed && !o && setOpen(null)}
+    >
       {card !== undefined && (
         <SheetContent
           side="right"
           // The stock sheet's own width rule is `data-[side=right]:sm:max-w-sm`;
           // only the same variant outranks it.
-          className="data-[side=right]:sm:max-w-xl"
+          className={cn(
+            'data-[side=right]:sm:max-w-xl',
+            !displayed && 'invisible pointer-events-none',
+          )}
+          aria-hidden={!displayed}
+          inert={!displayed}
+          onCloseAutoFocus={(event) => {
+            if (!displayed) event.preventDefault()
+          }}
           // Beside the meeting, not over it: the minutes and the transcript
           // stay usable while a task is open.
           onInteractOutside={(e) => e.preventDefault()}

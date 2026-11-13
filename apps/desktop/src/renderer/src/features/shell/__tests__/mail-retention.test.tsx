@@ -201,6 +201,7 @@ function MailTabs() {
         <TabView
           tab={tab}
           visible={visible}
+          focused={tab === key}
           settingsNavInSidebar={false}
           onOpen={noop}
           onOpenBeside={noop}
@@ -233,7 +234,15 @@ function mountMailTabs(showMail = true) {
           label: 'Other',
           icon: () => null,
           order: 100,
-          render: () => <Input aria-label="Other app state" defaultValue="initial" />,
+          keepMounted: true,
+          render: ({ visible, focused }) => (
+            <Input
+              aria-label="Other app state"
+              defaultValue="initial"
+              data-visible={String(visible)}
+              data-focused={String(focused)}
+            />
+          ),
         },
       ],
     },
@@ -253,6 +262,25 @@ function mountMailTabs(showMail = true) {
     show: (key: string) => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, key))),
   }
 }
+
+test('retained ordinary app views receive display and focus lifecycle updates', async () => {
+  const { show } = mountMailTabs(false)
+  const other = await screen.findByRole('textbox', { name: 'Other app state' })
+  expect(other).toHaveAttribute('data-visible', 'true')
+  expect(other).toHaveAttribute('data-focused', 'true')
+  fireEvent.change(other, { target: { value: 'unsaved app state' } })
+
+  show(mailKey)
+  await screen.findByRole('list', { name: 'Inbox' })
+  expect(other).toHaveAttribute('data-visible', 'false')
+  expect(other).toHaveAttribute('data-focused', 'false')
+
+  show(otherKey)
+  expect(await screen.findByRole('textbox', { name: 'Other app state' })).toBe(other)
+  expect(other).toHaveValue('unsaved app state')
+  expect(other).toHaveAttribute('data-visible', 'true')
+  expect(other).toHaveAttribute('data-focused', 'true')
+})
 
 test('Mail, session and code-file hosts retain and dispose independently', async () => {
   const { store, show } = mountMailTabs()
@@ -507,15 +535,21 @@ test('an open inline reply prevents switching accounts until its save succeeds a
   expect(screen.getByText('Pick a thread to read it')).toBeInTheDocument()
 })
 
-test('Mail first mounts when displayed, close and reopen starts fresh, other apps still unmount', async () => {
+test('Mail and opted-in ordinary apps retain until closed, then reopen fresh', async () => {
   const { store, show } = mountMailTabs(false)
   const other = screen.getByRole('textbox', { name: 'Other app state' })
   fireEvent.change(other, { target: { value: 'temporary' } })
   expect(searchMock).not.toHaveBeenCalled()
   show(mailKey)
   const list = await screen.findByRole('list', { name: 'Inbox' })
-  expect(other.isConnected).toBe(false)
+  expect(other.isConnected).toBe(true)
   show(otherKey)
+  expect(screen.getByRole('textbox', { name: 'Other app state' })).toBe(other)
+  expect(other).toHaveValue('temporary')
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, otherKey)))
+  expect(other.isConnected).toBe(false)
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, otherKey)))
+  expect(await screen.findByRole('textbox', { name: 'Other app state' })).not.toBe(other)
   expect(screen.getByRole('textbox', { name: 'Other app state' })).toHaveValue('initial')
   act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, mailKey)))
   expect(list.isConnected).toBe(false)

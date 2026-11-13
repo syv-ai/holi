@@ -15,7 +15,7 @@
  *
  * It owns its layout (`h-full`), so whatever mounts it gives it a sized box.
  */
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   EventCalendar,
@@ -126,7 +126,7 @@ function WheelSwipe(): null {
   return null
 }
 
-export function CalendarView(): React.JSX.Element {
+export function CalendarView({ visible = true }: { visible?: boolean }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const { account } = useGoogleAccount()
   const calendar = useGoogleCalendar(remote)
@@ -143,6 +143,15 @@ export function CalendarView(): React.JSX.Element {
   // The visible date, shared by the rail's mini calendar and the grid. One
   // source of truth: the mini calendar and grid nav both write it, both read it.
   const [date, setDate] = useState<Date>(() => new Date())
+
+  // A retained calendar keeps its range, but a sheet belongs to the displayed
+  // view and must not remain in a portal after that view is parked.
+  useEffect(() => {
+    if (!visible) {
+      setSheet(null)
+      setError(null)
+    }
+  }, [visible])
 
   // The primary calendar is the account's address: the one Holi writes to.
   const ownCalendarId = account?.email ?? null
@@ -444,6 +453,7 @@ export function CalendarView(): React.JSX.Element {
           onOpenOccurrence={openView}
         />
         <EventCalendar
+          visible={visible}
           events={items}
           date={date}
           onDateChange={setDate}
@@ -455,7 +465,7 @@ export function CalendarView(): React.JSX.Element {
           showWeekNumbers={weekNumbers}
           loading={calendar.loading}
           navButtonSize="default"
-          nowIndicator
+          nowIndicator={visible}
           scrollToHour={8}
           snapDuration={15}
           scrollMode="contained"
@@ -527,7 +537,7 @@ export function CalendarView(): React.JSX.Element {
         </EventCalendar>
 
         <EventSheet
-          state={sheet}
+          state={visible ? sheet : null}
           error={error}
           saving={saving}
           canCreateTask={canCreateTask}

@@ -2,6 +2,7 @@
 // ReUI: @reui/event-calendar (`npx shadcn@latest view @reui/event-calendar` shows the published source)
 
 import {
+  useEffect,
   useState,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
@@ -13,6 +14,7 @@ import {
   useEventCalendarSettings,
   useEventCalendarView,
   useEventCalendarViewConfig,
+  useEventCalendarVisible,
 } from "@/components/ui/event-calendar/event-calendar"
 import { toZoned } from "@/components/ui/event-calendar/event-calendar-lib"
 import type { CalendarView } from "@/components/ui/event-calendar/event-calendar-types"
@@ -287,7 +289,9 @@ function EventCalendarViewSwitcher({
   const labels = settings.i18n.labels
   // Controlled open: selecting a view swaps the whole content subtree in the
   // same click, so closing must not depend on the menu's internal handler.
+  const visible = useEventCalendarVisible()
   const [open, setOpen] = useState(false)
+  useEffect(() => { if (!visible) setOpen(false) }, [visible])
   // Hover-only tooltip: when the menu closes, Radix focuses the trigger
   // again and a focus-opened tooltip would flash - ignore focus opens.
   const [tipOpen, setTipOpen] = useState(false)
@@ -304,7 +308,7 @@ function EventCalendarViewSwitcher({
 
   return (
     <DropdownMenu
-      open={open}
+      open={visible && open}
       onOpenChange={(next: boolean) => {
         setOpen(next)
         if (next) setTipOpen(false)
@@ -453,7 +457,9 @@ function EventCalendarDatePicker({
   const settings = useEventCalendarSettings()
   const viewConfig = useEventCalendarViewConfig()
   const nav = useNavButtonProps()
+  const visible = useEventCalendarVisible()
   const [open, setOpen] = useState(false)
+  useEffect(() => { if (!visible) setOpen(false) }, [visible])
   const zoned = toZoned(date, settings.timeZone)
 
   const configured = mode ?? "auto"
@@ -471,7 +477,7 @@ function EventCalendarDatePicker({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={visible && open} onOpenChange={setOpen}>
       <NavTooltip content={tooltip}>
         <PopoverTrigger asChild {...props}>
           <Button

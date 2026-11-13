@@ -45,23 +45,36 @@ const syv = (s: SpeechService | undefined): boolean => s?.url == null
 
 /** A password field and Save: the key goes to main, then the window asks
  *  again whether one is set. */
-function SpeechKeyForm({ onSaved }: { onSaved?: () => void }): React.JSX.Element {
+function SpeechKeyForm({
+  keyValue,
+  setKeyValue,
+  busy,
+  setBusy,
+  error,
+  setError,
+  onSaved,
+}: {
+  keyValue: string
+  setKeyValue: (key: string) => void
+  busy: boolean
+  setBusy: (busy: boolean) => void
+  error: string | null
+  setError: (error: string | null) => void
+  onSaved?: () => void
+}): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const reload = useSetAtom(loadSpeechKeyAtom)
   const service = useAtomValue(speechKeyAtom)?.service
   const id = useId()
-  const [key, setKey] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const canSave = !busy && key.trim() !== '' && remote !== null
+  const canSave = !busy && keyValue.trim() !== '' && remote !== null
 
   const save = async () => {
     if (!canSave) return
     setBusy(true)
     setError(null)
     try {
-      await meetingCap['key.set'](remote, { key })
-      setKey('')
+      await meetingCap['key.set'](remote, { key: keyValue })
+      setKeyValue('')
       await reload()
       onSaved?.()
     } catch (e) {
@@ -79,11 +92,11 @@ function SpeechKeyForm({ onSaved }: { onSaved?: () => void }): React.JSX.Element
           id={id}
           type="password"
           placeholder={syv(service) ? 'hv_…' : 'If the service needs one'}
-          value={key}
+          value={keyValue}
           spellCheck={false}
           autoComplete="off"
           aria-invalid={error !== null || undefined}
-          onChange={(e) => setKey(e.target.value)}
+          onChange={(e) => setKeyValue(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault()
@@ -140,13 +153,23 @@ const BLOCKED: Record<MeetingBlock, { title: string; text: string }> = {
 
 /** Under the header of a meeting that waits on its key. */
 export function SpeechKeyBlocked({ reason }: { reason: MeetingBlock }): React.JSX.Element {
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   return (
     <Alert variant="warning" aria-label="Speech key">
       <TriangleAlert aria-hidden />
       <AlertTitle>{BLOCKED[reason].title}</AlertTitle>
       <AlertDescription>
         <span>{BLOCKED[reason].text}</span>
-        <SpeechKeyForm />
+        <SpeechKeyForm
+          keyValue={key}
+          setKeyValue={setKey}
+          busy={busy}
+          setBusy={setBusy}
+          error={error}
+          setError={setError}
+        />
       </AlertDescription>
     </Alert>
   )
@@ -162,20 +185,33 @@ const TESTED = {
 /** syv.ai's service, or another one's address and model, saved together. A
  *  key saved here stays with its service: it goes to the new one only when
  *  the box under the toggle is ticked. */
-function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JSX.Element {
+type ServiceDraft = { kind: 'syv' | 'other'; url: string; model: string; moveKey: boolean }
+
+function ServiceForm({
+  draft,
+  onDraft,
+  busy,
+  setBusy,
+  error,
+  setError,
+  onSaved,
+}: {
+  draft: ServiceDraft
+  onDraft: (draft: ServiceDraft) => void
+  busy: boolean
+  setBusy: (busy: boolean) => void
+  error: string | null
+  setError: (error: string | null) => void
+  onSaved: (said: string) => void
+}): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const status = useAtomValue(speechKeyAtom)
   const setStatus = useSetAtom(speechKeyAtom)
   const urlId = useId()
   const modelId = useId()
   const moveId = useId()
-  const [moveKey, setMoveKey] = useState(false)
   const ownKey = status?.source === 'app'
-  const [kind, setKind] = useState<'syv' | 'other'>(syv(status?.service) ? 'syv' : 'other')
-  const [url, setUrl] = useState(status?.service.url ?? '')
-  const [model, setModel] = useState(status?.service.model ?? '')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { moveKey, kind, url, model } = draft
 
   const save = async (next: SpeechService) => {
     if (remote === null) return
@@ -203,7 +239,7 @@ function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JS
         disabled={busy}
         onValueChange={(v) => {
           if (v !== 'syv' && v !== 'other') return
-          setKind(v)
+          onDraft({ ...draft, kind: v })
           if (v === 'syv' && !syv(status?.service)) void save({ url: null, model: null })
         }}
       >
@@ -216,7 +252,7 @@ function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JS
             id={moveId}
             checked={moveKey}
             disabled={busy}
-            onCheckedChange={(next) => setMoveKey(next === true)}
+            onCheckedChange={(next) => onDraft({ ...draft, moveKey: next === true })}
           />
           <FieldLabel htmlFor={moveId}>Move this Mac’s saved key to the new service</FieldLabel>
         </Field>
@@ -230,7 +266,7 @@ function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JS
               placeholder="https://api.example.com/v1"
               spellCheck={false}
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => onDraft({ ...draft, url: e.target.value })}
             />
             <FieldDescription>
               Any service that answers /audio/transcriptions as OpenAI’s does. https, or http on
@@ -245,7 +281,7 @@ function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JS
                 placeholder="whisper-1"
                 spellCheck={false}
                 value={model}
-                onChange={(e) => setModel(e.target.value)}
+                onChange={(e) => onDraft({ ...draft, model: e.target.value })}
               />
               <Button
                 size="sm"
@@ -269,9 +305,11 @@ function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JS
  *  for this Mac's, Remove. */
 export function SpeechKeyDialog({
   open,
+  visible = true,
   onOpenChange: setOpen,
 }: {
   open: boolean
+  visible?: boolean
   onOpenChange: (open: boolean) => void
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
@@ -279,12 +317,25 @@ export function SpeechKeyDialog({
   const reload = useSetAtom(loadSpeechKeyAtom)
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState<string | null>(null)
+  const [keyDraft, setKeyDraft] = useState('')
+  const [keyBusy, setKeyBusy] = useState(false)
+  const [keyError, setKeyError] = useState<string | null>(null)
+  const [serviceDraft, setServiceDraft] = useState<ServiceDraft | null>(null)
+  const [serviceBusy, setServiceBusy] = useState(false)
+  const [serviceError, setServiceError] = useState<string | null>(null)
   // Asked again each time it opens: the key may have changed elsewhere.
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      setKeyDraft('')
+      setServiceDraft(null)
+      setKeyError(null)
+      setServiceError(null)
+      return
+    }
+    if (!visible) return
     setSaid(null)
     void reload()
-  }, [open, reload])
+  }, [open, visible, reload])
 
   const act = async (run: (remote: string) => Promise<string | null>) => {
     if (remote === null) return
@@ -312,7 +363,7 @@ export function SpeechKeyDialog({
               : 'No key is set: the service is asked without one.'
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open && visible} modal={open && visible} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Speech service</DialogTitle>
@@ -322,7 +373,24 @@ export function SpeechKeyDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
-          {status !== null && <ServiceForm key={status.service.url ?? 'syv'} onSaved={setSaid} />}
+          {status !== null && (
+            <ServiceForm
+              draft={
+                serviceDraft ?? {
+                  kind: syv(status.service) ? 'syv' : 'other',
+                  url: status.service.url ?? '',
+                  model: status.service.model ?? '',
+                  moveKey: false,
+                }
+              }
+              onDraft={setServiceDraft}
+              busy={serviceBusy}
+              setBusy={setServiceBusy}
+              error={serviceError}
+              setError={setServiceError}
+              onSaved={setSaid}
+            />
+          )}
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {status?.set === true ? (
               <Badge variant="success-light">Key set</Badge>
@@ -333,7 +401,15 @@ export function SpeechKeyDialog({
             )}
             <span>{where}</span>
           </div>
-          <SpeechKeyForm onSaved={() => setSaid('Saved.')} />
+          <SpeechKeyForm
+            keyValue={keyDraft}
+            setKeyValue={setKeyDraft}
+            busy={keyBusy}
+            setBusy={setKeyBusy}
+            error={keyError}
+            setError={setKeyError}
+            onSaved={() => setSaid('Saved.')}
+          />
           {said !== null && (
             <p role="status" className="text-sm text-muted-foreground">
               {said}
