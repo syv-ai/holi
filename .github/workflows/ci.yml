@@ -117,6 +117,41 @@ jobs:
       - name: Exercise the generated Windows helper
         run: pnpm --filter @holi/desktop exec vitest run test/git-askpass.test.ts
 
+  windows-agent-launch:
+    name: Windows agent launch and cleanup
+    runs-on: windows-2025
+    env:
+      LANG: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run native Windows launch and caller regressions
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force apps/desktop/test-results | Out-Null
+          pnpm --filter @holi/desktop exec vitest run test/launch.test.ts test/tool-lookup.test.ts src/plugins/agent/test/windows-agents.test.ts src/plugins/agent/test/agent-runtime.test.ts --project node --reporter=verbose 2>&1 | Tee-Object -FilePath apps/desktop/test-results/windows-agent-launch.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload sanitized failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-agent-launch-failure
+          path: apps/desktop/test-results/windows-agent-launch.txt
+          if-no-files-found: ignore
+
   windows-helpers:
     name: Windows helper portability
     runs-on: windows-2025

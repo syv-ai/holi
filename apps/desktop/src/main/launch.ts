@@ -3,8 +3,9 @@
  * file and its arguments, untouched. On Windows two things differ:
  *
  *  - npm installs a tool as a `.cmd` launcher, and Node refuses to start one
- *    directly (`spawn EINVAL`, thrown synchronously from `spawn`). It runs
- *    through `cmd.exe /d /s /c`, with each argument quoted for `cmd.exe`.
+ *    directly (`spawn EINVAL`, thrown synchronously from `spawn`). Recognizable
+ *    npm shims are bypassed to run their JS entrypoint; opaque batches use
+ *    `cmd.exe` only when every argument is representable safely.
  *  - a bare name (`pnpm`, `python`) is not found by `spawn` unless it names an
  *    `.exe`, so it is looked up on `PATH` with `PATHEXT` first.
  *
@@ -20,6 +21,8 @@ import {
   type SpawnOptions,
 } from 'node:child_process'
 import { PassThrough } from 'node:stream'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { win32 } from 'node:path'
 import { resolveBin, type Platform } from './bin'
 import { killTree } from './process-group'
@@ -34,6 +37,26 @@ export interface Launch {
 }
 
 const BATCH = /\.(cmd|bat)$/i
+
+/** Resolve only the recognizable npm-generated node_modules shim shape. */
+function npmShimScript(file: string): string | null {
+  try {
+    const source = readFileSync(file, 'utf8')
+    if (!/@echo\s+off/i.test(source) || !/%\*/.test(source)) return null
+    // npm's Windows shim selects a colocated node.exe when present and points
+    // it at a node_modules JavaScript package entrypoint. Requiring both
+    // signatures avoids treating arbitrary batch programs as transparent.
+    if (!/%(?:~dp0|dp0%)[\\/]node\.exe/i.test(source) || !/node_modules[\\/]/i.test(source))
+      return null
+    const match = source.match(/"%(?:~dp0|dp0%)[\\/]([^"\r\n]+\.js)"\s+%\*/i)
+    const relativeScript = match?.[1]
+    if (!relativeScript) return null
+    const script = join(dirname(file), ...relativeScript.split(/[\\/]/))
+    return existsSync(script) ? script : null
+  } catch {
+    return null
+  }
+}
 
 /** One argument as `cmd.exe` reads it from a `/s /c "…"` line: quoted for the
  *  program's own argument parser, then every character `cmd.exe` itself acts
@@ -67,9 +90,9 @@ export interface LaunchOptions {
 const isBare = (name: string): boolean => !/[\\/]/.test(name) && win32.extname(name) === ''
 
 /**
- * What to run for `file` and `args`. A `.cmd` or `.bat` on Windows becomes
- * `cmd.exe /d /s /c "<file> <args>"`; a bare name is looked up first; every
- * other case is returned as it is.
+ * What to run for `file` and `args`. Windows first resolves bare names and
+ * bypasses recognizable npm JavaScript shims. Opaque batches use cmd.exe only
+ * for arguments that can be represented without shell expansion.
  */
 export function launchPlan(
   file: string,
@@ -80,11 +103,23 @@ export function launchPlan(
   const look = resolve ?? ((name, e) => resolveBin(name, e, { platform }))
   const target = isBare(file) ? (look(file, env) ?? file) : file
   if (!BATCH.test(target)) return { file: target, args: [...args], verbatim: false }
-  // The file once, its arguments twice: a `.cmd` (npm's launcher) hands them
-  // on to its program through `%*`, which `cmd.exe` parses a second time.
-  // The program in real quotes: `cmd.exe` cuts a command name at its first space
-  // unless it sees one, and a `^"` is not one. (A path has no `"` in it.)
-  const line = [`"${target}"`, ...args.map((arg) => quoteForCmd(arg, true))].join(' ')
+
+  // npm's generated .cmd launchers are only a command-shell wrapper around a
+  // JavaScript entrypoint. Bypass the wrapper so Windows receives argv through
+  // CreateProcess rather than cmd.exe's lossy second parse.
+  const script = npmShimScript(target)
+  if (script) return { file: process.execPath, args: [script, ...args], verbatim: false }
+
+  // cmd.exe cannot represent arbitrary argv: % expansion happens even inside
+  // quotes, delayed expansion can consume !, and line breaks are commands. Do
+  // not silently alter these inputs or risk executing them as shell syntax.
+  const unsafe = args.find((arg) => /[^\x20-\x7e]|[%!^&|<>"]/u.test(arg))
+  if (unsafe !== undefined) {
+    throw new Error(
+      `Cannot pass this argument safely to batch file ${target}; install a Node-based CLI shim or use an executable instead.`,
+    )
+  }
+  const line = [`"${target}"`, ...args.map((arg) => `"${arg}"`)].join(' ')
   return { file: comspec(env), args: ['/d', '/s', '/c', `"${line}"`], verbatim: true }
 }
 

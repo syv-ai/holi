@@ -28,7 +28,7 @@ describe('launchPlan', () => {
     })
   })
 
-  it('runs a .cmd or .bat through cmd.exe /d /s /c, as one verbatim line', () => {
+  it('runs an opaque .cmd through cmd.exe only for safely representable arguments', () => {
     const plan = launchPlan('C:\\Users\\Ada Lovelace\\npm\\claude.cmd', ['agents', '--json'], {
       ...WIN,
       env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
@@ -37,12 +37,43 @@ describe('launchPlan', () => {
     expect(plan.verbatim).toBe(true)
     expect(plan.args.slice(0, 3)).toEqual(['/d', '/s', '/c'])
     const line = ['C:\\Users\\Ada Lovelace\\npm\\claude.cmd', 'agents', '--json']
-    // The file once, its arguments twice: a .cmd hands them on through %*.
+    // The file once, then each ordinary argument is quoted for the batch call.
     const [file, ...rest] = line
-    expect(plan.args[3]).toBe(
-      `"${[`"${file}"`, ...rest.map((arg) => quoteForCmd(arg, true))].join(' ')}"`,
-    )
+    expect(plan.args[3]).toBe(`"${[`"${file}"`, ...rest.map((arg) => `"${arg}"`)].join(' ')}"`)
+    for (const unsafe of [
+      '%PATH%',
+      '!expanded!',
+      'a^b',
+      'a&b',
+      'a|b',
+      'a<b',
+      'a>b',
+      'a"b',
+      'line\r\nfeed',
+      '☃',
+    ]) {
+      expect(() => launchPlan('x.BAT', [unsafe], { ...WIN, env: {} })).toThrow(/safely/)
+    }
     expect(launchPlan('x.BAT', [], { ...WIN, env: {} }).file).toBe('cmd.exe')
+  })
+
+  it('bypasses recognizable npm shims so argv never passes through cmd.exe', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-npm-shim-'))
+    dirs.push(dir)
+    const packageDir = join(dir, 'node_modules', 'fixture')
+    await mkdir(packageDir, { recursive: true })
+    const script = join(packageDir, 'cli.js')
+    await writeFile(script, 'process.exit(0)')
+    const shim = join(dir, 'fixture.cmd')
+    await writeFile(
+      shim,
+      '@ECHO off\r\nIF EXIST "%dp0%\\node.exe" SET _prog="%dp0%\\node.exe"\r\n"%dp0%\\node_modules\\fixture\\cli.js" %*\r\n',
+    )
+    expect(launchPlan(shim, ['line one\r\nline two', '%PATH%', ''], WIN)).toEqual({
+      file: process.execPath,
+      args: [script, 'line one\r\nline two', '%PATH%', ''],
+      verbatim: false,
+    })
   })
 
   it('looks a bare name up first, and runs what it finds the way its file needs', () => {
@@ -57,7 +88,7 @@ describe('launchPlan', () => {
 
   it('hands node-pty the line as one string, where an array would be quoted again', () => {
     const plan = launchPlan('C:\\n\\claude.cmd', ['a'], { ...WIN, env: { ComSpec: 'cmd.exe' } })
-    expect(commandLine(plan)).toBe(`/d /s /c ""C:\\n\\claude.cmd" ${quoteForCmd('a', true)}"`)
+    expect(commandLine(plan)).toBe(`/d /s /c ""C:\\n\\claude.cmd" \"a\""`)
     const posix = launchPlan('/n/claude', ['a'], { platform: 'linux' })
     expect(commandLine(posix)).toEqual(['a'])
   })
@@ -110,16 +141,18 @@ describe('a real .cmd on Windows', () => {
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-launch-'))
       dirs.push(dir)
-      // The shape of an npm shim: a batch file that passes %* to node.
-      await writeFile(join(dir, 'show.js'), 'console.log(JSON.stringify(process.argv.slice(2)))\n')
       // A folder with a space in it, as a Windows account name can have.
-      await mkdir(join(dir, 'Ada Lovelace'))
+      const packageDir = join(dir, 'Ada Lovelace', 'node_modules', 'fixture')
+      await mkdir(packageDir, { recursive: true })
       await writeFile(
-        join(dir, 'Ada Lovelace', 'show.js'),
+        join(packageDir, 'cli.js'),
         'console.log(JSON.stringify(process.argv.slice(2)))\n',
       )
       const shim = join(dir, 'Ada Lovelace', 'tool.cmd')
-      await writeFile(shim, `@ECHO off\r\n"${process.execPath}" "%~dp0show.js" %*\r\n`)
+      await writeFile(
+        shim,
+        '@ECHO off\r\nIF EXIST "%dp0%\\node.exe" SET _prog="%dp0%\\node.exe"\r\n"%dp0%\\node_modules\\fixture\\cli.js" %*\r\n',
+      )
       for (const args of NASTY) {
         const plan = launchPlan(shim, args, WIN)
         const out = await new Promise<string>((resolve, reject) => {
