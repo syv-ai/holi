@@ -182,24 +182,32 @@ afterEach(() => {
 
 const mailKey = tabKey({ kind: 'app', id: 'mail' })
 const otherKey = tabKey({ kind: 'app', id: 'other' })
+const sessionKey = tabKey({ kind: 'session', owner: 'agent', id: 'session-one' })
 const noop = () => undefined
 
 /** The shell's real retained-host and TabView composition, with only Gmail faked. */
 function MailTabs() {
   const workspace = useAtomValue(shellWorkspaceAtom)
   const key = focusedTab(workspace)
-  const retained = useRetainedSurfaces(key === null ? [] : [key], (tab, visible) => (
-    <TabView
-      tab={tab}
-      visible={visible}
-      settingsNavInSidebar={false}
-      onOpen={noop}
-      onOpenBeside={noop}
-      onMoved={noop}
-      onNewDocument={noop}
-      onOpenSearch={noop}
-    />
-  ))
+  const retained = useRetainedSurfaces(
+    key === null ? [] : [key],
+    (tab, visible) =>
+      tab === sessionKey ? (
+        <Input aria-label="Retained agent terminal" data-visible={String(visible)} />
+      ) : (
+        <TabView
+          tab={tab}
+          visible={visible}
+          settingsNavInSidebar={false}
+          onOpen={noop}
+          onOpenBeside={noop}
+          onMoved={noop}
+          onNewDocument={noop}
+          onOpenSearch={noop}
+        />
+      ),
+    (tab) => tab === sessionKey,
+  )
   return (
     <div>
       {retained.content}
@@ -227,7 +235,7 @@ function mountMailTabs(showMail = true) {
       ],
     },
   ])
-  const workspace = openTab(openTab(emptyWorkspace(), otherKey), mailKey)
+  const workspace = openTab(openTab(openTab(emptyWorkspace(), otherKey), sessionKey), mailKey)
   store.set(shellWorkspaceAtom, showMail ? workspace : selectEntry(workspace, otherKey))
   render(
     <Provider store={store}>
@@ -239,6 +247,29 @@ function mountMailTabs(showMail = true) {
     show: (key: string) => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, key))),
   }
 }
+
+test('Mail and agent session hosts stay retained together across tab switches', async () => {
+  const { store, show } = mountMailTabs()
+  const list = await screen.findByRole('list', { name: 'Inbox' })
+  fireEvent.click(within(list).getByText('Q2 budget'))
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  const frame = document.querySelector('iframe')!
+  show(sessionKey)
+  const terminal = await screen.findByRole('textbox', { name: 'Retained agent terminal' })
+  expect(list.isConnected).toBe(true)
+  expect(frame.isConnected).toBe(true)
+  expect(terminal.isConnected).toBe(true)
+  expect(list.closest('[inert]')).not.toBeNull()
+
+  show(mailKey)
+  expect(await screen.findByRole('list', { name: 'Inbox' })).toBe(list)
+  expect(document.querySelector('iframe')).toBe(frame)
+  expect(terminal.isConnected).toBe(true)
+  expect(terminal).toHaveAttribute('data-visible', 'false')
+  expect(list.closest('[inert]')).toBeNull()
+  expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+  expect(store.get(shellWorkspaceAtom)).toBeDefined()
+})
 
 test('shell switch and back retains real Mail list, selection and scroll without refetching', async () => {
   const { show } = mountMailTabs()
