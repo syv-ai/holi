@@ -98,7 +98,7 @@ interface EventCardProps {
   onOpenChange: (open: boolean) => void
   onEdit: () => void
   /** Save what the form holds: the draft it was opened with, as edited. */
-  onSave: (draft: EventDraft) => Promise<void>
+  onSave: (draft: EventDraft) => Promise<boolean>
   onDelete: () => Promise<void>
   onCreateTask: () => Promise<void>
   onOpenExternal: (url: string) => void
@@ -235,6 +235,8 @@ export function EventCard({
   const escapeClose = useRef(false)
   const explicitClose = useRef(false)
   const successfulAction = useRef(false)
+  const activeCardIdentity = useRef<number | null>(null)
+  activeCardIdentity.current = state?.identity ?? null
   const isForm = state?.mode === 'edit' || state?.mode === 'create'
   const label = isForm ? (state?.mode === 'edit' ? 'Edit event' : 'New event') : state?.draft.title
   return (
@@ -289,8 +291,11 @@ export function EventCard({
               error={error}
               saving={saving}
               onSave={async (draft) => {
-                await onSave(draft)
-                successfulAction.current = true
+                successfulAction.current = false
+                const identity = state.identity
+                const saved = await onSave(draft)
+                successfulAction.current = saved && activeCardIdentity.current === identity
+                return successfulAction.current
               }}
               onDelete={onDelete}
               onClose={() => {
@@ -555,7 +560,7 @@ function EventForm({
   mode: 'edit' | 'create'
   error: string | null
   saving: boolean
-  onSave: (draft: EventDraft) => Promise<void>
+  onSave: (draft: EventDraft) => Promise<boolean>
   onDelete: () => Promise<void>
   onClose: () => void
 }) {
