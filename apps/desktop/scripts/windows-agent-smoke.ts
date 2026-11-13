@@ -91,7 +91,7 @@ if(args[0]==='--pty') {
  const c=cp.spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:'ignore',windowsHide:true,env:process.env});
  fs.writeFileSync(${JSON.stringify(pidFile)},JSON.stringify([process.pid,c.pid]));
  process.stdout.write('READY\\n');
- let input=''; process.stdin.on('data',d=>{input+=d;let n;while((n=input.indexOf('\\n'))>=0){const line=input.slice(0,n).replace(/\\r/g,'');input=input.slice(n+1);process.stdout.write(line==='size'?'SIZE:'+process.stdout.columns+'x'+process.stdout.rows+'\\n':'INPUT:'+line+'\\n')}});
+ let input=''; process.stdin.on('data',d=>{input+=d;let n;while((n=input.indexOf('\\n'))>=0){const line=input.slice(0,n).replace(/\\r/g,'');input=input.slice(n+1);process.stdout.write(line==='size'?'SIZE:'+process.stdout.getWindowSize().join('x')+'\\n':'INPUT:'+line+'\\n')}});
 } else { console.log(JSON.stringify(args)); }
 `,
   )
@@ -164,8 +164,11 @@ if(args[0]==='--pty') {
   runtime.write('ping\r')
   await until(() => output.includes('INPUT:ping'))
   runtime.resize(113, 37)
-  runtime.write('size\r')
-  await until(() => output.includes('SIZE:113x37'))
+  await until(() => {
+    if (output.includes('SIZE:113x37')) return true
+    runtime.write('size\r')
+    return false
+  })
   await runtime.kill()
   await until(() => pids.every((pid) => !alive(pid)))
   checks.push(
