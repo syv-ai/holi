@@ -310,6 +310,54 @@ test('document changes debounce while an earlier graph read is unresolved', asyn
   }
 })
 
+test('a canceled A read does not suppress a valid A read after A→B→A', async () => {
+  vi.useFakeTimers()
+  const previousWorker = globalThis.Worker
+  globalThis.Worker = undefined as unknown as typeof Worker
+  let resolveFirst!: (value: { nodes: string[]; edges: [number, number][]; total: number }) => void
+  graph.mockImplementationOnce(
+    () => new Promise((resolve) => (resolveFirst = resolve as typeof resolveFirst)),
+  )
+  graph.mockResolvedValue({ nodes: [], edges: [], total: 0 })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const result = render(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} />
+    </Provider>,
+  )
+
+  try {
+    act(() => vi.advanceTimersByTime(0))
+    expect(graph).toHaveBeenCalledTimes(1)
+    act(() =>
+      store.set(snapshotAtom, (snapshot) => ({
+        ...snapshot,
+        docs: [{ path: 'Temporary.md', kind: 'note', updatedAt: '1' }],
+      })),
+    )
+    act(() => vi.advanceTimersByTime(400))
+    act(() => store.set(snapshotAtom, emptyVaultSnapshot()))
+    act(() => vi.advanceTimersByTime(799))
+    expect(graph).toHaveBeenCalledTimes(1)
+    act(() => vi.advanceTimersByTime(1))
+    expect(graph).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+
+    expect(await screen.findByText('No notes to draw yet')).toBeInTheDocument()
+    act(() => resolveFirst({ nodes: ['Stale.md'], edges: [], total: 1 }))
+    await Promise.resolve()
+    expect(screen.getByText('No notes to draw yet')).toBeInTheDocument()
+    expect(screen.queryByText(/1 note · 0 links/)).not.toBeInTheDocument()
+    expect(graph).toHaveBeenCalledTimes(2)
+  } finally {
+    result.unmount()
+    vi.useRealTimers()
+    globalThis.Worker = previousWorker
+  }
+})
+
 test('a read that failed offers Retry, which asks again', async () => {
   graph.mockRejectedValueOnce(new Error('offline'))
   graph.mockResolvedValue({ nodes: ['Plan.md'], edges: [], total: 1 })
