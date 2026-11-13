@@ -12,6 +12,7 @@ import {
   COMMUNITY_NAMESPACES,
   communityCapabilities,
   linkRunningCommands,
+  listPlugins,
   runChecks,
   seedRunningApps,
   unlinkWhenOff,
@@ -65,6 +66,13 @@ export const communityMain: MainPlugin = {
               return work()
             }),
           ),
+        admit: (work) =>
+          attachment.run(() =>
+            owner.admit(async () => {
+              if (attachment.signal.aborted) throw new Error('community attachment is closed')
+              return work()
+            }),
+          ),
         signal: attachment.signal,
         live: attachment.isLive,
         run: (work) => attachment.run(() => work()),
@@ -80,22 +88,25 @@ export const communityMain: MainPlugin = {
     // renderer reads the rows again once they are linked. And the readiness
     // check of each running plugin not asked yet: every one as the vault
     // opens, and one just turned on.
+    const refresh = async (signal: AbortSignal) => {
+      if (signal.aborted) return
+      await seedRunningApps(ctx.root, { store, consent })
+      if (signal.aborted) return
+      await linkRunningCommands(ctx.root, { store, consent })
+      if (signal.aborted) return
+      ctx.emit(ctx.remote, 'commands', null)
+      for (const row of await listPlugins(ctx.root, { store, consent })) {
+        if (signal.aborted) return
+        await checks.forget(ctx.root, row.id)
+      }
+      const asked = await runChecks(ctx.root, { store, consent, checks }, { fresh: true })
+      if (asked && !signal.aborted) ctx.emit(ctx.remote, 'check', null)
+    }
     const follow = () =>
-      attachment
-        .refresh(async (signal) => {
-          if (signal.aborted) return
-          await seedRunningApps(ctx.root, { store, consent })
-          if (signal.aborted) return
-          await linkRunningCommands(ctx.root, { store, consent })
-          if (signal.aborted) return
-          ctx.emit(ctx.remote, 'commands', null)
-          const asked = await runChecks(ctx.root, { store, consent, checks })
-          if (asked && !signal.aborted) ctx.emit(ctx.remote, 'check', null)
-        })
-        .catch((err) => {
-          if (!attachment.signal.aborted) console.error('[community] refresh:', err)
-        })
-    attachment.observeMutations(() => follow())
+      attachment.refresh(refresh).catch((err) => {
+        if (!attachment.signal.aborted) console.error('[community] refresh:', err)
+      })
+    attachment.observeMutations(refresh)
     void follow()
     let signature: string | null = null
     ctx.onSnapshot((snapshot) => {

@@ -832,18 +832,18 @@ describe('serving', () => {
     const s = await ready([], 3950)
     const registry = createCapabilityRegistry()
     const unregister = registry.register(COMMUNITY_NAMESPACES, communityCapabilities(s.deps))
-    let resolveInstall!: (install: Awaited<ReturnType<typeof s.deps.store.get>>) => void
+    let releaseLookup!: () => void
     let lookupStarted!: () => void
     const lookup = new Promise<void>((resolve) => (lookupStarted = resolve))
-    const originalGet = s.deps.store.get.bind(s.deps.store)
+    const originalList = s.deps.store.list.bind(s.deps.store)
     let block = false
-    s.deps.store.get = ((id: string) =>
-      block
-        ? new Promise((resolve) => {
-            resolveInstall = resolve
-            lookupStarted()
-          })
-        : originalGet(id)) as typeof s.deps.store.get
+    s.deps.store.list = async () => {
+      if (block) {
+        lookupStarted()
+        await new Promise<void>((resolve) => (releaseLookup = resolve))
+      }
+      return originalList()
+    }
     const ctx = {
       remote: 'syv-ai/decks',
       root: vault,
@@ -857,7 +857,7 @@ describe('serving', () => {
     await shutdown
     unregister()
     block = false
-    resolveInstall(await originalGet('prezzi'))
+    releaseLookup()
     await expect(pending).rejects.toThrow(/disposed/)
     expect(s.origins.size).toBe(0)
     expect(s.states).toEqual([])
