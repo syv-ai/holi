@@ -48,6 +48,14 @@ interface Connection {
 }
 
 const refreshNonceAtom = atom(0)
+const retryTimers = new Set<() => void>()
+const lifecycleAtom = atom(0)
+lifecycleAtom.onMount = () => () => {
+  for (const cancel of retryTimers) cancel()
+}
+const lastGoodConnections = new Map<string, Connection>()
+
+const retryDelays = [250, 1_000]
 
 /**
  * Ask main again: after a connect, a disconnect or a change of account.
@@ -55,9 +63,10 @@ const refreshNonceAtom = atom(0)
  */
 export const refreshGoogleAtom = atom(null, (_get, set) => set(refreshNonceAtom, (n) => n + 1))
 
-const connectionAtom = atom(async (get): Promise<Connection> => {
+const connectionAtom = atom(async (get, { signal }): Promise<Connection | undefined> => {
   const remote = get(activeRemoteAtom)
   get(refreshNonceAtom)
+  get(lifecycleAtom)
   const none: Connection = {
     remote,
     account: null,
@@ -67,25 +76,48 @@ const connectionAtom = atom(async (get): Promise<Connection> => {
     currentSub: null,
   }
   if (remote === null) return none
-  try {
-    const [status, connected] = await Promise.all([
-      googleCap.status(remote),
-      googleCap.allAccounts(remote),
-    ])
-    return {
-      remote,
-      account: status.account,
-      missingScopes: status.missingScopes,
-      needsReconnect: status.needsReconnect === true,
-      accounts: connected.accounts,
-      currentSub: connected.current,
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const [status, connected] = await Promise.all([
+        googleCap.status(remote),
+        googleCap.allAccounts(remote),
+      ])
+      if (signal.aborted) return undefined
+      const connection: Connection = {
+        remote,
+        account: status.account,
+        missingScopes: status.missingScopes,
+        needsReconnect: status.needsReconnect === true,
+        accounts: connected.accounts,
+        currentSub: connected.current,
+      }
+      lastGoodConnections.set(remote, connection)
+      return connection
+    } catch {
+      if (signal.aborted) return undefined
+      const delay = retryDelays[attempt]
+      if (delay === undefined || !(await waitForRetry(delay, signal))) {
+        return lastGoodConnections.get(remote)
+      }
     }
-  } catch {
-    // A vault Holi cannot resolve, or Google off in it: a normal state the
-    // person cannot act on here, so it reads as "not connected" and settles.
-    return none
   }
 })
+
+function waitForRetry(delay: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    const finish = (shouldRetry: boolean) => {
+      clearTimeout(timeout)
+      signal.removeEventListener('abort', onAbort)
+      retryTimers.delete(onAbort)
+      resolve(shouldRetry)
+    }
+    const onAbort = () => finish(false)
+    const timeout = setTimeout(() => finish(true), delay)
+    retryTimers.add(onAbort)
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
+  })
+}
 
 /** The last answer while a refresh is in flight, so a refresh never flashes
  *  the nav menu's items away; `undefined` before the first. */
