@@ -136,7 +136,14 @@ export function TabView({
     case 'vault-app':
       // A vault app is the `app` surface, by its bundle's path, under its
       // header (Reload, the log, Edit source).
-      return <VaultAppTab key={tab} path={descriptor.path} onOpenSearch={onOpenSearch} />
+      return (
+        <VaultAppTab
+          key={tab}
+          path={descriptor.path}
+          visible={visible}
+          onOpenSearch={onOpenSearch}
+        />
+      )
     case 'doc':
       if (/\.md$/i.test(descriptor.path)) {
         return <DocumentView key={tab} path={descriptor.path} onOpen={onOpen} onMoved={onMoved} />

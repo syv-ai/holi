@@ -58,9 +58,11 @@ vi.mock('@/lib/trpc', () => {
       ? SETTINGS
       : name === 'settings.pluginFailures'
         ? {}
-        : name === 'github.collaborators'
-          ? { visibility: 'private', collaborators: [] }
-          : null
+        : name === 'terminal.list'
+          ? []
+          : name === 'github.collaborators'
+            ? { visibility: 'private', collaborators: [] }
+            : null
   const procedure = (name: string) => ({
     query: async () => answer(name),
     mutate: name === 'settings.write' ? write : async () => ({ ok: true }),
@@ -527,7 +529,7 @@ test('a visited keepMounted surface keeps its document and lease while another t
   await waitFor(() => expect(released).toHaveBeenCalledTimes(1))
 })
 
-function retainedFixture(keepMounted = true, surfaceKind = 'test-document') {
+function retainedFixture(keepMounted = true, surfaceKind = 'test-document', vaultApp = false) {
   const acquired = vi.fn()
   const released = vi.fn()
   function Document({ id, visible }: { id?: string; visible: boolean }) {
@@ -550,7 +552,10 @@ function retainedFixture(keepMounted = true, surfaceKind = 'test-document') {
   const install = (enabled: boolean) =>
     store.set(coreContributionAtom, { surfaces: enabled ? [surface] : [], rail: [], claims: [] })
   act(() => install(true))
-  const key = (id: string) => tabKey({ kind: 'surface', surface: surface.kind, id })
+  const key = (id: string) =>
+    tabKey(
+      vaultApp ? { kind: 'vault-app', path: id } : { kind: 'surface', surface: surface.kind, id },
+    )
   const show = (id: string) =>
     act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, key(id))))
   const away = () => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
@@ -823,4 +828,30 @@ test('a view not open yet, dragged from the sidebar, opens in the gap', async ()
   expect(activeSplit(ws)?.views).toEqual(['C.md', 'B.md'])
   expect(ws.entries.map((e) => (typeof e === 'string' ? e : 'split'))).toEqual(['A.md', 'split'])
   vi.restoreAllMocks()
+})
+
+test('vault-app descriptors retain the registered app view through the real tab wrapper and split layout', async () => {
+  const f = retainedFixture(true, 'app', true)
+  act(() =>
+    f.store.set(shellWorkspaceAtom, (ws) => selectEntry(openTab(ws, f.key('Two.app')), 'A.md')),
+  )
+  expect(f.acquired).not.toHaveBeenCalled()
+  f.show('One.app')
+  const one = await screen.findByRole('textbox', { name: 'State One.app' })
+  expect(screen.getByRole('button', { name: 'Edit source' })).toBeTruthy()
+  f.away()
+  expect(one.isConnected).toBe(true)
+  expect(one).toHaveAttribute('data-visible', 'false')
+  f.show('One.app')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, f.key('Two.app'))))
+  const two = await screen.findByRole('textbox', { name: 'State Two.app' })
+  for (const input of [one, two]) expect(input).toHaveAttribute('data-visible', 'true')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => separate(ws, activeSplit(ws)!.id)))
+  expect(one.isConnected).toBe(true)
+  expect(two.isConnected).toBe(true)
+  f.away()
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => closeTab(ws, f.key('One.app'))))
+  expect(one.isConnected).toBe(false)
+  f.show('One.app')
+  expect(await screen.findByRole('textbox', { name: 'State One.app' })).not.toBe(one)
 })
