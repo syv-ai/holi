@@ -16,11 +16,16 @@ function run(bin, args, options) {
   const result = spawnSync(bin, args, {
     ...options,
     encoding: 'utf8',
-    timeout: timeoutMs,
+    timeout: options.timeout ?? timeoutMs,
     maxBuffer: maxOutputBytes,
     windowsHide: true,
   })
-  if (result.error) throw new Error(`${args[0]} failed: ${result.error.message}`)
+  if (result.error)
+    throw new Error(
+      result.error.code === 'ETIMEDOUT'
+        ? `${args[0]} timed out after ${options.timeout ?? timeoutMs}ms`
+        : `${args[0]} failed: ${result.error.message}`,
+    )
   if (result.status !== 0)
     throw new Error(`${args[0]} exited ${result.status}: ${boundedDiagnostic(result.stderr)}`)
   if (result.stderr.trim())
@@ -28,7 +33,7 @@ function run(bin, args, options) {
   return result.stdout.trim()
 }
 
-export function checkPiCli({ bin, expectedVersion }) {
+export function checkPiCli({ bin, expectedVersion, timeout = timeoutMs }) {
   if (!bin || !expectedVersion) throw new Error('Pi binary and exact expected version are required')
   const root = mkdtempSync(join(tmpdir(), 'holi-pi-contract-'))
   const home = join(root, 'home')
@@ -46,18 +51,23 @@ export function checkPiCli({ bin, expectedVersion }) {
     PATH: `${dirname(executable)}:${dirname(process.execPath)}:/usr/bin:/bin`,
     PI_OFFLINE: '1',
   }
-  const options = { cwd: workdir, env }
+  // Never forward provider credentials, user configuration, or arbitrary
+  // inherited settings into the disposable CLI invocation.
+  const options = { cwd: workdir, env, timeout }
   try {
     const version = run(executable, ['--version'], options)
     if (version !== expectedVersion) {
       return {
         outcome: 'mismatch',
-        detail: `Pi --version returned ${version}; npm registry observation was ${expectedVersion}.`,
+        detail: boundedDiagnostic(
+          `Pi --version returned ${version}; npm registry observation was ${expectedVersion}.`,
+        ),
       }
     }
     const help = run(executable, ['--help'], options)
     const required = [
       '--session <path|id>',
+      '--session-id <id>',
       '--continue',
       '--resume',
       '--fork <path|id>',

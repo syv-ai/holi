@@ -70,9 +70,9 @@ jobs:
         id: consumer
         run: |
           if pnpm --filter @holi/desktop exec vitest run src/plugins/agent/test/pi-rpc.test.ts; then
-            RESULT='{"outcome":"pass","detail":"Constructed consumer fixtures replayed through PiRpcRun; attributed to Pi rpc.md and rpc-types.ts at b4899f59ef0fba6507c2e619fd804dcde51920ba, not captured from the latest release."}'
+            RESULT="$(node -e 'process.stdout.write(JSON.stringify({outcome:"pass",detail:"Consumer fixture tests passed through PiRpcRun; constructed from upstream RPC documentation/types at b4899f59ef0fba6507c2e619fd804dcde51920ba, not captured from the installed CLI."}))')"
           else
-            RESULT='{"outcome":"mismatch","detail":"PiRpcRun consumer fixture tests failed; see this compatibility job's test output."}'
+            RESULT="$(node -e 'process.stdout.write(JSON.stringify({outcome:"mismatch",detail:"PiRpcRun consumer fixtures failed; see this compatibility job test output."}))')"
           fi
           echo "result=$(printf '%s' "$RESULT" | base64 -w0)" >> "$GITHUB_OUTPUT"
       - name: Remove temporary Pi installation

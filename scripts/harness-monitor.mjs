@@ -153,7 +153,7 @@ function renderBody(report) {
   )
   const mismatches = report.checks.filter((check) => check.outcome === 'mismatch')
   return [
-    `Monitoring-only observation for **${report.name}** (\`${report.package}\`). No harness was installed or executed.`,
+    `Monitoring-only observation for **${report.name}** (\`${report.package}\`). ${report.id === 'pi' ? 'The isolated CLI contract executes the exact npm version without provider credentials or live prompts; RPC consumer fixtures are constructed from attributed upstream sources, and producer emission remains unverified.' : 'No provider harness was installed or executed.'}`,
     '',
     `Observed npm latest: \`${report.version}\``,
     `npm: ${report.npmUrl}`,
