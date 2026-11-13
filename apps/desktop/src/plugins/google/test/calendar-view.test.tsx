@@ -303,6 +303,44 @@ describe('the calendar view', () => {
     expect(new Date(window.from).getDay()).toBe(1)
   })
 
+  test('month overflow event pointer-down does not start slot creation', async () => {
+    agendaMock.mockResolvedValue(
+      Array.from({ length: 12 }, (_, index) =>
+        googleEvent({ id: `overflow-${index}`, title: `Overflow event ${index}` }),
+      ),
+    )
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click(await screen.findByRole('button', { name: 'Select view' }))
+    await user.click(await screen.findByText('Month'))
+    await user.click(await screen.findByRole('button', { name: /more/i }))
+
+    const overflow = await screen.findByRole('dialog')
+    const event = within(overflow).getByRole('button', { name: /Overflow event 11/ })
+    fireEvent.pointerDown(event, { button: 0, pointerId: 1 })
+    expect(screen.queryByRole('textbox', { name: 'Title' })).toBeNull()
+    expect(scheduleMock).not.toHaveBeenCalled()
+  })
+
+  test('clicking a month overflow event opens its card with focus', async () => {
+    agendaMock.mockResolvedValue(
+      Array.from({ length: 12 }, (_, index) =>
+        googleEvent({ id: `overflow-${index}`, title: `Overflow event ${index}` }),
+      ),
+    )
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click(await screen.findByRole('button', { name: 'Select view' }))
+    await user.click(await screen.findByText('Month'))
+    await user.click(await screen.findByRole('button', { name: /more/i }))
+
+    const overflow = await screen.findByRole('dialog')
+    await user.click(within(overflow).getByRole('button', { name: /Overflow event 11/ }))
+    const card = await screen.findByRole('dialog', { name: 'Overflow event 11' })
+    expect(within(card).getByText('Overflow event 11')).toHaveFocus()
+    expect(within(card).queryByRole('textbox', { name: 'Title' })).toBeNull()
+  })
+
   test('month overflow keeps a long event list inside the bounded scroller', async () => {
     agendaMock.mockResolvedValue(
       Array.from({ length: 12 }, (_, index) =>
@@ -554,6 +592,65 @@ describe('the calendar view', () => {
     expect(screen.getByRole('dialog', { name: 'New event' })).toBeInTheDocument()
     resolve({ id: 'new' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  test('Enter saves a valid event and restores focus to its origin', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const trigger = screen.getByRole('button', { name: 'New event' })
+    await user.click(trigger)
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await user.type(title, 'Enter-saved event')
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(trigger).toHaveFocus()
+  })
+
+  test('a failed save followed by outside-click navigation keeps the new card focused', async () => {
+    const user = userEvent.setup()
+    scheduleMock.mockRejectedValueOnce(new Error('Google said no'))
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const viewButton = screen.getByRole('button', { name: 'Select view' })
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await user.type(title, 'Failed event')
+    await user.click(screen.getByRole('button', { name: 'Add event' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Google said no')
+
+    fireEvent.pointerDown(viewButton, { button: 0, pointerId: 1 })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // Native pointer activation focuses the outside target after pointer-down.
+    viewButton.focus()
+    expect(viewButton).toHaveFocus()
+  })
+
+  test('a stale save completion does not close a card in a new vault context', async () => {
+    const user = userEvent.setup()
+    let resolve!: (value: { id: string }) => void
+    scheduleMock.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await user.type(title, 'Old vault event')
+    await user.click(screen.getByRole('button', { name: 'Add event' }))
+    expect(screen.getByRole('dialog', { name: 'New event' })).toBeInTheDocument()
+
+    getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    const currentCard = await screen.findByRole('dialog', { name: 'New event' })
+    resolve({ id: 'old-vault-event' })
+    expect(await within(currentCard).findByRole('textbox', { name: 'Title' })).toHaveFocus()
+    expect(screen.getByRole('dialog', { name: 'New event' })).toBeInTheDocument()
   })
 
   test('composition Enter does not submit the event', async () => {

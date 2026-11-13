@@ -291,14 +291,20 @@ export function CalendarView(): React.JSX.Element {
     }
   }, [])
 
-  const saveDraft = async (draft: EventDraft): Promise<void> => {
-    if (!card || pending.current) return
+  const saveDraft = async (draft: EventDraft): Promise<boolean> => {
+    if (!card || pending.current) return false
     const identity = cardIdentity.current
     const title = draft.title.trim()
-    if (title === '') return setError('Give it a title.')
+    if (title === '') {
+      setError('Give it a title.')
+      return false
+    }
     const start = draft.allDay ? toDate(draft.date, '00:00') : toDate(draft.date, draft.start)
     const end = draft.allDay ? midnightAfter(draft.dateEnd) : toDate(draft.dateEnd, draft.end)
-    if (end <= start) return setError('It has to end after it starts.')
+    if (end <= start) {
+      setError('It has to end after it starts.')
+      return false
+    }
     setError(null)
     pending.current = true
     setSaving(true)
@@ -312,9 +318,12 @@ export function CalendarView(): React.JSX.Element {
       if (identity === cardIdentity.current) {
         setCard(null)
         setCardAnchor(null)
+        return true
       }
+      return false
     } catch (err) {
       if (identity === cardIdentity.current) setError(messageOf(err, 'Could not save the event.'))
+      return false
     } finally {
       if (identity === cardIdentity.current) {
         pending.current = false
@@ -597,6 +606,7 @@ export function CalendarView(): React.JSX.Element {
                       key={segment.occurrence.key}
                       segment={segment}
                       className="w-full min-w-0 justify-start"
+                      onPointerDown={(event) => event.stopPropagation()}
                       onClick={(event) => {
                         event.stopPropagation()
                         close({ restoreFocus: false })
