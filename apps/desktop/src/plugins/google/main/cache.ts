@@ -71,6 +71,8 @@ export interface GoogleCache {
   setHistoryId(key: string, id: string): void
   /** Delete the database file. Disconnect calls this. */
   destroy(): void
+  /** Terminal disconnect: unlike destroy, later use cannot reopen the cache. */
+  retire(): void
   close(): void
 }
 
@@ -252,9 +254,15 @@ export function openGoogleCache(path: string): GoogleCache {
     },
 
     destroy() {
-      // The FILE, not the rows. Emptying the tables would leave recoverable
-      // pages on a disk Disconnect said it had cleaned. Nothing is reopened
-      // here either: `database()` does that on the next use.
+      // Delete the file but preserve this handle's reusable contract.
+      handle?.close()
+      handle = null
+      removeFiles(path)
+    },
+
+    retire() {
+      if (closed) return
+      closed = true
       handle?.close()
       handle = null
       removeFiles(path)

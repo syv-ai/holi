@@ -151,6 +151,10 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
    * same rule as `aliases`.
    */
   let forwarded: { messageId: string; bytes: Promise<MailPart[]> } | null = null
+  let retired = false
+  const assertActive = () => {
+    if (retired) throw new Error('that Google account is no longer connected')
+  }
 
   /**
    * The mail, with a forwarded message's attachments fetched and attached.
@@ -192,20 +196,27 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
 
   return {
     async agenda(window, overrides) {
+      assertActive()
       const events = await listAgenda(api(), window, { overrides })
+      assertActive()
       cache.writeAgenda(agendaKey(window, overrides), events)
       return events
     },
 
-    fetchAgenda(window, overrides) {
-      return listAgenda(api(), window, { overrides })
+    async fetchAgenda(window, overrides) {
+      assertActive()
+      const events = await listAgenda(api(), window, { overrides })
+      assertActive()
+      return events
     },
 
     cachedAgenda(window, overrides) {
+      assertActive()
       return cache.readAgenda(agendaKey(window, overrides))
     },
 
     async threads(options) {
+      assertActive()
       let knownAddresses: string[] | undefined
       try {
         knownAddresses = await (aliases ??= listSendAs(api()).catch((error: unknown) => {
@@ -215,7 +226,9 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       } catch {
         // Without account-authenticated addresses, classifying a message as neither would be false certainty.
       }
-      return syncThreads(api(), cache, options, knownAddresses)
+      const result = await syncThreads(api(), cache, options, knownAddresses)
+      assertActive()
+      return result
     },
 
     contacts() {
@@ -319,9 +332,10 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     },
 
     forget() {
+      retired = true
       addressBook = null
       aliases = null
-      cache.destroy()
+      cache.retire()
     },
   }
 }
