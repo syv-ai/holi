@@ -123,6 +123,7 @@ function setup(firstPort = 3940) {
     bridgeScript: () => null,
     scratch: join(userData, 'plugins', '.staging'),
     checks: createChecks(),
+    mutate: async <T>(work: () => Promise<T>) => work(),
     // Not this machine's PATH: what a test's commands may be called is its own.
     searchPath: () => '',
   }

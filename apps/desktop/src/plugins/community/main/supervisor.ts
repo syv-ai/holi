@@ -38,7 +38,7 @@ export interface SupervisorDeps {
   /** Every change of a server's state, by its key. */
   onState(key: string, state: ServerState): void
   /** Confine frames on `origin` (`PluginCtx.frameOrigin`); returns the undo. */
-  frameOrigin(origin: string): () => void
+  frameOrigin(origin: string, key?: string): () => void
   readyTimeoutMs?: number
   /** How long a stopped server has before SIGKILL. */
   graceMs?: number
@@ -217,7 +217,7 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
       // nobody holds.
       if (server.stopped) break
       if (up && !gone) {
-        server.unframe = deps.frameOrigin(pluginServerOrigin(port))
+        server.unframe = deps.frameOrigin(pluginServerOrigin(port), key)
         set(key, server, { state: 'running', port, log: [...server.log] })
         return { port }
       }
