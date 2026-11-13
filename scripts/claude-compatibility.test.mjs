@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmod, copyFile, mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -27,7 +27,7 @@ import { writeFile } from 'node:fs/promises'
 const args=process.argv.slice(2)
 await writeFile(${JSON.stringify(log)}, JSON.stringify(args)+String.fromCharCode(10), {flag:'a'})
 if(args[0]==='--version') process.stdout.write(${JSON.stringify(mode === 'wrong-version' ? '2.1.320 (Claude Code)' : '2.1.319 (Claude Code)')})
-else if(args.at(-1)==='--help') process.stdout.write(${JSON.stringify(mode === 'empty-help' ? '' : mode === 'removed' ? 'Usage: claude' : mode === 'huge-output' ? 'x'.repeat(100000) : 'Usage: claude agents --json --all attach stop respawn rm --bg --name --resume --fork-session --model --append-system-prompt --mcp-config --allowedTools --disallowedTools --')})
+else if(args.at(-1)==='--help') process.stdout.write(${JSON.stringify(mode === 'empty-help' ? '' : mode === 'removed' ? 'Usage: claude' : mode === 'huge-output' ? 'x'.repeat(100000) : 'Usage: claude agents --json --all attach stop respawn rm --bg --name --resume --fork-session --model --append-system-prompt --mcp-config --allowedTools --disallowedTools')})
 if (${JSON.stringify(mode)} === 'nonzero' && args[0] === 'agents') process.exit(7)
 if (${JSON.stringify(mode)} === 'timeout' && args[0] === 'agents') await new Promise(r=>setTimeout(r,1000))
 `)});
@@ -41,7 +41,7 @@ const bin=join(prefix,'node_modules','.bin'); await mkdir(bin,{recursive:true});
   return { temp, npm, log }
 }
 
-test('workflow executes every Claude consumer fixture and records it once', async () => {
+test('workflow records fixture evidence without claiming producer coverage', async (t) => {
   const workflow = await readFile(
     new URL('../.github/workflows/harness-monitor.yml', import.meta.url),
     'utf8',
@@ -50,16 +50,50 @@ test('workflow executes every Claude consumer fixture and records it once', asyn
     workflow,
     /src\/plugins\/agent\/test\/claude-sessions\.test\.ts test\/bridge-env\.test\.ts/,
   )
-  assert.match(
-    workflow,
-    /const proven=new Set\(\['fixture consumers','actual hook emission','messaging'\]\)/,
-  )
-  assert.match(workflow, /cli\.checks\.map\(check=>proven\.has\(check\.name\)/)
   const claudeJob = workflow.split('  claude-check:')[1]?.split('  report:')[0] ?? ''
-  assert.doesNotMatch(claudeJob, /JSON\.stringify\(\[\.\.\.cli\.checks,fixture\]\)/)
+  const mergeLine = claudeJob.split('\n').find((line) => line.includes('/claude/checks.json'))
+  const mergeSource = mergeLine?.trim().match(/^node -e "(.+)"$/)?.[1]
+  assert.ok(mergeSource, 'workflow must merge its fixture result')
+  const temp = await mkdtemp(join(tmpdir(), 'holi-claude-artifact-test-'))
+  t.after(async () => rm(temp, { recursive: true, force: true }))
+  await mkdir(join(temp, 'claude'))
+  const producerChecks = [
+    'historical-session inclusion',
+    'actual hook emission',
+    'permissions',
+    'messaging',
+  ].map((name) => ({ name, outcome: 'unverified', detail: 'Not exercised by fixture replay.' }))
+  await writeFile(
+    join(temp, 'claude', 'cli.json'),
+    JSON.stringify({
+      checks: [
+        { name: 'CLI surface', outcome: 'pass' },
+        { name: 'fixture consumers', outcome: 'unverified' },
+        ...producerChecks,
+      ],
+    }),
+  )
+  for (const outcome of ['pass', 'mismatch']) {
+    const fixture = { name: 'fixture consumers', outcome, detail: 'Constructed 2.1.319 fixture.' }
+    await writeFile(join(temp, 'claude', 'fixtures.json'), JSON.stringify(fixture))
+    const result = spawnSync(process.execPath, ['-e', mergeSource], {
+      env: { RUNNER_TEMP: temp },
+      encoding: 'utf8',
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const checks = JSON.parse(await readFile(join(temp, 'claude', 'checks.json'), 'utf8'))
+    assert.deepEqual(
+      checks.filter((check) => check.name === 'fixture consumers'),
+      [fixture],
+    )
+    assert.deepEqual(
+      checks.filter((check) => producerChecks.some((p) => p.name === check.name)),
+      producerChecks,
+    )
+  }
 })
 
-test('runs the exact isolated install and probes only bounded help/version argv', async (t) => {
+test('probes exact isolated help/version without requiring an advertised prompt separator', async (t) => {
   const fake = await fakeInstall(t)
   const result = await runCompatibility('2.1.319', { npm: fake.npm, timeout: 3000 })
   assert.equal(result.failed, false, JSON.stringify(result.checks))

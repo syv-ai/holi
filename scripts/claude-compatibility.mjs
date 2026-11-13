@@ -28,7 +28,6 @@ const probes = [
       '--mcp-config',
       '--allowedTools',
       '--disallowedTools',
-      '--',
     ],
   ],
 ]

@@ -97,7 +97,7 @@ jobs:
           else
             echo '{"name":"fixture consumers","outcome":"mismatch","detail":"Claude listing/history/CLI, shipped hook, or statusline production-consumer tests failed."}' > "$RUNNER_TEMP/claude/fixtures.json"
           fi
-          node -e "const fs=require('fs'); const cli=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/claude/cli.json')); const fixture=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/claude/fixtures.json')); const proven=new Set(['fixture consumers','actual hook emission','messaging']); const checks=cli.checks.map(check=>proven.has(check.name)?{...check,outcome:fixture.outcome,detail:fixture.outcome==='pass'?'Offline Claude listing/history/CLI fixture and shipped hook/statusline subprocess tests passed; no Claude runtime.':fixture.detail}:check); for (const name of proven) if (!checks.some(check=>check.name===name)) checks.push({name,outcome:fixture.outcome,detail:fixture.outcome==='pass'?'Offline Claude listing/history/CLI fixture and shipped hook/statusline subprocess tests passed; no Claude runtime.':fixture.detail}); fs.writeFileSync(process.env.RUNNER_TEMP+'/claude/checks.json', JSON.stringify(checks))"
+          node -e "const fs=require('fs'); const cli=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/claude/cli.json')); const fixture=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/claude/fixtures.json')); const checks=cli.checks.filter(check=>check.name!=='fixture consumers'); checks.push(fixture); fs.writeFileSync(process.env.RUNNER_TEMP+'/claude/checks.json', JSON.stringify(checks))"
       - uses: actions/upload-artifact@v4
         with:
           name: claude-checks
