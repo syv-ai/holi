@@ -21,6 +21,15 @@ import { createGoogleData, type GoogleData } from './data'
 import { googleSeed } from './seed'
 import { startGoogleTriggers } from './triggers'
 
+type GoogleOwner = {
+  accounts: Awaited<ReturnType<typeof import('./electron').createGoogleAccountsManager>>
+  dataForSub: (sub: string) => GoogleData
+}
+
+// Google credentials and mail cache belong to this Electron process, not to a
+// particular open vault. Keep the lazy owner across activation leases.
+const owners = new Map<string, Promise<GoogleOwner>>()
+
 export const googleMain: MainPlugin = {
   info: GOOGLE_INFO,
   seed: googleSeed,
@@ -28,36 +37,48 @@ export const googleMain: MainPlugin = {
     // The keychain and the system browser: Electron, loaded only when the
     // plugin starts (after `whenReady`), so the module stays importable under
     // plain Node in the tests.
-    const { createGoogleAccountsManager } = await import('./electron')
-    const accounts = await createGoogleAccountsManager(ctx.userData)
-
-    /** Each account's data, memoized while the plugin runs: one cache file
-     *  per account, which outlives it, so a later start does not re-fetch. */
-    const bySub = new Map<string, { data: GoogleData; cache: GoogleCache }>()
-    const dataForSub = (sub: string): GoogleData => {
-      const held = bySub.get(sub)
-      if (held !== undefined) return held.data
-      // `sub` becomes a filename. It is a numeric string from Google today, but
-      // build a path out of it only after saying so.
-      if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
-      const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
-      cache.ensureShape()
-      const data = createGoogleData({
-        // Bound to THIS account's session, not to whatever vault is active:
-        // the cache and the client it fills from have to be the same account.
-        api: () =>
-          new GoogleApi({
-            accessToken: () => {
-              const session = accounts.sessionForSub(sub)
-              if (session === null) throw new Error('that Google account is no longer connected')
-              return session.getAccessToken()
-            },
-          }),
-        cache,
-      })
-      bySub.set(sub, { data, cache })
-      return data
+    let ownerPromise = owners.get(ctx.userData)
+    if (ownerPromise === undefined) {
+      ownerPromise = (async () => {
+        const { createGoogleAccountsManager } = await import('./electron')
+        const accounts = await createGoogleAccountsManager(ctx.userData)
+        const bySub = new Map<string, { data: GoogleData; cache: GoogleCache }>()
+        const dataForSub = (sub: string): GoogleData => {
+          const held = bySub.get(sub)
+          if (held !== undefined) return held.data
+          // `sub` becomes a filename. It is a numeric string from Google today, but
+          // build a path out of it only after saying so.
+          if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
+          const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
+          cache.ensureShape()
+          const data = createGoogleData({
+            // Bound to THIS account's session, not to whatever vault is active:
+            // the cache and the client it fills from have to be the same account.
+            api: () =>
+              new GoogleApi({
+                accessToken: () => {
+                  const session = accounts.sessionForSub(sub)
+                  if (session === null)
+                    throw new Error('that Google account is no longer connected')
+                  return session.getAccessToken()
+                },
+              }),
+            cache,
+          })
+          bySub.set(sub, { data, cache })
+          return data
+        }
+        accounts.onChange((sub) => {
+          if (sub === null || accounts.sessionForSub(sub) !== null) return
+          bySub.get(sub)?.data.forget()
+          bySub.delete(sub)
+        })
+        return { accounts, dataForSub }
+      })()
+      owners.set(ctx.userData, ownerPromise)
+      void ownerPromise.catch(() => owners.delete(ctx.userData))
     }
+    const { accounts, dataForSub } = await ownerPromise
 
     /**
      * Keep a removed account's cache off the disk. On `onChange` rather than
@@ -65,13 +86,6 @@ export const googleMain: MainPlugin = {
      * or expired connection is just as much "this mail is no longer yours to
      * hold" as a button press.
      */
-    const stopWatching = accounts.onChange((sub) => {
-      if (sub === null) return // a vault unlinked; the account and its cache live on
-      if (accounts.sessionForSub(sub) !== null) return // still connected
-      bySub.get(sub)?.data.forget()
-      bySub.delete(sub)
-    })
-
     const dataFor = async (remote: string): Promise<GoogleData | null> => {
       const sub = (await accounts.sessionFor(remote))?.accountSub ?? null
       return sub === null ? null : dataForSub(sub)
@@ -110,10 +124,6 @@ export const googleMain: MainPlugin = {
 
     return () => {
       stopTriggers()
-      accounts.cancelConnect()
-      stopWatching()
-      for (const { cache } of bySub.values()) cache.close()
-      bySub.clear()
     }
   },
 }

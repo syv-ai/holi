@@ -126,27 +126,48 @@ export async function createGoogleAccounts(
     for (const cb of listeners) cb(sub)
   }
 
-  const persist = async (next: GoogleAccounts): Promise<void> => {
-    accounts = next
-    await deps.store.write(accounts)
+  let writes: Promise<void> = Promise.resolve()
+  const persist = (change: (current: GoogleAccounts) => GoogleAccounts): Promise<void> => {
+    const write = writes.then(async () => {
+      accounts = change(accounts)
+      await deps.store.write(accounts)
+    })
+    writes = write.catch(() => undefined)
+    return write
   }
 
   /** A session's window onto its own row. Writes go through here so the map has
    *  exactly one writer even while several sessions are refreshing. */
   const refFor = (sub: string): AccountRef => ({
     read: () => accounts[sub] ?? null,
-    async write(auth) {
-      // A refresh that was in flight when the account was removed must not
-      // bring it back: the grant is revoked and the vaults unlinked.
-      if (accounts[sub] === undefined) return
-      await persist({ ...accounts, [sub]: auth })
+    async write(auth, expectedRefreshToken) {
+      // A refresh that was in flight when this account was removed or replaced
+      // must not overwrite a reconnected grant for the same sub.
+      const current = accounts[sub]
+      if (
+        current === undefined ||
+        (expectedRefreshToken !== undefined && current.refreshToken !== expectedRefreshToken)
+      )
+        return
+      await persist((latest) => {
+        const row = latest[sub]
+        return row === undefined ||
+          (expectedRefreshToken !== undefined && row.refreshToken !== expectedRefreshToken)
+          ? latest
+          : { ...latest, [sub]: auth }
+      })
     },
     async remove() {
       await dropTokens(sub)
       await deps.vaults.unlinkAccount(sub)
       emit(sub)
     },
-    async expire() {
+    async expire(expectedRefreshToken) {
+      if (
+        expectedRefreshToken !== undefined &&
+        accounts[sub]?.refreshToken !== expectedRefreshToken
+      )
+        return
       await dropTokens(sub)
       await deps.vaults.expireAccount(sub)
       // Through `onChange` too, so the cache scoping hung off it fires for a
@@ -156,9 +177,11 @@ export async function createGoogleAccounts(
   })
 
   const dropTokens = async (sub: string): Promise<void> => {
-    const next = { ...accounts }
-    delete next[sub]
-    await persist(next)
+    await persist((current) => {
+      const next = { ...current }
+      delete next[sub]
+      return next
+    })
     sessions.delete(sub)
   }
 
@@ -192,6 +215,8 @@ export async function createGoogleAccounts(
 
     async connect(remote) {
       await switching
+      // Consent is machine-wide: the newest requester owns the one active flow.
+      cancelFlow()
       const epoch = clientEpoch
       const { id, secret } = currentClient()
       let cancelled = false
@@ -229,8 +254,8 @@ export async function createGoogleAccounts(
             return { kind: 'cancelled' } as const
           }
           // Additive: another vault may be using an account already in the store.
-          await persist({
-            ...accounts,
+          await persist((current) => ({
+            ...current,
             [tokens.sub]: {
               sub: tokens.sub,
               email: tokens.email,
@@ -239,7 +264,7 @@ export async function createGoogleAccounts(
               expiresAt: tokens.expiresAt,
               scopes: tokens.scopes,
             },
-          })
+          }))
           // A reconnect as the same account must pick up the new grant, not the
           // session built over the old row.
           sessions.delete(tokens.sub)
@@ -387,9 +412,11 @@ export async function createGoogleAccounts(
       await deps.vaults.unlinkAccount(sub)
       return
     }
-    const next = { ...accounts }
-    delete next[sub]
-    await persist(next)
+    await persist((current) => {
+      const next = { ...current }
+      delete next[sub]
+      return next
+    })
     sessions.delete(sub)
     await deps.vaults.unlinkAccount(sub)
     emit(sub)

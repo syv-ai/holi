@@ -105,12 +105,12 @@ export class GoogleReconnectRequiredError extends Error {
  */
 export interface AccountRef {
   read(): StoredGoogleAuth | null
-  write(auth: StoredGoogleAuth): Promise<void>
+  write(auth: StoredGoogleAuth, expectedRefreshToken?: string): Promise<void>
   /** The person disconnected: the tokens and every vault's link go. */
   remove(): Promise<void>
   /** Google refused the grant: the tokens and links go, and each vault linked
    *  to it is remembered as needing a reconnect, not as never connected. */
-  expire(): Promise<void>
+  expire(expectedRefreshToken?: string): Promise<void>
 }
 
 export interface GoogleSessionDeps {
@@ -247,7 +247,7 @@ export class GoogleSession {
       // must NOT drop a working connection. Google reports it as a 400.
       if (err instanceof Error && 'status' in err && err.status === 400) {
         // This account's record goes; every other account's is untouched.
-        await this.#deps.account.expire()
+        await this.#deps.account.expire(auth.refreshToken)
         this.#emit()
         throw new GoogleReconnectRequiredError()
       }
@@ -264,7 +264,7 @@ export class GoogleSession {
       refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : auth.refreshToken,
     }
 
-    await this.#deps.account.write(updated)
+    await this.#deps.account.write(updated, auth.refreshToken)
     return updated.accessToken
   }
 
