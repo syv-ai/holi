@@ -35,7 +35,6 @@ import { atom, useAtomValue } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  PDFViewer,
   SignatureMode,
   ZoomMode,
   deserializeEntries,
@@ -46,6 +45,7 @@ import {
   type SignatureEntry,
 } from '@embedpdf/react-pdf-viewer'
 import pdfiumWasmUrl from '@embedpdf/pdfium/pdfium.wasm?url'
+import { PdfViewerAdapter as PDFViewer } from './pdf-viewer-adapter'
 // The typed-signature faces, bundled so the viewer never fetches them from
 // Google Fonts (`PDF_FONTS`). Here, in the lazy chunk, so the main one never
 // carries them; a face's file loads only when a signature is typed in it.

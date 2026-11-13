@@ -12,6 +12,10 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, DRAWER_WIDTH, sessionAtom, snapshotAtom } from '@/plugin-api'
 import { PDF_FONTS, PDF_SIGNATURE_NOTE, shortcutOf } from '../renderer/pdf-viewer-config'
 
+vi.mock('../renderer/pdf-viewer-adapter', async () => ({
+  PdfViewerAdapter: (await import('@embedpdf/react-pdf-viewer')).PDFViewer,
+}))
+
 const REMOTE = 'syv-ai/vault'
 const PATH = 'docs/case.pdf'
 const BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46])
