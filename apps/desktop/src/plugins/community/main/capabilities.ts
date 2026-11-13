@@ -683,9 +683,9 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       run: async (ctx, { path }) => {
         const admitted = await admit(async () => {
           ensureLive()
-          const entry = (await pluginEntries(ctx.root, deps)).find(
-            ({ row }) => row.on && servedFile(row, path) !== null,
-          )
+          const entries = await pluginEntries(ctx.root, deps)
+          ensureLive()
+          const entry = entries.find(({ row }) => row.on && servedFile(row, path) !== null)
           if (entry === undefined) throw new CapabilityError('NOT_FOUND', `no plugin opens ${path}`)
           if (!entry.row.running)
             throw new CapabilityError(
