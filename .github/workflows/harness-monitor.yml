@@ -68,8 +68,44 @@ jobs:
           path: ${{ runner.temp }}/codex/checks.json
           if-no-files-found: error
 
+  claude-check:
+    needs: discover
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace for consumer fixtures
+        run: pnpm install --frozen-lockfile
+      - name: Probe exact npm Claude Code version without credentials
+        env:
+          MONITOR_REPORT: ${{ needs.discover.outputs.report }}
+        run: |
+          echo "$MONITOR_REPORT" | base64 --decode > report.json
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('report.json')).providers.find(p => p.id === 'claude-code').version)")
+          mkdir -p "$RUNNER_TEMP/claude"
+          node scripts/claude-compatibility.mjs "$VERSION" > "$RUNNER_TEMP/claude/cli.json" || true
+          if pnpm --filter @holi/desktop exec vitest run src/plugins/agent/test/claude-sessions.test.ts; then
+            echo '{"name":"fixture consumers","outcome":"pass","detail":"Claude listing/history and CLI consumers exercised by fixture agents-2.1.319.json (Claude Code 2.1.319 shape, constructed, not captured); no Claude runtime."}' > "$RUNNER_TEMP/claude/fixtures.json"
+          else
+            echo '{"name":"fixture consumers","outcome":"mismatch","detail":"Claude production-consumer fixture tests failed."}' > "$RUNNER_TEMP/claude/fixtures.json"
+          fi
+          node -e "const fs=require('fs'); const cli=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/claude/cli.json')); const fixture=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/claude/fixtures.json')); fs.writeFileSync(process.env.RUNNER_TEMP+'/claude/checks.json', JSON.stringify([...cli.checks,fixture]))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claude-checks
+          path: ${{ runner.temp }}/claude/checks.json
+          if-no-files-found: error
+
   report:
-    needs: [discover, codex-check]
+    needs: [discover, codex-check, claude-check]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -83,6 +119,10 @@ jobs:
         with:
           name: codex-checks
           path: codex-checks
+      - uses: actions/download-artifact@v4
+        with:
+          name: claude-checks
+          path: claude-checks
       - name: Reconcile tracking issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -90,5 +130,6 @@ jobs:
           MONITOR_REPORT: ${{ needs.discover.outputs.report }}
         run: |
           echo "$MONITOR_REPORT" | base64 --decode > report.json
-          node scripts/harness-monitor.mjs merge-codex report.json codex-checks/checks.json > normalized-report.json
+          node scripts/harness-monitor.mjs merge-codex report.json codex-checks/checks.json > codex-report.json
+          node scripts/harness-monitor.mjs merge-claude codex-report.json claude-checks/checks.json > normalized-report.json
           node scripts/harness-monitor.mjs report normalized-report.json

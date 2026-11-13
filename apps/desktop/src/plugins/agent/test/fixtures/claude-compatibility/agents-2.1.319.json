@@ -1,0 +1,27 @@
+{
+  "sourceVersion": "2.1.319",
+  "reference": "Claude Code 2.1.319 agents --json --all output shape, represented by the existing claude-sessions.test.ts listing fixture.",
+  "provenance": "constructed",
+  "rows": [
+    {
+      "id": "20c9f6e8",
+      "sessionId": "20c9f6e8-567a-4741-be50-89368985fa5a",
+      "cwd": "/fixture/vault",
+      "kind": "background",
+      "name": "Fixture session",
+      "pid": 4242,
+      "status": "busy",
+      "state": "working",
+      "startedAt": 1790627831838
+    },
+    {
+      "id": "7b1e0c42",
+      "sessionId": "7b1e0c42-1f3a-4c55-9d0e-2a6b8f1c3d47",
+      "cwd": "/fixture/vault",
+      "kind": "background",
+      "name": "Finished fixture",
+      "state": "done",
+      "startedAt": 1790627831838
+    }
+  ]
+}
