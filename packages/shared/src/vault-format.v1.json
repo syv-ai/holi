@@ -1,0 +1,491 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "ordinary-note",
+      "operation": "vaultRelPath",
+      "input": "notes/hello.md",
+      "expected": {
+        "path": "notes/hello.md",
+        "utf8": [110, 111, 116, 101, 115, 47, 104, 101, 108, 108, 111, 46, 109, 100]
+      }
+    },
+    {
+      "id": "normalize-separators",
+      "operation": "vaultRelPath",
+      "input": "./notes//./hello.md/",
+      "expected": {
+        "path": "notes/hello.md",
+        "utf8": [110, 111, 116, 101, 115, 47, 104, 101, 108, 108, 111, 46, 109, 100]
+      }
+    },
+    {
+      "id": "normalize-single",
+      "operation": "vaultRelPath",
+      "input": "a///./",
+      "expected": {
+        "path": "a",
+        "utf8": [97]
+      }
+    },
+    {
+      "id": "whitespace-preserved",
+      "operation": "vaultRelPath",
+      "input": " notes /a .md",
+      "expected": {
+        "path": " notes /a .md",
+        "utf8": [32, 110, 111, 116, 101, 115, 32, 47, 97, 32, 46, 109, 100]
+      }
+    },
+    {
+      "id": "empty",
+      "operation": "vaultRelPath",
+      "input": "",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "dot",
+      "operation": "vaultRelPath",
+      "input": ".",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "only-dots",
+      "operation": "vaultRelPath",
+      "input": "././",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "posix",
+      "operation": "vaultRelPath",
+      "input": "/notes/a.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "posix-double",
+      "operation": "vaultRelPath",
+      "input": "//notes/a.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "traversal",
+      "operation": "vaultRelPath",
+      "input": "notes/../a.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "traversal-root",
+      "operation": "vaultRelPath",
+      "input": "../a.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "traversal-embedded",
+      "operation": "vaultRelPath",
+      "input": "a/./../b",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "drive-absolute",
+      "operation": "vaultRelPath",
+      "input": "C:/notes/a.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "drive-relative",
+      "operation": "vaultRelPath",
+      "input": "c:notes/a.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "drive-uppercase",
+      "operation": "vaultRelPath",
+      "input": "Z:a",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "unc-forward",
+      "operation": "vaultRelPath",
+      "input": "//server/share/a.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "unc-backslash",
+      "operation": "vaultRelPath",
+      "input": "\\\\server\\share\\a.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "backslash",
+      "operation": "vaultRelPath",
+      "input": "notes\\a.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "nul",
+      "operation": "vaultRelPath",
+      "input": "notes/a\u0000.md",
+      "expected": {
+        "error": "PathSafetyError"
+      }
+    },
+    {
+      "id": "not-traversal",
+      "operation": "vaultRelPath",
+      "input": "notes/.../a..md",
+      "expected": {
+        "path": "notes/.../a..md",
+        "utf8": [110, 111, 116, 101, 115, 47, 46, 46, 46, 47, 97, 46, 46, 109, 100]
+      }
+    },
+    {
+      "id": "nfc",
+      "operation": "vaultRelPath",
+      "input": "café.md",
+      "expected": {
+        "path": "café.md",
+        "utf8": [99, 97, 102, 195, 169, 46, 109, 100]
+      }
+    },
+    {
+      "id": "nfd",
+      "operation": "vaultRelPath",
+      "input": "café.md",
+      "expected": {
+        "path": "café.md",
+        "utf8": [99, 97, 102, 101, 204, 129, 46, 109, 100]
+      }
+    },
+    {
+      "id": "unicode-nested",
+      "operation": "vaultRelPath",
+      "input": "./føroyar//📝.md",
+      "expected": {
+        "path": "føroyar/📝.md",
+        "utf8": [102, 195, 184, 114, 111, 121, 97, 114, 47, 240, 159, 147, 157, 46, 109, 100]
+      }
+    },
+    {
+      "id": "local-file",
+      "operation": "isLocalOnlyPath",
+      "input": "USER.local.md",
+      "expected": true
+    },
+    {
+      "id": "ordinary-user",
+      "operation": "isLocalOnlyPath",
+      "input": "USER.md",
+      "expected": false
+    },
+    {
+      "id": "nested-local-folder",
+      "operation": "isLocalOnlyPath",
+      "input": "a/Home.local.app/deep/file.md",
+      "expected": true
+    },
+    {
+      "id": "local-dot-prefix",
+      "operation": "isLocalOnlyPath",
+      "input": ".local.md",
+      "expected": true
+    },
+    {
+      "id": "local-marker-upper",
+      "operation": "isLocalOnlyPath",
+      "input": "USER.LOCAL.md",
+      "expected": false
+    },
+    {
+      "id": "local-marker-mixed",
+      "operation": "isLocalOnlyPath",
+      "input": "a/Foo.Local.app/x",
+      "expected": false
+    },
+    {
+      "id": "local-no-trailing-dot",
+      "operation": "isLocalOnlyPath",
+      "input": "foo.local/x",
+      "expected": false
+    },
+    {
+      "id": "local-no-leading-dot",
+      "operation": "isLocalOnlyPath",
+      "input": "local.md",
+      "expected": false
+    },
+    {
+      "id": "local-secret",
+      "operation": "isLocalOnlyPath",
+      "input": "a/.ENV/x",
+      "expected": true
+    },
+    {
+      "id": "local-envrc",
+      "operation": "isLocalOnlyPath",
+      "input": ".envrc",
+      "expected": false
+    },
+    {
+      "id": "local-backslash-literal",
+      "operation": "isLocalOnlyPath",
+      "input": "a.local\\x",
+      "expected": false
+    },
+    {
+      "id": "env",
+      "operation": "isSecretPath",
+      "input": ".env",
+      "expected": true
+    },
+    {
+      "id": "env-suffix",
+      "operation": "isSecretPath",
+      "input": "x/.env.production",
+      "expected": true
+    },
+    {
+      "id": "env-case",
+      "operation": "isSecretPath",
+      "input": "x/.EnV.LOCAL/y",
+      "expected": true
+    },
+    {
+      "id": "secrets",
+      "operation": "isSecretPath",
+      "input": ".secrets",
+      "expected": true
+    },
+    {
+      "id": "secrets-suffix",
+      "operation": "isSecretPath",
+      "input": "a/.SECRETS.TXT",
+      "expected": true
+    },
+    {
+      "id": "secret-folder",
+      "operation": "isSecretPath",
+      "input": "a/.secrets.private/note.md",
+      "expected": true
+    },
+    {
+      "id": "envrc",
+      "operation": "isSecretPath",
+      "input": ".envrc",
+      "expected": false
+    },
+    {
+      "id": "env-no-suffix",
+      "operation": "isSecretPath",
+      "input": ".env.",
+      "expected": false
+    },
+    {
+      "id": "secrets-no-suffix",
+      "operation": "isSecretPath",
+      "input": ".secrets.",
+      "expected": false
+    },
+    {
+      "id": "ordinary-secret-note",
+      "operation": "isSecretPath",
+      "input": "secrets.md",
+      "expected": false
+    },
+    {
+      "id": "ordinary-env-note",
+      "operation": "isSecretPath",
+      "input": "env.md",
+      "expected": false
+    },
+    {
+      "id": "env-prefix",
+      "operation": "isSecretPath",
+      "input": "foo.env",
+      "expected": false
+    },
+    {
+      "id": "git-root",
+      "operation": "isInIgnoredDir",
+      "input": ".git/config",
+      "expected": true
+    },
+    {
+      "id": "git-nested",
+      "operation": "isInIgnoredDir",
+      "input": "a/.git/b.md",
+      "expected": true
+    },
+    {
+      "id": "node-modules",
+      "operation": "isInIgnoredDir",
+      "input": "a/node_modules/pkg/a.md",
+      "expected": true
+    },
+    {
+      "id": "ignored-leaf",
+      "operation": "isInIgnoredDir",
+      "input": ".git",
+      "expected": true
+    },
+    {
+      "id": "ignored-case",
+      "operation": "isInIgnoredDir",
+      "input": "a/.GIT/file",
+      "expected": false
+    },
+    {
+      "id": "ignored-node-case",
+      "operation": "isInIgnoredDir",
+      "input": "Node_Modules/file",
+      "expected": false
+    },
+    {
+      "id": "ignored-substring",
+      "operation": "isInIgnoredDir",
+      "input": "a/.gitkeep",
+      "expected": false
+    },
+    {
+      "id": "ignored-suffix",
+      "operation": "isInIgnoredDir",
+      "input": "node_modules.md",
+      "expected": false
+    },
+    {
+      "id": "ignored-backslash",
+      "operation": "isInIgnoredDir",
+      "input": "a\\.git\\x",
+      "expected": false
+    },
+    {
+      "id": "ordinary-hidden",
+      "operation": "isInIgnoredDir",
+      "input": ".holi/settings/app.yaml",
+      "expected": false
+    },
+    {
+      "id": "remote",
+      "operation": "isRemote",
+      "input": "syv-ai/holi",
+      "expected": true
+    },
+    {
+      "id": "remote-case",
+      "operation": "isRemote",
+      "input": "Owner/Repo",
+      "expected": true
+    },
+    {
+      "id": "remote-punctuation",
+      "operation": "isRemote",
+      "input": "a.b_c-d/r.e_p-o",
+      "expected": true
+    },
+    {
+      "id": "remote-single-dot",
+      "operation": "isRemote",
+      "input": "./repo",
+      "expected": true
+    },
+    {
+      "id": "remote-empty",
+      "operation": "isRemote",
+      "input": "",
+      "expected": false
+    },
+    {
+      "id": "remote-no-owner",
+      "operation": "isRemote",
+      "input": "/repo",
+      "expected": false
+    },
+    {
+      "id": "remote-no-repo",
+      "operation": "isRemote",
+      "input": "owner/",
+      "expected": false
+    },
+    {
+      "id": "remote-extra-slash",
+      "operation": "isRemote",
+      "input": "owner/repo/other",
+      "expected": false
+    },
+    {
+      "id": "remote-double-slash",
+      "operation": "isRemote",
+      "input": "owner//repo",
+      "expected": false
+    },
+    {
+      "id": "remote-parent",
+      "operation": "isRemote",
+      "input": "../repo",
+      "expected": false
+    },
+    {
+      "id": "remote-double-dot",
+      "operation": "isRemote",
+      "input": "owner/re..po",
+      "expected": false
+    },
+    {
+      "id": "remote-url",
+      "operation": "isRemote",
+      "input": "https://github.com/owner/repo",
+      "expected": false
+    },
+    {
+      "id": "remote-backslash",
+      "operation": "isRemote",
+      "input": "owner\\repo",
+      "expected": false
+    },
+    {
+      "id": "remote-space",
+      "operation": "isRemote",
+      "input": "owner /repo",
+      "expected": false
+    },
+    {
+      "id": "remote-unicode",
+      "operation": "isRemote",
+      "input": "føroyar/repo",
+      "expected": false
+    },
+    {
+      "id": "remote-newline",
+      "operation": "isRemote",
+      "input": "owner/repo\n",
+      "expected": false
+    }
+  ]
+}
