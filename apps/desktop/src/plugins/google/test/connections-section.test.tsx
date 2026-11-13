@@ -11,7 +11,7 @@ import { Provider, createStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SandboxedHtml } from '../renderer/sandboxed-html'
 import { ConnectionsSection } from '../renderer/connections-section'
-import { activeRemoteAtom, loadVaultSettingsAtom } from '@/plugin-api'
+import { activeRemoteAtom, loadVaultSettingsAtom, registerBuffer } from '@/plugin-api'
 
 /** A fresh jotai store per test: the google atoms are module level, so one
  *  case's answer would otherwise still be held when the next one renders. */
@@ -351,6 +351,37 @@ describe('ConnectionsSection', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Use in this vault' })[0]!)
 
     await waitFor(() => expect(linkAccount).toHaveBeenCalledWith({ sub: 'sub-1' }))
+  })
+
+  it('keeps every account/client lifecycle change behind a successful draft flush', async () => {
+    status.mockResolvedValue({ account: { email: ADA.email }, missingScopes: [] })
+    accounts.mockResolvedValue({ accounts: [ADA, WORK], current: 'sub-1' })
+    const unregister = registerBuffer(async () => {
+      throw new Error('offline')
+    })
+    try {
+      render()
+      await screen.findByText(ADA.email)
+
+      await userEvent.click(screen.getAllByRole('button', { name: 'Use in this vault' })[0]!)
+      expect(await screen.findByRole('alert')).toHaveTextContent(/draft.*not changed/i)
+      expect(linkAccount).not.toHaveBeenCalled()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Disconnect this vault' }))
+      expect(disconnectVault).not.toHaveBeenCalled()
+
+      await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
+      await userEvent.click(await screen.findByRole('button', { name: 'Remove account' }))
+      expect(removeAccount).not.toHaveBeenCalled()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Use your own client…' }))
+      await userEvent.type(screen.getByLabelText('Client ID'), 'new-client')
+      await userEvent.type(screen.getByLabelText('Client secret'), 'secret')
+      await userEvent.click(screen.getByRole('button', { name: /^Save/ }))
+      expect(setClient).not.toHaveBeenCalled()
+    } finally {
+      unregister()
+    }
   })
 
   it('does not offer the account this vault is already using', async () => {

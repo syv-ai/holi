@@ -67,7 +67,9 @@ function rig() {
   registry.register(
     GOOGLE_NAMESPACES,
     googleCapabilities({
-      accounts: {} as GoogleAccountsManager,
+      accounts: {
+        sessionFor: async () => ({ accountSub: 'attachment-account' }),
+      } as unknown as GoogleAccountsManager,
       dataFor: async () => data,
       settings: {
         read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),

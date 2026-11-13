@@ -14,7 +14,7 @@
  * latter). Without this state the nav menu could not tell "no account" from
  * "no answer", and would flash its items on every launch.
  */
-import { atom, useAtomValue, useSetAtom, type Atom } from 'jotai'
+import { atom, useAtomValue, useSetAtom, useStore, type Atom } from 'jotai'
 import { unwrap } from 'jotai/utils'
 import { activeRemoteAtom } from '@/plugin-api'
 import { googleCap } from './google-cap'
@@ -234,11 +234,17 @@ export interface GoogleAccountState {
   currentSub: string | null
   /** Re-read every part from main. */
   refresh: () => void
+  refreshAndWait: () => Promise<void>
 }
 
 export function useGoogleAccount(): GoogleAccountState {
   const result = useAtomValue(currentConnectionReadAtom)
   const refresh = useSetAtom(refreshGoogleAtom)
+  const store = useStore()
+  const refreshAndWait = async () => {
+    store.set(refreshGoogleAtom)
+    await store.get(connectionAtom)
+  }
   const request = useAtomValue(refreshNonceAtom)
   const connection = result?.connection
   return {
@@ -253,5 +259,6 @@ export function useGoogleAccount(): GoogleAccountState {
     accounts: connection?.accounts ?? [],
     currentSub: connection?.currentSub ?? null,
     refresh,
+    refreshAndWait,
   }
 }
