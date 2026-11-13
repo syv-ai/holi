@@ -2346,11 +2346,15 @@ describe('VaultHost', () => {
     const ready = new Promise<void>((resolve) => {
       release = resolve
     })
+    const order: string[] = []
     const h = createVaultHost({
       claims: CLAIMS,
       registry,
-      beforeOpen: () => ready,
-      onSnapshot: () => {},
+      beforeOpen: async () => {
+        order.push('prepare')
+        await ready
+      },
+      onSnapshot: () => order.push('snapshot'),
       onSyncState: () => {},
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
     })
@@ -2368,6 +2372,7 @@ describe('VaultHost', () => {
     release()
     const vault = await opening
     expect(h.active()).toBe(vault)
+    expect(order.indexOf('prepare')).toBeLessThan(order.indexOf('snapshot'))
   })
 
   it('opens a vault and makes it active', async () => {
