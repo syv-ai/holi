@@ -301,7 +301,7 @@ function decodeCssIdentifier(identifier: string): string {
   )
 }
 
-/** Strip authored paint while preserving the declaration's layout tokens. */
+/** Original parser nodes grouped as one CSS identifier for classification. */
 type BackgroundToken = {
   type: valueParser.Node['type']
   value: string
@@ -319,7 +319,7 @@ function backgroundTokens(nodes: valueParser.Node[]): BackgroundToken[] {
       previous?.type === 'word' &&
       /(?:^|[^\\])(?:\\\\)*\\[0-9a-f]{1,6}$/i.test(previous.value) &&
       node.type === 'space' &&
-      /^(?:\\r\\n|[\\t\\n\\r\\f ])$/.test(node.value) &&
+      /^(?:\r\n|[\t\n\r\f ])$/.test(node.value) &&
       (next?.type === 'word' || next?.type === 'function')
     ) {
       previous.nodes.push(node, next)
@@ -333,6 +333,7 @@ function backgroundTokens(nodes: valueParser.Node[]): BackgroundToken[] {
   return tokens
 }
 
+/** Strip authored paint while preserving the declaration's layout tokens. */
 function normalizeDeclaration(declaration: Declaration): void {
   const property = decodeCssIdentifier(declaration.prop).toLowerCase()
   if (property === 'color' || property.endsWith('-color')) {

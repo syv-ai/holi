@@ -132,6 +132,24 @@ describe('mailFrameDocument — theming', () => {
     expect(declarations['background-image']?.value).toBe('u\\72 l(data:image/gif;base64,AA==)')
   })
 
+  it.each(['\t', '\n', '\r', '\f', '\r\n'])(
+    'preserves identifiers with terminating CSS whitespace %j',
+    (whitespace) => {
+      const background = `u\\72${whitespace}l(data:image/png;base64,AA==) t\\6f${whitespace}p`
+      const parsed = new DOMParser().parseFromString(
+        doc({ css: `.escaped{background:#fff ${background}!important}` }),
+        'text/html',
+      )
+      const stylesheet = postcss.parse(parsed.querySelectorAll('style')[1]?.textContent ?? '')
+      const declaration = (stylesheet.first as Rule).nodes.find(
+        (node): node is postcss.Declaration => node.type === 'decl' && node.prop === 'background',
+      )
+      // The HTML parser normalizes CR and CRLF to LF inside style text.
+      expect(declaration?.value).toBe(background.replace(/\r\n?/g, '\n'))
+      expect(declaration?.important).toBe(true)
+    },
+  )
+
   it('normalizes escaped paint properties and preserves escaped background layout', () => {
     const html = doc({
       html: '<div style="c\\6f lor:#111!important;back\\67 round-color:#fff!important">inline</div>',
