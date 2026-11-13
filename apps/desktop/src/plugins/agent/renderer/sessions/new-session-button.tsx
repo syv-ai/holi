@@ -31,6 +31,9 @@ export function NewSessionButton(): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const launching = useRef(false)
   const dismissingOutside = useRef(false)
+  const menuGeneration = useRef(0)
+  const retryFocus = useRef<{ item: HTMLElement; generation: number } | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const list = providers.kind === 'ready' ? providers.providers : []
   const ordered = list.length
@@ -45,19 +48,53 @@ export function NewSessionButton(): React.JSX.Element {
     if (open && providers.kind === 'loading') void load()
   }, [open, providers.kind, load])
 
+  useEffect(() => {
+    const pending = retryFocus.current
+    if (!pending || providers.kind === 'loading') return
+    retryFocus.current = null
+    if (
+      !open ||
+      pending.generation !== menuGeneration.current ||
+      (document.activeElement !== document.body && document.activeElement !== pending.item)
+    ) {
+      return
+    }
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not([data-disabled])')?.focus()
+  }, [open, providers, providers.kind])
+
+  const retry = (event: Event): void => {
+    event.preventDefault()
+    retryFocus.current = {
+      item: event.currentTarget as HTMLElement,
+      generation: menuGeneration.current,
+    }
+    void load()
+  }
+
   const launch = (args: Parameters<typeof start>[0]): void => {
     launching.current = true
     void start(args)
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
+    <DropdownMenu
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          menuGeneration.current += 1
+          retryFocus.current = null
+        }
+        setOpen(nextOpen)
+      }}
+      modal={false}
+    >
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" size="icon-xs" aria-label="New session">
           <PlusIcon aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
+        ref={menuRef}
         align="start"
         side="right"
         className="min-w-56"
@@ -76,12 +113,7 @@ export function NewSessionButton(): React.JSX.Element {
           {missing ? `${fallback} is gone. Start in which agent?` : 'New session'}
         </DropdownMenuLabel>
         {providers.kind === 'error' ? (
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault()
-              void load()
-            }}
-          >
+          <DropdownMenuItem onSelect={retry}>
             <span role="status">Couldn't list the agents.</span>
             <DropdownMenuShortcut>Retry</DropdownMenuShortcut>
           </DropdownMenuItem>
@@ -95,14 +127,7 @@ export function NewSessionButton(): React.JSX.Element {
             <DropdownMenuItem disabled>
               <span role="status">No agents available.</span>
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={(event) => {
-                event.preventDefault()
-                void load()
-              }}
-            >
-              Retry agent list
-            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={retry}>Retry agent list</DropdownMenuItem>
           </>
         ) : (
           ordered.map((p) => (
