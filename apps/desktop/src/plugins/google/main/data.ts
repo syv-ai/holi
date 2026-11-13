@@ -195,6 +195,15 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     })
   }
 
+  /** Google first, then cache only while this grant still owns it. Once a
+   * send has succeeded, retirement must not turn its receipt into a failure. */
+  async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> {
+    assertActive()
+    const result = await send()
+    if (!retired) record()
+    return result
+  }
+
   return {
     async agenda(window, overrides) {
       assertActive()
@@ -324,11 +333,18 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       )
     },
 
-    sendAs() {
-      return (aliases ??= listSendAs(api()).catch((error: unknown) => {
-        aliases = null
+    async sendAs() {
+      assertActive()
+      const pending = (aliases ??= listSendAs(api()))
+      let result: string[]
+      try {
+        result = await pending
+      } catch (error) {
+        if (aliases === pending) aliases = null
         throw error
-      }))
+      }
+      assertActive()
+      return result
     },
 
     ensureShape() {
@@ -342,26 +358,6 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       cache.retire()
     },
   }
-}
-
-/**
- * A write, and the ordering that keeps the cache honest.
- *
- * **Google first; the cache only once Google has agreed.** Patching
- * optimistically is wrong here: a cache that records a write Google refused is
- * the one divergence a delta sync can never repair. `history.list` reports
- * what changed *at Gmail*, and for a refused request nothing did, so the wrong
- * value would survive every refresh and every restart.
- *
- * Optimism belongs in the renderer, where a revert costs a re-render and
- * nothing is persisted. It does not belong on disk.
- */
-async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> {
-  const result = await send()
-  // The external effect may already have happened. Preserve its receipt, but
-  // never write its result into a cache retired while the request was in flight.
-  record()
-  return result
 }
 
 /**

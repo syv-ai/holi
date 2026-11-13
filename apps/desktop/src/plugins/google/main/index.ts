@@ -14,11 +14,12 @@ import { pluginSettingValue } from '@holi/shared'
 import { readVaultSettings, writePluginSettings, type MainPlugin } from '../../../main/plugin-api'
 import { GOOGLE_INFO } from '../info'
 import { GoogleApi } from './api'
-import { openGoogleCache, type GoogleCache } from './cache'
+import { openGoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
 import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
 import { googleSeed } from './seed'
+import type { GoogleSession } from './session'
 import { startGoogleTriggers } from './triggers'
 
 type GoogleOwner = {
@@ -42,17 +43,17 @@ export const googleMain: MainPlugin = {
       ownerPromise = (async () => {
         const { createGoogleAccountsManager } = await import('./electron')
         const accounts = await createGoogleAccountsManager(ctx.userData)
-        const bySub = new Map<string, { data: GoogleData; cache: GoogleCache }>()
+        const bySub = new Map<string, { data: GoogleData; session: GoogleSession }>()
         const dataForSub = (sub: string): GoogleData => {
           const held = bySub.get(sub)
           if (held !== undefined) return held.data
           // `sub` becomes a filename. It is a numeric string from Google today, but
           // build a path out of it only after saying so.
           if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
-          const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
-          cache.ensureShape()
           const session = accounts.sessionForSub(sub)
           if (session === null) throw new Error('that Google account is no longer connected')
+          const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
+          cache.ensureShape()
           const data = createGoogleData({
             // Bind this handle to the grant it was created for. A reconnect of
             // the same account retires it instead of lending it the new grant.
@@ -64,11 +65,13 @@ export const googleMain: MainPlugin = {
             },
             cache,
           })
-          bySub.set(sub, { data, cache })
+          bySub.set(sub, { data, session })
           return data
         }
         accounts.onChange((sub) => {
           if (sub === null) return
+          // Linking another vault does not replace the grant or its shared cache.
+          if (bySub.get(sub)?.session === accounts.sessionForSub(sub)) return
           // An old request can still finish after reconnecting the same account.
           // Retire its data handle and cache so it cannot return or persist stale rows.
           bySub.get(sub)?.data.forget()

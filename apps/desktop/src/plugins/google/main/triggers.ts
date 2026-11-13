@@ -62,16 +62,21 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
   let stopped = false
   /** Per query, each thread's version as last seen. */
   const seen = new Map<string, Map<string, string>>()
+  let observed: GoogleData | null = null
+  const current = async (data: GoogleData) => !stopped && (await deps.data()) === data
 
   async function calendar(data: GoogleData): Promise<void> {
     const at = now().getTime()
+    const overrides = await deps.overrides()
+    if (!(await current(data))) return
     const events = await data.fetchAgenda(
       {
         timeMin: new Date(at - BEHIND_MS).toISOString(),
         timeMax: new Date(at + AHEAD_MS).toISOString(),
       },
-      await deps.overrides(),
+      overrides,
     )
+    if (!(await current(data))) return
     const moments: Moment[] = events
       .filter((e) => !e.allDay)
       .map((e) => ({ id: e.id, kind: 'starts', at: new Date(e.start).toISOString() }))
@@ -79,7 +84,9 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
   }
 
   async function mail(data: GoogleData, query: string): Promise<void> {
+    if (!(await current(data))) return
     const page = await data.threads({ query, limit: THREADS })
+    if (!(await current(data))) return
     const before = seen.get(query)
     const after = new Map<string, string>()
     for (const t of page.threads) {
@@ -108,6 +115,10 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
     polling = true
     try {
       const data = await deps.data()
+      if (data !== observed) {
+        seen.clear()
+        observed = data
+      }
       if (data === null) {
         if (interest.calendar && !stopped) {
           ctx.events.emit({ type: 'upcoming', source: 'calendar', moments: [] })
@@ -129,6 +140,7 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
   function quiet(): void {
     interest = NO_INTEREST
     seen.clear()
+    observed = null
     if (timer !== null) clearInterval(timer)
     timer = null
   }

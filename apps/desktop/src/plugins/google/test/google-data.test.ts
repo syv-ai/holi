@@ -734,3 +734,66 @@ describe('forwarded attachments', () => {
     expect(urls.filter((url) => url.includes('/attachments/a0')).length).toBeGreaterThan(1)
   })
 })
+
+describe('retired grant reads and write receipts', () => {
+  it('rejects an alias response that completes after retiring its account', async () => {
+    let release!: (response: Response) => void
+    let entered!: () => void
+    const started = new Promise<void>((done) => (entered = done))
+    const waiting = new Promise<Response>((done) => (release = done))
+    const subject = createGoogleData({
+      cache,
+      api: () =>
+        new GoogleApi({
+          accessToken: async () => 'old-grant',
+          fetch: async () => {
+            entered()
+            return waiting
+          },
+        }),
+    })
+    const pending = subject.sendAs()
+    const rejected = expect(pending).rejects.toThrow(/no longer connected/)
+    await started
+    subject.forget()
+    release(Response.json({ sendAs: [{ sendAsEmail: 'old@example.test' }] }))
+    await rejected
+    await expect(subject.sendAs()).rejects.toThrow(/no longer connected/)
+  })
+
+  it('preserves a completed send receipt when removal retires its cache during the request', async () => {
+    let release!: (response: Response) => void
+    let entered!: () => void
+    const started = new Promise<void>((done) => (entered = done))
+    const waiting = new Promise<Response>((done) => (release = done))
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      entered()
+      return waiting
+    })
+    const subject = createGoogleData({
+      cache,
+      api: () =>
+        new GoogleApi({
+          accessToken: async () => 'old-grant',
+          fetch: fetcher,
+        }),
+    })
+    const pending = subject.sendMail({
+      draftId: 'draft',
+      threadId: 'thread',
+      mail: { to: ['someone@example.test'], subject: 'hello', body: 'hello' },
+    })
+    await started
+    subject.forget()
+    release(Response.json({ id: 'sent-id' }))
+    await expect(pending).resolves.toEqual({ id: 'sent-id' })
+    expect(existsSync(path)).toBe(false)
+    await expect(
+      subject.sendMail({
+        draftId: 'draft',
+        mail: { to: ['someone@example.test'], subject: 'hello', body: 'hello' },
+      }),
+    ).rejects.toThrow(/no longer connected/)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+})
