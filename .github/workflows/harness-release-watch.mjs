@@ -152,7 +152,8 @@ export async function watch({ fetch = globalThis.fetch, token, runUrl }) {
       const issue = matching.find(
         (candidate) => candidate.title === `Harness release: ${harness.id}`,
       )
-      if (matching.length > 1) throw new Error(`Multiple bot-owned reports found for ${harness.id}`)
+      if (matching.length > 1 || (matching.length === 1 && !issue))
+        throw new Error(`Ambiguous bot-owned report identity for ${harness.id}`)
       if (!issue) {
         await request(fetch, 'https://api.github.com/repos/syv-ai/holi/issues', {
           token,
