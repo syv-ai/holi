@@ -51,7 +51,7 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
     const key = Object.keys(env).find((key) => key.toUpperCase() === 'COMSPEC')
     return pty.spawn(
       key ? env[key]! : 'cmd.exe',
-      `/d /v:off /s /c "start "" /b /wait "%HOLI_NODE_PTY_EXEC%" -e "${bootstrap}""`,
+      `/d /v:off /s /c "start "" /b /wait "%HOLI_NODE_PTY_EXEC%" -e "${bootstrap}" <CONIN$"`,
       {
         name: 'xterm-256color',
         ...opts,

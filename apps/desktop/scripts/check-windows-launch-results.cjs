@@ -25,6 +25,8 @@ for (const name of [
   'terminates descendants before reporting root exit',
   'stops the entire owned job',
   'fails closed when its parent is gone',
+  'does not resolve the helper from a poisoned vault cwd',
+  'handles a missing helper without leaking stdin errors',
 ]) {
   const matches = tests.filter((test) => test.fullName.includes(name))
   assert(matches.length > 0, 'Undiscovered native case: ' + name)

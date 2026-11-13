@@ -1,5 +1,5 @@
 import { ChildProcess } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, onTestFailed } from 'vitest'
@@ -79,6 +79,56 @@ describe('spawnOwnedProgram', () => {
       expect(JSON.parse(output)).toEqual(args)
     } finally {
       await cleanup(child)
+    }
+  })
+
+  it.skipIf(!windows)('does not resolve the helper from a poisoned vault cwd', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-poisoned-cwd-'))
+    const poison = join(dir, 'powershell.exe')
+    let child: ReturnType<typeof spawnOwnedProgram> | undefined
+    try {
+      await copyFile(process.execPath, poison)
+      child = spawnOwnedProgram(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], {
+        cwd: dir,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      })
+      diagnostics(child)
+      const done = completion(child)
+      let output = ''
+      child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
+      expect(await done).toBe(0)
+      expect(output).toBe(dir)
+    } finally {
+      if (child) await cleanup(child)
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!windows)('handles a missing helper without leaking stdin errors', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-missing-helper-'))
+    const previousSystemRoot = process.env.SystemRoot
+    process.env.SystemRoot = dir
+    let child: ReturnType<typeof spawnOwnedProgram> | undefined
+    let childErrors = 0
+    let stdinErrors = 0
+    try {
+      child = spawnOwnedProgram(process.execPath, ['-e', 'process.exit(0)'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      })
+      child.on('error', () => childErrors++)
+      child.stdin!.on('error', () => stdinErrors++)
+      const closed = new Promise<number | null>((resolve) => child!.once('close', resolve))
+      await expect(completion(child)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(closed).resolves.toBe(-2)
+      expect(childErrors).toBe(1)
+      expect(stdinErrors).toBeGreaterThan(0)
+    } finally {
+      if (previousSystemRoot === undefined) delete process.env.SystemRoot
+      else process.env.SystemRoot = previousSystemRoot
+      if (child) await cleanup(child)
+      await rm(dir, { recursive: true, force: true })
     }
   })
 
