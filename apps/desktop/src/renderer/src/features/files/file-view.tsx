@@ -563,7 +563,7 @@ export function FileView({
 }) {
   const claims = useAtomValue(claimsAtom)
   const Claimed = claims.find((claim) => claim.view !== undefined && claim.match(path))?.view
-  if (Claimed !== undefined) return <Claimed path={path} />
+  if (Claimed !== undefined) return <Claimed path={path} visible={visible} focused={focused} />
 
   const kind = fileKind(path)
   if (kind === 'image') return <ImageFileView key={path} path={path} />

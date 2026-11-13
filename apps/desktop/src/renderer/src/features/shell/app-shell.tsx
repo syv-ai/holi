@@ -407,12 +407,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     memberBody,
     (key) => {
       const descriptor = parseTabKey(key)
-      if (
-        descriptor?.kind === 'doc' &&
-        vaultFiles.some((file) => file.path === descriptor.path) &&
-        isCoreTextFilePath(descriptor.path, claims)
-      ) {
-        return true
+      if (descriptor?.kind === 'doc' && vaultFiles.some((file) => file.path === descriptor.path)) {
+        if (isCoreTextFilePath(descriptor.path, claims)) return true
+        if (claims.some((claim) => claim.retainView === true && claim.match(descriptor.path))) {
+          return true
+        }
       }
       return (
         descriptor?.kind === 'session' &&

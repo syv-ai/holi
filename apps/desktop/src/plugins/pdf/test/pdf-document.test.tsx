@@ -291,10 +291,26 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function mount({ revealAfterMs }: { revealAfterMs?: number } = {}) {
+function mount({
+  revealAfterMs,
+  visible = true,
+  focused = visible,
+  path = PATH,
+}: {
+  revealAfterMs?: number
+  visible?: boolean
+  focused?: boolean
+  path?: string
+} = {}) {
   return render(
     <Provider store={store}>
-      <PdfDocument path={PATH} quietMs={0} revealAfterMs={revealAfterMs} />
+      <PdfDocument
+        path={path}
+        visible={visible}
+        focused={focused}
+        quietMs={0}
+        revealAfterMs={revealAfterMs}
+      />
     </Provider>,
   )
 }
@@ -308,6 +324,27 @@ test('fetches the bytes over the seam and hands the viewer a blob URL', async ()
   const blob = (URL.createObjectURL as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Blob
   expect(blob.type).toBe('application/pdf')
   expect(blob.size).toBe(BYTES.byteLength)
+})
+
+test('a departed vault read cannot create a blob URL or revive its PDF', async () => {
+  let finishOld!: (bytes: Uint8Array) => void
+  const oldRead = new Promise<Uint8Array>((resolve) => (finishOld = resolve))
+  seam.read.mockImplementation(({ remote }: { remote: string }) =>
+    remote === REMOTE ? oldRead : Promise.resolve(BYTES),
+  )
+  mount()
+  await waitFor(() => expect(seam.read).toHaveBeenCalledWith({ remote: REMOTE, path: PATH }))
+
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  await waitFor(() => expect(seam.read).toHaveBeenCalledWith({ remote: 'other/vault', path: PATH }))
+  await waitFor(() =>
+    expect(screen.getByTestId('pdf')).toHaveAttribute('data-pdf-src', 'blob:holi/1'),
+  )
+  finishOld(BYTES)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+  expect(seam.read).toHaveBeenCalledTimes(2)
 })
 
 test('themes the viewer through setTheme with Holi tokens', async () => {
@@ -573,6 +610,22 @@ test('writes the exported document back after a mark, and not before', async () 
   expect(Array.from(input.bytes)).toEqual([1, 2, 3, 4])
 })
 
+test('an annotation-save failure is caught without closing the viewer', async () => {
+  const error = new Error('disk unavailable')
+  seam.write.mockRejectedValue(error)
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  mount()
+  await screen.findByTestId('pdf')
+
+  act(() => seam.annotationCb!())
+  await waitFor(() =>
+    expect(log).toHaveBeenCalledWith(`[pdf] could not save marks into ${PATH}:`, error),
+  )
+  // The failure is contained by PDF's save path; it is not a buffer flush that
+  // can reject the shell's destructive-close guard.
+  expect(screen.getByTestId('pdf')).toBeInTheDocument()
+})
+
 test('its own write is not a reason to reload; a foreign change is', async () => {
   mount()
   await screen.findByTestId('pdf')
@@ -620,6 +673,62 @@ test('opening a PDF focuses it, so ⌘F reaches its search, like a note focuses 
 
   fireEvent.keyDown(document.activeElement!, { key: 'f', metaKey: true })
   expect(seam.seen).toContain('f+meta')
+})
+
+test('a retained PDF only takes focus while its pane is focused', async () => {
+  const mounted = mount({ focused: false })
+  const host = (await screen.findByTestId('pdf')).parentElement!
+  expect(document.activeElement).not.toBe(host)
+
+  mounted.rerender(
+    <Provider store={store}>
+      <PdfDocument path={PATH} visible focused quietMs={0} />
+    </Provider>,
+  )
+  await waitFor(() => expect(document.activeElement).toBe(host))
+})
+
+test('a hidden viewer cannot handle keyboard shortcuts, while a displayed viewer can', async () => {
+  const mounted = mount({ visible: false, focused: false })
+  const viewer = await screen.findByTestId('pdf')
+  fireEvent.keyDown(viewer, { key: 'h' })
+  expect(seam.seen).not.toContain('h')
+
+  mounted.rerender(
+    <Provider store={store}>
+      <PdfDocument path={PATH} visible focused quietMs={0} />
+    </Provider>,
+  )
+  fireEvent.keyDown(viewer, { key: 'h' })
+  expect(seam.seen).toContain('h')
+})
+
+test('two displayed PDFs keep each other’s keyboard shortcuts; hiding one silences it', async () => {
+  const mounted = render(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible focused quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible={true} focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  const viewers = await screen.findAllByTestId('pdf')
+  fireEvent.keyDown(viewers[0]!, { key: 'h' })
+  expect(seam.seen).toContain('h')
+
+  seam.seen.length = 0
+  mounted.rerender(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible focused quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible={false} focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  fireEvent.keyDown(viewers[1]!, { key: 'h' })
+  expect(seam.seen).not.toContain('h')
+  fireEvent.keyDown(viewers[0]!, { key: 'h' })
+  expect(seam.seen).toContain('h')
 })
 
 /**

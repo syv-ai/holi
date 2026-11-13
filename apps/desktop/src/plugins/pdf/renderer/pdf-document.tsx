@@ -131,6 +131,7 @@ const SIGNATURE_PANEL_COLUMN = `[data-sidebar-id="signature-panel"]:not(.${PDF_S
 
 /** The comments panel, whose one-line fields `PdfCommentField` stands in for. */
 const COMMENT_PANEL = `[data-sidebar-id="comment-panel"]:not(.${PDF_SIDEBAR_LEAVING})`
+const displayedPdfHosts = new Set<HTMLElement>()
 
 /** A comment row the viewer rendered: its field and, beside it, its send button. */
 interface CommentRow {
@@ -253,10 +254,14 @@ function provided<K extends keyof ViewerPlugins>(
 
 export function PdfDocument({
   path,
+  visible = true,
+  focused = visible,
   quietMs = SAVE_QUIET_MS,
   revealAfterMs = REVEAL_AFTER_MS,
 }: {
   path: string
+  visible?: boolean
+  focused?: boolean
   quietMs?: number
   revealAfterMs?: number
 }) {
@@ -300,6 +305,8 @@ export function PdfDocument({
   const askTargets = useAtomValue(agent?.targets ?? NO_TARGETS)
 
   const hostRef = useRef<HTMLDivElement>(null)
+  const activityRef = useRef({ visible, focused })
+  activityRef.current = { visible, focused }
   const viewerRef = useRef<PDFViewerRef>(null)
   const registryRef = useRef<PluginRegistry | null>(null)
   /** The mtime of the last state this viewer knows the file to be in: what the
@@ -310,6 +317,20 @@ export function PdfDocument({
    *  (an agent's re-export, say) must not pull it out of wherever you are. */
   const tookFocusRef = useRef(false)
   const savePendingRef = useRef(false)
+
+  useLayoutEffect(() => {
+    const host = hostRef.current
+    if (host === null) return
+    if (visible) displayedPdfHosts.add(host)
+    else displayedPdfHosts.delete(host)
+    return () => {
+      displayedPdfHosts.delete(host)
+    }
+  }, [visible])
+
+  useLayoutEffect(() => {
+    if (!visible) setAsk(null)
+  }, [visible])
 
   useEffect(() => {
     if (remote === null) return
@@ -606,6 +627,7 @@ export function PdfDocument({
             event.sidebarId === 'search-panel'
               ? root?.querySelector<HTMLInputElement>(SEARCH_FIELD)
               : null
+          if (!activityRef.current.visible || !activityRef.current.focused) return
           if (field != null) field.focus()
           else if (document.activeElement === document.body) hostRef.current?.focus()
         })
@@ -646,7 +668,9 @@ export function PdfDocument({
   useLayoutEffect(() => {
     const guard = (event: KeyboardEvent) => {
       const host = hostRef.current
-      if (host === null || event.composedPath().includes(host)) return
+      if (host === null) return
+      const path = event.composedPath()
+      if ([...displayedPdfHosts].some((shown) => path.includes(shown))) return
       const registry = registryRef.current
       const commands = registry === null ? null : provided(registry, 'commands')
       const shortcut = shortcutOf(event)
@@ -665,10 +689,10 @@ export function PdfDocument({
   }, [mode, src])
 
   useEffect(() => {
-    if (src === null || tookFocusRef.current) return
+    if (src === null || tookFocusRef.current || !visible || !focused) return
     tookFocusRef.current = true
     hostRef.current?.focus({ preventScroll: true })
-  }, [src])
+  }, [src, visible, focused])
 
   // The fallback: a viewer that never paints a page still arrives.
   useEffect(() => {
@@ -744,7 +768,7 @@ export function PdfDocument({
       {commentRows.map(({ row, input, send }) =>
         createPortal(<PdfCommentField input={input} send={send} />, row, rowKey(row)),
       )}
-      {agent !== null && (
+      {visible && agent !== null && (
         <AskAgentPopover
           anchor={ask?.anchor ?? null}
           label={ask?.label ?? ''}
