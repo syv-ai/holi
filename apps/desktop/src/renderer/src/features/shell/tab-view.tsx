@@ -24,7 +24,7 @@ import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 export function TabView({
   tab,
   visible = true,
-  displayed = visible,
+  focused = visible,
   settingsNavInSidebar,
   onOpen,
   onOpenBeside,
@@ -34,10 +34,10 @@ export function TabView({
   onOpenSearch,
 }: {
   tab: string | null
-  /** Whether this tab is the visible/focused split member. */
+  /** Whether this tab is displayed; all split members are visible together. */
   visible?: boolean
-  /** Whether this tab belongs to the shell's currently displayed view set. */
-  displayed?: boolean
+  /** Whether this is the focused member that may publish active UI state. */
+  focused?: boolean
   /** Whether the sidebar carries Settings' nav for this tab; otherwise the
    *  view draws its own. */
   settingsNavInSidebar: boolean
@@ -67,7 +67,7 @@ export function TabView({
     case 'board':
       return <PlanningView onOpenTask={onOpen} />
     case 'graph':
-      return <GraphView onOpen={onOpenBeside} reading={reading} displayed={displayed} />
+      return <GraphView onOpen={onOpenBeside} reading={reading} displayed={visible} />
     case 'apps':
       return <AppsView onOpen={onOpen} />
     case 'surface': {
@@ -108,7 +108,7 @@ export function TabView({
       // away: once per switch, keyed on the tab.
       return (
         <div key={tab} className="motion-in-rise flex min-h-0 flex-1 flex-col">
-          <AppView />
+          <AppView visible={visible} />
         </div>
       )
     }
@@ -147,7 +147,7 @@ export function TabView({
       }
       // Any other file: css, yaml, json, an image, a PDF.
       if (vaultFiles.some((file) => file.path === descriptor.path)) {
-        return <FileView key={tab} path={descriptor.path} />
+        return <FileView key={tab} path={descriptor.path} visible={visible} focused={focused} />
       }
       return (
         <IconStackEmpty

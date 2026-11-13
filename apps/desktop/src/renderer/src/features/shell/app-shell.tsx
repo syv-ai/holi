@@ -53,7 +53,7 @@ import {
 import { openingBeside } from '@/state/alt-open'
 import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
 import { shellTabForPathAtom } from '@/state/surfaces'
-import { activeRemoteAtom } from '@/state/vaults'
+import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
@@ -75,6 +75,8 @@ import { MobileHeader } from './mobile-header'
 import { readShares, writeShares } from './split-shares'
 import { SplitView, type MemberSlot } from './split-view'
 import { useRetainedSurfaces } from './retained-surfaces'
+import { isCoreTextFilePath } from '@/features/files/file-view'
+import { claimsAtom } from '@/state/plugins'
 import { TabStrip } from './tab-strip'
 import { TabView } from './tab-view'
 import { TitleBar } from './title-bar'
@@ -109,6 +111,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     if (pendingClose !== null && pendingClose.remote !== remote) setPendingClose(null)
   }, [pendingClose, remote])
   const folders = useAtomValue(folderSurfacesAtom)
+  const claims = useAtomValue(claimsAtom)
+  const vaultFiles = useAtomValue(snapshotAtom).files
   /** The key a sidebar row, a search hit or a plugin's request opens: a view's
    *  own key (the board), or a vault path's tab, which a plugin's folder
    *  document (a deck) opens as its surface. */
@@ -358,7 +362,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   /** One view: its header in a split, then what it shows. Focus follows a
    *  press or keyboard focus into a split's member. */
-  function memberBody(key: string, visible: boolean, displayed: boolean) {
+  function memberBody(key: string, visible: boolean) {
     const tab = key === NO_TAB ? null : key
     const isFocused = tab === focusedKey
     const focus = () => {
@@ -382,10 +386,10 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           <TabView
             tab={tab}
             visible={visible}
+            focused={isFocused}
             settingsNavInSidebar={isFocused && settingsActive && !isMobile && sidebarOpen}
             onOpen={openTabKey}
             onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
-            displayed={displayed}
             reading={
               tab === null
                 ? null
@@ -406,14 +410,21 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     isMobile ? [focusedKey ?? NO_TAB] : members.map((member) => member.key),
     memberBody,
     (key) => {
-      const tab = parseTabKey(key)
+      const descriptor = parseTabKey(key)
+      if (
+        descriptor?.kind === 'doc' &&
+        vaultFiles.some((file) => file.path === descriptor.path) &&
+        isCoreTextFilePath(descriptor.path, claims)
+      ) {
+        return true
+      }
       return (
-        tab?.kind === 'session' &&
+        descriptor?.kind === 'session' &&
         (running
           .find((plugin) => plugin.agentsMode)
           ?.agentsMode?.keepsSelectionMounted?.({
-            owner: tab.owner,
-            id: tab.id,
+            owner: descriptor.owner,
+            id: descriptor.id,
           }) ??
           false)
       )

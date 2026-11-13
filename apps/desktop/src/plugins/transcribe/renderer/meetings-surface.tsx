@@ -18,7 +18,7 @@ import { PastMeetings } from './past-meetings'
 import { recorderAtom } from './recorder'
 import { meetingsAtom, shownMeetingIdAtom } from './state'
 
-export function MeetingsSurface({ id }: { id?: string }): React.JSX.Element {
+export function MeetingsSurface({ id }: { id?: string; visible?: boolean }): React.JSX.Element {
   const shown = useAtomValue(shownMeetingIdAtom)
   // The shell gives a tab opened without an id `id=''` (`tab-view.tsx`): that
   // is the list, not a meeting folder at ''.

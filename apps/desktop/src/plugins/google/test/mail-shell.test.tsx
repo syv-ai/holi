@@ -371,12 +371,17 @@ test('the account menu switches the vault to another connected account', async (
   expect(useAccountMock).toHaveBeenCalledWith({ sub: 'b' })
 })
 
-test('compose opens the existing composer in a dialog', async () => {
+test('a compose dialog closes safely when its retained app is hidden', async () => {
   const user = userEvent.setup()
-  render(<MailShell />)
+  const view = render(<MailShell visible />)
   await screen.findByRole('list', { name: 'Inbox' })
 
   await user.click(screen.getByRole('button', { name: 'Compose new email' }))
-
   expect(await screen.findByRole('dialog', { name: 'New message' })).toBeInTheDocument()
+
+  view.rerender(<MailShell visible={false} />)
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New message' })).toBeNull())
+
+  view.rerender(<MailShell visible />)
+  expect(screen.queryByRole('dialog', { name: 'New message' })).toBeNull()
 })

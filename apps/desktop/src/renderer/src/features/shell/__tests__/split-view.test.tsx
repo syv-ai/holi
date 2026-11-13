@@ -4,6 +4,8 @@
  * tab's menu and a drag make a split; its members carry thin headers.
  */
 import { useEffect, useState } from 'react'
+import { undo } from '@codemirror/commands'
+import { EditorView } from '@codemirror/view'
 import { Provider, atom, createStore } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import { Input } from '@/components/ui/input'
@@ -41,6 +43,7 @@ const write = vi.fn(async (_input: unknown) => ({
   ok: true as const,
   warnings: [] as string[],
 }))
+const readFile = vi.fn(async () => 'first line\nsecond line\nthird line')
 
 const bufferCleanups: (() => void)[] = []
 afterEach(() => {
@@ -60,15 +63,19 @@ vi.mock('@/lib/trpc', () => {
   const answer = (name: string): unknown =>
     name === 'notes.graph'
       ? graphQuery()
-      : name === 'settings.read'
-        ? SETTINGS
-        : name === 'settings.pluginFailures'
-          ? {}
-          : name === 'github.collaborators'
-            ? { visibility: 'private', collaborators: [] }
-            : ['activity.entries', 'logs.entries', 'terminal.list'].includes(name)
-              ? []
-              : null
+      : name === 'notes.read'
+        ? readFile()
+        : name === 'github.fileContributors'
+          ? []
+          : name === 'settings.read'
+            ? SETTINGS
+            : name === 'settings.pluginFailures'
+              ? {}
+              : name === 'github.collaborators'
+                ? { visibility: 'private', collaborators: [] }
+                : ['activity.entries', 'logs.entries', 'terminal.list'].includes(name)
+                  ? []
+                  : null
   const procedure = (name: string) => ({
     query: async () => answer(name),
     mutate: name === 'settings.write' ? write : async () => ({ ok: true }),
@@ -98,6 +105,10 @@ vi.mock('@/components/ui/resizable', () => ({
 
 // The files sidebar's tree does not settle in jsdom; what matters here is
 // only whether it or Settings' nav holds the sidebar.
+vi.mock('@/features/history/file-history-button', () => ({
+  FileHistoryButton: () => null,
+}))
+
 vi.mock('@/features/sidebar/app-sidebar', () => ({
   AppSidebar: ({ collapsed }: { collapsed?: boolean }) =>
     collapsed ? <div>Rail</div> : <div>Documents</div>,
@@ -116,7 +127,7 @@ vi.mock('motion-panels/react', () => ({
   Separator: () => <div role="separator" />,
 }))
 
-function mount() {
+function mount(initial = ['A.md', 'B.md'], files: { path: string; updatedAt: string }[] = []) {
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
   store.set(vaultsAtom, [
@@ -127,9 +138,14 @@ function mount() {
       lastOpenedAt: '2026-10-23T10:00:00.000Z',
     },
   ] as never)
-  store.set(snapshotAtom, emptyVaultSnapshot())
+  store.set(snapshotAtom, { ...emptyVaultSnapshot(), files })
   store.set(vaultSettingsAtom, { remote: 'mara/notes', settings: SETTINGS })
-  store.set(shellWorkspaceAtom, (ws) => openTab(openTab(ws, 'A.md'), 'B.md'))
+  store.set(shellWorkspaceAtom, (ws) => {
+    const opened = initial
+      .slice(1)
+      .reduce((next, key) => openTab(next, key), openTab(ws, initial[0]!))
+    return files.length === 0 ? opened : selectEntry(opened, initial[0]!)
+  })
   render(
     <Provider store={store}>
       <AppShell onAddVault={() => {}} />
@@ -170,6 +186,33 @@ class LayoutObserver {
     }
   }
 }
+
+test('a core text file keeps its CodeMirror instance and undo history when its tab is hidden', async () => {
+  readFile.mockClear()
+  const store = mount(
+    ['notes/source', 'Other.md'],
+    [{ path: 'notes/source', updatedAt: '2026-10-23T10:00:00.000Z' }],
+  )
+  expect(store.get(shellWorkspaceAtom).entries).toContain('Other.md')
+  await waitFor(() => expect(document.querySelector('.cm-editor')).not.toBeNull())
+  const editor = document.querySelector('.cm-editor')!
+  const content = document.querySelector<HTMLElement>('.cm-content')!
+  const cm = EditorView.findFromDOM(editor as HTMLElement)!
+  cm.dispatch({ changes: { from: cm.state.doc.length, insert: ' edited' } })
+  await waitFor(() => expect(content.textContent).toContain('edited'))
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, 'Other.md')))
+  await waitFor(() => expect(document.querySelector('[data-pane-host="Other.md"]')).not.toBeNull())
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'notes/source')))
+  await waitFor(() =>
+    expect(document.querySelector('[data-pane-host="notes/source"] .cm-editor')).toBe(editor),
+  )
+  expect(document.querySelector('.cm-content')?.textContent).toContain('edited')
+  undo(cm)
+  expect(
+    document.querySelector('[data-pane-host="notes/source"] .cm-content')?.textContent,
+  ).not.toContain('edited')
+  expect(store.get(shellWorkspaceAtom).active).toBe('notes/source')
+})
 
 test('the tab count follows observed strip and entry layout changes', async () => {
   const previous = globalThis.ResizeObserver
@@ -918,6 +961,8 @@ test('a view not open yet, dragged from the sidebar, opens in the gap', async ()
  * view, just as a terminal's unsent input and viewport belong to its instance. */
 function sessionFixture(
   keepsSelectionMounted: AgentsMode['keepsSelectionMounted'] = ({ owner }) => owner === 'agent',
+  documentPath = 'A.md',
+  files: { path: string; updatedAt: string }[] = [],
 ) {
   const acquired = vi.fn()
   const disposed = vi.fn()
@@ -951,12 +996,12 @@ function sessionFixture(
       keepsSelectionMounted,
     },
   }
-  const store = mount()
+  const store = mount([documentPath, 'Other.md'], files)
   act(() => store.set(installedPluginsAtom, [plugin]))
   const key = (id: string, owner = 'agent') => tabKey({ kind: 'session', owner, id })
   const show = (id: string, owner = 'agent') =>
     act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, key(id, owner))))
-  const away = () => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
+  const away = () => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, documentPath)))
   return { store, plugin, acquired, disposed, key, show, away }
 }
 
@@ -1017,6 +1062,29 @@ test('session retention: document and session switches preserve connected DOM an
     ['agent:two', Number(second.dataset.instance)],
   ])
   expect(f.disposed).not.toHaveBeenCalled()
+})
+
+test('core text and agent session retain their live state together across tab switches', async () => {
+  const f = sessionFixture(undefined, 'notes/source', [
+    { path: 'notes/source', updatedAt: '2026-10-23T10:00:00.000Z' },
+  ])
+  await waitFor(() => expect(document.querySelector('.cm-editor')).not.toBeNull())
+  const editor = document.querySelector('.cm-editor')!
+  f.show('one')
+  const session = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  fireEvent.change(session, { target: { value: 'unsent agent input' } })
+  expect(editor.isConnected).toBe(true)
+  expect(document.querySelector('[data-pane-host="notes/source"] .cm-editor')).toBe(editor)
+
+  f.away()
+  expect(editor.isConnected).toBe(true)
+  expect(document.querySelector('[data-pane-host="notes/source"] .cm-editor')).toBe(editor)
+  expect(session.isConnected).toBe(true)
+  expect(session.closest('[inert]')).not.toBeNull()
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'Session agent:one' })).toBe(session)
+  expect(session).toHaveValue('unsent agent input')
+  expect(editor.isConnected).toBe(true)
 })
 
 test('session retention: open but unseen sessions mount only on first display', async () => {

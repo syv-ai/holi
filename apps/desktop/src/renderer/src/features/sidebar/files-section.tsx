@@ -20,7 +20,7 @@ import {
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { toast } from 'sonner'
-import { GITKEEP, holiLink, TASKS_CLAIM } from '@holi/shared'
+import { GITKEEP, holiWebLink, TASKS_CLAIM } from '@holi/shared'
 import { cn } from '@/lib/cn'
 
 import { ConfirmDialog } from '@/composites/confirm-dialog'
@@ -639,7 +639,7 @@ export function FilesSection({
         copyPath,
         copyLink: (path) => {
           if (files.remote !== null)
-            void copyText(holiLink({ remote: files.remote, path }), 'Holi link copied', path)
+            void copyText(holiWebLink({ remote: files.remote, path }), 'Holi link copied', path)
         },
         rename: (path) => {
           renameNext.current = path
