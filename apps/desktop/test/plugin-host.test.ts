@@ -58,6 +58,7 @@ function rig(
     remote?: string
     bridge?: BridgeServer
     appDoor?: boolean
+    call?: Parameters<typeof createPluginHost>[0]['call']
   } = {},
 ) {
   const calls = { started: 0, stopped: 0 }
@@ -115,6 +116,7 @@ function rig(
     notify: () => false,
     focused: () => false,
     activity: (entry) => activity.push(entry),
+    call: opts.call,
   })
   let root = ''
   const capabilities = createCapabilityHost({
@@ -138,8 +140,16 @@ function rig(
   const fromRenderer = (message: unknown) => listeners.get('plugin:fake')?.(message)
   /** Make `vault` the open one and reconcile, as the router does after `host.open`. */
   const enter = async (vault: OpenVault | null) => {
+    const previous = open
+    if (previous !== null && previous.remote !== vault?.remote) await host.stop(previous.remote)
     open = vault
-    await host.reconcile('open')
+    host.setDisplayed(vault?.remote ?? null)
+    if (vault === null) await host.stopAll()
+    else await host.reconcile(vault, 'open')
+  }
+  const reconcile = async (why: 'settings' | 'snapshot') => {
+    if (open === null) throw new Error('no vault is open')
+    await host.reconcile(open, why)
   }
   return {
     host,
@@ -149,6 +159,7 @@ function rig(
     sent,
     fromRenderer,
     enter,
+    reconcile,
     ctx: () => context!,
     activity,
     appDoor: () => appDoor!,
@@ -205,30 +216,30 @@ describe('the plugin host', () => {
     ])
     expect(activity.filter((entry) => entry.plugin === 'google')).toHaveLength(1)
     expect(activity.filter((entry) => entry.plugin === 'search-google')).toHaveLength(1)
-    await host.stop()
+    await host.stop('o/r')
   })
   it('starts an enabled plugin once, however often the vault reconciles', async () => {
-    const { host, calls, registry, enter } = rig()
+    const { host, calls, registry, enter, reconcile } = rig()
     const root = await tempDir()
     await enter(openVault('o/r', root))
-    await host.reconcile('snapshot')
-    await host.reconcile('settings')
+    await reconcile('snapshot')
+    await reconcile('settings')
     expect(calls.started).toBe(1)
     expect(registry.pluginOf('fake.ping', 'o/r')).toBe('fake')
 
-    await host.stop()
+    await host.stop('o/r')
     expect(calls.stopped).toBe(1)
     expect(registry.has('fake.ping', 'o/r')).toBe(false)
   })
 
   it('does not start a plugin the vault has off', async () => {
-    const { calls, enter } = rig({ default: false })
+    const { calls, enter, reconcile } = rig({ default: false })
     await enter(openVault('o/r', await tempDir()))
     expect(calls.started).toBe(0)
   })
 
   it("refuses a plugin's capability in a vault that has it off", async () => {
-    const { ping, enter } = rig()
+    const { ping, enter, reconcile } = rig()
     const on = await tempDir()
     const off = await tempDir()
     await turn(off, false)
@@ -278,33 +289,164 @@ describe('vault-scoped plugin host adapters', () => {
         })
       expect(await post(tokenA)).toEqual({ status: 200, body: 'A' })
       expect(await post(tokenB)).toEqual({ status: 200, body: 'B' })
-      await a.host.stop()
+      await a.host.stop('A')
       await expect(a.appDoor().call('A', 'T.app', 'core.remote', {})).rejects.toThrow(/closed/)
       await expect(a.ping('/A')).rejects.toThrow(/no such method/)
       expect((await b.ping('/B')).value).toBe('pong:B')
       expect((await post(tokenA)).status).toBe(404)
       expect(await post(tokenB)).toEqual({ status: 200, body: 'B' })
     } finally {
-      await a.host.stop()
-      await b.host.stop()
+      await a.host.stop('A')
+      await b.host.stop('B')
       await bridge.stop()
     }
   })
 })
 
 describe('the lifecycle', () => {
+  it('lets B start while A activation is pending and disposes a cancelled start once', async () => {
+    const log: string[] = []
+    let releaseA: () => void = () => {}
+    let enteredA: () => void = () => {}
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve
+    })
+    const startedA = new Promise<void>((resolve) => {
+      enteredA = resolve
+    })
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      async activate(ctx) {
+        if (ctx.remote === 'A') {
+          enteredA()
+          await gateA
+        }
+        return () => {
+          log.push(`stop ${ctx.remote}`)
+        }
+      },
+    }
+    const { host } = rig({ plugins: [plugin], roots: { A: '/A', B: '/B' } })
+    const a = openVault('A', '/A')
+    const b = openVault('B', '/B')
+    const pendingA = host.reconcile(a, 'open')
+    await startedA
+    await host.reconcile(b, 'open')
+    expect(log).toEqual([])
+    const stoppingA = host.stop('A')
+    releaseA()
+    await pendingA
+    await stoppingA
+    expect(log).toEqual(['stop A'])
+    await host.stop('B')
+    expect(log).toEqual(['stop A', 'stop B'])
+  })
+
+  it('rechecks a delayed ctx capability call after its caller stops', async () => {
+    let ctx: PluginCtx | null = null
+    let continueCall: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      continueCall = resolve
+    })
+    const plugin: MainPlugin = {
+      info: { id: 'caller', label: 'Caller', default: true },
+      activate(context) {
+        ctx = context
+        return () => {}
+      },
+    }
+    const { host, enter } = rig({
+      plugins: [plugin],
+      call: async (remote, _name, _params, beforeInvoke) => {
+        await gate
+        await beforeInvoke?.({ remote, root: '/A' })
+        return 'invoked'
+      },
+    })
+    const vault = openVault('A', '/A')
+    await enter(vault)
+    const delayed = ctx!.call('target.read', {})
+    await host.stop('A')
+    await host.reconcile(vault, 'open')
+    continueCall()
+    await expect(delayed).rejects.toThrow(/context is no longer active/)
+    await host.stopAll()
+  })
+
+  it('keeps concurrent remote instances, holds and notifications isolated', async () => {
+    const contexts = new Map<string, PluginCtx>()
+    const seen = new Map<string, string[]>()
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        contexts.set(ctx.remote, ctx)
+        const got: string[] = []
+        seen.set(ctx.remote, got)
+        ctx.onReport((report) => got.push(`report:${report.focusedPath}`))
+        ctx.onMention((mention) => got.push(`mention:${mention.notePath}`))
+        ctx.onSnapshot((snapshot) => got.push(`snapshot:${snapshot.root}`))
+        ctx.events.on((event) => got.push(`event:${event.type}`))
+        ctx.events.emit({
+          type: 'happened',
+          source: 'file',
+          kind: 'changed',
+          id: ctx.remote,
+          version: '1',
+        })
+        return () => {}
+      },
+    }
+    const { host, enter } = rig({ plugins: [plugin], roots: { A: '/A', B: '/B' } })
+    const logA: string[] = []
+    const logB: string[] = []
+    const a = openVault('A', '/A', logA)
+    const b = openVault('B', '/B', logB)
+    await enter(a)
+    host.setDisplayed('B')
+    await host.reconcile(b, 'open')
+
+    expect(contexts.get('A')?.active().remote).toBe('A')
+    expect(contexts.get('B')?.active().remote).toBe('B')
+    const releaseA = contexts.get('A')!.pauseSync('A hold')
+    const releaseB = contexts.get('B')!.pauseSync('B hold')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(seen.get('A')).toEqual(['event:happened'])
+    expect(seen.get('B')).toEqual(['event:happened'])
+
+    host.report('A', { focusedPath: 'a.md', selection: null, openPaths: [], recents: [] })
+    host.report('B', { focusedPath: 'b.md', selection: null, openPaths: [], recents: [] })
+    host.mentioned('A', [{ notePath: 'a.md' } as never])
+    host.mentioned('B', [{ notePath: 'b.md' } as never])
+    host.snapshot('A', { root: 'A' } as never)
+    host.snapshot('B', { root: 'B' } as never)
+    expect(seen.get('A')).toContain('report:a.md')
+    expect(seen.get('B')).toContain('report:b.md')
+    expect(seen.get('A')).toContain('snapshot:A')
+    expect(seen.get('B')).toContain('snapshot:B')
+    expect(seen.get('A')).toContain('mention:a.md')
+    expect(seen.get('B')).toContain('mention:b.md')
+
+    releaseA()
+    expect(logA).toContain('resume')
+    expect(logB).not.toContain('resume')
+    releaseB()
+    expect(logB).toContain('resume')
+    await host.stop('A')
+    expect(host.serving('/B')).resolves.toContain('fake')
+    await host.stop('B')
+  })
   it('stops a plugin turned off by hand, and starts it again, seeded, when turned back on', async () => {
-    const { host, calls, registry, enter } = rig()
+    const { host, calls, registry, enter, reconcile } = rig()
     const root = await tempDir()
     await enter(openVault('o/r', root))
 
     await turn(root, false)
-    await host.reconcile('snapshot')
+    await reconcile('snapshot')
     expect(calls).toEqual({ started: 1, stopped: 1 })
     expect(registry.has('fake.ping', 'o/r')).toBe(false)
 
     await turn(root, true)
-    await host.reconcile('snapshot')
+    await reconcile('snapshot')
     expect(calls).toEqual({ started: 2, stopped: 1 })
     expect(registry.pluginOf('fake.ping', 'o/r')).toBe('fake')
   })
@@ -329,11 +471,14 @@ describe('the lifecycle', () => {
         }
       },
     }
-    const { host, ping, sent, enter } = rig({ plugins: [winding], roots: { 'o/r': root } })
+    const { host, ping, sent, enter, reconcile } = rig({
+      plugins: [winding],
+      roots: { 'o/r': root },
+    })
     await enter(openVault('o/r', root))
 
     await turn(root, false)
-    const stopped = host.reconcile('settings')
+    const stopped = reconcile('settings')
     await left
     await vi.waitFor(() => expect(sent.map((s) => s.event.name)).toEqual(['stop-recording']))
     expect((await ping(root)).value).toBe('pong')
@@ -350,14 +495,14 @@ describe('the lifecycle', () => {
       logged(log, 'skin', { requires: ['face'] }),
       logged(log, 'base'),
     ]
-    const { host, enter } = rig({ plugins })
+    const { host, enter, reconcile } = rig({ plugins })
     const root = await tempDir()
     await enter(openVault('o/r', root))
     expect(log).toEqual(['start base', 'start face', 'start skin'])
 
     log.length = 0
     await writeVaultSettings(root, { committed: { plugins: { base: false } } })
-    await host.reconcile('settings')
+    await reconcile('settings')
     expect(log).toEqual(['stop skin', 'stop face', 'stop base'])
   })
 
@@ -383,15 +528,15 @@ describe('the lifecycle', () => {
       }),
       logged(log, 'face', { requires: ['base'] }),
     ]
-    const { host, enter } = rig({ plugins })
+    const { host, enter, reconcile } = rig({ plugins })
     await enter(openVault('o/r', await tempDir()))
     expect(host.failures('o/r')).toEqual({ base: 'keychain locked', face: 'base did not start.' })
 
-    await host.reconcile('snapshot')
+    await reconcile('snapshot')
     expect(log).toEqual(['try base'])
 
     fails = false
-    await host.reconcile('settings')
+    await reconcile('settings')
     expect(log).toEqual(['try base', 'try base', 'start face'])
     expect(host.failures('o/r')).toEqual({})
   })
@@ -415,7 +560,7 @@ describe('the lifecycle', () => {
         return () => {}
       }),
     ]
-    const { host, enter } = rig({ plugins })
+    const { host, enter, reconcile } = rig({ plugins })
     const root = await tempDir()
     await enter(openVault('o/r', root))
     base!.publish('news', 1)
@@ -423,7 +568,7 @@ describe('the lifecycle', () => {
     expect(host.failures('o/r')['stranger']).toMatch(/does not require/)
 
     await writeVaultSettings(root, { committed: { plugins: { face: false } } })
-    await host.reconcile('settings')
+    await reconcile('settings')
     base!.publish('news', 2)
     expect(heard).toEqual([1])
   })
@@ -438,7 +583,7 @@ describe('the lifecycle', () => {
         return () => void log.push('stop base')
       }),
     ]
-    const { host, enter } = rig({ plugins })
+    const { host, enter, reconcile } = rig({ plugins })
     await enter(openVault('o/r', root, log))
     expect([ctx!.remote, ctx!.root]).toEqual(['o/r', root])
 
@@ -451,7 +596,7 @@ describe('the lifecycle', () => {
     expect(log).toEqual(['pause one', 'pause two', 'pause two', 'resume'])
 
     ctx!.pauseSync('held')
-    await host.stop()
+    await host.stop('o/r')
     expect(log.slice(-3)).toEqual(['pause held', 'stop base', 'resume'])
   })
 
@@ -464,13 +609,13 @@ describe('the lifecycle', () => {
         return () => {}
       }),
     ]
-    const { host, enter } = rig({ plugins })
+    const { host, enter, reconcile } = rig({ plugins })
     await enter(openVault('o/r', root))
     const snapshot = (path: string) =>
       ({ files: [{ path, updatedAt: '' }] }) as unknown as Parameters<typeof host.snapshot>[1]
     host.snapshot('o/r', snapshot('a.txt'))
     host.snapshot('o/other', snapshot('b.txt'))
-    await host.stop()
+    await host.stop('o/r')
     host.snapshot('o/r', snapshot('c.txt'))
     expect(heard).toEqual(['a.txt'])
   })
@@ -481,7 +626,7 @@ describe('plugin events', () => {
     const on = await tempDir()
     const off = await tempDir()
     await turn(off, false)
-    const { ctx, sent, enter } = rig({ roots: { 'o/on': on, 'o/off': off } })
+    const { ctx, sent, enter, reconcile } = rig({ roots: { 'o/on': on, 'o/off': off } })
     await enter(openVault('o/on', on))
 
     ctx().emit('o/on', 'tick', 1)
@@ -498,7 +643,10 @@ describe('plugin events', () => {
 
   it("hear only the open vault's messages", async () => {
     const root = await tempDir()
-    const { ctx, fromRenderer, enter } = rig({ roots: { 'o/live': root }, live: 'o/live' })
+    const { ctx, fromRenderer, enter, reconcile } = rig({
+      roots: { 'o/live': root },
+      live: 'o/live',
+    })
     await enter(openVault('o/live', root))
     const heard: unknown[] = []
     ctx().on('key', (remote, payload) => heard.push([remote, payload]))
