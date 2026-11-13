@@ -53,6 +53,7 @@ import {
   previewTakenAtom,
 } from './app-previews'
 import { appCodeGenerationsAtom, appOpensAtom, appPathsAtom } from './apps'
+import { commandsChangedAtom } from './commands'
 import { appsCap } from './apps-cap'
 import { hostBridgeMessage } from './bridge-host'
 
@@ -137,6 +138,7 @@ export function AppFrame({
   const remote = useAtomValue(activeRemoteAtom)
   const codeGeneration = useAtomValue(appCodeGenerationsAtom)[remote ?? '']?.[path] ?? 0
   const mode = useAtomValue(activeModeAtom)
+  const commandsChanged = useAtomValue(commandsChangedAtom)
   const reloads = useAtomValue(appOpensAtom)[path] ?? 0
   const closeTab = useSetAtom(closeSurfaceTabAtom)
   const [revision, setRevision] = useState(0)
@@ -160,6 +162,7 @@ export function AppFrame({
       remote={remote}
       mode={mode}
       visible={visible}
+      commandsChanged={commandsChanged}
       recheck={recheck}
     />
   )
@@ -172,12 +175,14 @@ function AppLoad({
   remote,
   mode,
   visible,
+  commandsChanged,
   recheck,
 }: {
   path: string
   remote: string
   mode: string
   visible: boolean
+  commandsChanged: number
   recheck: () => void
 }): React.JSX.Element {
   const store = useStore()
@@ -243,6 +248,15 @@ function AppLoad({
   const [gateOpen, setGateOpen] = useState(false)
   const [error, setError] = useState(false)
   const [expiresAt, setExpiresAt] = useState<number | null>(null)
+  const permissionCheck = useRef<'checking' | 'ready' | 'error'>('checking')
+  const previousCommandsChanged = useRef(commandsChanged)
+  useEffect(() => {
+    if (previousCommandsChanged.current === commandsChanged) return
+    previousCommandsChanged.current = commandsChanged
+    // Main emits this after registering apps capabilities. Recover a failed or
+    // still-pending first check, but don't reload an app already running.
+    if (permissionCheck.current !== 'ready') recheck()
+  }, [commandsChanged, recheck])
   useEffect(() => {
     let current = true
     appsCap.grants(remote, { bundle: path }).then(
@@ -254,9 +268,13 @@ function AppLoad({
         setReasons(status.reasons ?? {})
         setExpiresAt(status.expiresAt ?? null)
         setGateOpen(ungranted.length === 0)
+        permissionCheck.current = 'ready'
       },
       () => {
-        if (current && live.current) setError(true)
+        if (current && live.current) {
+          permissionCheck.current = 'error'
+          setError(true)
+        }
       },
     )
     return () => {
