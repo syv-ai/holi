@@ -14,6 +14,10 @@ function observation(id, version = '1.0.0', runNumber = 1, outcome = 'unverified
         ? [
             { name: 'CLI surface', outcome },
             { name: 'fixture consumers', outcome },
+            { name: 'actual notify emission', outcome },
+            { name: 'approval notifications', outcome },
+            { name: 'inference events', outcome },
+            { name: 'sandbox enforcement', outcome },
           ]
         : [{ name: 'compatibility', outcome }],
   }
@@ -140,6 +144,10 @@ test('Codex report coverage keeps CLI surface and fixture consumers distinct', (
     [
       ['CLI surface', 'unverified'],
       ['fixture consumers', 'unverified'],
+      ['actual notify emission', 'unverified'],
+      ['approval notifications', 'unverified'],
+      ['inference events', 'unverified'],
+      ['sandbox enforcement', 'unverified'],
     ],
   )
 })

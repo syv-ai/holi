@@ -61,8 +61,8 @@ describe('the Codex provider', () => {
 
 describe('the Codex turn report', () => {
   it('consumes an attributed Codex notify fixture and ignores additive fields', () => {
-    // Contract fixture based on Codex CLI's documented notify payload shape;
-    // only these consumed keys affect identity and the first-ask label.
+    // Upstream contract: https://github.com/openai/codex/blob/d32063f96c2dff1dc96af839b3952abb6acfeda4/codex-rs/protocol/src/protocol.rs (notify payload contract at rust-v0.169.0)
+    // The extra future field is synthetic; consumed values mirror the upstream notify payload.
     const notifyFixture = {
       type: 'agent-turn-complete',
       'thread-id': '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
@@ -76,6 +76,12 @@ describe('the Codex turn report', () => {
     })
     expect(readTurn(JSON.stringify({ ...notifyFixture, 'thread-id': 'not-a-uuid' }))).toEqual({
       name: 'Review the release',
+    })
+    expect(
+      readTurn(JSON.stringify({ ...notifyFixture, 'input-messages': ['Changed ask'] })),
+    ).toEqual({
+      name: 'Changed ask',
+      conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
     })
   })
 

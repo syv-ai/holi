@@ -24,7 +24,14 @@ export const providers = [
 
 const requiredChecks = {
   'claude-code': ['compatibility'],
-  codex: ['CLI surface', 'fixture consumers'],
+  codex: [
+    'CLI surface',
+    'fixture consumers',
+    'actual notify emission',
+    'approval notifications',
+    'inference events',
+    'sandbox enforcement',
+  ],
   pi: ['compatibility'],
 }
 
