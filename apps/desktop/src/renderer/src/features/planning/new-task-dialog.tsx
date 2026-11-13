@@ -60,6 +60,16 @@ export function NewTaskDialog({
   const [fields, setFields] = useState(() => emptyDraft(defaultStatus, defaultFolder))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const presentationFocused = useRef(focused)
+  const wasPresented = useRef(false)
+  const presented = open && visible
+  if (presented && !wasPresented.current) {
+    presentationFocused.current = focused
+    wasPresented.current = true
+  } else if (!presented) {
+    wasPresented.current = false
+  }
+  const dialogFocused = presentationFocused.current
   const wasOpen = useRef(false)
   const edited = useRef(false)
   useEffect(() => {
@@ -114,8 +124,8 @@ export function NewTaskDialog({
 
   return (
     <Dialog
-      modal={focused}
-      open={open && visible}
+      modal={dialogFocused}
+      open={presented}
       onOpenChange={(next) => {
         if (!next) reset()
         onOpenChange(next)
@@ -123,10 +133,10 @@ export function NewTaskDialog({
     >
       <DialogContent
         className="sm:max-w-xl"
-        onOpenAutoFocus={(event) => !focused && event.preventDefault()}
-        onCloseAutoFocus={(event) => (!visible || !focused) && event.preventDefault()}
-        onFocusOutside={(event) => !focused && event.preventDefault()}
-        onInteractOutside={(event) => !focused && event.preventDefault()}
+        onOpenAutoFocus={(event) => !dialogFocused && event.preventDefault()}
+        onCloseAutoFocus={(event) => (!visible || !dialogFocused) && event.preventDefault()}
+        onFocusOutside={(event) => !dialogFocused && event.preventDefault()}
+        onInteractOutside={(event) => !dialogFocused && event.preventDefault()}
       >
         <div
           className="flex flex-col gap-6"
@@ -155,7 +165,7 @@ export function NewTaskDialog({
               </FieldLabel>
               <Input
                 id="new-task-title"
-                autoFocus={focused}
+                autoFocus={dialogFocused}
                 value={title}
                 onChange={(event) => {
                   edited.current = true
