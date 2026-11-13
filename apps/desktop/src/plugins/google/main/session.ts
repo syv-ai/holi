@@ -105,12 +105,14 @@ export class GoogleReconnectRequiredError extends Error {
  */
 export interface AccountRef {
   read(): StoredGoogleAuth | null
-  write(auth: StoredGoogleAuth, expectedRefreshToken?: string): Promise<void>
+  /** Identifies the currently stored grant, including reconnects that reuse a token. */
+  generation(): number
+  write(auth: StoredGoogleAuth, expectedGeneration: number): Promise<void>
   /** The person disconnected: the tokens and every vault's link go. */
   remove(): Promise<void>
   /** Google refused the grant: the tokens and links go, and each vault linked
    *  to it is remembered as needing a reconnect, not as never connected. */
-  expire(expectedRefreshToken?: string): Promise<void>
+  expire(expectedGeneration: number): Promise<void>
 }
 
 export interface GoogleSessionDeps {
@@ -201,7 +203,8 @@ export class GoogleSession {
 
     // `??=` is the latch: the first caller starts the refresh, everyone else
     // awaits the same promise.
-    this.#refreshing ??= this.#refresh(auth).finally(() => {
+    const generation = this.#deps.account.generation()
+    this.#refreshing ??= this.#refresh(auth, generation).finally(() => {
       this.#refreshing = null
     })
     return this.#refreshing
@@ -231,7 +234,7 @@ export class GoogleSession {
     return () => this.#listeners.delete(cb)
   }
 
-  async #refresh(auth: StoredGoogleAuth): Promise<string> {
+  async #refresh(auth: StoredGoogleAuth, generation: number): Promise<string> {
     let body: Record<string, unknown>
     const client = this.#client()
     try {
@@ -247,7 +250,7 @@ export class GoogleSession {
       // must NOT drop a working connection. Google reports it as a 400.
       if (err instanceof Error && 'status' in err && err.status === 400) {
         // This account's record goes; every other account's is untouched.
-        await this.#deps.account.expire(auth.refreshToken)
+        await this.#deps.account.expire(generation)
         this.#emit()
         throw new GoogleReconnectRequiredError()
       }
@@ -264,7 +267,8 @@ export class GoogleSession {
       refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : auth.refreshToken,
     }
 
-    await this.#deps.account.write(updated, auth.refreshToken)
+    await this.#deps.account.write(updated, generation)
+    if (this.#deps.account.generation() !== generation) throw new GoogleReconnectRequiredError()
     return updated.accessToken
   }
 
