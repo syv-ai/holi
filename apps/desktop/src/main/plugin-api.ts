@@ -295,6 +295,7 @@ export {
   type CapabilityContext,
   type CapabilityTable,
   type Admit,
+  type CliRun,
   type CliSpec,
   type Door,
 } from './capabilities/registry'

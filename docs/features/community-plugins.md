@@ -105,8 +105,40 @@ session through its supervisor's environment, as `holi` does, so a supervisor st
 Holi learns it at its next start. The consent dialog lists the commands; a call to one still asks
 for permission like any other command, until the person allows it.
 
+**Verbs through `holi plugin`.** A manifest's `cli` gives Holi's own command a plugin's verbs, so a
+person types what the agent does, with named flags in any order:
+
+```json
+"cli": {
+  "run": ["node", "bin/modelokale.mjs"],
+  "verbs": { "login": "Sign in to the booking site", "book": "Book a room" }
+}
+```
+
+```sh
+holi plugin modelokale book --room "Garage 2" --start 2026-11-10T10:00 --end 2026-11-10T11:00
+```
+
+`run` is an argv like `check.run`, with `{vault}` its one placeholder. Each verb is a lowercase name
+with one line saying what it does; its flags are the plugin's own, and Holi reads none of them.
+`holi plugin` lists the plugins running in the vault with their verbs, and `holi plugin <id>` (or
+`--help` in either place) one plugin's. A plugin that does not run here (off, not installed, not
+allowed or not set up) and a verb its manifest does not name are refused, and nothing runs. So is an
+option before the verb, which keeps the verb the third word for a rule that names it. Otherwise main
+answers the `holi` script with `run`, the verb and every word after it as typed, the plugin's folder
+and `HOLI_VAULT_ROOT`, and the script becomes that program (`exec`): its stdin, output, exit code and
+signals are the caller's, and output streams, so a sign-in can print a link and wait. It runs where a
+`bin` command does, as the caller, on the caller's `PATH`, never inside Holi. Every plugin has its
+own space under its id, so a verb never clashes with a command on the machine or another plugin's,
+and a rule reads as Holi's own do: `Bash(holi plugin modelokale book:*)`. Holi seeds no rule for
+them, so each call asks until the person allows that verb. A broad `Bash(holi:*)` that a person adds
+would cover every plugin's verbs too, as it covers `holi google send`. The consent dialog shows `run`
+and the verbs. `bin` stays beside `cli`: a `PATH` command works while Holi is not running, which
+`holi` does not.
+
 **Nothing runs before consent.** A fetched release waits until the person allows that commit, in a
-dialog naming the repository, version, commit, both commands and the commands it gives the agent, in body text, as the vault-app consent is. Consent is per `(id, commit)` in
+dialog naming the repository, version, commit, both commands, the commands it gives the agent and
+what its verbs run, in body text, as the vault-app consent is. Consent is per `(id, commit)` in
 `userData/plugin-consent.json`, with no expiry; a different commit asks again. Then setup runs once,
 its output streamed into the dialog and kept in `setup.log`. A folder install asks nothing: it is
 the person's own checkout.
@@ -199,6 +231,15 @@ plugin the vault pins, whether the vault turns it on, and the commands it gives 
 
 - **A plugin's commands first on `PATH`, as Holi's own `holi` is.** A plugin could then answer to
   `git` or `node` for the agent; last on `PATH`, with taken names refused, it can only add.
+- **Main running a plugin's verbs**, as it runs `setup`, `serve` and `check`. Its output would come
+  back only once it ended, over the bridge's buffered answer, with no stdin, no streaming for a
+  sign-in that waits, and a new way to carry stdout, stderr and the exit code; the script running
+  it in its own place gets all of them as a command on `PATH` does.
+- **Declaring each verb's flags in the manifest.** It would give usage and early errors at the cost
+  of a grammar for plugin authors to learn and Holi to keep; the verb's own `--help` gives the first,
+  and a plugin's flags are its business.
+- **A seeded ask rule for `holi plugin`.** Ask outranks allow, so it would override a person's own
+  allow for one verb and ask forever; nothing seeded allows the verbs, so they ask already.
 - **Allow rules in the manifest.** Calls to a plugin's command ask, as any command does; a plugin
   that could pre-allow itself would be consented to once and never asked about again.
 
@@ -220,7 +261,10 @@ plugin the vault pins, whether the vault turns it on, and the commands it gives 
 - `packages/shared/src/community-plugin.ts`: the manifest and pin grammar, `opensPath`,
   `pluginServerOrigin`, `PLUGIN_COMMANDS_DIR`.
 - `apps/desktop/src/plugins/community/main/`: the install store, fetch, the topic search, setup,
-  consent, the readiness checks (`checks.ts`), the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
+  consent, the readiness checks (`checks.ts`), the supervisor, the agent's commands (`commands.ts`),
+  the verbs of `holi plugin` (`verbs.ts`) and the `community.*` and `plugin.run` capabilities.
+- `apps/desktop/src/main/bridge/cli.ts`: a command that is its namespace (`rest`) and the program
+  the script runs in its place (`cliRun`, `runScript`).
 - `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`, `plugin-frame.tsx`), the settings section, the
   consent dialog and the vault notice.
 - `apps/desktop/src/main/window-guard.ts`: `originFrameExit`.

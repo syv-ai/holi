@@ -40,6 +40,7 @@ const row: PluginRow = {
   serve: null,
   apps: [],
   bin: [],
+  cli: null,
   commandsNote: null,
   check: null,
 }

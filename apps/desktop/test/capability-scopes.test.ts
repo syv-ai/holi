@@ -44,6 +44,113 @@ describe('remote-scoped capability registrations', () => {
     removeB()
   })
 
+  it('does not hand off an executable after its scoped registration is disposed', async () => {
+    const registry = createCapabilityRegistry()
+    let finish!: (value: string) => void
+    const pending = new Promise<string>((resolve) => {
+      finish = resolve
+    })
+    const command = cap({
+      doors: ['cli'] as const,
+      cli: { args: [], summary: 'pending handoff' },
+      params: () => ({}),
+      run: () => pending,
+      cliRun: () => ({ cwd: '/plugin', argv: ['/plugin/run'], env: {} }),
+    })
+    const remove = registry.register(['sample'], { 'sample.run': command }, 'sample', 'A')
+    const call = registry.run('sample.run', 'cli', context('A'), {})
+    await Promise.resolve()
+    remove()
+    finish('done')
+    await expect(call).rejects.toThrow(/no such method/)
+  })
+
+  it('fences a scoped handoff revoked while post-run enablement is pending', async () => {
+    const registry = createCapabilityRegistry()
+    let finish!: (enabled: boolean) => void
+    const enabled = new Promise<boolean>((resolve) => {
+      finish = resolve
+    })
+    const remove = registry.register(
+      ['sample'],
+      {
+        'sample.run': cap({
+          doors: ['cli'] as const,
+          cli: { args: [], summary: 'run' },
+          params: () => ({}),
+          run: async () => 'done',
+          cliRun: () => ({ cwd: '/plugin', argv: ['/plugin/run'], env: {} }),
+        }),
+      },
+      'sample',
+      'A',
+    )
+    const pluginEnabled = vi.fn().mockResolvedValueOnce(true).mockReturnValueOnce(enabled)
+    const host = createCapabilityHost({
+      registry,
+      rootFor: async () => '/A',
+      active: () => null,
+      core: noCoreServices,
+      pluginEnabled,
+      claims: async () => [],
+    })
+    const call = host.dispatch({ door: 'cli', remote: 'A', name: 'sample.run', params: {} })
+    await vi.waitFor(() => expect(pluginEnabled).toHaveBeenCalledTimes(2))
+    remove()
+    registry.register(
+      ['sample'],
+      {
+        'sample.run': cap({
+          doors: ['cli'] as const,
+          cli: { args: [], summary: 'replacement' },
+          params: () => ({}),
+          run: async () => 'replacement',
+          cliRun: () => ({ cwd: '/plugin', argv: ['/plugin/run'], env: {} }),
+        }),
+      },
+      'sample',
+      'A',
+    )
+    finish(true)
+    await expect(call).rejects.toThrow(/no such method/)
+  })
+
+  it('rechecks plugin enablement before returning an awaited executable handoff', async () => {
+    const registry = createCapabilityRegistry()
+    let finish!: (value: string) => void
+    const pending = new Promise<string>((resolve) => {
+      finish = resolve
+    })
+    registry.register(
+      ['sample'],
+      {
+        'sample.run': cap({
+          doors: ['cli'] as const,
+          cli: { args: [], summary: 'run' },
+          params: () => ({}),
+          run: () => pending,
+          cliRun: () => ({ cwd: '/plugin', argv: ['/plugin/run'], env: {} }),
+        }),
+      },
+      'sample',
+      'A',
+    )
+    const pluginEnabled = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    const host = createCapabilityHost({
+      registry,
+      rootFor: async () => '/A',
+      active: () => null,
+      core: noCoreServices,
+      pluginEnabled,
+      claims: async () => [],
+    })
+    const call = host.dispatch({ door: 'cli', remote: 'A', name: 'sample.run', params: {} })
+    await Promise.resolve()
+    finish('done')
+    await expect(call).rejects.toThrow(/no such method/)
+    expect(pluginEnabled).toHaveBeenCalledTimes(2)
+  })
+
   it('tracks empty namespace claims and rejects core/plugin/global collisions in either order', () => {
     const registry = createCapabilityRegistry()
     const release = registry.register(['empty'], {}, 'sample', 'A')

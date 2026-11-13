@@ -13,7 +13,7 @@ afterEach(async () => {
 })
 
 it.each(['darwin', 'linux'] as const)(
-  'preserves baseline POSIX helper bytes on %s',
+  'matches the expected POSIX helper bytes on %s',
   async (platform) => {
     const root = await mkdtemp(join(tmpdir(), 'holi helper bytes '))
     dirs.push(root)
@@ -24,9 +24,9 @@ it.each(['darwin', 'linux'] as const)(
       quote(join(root, 'cli-endpoint.json')),
       quote('/holi baseline user data/cli-endpoint.json'),
     )
-    // Golden byte digests of the generators at 74b834df, before Windows changes.
+    // Golden byte digests keep POSIX output identical across these platforms.
     expect(createHash('sha256').update(normalized).digest('hex')).toBe(
-      '3f9999f036c106072db311c25374dceba6184935a4e915febcf9ddf173bb863e',
+      '5d85d9b92d38324e18ec4f9b6218b226369dd3868cad352dba9d724786eb4dea',
     )
     expect(
       createHash('sha256')
