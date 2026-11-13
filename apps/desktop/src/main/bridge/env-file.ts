@@ -130,7 +130,7 @@ export function createBridgeEnv(
  */
 export function shellJobId(platform: NodeJS.Platform = process.platform): string {
   return platform === 'win32'
-    ? `job=$(printf '%s' "\${CLAUDE_JOB_DIR:-}" | tr '\\\\' '/' | sed 's|.*/||')`
+    ? `job=$(printf '%s' "\${CLAUDE_JOB_DIR:-}" | tr '\\134' '/' | sed 's|.*/||')`
     : 'job=${CLAUDE_JOB_DIR##*/}'
 }
 
