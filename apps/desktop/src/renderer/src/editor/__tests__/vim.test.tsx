@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, expect, it, vi } from 'vitest'
+import { getCM, Vim } from '@replit/codemirror-vim'
 import { useVimEditor } from '../vim'
 
 let view: EditorView | null = null
@@ -24,7 +25,7 @@ it('keeps its extension and editor state while applying current enablement and h
   const firstKey = vi.fn()
   const hook = renderHook(
     ({ enabled, onModeChange, onKeyDown }) =>
-      useVimEditor(editorView, enabled, onModeChange, onKeyDown),
+      useVimEditor(editorView, enabled, true, onModeChange, onKeyDown),
     { initialProps: { enabled: false, onModeChange: firstMode, onKeyDown: firstKey } },
   )
   const extension = hook.result.current.extension
@@ -51,11 +52,40 @@ it('keeps its extension and editor state while applying current enablement and h
   hook.unmount()
 })
 
+it('retains real Vim insert mode when the editor becomes inactive', async () => {
+  const callback = vi.fn()
+  const handler = vi.fn()
+  const hook = renderHook(
+    ({ currentView, active }) => useVimEditor(currentView, true, active, callback, handler),
+    { initialProps: { currentView: null as EditorView | null, active: true } },
+  )
+  const parent = document.createElement('div')
+  document.body.append(parent)
+  const editorView = new EditorView({
+    state: EditorState.create({ doc: 'start', extensions: [hook.result.current.extension] }),
+    parent,
+  })
+  view = editorView
+  act(() => hook.rerender({ currentView: editorView, active: true }))
+
+  await act(async () => {
+    editorView.focus()
+    Vim.handleKey(getCM(editorView)!, 'i', 'keydown')
+    await Promise.resolve()
+  })
+  expect(getCM(editorView)?.state.vim?.insertMode).toBe(true)
+  act(() => hook.rerender({ currentView: editorView, active: false }))
+  expect(getCM(editorView)?.state.vim?.insertMode).toBe(true)
+  expect(hook.result.current.onKeyDownCapture).toBeUndefined()
+  expect(hook.result.current.onKeyDown).toBeUndefined()
+  hook.unmount()
+})
+
 it('starts a replacement view with current enablement and suppresses mode reports after teardown', async () => {
   const callback = vi.fn()
   const handler = vi.fn()
   const hook = renderHook(
-    ({ currentView, enabled }) => useVimEditor(currentView, enabled, callback, handler),
+    ({ currentView, enabled }) => useVimEditor(currentView, enabled, enabled, callback, handler),
     { initialProps: { currentView: null as EditorView | null, enabled: false } },
   )
   act(() => hook.rerender({ currentView: makeView(), enabled: true }))
