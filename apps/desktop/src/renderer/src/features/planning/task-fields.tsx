@@ -45,7 +45,6 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import {
-  DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuLabel,
@@ -55,7 +54,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/cn'
 import { parentOf } from '@/lib/tree-paths'
 import { PRIORITIES, shortDate } from '@/lib/planning'
@@ -64,6 +63,7 @@ import { taskTagsAtom, tasksAtom } from '@/state/tasks'
 import { snapshotAtom } from '@/state/vaults'
 import { PeopleStack } from '@/composites/person-avatar'
 import { StatusIcon } from './task-bits'
+import { PlanningDropdownMenu, PlanningPopover } from './planning-visibility'
 
 /** What the row edits. `folder` is vault-relative, `""` the vault root. */
 export interface TaskFieldValues {
@@ -230,7 +230,7 @@ function StatusField({
 }) {
   const current = statuses.find((s) => s.id === value)
   return (
-    <DropdownMenu modal={false}>
+    <PlanningDropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -253,7 +253,7 @@ function StatusField({
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
-    </DropdownMenu>
+    </PlanningDropdownMenu>
   )
 }
 
@@ -271,7 +271,7 @@ function AssigneesField({
   const toggle = (login: string, on: boolean) =>
     onChange(on ? [...value, login] : value.filter((x) => x !== login))
   return (
-    <DropdownMenu modal={false}>
+    <PlanningDropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -303,7 +303,7 @@ function AssigneesField({
           ))
         )}
       </DropdownMenuContent>
-    </DropdownMenu>
+    </PlanningDropdownMenu>
   )
 }
 
@@ -320,7 +320,7 @@ function PriorityField({
 }) {
   const name = PRIORITIES.find((p) => p.id === value)?.name
   return (
-    <DropdownMenu modal={false}>
+    <PlanningDropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -345,7 +345,7 @@ function PriorityField({
           <DropdownMenuRadioItem value={NO_PRIORITY}>No priority</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
-    </DropdownMenu>
+    </PlanningDropdownMenu>
   )
 }
 
@@ -366,7 +366,7 @@ function DateField({
   const day = stampDay(value)
   const { label } = FIELD_NAMES[field]
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <PlanningPopover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -404,7 +404,7 @@ function DateField({
           </div>
         ) : null}
       </PopoverContent>
-    </Popover>
+    </PlanningPopover>
   )
 }
 
@@ -496,7 +496,7 @@ function LabelsField({
   const known = useAtomValue(taskTagsAtom)
   const options = [...new Set([...known, ...value])]
   return (
-    <Popover>
+    <PlanningPopover>
       <PopoverTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -528,7 +528,7 @@ function LabelsField({
           }
         />
       </PopoverContent>
-    </Popover>
+    </PlanningPopover>
   )
 }
 
@@ -546,7 +546,7 @@ function ProjectField({
   const projects = useProjects()
   const options = value !== '' && !projects.includes(value) ? [...projects, value] : projects
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <PlanningPopover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -578,7 +578,7 @@ function ProjectField({
           }}
         />
       </PopoverContent>
-    </Popover>
+    </PlanningPopover>
   )
 }
 
@@ -608,7 +608,7 @@ function EstimateField({
     setOpen(false)
   }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <PlanningPopover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -660,7 +660,7 @@ function EstimateField({
           ) : null}
         </div>
       </PopoverContent>
-    </Popover>
+    </PlanningPopover>
   )
 }
 
@@ -690,7 +690,7 @@ function SharingField({
 }) {
   const current = SHARINGS[value ? 1 : 0]
   return (
-    <DropdownMenu modal={false}>
+    <PlanningDropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <FieldTrigger
           layout={layout}
@@ -724,7 +724,7 @@ function SharingField({
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
-    </DropdownMenu>
+    </PlanningDropdownMenu>
   )
 }
 

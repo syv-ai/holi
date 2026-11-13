@@ -882,7 +882,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
         api.select({
           slot: { start: draft.start, end: draft.end, allDay: draft.allDay },
         })
-        settings.onSelectSlot?.(draft)
+        settings.onSelectSlot?.(draft, e)
       }
       return
     }
