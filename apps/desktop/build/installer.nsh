@@ -16,9 +16,35 @@
 
 ; The running app registers the holi:// scheme itself (setAsDefaultProtocolClient),
 ; which the uninstaller does not know to undo; left behind it points at a
-; deleted Holi.exe. An update runs the old uninstaller too, so skip it then.
+; deleted Holi.exe. Only remove a registration that points at this installation:
+; another Holi install may have registered itself later. An update runs the old
+; uninstaller too, so skip it then.
 !macro customUnInstall
   ${ifNot} ${isUpdated}
-    DeleteRegKey HKCU "Software\Classes\holi"
+    ReadRegStr $R1 HKCU "Software\Classes\holi\shell\open\command" ""
+    ; Electron registers a quoted executable followed by quoted arguments. Find
+    ; the matching closing quote rather than splitting on spaces in the path.
+    StrCpy $R0 $R1 1
+    StrCmp $R0 '"' 0 holiUninstallKeepProtocol
+    StrLen $R2 $R1
+    IntOp $R2 $R2 - 1
+    StrCpy $R3 1
+    holiUninstallFindProtocolQuote:
+      IntCmp $R3 $R2 holiUninstallKeepProtocol holiUninstallReadProtocolQuote holiUninstallKeepProtocol
+    holiUninstallReadProtocolQuote:
+      StrCpy $R0 $R1 1 $R3
+      StrCmp $R0 '"' holiUninstallCompareProtocol
+      IntOp $R3 $R3 + 1
+      Goto holiUninstallFindProtocolQuote
+    holiUninstallCompareProtocol:
+      IntOp $R3 $R3 - 1
+      StrCpy $R4 $R1 $R3 1
+      GetFullPathName $R4 "$R4"
+      GetFullPathName $R5 "$INSTDIR\${PRODUCT_FILENAME}.exe"
+      ; StrCmp is case-insensitive on Windows; GetFullPathName normalizes both
+      ; paths before comparison, while the quotes above protect spaces.
+      StrCmp $R4 $R5 0 holiUninstallKeepProtocol
+      DeleteRegKey HKCU "Software\Classes\holi"
+    holiUninstallKeepProtocol:
   ${endIf}
 !macroend
