@@ -122,7 +122,16 @@ function rig(
     notify: () => false,
     focused: () => false,
     activity: (entry) => activity.push(entry),
-    call: opts.call,
+    call:
+      opts.call ??
+      ((remote, name, params, beforeInvoke) =>
+        capabilities.dispatch({
+          door: 'ui',
+          remote,
+          name,
+          params,
+          beforeInvoke,
+        })),
   })
   let root = ''
   const capabilities = createCapabilityHost({
@@ -148,6 +157,7 @@ function rig(
   }
   /** Make `vault` the open one and reconcile, as the router does after `host.open`. */
   const enter = async (vault: OpenVault | null) => {
+    root = vault?.root ?? ''
     const previous = open
     if (previous !== null && previous.remote !== vault?.remote) await host.stop(previous.remote)
     open = vault
@@ -238,6 +248,65 @@ describe('the plugin host', () => {
     await host.stop('o/r')
     expect(calls.stopped).toBe(1)
     expect(registry.has('fake.ping', 'o/r')).toBe(false)
+  })
+
+  it('lets a fresh dependant finalizer use a provider capability until provider teardown', async () => {
+    let providerCtx: PluginCtx | null = null
+    let lateProviderRead: Promise<string> | null = null
+    const commits: string[] = []
+    const provider: MainPlugin = {
+      info: { id: 'provider', label: 'Provider', default: true },
+      activate(ctx) {
+        providerCtx = ctx
+        ctx.register(['probe'], {
+          'probe.final': cap({
+            doors: ['ui'],
+            params: noParams,
+            run: async () => {
+              const head = await ctx.head()
+              await ctx.commitNow()
+              const nested = await ctx.call('probe.nested', {})
+              lateProviderRead = new Promise((resolve) => {
+                setImmediate(() => void ctx.head().then(resolve, () => resolve('rejected')))
+              })
+              return { head, nested: nested.value }
+            },
+          }),
+          'probe.nested': cap({
+            doors: ['ui'],
+            params: noParams,
+            run: async () => ctx.head(),
+          }),
+        })
+        return () => {}
+      },
+    }
+    const dependant: MainPlugin = {
+      info: { id: 'dependant', label: 'Dependant', default: true, requires: ['provider'] },
+      activate(ctx) {
+        return async () => {
+          const result = await ctx.call('probe.final', {})
+          expect(result.value).toEqual({ head: 'sha', nested: 'sha' })
+        }
+      },
+    }
+    const plugins = [provider, dependant]
+    const { host, enter, registry } = rig({ plugins })
+    const root = await tempDir()
+    const vault = openVault('o/r', root)
+    vault.commitNow = async () => void commits.push('commit')
+    await enter(vault)
+    expect(registry.pluginOf('probe.final', 'o/r')).toBe('provider')
+
+    await host.stop('o/r')
+
+    expect(commits).toEqual(['commit'])
+    expect(registry.has('probe.final', 'o/r')).toBe(false)
+    expect(await lateProviderRead).toBe('rejected')
+    await expect(providerCtx!.head()).rejects.toThrow('plugin context is no longer active')
+    await expect(providerCtx!.call('probe.final', {})).rejects.toThrow(
+      'plugin context is no longer active',
+    )
   })
 
   it('does not start a plugin the vault has off', async () => {
