@@ -14,7 +14,12 @@
 import { type ChildProcess } from 'node:child_process'
 import net from 'node:net'
 import { pluginServerOrigin } from '@holi/shared'
-import { defaultProbePid, killTree, spawnProgram, type PidState } from '../../../main/plugin-api'
+import {
+  defaultProbePid,
+  killTree,
+  spawnOwnedProgram,
+  type PidState,
+} from '../../../main/plugin-api'
 import { splitLines } from './setup'
 
 /** Prezzi's own launcher starts here, above the servers people keep running. */
@@ -122,7 +127,7 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
    *  not a launcher that exits (docs/features/community-plugins.md). */
   const signal = (child: ChildProcess, sig: 'SIGTERM' | 'SIGKILL') => {
     if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return
-    if (probe(child.pid) !== 'group-leader') {
+    if (process.platform === 'win32' || probe(child.pid) !== 'group-leader') {
       child.kill(sig)
       return
     }
@@ -173,7 +178,7 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
       if (server.log.length > LOG_LINES) server.log.splice(0, server.log.length - LOG_LINES)
     })
     const [command, ...args] = spec.argv(port)
-    const child = spawnProgram(command!, args, {
+    const child = spawnOwnedProgram(command!, args, {
       cwd: spec.cwd,
       env: spec.env(port),
       detached: true,
@@ -188,7 +193,7 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         exitMessage = `could not run ${command}: ${err.message}`
         resolve()
       })
-      child.once('exit', (code, sig) => {
+      child.once('close', (code, sig) => {
         remember.flush()
         exitMessage ??= sig !== null ? `stopped by ${sig}` : `exited with ${code}`
         resolve()

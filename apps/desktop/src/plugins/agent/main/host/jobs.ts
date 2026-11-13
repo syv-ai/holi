@@ -84,7 +84,7 @@ import {
   killChildTree,
   killTree,
   readableOrNull,
-  spawnProgram,
+  spawnOwnedProgram,
   type PidState,
 } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
@@ -129,7 +129,7 @@ type SpawnJob = (
  *  child is not detached, which would only open a console window for what it
  *  starts; `killTree` stops its tree by the root pid.) */
 const defaultSpawnJob: SpawnJob = (bin, args, { cwd, env }) =>
-  spawnProgram(bin, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  spawnOwnedProgram(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
 
 export interface JobsDeps {
   vault: VaultRef
@@ -541,6 +541,16 @@ export function createJobs(deps: JobsDeps): Jobs {
   function signal(job: Job, sig: 'SIGTERM' | 'SIGKILL'): void {
     const child = job.child
     if (child === null || child.pid === undefined) return
+    if (process.platform === 'win32') {
+      // This ChildProcess is the ownership helper itself. Killing its process
+      // handle closes the Job Object; never target a Windows pid after a probe.
+      try {
+        child.kill(sig)
+      } catch {
+        // Raced with its exit.
+      }
+      return
+    }
     switch (probePid(child.pid)) {
       case 'group-leader':
         // Reaped between the probe and here is a no-op; on Windows a child that
@@ -574,9 +584,9 @@ export function createJobs(deps: JobsDeps): Jobs {
   /** Kill whatever the job's process left running in its group, so nothing
    *  changes the folder while it is copied back or the vault after its turn. */
   function killGroup(job: Job): void {
-    // The group may be empty already. (On Windows the leader has exited by
-    // now and its pid may be another program's, so nothing is sent.)
-    if (job.child) void killChildTree(job.child, 'SIGKILL')
+    // The Windows ownership helper closes only after its Job Object is empty.
+    // POSIX still needs the group sweep after the root closes.
+    if (process.platform !== 'win32' && job.child) void killChildTree(job.child, 'SIGKILL')
   }
 
   /** Move the current file aside atomically, then publish the replacement

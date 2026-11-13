@@ -10,7 +10,13 @@
 import { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { killChildTree, spawnProgram, toolPath, withPath } from '../../../main/plugin-api'
+import {
+  killChildTree,
+  spawnOwnedProgram,
+  spawnProgram,
+  toolPath,
+  withPath,
+} from '../../../main/plugin-api'
 
 /** What a command's `{file}`, `{vault}` and `{port}` stand for. */
 export interface CommandValues {
@@ -102,7 +108,7 @@ export function runCheck(args: {
   return new Promise((resolve) => {
     if (args.signal?.aborted) return resolve(false)
     // Its own process group, so a kill stops what it started too.
-    const child = spawnProgram(command!, rest, {
+    const child = spawnOwnedProgram(command!, rest, {
       cwd: args.cwd,
       env: pluginEnv(),
       stdio: 'ignore',
@@ -120,12 +126,12 @@ export function runCheck(args: {
     let stopped = false
     const stop = () => {
       stopped = true
-      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
-        if (!killChildTree(child, 'SIGKILL')) child.kill('SIGKILL')
+      if (child.exitCode === null && child.signalCode === null) {
+        if (process.platform === 'win32' || !killChildTree(child, 'SIGKILL')) child.kill('SIGKILL')
       }
-      // `taskkill` takes a moment: on Windows the answer waits for the tree to
-      // be gone (the `exit` below says so), so a caller removing the check's
-      // folder finds nothing holding it.
+      // On Windows the ownership helper waits for its whole Job Object to be
+      // empty before `close`, so a caller removing the check's folder finds
+      // nothing holding it.
       if (process.platform === 'win32' && child.exitCode === null) {
         setTimeout(() => finish(false), 3_000).unref()
         return
@@ -135,7 +141,7 @@ export function runCheck(args: {
     const timer = setTimeout(stop, args.timeoutMs ?? CHECK_TIMEOUT_MS)
     args.signal?.addEventListener('abort', stop, { once: true })
     child.once('error', () => finish(false))
-    child.once('exit', (code) => finish(!stopped && code === 0))
+    child.once('close', (code) => finish(!stopped && code === 0))
   })
 }
 

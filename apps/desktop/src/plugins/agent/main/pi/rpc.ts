@@ -1,5 +1,5 @@
 import { type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { killTree, spawnProgram } from '../../../../main/plugin-api'
+import { killTree, spawnOwnedProgram } from '../../../../main/plugin-api'
 import type { Readable, Writable } from 'node:stream'
 
 type PiRunStatus = 'completed' | 'failed' | 'aborted'
@@ -108,11 +108,11 @@ export class PiRpcRun {
       }
     }
     this.processGroup = options.spawn === undefined && process.platform !== 'win32'
-    this.processTree = options.spawn === undefined && process.platform === 'win32'
+    this.processTree = false
     const spawn =
       options.spawn ??
       ((bin, args, opts) =>
-        spawnProgram(bin, args, {
+        spawnOwnedProgram(bin, args, {
           ...opts,
           detached: this.processGroup,
         }) as ChildProcessWithoutNullStreams)
