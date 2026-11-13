@@ -67,7 +67,7 @@ export function TabView({
     case 'board':
       return <PlanningView onOpenTask={onOpen} />
     case 'graph':
-      return <GraphView onOpen={onOpenBeside} reading={reading} />
+      return <GraphView onOpen={onOpenBeside} reading={reading} displayed={visible} />
     case 'apps':
       return <AppsView onOpen={onOpen} />
     case 'surface': {

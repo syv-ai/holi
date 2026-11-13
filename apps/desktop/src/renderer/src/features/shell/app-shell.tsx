@@ -35,6 +35,8 @@ import {
   activeSplit,
   closeTab as closeTabIn,
   entryIds,
+  entryOf,
+  entryViews,
   focusedTab,
   focusMember,
   openInSplit,
@@ -389,9 +391,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
             onOpen={openTabKey}
             onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
             reading={
-              members
-                .map((member) => tabPath(member.key))
-                .find((path) => path !== null && path !== tab) ?? null
+              tab === null
+                ? null
+                : (entryViews(entryOf(ws, tab) ?? tab)
+                    .map((member) => tabPath(member))
+                    .find((path) => path !== null && path !== tab) ?? null)
             }
             onMoved={(from, to) => retargetTabs([{ from, to }])}
             onNewDocument={newDocument}
