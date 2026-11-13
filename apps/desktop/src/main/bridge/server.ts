@@ -117,7 +117,7 @@ function requestedVaultCandidates(argv: readonly string[]): string[] {
   for (let i = 0; i < argv.length; i++) {
     const word = argv[i]!
     if (word.startsWith('--vault=')) candidates.push(word.slice('--vault='.length))
-    else if (word === '--vault' && argv[i + 1] !== undefined) candidates.push(argv[++i]!)
+    else if (word === '--vault' && argv[i + 1] !== undefined) candidates.push(argv[i + 1]!)
   }
   return candidates
 }
@@ -216,13 +216,11 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
           const targetCommands = [...cli.commands(target.remote), MACHINE_LIST]
           const request = resolveArgv(argv, targetCommands, form.get('stdin'), form.get('job'))
           if (request.kind === 'usage') targetUsage ??= { status: 400, body: request.text }
-          const selectorRequest =
-            request.kind === 'help'
-              ? resolveArgv(helpArgv, targetCommands, form.get('stdin'), form.get('job'))
-              : request
+          const selectorRequest = request
           if (
-            (request.kind === 'run' || request.kind === 'stdin' || request.kind === 'help') &&
-            (selectorRequest.kind === 'run' || selectorRequest.kind === 'stdin') &&
+            (selectorRequest.kind === 'run' ||
+              selectorRequest.kind === 'stdin' ||
+              selectorRequest.kind === 'help') &&
             selectorRequest.vault?.toLowerCase() === candidate.toLowerCase()
           ) {
             machineTarget = target
@@ -264,7 +262,9 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
           form.get('job'),
         )
         if (
-          (selectorRequest.kind === 'run' || selectorRequest.kind === 'stdin') &&
+          (selectorRequest.kind === 'run' ||
+            selectorRequest.kind === 'stdin' ||
+            selectorRequest.kind === 'help') &&
           selectorRequest.vault !== null &&
           selectorRequest.vault.toLowerCase() !== machineTarget.remote.toLowerCase()
         ) {

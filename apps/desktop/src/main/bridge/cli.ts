@@ -47,7 +47,7 @@ export type CliRequest =
   /** Not a command: the text says why and what is (exit 2). */
   | { kind: 'usage'; text: string }
   /** Asked for usage, bare or with --help: the text is the answer (exit 0). */
-  | { kind: 'help'; text: string }
+  | { kind: 'help'; text: string; vault: string | null }
   /** The command reads a param from stdin and it was not given: ask the
    *  script for stdin, and run nothing yet. */
   | { kind: 'stdin'; vault: string | null }
@@ -127,7 +127,39 @@ export function resolveArgv(
         : root !== undefined
           ? `usage: ${commandLine(root)} [--json] [--fields <paths>]\n${root.cli.summary}\n--fields selects comma-separated dotted fields and requires --json.`
           : usageText(commands)
-    return { kind: 'help', text }
+    const command = commands.find((c) => c.name === `${argv[0]}.${argv[1]}`)
+    const root = argv[0] === undefined ? undefined : standaloneByNamespace.get(argv[0])
+    const target = command ?? root
+    let vault: string | null = null
+    if (target !== undefined) {
+      const rest = argv.slice(command === undefined ? 1 : 2)
+      let options = true
+      for (let i = 0; i < rest.length; i++) {
+        const word = rest[i]!
+        if (options && word === '--') {
+          options = false
+          continue
+        }
+        if (!options || !word.startsWith('--')) continue
+        const eq = word.indexOf('=')
+        const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
+        const takesValue =
+          target.cli.values?.includes(name) === true ||
+          target.cli.many?.includes(name) === true ||
+          target.cli.args.some((arg) => argName(arg) === name) ||
+          name === target.cli.stdin ||
+          name === target.cli.stdinUnless ||
+          name === target.cli.job ||
+          (target.cli.values === undefined && !target.cli.flags?.includes(name))
+        if (name === 'vault') {
+          const value = eq < 0 ? rest[++i] : word.slice(eq + 1)
+          if (value && isRemote(value)) vault = value
+        } else if (eq < 0 && takesValue) {
+          i++
+        }
+      }
+    }
+    return { kind: 'help', text, vault }
   }
   const ns = argv[0]
   const standaloneCommand = ns === undefined ? undefined : standaloneByNamespace.get(ns)

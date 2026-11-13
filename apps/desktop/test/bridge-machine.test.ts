@@ -8,7 +8,10 @@ import type { Dispatch } from '../src/main/capabilities/dispatch'
 import type { CliCommand } from '../src/main/capabilities/registry'
 
 const READ: CliCommand = { name: 'docs.read', cli: { args: ['path'], summary: 'read' } }
-const PLUGIN_READ: CliCommand = { name: 'links.read', cli: { args: [], summary: 'plugin read' } }
+const PLUGIN_READ: CliCommand = {
+  name: 'google.read',
+  cli: { args: ['threadId'], summary: 'plugin read', values: ['query'] },
+}
 const CHANGE: CliCommand = {
   name: 'store.put',
   cli: { args: [], stdin: 'content', summary: 'put' },
@@ -120,6 +123,31 @@ describe('machine CLI bridge', () => {
       req.end(argv('vault', 'list'))
     })
     expect(legacy).toBe(403)
+  })
+
+  it('resolves targeted plugin help without requiring execution arguments', async () => {
+    const r = await rig()
+    const result = await send(
+      r.port,
+      r.token,
+      argv('google', 'read', '--vault', 'owner/one', '--help'),
+    )
+    expect(result.status).toBe(200)
+    expect(result.body).toContain('usage: holi google read <threadId>')
+    expect(r.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('discovers selectors after option values that look like --vault', async () => {
+    for (const selector of [['--vault', 'owner/one'], ['--vault=owner/one']]) {
+      const r = await rig({ live: true })
+      const result = await send(
+        r.port,
+        r.token,
+        argv('google', 'read', '--query', '--vault', ...selector),
+      )
+      expect(result.status).toBe(400)
+      expect(result.body).toContain('threadId is missing')
+    }
   })
 
   it('answers help before resolving an explicit vault target', async () => {
