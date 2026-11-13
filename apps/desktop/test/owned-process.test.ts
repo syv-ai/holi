@@ -2,6 +2,7 @@ import { ChildProcess } from 'node:child_process'
 import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { getSystemErrorName } from 'node:util'
 import { describe, expect, it, onTestFailed } from 'vitest'
 import { spawnOwnedProgram } from '../src/main/owned-process'
 
@@ -121,7 +122,8 @@ describe('spawnOwnedProgram', () => {
       child.stdin!.on('error', () => stdinErrors++)
       const closed = new Promise<number | null>((resolve) => child!.once('close', resolve))
       await expect(completion(child)).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(closed).resolves.toBe(-2)
+      const code = await closed
+      expect(getSystemErrorName(code!)).toBe('ENOENT')
       expect(childErrors).toBe(1)
       expect(stdinErrors).toBeGreaterThan(0)
     } finally {
