@@ -65,6 +65,7 @@ function vimExtensions(onModeChange: ModeChange): Extension[] {
 export function useVimEditor(
   view: EditorView | null,
   enabled: boolean,
+  active: boolean,
   onModeChange: ModeChange,
   onKeyDown: KeyboardEventHandler<HTMLDivElement>,
 ) {
@@ -91,7 +92,7 @@ export function useVimEditor(
 
   return {
     extension: editor.extension,
-    onKeyDownCapture: enabled ? routeKeyDown : undefined,
-    onKeyDown: enabled ? undefined : routeKeyDown,
+    onKeyDownCapture: active && enabled ? routeKeyDown : undefined,
+    onKeyDown: active && !enabled ? routeKeyDown : undefined,
   }
 }

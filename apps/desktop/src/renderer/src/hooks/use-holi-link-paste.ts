@@ -10,7 +10,7 @@ export function useHoliLinkPaste(): void {
     const onPaste = (event: ClipboardEvent): void => {
       if (event.defaultPrevented || keyTargetOf(event.target) !== 'page' || dialogOpen()) return
       const text = event.clipboardData?.getData('text/plain')?.trim()
-      if (!text || !/^holi:\/\//i.test(text)) return
+      if (!text || !/^(?:holi:\/\/|https:\/\/syv-ai\.github\.io\/holi\/)/i.test(text)) return
       event.preventDefault()
       void trpc.holiLinks.openPasted
         .mutate({ url: text })

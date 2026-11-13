@@ -6,12 +6,14 @@ import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { allTabs } from '@/state/shell-workspace'
 import { parseTabKey } from '@/state/tab-descriptor'
 import { activeRemoteAtom } from '@/state/vaults'
+import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 
 /** One vault's visited surfaces, behind stable, connected portal hosts.
  * Slots may change with the shell layout; the iframe's document must not. */
 export function useRetainedSurfaces(
   visibleKeys: readonly string[],
   render: (key: string, visible: boolean) => ReactNode,
+  retainKey: (key: string) => boolean = () => false,
 ): { slot: (key: string) => ReactNode; content: ReactNode } {
   const remote = useAtomValue(activeRemoteAtom)
   const workspace = useAtomValue(shellWorkspaceAtom)
@@ -24,12 +26,15 @@ export function useRetainedSurfaces(
   const releaseFocus = useCallback((host: HTMLElement) => focusGuard.current?.release(host), [])
   const [visited, setVisited] = useState({ remote, keys: [] as string[] })
   const visible = new Set(visibleKeys)
+  const apps = useSidebarApps()
   const open = new Set(allTabs(workspace))
   const retained = (key: string) => {
     const tab = parseTabKey(key)
     return (
       (tab?.kind === 'surface' && surfaces.get(tab.surface)?.keepMounted === true) ||
-      (tab?.kind === 'vault-app' && surfaces.get('app')?.keepMounted === true)
+      (tab?.kind === 'vault-app' && surfaces.get('app')?.keepMounted === true) ||
+      (tab?.kind === 'app' && apps.find((app) => app.id === tab.id)?.keepMounted === true) ||
+      retainKey(key)
     )
   }
   const keep = new Set(

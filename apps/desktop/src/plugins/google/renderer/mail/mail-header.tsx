@@ -53,7 +53,7 @@ interface AppHeaderProps {
  * what can be done to it. Permanent delete is not here because Holi has no
  * scope for it; Trash is Gmail's, recoverable for 30 days.
  */
-export function AppHeader({ mail, commands }: AppHeaderProps) {
+export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visible: boolean }) {
   const reader = mail.reader
   const thread = reader.kind === 'ready' ? reader.thread : null
   const row = mail.openRow
@@ -167,7 +167,7 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{starred ? 'Unstar' : 'Star'}</TooltipContent>
+            {visible && <TooltipContent>{starred ? 'Unstar' : 'Star'}</TooltipContent>}
           </Tooltip>
 
           <Tooltip>
@@ -182,7 +182,9 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 <ArchiveIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Archive: out of the inbox, kept in All Mail</TooltipContent>
+            {visible && (
+              <TooltipContent>Archive: out of the inbox, kept in All Mail</TooltipContent>
+            )}
           </Tooltip>
 
           <Tooltip>
@@ -197,14 +199,14 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 <Trash2Icon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Move to trash: recoverable for 30 days</TooltipContent>
+            {visible && <TooltipContent>Move to trash: recoverable for 30 days</TooltipContent>}
           </Tooltip>
 
           <div className="mx-0.5 hidden items-center sm:flex">
             <Separator orientation="vertical" className="h-5" />
           </div>
 
-          <DropdownMenu>
+          <DropdownMenu key={`more-${visible ? 'visible' : 'hidden'}`}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"

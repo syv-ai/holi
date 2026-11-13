@@ -24,6 +24,7 @@ import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 export function TabView({
   tab,
   visible = true,
+  focused = visible,
   settingsNavInSidebar,
   onOpen,
   onOpenBeside,
@@ -33,8 +34,10 @@ export function TabView({
   onOpenSearch,
 }: {
   tab: string | null
-  /** Whether this tab is the visible/focused split member. */
+  /** Whether this tab is displayed; all split members are visible together. */
   visible?: boolean
+  /** Whether this is the focused member that may publish active UI state. */
+  focused?: boolean
   /** Whether the sidebar carries Settings' nav for this tab; otherwise the
    *  view draws its own. */
   settingsNavInSidebar: boolean
@@ -105,7 +108,7 @@ export function TabView({
       // away: once per switch, keyed on the tab.
       return (
         <div key={tab} className="motion-in-rise flex min-h-0 flex-1 flex-col">
-          <AppView />
+          <AppView visible={visible} />
         </div>
       )
     }
@@ -128,6 +131,7 @@ export function TabView({
       return (
         <AgentsMain
           key={tab}
+          visible={visible}
           selection={
             descriptor.kind === 'session' ? { owner: descriptor.owner, id: descriptor.id } : null
           }
@@ -150,7 +154,7 @@ export function TabView({
       }
       // Any other file: css, yaml, json, an image, a PDF.
       if (vaultFiles.some((file) => file.path === descriptor.path)) {
-        return <FileView key={tab} path={descriptor.path} />
+        return <FileView key={tab} path={descriptor.path} visible={visible} focused={focused} />
       }
       return (
         <IconStackEmpty
