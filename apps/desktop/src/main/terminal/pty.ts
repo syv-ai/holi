@@ -33,8 +33,8 @@ export type SpawnPty = (file: string, args: string[], opts: SpawnPtyOptions) => 
 /** The only place node-pty is loaded — never reached under vitest. */
 export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
   const pty = require('node-pty') as typeof import('node-pty')
-  // A `.cmd` (how npm installs an agent) runs through `cmd.exe` on Windows;
-  // anything else, and every file elsewhere, is started as given.
+  // Canonical npm Node shims resolve to their script; opaque Windows batches
+  // use cmd.exe. The Node fallback also needs a console parent on ConPTY.
   const launch = launchPlan(file, args, { env: opts.env })
   const env = launch.env ? { ...opts.env, ...launch.env } : opts.env
   if (process.platform === 'win32' && launch.env?.ELECTRON_RUN_AS_NODE === '1') {
@@ -51,7 +51,7 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
     const key = Object.keys(env).find((key) => key.toUpperCase() === 'COMSPEC')
     return pty.spawn(
       key ? env[key]! : 'cmd.exe',
-      `/d /v:off /s /c \"\"%HOLI_NODE_PTY_EXEC%\" -e \"${bootstrap}\"\"`,
+      `/d /v:off /s /c "start "" /b /wait "%HOLI_NODE_PTY_EXEC%" -e "${bootstrap}""`,
       {
         name: 'xterm-256color',
         ...opts,
