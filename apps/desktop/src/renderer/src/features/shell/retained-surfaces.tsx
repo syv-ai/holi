@@ -213,6 +213,9 @@ function SurfaceSlot({
     const home = parking.current
     if (destination === null || home === null) return
     moveHost(destination, host)
+    // Commit the state-preserving move at its parked size before the visible
+    // slot's responsive size can resize embedded documents and clamp scroll.
+    host.getBoundingClientRect()
     host.style.removeProperty('width')
     host.style.removeProperty('height')
     host.inert = false
