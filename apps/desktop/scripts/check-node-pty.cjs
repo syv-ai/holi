@@ -3,7 +3,13 @@
 // so a bad rebuild fails here instead of at app boot.
 const pty = require('node-pty')
 
-const child = pty.spawn('/bin/echo', ['node-pty-ok'], {
+// cmd.exe has no /bin/echo to spawn.
+const [file, args] =
+  process.platform === 'win32'
+    ? [process.env.ComSpec || 'cmd.exe', ['/c', 'echo', 'node-pty-ok']]
+    : ['/bin/echo', ['node-pty-ok']]
+
+const child = pty.spawn(file, args, {
   name: 'xterm-256color',
   cols: 80,
   rows: 24,
