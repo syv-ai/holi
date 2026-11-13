@@ -183,6 +183,7 @@ afterEach(() => {
 const mailKey = tabKey({ kind: 'app', id: 'mail' })
 const otherKey = tabKey({ kind: 'app', id: 'other' })
 const sessionKey = tabKey({ kind: 'session', owner: 'agent', id: 'session-one' })
+const codeKey = 'scratch.ts'
 const noop = () => undefined
 
 /** The shell's real retained-host and TabView composition, with only Gmail faked. */
@@ -194,6 +195,8 @@ function MailTabs() {
     (tab, visible) =>
       tab === sessionKey ? (
         <Input aria-label="Retained agent terminal" data-visible={String(visible)} />
+      ) : tab === codeKey ? (
+        <Input aria-label="Retained code-file state" defaultValue="initial code" />
       ) : (
         <TabView
           tab={tab}
@@ -206,7 +209,7 @@ function MailTabs() {
           onOpenSearch={noop}
         />
       ),
-    (tab) => tab === sessionKey,
+    (tab) => tab === sessionKey || tab === codeKey,
   )
   return (
     <div>
@@ -235,7 +238,10 @@ function mountMailTabs(showMail = true) {
       ],
     },
   ])
-  const workspace = openTab(openTab(openTab(emptyWorkspace(), otherKey), sessionKey), mailKey)
+  const workspace = openTab(
+    openTab(openTab(openTab(emptyWorkspace(), otherKey), codeKey), sessionKey),
+    mailKey,
+  )
   store.set(shellWorkspaceAtom, showMail ? workspace : selectEntry(workspace, otherKey))
   render(
     <Provider store={store}>
@@ -248,7 +254,7 @@ function mountMailTabs(showMail = true) {
   }
 }
 
-test('Mail and agent session hosts stay retained together across tab switches', async () => {
+test('Mail, session and code-file hosts retain and dispose independently', async () => {
   const { store, show } = mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   fireEvent.click(within(list).getByText('Q2 budget'))
@@ -261,6 +267,13 @@ test('Mail and agent session hosts stay retained together across tab switches', 
   expect(terminal.isConnected).toBe(true)
   expect(list.closest('[inert]')).not.toBeNull()
 
+  show(codeKey)
+  const code = await screen.findByRole('textbox', { name: 'Retained code-file state' })
+  fireEvent.change(code, { target: { value: 'edited code' } })
+  expect(list.isConnected).toBe(true)
+  expect(terminal.isConnected).toBe(true)
+  expect(terminal).toHaveAttribute('data-visible', 'false')
+
   show(mailKey)
   expect(await screen.findByRole('list', { name: 'Inbox' })).toBe(list)
   expect(document.querySelector('iframe')).toBe(frame)
@@ -268,7 +281,19 @@ test('Mail and agent session hosts stay retained together across tab switches', 
   expect(terminal).toHaveAttribute('data-visible', 'false')
   expect(list.closest('[inert]')).toBeNull()
   expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
-  expect(store.get(shellWorkspaceAtom)).toBeDefined()
+  show(codeKey)
+  expect(screen.getByRole('textbox', { name: 'Retained code-file state' })).toBe(code)
+  expect(code).toHaveValue('edited code')
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, mailKey)))
+  expect(frame.isConnected).toBe(false)
+  expect(terminal.isConnected).toBe(true)
+  expect(code.isConnected).toBe(true)
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, sessionKey)))
+  expect(terminal.isConnected).toBe(false)
+  expect(code.isConnected).toBe(true)
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, codeKey)))
+  expect(code.isConnected).toBe(false)
 })
 
 test('shell switch and back retains real Mail list, selection and scroll without refetching', async () => {
