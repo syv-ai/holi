@@ -9,17 +9,20 @@
  * calendar with nobody invited, since a change would email them. Any other
  * opens in Google Calendar.
  *
- * Dropped from the block: guests, the calendar select, notes and the booking
- * facts (reference, rate, nights, status). Holi invites nobody, writes only to
- * the primary calendar, and the calls it writes through carry a title, times
- * and, on creation, a place.
+ * Creation may invite guests and request Meet, through UI-only capabilities.
+ * Submitted intents are retained outside the vault until acceptance is known.
+ * Editing/deleting attendee events remains unavailable.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
-import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel, FieldSet } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
+import { dayAfter, localDate } from '@holi/shared'
+import { subDays } from 'date-fns'
+import { useMeetingCreation, type MeetingIdentity } from './use-meeting-creation'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
@@ -76,6 +79,8 @@ export interface EventSheetState {
 }
 
 interface EventSheetProps {
+  meetingIdentity?: MeetingIdentity | null
+  onCreated?: () => void
   state: EventSheetState | null
   error: string | null
   saving: boolean
@@ -187,6 +192,8 @@ function WhenDetail({ draft }: { draft: EventDraft }) {
 }
 
 export function EventSheet({
+  meetingIdentity = null,
+  onCreated = () => {},
   state,
   error,
   saving,
@@ -210,6 +217,10 @@ export function EventSheet({
         {state &&
           (isForm ? (
             <EventForm
+              key={`${meetingIdentity?.remote}:${meetingIdentity?.sub}:${state.mode}:${state.draft.key ?? 'new'}`}
+              identity={state.mode === 'create' ? meetingIdentity : null}
+              onCreated={onCreated}
+              onOpenExternal={onOpenExternal}
               draft={state.draft}
               mode={state.mode as 'edit' | 'create'}
               error={error}
@@ -441,6 +452,9 @@ function EventView({
  * grid and the rail.
  */
 function EventForm({
+  identity,
+  onCreated,
+  onOpenExternal,
   draft: initial,
   mode,
   error,
@@ -451,6 +465,9 @@ function EventForm({
 }: {
   draft: EventDraft
   mode: 'edit' | 'create'
+  identity: MeetingIdentity | null
+  onCreated: () => void
+  onOpenExternal: (url: string) => void
   error: string | null
   saving: boolean
   onSave: (draft: EventDraft) => void
@@ -458,14 +475,65 @@ function EventForm({
   onClose: () => void
 }) {
   const [draft, setDraft] = useState(initial)
-  const patch = useCallback(
-    (partial: Partial<EventDraft>) => setDraft((prev) => ({ ...prev, ...partial })),
-    [],
-  )
+  const [guests, setGuests] = useState('')
+  const [meet, setMeet] = useState(false)
+  const [validation, setValidation] = useState<string | null>(null)
+  const meeting = useMeetingCreation(identity, onCreated)
+  const restored = meeting.operation?.input
+  useEffect(() => {
+    if (!restored) return
+    const start = new Date(restored.start)
+    const end = new Date(restored.end)
+    const time = (date: Date) =>
+      `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+    setDraft((old) => ({
+      ...old,
+      title: restored.title,
+      location: restored.location,
+      allDay: restored.allDay,
+      date: restored.allDay ? restored.start : localDate(start),
+      dateEnd: restored.allDay
+        ? localDate(subDays(new Date(`${restored.end}T00:00:00`), 1))
+        : localDate(end),
+      start: restored.allDay ? old.start : time(start),
+      end: restored.allDay ? old.end : time(end),
+    }))
+    setGuests(restored.guests.join(', '))
+    setMeet(restored.meet)
+  }, [restored])
+  const locked = meeting.busy || meeting.submitted !== null
+  const disabled = saving || meeting.loading || meeting.busy
+  const shownError = validation ?? meeting.error ?? error
+  const lockedRef = useRef(false)
+  lockedRef.current = locked || meeting.loading
+  const patch = useCallback((partial: Partial<EventDraft>) => {
+    if (!lockedRef.current) setDraft((prev) => ({ ...prev, ...partial }))
+  }, [])
   // Stable, so the memoised time selects skip a keystroke in the title.
   const setStart = useCallback((start: string) => patch({ start }), [patch])
   const setEnd = useCallback((end: string) => patch({ end }), [patch])
-  const onSave = () => save(draft)
+  const onSave = () => {
+    if (mode === 'edit') return save(draft)
+    if (!identity) return setValidation('Wait for the Google account to finish loading.')
+    if (disabled) return
+    const title = draft.title.trim()
+    if (!title) return setValidation('Give it a title.')
+    const start = draft.allDay ? draft.date : toDate(draft.date, draft.start).toISOString()
+    const end = draft.allDay
+      ? dayAfter(draft.dateEnd)
+      : toDate(draft.dateEnd, draft.end).toISOString()
+    if (Date.parse(end) <= Date.parse(start)) return setValidation('It has to end after it starts.')
+    setValidation(null)
+    void meeting.submit({
+      title,
+      start,
+      end,
+      allDay: draft.allDay,
+      location: draft.location.trim(),
+      guests: guests.trim() ? guests.split(/[,;\s]+/).filter(Boolean) : [],
+      meet,
+    })
+  }
   return (
     <TooltipProvider>
       {/* Header */}
@@ -482,120 +550,224 @@ function EventForm({
       {/* Form body */}
       <div className="min-h-0 flex-1">
         <ScrollArea className="h-full">
-          {/* Enter in a text field saves, as a form would. */}
+          {/* Creation sends only through its explicitly labelled button. */}
           <div
             className="flex flex-col gap-5 px-5 py-5"
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && event.target instanceof HTMLInputElement && !saving) {
+              if (
+                mode === 'edit' &&
+                event.key === 'Enter' &&
+                event.target instanceof HTMLInputElement &&
+                !saving
+              ) {
                 event.preventDefault()
                 onSave()
               }
             }}
           >
-            <Field>
-              <FieldLabel htmlFor="event-title">Title</FieldLabel>
-              <Input
-                id="event-title"
-                value={draft.title}
-                onChange={(event) => patch({ title: event.target.value })}
-                placeholder="Title"
-                autoComplete="off"
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel>Calendar</FieldLabel>
-              <div className="flex min-w-0 items-center gap-2 text-sm">
-                <CalendarDot color={draft.color} />
-                <span className="truncate">{draft.calendarName}</span>
-              </div>
-              <FieldDescription>
-                {mode === 'create'
-                  ? 'Added to your own calendar. Nobody is invited, so nobody is emailed.'
-                  : draft.data?.recurring
-                    ? 'Changes this occurrence only.'
-                    : 'Nobody is invited, so nobody is emailed.'}
-              </FieldDescription>
-            </Field>
-
-            <Field orientation="horizontal">
-              <FieldLabel htmlFor="event-all-day">
-                All day
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span
-                      tabIndex={0}
-                      aria-label="About all-day events"
-                      className="text-muted-foreground/70 hover:text-muted-foreground focus-visible:ring-ring inline-flex cursor-help rounded-full outline-none focus-visible:ring-2"
-                    >
-                      <InfoIcon className="size-3.5" aria-hidden="true" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-56">
-                    All-day events span whole days. They show in the all-day row and as bars across
-                    the month view.
-                  </TooltipContent>
-                </Tooltip>
-              </FieldLabel>
-              <Switch
-                id="event-all-day"
-                checked={draft.allDay}
-                onCheckedChange={(checked: boolean) => patch({ allDay: checked })}
-              />
-            </Field>
-
-            <div className="flex gap-3">
-              <Field className="min-w-0 flex-1">
-                <FieldLabel htmlFor="event-start-date">Starts</FieldLabel>
-                <DateField
-                  id="event-start-date"
-                  value={draft.date}
-                  onSelect={(date) =>
-                    patch({ date, dateEnd: draft.dateEnd < date ? date : draft.dateEnd })
-                  }
-                />
-              </Field>
-              <Field className="min-w-0 flex-1">
-                <FieldLabel htmlFor="event-end-date">Ends</FieldLabel>
-                <DateField
-                  id="event-end-date"
-                  value={draft.dateEnd}
-                  onSelect={(dateEnd) => patch({ dateEnd })}
-                />
-              </Field>
-            </div>
-
-            {!draft.allDay && (
-              <div className="flex gap-3">
-                <Field className="min-w-0 flex-1">
-                  <FieldLabel htmlFor="event-start-time">From</FieldLabel>
-                  <TimeSelect id="event-start-time" value={draft.start} onChange={setStart} />
-                </Field>
-                <Field className="min-w-0 flex-1">
-                  <FieldLabel htmlFor="event-end-time">To</FieldLabel>
-                  <TimeSelect id="event-end-time" value={draft.end} onChange={setEnd} />
-                </Field>
-              </div>
-            )}
-
-            {/* A place is set when the event is made; moving one keeps it. */}
-            {mode === 'create' && (
+            <FieldSet disabled={locked || meeting.loading}>
               <Field>
-                <FieldLabel htmlFor="event-location">Location</FieldLabel>
+                <FieldLabel htmlFor="event-title">Title</FieldLabel>
                 <Input
-                  id="event-location"
-                  value={draft.location}
-                  onChange={(event) => patch({ location: event.target.value })}
-                  placeholder="Location"
+                  id="event-title"
+                  value={draft.title}
+                  onChange={(event) => patch({ title: event.target.value })}
+                  placeholder="Title"
                   autoComplete="off"
                 />
               </Field>
-            )}
 
-            {error && (
-              <p role="alert" className="text-destructive text-sm">
-                {error}
+              <Field>
+                <FieldLabel>Calendar</FieldLabel>
+                <div className="flex min-w-0 items-center gap-2 text-sm">
+                  <CalendarDot color={draft.color} />
+                  <span className="truncate">{draft.calendarName}</span>
+                </div>
+                <FieldDescription>
+                  {mode === 'create'
+                    ? 'Added to your primary Google calendar. Guests receive invitations only when you press Create and send invitations.'
+                    : draft.data?.recurring
+                      ? 'Changes this occurrence only.'
+                      : 'Nobody is invited, so nobody is emailed.'}
+                </FieldDescription>
+              </Field>
+
+              <Field orientation="horizontal">
+                <FieldLabel htmlFor="event-all-day">
+                  All day
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        tabIndex={0}
+                        aria-label="About all-day events"
+                        className="text-muted-foreground/70 hover:text-muted-foreground focus-visible:ring-ring inline-flex cursor-help rounded-full outline-none focus-visible:ring-2"
+                      >
+                        <InfoIcon className="size-3.5" aria-hidden="true" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-56">
+                      All-day events span whole days. They show in the all-day row and as bars
+                      across the month view.
+                    </TooltipContent>
+                  </Tooltip>
+                </FieldLabel>
+                <Switch
+                  id="event-all-day"
+                  checked={draft.allDay}
+                  onCheckedChange={(checked: boolean) => patch({ allDay: checked })}
+                />
+              </Field>
+
+              <div className="flex gap-3">
+                <Field className="min-w-0 flex-1">
+                  <FieldLabel htmlFor="event-start-date">Starts</FieldLabel>
+                  <DateField
+                    id="event-start-date"
+                    value={draft.date}
+                    onSelect={(date) =>
+                      patch({ date, dateEnd: draft.dateEnd < date ? date : draft.dateEnd })
+                    }
+                  />
+                </Field>
+                <Field className="min-w-0 flex-1">
+                  <FieldLabel htmlFor="event-end-date">Ends</FieldLabel>
+                  <DateField
+                    id="event-end-date"
+                    value={draft.dateEnd}
+                    onSelect={(dateEnd) => patch({ dateEnd })}
+                  />
+                </Field>
+              </div>
+
+              {!draft.allDay && (
+                <div className="flex gap-3">
+                  <Field className="min-w-0 flex-1">
+                    <FieldLabel htmlFor="event-start-time">From</FieldLabel>
+                    <TimeSelect id="event-start-time" value={draft.start} onChange={setStart} />
+                  </Field>
+                  <Field className="min-w-0 flex-1">
+                    <FieldLabel htmlFor="event-end-time">To</FieldLabel>
+                    <TimeSelect id="event-end-time" value={draft.end} onChange={setEnd} />
+                  </Field>
+                </div>
+              )}
+
+              {/* A place is set when the event is made; moving one keeps it. */}
+              {mode === 'create' && (
+                <Field>
+                  <FieldLabel htmlFor="event-location">Location</FieldLabel>
+                  <Input
+                    id="event-location"
+                    value={draft.location}
+                    onChange={(event) => patch({ location: event.target.value })}
+                    placeholder="Location"
+                    autoComplete="off"
+                  />
+                </Field>
+              )}
+
+              {mode === 'create' && identity && (
+                <>
+                  <Field>
+                    <FieldLabel htmlFor="event-guests">Guests</FieldLabel>
+                    <Input
+                      id="event-guests"
+                      value={guests}
+                      autoComplete="off"
+                      placeholder="Email addresses, separated by commas"
+                      onChange={(event) => setGuests(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') event.preventDefault()
+                      }}
+                    />
+                  </Field>
+                  <Field orientation="horizontal">
+                    <FieldLabel htmlFor="event-meet">Add Google Meet</FieldLabel>
+                    <Switch
+                      id="event-meet"
+                      checked={meet}
+                      disabled={!meeting.supported}
+                      onCheckedChange={setMeet}
+                    />
+                  </Field>
+                  {!meeting.loading && !meeting.supported && (
+                    <p className="text-muted-foreground text-sm">
+                      Google Meet is unavailable for this calendar.
+                    </p>
+                  )}
+                </>
+              )}
+            </FieldSet>
+            {meeting.loading && (
+              <Skeleton className="h-8 w-full" role="status" aria-label="Loading meeting options" />
+            )}
+            {meeting.busy && (
+              <p role="status" className="text-muted-foreground text-sm">
+                Checking with Google…
               </p>
+            )}
+            {meeting.submitted && (
+              <div role="status" className="flex flex-col gap-2 text-sm">
+                <p>
+                  {meeting.busy && !meeting.operation
+                    ? 'Creating the event…'
+                    : meeting.operation?.accepted
+                      ? meeting.operation.input.guests.length
+                        ? 'Event created. Google was asked to send invitations.'
+                        : 'Event created.'
+                      : 'Delivery is uncertain. Check status before retrying this unchanged meeting. Closing will keep the submitted meeting.'}
+                </p>
+                {meeting.operation?.accepted && meeting.operation.conference === 'pending' && (
+                  <p>
+                    Event created; Google Meet is still pending. Check status or open Google
+                    Calendar. Do not create another event.
+                  </p>
+                )}
+                {meeting.operation?.accepted && meeting.operation.conference === 'failure' && (
+                  <p>
+                    Event created, but Google Meet failed. Add a conference in Google Calendar; do
+                    not recreate the event.
+                  </p>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    onOpenExternal(
+                      meeting.operation?.htmlLink ?? 'https://calendar.google.com/calendar/',
+                    )
+                  }
+                >
+                  Open in Google Calendar
+                </Button>
+                {meeting.operation?.conferenceUrl && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => onOpenExternal(meeting.operation!.conferenceUrl!)}
+                  >
+                    Join the call
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={disabled}
+                  onClick={() => void meeting.check()}
+                >
+                  Check status
+                </Button>
+              </div>
+            )}
+            {shownError && (
+              <div role="alert" className="flex flex-col gap-2 text-sm">
+                <p className="text-destructive">{shownError}</p>
+                {identity && !meeting.submitted && (
+                  <Button type="button" variant="outline" onClick={() => void meeting.load()}>
+                    Retry
+                  </Button>
+                )}
+              </div>
             )}
           </div>
         </ScrollArea>
@@ -612,9 +784,31 @@ function EventForm({
         >
           Cancel
         </Button>
-        <Button type="button" onClick={onSave} disabled={saving}>
-          {saving ? 'Saving…' : mode === 'edit' ? 'Save' : 'Add event'}
-        </Button>
+        {meeting.operation?.accepted ? (
+          <Button type="button" disabled={disabled} onClick={() => void meeting.finish(onClose)}>
+            Done
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            onClick={onSave}
+            disabled={
+              disabled ||
+              (mode === 'create' && identity === null) ||
+              (identity !== null && meeting.error !== null && !meeting.submitted)
+            }
+          >
+            {saving || meeting.busy
+              ? 'Saving…'
+              : mode === 'edit'
+                ? 'Save'
+                : meeting.submitted
+                  ? 'Retry same meeting'
+                  : guests.trim()
+                    ? 'Create and send invitations'
+                    : 'Add event'}
+          </Button>
+        )}
       </div>
     </TooltipProvider>
   )

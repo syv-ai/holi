@@ -19,6 +19,7 @@ import type { CalendarOverrides } from './calendar'
 import { GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
 import { googleSeed } from './seed'
+import { createMeetingCreation } from './meeting-creation'
 import { startGoogleTriggers } from './triggers'
 
 export const googleMain: MainPlugin = {
@@ -90,6 +91,7 @@ export const googleMain: MainPlugin = {
       GOOGLE_NAMESPACES,
       googleCapabilities({
         accounts,
+        meetings: createMeetingCreation({ userData: ctx.userData, accounts }),
         dataFor,
         settings: {
           read: readSettings,
