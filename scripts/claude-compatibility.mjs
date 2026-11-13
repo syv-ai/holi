@@ -134,10 +134,10 @@ export async function runCompatibility(
       const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
       const mismatch = checkProbe(result, expected, output)
       const missingBackgroundFlag =
-        name === 'root options' && !/(^|[\s,=])--(?:bg|background)([\s,=]|$)/m.test(output)
+        name === 'root options' && !/(^|[\s,=])--bg([\s,=]|$)/m.test(output)
       if (mismatch || missingBackgroundFlag)
         failures.push(
-          `${name}: ${mismatch ?? 'missing consumed option --bg (help may advertise --background)'}; evidence=${bounded(output)}`,
+          `${name}: ${mismatch ?? 'missing consumed option --bg'}; evidence=${bounded(output)}`,
         )
     }
     return {

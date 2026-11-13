@@ -27,7 +27,7 @@ import { writeFile } from 'node:fs/promises'
 const args=process.argv.slice(2)
 await writeFile(${JSON.stringify(log)}, JSON.stringify(args)+String.fromCharCode(10), {flag:'a'})
 if(args[0]==='--version') process.stdout.write(${JSON.stringify(mode === 'wrong-version' ? '2.1.320 (Claude Code)' : '2.1.319 (Claude Code)')})
-else if(args.at(-1)==='--help') process.stdout.write(${JSON.stringify(mode === 'empty-help' ? '' : mode === 'removed' ? 'Usage: claude' : mode === 'huge-output' ? 'x'.repeat(100000) : 'Usage: claude agents --json --all attach stop respawn rm --bg --name --resume --fork-session --model --append-system-prompt --mcp-config --allowedTools --disallowedTools')})
+else if(args.at(-1)==='--help') process.stdout.write(${JSON.stringify(mode === 'empty-help' ? '' : mode === 'removed' ? 'Usage: claude' : mode === 'huge-output' ? 'x'.repeat(100000) : 'Usage: claude agents --json --all attach stop respawn rm --bg --name --resume --fork-session --model --append-system-prompt --mcp-config --allowedTools --disallowedTools'.replace('--bg', mode === 'long-background-only' ? '--background' : '--bg'))})
 if (${JSON.stringify(mode)} === 'nonzero' && args[0] === 'agents') process.exit(7)
 if (${JSON.stringify(mode)} === 'timeout' && args[0] === 'agents') await new Promise(r=>setTimeout(r,1000))
 `)});
@@ -182,6 +182,7 @@ test('reports wrong versions, removed options, empty help, and probe failures', 
     ['wrong-version', /version: expected 2.1.319/],
     ['removed', /missing consumed commands\/options/],
     ['empty-help', /missing consumed commands\/options/],
+    ['long-background-only', /root options: missing consumed option --bg/],
     ['nonzero', /agents: exit 7/],
     ['huge-output', /agents: stdout maxBuffer length exceeded|agents: spawnSync/],
   ]) {
