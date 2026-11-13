@@ -9,7 +9,7 @@ import { SettingsGroup, SettingsFieldRow } from '../settings-kit'
 import { SignOutConfirm } from './sign-out-confirm'
 import { openExternal } from '@/lib/open-external'
 import { useEffect } from 'react'
-import { useSettingsVisible } from '../settings-view'
+import { useSettingsVisible } from '../settings-visibility'
 
 export function AccountPage() {
   const viewer = useAtomValue(sessionAtom)

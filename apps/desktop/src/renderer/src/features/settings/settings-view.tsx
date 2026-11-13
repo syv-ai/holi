@@ -5,7 +5,7 @@
  * the heading reaches the other pages.
  */
 import { useAtom, useAtomValue } from 'jotai'
-import { createContext, useContext, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   Select,
@@ -20,12 +20,7 @@ import { settingsSectionAtom } from '@/state/settings-section'
 import { activeRemoteAtom } from '@/state/vaults'
 
 import { pageFor, settingsGroupsAtom } from './settings-pages'
-
-const SettingsVisibilityContext = createContext(true)
-
-export function useSettingsVisible() {
-  return useContext(SettingsVisibilityContext)
-}
+import { SettingsVisibilityContext } from './settings-visibility'
 
 export function SettingsView({ navHidden, visible }: { navHidden: boolean; visible: boolean }) {
   const groups = useAtomValue(settingsGroupsAtom)
@@ -90,7 +85,7 @@ export function SettingsView({ navHidden, visible }: { navHidden: boolean; visib
           {remote === null ? null : (
             // Keyed by page and vault: a page's local state never outlives either.
             <div key={`${page.id}:${remote}`} className="flex flex-col gap-8">
-              <Page remote={remote} visible={visible} />
+              <Page remote={remote} visible={visible} plugin={page.plugin} nested={page.nested} />
             </div>
           )}
         </div>

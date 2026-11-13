@@ -18,7 +18,7 @@ import { ExternalLinkIcon, FolderOpenIcon, ShieldCheckIcon } from 'lucide-react'
 import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from '../settings-kit'
 import { AgentsCard } from './agents-card'
 import { openExternal } from '@/lib/open-external'
-import { useSettingsVisible } from '../settings-view'
+import { useSettingsVisible } from '../settings-visibility'
 
 const githubUrl = (path: string) => `https://github.com/${path}`
 
