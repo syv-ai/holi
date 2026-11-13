@@ -42,6 +42,7 @@ export const activeRemoteAtom = atom(
     set(activeRemoteValueAtom, remote)
     set(activeRemoteRevisionAtom, (revision) => revision + 1)
     set(openedRemoteAtom, null)
+    set(documentRunsAtom, {})
   },
 )
 
@@ -181,35 +182,53 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
  * here may keep a snapshot keyed by remote.
  */
 const openRequestAtom = atom(0)
+const documentOpenIntentAtom = atom<{ id: number; remote: string } | null>(null)
+const documentOpenIntentSequenceAtom = atom(0)
 
-export const openVaultAtom = atom(null, async (get, set, remote: string): Promise<boolean> => {
-  const request = get(openRequestAtom) + 1
-  set(openRequestAtom, request)
-  const selectionRevision = get(activeRemoteRevisionAtom)
+export const openVaultAtom = atom(
+  null,
+  async (
+    get,
+    set,
+    target: string | { remote: string; documentIntentId?: number },
+  ): Promise<boolean> => {
+    const remote = typeof target === 'string' ? target : target.remote
+    const documentIntentId = typeof target === 'string' ? undefined : target.documentIntentId
+    const request = get(openRequestAtom) + 1
+    set(openRequestAtom, request)
+    const selectionRevision = get(activeRemoteRevisionAtom)
 
-  // A cross-vault open (`onOpen` below) arrives with the old vault's editors
-  // still mounted: what was typed goes into the vault it was typed in, before
-  // that one closes. A switch from the vault menu flushed already
-  // (`applyVaultSwitchAtom`), and this finds nothing left to write.
-  await flushAllBuffers()
-  // A newer selection or open request owns the main-process transition now.
-  // Do not switch the renderer or clear per-vault state for a stale request.
-  if (get(openRequestAtom) !== request || get(activeRemoteRevisionAtom) !== selectionRevision)
-    return false
+    // A cross-vault open (`onOpen` below) arrives with the old vault's editors
+    // still mounted: what was typed goes into the vault it was typed in, before
+    // that one closes. A switch from the vault menu flushed already
+    // (`applyVaultSwitchAtom`), and this finds nothing left to write.
+    await flushAllBuffers()
+    // A newer selection or open request owns the main-process transition now.
+    // Do not switch the renderer or clear per-vault state for a stale request.
+    if (
+      get(openRequestAtom) !== request ||
+      get(activeRemoteRevisionAtom) !== selectionRevision ||
+      (documentIntentId !== undefined && get(documentOpenIntentAtom)?.id !== documentIntentId)
+    )
+      return false
 
-  const snapshot = await trpc.vaults.open.mutate({ remote })
-  if (get(openRequestAtom) !== request || get(activeRemoteRevisionAtom) !== selectionRevision)
-    return false
+    const snapshot = await trpc.vaults.open.mutate({ remote })
+    if (
+      get(openRequestAtom) !== request ||
+      get(activeRemoteRevisionAtom) !== selectionRevision ||
+      (documentIntentId !== undefined && get(documentOpenIntentAtom)?.id !== documentIntentId)
+    )
+      return false
 
-  // Publish the cross-vault document-open selection only after main has opened
-  // it. This lets VaultHost observe openedRemote alongside activeRemote and
-  // avoid starting a duplicate open for the same request.
-  set(activeRemoteAtom, remote)
-  set(documentRunsAtom, {})
-  set(snapshotAtom, snapshot)
-  set(openedRemoteAtom, remote)
-  return true
-})
+    // Publish the cross-vault document-open selection only after main has opened
+    // it. This lets VaultHost observe openedRemote alongside activeRemote and
+    // avoid starting a duplicate open for the same request.
+    set(activeRemoteAtom, remote)
+    set(snapshotAtom, snapshot)
+    set(openedRemoteAtom, remote)
+    return true
+  },
+)
 
 /**
  * Clone a repo the user already has, and open it.
@@ -283,10 +302,29 @@ export function subscribeToVault(
   // snapshot is in (`openVaultAtom` sets it before this resolves). A link's
   // heading is where the document's view puts the caret.
   const offReminder = window.holi.vault.onOpen(({ remote, path, heading }) => {
-    if (remote && remote !== store.get(activeRemoteAtom)) {
-      void store.set(openVaultAtom, remote).then((landed) => {
-        if (landed) store.set(openDocumentAtom, path, heading)
-      })
+    const targetRemote = remote || store.get(activeRemoteAtom)
+    if (!targetRemote) return
+    const id = store.get(documentOpenIntentSequenceAtom) + 1
+    store.set(documentOpenIntentSequenceAtom, id)
+    store.set(documentOpenIntentAtom, { id, remote: targetRemote })
+
+    if (targetRemote !== store.get(activeRemoteAtom)) {
+      void store
+        .set(openVaultAtom, { remote: targetRemote, documentIntentId: id })
+        .then((landed) => {
+          const latest = store.get(documentOpenIntentAtom)
+          if (landed && latest?.id === id) {
+            store.set(openDocumentAtom, path, heading)
+          } else if (
+            !landed &&
+            latest?.remote === store.get(activeRemoteAtom) &&
+            store.get(openedRemoteAtom) === store.get(activeRemoteAtom)
+          ) {
+            // A newer same-vault open superseded this request while main was
+            // opening the other vault. Restore main to the still-active remote.
+            void store.set(openVaultAtom, latest.remote)
+          }
+        })
     } else {
       store.set(openDocumentAtom, path, heading)
     }

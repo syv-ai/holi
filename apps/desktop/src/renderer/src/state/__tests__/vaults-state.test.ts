@@ -7,9 +7,12 @@
  * test and still leave deleted notes on screen forever.
  */
 import { createStore } from 'jotai'
+import { registerBuffer } from '@/lib/buffer-registry'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { VaultSnapshot } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
+import { openDocumentRequestAtom } from '@/state/open-document'
+import { documentRunsAtom } from '@/state/document-runs'
 import {
   activeRemoteAtom,
   addVaultAtom,
@@ -138,6 +141,96 @@ describe('vaults', () => {
     expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
     expect(store.get(snapshotAtom).docs.map((doc) => doc.path)).toEqual(['latest.md'])
     expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha')
+  })
+
+  it('supersedes a pending cross-vault document open with a same-vault intent', async () => {
+    const responses: ((value: VaultSnapshot) => void)[] = []
+    holi = installFakeHoli((op) =>
+      op.path === 'vaults.open'
+        ? new Promise<VaultSnapshot>((resolve) => responses.push(resolve))
+        : undefined,
+    )
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    store.set(openedRemoteAtom, 'syv-ai/alpha')
+    unsubscribe = subscribeToVault(store)
+
+    holi.pushOpen({ remote: 'syv-ai/beta', path: 'beta.md' })
+    await vi.waitFor(() => expect(responses).toHaveLength(1))
+    holi.pushOpen({ remote: 'syv-ai/alpha', path: 'alpha.md' })
+    expect(store.get(openDocumentRequestAtom)).toMatchObject({ path: 'alpha.md' })
+
+    responses[0]!(snapshot('stale-beta.md'))
+    await vi.waitFor(() => expect(holi!.calls).toHaveLength(2))
+    expect((holi!.calls[1]!.input as { remote: string }).remote).toBe('syv-ai/alpha')
+    responses[1]!(snapshot('alpha.md'))
+    await vi.waitFor(() =>
+      expect(store.get(snapshotAtom).docs.map((doc) => doc.path)).toEqual(['alpha.md']),
+    )
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
+    expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha')
+  })
+
+  it('clears document runs only when a different remote becomes active', async () => {
+    holi = installFakeHoli((op) => (op.path === 'vaults.open' ? snapshot('shared.md') : undefined))
+    const store = createStore()
+    store.set(documentRunsAtom, { 'shared.md': { status: 'completed' } } as never)
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    expect(store.get(documentRunsAtom)).toEqual({})
+    store.set(documentRunsAtom, { 'shared.md': { status: 'completed' } } as never)
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    expect(store.get(documentRunsAtom)).toHaveProperty('shared.md')
+
+    await store.set(openVaultAtom, 'syv-ai/beta')
+    expect(store.get(documentRunsAtom)).toEqual({})
+  })
+
+  it('waits for dirty buffers before opening another vault', async () => {
+    holi = installFakeHoli((op) => (op.path === 'vaults.open' ? snapshot('beta.md') : undefined))
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    let finishFlush!: () => void
+    const unregister = registerBuffer(() => new Promise<void>((resolve) => (finishFlush = resolve)))
+
+    const pending = store.set(openVaultAtom, 'syv-ai/beta')
+    await vi.waitFor(() => expect(finishFlush).toBeTypeOf('function'))
+    expect(holi.calls).toEqual([])
+    finishFlush()
+    await expect(pending).resolves.toBe(true)
+    unregister()
+    expect(holi.calls.map((call) => call.path)).toEqual(['vaults.open'])
+  })
+
+  it('does not open another vault when flushing a buffer fails', async () => {
+    holi = installFakeHoli()
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    const unregister = registerBuffer(() => Promise.reject(new Error('write failed')))
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(store.set(openVaultAtom, 'syv-ai/beta')).rejects.toThrow('write failed')
+    unregister()
+    error.mockRestore()
+    expect(holi.calls).toEqual([])
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
+  })
+
+  it('does not open a stale remote if selection changes while buffers flush', async () => {
+    holi = installFakeHoli()
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    let finishFlush!: () => void
+    const unregister = registerBuffer(() => new Promise<void>((resolve) => (finishFlush = resolve)))
+
+    const pending = store.set(openVaultAtom, 'syv-ai/beta')
+    await vi.waitFor(() => expect(finishFlush).toBeTypeOf('function'))
+    store.set(activeRemoteAtom, 'syv-ai/gamma')
+    finishFlush()
+    await expect(pending).resolves.toBe(false)
+    unregister()
+    expect(holi.calls).toEqual([])
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/gamma')
   })
 
   it('does not publish a snapshot query for a no-longer-active vault', async () => {
