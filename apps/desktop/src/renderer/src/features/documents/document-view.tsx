@@ -24,7 +24,7 @@ import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import {
   differsBeyondTidy,
-  holiLink,
+  holiWebLink,
   isHoliLinkable,
   isResolved,
   parseTaskFile,
@@ -396,7 +396,7 @@ function DocumentEditor({
 
   const holiLinks = isHoliLinkable(path)
     ? {
-        file: () => holiLink({ remote, path }),
+        file: () => holiWebLink({ remote, path }),
         heading: () => {
           if (
             !editor ||
@@ -405,7 +405,7 @@ function DocumentEditor({
           )
             return null
           const heading = headingAtCaret(editor, markdown())
-          return heading === null ? null : holiLink({ remote, path, heading })
+          return heading === null ? null : holiWebLink({ remote, path, heading })
         },
       }
     : null

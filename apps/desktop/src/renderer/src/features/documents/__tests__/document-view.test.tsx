@@ -806,7 +806,7 @@ test("the narrow document menu copies a heading's Holi link and disables it with
   expect(action).toBeEnabled()
   await user.click(action)
   expect(writeText).toHaveBeenCalledWith(
-    'holi://open?vault=syv/vault&path=notes/Plan.md&heading=plan',
+    'https://syv-ai.github.io/holi/#vault=syv/vault&path=notes/Plan.md&heading=plan',
   )
   expect(screen.getByRole('menuitem', { name: 'Copied' })).toBeInTheDocument()
 })
@@ -865,7 +865,7 @@ test('the narrow fallback tracks the document pane width without replacing its e
     expect(window.innerWidth).toBe(1200)
     await user.click(action)
     expect(writeText).toHaveBeenCalledWith(
-      'holi://open?vault=syv/vault&path=notes/Plan.md&heading=plan',
+      'https://syv-ai.github.io/holi/#vault=syv/vault&path=notes/Plan.md&heading=plan',
     )
 
     paneWidth = 800
@@ -908,7 +908,7 @@ test('duplicate top-level headings copy their disambiguated anchor', async () =>
   await user.click(screen.getByRole('button', { name: 'Document actions' }))
   await user.click(await screen.findByRole('menuitem', { name: 'Copy link to heading' }))
   expect(writeText).toHaveBeenCalledWith(
-    'holi://open?vault=syv/vault&path=notes/Plan.md&heading=same-1',
+    'https://syv-ai.github.io/holi/#vault=syv/vault&path=notes/Plan.md&heading=same-1',
   )
 })
 
