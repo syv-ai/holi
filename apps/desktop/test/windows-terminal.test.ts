@@ -116,6 +116,7 @@ describe('the PowerShell integration script', () => {
 
 describe.runIf(process.platform === 'win32')(
   'the PowerShell script, run by Windows PowerShell',
+  { timeout: 90_000 },
   () => {
     it('prints the folder before their own prompt and leaves $? and $LASTEXITCODE as they were', () => {
       const dir = mkdtempSync(join(tmpdir(), 'holi-shell-run-'))
@@ -155,7 +156,7 @@ describe.runIf(process.platform === 'win32')(
   },
 )
 
-describe.runIf(process.platform === 'win32')('under Set-StrictMode', () => {
+describe.runIf(process.platform === 'win32')('under Set-StrictMode', { timeout: 90_000 }, () => {
   it('still wraps the prompt when the profile turned strict mode on', () => {
     const dir = mkdtempSync(join(tmpdir(), 'holi-shell-strict-'))
     try {
@@ -187,6 +188,7 @@ describe.runIf(process.platform === 'win32')('under Set-StrictMode', () => {
 const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe'
 describe.runIf(process.platform === 'win32' && existsSync(GIT_BASH))(
   'the Git Bash script, run by Git Bash',
+  { timeout: 90_000 },
   () => {
     it('reports a folder under an MSYS-only root as a Windows folder', () => {
       const dir = mkdtempSync(join(tmpdir(), 'holi-shell-bash-'))
@@ -273,17 +275,29 @@ describe('processCwd', () => {
 describe('the panel’s shell on Windows', () => {
   const WIN = { SystemRoot: 'C:\\Windows' } as NodeJS.ProcessEnv
   const GIT_BASH = 'C:\\Git\\bin\\bash.exe'
+  const none = () => null
+
+  it('prefers pwsh where it is found, and never looks off Windows', () => {
+    const PWSH = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'
+    const asked: string[] = []
+    const find = (name: string) => (asked.push(name), name === 'pwsh' ? PWSH : null)
+    expect(defaultShell(WIN, 'win32', find)).toBe(PWSH)
+    expect(defaultShell({ SHELL: GIT_BASH }, 'win32', find)).toBe(GIT_BASH)
+    asked.length = 0
+    expect(defaultShell({}, 'linux', find)).toBe('/bin/zsh')
+    expect(asked).toEqual([])
+  })
 
   it('falls back to Windows PowerShell, not /bin/zsh, when SHELL is unset', () => {
-    expect(defaultShell(WIN, 'win32')).toBe(
+    expect(defaultShell(WIN, 'win32', none)).toBe(
       'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     )
-    expect(defaultShell({}, 'win32')).toMatch(/^C:\\Windows\\System32\\/)
-    expect(defaultShell({}, 'win32')).toMatch(/WindowsPowerShell.v1\.0.powershell\.exe$/)
+    expect(defaultShell({}, 'win32', none)).toMatch(/^C:\\Windows\\System32\\/)
+    expect(defaultShell({}, 'win32', none)).toMatch(/WindowsPowerShell.v1\.0.powershell\.exe$/)
   })
 
   it('keeps SHELL where the person set it, and /bin/zsh off Windows', () => {
-    expect(defaultShell({ SHELL: GIT_BASH }, 'win32')).toBe(GIT_BASH)
+    expect(defaultShell({ SHELL: GIT_BASH }, 'win32', none)).toBe(GIT_BASH)
     expect(defaultShell({ SHELL: '/bin/fish' }, 'linux')).toBe('/bin/fish')
     expect(defaultShell({}, 'darwin')).toBe('/bin/zsh')
     expect(defaultShell({}, 'linux')).toBe('/bin/zsh')

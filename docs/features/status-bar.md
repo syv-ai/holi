@@ -67,8 +67,8 @@ from the shell's first render so its keys are live, drawn once first opened, and
 rather than unmounted, so a closed panel keeps the shells' scrollback.
 
 **The Terminal** is the person's login shell (`$SHELL -l`, else `/bin/zsh`) in a PTY in main; on
-Windows `$SHELL` if they set one (Git Bash does for its own children), else Windows PowerShell
-(`default-shell.ts`). It is not started `-l` there: that is not a PowerShell switch (it exits 1),
+Windows `$SHELL` if they set one (Git Bash does for its own children), else PowerShell 7 (`pwsh`, found
+on the tool `PATH`) if installed, else Windows PowerShell (`default-shell.ts`). It is not started `-l` there: that is not a PowerShell switch (it exits 1),
 so PowerShell gets `-NoLogo` and, with the integration below, `-NoExit -Command`; cmd takes no
 arguments. On Windows shell names are matched with or without `.exe`. It runs in
 the open vault's clone, with `TERM=xterm-256color` and the `holi` command on `PATH`. It is core's

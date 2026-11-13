@@ -196,9 +196,9 @@ pending, which win; the 3-way merge and the conflict banner are not built for no
 renderer runs on shadcn's neutral theme and the settings have no Appearance page
 ([ui-system](ui-system.md#per-vault-theming)).
 
-**A shell picker for the Terminal.** The panel runs `$SHELL`, else Windows PowerShell on Windows
-and zsh elsewhere, and nothing lets a person choose another (Git Bash, cmd, WSL, a `pwsh` they
-installed) without setting `$SHELL` before Holi starts. cmd also has no folder tracking: Windows has
+**A shell picker for the Terminal.** The panel runs `$SHELL`, else `pwsh` or Windows PowerShell on
+Windows and zsh elsewhere, and nothing lets a person choose another (Git Bash, cmd, WSL) without setting `$SHELL` before Holi starts. MSYS zsh and WSL's `bash.exe` start as plain login shells with no folder tracking either (Git Bash has it,
+through `cygpath -m`). cmd also has no folder tracking: Windows has
 no `lsof`, and a `PROMPT` that prints the folder would need its `#`, `?` and `%` escaped first, which
 cmd's `$P` does not do. See [status-bar](features/status-bar.md).
 

@@ -78,7 +78,7 @@ export interface TerminalsDeps {
   send(event: TerminalEvent): void
   spawnPty?: SpawnPty
   probePid?: (pid: number) => PidState
-  /** The shell to run: `$SHELL`, else Windows PowerShell on Windows and
+  /** The shell to run: `$SHELL`, else `pwsh` or Windows PowerShell on Windows and
    *  `/bin/zsh` elsewhere (`default-shell.ts`). */
   shell?: () => string
   /** The OS the paths and shells are those of; the running one unless a test
@@ -269,7 +269,7 @@ export function createTerminals(deps: TerminalsDeps): Terminals {
         // A login shell, so the person's profile (PATH, prompt) is there as
         // in their own terminal: an app opened from the Dock has neither.
         // With the integration where Holi has one, which reports the cwd.
-        const env = shellEnv(baseEnv(), deps.binDir?.() ?? null)
+        const env = shellEnv(baseEnv(), deps.binDir?.() ?? null, platform)
         const launch = shellLaunch(file, env, integrationDir(), platform)
         pty = spawn(file, launch.args, {
           cwd: root,
