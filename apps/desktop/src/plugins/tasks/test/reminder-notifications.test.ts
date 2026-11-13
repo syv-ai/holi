@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { notificationsFor } from '../main/reminders/notifications'
+import { createNotifier } from '../main/reminders/notify'
 import type { RemindersEvent } from '../main/reminders/types'
 
 const fire = (n: number, remote = 'o/r') => ({
@@ -67,6 +68,57 @@ describe('notificationsFor', () => {
         task: { remote: 'o/work', path: 'task.t3.md' },
       },
     ])
+  })
+
+  it('labels a fallback notice overdue with its due stamp and vault', () => {
+    expect(
+      notificationsFor({
+        fires: [{ ...fire(1), fireAt: '2026-07-30T10:00', due: '2026-07-28T09:30', overdue: true }],
+        coalesced: false,
+        firedAt: '2026-07-30T10:00',
+      })[0],
+    ).toEqual({
+      title: 'Overdue: task 1',
+      body: 'r · Overdue · 2026-07-28 09:30',
+      task: { remote: 'o/r', path: 'task.t1.md' },
+    })
+  })
+
+  it('summarizes all-overdue and mixed batches accurately per vault', () => {
+    const overdueFire = { ...fire(1), due: '2026-07-28', overdue: true as const }
+    expect(
+      notificationsFor({
+        fires: [overdueFire, { ...fire(2), due: '2026-07-29', overdue: true }],
+        coalesced: true,
+        firedAt: '2026-07-30T10:00',
+      })[0],
+    ).toMatchObject({
+      title: '2 overdue tasks in r',
+      body: 'Overdue: task 1 (2026-07-28), Overdue: task 2 (2026-07-29)',
+    })
+    expect(
+      notificationsFor({
+        fires: [overdueFire, fire(2), fire(3), fire(4)],
+        coalesced: true,
+        firedAt: '2026-07-30T10:00',
+      })[0],
+    ).toMatchObject({
+      title: '4 task reminders in r',
+      body: 'Overdue: task 1 (2026-07-28), task 2, task 3 +1 more',
+    })
+  })
+
+  it('opens the exact vault and task path on a singleton click', () => {
+    const notices: Array<{ title: string; body: string; onClick?: () => void }> = []
+    const opened: Array<[string, string]> = []
+    createNotifier({
+      notify: (notice) => {
+        notices.push(notice)
+      },
+      open: (remote, path) => opened.push([remote, path]),
+    }).fire({ fires: [fire(1, 'o/second')], coalesced: false, firedAt: '2026-07-16T07:00' })
+    notices[0]!.onClick!()
+    expect(opened).toEqual([['o/second', 'task.t1.md']])
   })
 
   it('raises nothing for an empty batch', () => {

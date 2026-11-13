@@ -9,6 +9,7 @@ Holi, the app around this vault, is open source: https://github.com/syv-ai/holi.
 - Moving a file: links to it are rewritten on commit when git sees the rename. If you moved it another way, fix the links manually.
 - A `.local.` in a file or folder name keeps it, and everything in a folder, on this machine (gitignored). Anything personal goes in one.
 - Show the user a file with `holi docs open <path>` rather than telling them where it is, and see what they see with `holi docs screenshot <path>` (the show-the-user skill). Bare `holi` lists Holi's other commands.
+- Find tasks with `holi tasks list`, not grep or glob, which can miss private tasks. Use `--due today` for today's due dates, `--overdue` for late open tasks, and `--json` for task fields (the using-tasks skill).
 
 ## Sync
 

@@ -29,6 +29,7 @@ export interface CapabilityHostDeps {
   /** The open vault, or null with none open. */
   active(): {
     remote: string
+    root: string
     snapshot(): VaultSnapshot
     refresh(): Promise<unknown>
   } | null
@@ -46,6 +47,7 @@ interface CapabilityCall {
   remote: string
   name: string
   params: unknown
+  beforeInvoke?: (target: { remote: string; root: string }) => Promise<void>
 }
 
 export type Dispatch = (call: CapabilityCall) => Promise<CapabilityResult>
@@ -67,9 +69,9 @@ export interface CapabilityHost {
   /** The names open at `door` in the vault at `remote`: core's, and those of
    *  the plugins it runs. What `has('tasks.create')` asks. */
   names(remote: string, door: Door): Promise<string[]>
-  /** Open the app door. One opener at a time: a second throws while the
-   *  first has not closed it. */
-  openAppDoor(opener: AppDoorOpener): AppDoor
+  /** Open one app door per remote. A second opener for that remote throws
+   *  until the first closes; closing also revokes its pending calls. */
+  openAppDoor(opener: AppDoorOpener, remote: string): AppDoor
 }
 
 export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
@@ -79,8 +81,8 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     return root
   }
 
-  async function enabled(name: string, root: string): Promise<boolean> {
-    const plugin = deps.registry.pluginOf(name)
+  async function enabled(name: string, root: string, remote: string): Promise<boolean> {
+    const plugin = deps.registry.pluginOf(name, remote)
     return plugin === null || (await deps.pluginEnabled(plugin, root))
   }
 
@@ -91,9 +93,12 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     name: string,
     params: unknown,
     admit?: Admit,
+    isCurrent?: () => boolean,
+    beforeInvoke?: CapabilityCall['beforeInvoke'],
   ): Promise<CapabilityResult> {
     const root = await rootOf(remote)
-    if (!(await enabled(name, root))) {
+    if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+    if (!(await enabled(name, root, remote))) {
       throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
     }
     const result = await deps.registry.run(
@@ -105,7 +110,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
         bundle,
         snapshot: async () => {
           const active = deps.active()
-          return active?.remote === remote
+          return active?.remote === remote && active.root === root
             ? active.snapshot()
             : scanVault(root, await deps.claims(root))
         },
@@ -114,26 +119,30 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       },
       params,
       admit,
+      isCurrent,
+      beforeInvoke,
     )
     if (result.writes) {
       const active = deps.active()
-      if (active?.remote === remote) {
+      if (active?.remote === remote && active.root === root) {
         await active.refresh().catch((e) => console.error('[capabilities] post-write rescan:', e))
       }
     }
     return result
   }
 
-  let opened = false
   // One CLI note operation at a time per vault, through its snapshot refresh
   // and settlement. Two agents that inspect the same revision must not both
   // pass the check before either has written and published its change.
   const docQueues = new Map<string, Promise<void>>()
   const docCommands = new Set(['docs.create', 'docs.update', 'docs.delete', 'docs.settle'])
 
+  const openedDoors = new Map<string, object>()
   return {
-    dispatch: async ({ door, remote, name, params }) => {
-      if (door !== 'cli' || !docCommands.has(name)) return run(door, remote, null, name, params)
+    dispatch: async ({ door, remote, name, params, beforeInvoke }) => {
+      if (door !== 'cli' || !docCommands.has(name)) {
+        return run(door, remote, null, name, params, undefined, undefined, beforeInvoke)
+      }
       const previous = docQueues.get(remote) ?? Promise.resolve()
       let release!: () => void
       const pending = new Promise<void>((resolve) => {
@@ -142,7 +151,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       docQueues.set(remote, pending)
       await previous
       try {
-        return await run(door, remote, null, name, params)
+        return await run(door, remote, null, name, params, undefined, undefined, beforeInvoke)
       } finally {
         release()
         if (docQueues.get(remote) === pending) docQueues.delete(remote)
@@ -151,24 +160,27 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
 
     async names(remote, door) {
       const root = await rootOf(remote)
-      const names = deps.registry.names(door)
-      const on = await Promise.all(names.map((name) => enabled(name, root)))
+      const names = deps.registry.names(door, remote)
+      const on = await Promise.all(names.map((name) => enabled(name, root, remote)))
       return names.filter((_, i) => on[i])
     },
 
-    openAppDoor({ admit }) {
-      if (opened) throw new Error('the app door is already open')
-      opened = true
+    openAppDoor({ admit }, remote) {
+      if (openedDoors.has(remote)) throw new Error('the app door is already open')
+      const lease = {}
+      openedDoors.set(remote, lease)
       let shut = false
+      const isCurrent = () => !shut && openedDoors.get(remote) === lease
       return {
-        call: async (remote, bundle, name, params) => {
-          if (shut) throw new Error('the app door is closed')
-          return run('app', remote, bundle, name, params, admit)
+        call: async (target, bundle, name, params) => {
+          if (target !== remote) throw new Error(`app door belongs to ${remote}`)
+          if (!isCurrent()) throw new Error('the app door is closed')
+          return run('app', remote, bundle, name, params, admit, isCurrent)
         },
         close: () => {
           if (shut) return
           shut = true
-          opened = false
+          if (openedDoors.get(remote) === lease) openedDoors.delete(remote)
         },
       }
     },

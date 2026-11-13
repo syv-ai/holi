@@ -23,8 +23,10 @@ const when = (fireAt: string) => fireAt.replace('T', ' ')
 const vaultName = (remote: string) => remote.slice(remote.indexOf('/') + 1)
 
 const single = (f: ReminderFire): NotificationSpec => ({
-  title: f.title,
-  body: `${vaultName(f.remote)} · Reminder · ${when(f.fireAt)}`,
+  title: f.overdue ? `Overdue: ${f.title}` : f.title,
+  body: f.overdue
+    ? `${vaultName(f.remote)} · Overdue · ${when(f.due ?? f.fireAt)}`
+    : `${vaultName(f.remote)} · Reminder · ${when(f.fireAt)}`,
   task: { remote: f.remote, path: f.path },
 })
 
@@ -45,10 +47,20 @@ export function notificationsFor(event: RemindersEvent): NotificationSpec[] {
   for (const f of event.fires) byVault.set(f.remote, [...(byVault.get(f.remote) ?? []), f])
   return [...byVault].map(([remote, fires]) => {
     if (fires.length === 1) return single(fires[0]!)
-    const named = fires.slice(0, SUMMARY_TITLES).map((f) => f.title)
+    const overdue = fires.filter((f) => f.overdue).length
+    const explicit = fires.length - overdue
+    const kind =
+      overdue === fires.length
+        ? 'overdue tasks'
+        : explicit === fires.length
+          ? 'reminders'
+          : 'task reminders'
+    const named = fires
+      .slice(0, SUMMARY_TITLES)
+      .map((f) => (f.overdue ? `Overdue: ${f.title} (${when(f.due ?? f.fireAt)})` : f.title))
     const rest = fires.length - named.length
     return {
-      title: `${fires.length} reminders in ${vaultName(remote)}`,
+      title: `${fires.length} ${kind} in ${vaultName(remote)}`,
       body: rest > 0 ? `${named.join(', ')} +${rest} more` : named.join(', '),
     }
   })
