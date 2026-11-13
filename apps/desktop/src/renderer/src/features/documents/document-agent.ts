@@ -123,7 +123,7 @@ async function clearMarker(remote: string, path: string): Promise<void> {
  * and stop one. `start` expects the document already saved: for a write, with
  * the marker in place.
  */
-export function useDocumentAgent(path: string) {
+export function useDocumentAgent(path: string, focused = true) {
   const remote = useAtomValue(activeRemoteAtom)
   const loadSettings = useSetAtom(loadVaultSettingsAtom)
   const remoteRef = useRef(remote)
@@ -220,18 +220,17 @@ export function useDocumentAgent(path: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run, finished, copying, copyFailed])
 
-  // Leaving the document while a run goes on: when it finishes, its app is
-  // offered rather than opened over whatever is in front by then.
-  useEffect(
-    () => () =>
-      setRuns((all) => {
-        const current = all[path]
-        return current === undefined || !isRunLive(current)
-          ? all
-          : { ...all, [path]: { ...current, away: true } }
-      }),
-    [path, setRuns],
-  )
+  // Once a run's document is left, its completion must never navigate over
+  // whatever is in front, even if the person later returns to this view.
+  useEffect(() => {
+    if (focused) return
+    setRuns((all) => {
+      const current = all[path]
+      return current === undefined || !isRunLive(current) || current.away
+        ? all
+        : { ...all, [path]: { ...current, away: true } }
+    })
+  }, [focused, path, setRuns])
 
   // A write that ended without removing its marker leaves no trace of it.
   useEffect(() => {

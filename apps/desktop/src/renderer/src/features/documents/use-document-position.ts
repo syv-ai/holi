@@ -19,12 +19,15 @@ export function useDocumentPosition({
   path,
   scrollerRef,
   markdown,
+  active = true,
 }: {
   editor: Editor | null
   remote: string | null
   path: string
   scrollerRef: React.RefObject<HTMLDivElement | null>
   markdown: () => string
+  /** Only the focused view may consume a deferred heading destination. */
+  active?: boolean
 }): void {
   // A tab switched back to opens where it was left: the caret and the
   // scroll, kept as they move (`view-memory.ts`). A link to a heading
@@ -71,9 +74,9 @@ export function useDocumentPosition({
   // A Holi link that named a heading lands the caret on it once the
   // document is in the editor.
   useEffect(() => {
-    if (!editor || editor.isDestroyed || pendingHeading?.path !== path) return
+    if (!active || !editor || editor.isDestroyed || pendingHeading?.path !== path) return
     landOnHeading(editor, markdown(), pendingHeading.heading)
     setPendingHeading(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, pendingHeading, path])
+  }, [editor, pendingHeading, path, active])
 }

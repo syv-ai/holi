@@ -124,12 +124,18 @@ export function DocumentView({
   path,
   onOpen,
   onMoved,
+  visible = true,
+  focused = visible,
 }: {
   path: string
   /** Open a vault path in a tab: a linked note, or a finished artifact. */
   onOpen: (path: string) => void
   /** The document moved (a task given another project): follow it. */
   onMoved?: (from: string, to: string) => void
+  /** Whether the shell displays this retained view. */
+  visible?: boolean
+  /** Whether it owns keyboard focus and may publish active UI state. */
+  focused?: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
@@ -183,6 +189,8 @@ export function DocumentView({
       docs={docs}
       onOpen={onOpen}
       onMoved={onMoved}
+      visible={visible}
+      focused={focused}
     />
   )
 }
@@ -195,6 +203,8 @@ function DocumentEditor({
   docs,
   onOpen,
   onMoved,
+  visible,
+  focused,
 }: {
   path: string
   remote: string
@@ -203,8 +213,10 @@ function DocumentEditor({
   docs: readonly { path: string }[]
   onOpen: (path: string) => void
   onMoved?: (from: string, to: string) => void
+  visible: boolean
+  focused: boolean
 }) {
-  const agent = useDocumentAgent(path)
+  const agent = useDocumentAgent(path, focused)
   const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const agentLabelRef = useRef(agentLabel)
   agentLabelRef.current = agentLabel
@@ -277,6 +289,8 @@ function DocumentEditor({
   }, [])
   const lockedRef = useRef(locked)
   lockedRef.current = locked
+  const focusedRef = useRef(focused)
+  focusedRef.current = focused
 
   // Callbacks the extensions hold, read through refs so the extensions are
   // made once per document.
@@ -287,6 +301,7 @@ function DocumentEditor({
     pluginItems: (): readonly RichTextSlashItem[] => [],
   })
   handlers.current.openLink = (target) => {
+    if (!focusedRef.current) return
     const found = resolveLink(target, path, docs)
     if (found) onOpen(found)
   }
@@ -384,7 +399,7 @@ function DocumentEditor({
     refreshThreads,
   } = comments
 
-  useSelectionReport(editor, path, head)
+  useSelectionReport(editor, path, head, focused)
 
   const claims = useAtomValue(claimsAtom)
   /** The latest claims, for `save` and the reload, which outlive the render that made them. */
@@ -392,7 +407,7 @@ function DocumentEditor({
   claimsRef.current = claims
   /** What the first claim on this path draws above it: a link's card. */
   const Banner = claims.find((claim) => claim.banner !== undefined && claim.match(path))?.banner
-  useDocumentPosition({ editor, remote, path, scrollerRef, markdown })
+  useDocumentPosition({ editor, remote, path, scrollerRef, markdown, active: focused })
 
   const holiLinks = isHoliLinkable(path)
     ? {
@@ -503,6 +518,19 @@ function DocumentEditor({
 
   // Leaving the document writes what is pending, and leaves what it showed
   // for its tab to be compared to (`doc-changes.ts`).
+  useEffect(() => {
+    if (visible) return
+    const pending = dirty.current
+    const live = editor !== null && !editor.isDestroyed
+    sawText(remote, path, pending && live ? markdown() : lastText.current)
+    if (pending) void save().catch(() => undefined)
+    // Saving is an existing leave-view behavior; a retained editor remains
+    // mounted, so visibility replaces its former unmount transition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible])
+
+  // A close or vault disposal still unmounts the editor and needs the same
+  // final save that ordinary tabs used to get from unmounting on every leave.
   useEffect(
     () => () => {
       const pending = dirty.current
@@ -566,8 +594,8 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked && !frozen.current && !doneFreeze.current)
-  }, [editor, locked])
+    editor.setEditable(!locked && focused && !frozen.current && !doneFreeze.current)
+  }, [editor, locked, focused])
 
   // A finished edit clears its pill on its own. A finished vault app opens
   // when the document is still the tab in front and was never left while it
@@ -632,7 +660,7 @@ function DocumentEditor({
     setLinkOpen(true)
   }
 
-  const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef)
+  const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef, focused)
 
   async function finishTask() {
     if (doneInFlight.current || lockedRef.current || frozen.current || !editor?.isEditable) return
@@ -672,14 +700,14 @@ function DocumentEditor({
       doneInFlight.current = false
       if (!editor.isDestroyed) {
         doneFreeze.current = false
-        editor.setEditable(!lockedRef.current && !frozen.current)
+        editor.setEditable(!lockedRef.current && focusedRef.current && !frozen.current)
       }
       setDonePending(false)
     }
   }
 
   function handleViewKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (!editor || event.defaultPrevented) return
+    if (!focusedRef.current || !editor || event.defaultPrevented) return
     const mod = apple ? event.metaKey : event.ctrlKey
     const key = event.key.toLowerCase()
     if (mod && event.altKey && !event.shiftKey && event.code === 'KeyM') {
@@ -720,6 +748,7 @@ function DocumentEditor({
       <div
         ref={viewRef}
         className="text-foreground @container/document relative flex h-full min-h-0 w-full flex-col"
+        inert={!visible}
         onKeyDown={handleViewKeyDown}
       >
         {/* Locked while a run edits the document: nothing in it answers. */}
@@ -775,7 +804,7 @@ function DocumentEditor({
             >
               {/* The find bar floats at the page's top right, over the text,
                 and stays there as it scrolls. */}
-              {editor && find ? (
+              {editor && find && focused ? (
                 <div className="sticky top-2 z-40 flex h-0 items-start justify-end px-4">
                   <DocumentFindBar editor={editor} request={find} onClose={() => setFind(null)} />
                 </div>
@@ -830,7 +859,7 @@ function DocumentEditor({
                 ) : (
                   <DocumentSkeleton />
                 )}
-                {editor ? (
+                {editor && focused ? (
                   <>
                     <DocumentFormatBubble
                       editor={editor}
@@ -943,7 +972,11 @@ function DocumentEditor({
           </div>
         ) : null}
       </div>
-      <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
+      <DeleteTableDialog
+        editor={editor}
+        open={deleteTableOpen && visible && focused}
+        onOpenChange={setDeleteTableOpen}
+      />
     </TooltipProvider>
   )
 }
