@@ -1,5 +1,5 @@
 import { type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { killTree, spawnOwnedProgram } from '../../../../main/plugin-api'
+import { spawnOwnedProgram } from '../../../../main/plugin-api'
 import type { Readable, Writable } from 'node:stream'
 
 type PiRunStatus = 'completed' | 'failed' | 'aborted'
@@ -64,8 +64,6 @@ export class PiRpcRun {
   private readonly child: PiChild
   private readonly onStats?: PiRpcOptions['onStats']
   private readonly processGroup: boolean
-  /** Windows: no groups, so the real Pi's tree is stopped by its root pid. */
-  private readonly processTree: boolean
   private exited = false
   private killTimer?: ReturnType<typeof setTimeout>
   private statsTimer?: ReturnType<typeof setTimeout>
@@ -108,7 +106,6 @@ export class PiRpcRun {
       }
     }
     this.processGroup = options.spawn === undefined && process.platform !== 'win32'
-    this.processTree = false
     const spawn =
       options.spawn ??
       ((bin, args, opts) =>
@@ -208,8 +205,6 @@ export class PiRpcRun {
       if (this.exited && !this.processGroup) return
       try {
         if (this.processGroup && this.child.pid !== undefined) process.kill(-this.child.pid, name)
-        else if (this.processTree && !this.exited && this.child.pid !== undefined)
-          killTree(this.child.pid, 'SIGKILL')
         else if (!this.exited) this.child.kill(name)
       } catch {
         /* process or its group already exited */

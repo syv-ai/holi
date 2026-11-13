@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +8,7 @@ import { commandLine, launchPlan, spawnProgram } from '../src/main/launch'
 import { defaultProbePid, killChildTree, killTree } from '../src/main/process-group'
 
 const WIN = { platform: 'win32' } as const
+const npmShim = () => readFile(join(import.meta.dirname, 'fixtures/npm-node-shim.cmd'), 'utf8')
 
 describe('launchPlan', () => {
   it('leaves every program alone on macOS and Linux, a .cmd by name included', () => {
@@ -64,15 +65,24 @@ describe('launchPlan', () => {
     const script = join(packageDir, 'cli.js')
     await writeFile(script, 'process.exit(0)')
     const shim = join(dir, 'fixture.cmd')
-    await writeFile(
-      shim,
-      '@ECHO off\r\nIF EXIST "%~dp0%\\node.exe" (SET "_prog=%~dp0%\\node.exe") ELSE (SET "_prog=node")\r\n"%_prog%" "%~dp0%\\node_modules\\fixture\\cli.js" %*\r\n',
-    )
-    expect(launchPlan(shim, ['line one\r\nline two', '%PATH%', ''], WIN)).toEqual({
+    await writeFile(shim, await npmShim())
+    expect(
+      launchPlan(shim, ['line one\r\nline two', '%PATH%', ''], { ...WIN, resolve: () => null }),
+    ).toEqual({
       file: process.execPath,
       args: [script, 'line one\r\nline two', '%PATH%', ''],
       verbatim: false,
     })
+  })
+
+  it('does not bypass custom batch work surrounding an npm entrypoint', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-custom-shim-'))
+    dirs.push(dir)
+    await mkdir(join(dir, 'node_modules', 'fixture'), { recursive: true })
+    await writeFile(join(dir, 'node_modules', 'fixture', 'cli.js'), 'process.exit(0)')
+    const shim = join(dir, 'fixture.cmd')
+    await writeFile(shim, (await npmShim()) + '\r\necho custom-work\r\n')
+    expect(() => launchPlan(shim, ['line one\nline two'], WIN)).toThrow(/safely/)
   })
 
   it('carries Unicode through an opaque batch argument without rewriting it', () => {
@@ -120,6 +130,7 @@ describe('a real .cmd on Windows', () => {
     [''],
     ["it's `tick`"],
     ['C:\\Program Files\\x y\\'],
+    ['line one\r\nline two', 'x'.repeat(12_000), 'snowman ☃'],
   ]
 
   it.runIf(process.platform === 'win32')(
@@ -135,10 +146,7 @@ describe('a real .cmd on Windows', () => {
         'console.log(JSON.stringify(process.argv.slice(2)))\n',
       )
       const shim = join(dir, 'Ada Lovelace', 'tool.cmd')
-      await writeFile(
-        shim,
-        '@ECHO off\r\nIF EXIST "%~dp0%\\node.exe" (SET "_prog=%~dp0%\\node.exe") ELSE (SET "_prog=node")\r\n"%_prog%" "%~dp0%\\node_modules\\fixture\\cli.js" %*\r\n',
-      )
+      await writeFile(shim, await npmShim())
       for (const args of NASTY) {
         const plan = launchPlan(shim, args, WIN)
         const out = await new Promise<string>((resolve, reject) => {
@@ -160,6 +168,12 @@ describe('a real .cmd on Windows', () => {
 })
 
 describe('spawnProgram', () => {
+  it('reports rejected batch planning through the expected error event', async () => {
+    const child = spawnProgram('opaque.cmd', ['%PATH%'], { stdio: 'pipe' }, WIN)
+    const error = await new Promise<Error>((resolve) => child.once('error', resolve))
+    expect(error.message).toContain('safely')
+  })
+
   it('reports a start that throws as the error event every caller handles', async () => {
     // A NUL cannot be in an argument: spawn throws synchronously, as it does
     // for a .cmd it refuses (EINVAL).

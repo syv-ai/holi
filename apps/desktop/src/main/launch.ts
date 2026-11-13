@@ -21,7 +21,7 @@ import {
   type SpawnOptions,
 } from 'node:child_process'
 import { PassThrough } from 'node:stream'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { win32 } from 'node:path'
 import { resolveBin, type Platform } from './bin'
@@ -40,21 +40,37 @@ export interface Launch {
 
 const BATCH = /\.(cmd|bat)$/i
 
-/** Resolve only the recognizable npm-generated node_modules shim shape. */
+/** Only a complete npm node shim is transparent; a custom batch may do other work. */
 function npmShimScript(file: string): string | null {
   try {
-    const source = readFileSync(file, 'utf8')
-    if (!/@echo\s+off/i.test(source) || !/%\*/.test(source)) return null
-    // npm's Windows shim selects a colocated node.exe when present and points
-    // it at a node_modules JavaScript package entrypoint. Requiring both
-    // signatures avoids treating arbitrary batch programs as transparent.
-    if (!/%(?:~dp0|dp0%)[\\/]node\.exe/i.test(source) || !/node_modules[\\/]/i.test(source))
-      return null
-    const match = source.match(/"%(?:~dp0|dp0%)[\\/]([^"\r\n]+\.js)"\s+%\*/i)
-    const relativeScript = match?.[1]
-    if (!relativeScript) return null
-    const script = join(dirname(file), ...relativeScript.split(/[\\/]/))
-    return existsSync(script) ? script : null
+    const lines = readFileSync(file, 'utf8')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const entry = lines
+      .pop()
+      ?.match(
+        /^endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & "%_prog%"\s+"%dp0%\\([^"\r\n]+)" %\*$/i,
+      )
+    const header = [
+      '@ECHO off',
+      'GOTO start',
+      ':find_dp0',
+      'SET dp0=%~dp0',
+      'EXIT /b',
+      ':start',
+      'SETLOCAL',
+      'CALL :find_dp0',
+      'IF EXIST "%dp0%\\node.exe" (',
+      'SET "_prog=%dp0%\\node.exe"',
+      ') ELSE (',
+      'SET "_prog=node"',
+      'SET PATHEXT=%PATHEXT:;.JS;=;%',
+      ')',
+    ]
+    if (!entry || lines.join('\n').toLowerCase() !== header.join('\n').toLowerCase()) return null
+    const script = join(dirname(file), ...entry[1]!.split(/[\\/]/))
+    return statSync(script).isFile() ? script : null
   } catch {
     return null
   }
@@ -97,9 +113,19 @@ export function launchPlan(
   if (script) {
     const colocatedNode = join(dirname(target), 'node.exe')
     const callerNode = look('node', env)
-    const electronIsNode = /(?:^|[\\/])electron(?:\.exe)?$/i.test(process.execPath)
-    const node = existsSync(colocatedNode) ? colocatedNode : callerNode ?? process.execPath
-    const useElectron = node === process.execPath && electronIsNode
+    const isFile = (path: string): boolean => {
+      try {
+        return statSync(path).isFile()
+      } catch {
+        return false
+      }
+    }
+    const node = isFile(colocatedNode)
+      ? colocatedNode
+      : callerNode && /\.(?:exe|com)$/i.test(callerNode)
+        ? callerNode
+        : process.execPath
+    const useElectron = node === process.execPath && process.versions.electron !== undefined
     return {
       file: node,
       args: [script, ...args],
@@ -111,16 +137,18 @@ export function launchPlan(
   // cmd.exe cannot represent arbitrary argv: % expansion happens even inside
   // quotes, delayed expansion can consume !, and line breaks are commands. Do
   // not silently alter these inputs or risk executing them as shell syntax.
-  const unsafe = args.find((arg) => /[\r\n\0]|[%!^&|<>]/u.test(arg))
-  if (unsafe !== undefined || /[%!^&|<>\r\n]/u.test(target)) {
+  const unsafe = args.find((arg) => /[\x00-\x1f"%!^&|<>]/u.test(arg))
+  if (unsafe !== undefined || /[\x00-\x1f"%!^&|<>]/u.test(target)) {
     throw new Error(
       `Cannot pass this argument safely to batch file ${target}; install a Node-based CLI shim or use an executable instead.`,
     )
   }
-  const quote = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`
+  const quote = (value: string) => `"${value}"`
   const line = [quote(target), ...args.map(quote)].join(' ')
-  if (line.length > 8191) {
-    throw new Error(`Cannot pass this command to batch file ${target}: Windows cmd.exe command limit is 8191 characters.`)
+  if (line.length + 2 > 8191) {
+    throw new Error(
+      `Cannot pass this command to batch file ${target}: Windows cmd.exe command limit is 8191 characters.`,
+    )
   }
   return { file: comspec(env), args: ['/d', '/s', '/c', `"${line}"`], verbatim: true }
 }
@@ -165,7 +193,7 @@ export function spawnProgram(
   try {
     return spawn(plan.file, plan.args, {
       ...options,
-      ...(plan.env ? { env: { ...process.env, ...options.env, ...plan.env } } : {}),
+      ...(plan.env ? { env: { ...(options.env ?? process.env), ...plan.env } } : {}),
       // No console to share with a child that has none of its own: a
       // detached child on Windows would open a window for a console
       // grandchild (the `node` behind `claude.cmd`). Its tree is stopped by

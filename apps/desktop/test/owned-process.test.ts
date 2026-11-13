@@ -4,128 +4,106 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { spawnOwnedProgram } from '../src/main/owned-process'
 
-const until = async (check: () => Promise<boolean>, message: string): Promise<void> => {
+const windows = process.platform === 'win32'
+
+async function waitForFile(file: string): Promise<string> {
   const deadline = Date.now() + 10_000
-  while (!(await check())) {
-    if (Date.now() >= deadline) throw new Error(message)
-    await new Promise((resolve) => setTimeout(resolve, 10))
+  while (true) {
+    try {
+      return await readFile(file, 'utf8')
+    } catch {
+      if (Date.now() >= deadline) throw new Error(`No handshake at ${file}`)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
   }
 }
 
+function completion(child: ReturnType<typeof spawnOwnedProgram>): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', (code) => resolve(code))
+  })
+}
+
 describe('spawnOwnedProgram', () => {
-  it('starts ordinary programs with argv and output on POSIX', async () => {
-    if (process.platform === 'win32') return
+  it('preserves exact argv and output', async () => {
+    const args = ['one two', '', '☃', 'one\r\ntwo', 'q"uote', 'x'.repeat(12_000)]
     const child = spawnOwnedProgram(
       process.execPath,
-      ['-e', 'process.stdout.write(JSON.stringify(process.argv.slice(1)))', 'one two'],
+      ['-e', 'process.stdout.write(JSON.stringify(process.argv.slice(1)))', '--', ...args],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     )
+    const done = completion(child)
     let output = ''
     child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
-    const [code] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) =>
-      child.once('close', (status, signal) => resolve([status, signal])),
-    )
-    expect(code).toBe(0)
-    expect(JSON.parse(output)).toEqual(['one two'])
+    let error = ''
+    child.stderr!.setEncoding('utf8').on('data', (chunk: string) => (error += chunk))
+    expect(await done, error).toBe(0)
+    expect(JSON.parse(output)).toEqual(args)
   })
 
-  it('stops and waits for the Windows ownership job', async () => {
-    if (process.platform !== 'win32') return
-    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-stop-'))
-    const ready = join(dir, 'ready')
-    const rootExited = join(dir, 'root-exited')
-    const pidFile = join(dir, 'descendant-pid')
-    const descendant = [
-      'const fs=require("node:fs");',
-      `const dir=${JSON.stringify(dir)};`,
-      'const watcher=fs.watch(dir,()=>{});',
-      `fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid));`,
-      `fs.writeFileSync(${JSON.stringify(ready)},"ready");`,
-    ].join('')
-    const root = [
-      'const fs=require("node:fs");const cp=require("node:child_process");',
-      `cp.spawn(process.execPath,["-e",${JSON.stringify(descendant)}],{stdio:"ignore",windowsHide:true});`,
-      `fs.writeFileSync(${JSON.stringify(rootExited)},"exit");process.exit(23);`,
-    ].join('')
-    try {
-      const child = spawnOwnedProgram(process.execPath, ['-e', root], { stdio: 'ignore' })
-      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-        (resolve) => child.once('close', (code, signal) => resolve({ code, signal })),
-      )
-      await until(async () => {
-        try {
-          await readFile(ready)
-          await readFile(rootExited)
-          await readFile(pidFile)
-          return true
-        } catch {
-          return false
-        }
-      }, 'root/descendant stop handshake timed out')
-      expect(child.kill('SIGTERM')).toBe(true)
-      expect(await closed).toEqual({ code: 1, signal: null })
-      const pid = Number(await readFile(pidFile, 'utf8'))
-      expect(() => process.kill(pid, 0)).toThrow()
-    } finally {
-      await rm(dir, { recursive: true, force: true })
-    }
-  })
-
-  it.each([false, true])(
-    'holds Windows descendants through root exit (inherited pipes: %s)',
-    async (inheritedPipes) => {
-      if (process.platform !== 'win32') return
+  it.skipIf(!windows).each([false, true])(
+    'terminates descendants before reporting root exit (pipes: %s)',
+    async (pipes) => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-owned-'))
-      const ready = join(dir, 'ready')
-      const rootExited = join(dir, 'root-exited')
-      const release = join(dir, 'release')
-      const descendantDone = join(dir, 'descendant-done')
-      const descendant = [
-        'const fs=require("node:fs");',
-        `const dir=${JSON.stringify(dir)};`,
-        'const watcher=fs.watch(dir,()=>{if(fs.existsSync(dir+"/release")){watcher.close();fs.writeFileSync(dir+"/descendant-done","done")}});',
-        'fs.writeFileSync(dir+"/ready","ready");',
-      ].join('')
-      const root = [
-        'const fs=require("node:fs");const cp=require("node:child_process");',
-        `cp.spawn(process.execPath,["-e",${JSON.stringify(descendant)}],{stdio:${inheritedPipes ? '"inherit"' : '["ignore","ignore","ignore"]'},windowsHide:true});`,
-        `fs.writeFileSync(${JSON.stringify(rootExited)},"exit");process.exit(23);`,
-      ].join('')
+      const pidFile = join(dir, 'descendant-pid')
+      let child: ReturnType<typeof spawnOwnedProgram> | undefined
       try {
-        const child = spawnOwnedProgram(process.execPath, ['-e', root], {
-          stdio: ['ignore', inheritedPipes ? 'pipe' : 'ignore', inheritedPipes ? 'pipe' : 'ignore'],
+        const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.stdout.write('ready\\n');setInterval(()=>0,1000)`
+        const root = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','pipe',${pipes ? "'inherit'" : "'ignore'"}],windowsHide:true});c.stdout.once('data',()=>process.exit(23))`
+        child = spawnOwnedProgram(process.execPath, ['-e', root], {
+          stdio: ['ignore', 'pipe', 'pipe'],
         })
-        let closed = false
-        const closedPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-          (resolve) =>
-            child.once('close', (code, signal) => {
-              closed = true
-              resolve({ code, signal })
-            }),
-        )
-        await until(async () => {
-          try {
-            await readFile(ready)
-            await readFile(rootExited)
-            return true
-          } catch {
-            return false
-          }
-        }, 'root/descendant handshake timed out')
-        expect(closed).toBe(false)
-        await writeFile(release, 'release')
-        await until(async () => {
-          try {
-            await readFile(descendantDone)
-            return true
-          } catch {
-            return false
-          }
-        }, 'descendant did not finish')
-        expect(await closedPromise).toEqual({ code: 23, signal: null })
+        let error = ''
+        child.stderr!.setEncoding('utf8').on('data', (chunk: string) => (error += chunk))
+        expect(await completion(child), error).toBe(23)
+        const pid = Number(await readFile(pidFile, 'utf8'))
+        expect(pid).toBeGreaterThan(1)
+        expect(() => process.kill(pid, 0)).toThrow()
       } finally {
+        child?.kill()
         await rm(dir, { recursive: true, force: true })
       }
     },
   )
+
+  it.skipIf(!windows)('stops the entire owned job and leaves no stop artifact', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-stop-'))
+    const pidFile = join(dir, 'descendant-pid')
+    let child: ReturnType<typeof spawnOwnedProgram> | undefined
+    try {
+      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
+      const root = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});setInterval(()=>0,1000)`
+      child = spawnOwnedProgram(process.execPath, ['-e', root], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      const done = completion(child)
+      const pid = Number(await waitForFile(pidFile))
+      expect(child.kill('SIGTERM')).toBe(true)
+      expect(child.kill('SIGKILL')).toBe(true)
+      expect(await done).toBe(1)
+      expect(() => process.kill(pid, 0)).toThrow()
+    } finally {
+      child?.kill()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!windows)('fails closed when its parent is gone', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-parent-'))
+    const sentinel = join(dir, 'should-not-run')
+    try {
+      const child = spawnOwnedProgram(
+        process.execPath,
+        ['-e', `require('node:fs').writeFileSync(${JSON.stringify(sentinel)},'ran')`],
+        { stdio: ['ignore', 'pipe', 'pipe'] },
+        2_000_000_000,
+      )
+      child.stderr!.resume()
+      expect(await completion(child)).toBe(125)
+      await expect(readFile(sentinel)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })

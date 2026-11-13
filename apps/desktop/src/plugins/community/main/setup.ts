@@ -133,7 +133,6 @@ export function runCheck(args: {
       // empty before `close`, so a caller removing the check's folder finds
       // nothing holding it.
       if (process.platform === 'win32' && child.exitCode === null) {
-        setTimeout(() => finish(false), 3_000).unref()
         return
       }
       finish(false)

@@ -140,17 +140,33 @@ jobs:
       - name: Run native Windows launch and caller regressions
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force apps/desktop/test-results | Out-Null
-          pnpm --filter @holi/desktop exec vitest run test/launch.test.ts test/tool-lookup.test.ts src/plugins/agent/test/windows-agents.test.ts src/plugins/agent/test/agent-runtime.test.ts --project node --reporter=verbose 2>&1 | Tee-Object -FilePath apps/desktop/test-results/windows-agent-launch.txt
+          pnpm --filter @holi/desktop exec vitest run test/launch.test.ts test/tool-lookup.test.ts test/owned-process.test.ts src/plugins/agent/test/windows-agents.test.ts src/plugins/agent/test/agent-runtime.test.ts --project node --reporter=verbose --reporter=json --outputFile="$env:RUNNER_TEMP/windows-agent-tests.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/desktop/scripts/check-windows-launch-results.cjs "$env:RUNNER_TEMP/windows-agent-tests.json"
 
-      - name: Upload sanitized failure evidence
-        if: failure()
+      - name: Install Electron and rebuild the native PTY
+        run: |
+          node apps/desktop/node_modules/electron/install.js
+          pnpm --filter @holi/desktop run rebuild:natives
+
+      - name: Check native PTY under Electron
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          pnpm --filter @holi/desktop exec electron scripts/check-node-pty.cjs
+
+      - name: Exercise disposable Electron and real ConPTY lifecycle
+        run: pnpm --filter @holi/desktop exec node scripts/run-windows-agent-smoke.mjs "${{ runner.temp }}/windows-agent-evidence"
+
+      - name: Upload native execution evidence
+        if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: windows-agent-launch-failure
-          path: apps/desktop/test-results/windows-agent-launch.txt
-          if-no-files-found: ignore
+          name: windows-agent-launch-evidence
+          path: |
+            ${{ runner.temp }}/windows-agent-tests.json
+            ${{ runner.temp }}/windows-agent-evidence/
+          if-no-files-found: error
 
   windows-helpers:
     name: Windows helper portability

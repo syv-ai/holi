@@ -43,6 +43,7 @@ export function spawnOwnedProgram(
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
     {
       ...options,
+      detached: false,
       windowsHide: true,
       stdio: [
         'pipe',
@@ -65,7 +66,7 @@ export function spawnOwnedProgram(
     args: plan.args,
     verbatim: plan.verbatim,
     cwd: options.cwd,
-    env: plan.env ? { ...process.env, ...options.env, ...plan.env } : options.env,
+    env: { ...(options.env ?? process.env), ...plan.env },
     parentPid,
     stopFile,
   })
@@ -134,6 +135,7 @@ public static class HoliOwnedProcess {
   [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle, uint ms);
   [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
   [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int which);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
   static void Check(bool ok) { if (!ok) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); }
@@ -154,16 +156,21 @@ public static class HoliOwnedProcess {
     try {
       var data=(System.Collections.Generic.Dictionary<string,object>)new JavaScriptSerializer().DeserializeObject(ReadSpec());
       int parentPid=Convert.ToInt32(data["parentPid"]);
-      parent=OpenProcess(0x00100000, false, parentPid);
+      parent=OpenProcess(0x00101000, false, parentPid);
       if(parent==IntPtr.Zero) throw new Exception("cannot hold the Holi process handle");
-      if(WaitForSingleObject(parent,0)!=0) throw new Exception("Holi exited before ownership was established");
+      if(WaitForSingleObject(parent,0)!=0x102) throw new Exception("Holi exited before ownership was established");
+      long parentCreated, selfCreated, ignored;
+      Check(GetProcessTimes(parent,out parentCreated,out ignored,out ignored,out ignored));
+      using(var self=Process.GetCurrentProcess()) Check(GetProcessTimes(self.Handle,out selfCreated,out ignored,out ignored,out ignored));
+      if(parentCreated>selfCreated) throw new Exception("Holi process identity changed");
+      if(File.Exists((string)data["stopFile"])) return 1;
       job=CreateJobObject(IntPtr.Zero,null); if(job==IntPtr.Zero) Check(false);
       var limits=new JOBOBJECT_EXTENDED_LIMIT_INFORMATION(); limits.BasicLimitInformation.LimitFlags=0x2000;
       Check(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))));
       string bin=(string)data["bin"]; var argv=(object[])data["args"];
       bool verbatim=data.ContainsKey("verbatim") && Convert.ToBoolean(data["verbatim"]);
-      var cmd=new StringBuilder(verbatim?String.Join(" ",Array.ConvertAll(argv,a=>Convert.ToString(a))):Arg(bin));
-      if(!verbatim) foreach(object a in argv) cmd.Append(' ').Append(Arg(Convert.ToString(a)));
+      var cmd=new StringBuilder(Arg(bin));
+      foreach(object a in argv) cmd.Append(' ').Append(verbatim?Convert.ToString(a):Arg(Convert.ToString(a)));
       var si=new STARTUPINFO(); si.cb=Marshal.SizeOf(typeof(STARTUPINFO)); si.dwFlags=0x100; si.hStdInput=GetStdHandle(-10); si.hStdOutput=GetStdHandle(-11); si.hStdError=GetStdHandle(-12);
       IntPtr env=IntPtr.Zero;
       var vars=data["env"] as System.Collections.Generic.Dictionary<string,object>;
@@ -171,7 +178,8 @@ public static class HoliOwnedProcess {
       Check(CreateProcess(bin,cmd,IntPtr.Zero,IntPtr.Zero,true,0x4|0x400,env,data.ContainsKey("cwd")?(string)data["cwd"]:null,ref si,out pi));
       if(env!=IntPtr.Zero) Marshal.FreeHGlobal(env);
       Check(AssignProcessToJobObject(job,pi.hProcess));
-      if(ResumeThread(pi.hThread)==0xffffffff) Check(false);
+      if(File.Exists((string)data["stopFile"]) || WaitForSingleObject(parent,0)!=0x102) { Check(TerminateJobObject(job,1)); stopped=true; }
+      else if(ResumeThread(pi.hThread)==0xffffffff) Check(false);
       while(true) {
         uint wait=WaitForSingleObject(pi.hProcess,100);
         if(WaitForSingleObject(parent,0)==0 || File.Exists((string)data["stopFile"])) { TerminateJobObject(job,1); stopped=true; break; }
@@ -179,6 +187,7 @@ public static class HoliOwnedProcess {
         if(wait!=0x102) Check(false);
       }
       uint code; Check(GetExitCodeProcess(pi.hProcess,out code));
+      Check(TerminateJobObject(job,1));
       while(true) {
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION counts;
         Check(QueryInformationJobObject(job,1,out counts,(uint)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION)),IntPtr.Zero));
