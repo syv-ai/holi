@@ -137,6 +137,8 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     seed: seedVault,
     plugins: {
       reconcile: async () => {},
+      invalidate: () => {},
+      setDisplayed: () => {},
       syncBackground: async () => {},
       failures: () => ({}),
       scanClaimsFor: TASKS,
@@ -1388,6 +1390,8 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
     seed: seedVault,
     plugins: {
       reconcile: async () => {},
+      invalidate: () => {},
+      setDisplayed: () => {},
       syncBackground: async () => {},
       failures: () => ({}),
       scanClaimsFor: TASKS,
