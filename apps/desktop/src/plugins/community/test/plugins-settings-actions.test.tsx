@@ -1,7 +1,7 @@
 import { act, render, screen, fireEvent, waitFor } from '@/test/render'
 import { Provider, createStore } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, shownDialogAtom } from '@/plugin-api'
 import { PluginsSettings } from '../renderer/plugins-settings'
 import { communityRenderer } from '../renderer/index'
 import { rowsAtom, updatesAtom, type PluginRow } from '../renderer/state'
@@ -52,11 +52,12 @@ function openSettings(rows = [row()]) {
   store.set(activeRemoteAtom, 'synthetic/vault')
   store.set(rowsAtom, { remote: 'synthetic/vault', rows })
   store.set(updatesAtom, { dash: '2.0.0' })
-  render(
+  const view = render(
     <Provider store={store}>
       <PluginsSettings remote="synthetic/vault" />
     </Provider>,
   )
+  return { store, ...view }
 }
 
 function openNotice() {
@@ -97,6 +98,60 @@ beforeEach(() => {
 afterEach(() => {
   document.querySelector('#busy-label-css')?.remove()
   localStorage.clear()
+})
+
+test('hiding Settings dismisses plugin search results and does not reopen them on return', async () => {
+  const { store, rerender } = openSettings()
+  const input = screen.getByPlaceholderText('Search GitHub, or type owner/repo')
+  fireEvent.change(input, { target: { value: 'synthetic/plugin' } })
+  await screen.findByText('Searching…')
+
+  rerender(
+    <Provider store={store}>
+      <PluginsSettings remote="synthetic/vault" visible={false} />
+    </Provider>,
+  )
+  expect(screen.queryByText('Searching…')).toBeNull()
+  rerender(
+    <Provider store={store}>
+      <PluginsSettings remote="synthetic/vault" visible />
+    </Provider>,
+  )
+  expect(screen.queryByText('Searching…')).toBeNull()
+})
+
+test('hiding Settings closes its already-open consent dialog', async () => {
+  const { store, rerender } = openSettings([row('dash', 'needs-consent')])
+  mocks.ask.mockImplementation((flow) => flow.openDialog(() => <div>consent body</div>))
+  fireEvent.click(await screen.findByRole('button', { name: 'Review and allow…' }))
+  expect(store.get(shownDialogAtom)).not.toBeNull()
+
+  rerender(
+    <Provider store={store}>
+      <PluginsSettings remote="synthetic/vault" visible={false} />
+    </Provider>,
+  )
+  expect(store.get(shownDialogAtom)).toBeNull()
+})
+
+test('an install finishing after Settings hides cannot hand off to consent', async () => {
+  const { store, rerender } = openSettings([row('dash', 'not-installed')])
+  let finishInstall!: () => void
+  mocks.install.mockImplementation(async (flow) => {
+    await new Promise<void>((resolve) => {
+      finishInstall = resolve
+    })
+    flow.openDialog(() => <div>late consent</div>)
+    return null
+  })
+  fireEvent.click(await screen.findByRole('button', { name: 'Install 1.0.0' }))
+  rerender(
+    <Provider store={store}>
+      <PluginsSettings remote="synthetic/vault" visible={false} />
+    </Provider>,
+  )
+  await act(async () => finishInstall())
+  expect(store.get(shownDialogAtom)).toBeNull()
 })
 
 test('Settings keeps its update accessible name while the label is visually hidden', async () => {

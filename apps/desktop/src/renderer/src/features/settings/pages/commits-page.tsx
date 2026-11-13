@@ -12,8 +12,10 @@ import {
   type Choice,
 } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
+import { useSettingsVisible } from '../settings-view'
 
 export function CommitsPage() {
+  const visible = useSettingsVisible()
   const { resolved, write } = useVaultSettings()
   const descriptors = useAtomValue(settingDescriptorsAtom)
   const limit = descriptors.find((d) => d.key === 'maxCommittedFileBytes')
@@ -63,6 +65,7 @@ export function CommitsPage() {
             label="Largest file to commit"
             value={current}
             choices={sizeChoices}
+            visible={visible}
             onChange={(bytes) => void write('maxCommittedFileBytes', Number(bytes))}
           />
         </SettingsFieldRow>
