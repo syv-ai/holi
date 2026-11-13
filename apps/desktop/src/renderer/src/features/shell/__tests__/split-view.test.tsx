@@ -411,6 +411,39 @@ test('parked surface focus returns to the shell after a control or iframe takes 
   }
 })
 
+test('a parked host starts and stops its iframe focus watchdog as frames change', async () => {
+  const f = retainedFixture()
+  f.show('late-frame')
+  const input = await screen.findByRole('textbox', { name: 'State late-frame' })
+  const outside = within(stripOf()).getByRole('tab', { name: 'A' })
+  await act(async () => outside.focus())
+  f.away()
+
+  const stopLocalFocus = (event: Event) => event.stopImmediatePropagation()
+  window.addEventListener('focus', stopLocalFocus, true)
+  window.addEventListener('focusin', stopLocalFocus, true)
+  vi.useFakeTimers()
+  try {
+    const baselineTimers = vi.getTimerCount()
+    const host = input.closest('[data-pane-host]')!
+    const iframe = document.createElement('iframe')
+    host.append(iframe)
+    await act(async () => Promise.resolve())
+    expect(vi.getTimerCount()).toBeGreaterThan(baselineTimers)
+    iframe.focus()
+    await act(async () => vi.advanceTimersByTime(250))
+    expect(document.activeElement).toBe(outside)
+
+    iframe.remove()
+    await act(async () => vi.advanceTimersByTime(250))
+    expect(vi.getTimerCount()).toBe(baselineTimers)
+  } finally {
+    vi.useRealTimers()
+    window.removeEventListener('focus', stopLocalFocus, true)
+    window.removeEventListener('focusin', stopLocalFocus, true)
+  }
+})
+
 test('programmatically parking a focused surface releases focus and visible members retain it', async () => {
   const f = retainedFixture()
   f.show('one')

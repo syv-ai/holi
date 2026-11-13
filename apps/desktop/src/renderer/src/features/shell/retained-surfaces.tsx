@@ -118,9 +118,19 @@ export function useRetainedSurfaces(
       timer = ownerWindow.setTimeout(() => {
         timer = null
         check()
-        if (home.querySelector('iframe') !== null) watch()
+        watch()
       }, 250)
     }
+    const syncWatch = () => {
+      if (home.querySelector('iframe') === null) {
+        if (timer !== null) ownerWindow.clearTimeout(timer)
+        timer = null
+      } else {
+        watch()
+      }
+    }
+    const observer = new ownerWindow.MutationObserver(syncWatch)
+    observer.observe(home, { childList: true, subtree: true })
     const focusIn = (event: FocusEvent) => {
       if (outside(event.target as Element | null)) lastOutside = event.target as HTMLElement
       schedule()
@@ -138,7 +148,7 @@ export function useRetainedSurfaces(
         if (host.contains(ownerDocument.activeElement)) schedule()
       },
       parked() {
-        watch()
+        syncWatch()
       },
     }
     focusGuard.current = guard
@@ -146,6 +156,7 @@ export function useRetainedSurfaces(
       disposed = true
       queued = false
       if (timer !== null) ownerWindow.clearTimeout(timer)
+      observer.disconnect()
       ownerDocument.removeEventListener('focusin', focusIn, true)
       ownerDocument.removeEventListener('focus', schedule, true)
       ownerWindow.removeEventListener('blur', schedule)
