@@ -63,6 +63,8 @@ const OUTCOME: Record<string, string> = {
 export function ConnectionsSection(): React.JSX.Element {
   const {
     account,
+    loading,
+    readError,
     missingScopes,
     needsReconnect,
     accounts,
@@ -149,7 +151,7 @@ export function ConnectionsSection(): React.JSX.Element {
   const connectLabel = accounts.length > 0 ? 'Connect a different account…' : 'Connect'
 
   const connected = account != null
-  const busy = phase.kind === 'connecting' || account === undefined
+  const busy = phase.kind === 'connecting' || loading
   /**
    * Connected, but on a grant older than the scopes this build needs.
    *
@@ -179,6 +181,8 @@ export function ConnectionsSection(): React.JSX.Element {
                   'Waiting for your browser…'
                 ) : needsReconnect ? (
                   'Google stopped accepting this connection. Connect again, or forget it.'
+                ) : loading ? (
+                  'Checking your Google connection…'
                 ) : (
                   'Read and triage your Gmail, read your Calendar. This vault only.'
                 )}
@@ -226,6 +230,15 @@ export function ConnectionsSection(): React.JSX.Element {
               )}
             </ItemActions>
           </Item>
+
+          {readError && (
+            <p role="alert" className="text-sm text-pretty text-destructive">
+              Could not read the Google connection.{' '}
+              <Button size="sm" variant="text" onClick={refreshGoogle}>
+                Retry
+              </Button>
+            </p>
+          )}
 
           {connected &&
             (needsReconsent ? (
