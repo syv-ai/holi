@@ -2,6 +2,11 @@
   "sourceVersion": "2.1.319",
   "reference": "Claude Code 2.1.319 agents --json --all output shape, represented by the existing claude-sessions.test.ts listing fixture.",
   "provenance": "constructed",
+  "launchOutput": "backgrounded · 1234abcd · Compatibility run\\n",
+  "statusLineInput": {
+    "model": { "display_name": "Sonnet 4" },
+    "context_window": { "used_percentage": 42.6 }
+  },
   "rows": [
     {
       "id": "20c9f6e8",

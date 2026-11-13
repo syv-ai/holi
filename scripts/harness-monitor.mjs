@@ -72,8 +72,17 @@ export async function discover({ fetchImpl = fetch, sha, runNumber, runUrl }) {
 
 export function normalizeReport(observation, checks = observation.checks ?? []) {
   const allowed = new Set(['pass', 'mismatch', 'unverified'])
+  if (!Array.isArray(checks)) throw new Error('Invalid normalized checks')
   for (const check of checks) {
-    if (!allowed.has(check.outcome) || !check.name) throw new Error('Invalid normalized check')
+    if (
+      !check ||
+      typeof check !== 'object' ||
+      !allowed.has(check.outcome) ||
+      typeof check.name !== 'string' ||
+      !check.name.trim() ||
+      (check.detail !== undefined && typeof check.detail !== 'string')
+    )
+      throw new Error('Invalid normalized check')
   }
   const normalizedChecks = [...checks]
   for (const name of requiredChecks[observation.id] ?? []) {
