@@ -22,7 +22,10 @@ import {
   type EventCalendarRenderEventProps,
 } from '@/components/ui/event-calendar/event-calendar'
 import { EventCalendarContent } from '@/components/ui/event-calendar/event-calendar-content'
-import { EVENT_CALENDAR_FADE_TRUNCATE } from '@/components/ui/event-calendar/event-calendar-event'
+import {
+  EVENT_CALENDAR_FADE_TRUNCATE,
+  EventCalendarEvent,
+} from '@/components/ui/event-calendar/event-calendar-event'
 import {
   EventCalendarNav,
   EventCalendarToolbar,
@@ -589,25 +592,17 @@ export function CalendarView(): React.JSX.Element {
               </h2>
               <ScrollArea className="-me-2 min-h-0 **:data-[slot=scroll-area-viewport]:max-h-(--ec-more-max-height,16rem)">
                 <div className="flex flex-col gap-1 py-1 ps-1 pe-4">
-                  {segments.map(({ occurrence }) => (
-                    <Button
-                      key={occurrence.key}
-                      type="button"
-                      variant="ghost"
-                      size="row"
+                  {segments.map((segment) => (
+                    <EventCalendarEvent
+                      key={segment.occurrence.key}
+                      segment={segment}
                       className="w-full min-w-0 justify-start"
                       onClick={(event) => {
+                        event.stopPropagation()
                         close({ restoreFocus: false })
-                        openView(occurrence, event)
+                        openView(segment.occurrence, event)
                       }}
-                    >
-                      <span className="min-w-0 flex-1 truncate text-start">
-                        {occurrence.event.title}
-                      </span>
-                      <span className="text-muted-foreground shrink-0 text-xs">
-                        {occurrence.allDay ? 'All day' : timeOf(occurrence.start, clock)}
-                      </span>
-                    </Button>
+                    />
                   ))}
                 </div>
               </ScrollArea>
@@ -678,7 +673,7 @@ export function CalendarView(): React.JSX.Element {
           canCreateTask={canCreateTask}
           onOpenChange={closeCard}
           onEdit={startEdit}
-          onSave={(draft) => void saveDraft(draft)}
+          onSave={saveDraft}
           onDelete={deleteDraft}
           onCreateTask={createTask}
           onOpenExternal={(url) => openExternal(url)}
