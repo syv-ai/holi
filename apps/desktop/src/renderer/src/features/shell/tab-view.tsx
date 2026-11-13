@@ -24,6 +24,7 @@ import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 export function TabView({
   tab,
   visible = true,
+  displayed = visible,
   settingsNavInSidebar,
   onOpen,
   onOpenBeside,
@@ -35,6 +36,8 @@ export function TabView({
   tab: string | null
   /** Whether this tab is the visible/focused split member. */
   visible?: boolean
+  /** Whether this tab belongs to the shell's currently displayed view set. */
+  displayed?: boolean
   /** Whether the sidebar carries Settings' nav for this tab; otherwise the
    *  view draws its own. */
   settingsNavInSidebar: boolean
@@ -64,7 +67,7 @@ export function TabView({
     case 'board':
       return <PlanningView onOpenTask={onOpen} />
     case 'graph':
-      return <GraphView onOpen={onOpenBeside} reading={reading} />
+      return <GraphView onOpen={onOpenBeside} reading={reading} displayed={displayed} />
     case 'apps':
       return <AppsView onOpen={onOpen} />
     case 'surface': {
