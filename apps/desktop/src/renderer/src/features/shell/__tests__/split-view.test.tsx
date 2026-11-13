@@ -660,17 +660,21 @@ test('parked retained surfaces preserve their viewport size and restore responsi
   const input = await screen.findByRole('textbox', { name: 'State one' })
   const host = input.closest<HTMLElement>('[data-pane-host]')!
   const parking = document.querySelector<HTMLElement>('[data-retained-parking]')!
-  vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({
-    left: 0,
-    top: 0,
-    width: 640,
-    height: 480,
-    right: 640,
-    bottom: 480,
-    x: 0,
-    y: 0,
-    toJSON: () => ({}),
-  } as DOMRect)
+  const settledAtParkedSize = vi.fn()
+  const measureHost = vi.spyOn(host, 'getBoundingClientRect').mockImplementation(() => {
+    if (host.parentElement !== parking) settledAtParkedSize(host.style.width, host.style.height)
+    return {
+      left: 0,
+      top: 0,
+      width: 640,
+      height: 480,
+      right: 640,
+      bottom: 480,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect
+  })
 
   f.away()
 
@@ -688,6 +692,10 @@ test('parked retained surfaces preserve their viewport size and restore responsi
   f.show('one')
 
   expect(host.parentElement).not.toBe(parking)
+  // The state-preserving move must be laid out while its parked dimensions
+  // are still fixed, before the visible slot can resize an embedded document.
+  expect(measureHost).toHaveBeenCalledTimes(2)
+  expect(settledAtParkedSize).toHaveBeenCalledWith('640px', '480px')
   expect(host.style.width).toBe('')
   expect(host.style.height).toBe('')
   expect(host.className).toContain('w-full')
