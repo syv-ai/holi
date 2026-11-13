@@ -237,3 +237,49 @@ test('a folder at the path a moved or deleted meeting had is not that meeting', 
   expect(screen.getByText(/is not recorded yet$/)).toBeInTheDocument()
   expect(screen.queryByRole('heading', { name: done.title })).toBeNull()
 }, 15_000)
+
+test('a tab with an empty id is the list, and Record makes a new meeting', async () => {
+  // The shell gives a tab opened without an id `id=''`.
+  run.mockImplementation(async ({ name }: { name: string }) => {
+    switch (name) {
+      case 'meeting.key.status':
+        return {
+          set: true,
+          source: 'app',
+          service: { url: null, model: null },
+          ready: true,
+          elsewhere: false,
+        }
+      case 'meeting.start':
+        return { meetingId: 'm9' }
+      case 'meeting.get':
+        return { ...meeting, id: 'm9', title: 'bob' }
+      case 'meeting.list':
+        return LIST
+      default:
+        return { ok: true }
+    }
+  })
+  vi.mocked(startCapture).mockResolvedValue({
+    stop: async () => {},
+    sources: { microphone: true, system: true },
+    problems: [],
+  })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(profilesAtom, [profile])
+  store.set(meetingsAtom, LIST)
+  render(
+    <Provider store={store}>
+      <MeetingsSurface id="" />
+    </Provider>,
+  )
+  expect(screen.getByRole('region', { name: 'Past meetings' })).toBeInTheDocument()
+  expect(screen.queryByText(/is not recorded yet$/)).toBeNull()
+  await userEvent.type(screen.getByLabelText('Meeting title'), 'bob')
+  await userEvent.click(screen.getByRole('button', { name: 'Record' }))
+  await waitFor(() =>
+    expect(calls('meeting.start')).toEqual([{ profileId: 'planning', title: 'bob' }]),
+  )
+  await act(() => store.set(stopRecordingAtom))
+}, 15_000)

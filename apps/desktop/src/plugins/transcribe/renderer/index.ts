@@ -1,6 +1,6 @@
 /**
  * Transcribe's renderer side: the Meetings tab (live captions, the topics
- * and minutes, the tasks sent from them), its nav item, a meeting as a
+ * and minutes, the tasks sent from them), its app in the sidebar, a meeting as a
  * folder the vault's tree opens and its New menu makes (`meeting-claim.ts`),
  * Start and Stop meeting in the command menu, a status-bar item while a
  * meeting records, and the meetings kept in step with main while the vault
@@ -15,7 +15,7 @@ import { MEETING_CLAIM, meetingName } from './meeting-claim'
 import { MeetingsSurface } from './meetings-surface'
 import { RecordingStatusItem } from './recording-status-item'
 import { discardRecordingAtom, recorderAtom, recordingAtom, stopRecordingAtom } from './recorder'
-import { MEETINGS_SURFACE, meetingsVault, transcribeEvents } from './state'
+import { MEETINGS_APP, MEETINGS_SURFACE, meetingsVault, transcribeEvents } from './state'
 
 export const transcribeRenderer: RendererPlugin = {
   info: TRANSCRIBE_INFO,
@@ -39,13 +39,16 @@ export const transcribeRenderer: RendererPlugin = {
   surfaces: [
     {
       kind: MEETINGS_SURFACE,
-      label: (id) => (id === undefined ? 'Meetings' : meetingName(id)),
+      // The shell names a tab opened without an id with `label('')`.
+      label: (id) => (id === undefined || id === '' ? 'Meetings' : meetingName(id)),
       icon: AudioLines,
       render: MeetingsSurface,
     },
   ],
-  // After Agenda, before Agents.
-  rail: [{ surface: MEETINGS_SURFACE, order: 55, live: recordingAtom }],
+  // In the sidebar's apps, after Mail and Calendar.
+  sidebarApps: [
+    { id: MEETINGS_APP, label: 'Meetings', icon: AudioLines, order: 30, render: MeetingsSurface },
+  ],
   commandMenu: { entries: meetingMenuEntriesAtom, run: runMeetingMenuEntryAtom },
   statusItems: [{ id: 'recording', side: 'left', order: 10, Component: RecordingStatusItem }],
   leaveGuard: atom((get) =>

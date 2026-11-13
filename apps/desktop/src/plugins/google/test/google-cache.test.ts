@@ -50,6 +50,10 @@ function thread(id: string, overrides: Partial<MailThreadSummary> = {}): MailThr
     labels: [],
     unsubscribeUrl: null,
     hasInvite: false,
+    replied: false,
+    lastReplyAt: null,
+    addressedAs: null,
+    automated: false,
     ...overrides,
   }
 }

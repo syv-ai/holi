@@ -1,7 +1,7 @@
 /**
- * The Meetings tab: the recording controls on top, then the meeting being
- * shown (live while it records, its review after), or the list of meetings
- * when none is. Recording lives outside this view (`recorder.ts`), so
+ * The Meetings app, one of the sidebar's: the recording controls on top,
+ * then the meeting being shown (live while it records, its review after), or
+ * the list of meetings when none is. Recording lives outside this view (`recorder.ts`), so
  * leaving the tab keeps it going.
  *
  * A meeting opened from the vault's tree is a tab of its own, its folder the
@@ -20,7 +20,9 @@ import { meetingsAtom, shownMeetingIdAtom } from './state'
 
 export function MeetingsSurface({ id }: { id?: string }): React.JSX.Element {
   const shown = useAtomValue(shownMeetingIdAtom)
-  if (id !== undefined) return <MeetingFolder path={id} />
+  // The shell gives a tab opened without an id `id=''` (`tab-view.tsx`): that
+  // is the list, not a meeting folder at ''.
+  if (id !== undefined && id !== '') return <MeetingFolder path={id} />
   return (
     <div className="flex h-full min-h-0 flex-col">
       <MeetingHeader />

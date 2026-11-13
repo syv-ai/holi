@@ -8,7 +8,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
-import { completeTask, isClosedStatus } from '@holi/shared'
+import { completeTask, isClosedStatus, isOverdue } from '@holi/shared'
 import {
   isPrivateTask,
   isTaskFilePath,
@@ -32,7 +32,6 @@ import {
   CapabilityError,
   flagParam,
   knownPath,
-  noParams,
   paramsObject,
   pathParams,
   readableOrNull,
@@ -290,20 +289,47 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
 
     'tasks.list': cap({
       doors: ['app', 'cli'],
-      cli: { args: [], summary: 'every task: status, title, path, and private for a private one' },
-      params: noParams,
+      cli: {
+        args: [],
+        flags: ['overdue'],
+        summary: 'list tasks; --due today and --overdue filter by due date',
+      },
+      params: (raw): { due?: string; overdue?: boolean } => {
+        const p = paramsObject(raw)
+        const due = optionalString(p, 'due')
+        if (due !== undefined && due !== 'today') {
+          throw new CapabilityError('BAD_REQUEST', 'due must be today')
+        }
+        const overdue = flagParam(p, 'overdue')
+        return { due, overdue }
+      },
       // An app is told only the tasks it may read, as `docs.list` tells it
       // only the notes: a task's path and title are its content too.
-      run: async (ctx): Promise<Task[]> => {
+      run: async (ctx, filters): Promise<Task[]> => {
         const tasks = snapshotTasks(await ctx.snapshot()).items
-        return ctx.bundle === null ? tasks : tasks.filter((t) => readableOrNull(t.path) !== null)
+        const readable =
+          ctx.bundle === null ? tasks : tasks.filter((t) => readableOrNull(t.path) !== null)
+        const today = deps.today()
+        const statuses = await readVaultStatuses(ctx.root)
+        const now = new Date()
+        const localNow = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+        return readable.filter((task) => {
+          if (filters.due === 'today' && task.due?.slice(0, 10) !== today) return false
+          if (
+            filters.overdue &&
+            (!task.due || isClosedStatus(statuses, task.status) || !isOverdue(task.due, localNow))
+          )
+            return false
+          return true
+        })
       },
       // A private task says so: it is on this machine only, and an agent
       // reporting tasks to a teammate should know which ones they cannot see.
       text: (tasks) =>
         tasks
           .map(
-            (t) => `${t.status}\t${t.title}\t${t.path}${isPrivateTask(t.path) ? '\tprivate' : ''}`,
+            (t) =>
+              `${t.status}\t${t.title}\t${t.path}${t.due ? `\tdue ${t.due}` : ''}${isPrivateTask(t.path) ? '\tprivate' : ''}`,
           )
           .join('\n'),
     }),

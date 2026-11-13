@@ -31,6 +31,8 @@ export interface ActivityEntry {
   detail?: string
   /** The vault it is about, when it is about one. */
   remote?: string
+  global?: boolean
+  plugin?: string
 }
 
 /** What a writer gives; the log stamps the rest. */
@@ -40,6 +42,8 @@ interface ActivityInput {
   message: string
   detail?: string
   remote?: string
+  global?: boolean
+  plugin?: string
 }
 
 /** How a part of Holi writes to the log. */
@@ -69,16 +73,33 @@ const MAX_DETAIL = 4000
 export function scrubSecrets(text: string): string {
   return (
     text
-      // userinfo in a URL: https://x-access-token:ghs_…@github.com, https://user:pass@host
+      // URL userinfo and sensitive query parameters.
       .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi, '$1***@')
-      // GitHub token shapes: ghp_, gho_, ghu_, ghs_, ghr_, github_pat_
-      .replace(/\b(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '***')
-      // Authorization headers
-      .replace(/\b(bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{16,}/gi, '$1 ***')
-      // KEY=value pairs that name a secret (an env dump in an error)
       .replace(
-        /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY)[A-Z0-9_]*)=\S+/g,
-        '$1=***',
+        /([?&](?:access_token|refresh_token|client_secret|api_key|token|code)=)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^&#\s]+)/gi,
+        '$1***',
+      )
+      // JSON-like quoted values allow escaped quotes and apostrophes within either quote style.
+      .replace(
+        /(["']?(?:access_token|refresh_token|client_secret|api_key)["']?\s*:\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/gi,
+        '$1"***"',
+      )
+      .replace(/\bya29\.[A-Za-z0-9._~-]+/g, '***')
+      .replace(/\b1\/\/[A-Za-z0-9._~-]{8,}/g, '***')
+      .replace(/\b(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '***')
+      .replace(/\b(bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{16,}/gi, '$1 ***')
+      .replace(
+        /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY)[A-Z0-9_]*)\s*=\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+)/gi,
+        (match, key: string, value: string, offset: number, input: string) => {
+          // Keep query separators after a value the URL pass already scrubbed.
+          // A password that happens to start with asterisks is still a secret.
+          const query = input[offset - 1] === '?' || input[offset - 1] === '&'
+          const scrubbedQuery =
+            query &&
+            /^(?:access_token|refresh_token|client_secret|api_key|token)$/i.test(key) &&
+            /^\*{3}(?:[&#]|$)/.test(value)
+          return scrubbedQuery ? match : `${key}=***`
+        },
       )
   )
 }
@@ -114,6 +135,8 @@ export function createActivityLog(
         message: scrubSecrets(input.message),
         ...(detail === undefined ? {} : { detail }),
         ...(input.remote === undefined ? {} : { remote: input.remote }),
+        ...(input.global === true ? { global: true } : {}),
+        ...(input.plugin === undefined ? {} : { plugin: input.plugin }),
       }
       if (size < capacity) {
         ring[(start + size) % capacity] = entry
