@@ -249,11 +249,17 @@ describe('vaults', () => {
 
   it('prepares a cold vault before seeding and skips preparation for its live runtime', async () => {
     const order: string[] = []
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const preparing = new Promise<void>((resolve) => (entered = resolve))
     const { caller } = await rig(
       {},
       undefined,
       async () => {
         order.push('prepare')
+        entered()
+        await gate
       },
       async () => {
         order.push('seed')
@@ -261,7 +267,15 @@ describe('vaults', () => {
       },
     )
 
-    await caller.vaults.open({ remote: REMOTE })
+    try {
+      const firstOpen = caller.vaults.open({ remote: REMOTE })
+      await preparing
+      const secondOpen = caller.vaults.open({ remote: REMOTE })
+      release()
+      await Promise.all([firstOpen, secondOpen])
+    } finally {
+      release()
+    }
     expect(order).toEqual(['prepare', 'seed'])
     order.length = 0
     await caller.vaults.open({ remote: REMOTE })

@@ -37,6 +37,10 @@ async function git(root: string, args: string[], input?: Buffer): Promise<Buffer
     child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk))
     child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
     child.once('error', reject)
+    // Git may reject the input before the producer finishes writing (for
+    // example, a large path list against a malformed repository). Consume EPIPE;
+    // the close handler below reports Git's actual failure.
+    child.stdin.on('error', () => {})
     child.once('close', (code) => {
       if (code === 0) resolveOutput(Buffer.concat(stdout))
       else reject(new Error(Buffer.concat(stderr).toString('utf8') || `git exited ${code}`))
@@ -295,9 +299,55 @@ async function refresh(
     await handle.writeFile(blob)
     await handle.chmod(info.mode & 0o777)
     await handle.close()
-    // Ensure the destination has not been replaced while writing the temp file.
-    const latest = await safeRegularPath(root, entry.path)
-    if (latest !== file || !(await readFile(file)).equals(original)) return
+    // Revalidate every mutable eligibility condition after writing the temp
+    // file. The index and attributes can change while that write is in flight.
+    const [index, staged, unmerged, latest] = await Promise.all([
+      git(root, ['ls-files', '--stage', '-z']),
+      git(root, ['diff-index', '--cached', '--name-only', '-z', 'HEAD']),
+      git(root, ['ls-files', '--unmerged', '-z']),
+      safeRegularPath(root, entry.path),
+    ])
+    const entries = parseIndex(index)
+    const currentEntry = entries.find((item) => item.path === entry.path && item.stage === 0)
+    const latestInfo = latest === file ? await lstat(file) : null
+    if (
+      latest !== file ||
+      latestInfo === null ||
+      !latestInfo.isFile() ||
+      latestInfo.dev !== info.dev ||
+      latestInfo.ino !== info.ino ||
+      (latestInfo.mode & 0o777) !== (info.mode & 0o777) ||
+      nulFields(staged).some((path) => path.toString('utf8') === entry.path) ||
+      entries.some((item) => item.path === entry.path && item.stage !== 0) ||
+      parseIndex(unmerged).some((item) => item.path === entry.path) ||
+      !currentEntry ||
+      currentEntry.mode !== entry.mode ||
+      currentEntry.oid !== entry.oid ||
+      !(await readFile(file)).equals(original)
+    )
+      return
+    const latestAttrs = await git(root, [
+      'check-attr',
+      '-z',
+      'text',
+      'eol',
+      'crlf',
+      'filter',
+      'working-tree-encoding',
+      'ident',
+      '--',
+      entry.path,
+    ])
+    const latestValues = nulFields(latestAttrs)
+    const latestMap = new Map<string, string>()
+    for (let i = 0; i < latestValues.length; i += 3)
+      latestMap.set(latestValues[i + 1]!.toString('ascii'), latestValues[i + 2]!.toString('utf8'))
+    if (
+      !safeTextAttributes(latestMap) ||
+      !attributes ||
+      [...attributes].some(([key, value]) => latestMap.get(key) !== value)
+    )
+      return
     await rename(temporary, file)
   } finally {
     await handle.close().catch(() => {})

@@ -466,46 +466,40 @@ export function createRouter(deps: RouterDeps) {
     url: string | undefined,
     opts: { requireVault?: boolean; readme?: string } = {},
   ): Promise<VaultSnapshot> {
-    const { repo, outcome } = await ensureClone({
-      root: deps.vaultRoot,
-      remote,
-      url: url ?? cloneUrlFor(remote),
-      deps: { token: () => deps.session.token() },
-    })
-    // Joining an existing vault (not creating one) — refuse anything that is not
-    // already a vault. The seed below would otherwise write `AGENTS.md`,
-    // `.claude/` and friends into a plain code repo and the auto-push would carry
-    // them upstream, quietly turning someone's codebase into a half-vault. The
-    // marker is the `.holi/vault` the seed commits at creation. A repo we
-    // just cloned for this is removed on refusal so nothing is left behind; a
-    // pre-existing adopted path is left exactly as we found it.
-    if (opts.requireVault && !(await isVaultClone(repo.root))) {
-      if (outcome.kind === 'cloned') await rm(repo.root, { recursive: true, force: true })
-      throw new Error(
-        `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
-      )
-    }
-    if (deps.host.get(remote) === null) {
+    const active = await deps.host.open(remote, async () => {
+      const { repo, outcome } = await ensureClone({
+        root: deps.vaultRoot,
+        remote,
+        url: url ?? cloneUrlFor(remote),
+        deps: { token: () => deps.session.token() },
+      })
+      // Validate before any preparation or seed side effects. A rejected clone
+      // is never entered into the registry.
+      if (opts.requireVault && !(await isVaultClone(repo.root))) {
+        if (outcome.kind === 'cloned') await rm(repo.root, { recursive: true, force: true })
+        throw new Error(
+          `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
+        )
+      }
       await (deps.prepareClone ?? prepareManagedClone)(repo.root)
-    }
-    await deps.seed(repo.root)
-    // A new vault's README, beside the seed so it lands in the first commit.
-    // Not a once-seed file: it is written from this vault's own answer. Never
-    // over one that is already there (`wx`).
-    if (opts.readme !== undefined) {
-      await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
-        (err: NodeJS.ErrnoException) => {
-          if (err.code !== 'EEXIST') throw err
-        },
-      )
-    }
-    await deps.registry.add({
-      remote,
-      path: repo.root,
-      name: repoName(remote),
-      lastOpenedAt: now(),
+      await deps.seed(repo.root)
+      // A new vault's README, beside the seed so it lands in the first commit.
+      // Not a once-seed file: it is written from this vault's own answer. Never
+      // over one that is already there (`wx`).
+      if (opts.readme !== undefined) {
+        await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
+          (err: NodeJS.ErrnoException) => {
+            if (err.code !== 'EEXIST') throw err
+          },
+        )
+      }
+      await deps.registry.add({
+        remote,
+        path: repo.root,
+        name: repoName(remote),
+        lastOpenedAt: now(),
+      })
     })
-    const active = await deps.host.open(remote)
     await deps.plugins.reconcile('open')
     deps.opened?.(remote)
     return active.snapshot()
@@ -805,12 +799,11 @@ export function createRouter(deps: RouterDeps) {
          * Before `host.open`, for `addVault`'s reason: nothing can be committed
          * ahead of the `.gitignore`.
          */
-        if (deps.host.get(input.remote) === null) {
-          await (deps.prepareClone ?? prepareManagedClone)(root)
-        }
-        await deps.seed(root)
-        await deps.registry.touch(input.remote, now())
-        const active = await deps.host.open(input.remote)
+        const active = await deps.host.open(input.remote, async (coldStart) => {
+          if (coldStart) await (deps.prepareClone ?? prepareManagedClone)(root)
+          await deps.seed(root)
+          await deps.registry.touch(input.remote, now())
+        })
         await deps.plugins.reconcile('open')
         deps.opened?.(input.remote)
         return active.snapshot()

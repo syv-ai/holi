@@ -2947,6 +2947,70 @@ describe('VaultHost', () => {
     expect(closedB).toBe(true)
   })
 
+  it('admits cold preparation once across visible and non-selecting starts', async () => {
+    const { registry } = await twoVaults()
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    let preparations = 0
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const previous = await h.open('syv-ai/a')
+    try {
+      const visible = h.open('syv-ai/b', async () => {
+        preparations++
+        entered()
+        await gate
+      })
+      await started
+      const background = h.getOrOpen('syv-ai/b')
+      expect(h.active()).toBe(previous)
+      release()
+      const [selected, startedRuntime] = await Promise.all([visible, background])
+      expect(selected).toBe(startedRuntime)
+      expect(preparations).toBe(1)
+      expect(h.active()).toBe(selected)
+    } finally {
+      release()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
+  it('lets independent vaults prepare without a global start lock', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    hosts.push(h)
+    await h.open('syv-ai/b')
+    let release!: () => void
+    let entered!: () => void
+    let independentEntered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const blocked = new Promise<void>((resolve) => (entered = resolve))
+    const independent = new Promise<void>((resolve) => (independentEntered = resolve))
+    try {
+      const first = h.open('syv-ai/a', async () => {
+        entered()
+        await gate
+      })
+      await blocked
+      const second = h.open('syv-ai/b', async () => independentEntered())
+      await independent
+      expect(h.active()?.remote).toBe('syv-ai/b')
+      release()
+      await Promise.all([first, second])
+    } finally {
+      release()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
   it('serialises concurrent opens rather than racing two vaults into one slot', async () => {
     // Two clicks in the switcher, or a click during a slow open. Unserialised,
     // both openActiveVault calls run and only one is ever closed — leaking the
