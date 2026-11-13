@@ -91,7 +91,13 @@ test('a hidden graph stays lazy and an unchanged redisplay keeps its graph insta
     </Provider>,
   )
   expect(await screen.findByText(/1 note · 0 links/)).toBeInTheDocument()
+  await waitFor(() => expect(document.querySelector('[data-graph-node="Plan.md"]')).not.toBeNull())
   const node = document.querySelector('[data-graph-node="Plan.md"]')
+  const picture = document.querySelector('[data-graph-view] svg[aria-label]')!
+  const viewport = picture.parentElement!
+  fireEvent.wheel(viewport, { deltaY: 25, ctrlKey: true })
+  fireEvent.wheel(viewport, { deltaX: 45, deltaY: 30 })
+  const transform = picture.firstElementChild!.getAttribute('transform')
   result.rerender(
     <Provider store={store}>
       <GraphView onOpen={() => {}} displayed={false} />
@@ -103,7 +109,51 @@ test('a hidden graph stays lazy and an unchanged redisplay keeps its graph insta
     </Provider>,
   )
   expect(document.querySelector('[data-graph-node="Plan.md"]')).toBe(node)
+  expect(picture.firstElementChild).toHaveAttribute('transform', transform)
   expect(graph).toHaveBeenCalledTimes(1)
+})
+
+test('hiding and unmounting release an active graph drag and hidden wheel input is ignored', async () => {
+  graph.mockResolvedValue({ nodes: ['Plan.md'], edges: [], total: 1 })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const view = (displayed: boolean) => (
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} displayed={displayed} />
+    </Provider>
+  )
+  const result = render(view(true))
+  await waitFor(() => expect(document.querySelector('[data-graph-node="Plan.md"]')).not.toBeNull())
+  const picture = document.querySelector('[data-graph-view] svg[aria-label]')!
+  const viewport = picture.parentElement!
+  const capture = vi.spyOn(viewport, 'hasPointerCapture').mockReturnValue(true)
+  const release = vi.spyOn(viewport, 'releasePointerCapture')
+  fireEvent(
+    viewport,
+    Object.assign(
+      new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }),
+      { pointerId: 1 },
+    ),
+  )
+  result.rerender(view(false))
+  expect(release).toHaveBeenCalledTimes(1)
+  const transform = picture.firstElementChild!.getAttribute('transform')
+  fireEvent.wheel(viewport, { deltaY: 80, ctrlKey: true })
+  fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 300, clientY: 300 })
+  expect(picture.firstElementChild).toHaveAttribute('transform', transform)
+  result.rerender(view(true))
+  fireEvent(
+    viewport,
+    Object.assign(
+      new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }),
+      { pointerId: 2 },
+    ),
+  )
+  result.unmount()
+  expect(release).toHaveBeenCalledTimes(2)
+  capture.mockRestore()
+  release.mockRestore()
 })
 
 test('hidden layout work is terminated, stale worker replies are ignored, and layout resumes', async () => {

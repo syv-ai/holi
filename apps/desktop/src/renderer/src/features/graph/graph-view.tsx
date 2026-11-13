@@ -184,6 +184,7 @@ function useLayout(
           type: 'module',
         })
         worker.onerror = failedLayout
+        // Correlate this worker request and reply; randomness never runs during render.
         const id = Math.random()
         onMessage = (event) => {
           if (event.data.id === id) land(event.data.points)
@@ -306,6 +307,7 @@ export function GraphView({
   }, [pictured, displayed])
 
   const dragCleanup = useRef<(() => void) | null>(null)
+  useEffect(() => () => dragCleanup.current?.(), [])
   useEffect(() => {
     if (displayed) return
     dragCleanup.current?.()
