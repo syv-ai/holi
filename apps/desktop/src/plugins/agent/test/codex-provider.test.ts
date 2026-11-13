@@ -60,6 +60,25 @@ describe('the Codex provider', () => {
 })
 
 describe('the Codex turn report', () => {
+  it('consumes an attributed Codex notify fixture and ignores additive fields', () => {
+    // Contract fixture based on Codex CLI's documented notify payload shape;
+    // only these consumed keys affect identity and the first-ask label.
+    const notifyFixture = {
+      type: 'agent-turn-complete',
+      'thread-id': '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+      'input-messages': ['Review the release', 'follow-up'],
+      'last-assistant-message': 'Complete',
+      future_codex_field: { ignored: true },
+    }
+    expect(readTurn(JSON.stringify(notifyFixture))).toEqual({
+      name: 'Review the release',
+      conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+    })
+    expect(readTurn(JSON.stringify({ ...notifyFixture, 'thread-id': 'not-a-uuid' }))).toEqual({
+      name: 'Review the release',
+    })
+  })
+
   it('names the session by its first ask, and its thread', () => {
     expect(
       readTurn(
