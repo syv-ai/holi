@@ -40,17 +40,30 @@ async function rig() {
       return sub
         ? ({
             accountSub: sub,
-            getAccessToken: async () => `synthetic-token-${sub}`,
+            getAccessToken: async () => {
+              const gate = tokenGate
+              tokenGate = null
+              if (gate) await gate()
+              return `synthetic-token-${sub}`
+            },
           } as GoogleSession)
         : null
     },
   } as GoogleAccountsManager
   let supported = true
   let conference: 'pending' | 'success' | 'failure' = 'success'
-  let mode: 'normal' | 'lost' | 'malformed' | 'conflict' | 'missing' | 'read-error' | 'mismatch' =
-    'normal'
+  let mode:
+    | 'normal'
+    | 'lost'
+    | 'malformed'
+    | 'conflict'
+    | 'missing'
+    | 'read-error'
+    | 'mismatch'
+    | 'refused' = 'normal'
   let postGate: (() => Promise<void>) | null = null
   let metadataGate: (() => void) | null = null
+  let tokenGate: (() => Promise<void>) | null = null
   const events = new Map<string, Record<string, unknown>>()
   const calls: {
     method: string
@@ -107,6 +120,8 @@ async function rig() {
       expect(held.attempts).toBeGreaterThan(0)
       if (postGate) await postGate()
       if (mode === 'missing') throw new Error('Synthetic transport timeout')
+      if (mode === 'refused')
+        return Response.json({ error: { message: 'Invalid location' } }, { status: 400 })
       events.set(String(body!.id), body!)
       if (mode === 'lost' || mode === 'read-error') throw new Error('Synthetic lost response')
       if (mode === 'conflict') return Response.json({}, { status: 409 })
@@ -174,6 +189,9 @@ async function rig() {
     metadataGate: (value: typeof metadataGate) => {
       metadataGate = value
     },
+    tokenGate: (value: typeof tokenGate) => {
+      tokenGate = value
+    },
     gate: (value: typeof postGate) => {
       postGate = value
     },
@@ -220,6 +238,7 @@ it('solo all-day creation is silent and omits attendees/conference data', async 
   const r = await rig()
   await r.run('createMeeting', {
     ...input,
+    location: '',
     guests: [],
     allDay: true,
     start: '2027-01-12',
@@ -297,6 +316,21 @@ it('serializes overlapping identical submissions and refuses a changed intent', 
   expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(1)
 })
 
+it('clears a definite first refusal after exact-id 404 so corrected intent can be submitted', async () => {
+  const r = await rig()
+  r.mode('refused')
+  await expect(r.run('createMeeting', input)).rejects.toThrow(/Invalid location/)
+  expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(1)
+  expect(
+    ((await r.run('meetingState', { sub: input.sub })) as { operation: unknown }).operation,
+  ).toBeNull()
+  const restarted = r.make()
+  r.mode('normal')
+  const corrected = await restarted.submit('owner/repo', { ...input, title: 'Corrected' })
+  expect(corrected).toMatchObject({ accepted: true, input: { title: 'Corrected' } })
+  expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(2)
+})
+
 it('persists unknown delivery across restart; recovery 404 never retries or clears it', async () => {
   const r = await rig()
   r.mode('missing')
@@ -361,6 +395,25 @@ it.each(['pending', 'failure'] as const)(
     expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(1)
   },
 )
+
+it('refuses transport when the account relinks while the token getter is pending', async () => {
+  const r = await rig()
+  let release!: () => void
+  r.tokenGate(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve
+      }),
+  )
+  const pending = r.meetings.submit('owner/repo', input)
+  for (let i = 0; i < 100 && !release; i++) await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(release).toBeTypeOf('function')
+  r.links['owner/repo'] = 'synthetic-b'
+  release()
+  await expect(pending).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
+  expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(0)
+  expect(await r.make().state('owner/repo', 'synthetic-b')).toMatchObject({ operation: null })
+})
 
 it('binds tokens to the submitted account and refuses late results after relinking', async () => {
   const r = await rig()
