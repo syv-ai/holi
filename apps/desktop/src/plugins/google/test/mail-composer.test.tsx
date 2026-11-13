@@ -456,7 +456,9 @@ describe('Bcc recipients', () => {
   it('does not accept Bcc edits while discarding a draft', async () => {
     const user = setup()
     let resolveDiscard!: () => void
-    discardDraft.mockImplementationOnce(() => new Promise((resolve) => (resolveDiscard = resolve)))
+    discardDraft.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (resolveDiscard = resolve)),
+    )
     draftQuery.mockResolvedValueOnce({
       draftId: 'd-7',
       threadId: null,

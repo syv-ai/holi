@@ -70,13 +70,23 @@ export async function flushAllBuffers(): Promise<void> {
 
 /** Keep editors mounted and stable until closing can preserve their text. */
 export async function saveBeforeClosing(close: () => void, rejectErrors = false): Promise<void> {
+  await withSavedBuffers(async () => close(), rejectErrors)
+}
+
+/** Persist every editor before an asynchronous operation can invalidate its context.
+ *  Editors stay frozen until the complete operation settles, then always thaw. */
+export async function withSavedBuffers<T>(
+  operation: () => Promise<T>,
+  rejectErrors = true,
+): Promise<T | undefined> {
   const release = freezeBuffers()
   try {
     await flushAllBuffers()
-    close()
+    return await operation()
   } catch (error) {
-    console.error('[close] save failed; tab retained:', error)
+    console.error('[buffer] guarded operation failed:', error)
     if (rejectErrors) throw error
+    return undefined
   } finally {
     release()
   }

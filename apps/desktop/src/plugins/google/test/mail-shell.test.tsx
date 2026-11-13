@@ -9,6 +9,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { getDefaultStore } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
+import { ConnectionsSection } from '../renderer/connections-section'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
 
@@ -22,19 +23,33 @@ const starMock = vi.fn()
 const archiveMock = vi.fn()
 const trashMock = vi.fn()
 const useAccountMock = vi.fn()
+const disconnectVaultMock = vi.fn()
+const removeAccountMock = vi.fn()
+const setClientMock = vi.fn()
+let accountSub = 'a'
 const toastMock = vi.fn()
 const openExternal = vi.fn()
 
 const google: Record<string, (params: unknown) => unknown> = {
-  status: () => ({ account: { email: 'ada@syv.ai', sub: 'a' }, missingScopes: [] }),
+  status: () => ({
+    account:
+      accountSub === ''
+        ? null
+        : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test', sub: accountSub },
+    missingScopes: [],
+  }),
   allAccounts: () => ({
     accounts: [
       { sub: 'a', email: 'ada@syv.ai' },
       { sub: 'b', email: 'ada@home.test' },
     ],
-    current: 'a',
+    current: accountSub,
   }),
   useAccount: (p) => useAccountMock(p),
+  disconnectVault: () => disconnectVaultMock(),
+  removeAccount: (p) => removeAccountMock(p),
+  client: () => ({ id: 'holi.apps.googleusercontent.com', source: 'shipped' }),
+  setClient: (p) => setClientMock(p),
   search: (p) => searchMock(p),
   thread: (p) => threadMock(p),
   drafts: () => draftsMock(),
@@ -151,7 +166,17 @@ beforeEach(() => {
   starMock.mockReset().mockResolvedValue({ ok: true })
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
-  useAccountMock.mockReset().mockResolvedValue({ ok: true })
+  useAccountMock.mockReset().mockImplementation(async ({ sub }: { sub: string }) => {
+    accountSub = sub
+    return { ok: true }
+  })
+  disconnectVaultMock.mockReset().mockImplementation(async () => {
+    accountSub = ''
+    return { ok: true }
+  })
+  removeAccountMock.mockReset().mockResolvedValue({ ok: true })
+  setClientMock.mockReset().mockResolvedValue({ ok: true })
+  accountSub = 'a'
   toastMock.mockReset()
   openExternal.mockReset()
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
@@ -163,6 +188,48 @@ beforeEach(() => {
 afterEach(() => {
   // @ts-expect-error: as above.
   delete window.holi
+})
+
+test('retained mail saves before Settings changes the Google account and keeps the draft on failure', async () => {
+  let finishLink!: () => void
+  const user = userEvent.setup()
+  render(
+    <>
+      <MailShell />
+      <ConnectionsSection />
+    </>,
+  )
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const editor = await screen.findByRole('textbox', { name: 'Subject' })
+  await user.type(editor, 'still here')
+
+  saveDraftMock.mockRejectedValueOnce(new Error('offline'))
+  await user.click(await screen.findByRole('button', { name: 'Use in this vault' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(/draft.*not changed/i)
+  expect(useAccountMock).not.toHaveBeenCalled()
+  expect(editor).toHaveValue('still here')
+
+  useAccountMock.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishLink = () => {
+          accountSub = 'b'
+          resolve({ ok: true })
+        }
+      }),
+  )
+  await user.click(screen.getByRole('button', { name: 'Use in this vault' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2))
+  expect(saveDraftMock.mock.calls.at(-1)![0]).toMatchObject({ mail: { subject: 'still here' } })
+  await waitFor(() => expect(editor).toBeDisabled())
+  finishLink()
+  await waitFor(() => expect(useAccountMock).toHaveBeenCalledTimes(1))
+  expect(accountSub).toBe('b')
+  expect(
+    await screen.findByRole('button', { name: 'Google account ada@home.test' }),
+  ).toBeInTheDocument()
+  expect(saveDraftMock.mock.calls.at(-1)![0]).toMatchObject({ mail: { subject: 'still here' } })
 })
 
 test('lists the inbox from Gmail with its sender, subject, tab and labels', async () => {
