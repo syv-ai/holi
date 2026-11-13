@@ -1,11 +1,17 @@
 import { parse as parseYaml } from 'yaml'
 import { execFile } from 'node:child_process'
 import { commitChanges } from './commit-changes'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { parseTaskFile, privateTaskPath, sharedTaskPath, taskClaim } from '@holi/shared'
+import {
+  parseTaskFile,
+  privateTaskPath,
+  sharedTaskPath,
+  taskClaim,
+  SCRATCHPAD_PATH,
+} from '@holi/shared'
 import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
@@ -575,6 +581,64 @@ describe('files', () => {
 })
 
 describe('notes', () => {
+  it.each(['outside', 'inside', 'dangling'] as const)(
+    'refuses to read or write a %s scratchpad symlink without changing it',
+    async (kind) => {
+      const { caller, root } = await rig()
+      const scratchpad = join(root, SCRATCHPAD_PATH)
+      const outside = join(root, '..', 'outside-scratchpad.md')
+      const inside = join(root, 'inside-scratchpad.md')
+      await writeFile(outside, 'outside bytes\n')
+      await writeFile(inside, 'inside bytes\n')
+      await rm(scratchpad, { force: true })
+      const target =
+        kind === 'outside' ? outside : kind === 'inside' ? inside : join(root, 'missing-target.md')
+      await symlink(target, scratchpad)
+
+      await expect(caller.notes.read({ remote: REMOTE, path: SCRATCHPAD_PATH })).rejects.toThrow(
+        /scratchpad.*symlink/i,
+      )
+      await expect(
+        caller.notes.write({ remote: REMOTE, path: SCRATCHPAD_PATH, text: 'replacement\n' }),
+      ).rejects.toThrow(/scratchpad.*symlink/i)
+      expect((await lstat(scratchpad)).isSymbolicLink()).toBe(true)
+      expect(await readFile(scratchpad, 'utf8').catch(() => null)).toBe(
+        kind === 'dangling' ? null : `${kind} bytes\n`,
+      )
+    },
+  )
+
+  it('refuses a scratchpad symlink introduced while a save waits for its lock', async () => {
+    const { caller, root } = await rig()
+    const scratchpad = join(root, SCRATCHPAD_PATH)
+    const outside = join(root, '..', 'outside-scratchpad-race.md')
+    await writeFile(outside, 'untouched\n')
+    const held = withFileLock((await exactPath(root, SCRATCHPAD_PATH))!, async () => {
+      await new Promise((r) => setTimeout(r, 50))
+      await rm(scratchpad)
+      await symlink(outside, scratchpad)
+    })
+    const save = caller.notes.write({
+      remote: REMOTE,
+      path: SCRATCHPAD_PATH,
+      text: 'replacement\n',
+    })
+    await Promise.all([held, expect(save).rejects.toThrow(/scratchpad.*symlink/i)])
+    expect((await lstat(scratchpad)).isSymbolicLink()).toBe(true)
+    expect(await readFile(outside, 'utf8')).toBe('untouched\n')
+  })
+
+  it('keeps regular and absent scratchpads readable and writable', async () => {
+    const { caller, root } = await rig()
+    const scratchpad = join(root, SCRATCHPAD_PATH)
+    expect(await caller.notes.read({ remote: REMOTE, path: SCRATCHPAD_PATH })).toBeTruthy()
+    await caller.notes.write({ remote: REMOTE, path: SCRATCHPAD_PATH, text: 'regular\n' })
+    expect(await readFile(scratchpad, 'utf8')).toBe('regular\n')
+    await rm(scratchpad)
+    await caller.notes.write({ remote: REMOTE, path: SCRATCHPAD_PATH, text: 'created\n' })
+    expect(await readFile(scratchpad, 'utf8')).toBe('created\n')
+  })
+
   it('reads and writes', async () => {
     const { caller, root } = await rig({ 'a.md': '# A\n' })
     expect(await caller.notes.read({ remote: REMOTE, path: 'a.md' })).toBe('# A\n')

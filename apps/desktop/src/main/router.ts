@@ -6,10 +6,10 @@
  * with no server, a check running on the machine of the person it restricts is
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
-import { readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
-import { resolveRelative } from '@holi/shared/path-safety-node'
+import { exactPath, resolveRelative } from '@holi/shared/path-safety-node'
 import {
   commentThreads,
   isCommentableNote,
@@ -30,6 +30,7 @@ import {
   MEMORY_DIR,
   MEMORY_INDEX,
   isHiddenPath,
+  SCRATCHPAD_PATH,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
 import type { OpenVault } from './plugin-host/host'
@@ -539,6 +540,17 @@ export function createRouter(deps: RouterDeps) {
       return vaultRelPath(path)
     } catch (err) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message })
+    }
+  }
+
+  /** Refuse a planted scratchpad link rather than reading through it or
+   * replacing it with the atomic writer. Missing leaves remain valid writes. */
+  async function guardScratchpadLink(root: string, rel: VaultRelPath): Promise<void> {
+    if (rel.toLowerCase() !== SCRATCHPAD_PATH.toLowerCase()) return
+    const canonical = await exactPath(root, rel)
+    const info = await lstat(join(root, rel)).catch(() => null)
+    if (info?.isSymbolicLink() && canonical === null) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'scratchpad path cannot be a symlink' })
     }
   }
 
@@ -1110,7 +1122,10 @@ export function createRouter(deps: RouterDeps) {
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
       .query(async ({ input }): Promise<string> => {
-        const abs = absPathFor(await rootFor(input.remote), safe(input.path))
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        await guardScratchpadLink(root, rel)
+        const abs = absPathFor(root, rel)
         const text = await readFile(abs, 'utf8').catch(() => null)
         if (text === null) throw new TRPCError({ code: 'NOT_FOUND', message: input.path })
         return text
@@ -1188,7 +1203,10 @@ export function createRouter(deps: RouterDeps) {
         // Under the file's lock, keyed as an app's `docs.write` keys it (the
         // canonical path), so an app's check of the text it read and its
         // write are never split by this save.
-        await withFileLock(await lockPath(root, rel), () => writeAtomic(root, rel, input.text))
+        await withFileLock(await lockPath(root, rel), async () => {
+          await guardScratchpadLink(root, rel)
+          await writeAtomic(root, rel, input.text)
+        })
         return { ok: true as const }
       }),
 
