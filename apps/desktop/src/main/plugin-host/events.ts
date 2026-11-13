@@ -25,7 +25,7 @@ export interface PluginEventsDeps {
   send(channel: string, event: PluginEvent): void
   /** Hear what the renderer sends on `channel`. Returns the undo. */
   listen(channel: string, handler: (message: unknown) => void): () => void
-  /** The open vault's remote, or null with none open. */
+  /** The displayed vault's remote, or null with none displayed. */
   liveRemote(): string | null
 }
 
@@ -64,6 +64,7 @@ export function pluginEvents(
   deps: PluginEventsDeps,
   id: string,
   runs?: (remote: string) => Promise<boolean>,
+  generation?: () => number,
 ): PluginEvents {
   const channel = `plugin:${id}`
   const outbound = queue(`${id} event`)
@@ -73,8 +74,11 @@ export function pluginEvents(
       checkName(name)
       const event = { remote, name, payload }
       if (runs === undefined) return deps.send(channel, event)
+      const at = generation?.()
       outbound(async () => {
-        if (await runs(remote)) deps.send(channel, event)
+        if ((generation === undefined || generation() === at) && (await runs(remote))) {
+          deps.send(channel, event)
+        }
       })
     },
     on(name, handler) {
@@ -84,9 +88,17 @@ export function pluginEvents(
         // Checked on arrival: a keystroke typed before a vault switch must
         // not reach the vault that replaced it.
         if (message.remote !== deps.liveRemote()) return
+        const at = generation?.()
         inbound(async () => {
+          if (message.remote !== deps.liveRemote()) return
+          if (generation !== undefined && generation() !== at) return
           if (runs === undefined || (await runs(message.remote))) {
-            handler(message.remote, message.payload)
+            if (
+              message.remote === deps.liveRemote() &&
+              (generation === undefined || generation() === at)
+            ) {
+              handler(message.remote, message.payload)
+            }
           }
         })
       })
