@@ -155,6 +155,8 @@ export function EditProjectDialog({
         className="sm:max-w-lg"
         onOpenAutoFocus={(event) => !focused && event.preventDefault()}
         onCloseAutoFocus={(event) => (!visible || !focused) && event.preventDefault()}
+        onFocusOutside={(event) => !focused && event.preventDefault()}
+        onInteractOutside={(event) => !focused && event.preventDefault()}
       >
         <div
           className="flex max-h-160 flex-col gap-6 overflow-y-auto"

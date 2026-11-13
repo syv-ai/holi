@@ -264,18 +264,26 @@ test('an inline board draft survives sensor disposal and does not steal focus on
   expect(screen.getByRole('textbox', { name: 'Foreground input' })).toHaveFocus()
 })
 
-test('unfocused planning dialogs leave the foreground focusable', async () => {
+test('unfocused task dialog keeps its draft when a sibling pane receives focus', async () => {
   activity.mockResolvedValue([])
   setup('board', { focused: false })
   await userEvent.click(screen.getByRole('button', { name: 'New task' }))
+  const title = screen.getByPlaceholderText('Task title')
+  await userEvent.type(title, 'Draft task title')
   const external = screen.getByRole('textbox', { name: 'Foreground input' })
-  expect(screen.getByRole('dialog', { name: 'New task' })).toBeInTheDocument()
   external.focus()
-  expect(external).toHaveFocus()
+  await waitFor(() => {
+    expect(external).toHaveFocus()
+    expect(screen.getByRole('dialog', { name: 'New task' })).toBeInTheDocument()
+    expect(title).toHaveValue('Draft task title')
+  })
+  await userEvent.click(external)
   expect(screen.getByRole('dialog', { name: 'New task' })).toBeInTheDocument()
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New task' })).toBeNull())
 })
 
-test('an unfocused project dialog leaves foreground focus available and keeps its draft', async () => {
+test('an unfocused project dialog keeps its draft when a sibling pane receives focus', async () => {
   activity.mockResolvedValue([])
   setup('board', { focused: false })
   await userEvent.click(screen.getByRole('button', { name: 'Edit project' }))
@@ -284,9 +292,15 @@ test('an unfocused project dialog leaves foreground focus available and keeps it
   await userEvent.type(name, 'Draft project name')
   const external = screen.getByRole('textbox', { name: 'Foreground input' })
   external.focus()
-  expect(external).toHaveFocus()
+  await waitFor(() => {
+    expect(external).toHaveFocus()
+    expect(screen.getByRole('dialog', { name: 'Edit project' })).toBeInTheDocument()
+    expect(name).toHaveValue('Draft project name')
+  })
+  await userEvent.click(external)
   expect(screen.getByRole('dialog', { name: 'Edit project' })).toBeInTheDocument()
-  expect(name).toHaveValue('Draft project name')
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit project' })).toBeNull())
 })
 
 test('a project save completing while hidden closes its dialog', async () => {
