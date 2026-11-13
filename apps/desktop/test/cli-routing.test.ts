@@ -208,7 +208,10 @@ describe('generated CLI registry routing', () => {
     })
     await symlink(dir, join(a, 'escape'))
     expect((await run(['docs', 'read', 'note.md'], join(a, 'escape'))).code).toBe(2)
-    expect((await run(['--vault', 'owner/a', 'docs', 'read', 'note.md'])).code).toBe(2)
+    const prefixed = await run(['--vault', 'owner/a', 'docs', 'read', 'note.md'])
+    expect(prefixed.code).toBe(2)
+    expect(prefixed.stderr).toContain('say the command first')
+    expect(invoked).not.toHaveBeenCalled()
   })
   it('denies closed writes and plugin/UI actions before invoking them', async () => {
     expect(await run(['probe', 'read', '--vault', 'owner/a', '--help'])).toMatchObject({
@@ -219,6 +222,10 @@ describe('generated CLI registry routing', () => {
       code: 0,
       stdout: expect.stringContaining('read owner/b plugin context'),
     })
+    const unknownTargetHelp = await run(['probe', 'read', '--vault', 'owner/missing', '--help'])
+    expect(unknownTargetHelp.code).toBe(1)
+    expect(unknownTargetHelp.stderr).toContain('unknown vault')
+    expect(unknownTargetHelp.stdout).toBe('')
     for (const args of [
       ['docs', 'create', 'new.md'],
       ['docs', 'open', 'note.md'],

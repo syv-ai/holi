@@ -6,7 +6,7 @@
  * a quoting bug in it does not fail loudly, it sends a different argument.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -130,16 +130,18 @@ function bridge(table: Record<string, AnyCapability>, namespaces: string[]): Bri
         token: () => endpoint?.token ?? '',
         listVaults: async () => [{ remote: 'owner/repo', name: 'repo', live: true }],
         resolveTarget: async (selector, cwd) => {
-          const fromCwd = cwd === null ? null : relative(dir, cwd)
+          const root = await realpath(dir)
+          const physicalCwd = cwd === null ? null : await realpath(cwd).catch(() => cwd)
+          const fromCwd = physicalCwd === null ? null : relative(root, physicalCwd)
           const cwdMatches =
-            cwd !== null &&
-            isAbsolute(cwd) &&
+            physicalCwd !== null &&
+            isAbsolute(physicalCwd) &&
             (fromCwd === '' ||
               (fromCwd !== '..' && !fromCwd.startsWith(`..${sep}`) && !isAbsolute(fromCwd)))
           return (selector === null && !cwdMatches) ||
             (selector !== null && selector.toLowerCase() !== 'owner/repo')
             ? null
-            : { remote: 'owner/repo', root: dir, live: true }
+            : { remote: 'owner/repo', root, live: true }
         },
       },
     },
@@ -719,6 +721,7 @@ describe('a command whose body is read from stdin only as `-`', () => {
   it('reads stdin for `--body -`, and takes any other value as it is', () => {
     expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, null)).toEqual({
       kind: 'stdin',
+      vault: null,
     })
     expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, '{}')).toMatchObject({
       params: { path: 'a', body: '{}' },
@@ -766,6 +769,7 @@ describe('a command whose body is read from stdin only as `-`', () => {
   it('reads stdin for `--body -`, and takes any other value as it is', () => {
     expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, null)).toEqual({
       kind: 'stdin',
+      vault: null,
     })
     expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, '{}')).toMatchObject({
       params: { path: 'a', body: '{}' },

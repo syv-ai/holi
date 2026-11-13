@@ -216,7 +216,7 @@ export function resolveArgv(
         params[name] = 'true'
       } else {
         const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
-        if (value === undefined || (cli.values !== undefined && value.startsWith('--')))
+        if (value === undefined || (eq < 0 && cli.values !== undefined && value.startsWith('--')))
           return wrong(`--${name} needs a value`)
         if (cli.many?.includes(name)) {
           const prior = params[name]

@@ -159,21 +159,45 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     const argv = form.getAll('argv')
     const globalCommands = machine ? cli.commands() : cli.commands(remote)
     const terminator = argv.indexOf('--')
+    const helpArgv =
+      terminator < 0
+        ? argv.filter((word) => word !== '--help' && word !== '-h')
+        : [
+            ...argv.slice(0, terminator).filter((word) => word !== '--help' && word !== '-h'),
+            ...argv.slice(terminator),
+          ]
     const help =
       argv.length === 0 ||
       argv
         .slice(0, terminator < 0 ? undefined : terminator)
         .some((word) => word === '--help' || word === '-h')
-    if (machine && help) {
+    const namedGlobally =
+      globalCommands.some((command) => command.name.startsWith(`${argv[0]}.`)) ||
+      globalCommands.some(
+        (command) =>
+          command.cli.standalone === true &&
+          command.name.slice(0, command.name.indexOf('.')) === argv[0],
+      )
+    const targetedHelp = machine && help && argv.length > 0 && !namedGlobally
+    if (machine && help && !targetedHelp) {
       const request = resolveArgv(argv, globalCommands, form.get('stdin'), form.get('job'))
       if (request.kind === 'help') return { status: 200, body: request.text }
     }
     const listing = argv[0] === 'vault' && argv[1] === 'list'
+    if (machine && !listing && argv[0]?.startsWith('-')) {
+      const request = resolveArgv(
+        help ? helpArgv : argv,
+        globalCommands,
+        form.get('stdin'),
+        form.get('job'),
+      )
+      if (request.kind === 'usage') return { status: 400, body: request.text }
+    }
     let targetRemote = remote
     let machineTarget: { remote: string; root: string; live: boolean } | null = null
     let targetRequest: ReturnType<typeof resolveArgv> | undefined
     let requestCwd: string | null = null
-    if (machine && !listing && !help) {
+    if (machine && !listing && (!help || targetedHelp)) {
       if (!cli.machine) return { status: 403 }
       requestCwd = form.get('cwd')
       if (
@@ -188,15 +212,16 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         try {
           const target = await cli.machine.resolveTarget(candidate, requestCwd)
           if (!target) continue
-          const request = resolveArgv(
-            argv,
-            [...cli.commands(target.remote), MACHINE_LIST],
-            form.get('stdin'),
-            form.get('job'),
-          )
+          const targetCommands = [...cli.commands(target.remote), MACHINE_LIST]
+          const request = resolveArgv(argv, targetCommands, form.get('stdin'), form.get('job'))
+          const selectorRequest =
+            request.kind === 'help'
+              ? resolveArgv(helpArgv, targetCommands, form.get('stdin'), form.get('job'))
+              : request
           if (
-            (request.kind === 'run' || request.kind === 'stdin') &&
-            request.vault?.toLowerCase() === candidate.toLowerCase()
+            (request.kind === 'run' || request.kind === 'stdin' || request.kind === 'help') &&
+            (selectorRequest.kind === 'run' || selectorRequest.kind === 'stdin') &&
+            selectorRequest.vault?.toLowerCase() === candidate.toLowerCase()
           ) {
             machineTarget = target
             targetRequest = request
@@ -228,13 +253,31 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         }
       }
       targetRemote = machineTarget.remote
+      if (targetedHelp) {
+        const selectorRequest = resolveArgv(
+          helpArgv,
+          [...cli.commands(targetRemote), MACHINE_LIST],
+          form.get('stdin'),
+          form.get('job'),
+        )
+        if (
+          (selectorRequest.kind === 'run' || selectorRequest.kind === 'stdin') &&
+          selectorRequest.vault !== null &&
+          selectorRequest.vault.toLowerCase() !== machineTarget.remote.toLowerCase()
+        ) {
+          return { status: 422, body: 'holi: unknown vault target; check --vault owner/repo' }
+        }
+      }
     }
     const request =
       targetRequest ??
       resolveArgv(
         argv,
         machine
-          ? [...(listing || help ? globalCommands : cli.commands(targetRemote)), MACHINE_LIST]
+          ? [
+              ...(listing || (help && !targetedHelp) ? globalCommands : cli.commands(targetRemote)),
+              MACHINE_LIST,
+            ]
           : cli.commands(remote),
         form.get('stdin'),
         form.get('job'),
