@@ -160,7 +160,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
     },
     commands: {
       getCommandByShortcut: (s: string) =>
-        s === 'h' || s === 'meta+f' || s === 'meta+p' ? { id: s } : undefined,
+        s === 'h' || s === 'f+meta' || s === 'meta+p' ? { id: s } : undefined,
       // ⌘P is print, which Holi disables by category; a disabled command must
       // not be claimed, or the palette never opens while a PDF is on screen.
       resolve: (id: string) => ({ disabled: id === 'meta+p', visible: true }),
@@ -759,7 +759,7 @@ test('opening a PDF focuses it, so ⌘F reaches its search, like a note focuses 
   await waitFor(() => expect(document.activeElement).toBe(host))
 
   fireEvent.keyDown(document.activeElement!, { key: 'f', metaKey: true })
-  expect(seam.seen).toContain('f+meta')
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/1', id: 'f+meta' }])
 })
 
 test('a retained PDF only takes focus while its pane is focused', async () => {
@@ -1027,6 +1027,27 @@ test('a hidden earlier instance cannot steal a later displayed PDF shortcut', as
 
   expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/2', id: 'h' }])
   expect(seam.seen).not.toContain('h')
+})
+
+test('a PDF opened after another viewer registered its listener owns its shortcuts', async () => {
+  const mounted = render(
+    <Provider store={store}>
+      <PdfDocument path={PATH} visible focused quietMs={0} />
+    </Provider>,
+  )
+  await screen.findByTestId('pdf')
+  mounted.rerender(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible focused quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  await waitFor(() => expect(screen.getAllByTestId('pdf')).toHaveLength(2))
+  const viewers = screen.getAllByTestId('pdf')
+  fireEvent.keyDown(viewers[1]!, { key: 'h' })
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/2', id: 'h' }])
 })
 
 test('editable fields and unrecognized or disabled shortcuts pass through', async () => {

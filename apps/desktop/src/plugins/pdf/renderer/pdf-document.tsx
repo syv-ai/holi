@@ -698,8 +698,10 @@ export function PdfDocument({
         commands.execute(command.id, undefined, 'keyboard')
       }
     }
-    document.addEventListener('keydown', guard)
-    return () => document.removeEventListener('keydown', guard)
+    // A later-opened PDF's guard must run before an earlier viewer's native
+    // document listener, irrespective of the order their effects registered.
+    document.addEventListener('keydown', guard, true)
+    return () => document.removeEventListener('keydown', guard, true)
   }, [])
 
   useEffect(() => {
