@@ -131,6 +131,10 @@ export type VaultMembership =
 
 export interface RouterDeps {
   registry: VaultRegistry
+  /** The shared main-side Holi link validation/opener, used by paste. */
+  openPastedHoliLink?: (
+    url: string,
+  ) => Promise<{ ok: true } | { ok: false; message: string; detail: string }>
   session: GitHubSession
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
@@ -649,7 +653,7 @@ export function createRouter(deps: RouterDeps) {
    */
   async function removeClone(remote: string): Promise<void> {
     const root = await rootFor(remote)
-    if (deps.host.active()?.remote === remote) await deps.host.close()
+    await deps.host.close(remote)
     await deps.trashItem(root)
     await deps.registry.remove(remote)
     await deps.plugins.syncBackground()
@@ -893,7 +897,9 @@ export function createRouter(deps: RouterDeps) {
     // best-effort: one that won't trash stays on disk AND in the registry, never
     // orphaned.
     deleteClones: t.procedure.mutation(async (): Promise<{ ok: true }> => {
-      await deps.host.close()
+      // Every registered clone may have a runtime: background runtimes keep
+      // their own watcher and timers even when another vault is selected.
+      await deps.host.closeAll()
       for (const e of await deps.registry.list()) {
         try {
           await deps.trashItem(e.path)
@@ -2025,6 +2031,17 @@ export function createRouter(deps: RouterDeps) {
   })
 
   return t.router({
+    holiLinks: t.router({
+      openPasted: t.procedure.input(fields({ url: 'string' })).mutation(({ input }) =>
+        deps.openPastedHoliLink === undefined
+          ? Promise.resolve({
+              ok: false as const,
+              message: 'This link cannot be opened.',
+              detail: 'Link opening is unavailable.',
+            })
+          : deps.openPastedHoliLink(input.url),
+      ),
+    }),
     auth,
     github,
     vaults,

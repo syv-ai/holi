@@ -93,9 +93,46 @@ describe('Mermaid label source edits', () => {
     })
   })
 
+  it.each([
+    ['rounded rectangle', '(label)', 'round'],
+    ['diamond', '{label}', 'diamond'],
+    ['circle', '((label))', 'circle'],
+    ['stadium', '([label])', 'stadium'],
+    ['subroutine', '[[label]]', 'subroutine'],
+    ['cylinder', '[(label)]', 'cylinder'],
+    ['hexagon', '{{label}}', 'hexagon'],
+  ])('round-trips %s while preserving its delimiters', (_name, shape, id) => {
+    const source = `%% keep\r\nflowchart LR\r\n${id}${shape} --> Z[Other] ; %% tail\r\n`
+    const parsed = analyseMermaidLabels(source)
+    expect(parsed).toMatchObject({
+      supported: true,
+      labels: [
+        { id, label: 'label' },
+        { id: 'Z', label: 'Other' },
+      ],
+    })
+    const edited = patchMermaidLabel(source, id, 'quote " and !? 🚀 &amp; ' + shape)
+    expect(edited).toEqual({
+      source: source.replace('label', '"quote #34; and !? 🚀 &amp;amp; ' + shape + '"'),
+    })
+    if (!('source' in edited)) throw new Error(edited.error)
+    expect(analyseMermaidLabels(edited.source)).toMatchObject({
+      supported: true,
+      labels: [
+        { id, label: 'quote " and !? 🚀 &amp; ' + shape },
+        { id: 'Z', label: 'Other' },
+      ],
+    })
+    expect(edited.source.replace('"quote #34; and !? 🚀 &amp;amp; ' + shape + '"', 'label')).toBe(
+      source,
+    )
+  })
+
   it('rejects duplicate declarations and unsupported or ambiguous forms', () => {
     for (const source of [
-      'flowchart LR\nA((circle))',
+      'flowchart LR\nA[one]\nB{{nested [shape]}}',
+      'flowchart LR\nA((unclosed)',
+      'flowchart LR\nA([nested (shape)])',
       'flowchart LR\nA[one]\nA[two]',
       'flowchart LR\nA[one]-->A[two]',
       'sequenceDiagram\nA->>B: hi',

@@ -16,7 +16,14 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
-import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
+import {
+  claudeSeed,
+  agentSettings,
+  STATUS_LINE,
+  POSIX_STATUS_LINE,
+  WINDOWS_STATUS_LINE,
+} from '../src/plugins/agent/main/claude/seed'
+import { shellReadBridgeEnv } from '../src/main/bridge/env-file'
 import { appsSeed } from '../src/plugins/apps/main/seed'
 import { automationsSeed } from '../src/plugins/automations/main/seed'
 import { holisSeed } from '../src/plugins/holis/main/seed'
@@ -1909,6 +1916,67 @@ describe('mergedSettings — background sessions', () => {
     const mine = { type: 'command', command: 'mine.sh' }
     const kept = mergedSettings(JSON.stringify({ statusLine: mine }))
     expect(kept === null ? mine : JSON.parse(kept).statusLine).toEqual(mine)
+  })
+
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'selects fresh status defaults for %s',
+    (platform) => {
+      const settings = agentSettings(null, [], () => false, undefined, platform)!
+      expect(JSON.parse(settings).statusLine).toEqual({
+        type: 'command',
+        command: platform === 'win32' ? WINDOWS_STATUS_LINE : POSIX_STATUS_LINE,
+      })
+    },
+  )
+
+  it('preserves the POSIX status command bytes as the pre-Windows baseline', () => {
+    const expected = [
+      'input=$(cat)',
+      `printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")'`,
+      `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi; fi`,
+      'true',
+    ].join('; ')
+    expect(POSIX_STATUS_LINE).toBe(expected)
+    const complete = JSON.parse(SETTINGS_SEED)
+    complete.statusLine = { type: 'command', command: expected }
+    expect(
+      agentSettings(JSON.stringify(complete), SETTINGS_FRAGMENTS, () => true, undefined, 'darwin'),
+    ).toBeNull()
+  })
+
+  it('migrates only the exact prior Holi status command and is idempotent', () => {
+    const prior = [
+      'input=$(cat)',
+      `printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")'`,
+      `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi; fi`,
+      'true',
+    ].join('; ')
+    const complete = JSON.parse(SETTINGS_SEED)
+    complete.statusLine = { type: 'command', command: prior }
+    complete.extraUserKey = { retained: true }
+    const before = JSON.stringify(complete)
+    const migrated = agentSettings(before, SETTINGS_FRAGMENTS, () => true, undefined, 'win32')
+    expect(migrated).not.toBeNull()
+    expect(JSON.parse(migrated!).statusLine.command).toContain('node -e')
+    expect(JSON.parse(migrated!).extraUserKey).toEqual({ retained: true })
+    expect(agentSettings(migrated, SETTINGS_FRAGMENTS, () => true, undefined, 'win32')).toBeNull()
+    const custom = { statusLine: { type: 'command', command: `${prior} ` } }
+    const kept = agentSettings(
+      JSON.stringify(custom),
+      SETTINGS_FRAGMENTS,
+      () => true,
+      undefined,
+      'win32',
+    )
+    expect(JSON.parse(kept!).statusLine).toEqual(custom.statusLine)
+    const posix = agentSettings(
+      JSON.stringify({ statusLine: { type: 'command', command: prior } }),
+      SETTINGS_FRAGMENTS,
+      () => true,
+      undefined,
+      'darwin',
+    )
+    expect(JSON.parse(posix!).statusLine.command).toBe(prior)
   })
 
   it('keeps background sessions in the vault itself, unless the user chose otherwise', () => {
