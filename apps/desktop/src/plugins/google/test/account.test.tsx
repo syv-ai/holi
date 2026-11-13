@@ -348,6 +348,26 @@ test('a vault switch does not let a late prior answer overwrite the new vault', 
   expect(getByTestId('account').textContent).toBe('new@syv.ai')
 })
 
+test('the sidebar subscription preserves a connection without a React account reader', async () => {
+  vi.useFakeTimers()
+  statusMock.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv-ai/sidebar-only')
+  const unsubscribe = store.sub(googleConnectedAtom, () => undefined)
+  await vi.waitFor(() => expect(store.get(googleConnectedAtom)).toBe(true))
+
+  statusMock.mockRejectedValue(new Error('Google is unavailable'))
+  store.set(refreshGoogleAtom)
+  await vi.advanceTimersByTimeAsync(1_250)
+  expect(store.get(googleConnectedAtom)).toBe(true)
+
+  statusMock.mockResolvedValue({ account: null, missingScopes: [] })
+  store.set(refreshGoogleAtom)
+  await vi.advanceTimersByTimeAsync(1_250)
+  expect(store.get(googleConnectedAtom)).toBe(false)
+  unsubscribe()
+})
+
 test('refresh failures preserve the last connected account', async () => {
   statusMock.mockResolvedValueOnce({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
   const store = createStore()
