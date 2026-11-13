@@ -47,6 +47,8 @@ export interface PluginSetting {
   /** The value when no file answers it. Must pass its own type. */
   default: unknown
   target: SettingTarget
+  /** This value is private to the machine even when a committed file answers it. */
+  localOnly?: boolean
 }
 
 /** Resolved values, by plugin id then setting key. */
@@ -190,9 +192,11 @@ export function resolvePluginSettings(
       return {}
     })
     for (const setting of info.settings ?? []) {
-      // The last file that mentions the key answers it.
+      // A local-only value cannot inherit consent from the shared vault file.
+      // A malformed local value also fails closed to its default.
       let raw: unknown
-      for (const block of blocks) if (setting.key in block) raw = block[setting.key]
+      const sources = setting.localOnly ? [blocks[1]!] : blocks
+      for (const block of sources) if (setting.key in block) raw = block[setting.key]
       if (raw === undefined) {
         out[setting.key] = fresh(setting.default)
         continue
@@ -285,6 +289,9 @@ export function pluginSettingsProblems(info: PluginInfo): string[] {
     seen.add(setting.key)
     if (!readPluginValue(setting.type, setting.default).ok) {
       problems.push(`plugin ${info.id} setting ${setting.key} has a default its type refuses`)
+    }
+    if (setting.localOnly !== undefined && typeof setting.localOnly !== 'boolean') {
+      problems.push(`plugin ${info.id} setting ${setting.key} localOnly must be boolean`)
     }
   }
   return problems

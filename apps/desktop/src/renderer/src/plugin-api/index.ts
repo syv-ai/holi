@@ -76,7 +76,12 @@ export {
 } from '@/composites/arcade/holi-arcade'
 export { sessionAtom } from '@/state/session'
 export { forgetAgentLabelsAtom, useAgentLabel } from '@/state/document-runs'
-export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
+export {
+  activeVaultSettingsAtom,
+  agentProviderSettingAtom,
+  loadVaultSettingsAtom,
+  usePluginSetting,
+} from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
 export {
   terminalTheme,

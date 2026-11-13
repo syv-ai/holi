@@ -24,11 +24,33 @@ const MAIL = { to: ['bo@example.com'], subject: 'Q2 budget', body: 'Here it is.'
 interface RigOptions {
   data?: Partial<GoogleData> | null
   accounts?: Partial<GoogleAccountsManager>
+  settings?: {
+    read: () => Promise<{
+      calendars: Record<string, boolean>
+      imageSenders: string[]
+      imagesFromAllSenders: boolean
+    }>
+    write: (
+      root: string,
+      values: Partial<{
+        calendars: Record<string, boolean>
+        imageSenders: string[]
+        imagesFromAllSenders: boolean
+      }>,
+    ) => Promise<void>
+  }
 }
 
 /** The capabilities over a fake data layer and accounts manager, recording
  *  what each call asked of them, run through the UI door for `remote`. */
-function rig({ data = {}, accounts = {} }: RigOptions = {}) {
+function rig({
+  data = {},
+  accounts = {},
+  settings = {
+    read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
+    write: async () => {},
+  },
+}: RigOptions = {}) {
   const calls: { name: string; input: unknown }[] = []
   const record =
     <T>(name: string, result: T) =>
@@ -52,7 +74,7 @@ function rig({ data = {}, accounts = {} }: RigOptions = {}) {
     googleCapabilities({
       accounts: accounts as GoogleAccountsManager,
       dataFor: async () => googleData,
-      settings: { read: async () => ({ calendars: {}, imageSenders: [] }), write: async () => {} },
+      settings,
     }),
   )
   const run = (name: string, params: unknown, remote: string, door: Door) =>
@@ -61,7 +83,7 @@ function rig({ data = {}, accounts = {} }: RigOptions = {}) {
       door,
       {
         remote,
-        root: '',
+        root: remote,
         bundle: null,
         snapshot: async () => emptyVaultSnapshot(),
         claims: async () => [],
@@ -80,7 +102,10 @@ it('lists --full in the generated usage for google read', () => {
   const read = googleCapabilities({
     accounts: {} as GoogleAccountsManager,
     dataFor: async () => null,
-    settings: { read: async () => ({ calendars: {}, imageSenders: [] }), write: async () => {} },
+    settings: {
+      read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
+      write: async () => {},
+    },
   })['google.read']
   const usage = resolveArgv(
     ['google', 'read', '--help'],
@@ -89,6 +114,59 @@ it('lists --full in the generated usage for google read', () => {
   )
   if (usage.kind !== 'help') throw new Error('expected generated CLI help')
   expect(usage.text).toContain('[--full]')
+})
+
+describe('remote image preferences', () => {
+  it('validates all-senders as a boolean and writes the explicitly selected value for this root', async () => {
+    const writes: unknown[] = []
+    let stored = {
+      calendars: {},
+      imageSenders: ['trusted@example.com'],
+      imagesFromAllSenders: false,
+    }
+    const { call } = rig({
+      settings: {
+        read: async () => stored,
+        write: async (root, values) => {
+          writes.push({ root, values })
+          stored = { ...stored, ...values }
+        },
+      },
+    })
+    expect(await call('setImagesFromAllSenders', { enabled: true }, 'owner/vault')).toEqual({
+      ok: true,
+    })
+    expect(writes).toEqual([{ root: 'owner/vault', values: { imagesFromAllSenders: true } }])
+    expect(await call('imageSenders')).toEqual({
+      senders: ['trusted@example.com'],
+      allSenders: true,
+    })
+    await expect(call('setImagesFromAllSenders', { enabled: 'yes' })).rejects.toThrow(
+      /enabled must be a boolean/,
+    )
+    await expect(call('setImagesFromAllSenders', { enabled: 1 })).rejects.toThrow(
+      /enabled must be a boolean/,
+    )
+    await expect(call('setImagesFromAllSenders', {})).rejects.toThrow(/enabled must be a boolean/)
+  })
+
+  it('forgetting trusted senders preserves the independent all-senders setting', async () => {
+    const writes: unknown[] = []
+    const { call } = rig({
+      settings: {
+        read: async () => ({
+          calendars: {},
+          imageSenders: ['trusted@example.com'],
+          imagesFromAllSenders: true,
+        }),
+        write: async (_root, values) => {
+          writes.push(values)
+        },
+      },
+    })
+    await call('forgetImageSenders')
+    expect(writes).toEqual([{ imageSenders: [] }])
+  })
 })
 
 const refusal = (p: Promise<unknown>) =>

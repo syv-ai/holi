@@ -12,7 +12,7 @@ import { MailView, matchPeople, mentionAt, replaceMention } from '../renderer/ma
 import { getDefaultStore } from 'jotai'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, loadVaultSettingsAtom } from '@/plugin-api'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 
 const threadMock = vi.fn()
@@ -27,6 +27,7 @@ const untrashMock = vi.fn()
 const toastMock = vi.fn()
 const categoryCountsMock = vi.fn()
 const imageSendersMock = vi.fn()
+const setImagesFromAllSendersMock = vi.fn()
 const allowImagesFromMock = vi.fn()
 const forgetImageSendersMock = vi.fn()
 const sendAsMock = vi.fn()
@@ -53,7 +54,16 @@ const google: Record<string, (params: unknown) => unknown> = {
   untrash: (p) => untrashMock(p),
   categoryCounts: () => categoryCountsMock(),
   imageSenders: () => imageSendersMock(),
-  allowImagesFrom: (p) => allowImagesFromMock(p),
+  setImagesFromAllSenders: (p) => setImagesFromAllSendersMock(p),
+  allowImagesFrom: async (p) => {
+    const result = await allowImagesFromMock(p)
+    const before = await imageSendersMock()
+    imageSendersMock.mockResolvedValue({
+      ...before,
+      imageSenders: [...before.imageSenders, (p as { sender: string }).sender],
+    })
+    return result
+  },
   forgetImageSenders: () => forgetImageSendersMock(),
   sendAs: () => sendAsMock(),
   saveDraft: (p) => saveDraftMock(p),
@@ -79,6 +89,14 @@ vi.mock('sonner', async (original) => ({
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    settings: {
+      read: {
+        query: async () => ({
+          pluginValues: { google: await imageSendersMock() },
+          plugins: { vault: {}, localOff: [] },
+        }),
+      },
+    },
     cap: {
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
@@ -216,7 +234,8 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   categoryCountsMock.mockReset().mockResolvedValue({})
   meetingMock.mockReset().mockResolvedValue(null)
-  imageSendersMock.mockReset().mockResolvedValue([])
+  imageSendersMock.mockReset().mockResolvedValue({ imageSenders: [], imagesFromAllSenders: false })
+  setImagesFromAllSendersMock.mockReset().mockResolvedValue({ ok: true })
   allowImagesFromMock.mockReset().mockResolvedValue({ ok: true })
   forgetImageSendersMock.mockReset().mockResolvedValue({ ok: true })
   sendAsMock.mockReset().mockResolvedValue(['ada@syv.ai'])
@@ -1278,7 +1297,11 @@ test('“always from this sender” is remembered in main, keyed on the address'
 })
 
 test('a sender already allowed never shows the banner at all', async () => {
-  imageSendersMock.mockResolvedValue(['jane@example.com'])
+  imageSendersMock.mockResolvedValue({
+    imageSenders: ['jane@example.com'],
+    imagesFromAllSenders: false,
+  })
+  await getDefaultStore().set(loadVaultSettingsAtom, { force: true })
   withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
 
   const article = await openThread()

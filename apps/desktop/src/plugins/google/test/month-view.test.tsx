@@ -56,7 +56,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   'google.agendaCached': () => null,
   'google.calendars': () => [],
   'google.schedule': (p) => scheduleMock(p),
-  'google.imageSenders': () => [],
+  'google.imageSenders': () => ({ senders: [], allSenders: false }),
 }
 vi.mock('@/lib/trpc', () => ({
   trpc: {

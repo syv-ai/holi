@@ -9,8 +9,9 @@ import { act, fireEvent, render as rtlRender, screen, waitFor } from '@testing-l
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SandboxedHtml } from '../renderer/sandboxed-html'
 import { ConnectionsSection } from '../renderer/connections-section'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, loadVaultSettingsAtom } from '@/plugin-api'
 
 /** A fresh jotai store per test: the google atoms are module level, so one
  *  case's answer would otherwise still be held when the next one renders. */
@@ -35,6 +36,9 @@ const setClient = vi.fn()
 const connect = vi.fn()
 const awaitConnect = vi.fn()
 const cancelConnect = vi.fn()
+const setAllImages = vi.fn()
+const settingsRead = vi.fn()
+let allImages = false
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
@@ -46,13 +50,19 @@ const google: Record<string, (params: unknown) => unknown> = {
   'google.connect': (p) => connect(p),
   'google.awaitConnect': (p) => awaitConnect(p),
   'google.cancelConnect': (p) => cancelConnect(p),
-  'google.imageSenders': async () => [],
+  'google.imageSenders': async () => ({ senders: [], allSenders: false }),
+  'google.setImagesFromAllSenders': async (p) => {
+    const result = await setAllImages(p)
+    allImages = (p as { enabled: boolean }).enabled
+    return result
+  },
   'google.client': () => client(),
   'google.setClient': (p) => setClient(p),
 }
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    settings: { read: { query: () => settingsRead() } },
     cap: {
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
@@ -85,9 +95,90 @@ beforeEach(() => {
   connect.mockResolvedValue(undefined)
   awaitConnect.mockResolvedValue({ kind: 'granted' })
   cancelConnect.mockResolvedValue(undefined)
+  setAllImages.mockResolvedValue({ ok: true })
+  allImages = false
+  settingsRead.mockImplementation(async () => ({
+    pluginValues: { google: { imageSenders: [], imagesFromAllSenders: allImages } },
+    plugins: { vault: {}, localOff: [] },
+  }))
 })
 
 describe('ConnectionsSection', () => {
+  it('shows a settings read retry and retries a failed write without racing the switch', async () => {
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/vault')
+    status.mockResolvedValue({ account: ADA, missingScopes: [] })
+    settingsRead.mockRejectedValueOnce(new Error('read failed'))
+    await expect(store.set(loadVaultSettingsAtom, { force: true })).rejects.toThrow('read failed')
+    setAllImages.mockRejectedValueOnce(new Error('write failed'))
+    rtlRender(
+      <Provider store={store}>
+        <ConnectionsSection />
+      </Provider>,
+    )
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Retry' }))
+    const toggle = await screen.findByRole('switch', {
+      name: 'Always load images from all senders',
+    })
+    expect(toggle).toBeEnabled()
+    await user.click(toggle)
+    expect(await screen.findByText(/could not save or read/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(setAllImages).toHaveBeenCalledTimes(2))
+    expect(setAllImages).toHaveBeenNthCalledWith(2, { enabled: true })
+    expect(screen.queryByText(/could not save or read/i)).toBeNull()
+
+    setAllImages.mockRejectedValueOnce(new Error('disable failed'))
+    await user.click(toggle)
+    expect(await screen.findByText(/could not save or read/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(setAllImages).toHaveBeenCalledTimes(4))
+    expect(setAllImages).toHaveBeenNthCalledWith(4, { enabled: false })
+  })
+  it('shares pending consent between the banner and actual settings controls', async () => {
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/vault')
+    await store.set(loadVaultSettingsAtom, { force: true })
+    status.mockResolvedValue({ account: ADA, missingScopes: [] })
+    let finish!: (value: { ok: true }) => void
+    setAllImages.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+    rtlRender(
+      <Provider store={store}>
+        <ConnectionsSection />
+        <SandboxedHtml
+          html='<img src="https://cdn.test/logo.png">'
+          label="Message"
+          identity={{ key: 'm1', sender: 'new@example.com' }}
+        />
+      </Provider>,
+    )
+    const user = userEvent.setup()
+    const toggle = await screen.findByRole('switch', {
+      name: 'Always load images from all senders',
+    })
+    await user.click(screen.getByRole('button', { name: 'Always from all senders' }))
+    expect(toggle).toBeDisabled()
+    await act(async () => finish({ ok: true }))
+    await waitFor(() => expect(toggle).toBeChecked())
+    await waitFor(() => expect(toggle).toBeEnabled())
+    setAllImages.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+    await user.click(toggle)
+    expect(await screen.findByRole('button', { name: 'Always from all senders' })).toBeDisabled()
+    await act(async () => finish({ ok: true }))
+    await waitFor(() => expect(toggle).not.toBeChecked())
+    expect(screen.getByRole('button', { name: 'Always from all senders' })).toBeEnabled()
+  })
+
   it('closes the OAuth dialog when its Settings page is hidden and preserves its draft', async () => {
     const mounted = render()
     await screen.findByRole('button', { name: 'Use your own client…' })

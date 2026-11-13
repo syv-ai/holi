@@ -17,7 +17,9 @@ const agendaCachedMock = vi.fn()
 const calendarsMock = vi.fn()
 const setCalendarMock = vi.fn()
 const createTaskMock = vi.fn()
-const imageSendersMock = vi.fn(() => Promise.resolve<string[]>([]))
+const imageSendersMock = vi.fn(() =>
+  Promise.resolve({ senders: [] as string[], allSenders: false }),
+)
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
@@ -106,7 +108,7 @@ beforeEach(() => {
   calendarsMock.mockReset().mockResolvedValue(CALENDARS)
   setCalendarMock.mockReset().mockResolvedValue({ ok: true })
   createTaskMock.mockReset().mockResolvedValue({ path: 'tasks/q2-review.md' })
-  imageSendersMock.mockReset().mockResolvedValue([])
+  imageSendersMock.mockReset().mockResolvedValue({ senders: [], allSenders: false })
   // Module state on jotai's default store, shared by every test in this file.
   resetMailImagesForTests()
   // Every Google call names the vault it is for.
