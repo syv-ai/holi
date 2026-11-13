@@ -762,14 +762,23 @@ async function createTask(
   })) as { path: string }
 }
 
+type TaskVerb = 'update' | 'move' | 'delete'
+/** What `tasks.<verb>` answers, as its capability declares it. */
+type TaskAnswer<V extends TaskVerb> = Awaited<
+  ReturnType<ReturnType<typeof taskCapabilities>[`tasks.${V}`]['run']>
+>
+
 /** One of the board's own `tasks.*` capabilities, at the UI door. */
-async function tasksCall(
+async function tasksCall<V extends TaskVerb>(
   caller: Awaited<ReturnType<typeof rig>>['caller'],
-  verb: 'update' | 'move' | 'delete',
+  verb: V,
   { remote, ...params }: { remote: string } & Record<string, unknown>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<any> {
-  return caller.cap.run({ remote, name: `tasks.${verb}`, paramsJson: JSON.stringify(params) })
+): Promise<TaskAnswer<V>> {
+  return (await caller.cap.run({
+    remote,
+    name: `tasks.${verb}`,
+    paramsJson: JSON.stringify(params),
+  })) as TaskAnswer<V>
 }
 
 describe('tasks', () => {

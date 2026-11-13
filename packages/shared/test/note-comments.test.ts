@@ -19,6 +19,16 @@ import {
   type NoteComment,
 } from '../src/note-comments'
 
+/** A comments file as JSON reads it back, keys and threads Holi does not know included. */
+interface WrittenFile {
+  version?: unknown
+  threads: Record<
+    string,
+    { tag?: unknown; anchor?: Record<string, unknown>; comments?: Record<string, unknown> }
+  >
+  [key: string]: unknown
+}
+
 const comment = (id: string, body: string, author = 'ada', at = '2026-10-21T10:00:00.000Z') =>
   ({ id, author, at, body }) satisfies NoteComment
 
@@ -119,12 +129,12 @@ describe('threads', () => {
     expect(commentThreads(file).map((t) => t.id)).toEqual(['good'])
     const written = JSON.parse(
       formatCommentsFile(withReply(file, 'good', comment('r', 'reply'))!),
-    ) as Record<string, any>
+    ) as WrittenFile
     expect(written.version).toBe(2)
     expect(Object.keys(written.threads).sort()).toEqual(['good', 'noComments', 'noQuote'])
-    expect(written.threads.good.tag).toBe(1)
-    expect(written.threads.good.anchor.color).toBe('red')
-    expect(Object.keys(written.threads.good.comments).sort()).toEqual(['c', 'odd', 'r'])
+    expect(written.threads.good?.tag).toBe(1)
+    expect(written.threads.good?.anchor?.color).toBe('red')
+    expect(Object.keys(written.threads.good?.comments ?? {}).sort()).toEqual(['c', 'odd', 'r'])
     expect(withReply(file, 'noQuote', comment('r', 'reply'))).toBeNull()
     expect(parseCommentsFile('[1]')).toBeNull()
     expect(parseCommentsFile('{"threads":[]}')).toBeNull()
@@ -183,11 +193,11 @@ describe('mergeCommentsText', () => {
     const ours = extra(withReply(base, 't', comment('b', 'mine'))!, 'oursKey')
     const theirs = extra(withReply(base, 't', comment('c', 'yours'))!, 'theirsKey')
     const out = mergeCommentsText(f(base), f(ours), f(theirs))
-    const merged = JSON.parse(out.ok ? out.text : '{}') as Record<string, any>
+    const merged = JSON.parse(out.ok ? out.text : '{}') as WrittenFile
     expect(merged.oursKey).toBe(true)
     expect(merged.theirsKey).toBe(true)
     expect(Object.keys(merged.threads).sort()).toEqual(['raw-oursKey', 'raw-theirsKey', 't'])
-    expect(Object.keys(merged.threads.t.comments).sort()).toEqual(['a', 'b', 'c'])
+    expect(Object.keys(merged.threads.t?.comments ?? {}).sort()).toEqual(['a', 'b', 'c'])
   })
 
   it('conflicts rather than keep one side of a value both changed', () => {

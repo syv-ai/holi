@@ -1,13 +1,33 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+
+type Listener = (...args: unknown[]) => void
+
+/** electron-updater's `autoUpdater`, as far as the updater uses it. */
+interface FakeUpdater {
+  on(event: string, listener: Listener): FakeUpdater
+  removeListener(event: string, listener: Listener): FakeUpdater
+  removeAllListeners(): void
+  emit(event: string, ...args: unknown[]): void
+  listeners: Map<string, Listener[]>
+  autoDownload: boolean
+  autoInstallOnAppQuit: boolean
+  allowDowngrade: boolean
+  channel: string | null
+  _channel: string | null
+  checkForUpdates: Mock
+  downloadUpdate: Mock
+  quitAndInstall: Mock
+}
 
 const mocks = vi.hoisted(() => {
-  const listeners = new Map<string, Array<(...args: any[]) => void>>()
+  const listeners = new Map<string, Listener[]>()
+  // The rest of it is set in beforeEach, afresh for each test.
   const updater = {
-    on: (event: string, listener: (...args: any[]) => void) => {
+    on: (event: string, listener: Listener) => {
       listeners.set(event, [...(listeners.get(event) ?? []), listener])
       return updater
     },
-    removeListener: (event: string, listener: (...args: any[]) => void) => {
+    removeListener: (event: string, listener: Listener) => {
       listeners.set(
         event,
         (listeners.get(event) ?? []).filter((l) => l !== listener),
@@ -15,11 +35,11 @@ const mocks = vi.hoisted(() => {
       return updater
     },
     removeAllListeners: () => listeners.clear(),
-    emit: (event: string, ...args: any[]) => {
+    emit: (event: string, ...args: unknown[]) => {
       for (const listener of listeners.get(event) ?? []) listener(...args)
     },
     listeners,
-  } as Record<string, any>
+  } as FakeUpdater
   return {
     updater,
     read: vi.fn(),

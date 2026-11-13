@@ -95,11 +95,26 @@ const hookEntry = (script: string) => ({
   type: 'command',
   command: `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${script}.mjs"`,
 })
-const gateOf = (pre: { matcher?: string; hooks?: unknown[] }[]) =>
-  pre.find(
-    (entry) =>
-      entry.matcher === 'Bash' && JSON.stringify(entry.hooks ?? []).includes('google-send-gate'),
-  ) as any
+
+/** A Claude Code `settings.json`, as far as these tests read one. */
+interface HookEntry {
+  matcher?: string
+  hooks: { type: string; command: string; if?: string }[]
+}
+interface ClaudeSettings {
+  hooks: Record<string, HookEntry[]>
+  permissions: { allow?: string[]; ask?: string[]; deny?: string[] }
+  skillOverrides: Record<string, string>
+  [key: string]: unknown
+}
+
+const gateOf = (pre: HookEntry[] | undefined): HookEntry => {
+  const gate = (pre ?? []).find(
+    (entry) => entry.matcher === 'Bash' && JSON.stringify(entry.hooks).includes('google-send-gate'),
+  )
+  if (gate === undefined) throw new Error('no send gate among the PreToolUse hooks')
+  return gate
+}
 
 /** The merged `.claude/settings.json` a vault gets when it has none. */
 const SETTINGS_SEED = mergedSettings(null)!
@@ -361,8 +376,8 @@ describe('the seed tables', () => {
     const gate = gateOf(settings.hooks.PreToolUse)
 
     expect(gate.matcher).toBe('Bash')
-    expect(gate.hooks[0].command).toContain('.claude/hooks/google-send-gate.mjs')
-    expect(gate.hooks[0].if).toBeUndefined()
+    expect(gate.hooks[0]?.command).toContain('.claude/hooks/google-send-gate.mjs')
+    expect(gate.hooks[0]?.if).toBeUndefined()
   })
 
   it('the send gate returns ask rather than deny, so the user still decides', () => {
@@ -999,7 +1014,7 @@ describe('hook scripts', () => {
  * put there, and return `null` when there is nothing to do.
  */
 describe('mergedSettings', () => {
-  const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
+  const parse = (s: string | null) => JSON.parse(s!) as ClaudeSettings
 
   describe('what an earlier Holi merged in', () => {
     const gate = '.claude/hooks/google-send-gate.mjs'
@@ -1056,10 +1071,7 @@ describe('mergedSettings', () => {
       expect(agentOnly.flatMap((f) => f.retired?.hooks?.sha256 ?? [])).toHaveLength(2)
 
       const before = JSON.stringify({ permissions: { ask: ['Bash(holi google trash:*)'] } })
-      const after = JSON.parse(agentSettings(before, agentOnly, () => false)!) as Record<
-        string,
-        any
-      >
+      const after = JSON.parse(agentSettings(before, agentOnly, () => false)!) as ClaudeSettings
 
       expect(after.permissions.ask).not.toContain('Bash(holi google trash:*)')
     })
@@ -1073,7 +1085,7 @@ describe('mergedSettings', () => {
 
     const after = parse(mergedSettings(before))
 
-    expect(gateOf(after.hooks.PreToolUse).hooks[0].command).toContain('google-send-gate.mjs')
+    expect(gateOf(after.hooks.PreToolUse).hooks[0]?.command).toContain('google-send-gate.mjs')
     expect(after.permissions.ask).toContain('Bash(holi google send:*)')
     expect(after.permissions.deny).toContain('SendFeedback')
     expect(after.skillOverrides['code-review']).toBe('off')
@@ -1093,8 +1105,8 @@ describe('mergedSettings', () => {
     const after = parse(mergedSettings(before))
 
     // Untouched
-    expect(after.hooks.PostToolUse[0].hooks[0].command).toBe('format')
-    expect(after.hooks.UserPromptSubmit[0].hooks[0].command).toBe('mine')
+    expect(after.hooks.PostToolUse?.[0]?.hooks[0]?.command).toBe('format')
+    expect(after.hooks.UserPromptSubmit?.[0]?.hooks[0]?.command).toBe('mine')
     expect(after.permissions.allow).toEqual([
       'Bash(ls:*)',
       'Bash(node .claude/skills/memory/lint.mjs:*)',
@@ -1108,7 +1120,7 @@ describe('mergedSettings', () => {
       'Bash(holi apps:*)',
       'Bash(holi store:*)',
     ])
-    expect(after.permissions.deny[0]).toBe('Bash(sudo:*)')
+    expect(after.permissions.deny?.[0]).toBe('Bash(sudo:*)')
     expect(after.skillOverrides.init).toBe('on')
     expect(after.model).toBe('opus')
     // Added, not replaced
@@ -1117,7 +1129,7 @@ describe('mergedSettings', () => {
   })
 
   it('allows the commands that need no prompt, in a vault that predates them', () => {
-    const before = JSON.parse(SETTINGS_SEED) as Record<string, any>
+    const before = JSON.parse(SETTINGS_SEED) as ClaudeSettings
     delete before.permissions.allow
     const after = parse(mergedSettings(JSON.stringify(before)))
     expect(after.permissions.allow).toEqual([
@@ -1151,7 +1163,7 @@ describe('mergedSettings', () => {
     // The memory index guard, then two gate matchers, not two copies: `Bash`
     // for the CLI and `mcp__…Gmail…` for the claude.ai connector, which a Bash
     // matcher cannot see. Seeding again adds none of them.
-    expect(parse(once).hooks.PreToolUse.map((e: { matcher: string }) => e.matcher)).toEqual([
+    expect(parse(once).hooks.PreToolUse?.map((e) => e.matcher)).toEqual([
       'Write|Edit|MultiEdit',
       'Bash',
       'mcp__.*[Gg]mail.*',
@@ -1191,7 +1203,7 @@ describe('ensureSeeded — settings.json', () => {
     const { written } = await ensureSeeded(root)
 
     const settings = parseYaml(await readFile(join(root, '.claude/settings.json'), 'utf8'))
-    expect(gateOf(settings.hooks.PreToolUse).hooks[0].command).toContain('google-send-gate.mjs')
+    expect(gateOf(settings.hooks.PreToolUse).hooks[0]?.command).toContain('google-send-gate.mjs')
     expect(written).toContain('.claude/settings.json')
     // A fragment from a contribution that does not own the file reaches it.
     expect(settings.permissions.allow).toContain('Bash(holi pdf comments:*)')
@@ -1795,7 +1807,7 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
  */
 describe('vault memory', () => {
   const settings = () => JSON.parse(SETTINGS_SEED)
-  const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
+  const parse = (s: string | null) => JSON.parse(s!) as ClaudeSettings
 
   it('switches Claude Code’s own auto-memory off, so there is one surface', () => {
     // Verified live against 2.1.267, not read out of the binary: with this key

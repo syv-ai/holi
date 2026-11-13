@@ -74,7 +74,7 @@ interface Spawned {
 
 function fakeSpawn(pid?: number) {
   const spawns: Spawned[] = []
-  const spawn = (file: string, args: string[], opts: any) => {
+  const spawn = (file: string, args: string[], opts: Spawned['opts']) => {
     const pty = new FakePty(pid)
     spawns.push({ pty, file, args, opts })
     return pty

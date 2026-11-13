@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
+import type { CapabilityContext } from '../../../main/plugin-api'
 
 const race = vi.hoisted(() => ({
   root: '',
@@ -54,7 +55,7 @@ it('refuses the file opened outside the vault during an ancestor ABA swap', asyn
         ...emptyVaultSnapshot(),
         files: [{ path: 'dir/file.txt', updatedAt: '' }],
       }),
-    } as any
+    } as unknown as CapabilityContext
 
     await expect(vaultAttachments(ctx, ['dir/file.txt'])).rejects.toMatchObject({
       code: 'FORBIDDEN',

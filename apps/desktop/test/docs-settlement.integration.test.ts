@@ -18,6 +18,10 @@ import {
   plainGit,
 } from './helpers/git-fixtures'
 
+/** The open vault as both core's services and the capability host read it. */
+type OpenVaultFake = NonNullable<ReturnType<Parameters<typeof createCoreServices>[0]['active']>> &
+  NonNullable<ReturnType<Parameters<typeof createCapabilityHost>[0]['active']>>
+
 const REMOTE = 'owner/repo'
 const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 afterAll(cleanupFixtures)
@@ -60,8 +64,7 @@ describe('CLI note settlement with a real local origin', () => {
 
     let state: SyncState = { kind: 'up-to-date' }
     let snapshot = await scanVault(root, [])
-    let active: any
-    active = {
+    let active: OpenVaultFake | null = {
       remote: REMOTE,
       root,
       syncState: () => state,
