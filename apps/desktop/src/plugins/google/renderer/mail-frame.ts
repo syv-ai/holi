@@ -333,8 +333,33 @@ function backgroundTokens(nodes: valueParser.Node[]): BackgroundToken[] {
   return tokens
 }
 
+/** Recover CSS priority written with escapes before paint tokens are filtered. */
+function preserveEscapedImportant(declaration: Declaration): void {
+  const parsed = valueParser(declaration.value)
+  const nodes = parsed.nodes
+  const isTrivia = (node: valueParser.Node) => node.type === 'space' || node.type === 'comment'
+  let end = nodes.length - 1
+  while (end >= 0 && isTrivia(nodes[end]!)) end -= 1
+  const priority = backgroundTokens(nodes.slice(0, end + 1)).at(-1)
+  if (priority?.type !== 'word') return
+  const decoded = decodeCssIdentifier(priority.value).toLowerCase()
+  const priorityStart = nodes.indexOf(priority.nodes[0]!)
+  if (decoded === '!important') {
+    nodes.splice(priorityStart, priority.nodes.length)
+  } else {
+    if (decoded !== 'important') return
+    let bang = priorityStart - 1
+    while (bang >= 0 && isTrivia(nodes[bang]!)) bang -= 1
+    if (nodes[bang]?.type !== 'word' || nodes[bang]?.value !== '!') return
+    nodes.splice(bang, nodes.indexOf(priority.nodes.at(-1)!) - bang + 1)
+  }
+  declaration.value = valueParser.stringify(nodes).trimEnd()
+  declaration.important = true
+}
+
 /** Strip authored paint while preserving the declaration's layout tokens. */
 function normalizeDeclaration(declaration: Declaration): void {
+  preserveEscapedImportant(declaration)
   const property = decodeCssIdentifier(declaration.prop).toLowerCase()
   if (property === 'color' || property.endsWith('-color')) {
     declaration.remove()
@@ -371,7 +396,10 @@ function normalizeDeclaration(declaration: Declaration): void {
             token.type === 'function' && decodeCssIdentifier(token.value).toLowerCase() === 'url',
         )
         if (hadGradient && !hasUrl) kept.unshift(valueParser('none').nodes[0]!)
-        return valueParser.stringify(kept).trim()
+        const layer = valueParser.stringify(kept).trim()
+        // A color-only layer still resets the matching image layer. In
+        // particular, `background: white` must not expose an older image.
+        return layer || 'none'
       })
       .join(', ')
     if (declaration.value === '') declaration.remove()
