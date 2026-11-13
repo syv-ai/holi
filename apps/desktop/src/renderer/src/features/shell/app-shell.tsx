@@ -400,6 +400,19 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const retained = useRetainedSurfaces(
     isMobile ? [focusedKey ?? NO_TAB] : members.map((member) => member.key),
     memberBody,
+    (key) => {
+      const tab = parseTabKey(key)
+      return (
+        tab?.kind === 'session' &&
+        (running
+          .find((plugin) => plugin.agentsMode)
+          ?.agentsMode?.keepsSelectionMounted?.({
+            owner: tab.owner,
+            id: tab.id,
+          }) ??
+          false)
+      )
+    },
   )
   const header = (
     <TabStrip onNewTab={openNewTab} onCloseRequest={requestEntryClose} draggable={!isMobile} />
