@@ -220,7 +220,7 @@ ${sheets}
 </head><body>${content.html}</body></html>`
 }
 
-/** Defaults for normalized content, first so sender layout rules still win. */
+/** Normalize authored paint while retaining the message's structure and layout. */
 function normalizeDarkMail(html: string, css: string): { html: string; css: string } {
   const parsed = new DOMParser().parseFromString(html, 'text/html')
   for (const element of parsed.body.querySelectorAll('body, body *')) {
@@ -353,8 +353,9 @@ body {
   overflow-wrap: break-word;
 }
 img { max-width: 100%; height: auto; }
-table { max-width: 100%; }  a { color: ${palette.link}; }
-  blockquote {
+table { max-width: 100%; }
+a { color: ${palette.link}; }
+blockquote {
   margin: 0.5em 0; padding-left: 0.75em;
   border-left: 2px solid ${palette.border}; color: ${palette.muted};
 }
