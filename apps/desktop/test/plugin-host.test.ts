@@ -64,7 +64,7 @@ function rig(
 ) {
   const calls = { started: 0, stopped: 0 }
   const sent: { channel: string; event: PluginEvent }[] = []
-  const listeners = new Map<string, (message: unknown) => void>()
+  const listeners = new Map<string, Set<(message: unknown) => void>>()
   let context: PluginCtx | null = null
   let appDoor: ReturnType<PluginCtx['openAppDoor']> | null = null
   let open: OpenVault | null = null
@@ -104,8 +104,13 @@ function rig(
     events: {
       send: (channel, event) => void sent.push({ channel, event }),
       listen: (channel, handler) => {
-        listeners.set(channel, handler)
-        return () => void listeners.delete(channel)
+        const handlers = listeners.get(channel) ?? new Set()
+        handlers.add(handler)
+        listeners.set(channel, handlers)
+        return () => {
+          handlers.delete(handler)
+          if (handlers.size === 0) listeners.delete(channel)
+        }
       },
       liveRemote: () => opts.live ?? null,
     },
@@ -138,7 +143,9 @@ function rig(
     })
   }
   /** What the renderer sends the plugin's main side. */
-  const fromRenderer = (message: unknown) => listeners.get('plugin:fake')?.(message)
+  const fromRenderer = (message: unknown) => {
+    for (const handler of listeners.get('plugin:fake') ?? []) handler(message)
+  }
   /** Make `vault` the open one and reconcile, as the router does after `host.open`. */
   const enter = async (vault: OpenVault | null) => {
     const previous = open
@@ -305,6 +312,104 @@ describe('vault-scoped plugin host adapters', () => {
 })
 
 describe('the lifecycle', () => {
+  it('keeps failures and dependent teardown scoped when one host runs two remotes', async () => {
+    const starts: string[] = []
+    const stops: string[] = []
+    const provider: MainPlugin = {
+      info: { id: 'base', label: 'Base', default: true },
+      activate(ctx) {
+        starts.push(`base:${ctx.remote}`)
+        if (ctx.remote === 'A' && starts.filter((entry) => entry === 'base:A').length === 1)
+          throw new Error('A unavailable')
+        return () => stops.push(`base:${ctx.remote}`)
+      },
+    }
+    const dependent: MainPlugin = {
+      info: { id: 'face', label: 'Face', default: true, requires: ['base'] },
+      activate(ctx) {
+        starts.push(`face:${ctx.remote}`)
+        return () => stops.push(`face:${ctx.remote}`)
+      },
+    }
+    const aRoot = await tempDir()
+    const bRoot = await tempDir()
+    const { host } = rig({ plugins: [provider, dependent], roots: { A: aRoot, B: bRoot } })
+    const a = openVault('A', aRoot)
+    const b = openVault('B', bRoot)
+    await host.reconcile(a, 'open')
+    expect(host.failures('A')).toMatchObject({ base: 'A unavailable' })
+    await host.reconcile(b, 'open')
+    expect([...(await host.serving('B'))]).toEqual(expect.arrayContaining(['base', 'face']))
+    await writeVaultSettings(aRoot, { committed: { plugins: { base: true } } })
+    await host.reconcile(a, 'settings')
+    expect(host.failures('A')).toEqual({})
+    expect([...(await host.serving('A'))]).toEqual(expect.arrayContaining(['base', 'face']))
+    await writeVaultSettings(aRoot, { committed: { plugins: { base: false } } })
+    await host.reconcile(a, 'settings')
+    expect(stops).toEqual(['face:A', 'base:A'])
+    expect([...(await host.serving('B'))]).toEqual(expect.arrayContaining(['base', 'face']))
+    await host.stopAll()
+  })
+
+  it('does not let a stopped vault hold resume its replacement or another remote', async () => {
+    const contexts: PluginCtx[] = []
+    const disposals: string[] = []
+    let releaseDispose: () => void = () => {}
+    let enteredDispose: () => void = () => {}
+    const disposeGate = new Promise<void>((resolve) => (releaseDispose = resolve))
+    const disposing = new Promise<void>((resolve) => (enteredDispose = resolve))
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        contexts.push(ctx)
+        return async () => {
+          disposals.push(ctx.remote)
+          await ctx.commitNow()
+          await ctx.head()
+          if (ctx.remote === 'A' && contexts.length === 2) {
+            enteredDispose()
+            await disposeGate
+          }
+        }
+      },
+    }
+    const { host } = rig({ plugins: [plugin] })
+    const oldCalls: string[] = []
+    const newCalls: string[] = []
+    const otherCalls: string[] = []
+    const oldVault = openVault('A', '/old', oldCalls)
+    const newVault = openVault('A', '/new', newCalls)
+    const otherVault = openVault('B', '/B', otherCalls)
+    oldVault.commitNow = async () => {
+      oldCalls.push('commit old')
+      return null
+    }
+    newVault.commitNow = async () => {
+      newCalls.push('commit new')
+      return null
+    }
+    await host.reconcile(oldVault, 'open')
+    await host.reconcile(otherVault, 'open')
+    const oldRelease = contexts[0]!.pauseSync('old')
+    const otherRelease = contexts[1]!.pauseSync('other')
+    const stopping = host.stop('A')
+    await disposing
+    const reopening = host.reconcile(newVault, 'open')
+    releaseDispose()
+    await Promise.all([stopping, reopening])
+    expect(contexts[2]!.active()).toBe(newVault)
+    oldRelease()
+    expect(oldCalls).toContain('resume')
+    expect(oldCalls).toContain('commit old')
+    expect(newCalls).not.toContain('resume')
+    expect(otherCalls).not.toContain('resume')
+    otherRelease()
+    expect(disposals.filter((remote) => remote === 'A')).toHaveLength(1)
+    expect(await contexts[2]!.head()).toBe('sha')
+    await host.stopAll()
+    expect(newCalls).toContain('commit new')
+  })
+
   it('lets B start while A activation is pending and disposes a cancelled start once', async () => {
     const log: string[] = []
     let releaseA: () => void = () => {}
@@ -392,6 +497,202 @@ describe('the lifecycle', () => {
     expect(current.displayed()).toBe('C')
     current.publish('live', null)
     await host.stop('A')
+  })
+
+  it('retires every callback and context capability from a failed activation', async () => {
+    let old: PluginCtx | null = null
+    let fail = true
+    const log: string[] = []
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        if (fail) {
+          old = ctx
+          throw new Error('activation failed')
+        }
+        ctx.register(['fake'], {
+          'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => 'fresh' }),
+        })
+        return () => {}
+      },
+    }
+    const root = await tempDir()
+    const { host, enter, reconcile, registry } = rig({ plugins: [plugin] })
+    await enter(openVault('A', root))
+    expect(host.failures('A')).toEqual({ fake: 'activation failed' })
+    expect(() => old!.register(['fake'], {})).toThrow()
+    expect(() => old!.pauseSync('stale')).toThrow()
+    expect(() => old!.on('input', () => log.push('input'))).toThrow()
+    expect(() => old!.onDisplayChange(() => log.push('display'))).toThrow()
+    expect(() => old!.hear('provider', 'news', () => log.push('hear'))).toThrow()
+    expect(() => old!.onReport(() => log.push('report'))).toThrow()
+    expect(() => old!.onSnapshot(() => log.push('snapshot'))).toThrow()
+    expect(() => old!.events.on(() => log.push('event'))).toThrow()
+    old!.emit('A', 'stale', null)
+    old!.publish('news', null)
+    old!.events.emit({ type: 'stale', source: 'file', kind: 'changed', id: 'A', version: '1' })
+    expect(log).toEqual([])
+    expect(registry.has('fake.ping', 'A')).toBe(false)
+
+    fail = false
+    await reconcile('settings')
+    expect(registry.has('fake.ping', 'A')).toBe(true)
+    await host.stop('A')
+  })
+
+  it('stops inbound callbacks when settings disable a plugin during its disposer', async () => {
+    let ctx: PluginCtx | null = null
+    let providerCtx: PluginCtx | null = null
+    let disposing: () => void = () => {}
+    let finish: () => void = () => {}
+    const enteredDispose = new Promise<void>((resolve) => (disposing = resolve))
+    const disposeGate = new Promise<void>((resolve) => (finish = resolve))
+    const received: string[] = []
+    const provider: MainPlugin = {
+      info: { id: 'base', label: 'Base', default: true },
+      activate(context) {
+        providerCtx = context
+        return () => {}
+      },
+    }
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true, requires: ['base'] },
+      activate(context) {
+        ctx = context
+        context.hear('base', 'news', () => received.push('hear'))
+        context.onReport(() => received.push('report'))
+        context.onMention(() => received.push('mention'))
+        context.onSnapshot(() => received.push('snapshot'))
+        context.on('input', () => received.push('input'))
+        context.events.on(() => received.push('event'))
+        return async () => {
+          disposing()
+          await disposeGate
+        }
+      },
+    }
+    const root = await tempDir()
+    const { host, enter, reconcile, fromRenderer } = rig({
+      plugins: [provider, plugin],
+      live: 'A',
+      roots: { A: root },
+    })
+    await enter(openVault('A', root))
+    await turn(root, false)
+    const stopping = reconcile('settings')
+    await enteredDispose
+    fromRenderer({ remote: 'A', name: 'input', payload: null })
+    host.report('A', { focusedPath: 'a.md', selection: null, openPaths: [], recents: [] })
+    host.mentioned('A', [{ notePath: 'a.md' } as never])
+    host.snapshot('A', { root: 'A' } as never)
+    ctx!.events.emit({
+      type: 'during-drain',
+      source: 'file',
+      kind: 'changed',
+      id: 'A',
+      version: '1',
+    })
+    providerCtx!.publish('news', null)
+    providerCtx!.events.emit({
+      type: 'provider-during-drain',
+      source: 'file',
+      kind: 'changed',
+      id: 'A',
+      version: '1',
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(received).toEqual([])
+    finish()
+    await stopping
+    await host.stopAll()
+  })
+
+  it('delivers final output and vault events emitted by a synchronous disposer', async () => {
+    const heard: string[] = []
+    const provider: MainPlugin = {
+      info: { id: 'base', label: 'Base', default: true },
+      activate(ctx) {
+        ctx.events.on((event) => heard.push(event.type))
+        return () => {}
+      },
+    }
+    const finalizer: MainPlugin = {
+      info: { id: 'face', label: 'Face', default: true, requires: ['base'] },
+      activate(context) {
+        return () => {
+          context.emit('A', 'final', 'done')
+          context.events.emit({
+            type: 'final-event',
+            source: 'file',
+            kind: 'changed',
+            id: 'A',
+            version: '1',
+          })
+        }
+      },
+    }
+    const { host, sent, enter } = rig({ plugins: [provider, finalizer], roots: { A: '/A' } })
+    await enter(openVault('A', '/A'))
+    await host.stop('A')
+    expect(sent.map((item) => item.event)).toEqual([
+      { remote: 'A', name: 'final', payload: 'done' },
+    ])
+    expect(heard).toContain('final-event')
+  })
+
+  it('delivers synchronous disposer output when settings disable a plugin', async () => {
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        return () => ctx.emit('A', 'disabled-final', null)
+      },
+    }
+    const root = await tempDir()
+    const { sent, enter, reconcile } = rig({ plugins: [plugin], roots: { A: root } })
+    await enter(openVault('A', root))
+    await turn(root, false)
+    await reconcile('settings')
+    expect(sent.map((item) => item.event.name)).toEqual(['disabled-final'])
+  })
+
+  it('does not let a fresh final output wait behind a cancelled outbound gate', async () => {
+    let ctx: PluginCtx | null = null
+    let releaseOld: () => void = () => {}
+    let gateEntered: () => void = () => {}
+    const oldGate = new Promise<void>((resolve) => (releaseOld = resolve))
+    const entered = new Promise<void>((resolve) => (gateEntered = resolve))
+    let rootLookups = 0
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(context) {
+        ctx = context
+        return () => context.emit('A', 'final', null)
+      },
+    }
+    const { host, enter, sent } = rig({
+      plugins: [plugin],
+      rootFor: async () => {
+        rootLookups += 1
+        if (rootLookups === 1) {
+          gateEntered()
+          await oldGate
+        }
+        return '/A'
+      },
+    })
+    await enter(openVault('A', '/A'))
+    ctx!.emit('A', 'old', null)
+    await entered
+    const stopping = host.stop('A')
+    try {
+      await stopping
+      await host.reconcile(openVault('A', '/A'), 'open')
+      expect(sent.map((item) => item.event.name)).toEqual(['final'])
+    } finally {
+      releaseOld()
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(sent.map((item) => item.event.name)).toEqual(['final'])
   })
 
   it('drops host-routed output queued before stop after its async gate', async () => {
@@ -801,6 +1102,36 @@ describe('plugin events', () => {
       event: { remote: 'o/on', name: 'tick', payload: 1 },
     })
     expect(() => ctx().emit('o/on', 'Not Kebab', null)).toThrow()
+  })
+
+  it('keeps renderer handlers for both running remote instances', async () => {
+    const contexts = new Map<string, PluginCtx>()
+    const heard = new Map<string, string[]>()
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        contexts.set(ctx.remote, ctx)
+        heard.set(ctx.remote, [])
+        ctx.on('input', (remote, payload) => heard.get(ctx.remote)!.push(`${remote}:${payload}`))
+        return () => {}
+      },
+    }
+    const { host, fromRenderer } = rig({
+      plugins: [plugin],
+      live: 'B',
+      roots: { A: '/A', B: '/B' },
+    })
+    await host.reconcile(openVault('A', '/A'), 'open')
+    await host.reconcile(openVault('B', '/B'), 'open')
+    host.setDisplayed('B')
+    fromRenderer({ remote: 'B', name: 'input', payload: 'current' })
+    await vi.waitFor(() => expect(heard.get('B')).toEqual(['B:current']))
+    expect(heard.get('A')).toEqual([])
+    await host.stop('A')
+    fromRenderer({ remote: 'B', name: 'input', payload: 'still-live' })
+    await vi.waitFor(() => expect(heard.get('B')).toEqual(['B:current', 'B:still-live']))
+    await host.stop('B')
+    expect(contexts.size).toBe(2)
   })
 
   it("hear only the open vault's messages", async () => {
