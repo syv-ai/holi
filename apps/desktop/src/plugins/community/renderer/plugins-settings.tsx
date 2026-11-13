@@ -70,6 +70,8 @@ export function PluginsSettings({
   const openDialog = useSetAtom(openDialogAtom)
   const closePluginDialog = useSetAtom(closePluginDialogAtom)
   const visibleRef = useRef(visible)
+  const visibilityGeneration = useRef(0)
+  const actionGeneration = useRef(0)
   const dialogRenderer = useRef<((close: () => void) => React.ReactNode) | null>(null)
   visibleRef.current = visible
   const rows = useAtomValue(rowsAtom)?.rows ?? []
@@ -79,10 +81,16 @@ export function PluginsSettings({
   useEffect(() => {
     if (visible) {
       void refreshUpdates(remote, store, true)
-      return
+    } else {
+      visibilityGeneration.current += 1
+      if (dialogRenderer.current !== null) closePluginDialog(dialogRenderer.current)
+      dialogRenderer.current = null
     }
-    if (dialogRenderer.current !== null) closePluginDialog(dialogRenderer.current)
-    dialogRenderer.current = null
+    return () => {
+      visibilityGeneration.current += 1
+      if (dialogRenderer.current !== null) closePluginDialog(dialogRenderer.current)
+      dialogRenderer.current = null
+    }
   }, [remote, store, visible, closePluginDialog])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -93,7 +101,7 @@ export function PluginsSettings({
     remote,
     store,
     openDialog: (render) => {
-      if (!visibleRef.current) return
+      if (!visibleRef.current || actionGeneration.current !== visibilityGeneration.current) return
       dialogRenderer.current = render
       openDialog({ id: 'plugin', size: 'md', render })
     },
@@ -102,6 +110,7 @@ export function PluginsSettings({
   const act = async (id: string, fn: () => Promise<string | null | void>) => {
     if (actionLock.current) return
     actionLock.current = true
+    actionGeneration.current = visibilityGeneration.current
     setBusy(true)
     setActing(id)
     setError(null)
