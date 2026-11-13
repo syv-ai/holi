@@ -202,7 +202,7 @@ interface ViewerPlugins {
   commands: {
     getCommandByShortcut(shortcut: string): { id: string } | undefined
     resolve(id: string, documentId?: string): { disabled: boolean; visible: boolean }
-    execute(id: string, documentId?: string): void
+    execute(id: string, documentId?: string, source?: string): void
     registerCommand(command: ViewerCommand): void
   }
 }
@@ -670,7 +670,19 @@ export function PdfDocument({
       const host = hostRef.current
       if (host === null) return
       const path = event.composedPath()
-      if ([...displayedPdfHosts].some((shown) => path.includes(shown))) return
+      const owner = [...displayedPdfHosts].find((shown) => path.includes(shown))
+      if (owner !== undefined && owner !== host) return
+
+      const target = path[0]
+      if (
+        owner === host &&
+        event.key !== 'Tab' &&
+        (target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          (target instanceof HTMLElement && target.isContentEditable))
+      )
+        return
+
       const registry = registryRef.current
       const commands = registry === null ? null : provided(registry, 'commands')
       const shortcut = shortcutOf(event)
@@ -678,7 +690,13 @@ export function PdfDocument({
       const command = commands.getCommandByShortcut(shortcut)
       if (command === undefined) return
       const state = commands.resolve(command.id)
-      if (!state.disabled && state.visible) event.stopImmediatePropagation()
+      if (state.disabled || !state.visible) return
+
+      event.stopImmediatePropagation()
+      if (owner === host) {
+        event.preventDefault()
+        commands.execute(command.id, undefined, 'keyboard')
+      }
     }
     document.addEventListener('keydown', guard)
     return () => document.removeEventListener('keydown', guard)
