@@ -78,10 +78,37 @@ describe('mailFrameDocument — theming', () => {
     expect(html).toContain('color-scheme: dark')
   })
 
-  it('puts its defaults before the message, so the sender’s own styling wins', () => {
-    const html = doc({ html: '<style>body{background:#fff}</style><p>hi</p>' })
+  it('neutralizes authored paint in dark mode without changing structure', () => {
+    const raw =
+      '<style>.card{background:#fff!important;color:#111!important;width:80%;background-image:url(data:image/gif;base64,AA==)}' +
+      '.hero{background:#fff url(data:image/png;base64,AA==) center/cover}' +
+      'a{color:#000!important}blockquote{color:#111!important}' +
+      '@media (min-width:480px){.col{color:#000!important;width:65%!important}}</style>' +
+      '<ta' +
+      'ble bgcolor="#fff"><tr><td style="color:#000!important;background-color:#fff!important">' +
+      '<font color="#000">hello</font></td></tr></ta' +
+      'ble>'
+    const sanitized = sanitizeMailHtml(raw)
+    const html = doc({ html: sanitized.html, css: sanitized.css })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const cell = parsed.querySelector('td')
 
-    expect(html.indexOf('color-scheme')).toBeLessThan(html.indexOf('body{background:#fff}'))
+    expect(cell?.hasAttribute('style')).toBe(false)
+    expect(parsed.querySelector('table')?.hasAttribute('bgcolor')).toBe(false)
+    const authoredSheet = parsed.head.querySelectorAll('style')[1]?.textContent ?? ''
+    expect(parsed.body.querySelector('td')?.textContent).toBe('hello')
+    expect(parsed.querySelector('font')?.hasAttribute('color')).toBe(false)
+    expect(authoredSheet).toContain('width:80%')
+    expect(authoredSheet).toContain('@media (min-width:480px)')
+    expect(authoredSheet).toContain('width:65%!important')
+    expect(authoredSheet).toContain('background-image:url(data:image/gif;base64,AA==)')
+    expect(authoredSheet).toContain('background-image:url(data:image/png;base64,AA==)')
+    expect(authoredSheet).not.toMatch(/(?:color|background)\s*:/i)
+    const defaults = parsed.head.querySelector('style')?.textContent ?? ''
+    expect(defaults).toContain('a { color: #66aaff; }')
+    expect(defaults).toContain('color: #888888')
+    expect(authoredSheet).not.toContain('#fff')
+    expect(authoredSheet).not.toContain('#111')
   })
 })
 
@@ -206,6 +233,23 @@ describe('useMailPalette', () => {
 
     // Identity matters: the palette is a frame effect dependency.
     expect(result.current).toBe(second)
+
+    await act(async () => {
+      document.documentElement.dataset.theme = 'light'
+      await Promise.resolve()
+    })
+    expect(result.current.scheme).toBe('light')
+    expect(canvasFor('<p style="color:#000">hello</p>', result.current)).toMatchObject({
+      background: '#ffffff',
+      scheme: 'light',
+    })
+
+    await act(async () => {
+      document.documentElement.dataset.theme = 'dark'
+      await Promise.resolve()
+    })
+    expect(result.current.scheme).toBe('dark')
+    expect(canvasFor('<p style="color:#000">hello</p>', result.current)).toBe(result.current)
   })
 })
 
@@ -224,49 +268,45 @@ describe('openableLink', () => {
 })
 
 /**
- * Which canvas a block of HTML renders on. Mail declares its ink and assumes
- * white paper, so any sign of design means paper: a wrong white block is
- * ordinary, a wrong dark canvas is unreadable.
+ * Dark-mode canvas and author paint normalization, including light-mode fidelity.
  */
 describe('canvasFor', () => {
+  const LIGHT_PALETTE: MailPalette = { ...PALETTE, scheme: 'light' }
   const paper = { background: '#ffffff', scheme: 'light' }
 
-  it('gives the app’s theme to prose that brought no design', () => {
-    expect(canvasFor('<p>hello, here is the plan</p>', PALETTE)).toBe(PALETTE)
+  it('gives the app’s palette to every message in dark mode, including designed mail', () => {
+    expect(canvasFor('<p style="color:#333333">hello</p><img src="logo.png">', PALETTE)).toBe(
+      PALETTE,
+    )
   })
 
-  it('gives paper to a message that sets a text colour', () => {
-    // Ink declared, paper assumed.
-    expect(canvasFor('<p style="color:#333333">hello</p>', PALETTE)).toMatchObject(paper)
+  it('preserves sender design and authored colors in light mode', () => {
+    const source = '<p style="color:#333333;background:#fff!important">hello</p>'
+    expect(canvasFor(source, LIGHT_PALETTE)).toMatchObject(paper)
+    expect(canvasFor('<p>plain mail</p>', LIGHT_PALETTE)).toBe(LIGHT_PALETTE)
+    const lightHtml = mailFrameDocument({
+      html: source,
+      css: '.card{color:#111!important;background:#fff}',
+      palette: canvasFor(source, LIGHT_PALETTE),
+      allowRemoteContent: false,
+    })
+    expect(lightHtml).toContain('color:#333333;background:#fff!important')
+    expect(lightHtml).toContain('.card{color:#111!important;background:#fff}')
   })
 
-  it.each([
-    ['a background', '<td style="background-color:#f5f5f5">x</td>'],
-    ['a bgcolor attribute', '<table bgcolor="#ffffff"><tr><td>x</td></tr></table>'],
-    ['a font tag', '<font color="#000000">x</font>'],
-    ['an image', '<p>hi</p><img src="https://cdn.test/logo.png">'],
-  ])('gives paper to a message carrying %s', (_what, html) => {
-    expect(canvasFor(html, PALETTE)).toMatchObject(paper)
-  })
-
-  it('counts an image even with no colour anywhere', () => {
-    // Images were drawn to sit on white.
-    expect(bringsOwnDesign('<img src="https://cdn.test/logo.png">')).toBe(true)
-  })
-
-  it('does not change its mind when the images are unblocked', () => {
-    // Read from the raw html, so "Load images" cannot flip the canvas.
+  it('keeps image markup and image permissions separate from canvas choice', () => {
     const html = '<p style="color:#222">hi</p><img src="https://cdn.test/logo.png">'
     const blocked = '<p style="color:#222">hi</p><img>'
 
     expect(bringsOwnDesign(html)).toBe(bringsOwnDesign(blocked))
+    expect(canvasFor(html, PALETTE)).toBe(PALETTE)
   })
 
   it('sets color-scheme to light with the paper, so the frame’s own defaults follow', () => {
     // Or scrollbars and controls stay dark on a white page.
     const html = mailFrameDocument({
       html: '<p>x</p>',
-      palette: canvasFor('<p style="color:#333">x</p>', PALETTE),
+      palette: canvasFor('<p style="color:#333">x</p>', { ...PALETTE, scheme: 'light' }),
       allowRemoteContent: false,
     })
 
