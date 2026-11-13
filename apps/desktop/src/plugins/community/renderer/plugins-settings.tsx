@@ -8,7 +8,7 @@
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites/settings-ui'
-import { openDialogAtom } from '@/plugin-api'
+import { closePluginDialogAtom, openDialogAtom } from '@/plugin-api'
 import { communityCap, setPluginSwitch } from './community-cap'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -59,16 +59,39 @@ async function turnOnHere(remote: string, id: string): Promise<void> {
   if (row !== undefined && !row.on) await setOn(remote, row, true)
 }
 
-export function PluginsSettings({ remote }: { remote: string }): React.JSX.Element {
+export function PluginsSettings({
+  remote,
+  visible = true,
+}: {
+  remote: string
+  visible?: boolean
+}): React.JSX.Element {
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
+  const closePluginDialog = useSetAtom(closePluginDialogAtom)
+  const visibleRef = useRef(visible)
+  const visibilityGeneration = useRef(0)
+  const actionGeneration = useRef(0)
+  const dialogRenderer = useRef<((close: () => void) => React.ReactNode) | null>(null)
+  visibleRef.current = visible
   const rows = useAtomValue(rowsAtom)?.rows ?? []
   const updates = useAtomValue(updatesAtom)
 
   // Opening the section asks GitHub now rather than trusting the hourly check.
   useEffect(() => {
-    void refreshUpdates(remote, store, true)
-  }, [remote, store])
+    if (visible) {
+      void refreshUpdates(remote, store, true)
+    } else {
+      visibilityGeneration.current += 1
+      if (dialogRenderer.current !== null) closePluginDialog(dialogRenderer.current)
+      dialogRenderer.current = null
+    }
+    return () => {
+      visibilityGeneration.current += 1
+      if (dialogRenderer.current !== null) closePluginDialog(dialogRenderer.current)
+      dialogRenderer.current = null
+    }
+  }, [remote, store, visible, closePluginDialog])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [acting, setActing] = useState<string | null>(null)
@@ -77,12 +100,17 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
   const flow: InstallFlow = {
     remote,
     store,
-    openDialog: (render) => openDialog({ id: 'plugin', size: 'md', render }),
+    openDialog: (render) => {
+      if (!visibleRef.current || actionGeneration.current !== visibilityGeneration.current) return
+      dialogRenderer.current = render
+      openDialog({ id: 'plugin', size: 'md', render })
+    },
   }
 
   const act = async (id: string, fn: () => Promise<string | null | void>) => {
     if (actionLock.current) return
     actionLock.current = true
+    actionGeneration.current = visibilityGeneration.current
     setBusy(true)
     setActing(id)
     setError(null)
@@ -288,7 +316,7 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
         </SettingsList>
       )}
 
-      <AddPlugin flow={flow} busy={busy} acting={acting} act={act} />
+      <AddPlugin flow={flow} busy={busy} acting={acting} visible={visible} act={act} />
       {error !== null && (
         <p role="alert" className="mt-2 text-xs text-pretty break-words text-destructive">
           {error}
@@ -302,11 +330,13 @@ function AddPlugin({
   flow,
   busy,
   acting,
+  visible,
   act,
 }: {
   flow: InstallFlow
   busy: boolean
   acting: string | null
+  visible: boolean
   act: (id: string, fn: () => Promise<string | null | void>) => Promise<void>
 }): React.JSX.Element {
   const addFolder = async () => {
@@ -326,6 +356,7 @@ function AddPlugin({
           <PluginSearch
             remote={flow.remote}
             disabled={busy}
+            visible={visible}
             onChoose={(c) =>
               void act('add:install', () =>
                 installAndAsk(flow, { repo: c.repo, path: c.path, version: c.latest }, (row) =>
