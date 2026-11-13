@@ -3,7 +3,7 @@
  * writes the file whole (`serializeProjectFile`), keeping any key this
  * version does not know.
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PROJECT_STATUSES, type Milestone, type Project, type ProjectStatus } from '@holi/shared'
 import { PlusIcon, Trash2Icon } from 'lucide-react'
 
@@ -84,6 +84,8 @@ function projectOf(draft: Draft, base: Project): Project {
 
 export function EditProjectDialog({
   open,
+  visible,
+  focused,
   onOpenChange,
   project,
   fallbackName,
@@ -91,6 +93,8 @@ export function EditProjectDialog({
   onSave,
 }: {
   open: boolean
+  visible: boolean
+  focused: boolean
   onOpenChange: (open: boolean) => void
   project: Project
   /** What the project is called when it has no name of its own. */
@@ -101,7 +105,32 @@ export function EditProjectDialog({
   const [draft, setDraft] = useState<Draft>(() => draftOf(project))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
+  const presentationFocused = useRef(focused)
+  const wasPresented = useRef(false)
+  const presented = open && visible
+  if (presented && !wasPresented.current) {
+    presentationFocused.current = focused
+    wasPresented.current = true
+  } else if (!presented) {
+    wasPresented.current = false
+  }
+  const dialogFocused = presentationFocused.current
+  const wasOpen = useRef(false)
+  const edited = useRef(false)
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      setDraft(draftOf(project))
+      edited.current = false
+      setError(null)
+    } else if (open && !edited.current) {
+      setDraft(draftOf(project))
+    }
+    wasOpen.current = open
+  }, [open, project])
+  const set = (patch: Partial<Draft>) => {
+    edited.current = true
+    setDraft((d) => ({ ...d, ...patch }))
+  }
   const leads =
     draft.lead !== NO_LEAD && !people.includes(draft.lead) ? [draft.lead, ...people] : people
 
@@ -125,14 +154,20 @@ export function EditProjectDialog({
 
   return (
     <Dialog
-      open={open}
+      modal={dialogFocused}
+      open={presented}
       onOpenChange={(next) => {
-        // Opening starts from what the file says now.
-        if (next) setDraft(draftOf(project))
+        if (!next) setDraft(draftOf(project))
         onOpenChange(next)
       }}
     >
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent
+        className="sm:max-w-lg"
+        onOpenAutoFocus={(event) => !dialogFocused && event.preventDefault()}
+        onCloseAutoFocus={(event) => (!visible || !dialogFocused) && event.preventDefault()}
+        onFocusOutside={(event) => !dialogFocused && event.preventDefault()}
+        onInteractOutside={(event) => !dialogFocused && event.preventDefault()}
+      >
         <div
           className="flex max-h-160 flex-col gap-6 overflow-y-auto"
           onKeyDown={(event) => {

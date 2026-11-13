@@ -65,7 +65,7 @@ export function TabView({
     case 'new':
       return <NewTabView key={tab ?? 'none'} onOpen={onOpen} onNewDocument={onNewDocument} />
     case 'board':
-      return <PlanningView onOpenTask={onOpen} />
+      return <PlanningView onOpenTask={onOpen} visible={visible} focused={focused} />
     case 'graph':
       return <GraphView onOpen={onOpenBeside} reading={reading} displayed={visible} />
     case 'apps':
