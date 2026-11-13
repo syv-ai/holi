@@ -69,6 +69,22 @@ describe('shellLaunch', () => {
     expect(shellLaunch('C:\\Windows\\sysnative\\BASH.EXE', {}, DIR, 'win32').args).toEqual(['-l'])
   })
 
+  it('starts wsl.exe and cmd with no arguments, since wsl -l lists distributions', () => {
+    expect(shellLaunch(String.raw`C:\Windows\System32\wsl.exe`, {}, DIR, 'win32').args).toEqual([])
+  })
+
+  it('writes the Windows scripts only for Windows', () => {
+    const posixDir = mkdtempSync(join(tmpdir(), 'holi-shell-posix-'))
+    try {
+      writeShellIntegration(posixDir, 'darwin')
+      expect(existsSync(join(posixDir, 'bash-init.sh'))).toBe(true)
+      expect(existsSync(join(posixDir, 'bash-init-win.sh'))).toBe(false)
+      expect(existsSync(join(posixDir, 'pwsh-init.ps1'))).toBe(false)
+    } finally {
+      rmSync(posixDir, { recursive: true, force: true })
+    }
+  })
+
   it('gives MSYS zsh no shim, which could not report a Windows path', () => {
     const zsh = String.raw`C:\msys64\usr\bin\zsh.exe`
     expect(shellLaunch(zsh, {}, DIR, 'win32')).toEqual({ args: ['-l'], env: {} })
@@ -95,7 +111,7 @@ describe('the PowerShell integration script', () => {
 
   it('is written beside the other shims and wraps the person’s own prompt', () => {
     dir = mkdtempSync(join(tmpdir(), 'holi-shell-test-'))
-    writeShellIntegration(dir)
+    writeShellIntegration(dir, 'win32')
     expect(existsSync(join(dir, 'zsh', '.zshrc'))).toBe(true)
     const script = readFileSync(join(dir, 'pwsh-init.ps1'), 'utf8')
     expect(script).toContain('function global:prompt')
@@ -121,7 +137,7 @@ describe.runIf(process.platform === 'win32')(
     it('prints the folder before their own prompt and leaves $? and $LASTEXITCODE as they were', () => {
       const dir = mkdtempSync(join(tmpdir(), 'holi-shell-run-'))
       try {
-        writeShellIntegration(dir)
+        writeShellIntegration(dir, 'win32')
         const script = join(dir, 'pwsh-init.ps1')
         const powershell = join(
           process.env.SystemRoot!,
@@ -160,7 +176,7 @@ describe.runIf(process.platform === 'win32')('under Set-StrictMode', { timeout: 
   it('still wraps the prompt when the profile turned strict mode on', () => {
     const dir = mkdtempSync(join(tmpdir(), 'holi-shell-strict-'))
     try {
-      writeShellIntegration(dir)
+      writeShellIntegration(dir, 'win32')
       const script = join(dir, 'pwsh-init.ps1')
       const powershell = join(
         process.env.SystemRoot!,
@@ -193,7 +209,7 @@ describe.runIf(process.platform === 'win32' && existsSync(GIT_BASH))(
     it('reports a folder under an MSYS-only root as a Windows folder', () => {
       const dir = mkdtempSync(join(tmpdir(), 'holi-shell-bash-'))
       try {
-        writeShellIntegration(dir)
+        writeShellIntegration(dir, 'win32')
         const init = join(dir, 'bash-init-win.sh').replaceAll('\\', '/')
         const out = execFileSync(GIT_BASH, ['--init-file', init, '-i'], {
           input: 'cd /tmp\n__holi_osc7\ncd /c/Windows\n__holi_osc7\nexit\n',
@@ -294,6 +310,13 @@ describe('the panel’s shell on Windows', () => {
     )
     expect(defaultShell({}, 'win32', none)).toMatch(/^C:\\Windows\\System32\\/)
     expect(defaultShell({}, 'win32', none)).toMatch(/WindowsPowerShell.v1\.0.powershell\.exe$/)
+  })
+
+  it('ignores a POSIX-style SHELL on Windows, which node-pty cannot start', () => {
+    expect(defaultShell({ ...WIN, SHELL: '/bin/bash' }, 'win32', none)).toMatch(/powershell\.exe$/)
+    expect(defaultShell({ SHELL: 'C:/Git/bin/bash.exe' }, 'win32', none)).toBe(
+      'C:/Git/bin/bash.exe',
+    )
   })
 
   it('keeps SHELL where the person set it, and /bin/zsh off Windows', () => {

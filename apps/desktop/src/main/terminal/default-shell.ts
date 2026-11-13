@@ -7,8 +7,8 @@
 import { posix, win32 } from 'node:path'
 import { resolveBin } from '../bin'
 
-/** The shell's path. `$SHELL` wins on every OS (Git Bash sets it for its own
- *  children, and a person may export it); without one on Windows, `pwsh` where
+/** The shell's path. `$SHELL` wins (Git Bash sets it for its own children, and
+ *  a person may export it), on Windows when it is a Windows path; without one on Windows, `pwsh` where
  *  `find` finds it (PowerShell 7 has its own profile, which a person who installed
  *  it set up), else Windows PowerShell by its fixed place under the system
  *  folder, which every Windows has. */
@@ -17,8 +17,10 @@ export function defaultShell(
   platform: NodeJS.Platform = process.platform,
   find: (name: string) => string | null = (name) => resolveBin(name, env, { platform }),
 ): string {
-  if (env.SHELL) return env.SHELL
-  if (platform !== 'win32') return '/bin/zsh'
+  if (platform !== 'win32') return env.SHELL || '/bin/zsh'
+  // A Windows `$SHELL` is a Windows path; a Cygwin or MSYS one (`/bin/bash`) is
+  // none node-pty can start, so it is not taken.
+  if (env.SHELL && /^(?:[A-Za-z]:[\\/]|\\\\)/.test(env.SHELL)) return env.SHELL
   const pwsh = find('pwsh')
   if (pwsh !== null) return pwsh
   const system = env.SystemRoot || env.windir || 'C:\\Windows'

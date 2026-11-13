@@ -67,10 +67,11 @@ from the shell's first render so its keys are live, drawn once first opened, and
 rather than unmounted, so a closed panel keeps the shells' scrollback.
 
 **The Terminal** is the person's login shell (`$SHELL -l`, else `/bin/zsh`) in a PTY in main; on
-Windows `$SHELL` if they set one (Git Bash does for its own children), else PowerShell 7 (`pwsh`, found
-on the tool `PATH`) if installed, else Windows PowerShell (`default-shell.ts`). It is not started `-l` there: that is not a PowerShell switch (it exits 1),
-so PowerShell gets `-NoLogo` and, with the integration below, `-NoExit -Command`; cmd takes no
-arguments. On Windows shell names are matched with or without `.exe`. It runs in
+Windows `$SHELL` if they set one to a Windows path (Git Bash does for its own children; a Cygwin `/bin/bash` is no path node-pty can start), else PowerShell 7 (`pwsh`, found
+on the tool `PATH`) if installed, else Windows PowerShell (`default-shell.ts`). It is not always started `-l` there: that is not a PowerShell switch (it exits 1),
+so PowerShell gets `-NoLogo` and, with the integration below, `-NoExit -Command`; cmd and
+`wsl.exe` (where `-l` lists distributions) take no arguments. Git Bash, MSYS zsh and other
+shells keep `-l`. On Windows shell names are matched with or without `.exe`. It runs in
 the open vault's clone, with `TERM=xterm-256color` and the `holi` command on `PATH`. It is core's
 (`main/terminal/`), not the agent plugin's: a terminal is a terminal whatever the vault runs, and
 core may not import a plugin. node-pty is loaded in one place, `main/terminal/pty.ts`, which the

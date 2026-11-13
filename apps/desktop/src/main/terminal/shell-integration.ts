@@ -171,13 +171,18 @@ const BASH_INIT_WINDOWS = bashInit(
  * Write the shim files under `dir`.
  * @public exported for its test
  */
-export function writeShellIntegration(dir: string): void {
+export function writeShellIntegration(
+  dir: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
   const zsh = join(dir, 'zsh')
   mkdirSync(zsh, { recursive: true, mode: 0o700 })
   for (const [name, text] of Object.entries(ZSH_FILES)) {
     writeFileSync(join(zsh, name), text, { mode: 0o600 })
   }
   writeFileSync(join(dir, 'bash-init.sh'), BASH_INIT, { mode: 0o600 })
+  // The Windows shells' scripts are written only for Windows: a POSIX run's folder stays as it was.
+  if (platform !== 'win32') return
   writeFileSync(join(dir, 'bash-init-win.sh'), BASH_INIT_WINDOWS, { mode: 0o600 })
   writeFileSync(join(dir, 'pwsh-init.ps1'), PWSH_INIT, { mode: 0o600 })
 }
@@ -265,7 +270,8 @@ export function shellLaunch(
         env: {},
       }
     }
-    if (name === 'cmd') return { args: [], env: {} }
+    // cmd has no login mode, and wsl.exe takes -l as "list distributions".
+    if (name === 'cmd' || name === 'wsl') return { args: [], env: {} }
   }
   return { args: ['-l'], env: {} }
 }
