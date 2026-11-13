@@ -128,6 +128,7 @@ export function TabView({
       return (
         <AgentsMain
           key={tab}
+          visible={visible}
           selection={
             descriptor.kind === 'session' ? { owner: descriptor.owner, id: descriptor.id } : null
           }

@@ -825,9 +825,25 @@ describe('a command that acts as the calling session', () => {
     await startBridge()
   })
 
-  it('is the session the script runs in, with no flag for it', async () => {
-    const res = await run(bin, ['x', 'who'], inSession('abcd1234'))
+  it('is the session the POSIX script runs in', async () => {
+    const res = await run(bin, ['x', 'who'], {
+      ...env,
+      CLAUDE_JOB_DIR: '/Users/ada/Vault café/jobs/abcd1234',
+    })
     expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+  })
+
+  it('normalizes Windows job paths in the generated Windows adapter', async () => {
+    const generated = await installHoliCli(dir, 'win32')
+    try {
+      const res = await run(generated, ['x', 'who'], {
+        ...env,
+        CLAUDE_JOB_DIR: 'C:\\Users\\ada\\Vault café\\jobs\\abcd1234',
+      })
+      expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+    } finally {
+      await installHoliCli(dir)
+    }
   })
 
   it('refuses to name another session from inside one, in either spelling', async () => {

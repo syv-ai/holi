@@ -1232,14 +1232,95 @@ export async function createDraft(
   api: GoogleApi,
   mail: OutgoingMail,
   threadId?: string,
+  updateId?: string,
 ): Promise<{ id: string | null }> {
-  const draft = await api.postJson<{ id?: string }>(`${BASE}/drafts`, {
-    message: {
-      raw: toBase64Url(buildRfc822(mail)),
-      ...(threadId === undefined ? {} : { threadId }),
-    },
+  if (updateId !== undefined && (!updateId.trim() || /[\r\n]/.test(updateId))) {
+    throw new Error('invalid draft id')
+  }
+  const threading = threadId === undefined ? {} : await replyHeaders(api, threadId)
+  const message = {
+    raw: toBase64Url(buildRfc822({ ...mail, ...threading })),
+    ...(threadId === undefined ? {} : { threadId }),
+  }
+  const draft =
+    updateId === undefined
+      ? await api.postJson<{ id?: string }>(`${BASE}/drafts`, { message })
+      : await api.putJson<{ id?: string }>(`${BASE}/drafts/${encodeURIComponent(updateId)}`, {
+          id: updateId,
+          message,
+        })
+  if (updateId !== undefined && draft?.id !== undefined && draft.id !== updateId) {
+    throw new Error('Gmail returned a different draft id while updating')
+  }
+  return { id: draft?.id ?? updateId ?? null }
+}
+
+function normalizeMessageIds(value: string): string[] | null {
+  const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
+  if (/[\r\n]/.test(unfolded)) return null
+  let clean = ''
+  let comments = 0
+  let escaped = false
+  let quoted = false
+  for (const char of unfolded) {
+    if (escaped) {
+      if (comments === 0) clean += char
+      escaped = false
+    } else if (char === '\\') {
+      if (comments === 0) clean += char
+      escaped = true
+    } else if (comments > 0) {
+      if (char === '(') comments++
+      else if (char === ')') comments--
+    } else if (char === '"') {
+      quoted = !quoted
+      clean += char
+    } else if (char === '(' && !quoted) comments++
+    else clean += char
+  }
+  if (comments !== 0 || escaped || quoted) return null
+  const text = clean.trim()
+  if (text === '') return []
+  const ids = text.match(/<[^<>]+>/g) ?? []
+  if (ids.length === 0 || !/^\s*$/.test(text.replace(/<[^<>]+>/g, ''))) return null
+  const valid = ids.every((token) => {
+    const id = token.slice(1, -1)
+    const at = id.lastIndexOf('@')
+    if (at < 1 || at === id.length - 1) return false
+    const atom = "[A-Za-z0-9!#$%&'*+\\-/=?^_`{|}~]+"
+    const local = id.slice(0, at)
+    const domain = id.slice(at + 1)
+    return (
+      new RegExp(`^(?:${atom}(?:\\.${atom})*|\"(?:[^\"\\\\\\r\\n]|\\\\[\\x00-\\x7f])*\")$`).test(
+        local,
+      ) && new RegExp(`^(?:${atom}(?:\\.${atom})*|\\[[^\\]\\r\\n]+\\])$`).test(domain)
+    )
   })
-  return { id: draft?.id ?? null }
+  return valid ? ids : null
+}
+
+async function replyHeaders(
+  api: GoogleApi,
+  threadId: string,
+): Promise<Pick<OutgoingMail, 'inReplyTo' | 'references'>> {
+  if (!threadId.trim() || /[\r\n]/.test(threadId)) throw new Error('invalid thread id')
+  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
+    format: 'full',
+  })
+  const parent = [...(thread.messages ?? [])]
+    .reverse()
+    .find((message) => !message.labelIds?.includes('DRAFT'))
+  const messageId = headerOf(parent?.payload, 'Message-ID')
+  const ids = messageId === null ? null : normalizeMessageIds(messageId)
+  if (ids?.length !== 1) throw new Error('thread has no valid Message-ID to reply to')
+  const normalizedReferences = normalizeMessageIds(headerOf(parent?.payload, 'References') ?? '')
+  if (normalizedReferences === null) throw new Error('thread has an invalid References header')
+  const validMessageId = ids[0]!
+  const references = normalizedReferences
+  return {
+    inReplyTo: validMessageId,
+    references: references.at(-1) === validMessageId ? references : [...references, validMessageId],
+  }
 }
 
 /**
@@ -1345,6 +1426,7 @@ export interface DraftBody {
   threadId: string | null
   to: MailAddress[]
   cc: MailAddress[]
+  bcc: MailAddress[]
   subject: string
   /**
    * The markdown source, byte-exact, when `X-Holi-Source` says this draft came
@@ -1515,6 +1597,7 @@ export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftB
     threadId: threadIdOf(message),
     to: parseAddresses(headerOf(payload, 'To')),
     cc: parseAddresses(headerOf(payload, 'Cc')),
+    bcc: parseAddresses(headerOf(payload, 'Bcc')),
     subject: headerOf(payload, 'Subject') ?? '',
     // The marker means the text/plain part IS the markdown that produced this
     // draft, so it round-trips byte-exact. Without it there is nothing here to
