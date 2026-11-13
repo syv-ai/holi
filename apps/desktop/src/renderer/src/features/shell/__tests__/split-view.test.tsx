@@ -3,13 +3,14 @@
  * title band holds every tab, a split view being one pill of it; ⌘\\, a
  * tab's menu and a drag make a split; its members carry thin headers.
  */
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { undo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
-import { Provider, createStore } from 'jotai'
+import { Provider, atom, createStore } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import { Input } from '@/components/ui/input'
-import { coreContributionAtom } from '@/state/plugins'
+import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
+import type { AgentsMode, RendererPlugin } from '@/state/plugin-types'
 import { tabKey } from '@/state/tab-descriptor'
 import { closeTab, selectEntry, separate, openInSplit } from '@/state/shell-workspace'
 import {
@@ -33,6 +34,7 @@ import { activeSplit, focusedTab, isSplit, openTab, splitActive } from '@/state/
 import { vaultSettingsAtom } from '@/state/settings'
 import { tabDragAtom } from '@/features/shell/use-tab-drag'
 import { registerBuffer } from '@/lib/buffer-registry'
+import { agentsSelectionAtom } from '@/state/agents-slots'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 const write = vi.fn(async (_input: unknown) => ({
@@ -67,7 +69,9 @@ vi.mock('@/lib/trpc', () => {
             ? {}
             : name === 'github.collaborators'
               ? { visibility: 'private', collaborators: [] }
-              : null
+              : ['activity.entries', 'logs.entries', 'terminal.list'].includes(name)
+                ? []
+                : null
   const procedure = (name: string) => ({
     query: async () => answer(name),
     mutate: name === 'settings.write' ? write : async () => ({ ok: true }),
@@ -867,3 +871,308 @@ test('a view not open yet, dragged from the sidebar, opens in the gap', async ()
   expect(ws.entries.map((e) => (typeof e === 'string' ? e : 'split'))).toEqual(['A.md', 'split'])
   vi.restoreAllMocks()
 })
+
+/** Real session descriptors reach this adapter through TabView's Agents mode,
+ * not the unrelated keepMounted surface seam. State belongs to each mounted
+ * view, just as a terminal's unsent input and viewport belong to its instance. */
+function sessionFixture(
+  keepsSelectionMounted: AgentsMode['keepsSelectionMounted'] = ({ owner }) => owner === 'agent',
+  documentPath = 'A.md',
+  files: { path: string; updatedAt: string }[] = [],
+) {
+  const acquired = vi.fn()
+  const disposed = vi.fn()
+  let nextInstance = 0
+  const Main: AgentsMode['main'] = ({ selection, visible }) => {
+    const [instance] = useState(() => ++nextInstance)
+    const [text, setText] = useState('initial')
+    const name = selection === null ? 'home' : `${selection.owner}:${selection.id}`
+    useEffect(() => {
+      acquired(name, instance)
+      return () => {
+        disposed(name, instance)
+      }
+    }, [name, instance])
+    return (
+      <Input
+        aria-label={`Session ${name}`}
+        data-instance={instance}
+        data-visible={String(visible)}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
+    )
+  }
+  const plugin: RendererPlugin = {
+    info: { id: 'agent', label: 'Agent', default: true, builtIn: true },
+    agentsMode: {
+      sidebar: () => null,
+      main: Main,
+      status: atom({ needsYou: 0, working: 0 }),
+      keepsSelectionMounted,
+    },
+  }
+  const store = mount([documentPath, 'Other.md'], files)
+  act(() => store.set(installedPluginsAtom, [plugin]))
+  const key = (id: string, owner = 'agent') => tabKey({ kind: 'session', owner, id })
+  const show = (id: string, owner = 'agent') =>
+    act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, key(id, owner))))
+  const away = () => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, documentPath)))
+  return { store, plugin, acquired, disposed, key, show, away }
+}
+
+test('an Ask returns to its retained session host and closing releases it', async () => {
+  const f = sessionFixture()
+  act(() => f.store.set(agentsSelectionAtom, { owner: 'agent', id: 'session-one' }))
+  const input = await screen.findByRole('textbox', { name: 'Session agent:session-one' })
+  const instance = input.dataset.instance
+
+  // The PDF Ask lands on the session selection, which the shell turns into
+  // the one canonical session tab instead of a second agent surface.
+  f.away()
+  expect(input.isConnected).toBe(true)
+  expect(input.closest('[inert]')).not.toBeNull()
+  act(() => f.store.set(agentsSelectionAtom, { owner: 'agent', id: 'session-one' }))
+  expect(await screen.findByRole('textbox', { name: 'Session agent:session-one' })).toBe(input)
+  expect(input.dataset.instance).toBe(instance)
+
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => closeTab(ws, f.key('session-one'))))
+  await waitFor(() => expect(input.isConnected).toBe(false))
+  expect(f.disposed).toHaveBeenCalledTimes(1)
+})
+
+test('session retention: document and session switches preserve connected DOM and local state', async () => {
+  const f = sessionFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  const instance = first.dataset.instance
+  expect(first).toHaveAttribute('data-visible', 'true')
+  fireEvent.change(first, { target: { value: 'unsent input and viewport state' } })
+
+  f.away()
+  // Assert connection before looking for it again: a replacement with restored
+  // text is not the original live terminal document.
+  expect(first.isConnected).toBe(true)
+  expect(first.closest('[inert]')).not.toBeNull()
+  expect(first).toHaveAttribute('data-visible', 'false')
+  expect(document.querySelector('[aria-label="Session agent:one"]')).toBe(first)
+  expect(f.disposed).not.toHaveBeenCalled()
+
+  f.show('two')
+  const second = await screen.findByRole('textbox', { name: 'Session agent:two' })
+  fireEvent.change(second, { target: { value: 'second session only' } })
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'Session agent:one' })).toBe(first)
+  expect(first).toHaveAttribute('data-instance', instance)
+  expect(first).toHaveValue('unsent input and viewport state')
+  expect(first).toHaveAttribute('data-visible', 'true')
+  expect(first.closest('[inert]')).toBeNull()
+  expect(second.isConnected).toBe(true)
+  expect(second).toHaveAttribute('data-visible', 'false')
+  f.away()
+  f.show('two')
+  expect(await screen.findByRole('textbox', { name: 'Session agent:two' })).toBe(second)
+  expect(second).toHaveValue('second session only')
+  expect(f.acquired.mock.calls).toEqual([
+    ['agent:one', Number(instance)],
+    ['agent:two', Number(second.dataset.instance)],
+  ])
+  expect(f.disposed).not.toHaveBeenCalled()
+})
+
+test('core text and agent session retain their live state together across tab switches', async () => {
+  const f = sessionFixture(undefined, 'notes/source', [
+    { path: 'notes/source', updatedAt: '2026-10-23T10:00:00.000Z' },
+  ])
+  await waitFor(() => expect(document.querySelector('.cm-editor')).not.toBeNull())
+  const editor = document.querySelector('.cm-editor')!
+  f.show('one')
+  const session = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  fireEvent.change(session, { target: { value: 'unsent agent input' } })
+  expect(editor.isConnected).toBe(true)
+  expect(document.querySelector('[data-pane-host="notes/source"] .cm-editor')).toBe(editor)
+
+  f.away()
+  expect(editor.isConnected).toBe(true)
+  expect(document.querySelector('[data-pane-host="notes/source"] .cm-editor')).toBe(editor)
+  expect(session.isConnected).toBe(true)
+  expect(session.closest('[inert]')).not.toBeNull()
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'Session agent:one' })).toBe(session)
+  expect(session).toHaveValue('unsent agent input')
+  expect(editor.isConnected).toBe(true)
+})
+
+test('session retention: open but unseen sessions mount only on first display', async () => {
+  const f = sessionFixture()
+  act(() =>
+    f.store.set(shellWorkspaceAtom, (ws) =>
+      selectEntry(openTab(openTab(ws, f.key('one')), f.key('two')), 'A.md'),
+    ),
+  )
+  expect(f.acquired).not.toHaveBeenCalled()
+  expect(document.querySelector('[aria-label^="Session "]')).toBeNull()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  f.away()
+  expect(first.isConnected).toBe(true)
+  expect(f.acquired).toHaveBeenCalledTimes(1)
+  expect(document.querySelector('[aria-label="Session agent:two"]')).toBeNull()
+  f.show('two')
+  await screen.findByRole('textbox', { name: 'Session agent:two' })
+  expect(f.acquired).toHaveBeenCalledTimes(2)
+})
+
+test('session retention: parking passes visible false and releases keyboard focus', async () => {
+  const f = sessionFixture()
+  f.show('one')
+  const input = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  await act(async () => input.focus())
+  expect(document.activeElement).toBe(input)
+  f.away()
+  await waitFor(() => expect(document.activeElement).not.toBe(input))
+  expect(input.isConnected).toBe(true)
+  expect(input).toHaveAttribute('data-visible', 'false')
+  expect(input.closest('[inert]')).not.toBeNull()
+  await act(async () => input.focus())
+  expect(document.activeElement).not.toBe(input)
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'Session agent:one' })).toBe(input)
+  await act(async () => input.focus())
+  expect(document.activeElement).toBe(input)
+  expect(input).toHaveAttribute('data-visible', 'true')
+})
+
+test('session retention: split and separate reuse both instances regardless of focused member', async () => {
+  const f = sessionFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  fireEvent.change(first, { target: { value: 'first local state' } })
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, f.key('two'))))
+  const second = await screen.findByRole('textbox', { name: 'Session agent:two' })
+  fireEvent.change(second, { target: { value: 'second local state' } })
+  for (const [id, input] of [
+    ['one', first],
+    ['two', second],
+  ] as const) {
+    await act(async () => input.focus())
+    expect(focusedTab(f.store.get(shellWorkspaceAtom))).toBe(f.key(id))
+    for (const member of [first, second]) {
+      expect(member.isConnected).toBe(true)
+      expect(member).toHaveAttribute('data-visible', 'true')
+      expect(member.closest('[inert]')).toBeNull()
+    }
+  }
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => separate(ws, activeSplit(ws)!.id)))
+  expect(first.isConnected).toBe(true)
+  expect(second.isConnected).toBe(true)
+  expect([first, second].filter((input) => input.dataset.visible === 'true')).toHaveLength(1)
+  for (const [id, input, value] of [
+    ['one', first, 'first local state'],
+    ['two', second, 'second local state'],
+  ] as const) {
+    f.show(id)
+    expect(await screen.findByRole('textbox', { name: `Session agent:${id}` })).toBe(input)
+    expect(input).toHaveValue(value)
+  }
+  expect(f.acquired).toHaveBeenCalledTimes(2)
+  expect(f.disposed).not.toHaveBeenCalled()
+})
+
+test('session retention: closing a parked session disposes once and reopening starts fresh', async () => {
+  const f = sessionFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  const instance = Number(first.dataset.instance)
+  fireEvent.change(first, { target: { value: 'discard on close' } })
+  f.away()
+  expect(f.disposed).not.toHaveBeenCalled()
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => closeTab(ws, f.key('one'))))
+  expect(first.isConnected).toBe(false)
+  expect(f.disposed.mock.calls).toEqual([['agent:one', instance]])
+  f.show('one')
+  const second = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  expect(second).not.toBe(first)
+  expect(second.dataset.instance).not.toBe(first.dataset.instance)
+  expect(second).toHaveValue('initial')
+  expect(f.acquired).toHaveBeenCalledTimes(2)
+  cleanup()
+  expect(f.disposed.mock.calls).toEqual([
+    ['agent:one', instance],
+    ['agent:one', Number(second.dataset.instance)],
+  ])
+})
+
+test('session retention: the same session id in a different vault gets a fresh instance', async () => {
+  const f = sessionFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  fireEvent.change(first, { target: { value: 'first vault only' } })
+  f.away()
+  act(() => f.store.set(activeRemoteAtom, 'mara/other'))
+  f.show('one')
+  const second = await screen.findByRole('textbox', { name: 'Session agent:one' })
+  expect(second).not.toBe(first)
+  expect(second.dataset.instance).not.toBe(first.dataset.instance)
+  expect(second).toHaveValue('initial')
+  expect(first.isConnected).toBe(false)
+  expect(f.disposed.mock.calls).toEqual([['agent:one', Number(first.dataset.instance)]])
+  expect(f.acquired).toHaveBeenCalledTimes(2)
+})
+
+test.each(['mode', 'plugin'])(
+  'session retention: removing the %s cleans parked sessions',
+  async (removed) => {
+    const f = sessionFixture()
+    f.show('one')
+    const first = await screen.findByRole('textbox', { name: 'Session agent:one' })
+    f.away()
+    act(() =>
+      f.store.set(
+        installedPluginsAtom,
+        removed === 'plugin' ? [] : [{ ...f.plugin, agentsMode: undefined }],
+      ),
+    )
+    expect(first.isConnected).toBe(false)
+    expect(f.disposed.mock.calls).toEqual([['agent:one', Number(first.dataset.instance)]])
+    act(() => f.store.set(installedPluginsAtom, [f.plugin]))
+    expect(f.acquired).toHaveBeenCalledTimes(1)
+    f.show('one')
+    expect(await screen.findByRole('textbox', { name: 'Session agent:one' })).not.toBe(first)
+    expect(f.acquired).toHaveBeenCalledTimes(2)
+  },
+)
+
+test.each(['no policy', 'opted out', 'utility', 'home'] as const)(
+  'session retention: %s views still unmount when left',
+  async (kind) => {
+    const f = sessionFixture(kind === 'opted out' ? () => false : undefined)
+    if (kind === 'no policy') {
+      act(() =>
+        f.store.set(installedPluginsAtom, [
+          {
+            ...f.plugin,
+            agentsMode: { ...f.plugin.agentsMode!, keepsSelectionMounted: undefined },
+          },
+        ]),
+      )
+    }
+    const key =
+      kind === 'home'
+        ? tabKey({ kind: 'agents-home' })
+        : f.key('one', kind === 'utility' ? 'utility' : 'agent')
+    const name =
+      kind === 'home' ? 'Session home' : `Session ${kind === 'utility' ? 'utility' : 'agent'}:one`
+    act(() => f.store.set(shellWorkspaceAtom, (ws) => openTab(ws, key)))
+    const first = await screen.findByRole('textbox', { name })
+    fireEvent.change(first, { target: { value: 'not retained' } })
+    f.away()
+    expect(first.isConnected).toBe(false)
+    expect(f.disposed).toHaveBeenCalledTimes(1)
+    act(() => f.store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, key)))
+    const second = await screen.findByRole('textbox', { name })
+    expect(second).not.toBe(first)
+    expect(second).toHaveValue('initial')
+    expect(f.acquired).toHaveBeenCalledTimes(2)
+  },
+)
