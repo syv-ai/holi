@@ -3,7 +3,7 @@
 // so a bad rebuild fails here instead of at app boot.
 const pty = require('node-pty')
 
-const child = pty.spawn('/bin/echo', ['node-pty-ok'], {
+const child = pty.spawn(process.execPath, ['-e', 'process.stdout.write("node-pty-ok")'], {
   name: 'xterm-256color',
   cols: 80,
   rows: 24,
