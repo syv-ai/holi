@@ -2398,13 +2398,20 @@ test('failed dirty Close keeps the subject editable and Retry lets Close finish'
   const subject = screen.getByRole('textbox', { name: 'Subject' })
   await user.clear(subject)
   await user.type(subject, 'Keep this subject')
-  saveDraftMock.mockRejectedValueOnce(new Error('offline'))
+  let rejectSave!: (error: Error) => void
+  saveDraftMock.mockImplementationOnce(
+    () => new Promise((_resolve, reject) => (rejectSave = reject)),
+  )
 
   await user.click(screen.getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  rejectSave(new Error('offline'))
 
-  expect(await screen.findByText('offline')).toBeInTheDocument()
-  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
-  expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('Keep this subject')
+  await waitFor(() => {
+    expect(screen.getByText('offline')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('Keep this subject')
+  })
   saveDraftMock.mockResolvedValue({ id: 'saved-draft' })
   await user.click(screen.getByRole('button', { name: 'Retry' }))
   await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2))
