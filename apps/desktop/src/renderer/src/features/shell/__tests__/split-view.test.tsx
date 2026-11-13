@@ -327,7 +327,9 @@ test('a failed split-tab close stays visible and can be retried', async () => {
   await waitFor(() => expect(views()).toHaveLength(1))
   expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md'])
   expect(flush).toHaveBeenCalledTimes(2)
-  expect(screen.queryByRole('heading', { name: 'Close split tab?' })).toBeNull()
+  await waitFor(() =>
+    expect(screen.queryByRole('heading', { name: 'Close split tab?' })).toBeNull(),
+  )
 })
 
 test('selecting another tab shows it alone, the split staying in the strip', async () => {
