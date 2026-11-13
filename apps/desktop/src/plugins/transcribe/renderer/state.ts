@@ -5,7 +5,12 @@
  */
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { activeRemoteAtom, type PluginEventHandler, type PluginStore } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  openTabAtom,
+  type PluginEventHandler,
+  type PluginStore,
+} from '@/plugin-api'
 import type { SpeechKeyStatus } from '../main/speech-key'
 import type {
   Card,
@@ -19,6 +24,16 @@ import type {
 import { meetingCap } from './meeting-cap'
 
 export const MEETINGS_SURFACE = 'meetings'
+
+/** Meetings as one of the sidebar's apps (`sidebarApps`): the list,
+ *  and the meeting it shows. A meeting folder from the tree is a tab of the
+ *  surface instead, by its path. */
+export const MEETINGS_APP = 'meetings'
+
+/** Bring the Meetings app forward, or open it. */
+export const openMeetingsAtom = atom(null, (_get, set): void => {
+  set(openTabAtom, { kind: 'app', id: MEETINGS_APP })
+})
 
 /** A failure in words to show. */
 export function message(e: unknown): string {
