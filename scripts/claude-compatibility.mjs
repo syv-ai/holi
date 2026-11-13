@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { access, readFile, stat, mkdtemp, rm } from 'node:fs/promises'
+import { arch, platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkProbe, exactVersion, isolatedEnvironment } from './claude-compatibility-checks.mjs'
@@ -33,6 +33,55 @@ const probes = [
   ],
 ]
 
+export function nativePlatform(os = platform(), cpu = arch(), isMusl = detectMusl(os)) {
+  if (os === 'darwin' && ['arm64', 'x64'].includes(cpu)) return `darwin-${cpu}`
+  if (os === 'win32' && ['arm64', 'x64'].includes(cpu)) return `win32-${cpu}`
+  if (os === 'linux' && ['arm64', 'x64'].includes(cpu))
+    return `linux-${cpu}${isMusl ? '-musl' : ''}`
+  return null
+}
+
+function detectMusl(os) {
+  return os === 'linux' && process.report?.getReport?.().header?.glibcVersionRuntime === undefined
+}
+
+async function readManifest(path) {
+  const info = await stat(path)
+  if (!info.isFile() || info.size > 64 * 1024) throw new Error('invalid package manifest')
+  return JSON.parse(await readFile(path, 'utf8'))
+}
+
+async function resolveNativeBinary(install, version, os = platform(), cpu = arch()) {
+  const wrapper = join(install, 'node_modules', '@anthropic-ai', 'claude-code')
+  const wrapperManifest = await readManifest(join(wrapper, 'package.json'))
+  if (
+    wrapperManifest.name !== '@anthropic-ai/claude-code' ||
+    wrapperManifest.version !== version ||
+    wrapperManifest.bin?.claude !== 'bin/claude.exe'
+  )
+    throw new Error('installed Claude wrapper manifest does not match the requested version')
+  const platformKey = nativePlatform(os, cpu)
+  if (!platformKey) throw new Error(`unsupported Claude platform ${os}/${cpu}`)
+  const packageName = `@anthropic-ai/claude-code-${platformKey}`
+  const nativeRoot = join(install, 'node_modules', '@anthropic-ai', `claude-code-${platformKey}`)
+  const nativeManifest = await readManifest(join(nativeRoot, 'package.json'))
+  if (
+    nativeManifest.name !== packageName ||
+    nativeManifest.version !== version ||
+    nativeManifest.os?.length !== 1 ||
+    nativeManifest.os[0] !== os ||
+    nativeManifest.cpu?.length !== 1 ||
+    nativeManifest.cpu[0] !== cpu
+  )
+    throw new Error(`installed Claude native package does not match ${version} ${os}/${cpu}`)
+  const binary = join(nativeRoot, os === 'win32' ? 'claude.exe' : 'claude')
+  await access(binary)
+  const binaryInfo = await stat(binary)
+  if (!binaryInfo.isFile() || binaryInfo.size === 0)
+    throw new Error('installed Claude native binary is invalid')
+  return binary
+}
+
 export async function runCompatibility(
   version,
   { npm = 'npm', timeout = 10_000, installTimeout = 180_000 } = {},
@@ -41,7 +90,6 @@ export async function runCompatibility(
     throw new Error('Expected exact Claude Code npm version')
   const root = await mkdtemp(join(tmpdir(), 'holi-claude-check-'))
   const install = join(root, 'package')
-  const bin = join(install, 'node_modules', '.bin', 'claude')
   const env = isolatedEnvironment(root)
   const failures = []
   try {
@@ -63,7 +111,8 @@ export async function runCompatibility(
         maxBuffer: 64 * 1024,
       },
     )
-    const versionProbe = spawnSync(bin, ['--version'], {
+    const nativeBin = await resolveNativeBinary(install, version)
+    const versionProbe = spawnSync(nativeBin, ['--version'], {
       env,
       cwd: root,
       encoding: 'utf8',
@@ -76,7 +125,7 @@ export async function runCompatibility(
         `version: expected ${version}, got ${bounded(versionOutput)}; ${versionProbe.error?.code ?? `status=${versionProbe.status}`}`,
       )
     for (const [name, args, expected] of probes) {
-      const result = spawnSync(bin, args, {
+      const result = spawnSync(nativeBin, args, {
         env,
         cwd: root,
         encoding: 'utf8',
