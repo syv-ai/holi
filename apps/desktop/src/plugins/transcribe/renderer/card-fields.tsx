@@ -52,7 +52,7 @@ export function ListField({
         {items.map((value, k) => (
           <li key={k} className="flex items-center gap-1">
             {badge !== undefined && (
-              <Badge variant="warning-light" className="shrink-0">
+              <Badge variant="warning" className="shrink-0">
                 {badge}
               </Badge>
             )}

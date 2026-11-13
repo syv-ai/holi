@@ -92,7 +92,7 @@ function GroupCell({
         <span className="text-foreground shrink-0 truncate text-sm font-medium">
           {row.status.name}
         </span>
-        <Badge variant="outline" className="shrink-0 tabular-nums">
+        <Badge variant="secondary" className="shrink-0 tabular-nums">
           {count}
         </Badge>
       </div>

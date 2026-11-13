@@ -43,10 +43,10 @@ export function RunHistory({ runs }: { runs: readonly RunRecord[] }): React.JSX.
             <Badge
               variant={
                 r.outcome === 'failed'
-                  ? 'destructive-light'
+                  ? 'destructive'
                   : r.outcome === 'started'
-                    ? 'primary-light'
-                    : 'outline'
+                    ? 'default'
+                    : 'secondary'
               }
             >
               {r.outcome === 'started'
