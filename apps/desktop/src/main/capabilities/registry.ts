@@ -151,17 +151,22 @@ export interface CliCommand {
 }
 
 export interface CapabilityRegistry {
-  /** Adds `table`, whose every name must sit under one of `namespaces`, which
-   *  no other caller may already own. Throws otherwise. Returns the undo.
-   *  `plugin` names the plugin that registered it; core's entries have none. */
-  register(namespaces: readonly string[], table: CapabilityTable, plugin?: string): () => void
-  has(name: string): boolean
+  /** Claim namespaces and install their entries. Core claims are global;
+   *  a plugin claims each namespace once per remote, under the same plugin
+   *  owner across remotes. Conflicts throw. Returns the exact owner's undo. */
+  register(
+    namespaces: readonly string[],
+    table: CapabilityTable,
+    plugin?: string,
+    remote?: string,
+  ): () => void
+  has(name: string, remote?: string): boolean
   /** Every entry that opens `door`, by name. */
-  names(door: Door): string[]
+  names(door: Door, remote?: string): string[]
   /** The plugin an entry belongs to, or null for core's (and unknown names). */
-  pluginOf(name: string): string | null
+  pluginOf(name: string, remote?: string): string | null
   /** Every entry open at the CLI door, as a command, by name. */
-  commands(): CliCommand[]
+  commands(remote?: string): CliCommand[]
   /**
    * Run one capability through one door. An unknown name, or one that does
    * not open to this door, is refused as "no such method", which is what it is
@@ -174,6 +179,8 @@ export interface CapabilityRegistry {
     ctx: CapabilityContext,
     rawParams: unknown,
     admit?: Admit,
+    isCurrent?: () => boolean,
+    beforeInvoke?: (target: { remote: string; root: string }) => Promise<void>,
   ): Promise<CapabilityResult>
 }
 
@@ -187,72 +194,146 @@ const namespaceOf = (name: string): string | null => {
 }
 
 export function createCapabilityRegistry(): CapabilityRegistry {
-  const owners = new Map<string, CapabilityTable>()
-  const entries = new Map<string, AnyCapability>()
-  const plugins = new Map<string, string>()
+  type Lease = { entry: AnyCapability; plugin?: string }
+  const globals = new Map<string, Lease>()
+  const scoped = new Map<string, Map<string, Lease>>()
+  // Namespaces are claimed independently of their entries, including empty tables.
+  const namespacePlugins = new Map<string, string | null>()
+  const globalsNamespaceClaims = new Set<string>()
+  const namespaceScopes = new Map<string, Map<string, object>>()
+
+  const leaseFor = (name: string, remote?: string): Lease | undefined =>
+    (remote === undefined ? undefined : scoped.get(remote)?.get(name)) ?? globals.get(name)
 
   return {
-    register(namespaces, table, plugin) {
-      for (const ns of namespaces) {
-        if (owners.has(ns)) throw new Error(`capability namespace ${ns} is already registered`)
+    register(namespaces, table, plugin, remote) {
+      if (plugin !== undefined && remote === undefined)
+        throw new Error(`plugin capability registrations must be scoped to a remote`)
+      if (plugin === undefined && remote !== undefined)
+        throw new Error(`only plugin capability registrations may be scoped to a remote`)
+      const uniqueNamespaces = [...new Set(namespaces)]
+      const scopedClaims =
+        remote === undefined ? undefined : (namespaceScopes.get(remote) ?? new Map())
+      for (const ns of uniqueNamespaces) {
+        const owner = namespacePlugins.get(ns)
+        if (owner !== undefined && owner !== (plugin ?? null))
+          throw new Error(`capability namespace ${ns} is already registered`)
+        if (remote === undefined && globalsNamespaceClaims.has(ns))
+          throw new Error(`capability namespace ${ns} is already registered`)
+        if (
+          (remote === undefined &&
+            [...namespaceScopes.values()].some((claims) => claims.has(ns))) ||
+          (remote !== undefined && globalsNamespaceClaims.has(ns)) ||
+          scopedClaims?.has(ns)
+        )
+          throw new Error(`capability namespace ${ns} is already registered`)
       }
       for (const [name, entry] of Object.entries(table)) {
         const ns = namespaceOf(name)
-        if (ns === null || !namespaces.includes(ns)) {
+        if (ns === null || !uniqueNamespaces.includes(ns))
           throw new Error(`capability ${name} is outside its owner's namespaces`)
-        }
-        if (entry.doors.includes('cli') !== (entry.cli !== undefined)) {
+        if (
+          globals.has(name) ||
+          (remote === undefined
+            ? [...scoped.values()].some((entries) => entries.has(name))
+            : scoped.get(remote)?.has(name))
+        )
+          throw new Error(`capability namespace ${ns} is already registered`)
+        if (entry.doors.includes('cli') !== (entry.cli !== undefined))
           throw new Error(
             `capability ${name} must say how it reads at the CLI door, and only there`,
           )
-        }
         const optional = entry.cli?.args.findIndex((a) => a.endsWith('?')) ?? -1
-        if (optional >= 0 && entry.cli!.args.slice(optional).some((a) => !a.endsWith('?'))) {
+        if (optional >= 0 && entry.cli!.args.slice(optional).some((a) => !a.endsWith('?')))
           throw new Error(`capability ${name} has a required argument after an optional one`)
-        }
       }
-      for (const ns of namespaces) owners.set(ns, table)
+      const namespaceLeases = new Map<string, object>()
+      for (const ns of uniqueNamespaces) {
+        if (!namespacePlugins.has(ns)) namespacePlugins.set(ns, plugin ?? null)
+        if (remote === undefined) globalsNamespaceClaims.add(ns)
+        const claim = {}
+        namespaceLeases.set(ns, claim)
+        if (remote !== undefined) scopedClaims!.set(ns, claim)
+      }
+      if (remote !== undefined) namespaceScopes.set(remote, scopedClaims!)
+
+      const scope = remote === undefined ? globals : (scoped.get(remote) ?? new Map())
+      const installed = new Map<string, Lease>()
       for (const [name, entry] of Object.entries(table)) {
-        entries.set(name, entry)
-        if (plugin !== undefined) plugins.set(name, plugin)
+        const installedLease: Lease = { entry, ...(plugin ? { plugin } : {}) }
+        scope.set(name, installedLease)
+        installed.set(name, installedLease)
       }
+      if (remote !== undefined) scoped.set(remote, scope)
+      let disposed = false
       return () => {
-        for (const ns of namespaces) if (owners.get(ns) === table) owners.delete(ns)
-        for (const [name, entry] of Object.entries(table)) {
-          if (entries.get(name) === entry) {
-            entries.delete(name)
-            plugins.delete(name)
-          }
+        if (disposed) return
+        disposed = true
+        for (const [name, installedLease] of installed)
+          if (scope.get(name) === installedLease) scope.delete(name)
+        for (const [ns, claim] of namespaceLeases) {
+          if (remote === undefined) globalsNamespaceClaims.delete(ns)
+          else if (scopedClaims?.get(ns) === claim) scopedClaims.delete(ns)
+          if (
+            !globalsNamespaceClaims.has(ns) &&
+            ![...namespaceScopes.values()].some((claims) => claims.has(ns))
+          )
+            namespacePlugins.delete(ns)
         }
+        if (
+          remote !== undefined &&
+          scopedClaims?.size === 0 &&
+          namespaceScopes.get(remote) === scopedClaims
+        )
+          namespaceScopes.delete(remote)
+        if (remote !== undefined && scope.size === 0 && scoped.get(remote) === scope)
+          scoped.delete(remote)
       }
     },
 
-    has: (name) => entries.has(name),
+    has: (name, remote) => leaseFor(name, remote) !== undefined,
 
-    names: (door) =>
-      [...entries].flatMap(([name, entry]) => (entry.doors.includes(door) ? [name] : [])),
+    names: (door, remote) => {
+      const entries = new Map<string, AnyCapability>()
+      for (const [name, lease] of globals) entries.set(name, lease.entry)
+      if (remote !== undefined)
+        for (const [name, lease] of scoped.get(remote) ?? []) entries.set(name, lease.entry)
+      return [...entries].filter(([, entry]) => entry.doors.includes(door)).map(([name]) => name)
+    },
 
-    pluginOf: (name) => plugins.get(name) ?? null,
+    pluginOf(name, remote) {
+      return leaseFor(name, remote)?.plugin ?? null
+    },
 
-    commands: () =>
-      [...entries]
+    commands(remote) {
+      const entries = new Map<string, AnyCapability>()
+      for (const [name, lease] of globals) entries.set(name, lease.entry)
+      if (remote !== undefined)
+        for (const [name, lease] of scoped.get(remote) ?? []) entries.set(name, lease.entry)
+      return [...entries]
         .flatMap(([name, entry]) =>
           entry.cli === undefined ? [] : [{ name, cli: entry.cli, succeeded: entry.cliSucceeded }],
         )
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        .sort((a, b) => a.name.localeCompare(b.name))
+    },
 
-    async run(name, door, ctx, rawParams, admit) {
-      const entry = entries.get(name)
+    async run(name, door, ctx, rawParams, admit, isCurrent = () => true, beforeInvoke) {
+      const lease = leaseFor(name, ctx.remote)
+      const entry = lease?.entry
+      const current = () =>
+        lease !== undefined && leaseFor(name, ctx.remote) === lease && isCurrent()
       if (entry === undefined || !entry.doors.includes(door)) {
         throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       }
       const params = entry.params(rawParams)
+      if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       if (door === 'app' && entry.appGrant !== undefined) {
-        // Fails closed: an app door with no consent check reaches no entry
-        // that needs one.
         if (admit === undefined) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
         await admit(ctx, entry.appGrant)
       }
+      if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+      if (beforeInvoke !== undefined) await beforeInvoke({ remote: ctx.remote, root: ctx.root })
+      if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       const result = await entry.run(ctx, params)
       const value = door === 'cli' && entry.cliValue !== undefined ? entry.cliValue(result) : result
       return {

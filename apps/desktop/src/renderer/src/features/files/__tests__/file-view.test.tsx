@@ -672,6 +672,7 @@ test('frozen Vim editors reject edit commands and become editable after thaw', a
   read.mockResolvedValue('alpha beta\n')
   historyList.mockResolvedValue([])
   setup('src/frozen.txt', false, true)
+  expect(await screen.findByLabelText('Vim normal mode')).toBeInTheDocument()
   const content = await waitFor(() => {
     const node = document.querySelector<HTMLElement>('.cm-content')
     if (node === null) throw new Error('no editor yet')

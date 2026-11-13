@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
-import type { CapabilityError } from '../src/main/capabilities/error'
+import { CapabilityError } from '../src/main/capabilities/error'
 import {
   cap,
   createCapabilityRegistry,
@@ -96,6 +96,7 @@ describe('the capability host', () => {
       ['fake'],
       { 'fake.ping': ui, 'fake.cli': { ...ui, doors: ['cli'], cli: { args: [], summary: '' } } },
       'fake',
+      'o/r',
     )
     return createCapabilityHost({
       registry: caps,
@@ -110,6 +111,88 @@ describe('the capability host', () => {
   it("names a door's entries, leaving out those of plugins the vault has off", async () => {
     expect(await host(() => true).names('o/r', 'ui')).toEqual(['core.ping', 'fake.ping'])
     expect(await host(() => false).names('o/r', 'ui')).toEqual(['core.ping'])
+  })
+
+  it('rechecks queued CLI calls immediately before invocation', async () => {
+    let calls = 0
+    let checks = 0
+    let allowed = true
+    let release!: () => void
+    const first = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const caps = createCapabilityRegistry()
+    caps.register(['docs'], {
+      'docs.update': cap({
+        doors: ['cli'],
+        cli: { args: [], summary: 'test' },
+        params: () => ({}),
+        run: async () => {
+          calls++
+          if (calls === 1) await first
+          return calls
+        },
+      }),
+    })
+    const h = createCapabilityHost({
+      registry: caps,
+      rootFor: async () => '/vault',
+      active: () => null,
+      core: noCoreServices,
+      pluginEnabled: async () => true,
+      claims: async () => [],
+    })
+    const beforeInvoke = async () => {
+      checks++
+      if (!allowed) throw new CapabilityError('FORBIDDEN', 'target changed')
+    }
+    const one = h.dispatch({
+      door: 'cli',
+      remote: 'o/r',
+      name: 'docs.update',
+      params: {},
+      beforeInvoke,
+    })
+    const two = h.dispatch({
+      door: 'cli',
+      remote: 'o/r',
+      name: 'docs.update',
+      params: {},
+      beforeInvoke,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(calls).toBe(1)
+    expect(checks).toBe(1)
+    allowed = false
+    release()
+    expect((await one).value).toBe(1)
+    await expect(two).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'target changed' })
+    expect(checks).toBe(2)
+    expect(calls).toBe(1)
+  })
+
+  it('does not check beforeInvoke for nonexistent or disabled commands', async () => {
+    const h = host(() => false)
+    const beforeInvoke = vi.fn(async () => {})
+    await expect(
+      h.dispatch({
+        door: 'cli',
+        remote: 'o/r',
+        name: 'missing.command',
+        params: {},
+        beforeInvoke,
+      }),
+    ).rejects.toThrow(/no such method/)
+    await expect(
+      h.dispatch({
+        door: 'cli',
+        remote: 'o/r',
+        name: 'fake.cli',
+        params: {},
+        beforeInvoke,
+      }),
+    ).rejects.toThrow(/no such method/)
+    expect(beforeInvoke).not.toHaveBeenCalled()
   })
 
   it('serializes CLI note mutations and their settlement', async () => {
@@ -161,8 +244,8 @@ describe('the capability host', () => {
 
   it('opens the app door once', () => {
     const h = host(() => true)
-    h.openAppDoor({ admit: async () => {} })
-    expect(() => h.openAppDoor({ admit: async () => {} })).toThrow(/already open/)
+    h.openAppDoor({ admit: async () => {} }, 'o/r')
+    expect(() => h.openAppDoor({ admit: async () => {} }, 'o/r')).toThrow(/already open/)
   })
 
   it("asks the opener's consent for an entry with an appGrant, at the app door only", async () => {
@@ -184,12 +267,15 @@ describe('the capability host', () => {
       claims: async () => [],
     })
     const asked: string[] = []
-    const door = h.openAppDoor({
-      admit: async (_ctx, grant) => {
-        asked.push(grant)
-        throw new Error('not approved')
+    const door = h.openAppDoor(
+      {
+        admit: async (_ctx, grant) => {
+          asked.push(grant)
+          throw new Error('not approved')
+        },
       },
-    })
+      'o/r',
+    )
     await expect(door.call('o/r', 'A.app', 'x.read', {})).rejects.toThrow(/not approved/)
     expect(asked).toEqual(['mail'])
     expect(

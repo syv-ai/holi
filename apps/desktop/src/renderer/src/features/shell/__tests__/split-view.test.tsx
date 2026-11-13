@@ -326,10 +326,44 @@ test('selecting another tab shows it alone, the split staying in the strip', asy
   const store = mount()
   fireEvent.keyDown(window, { key: '\\', ctrlKey: true })
   await waitFor(() => expect(views()).toHaveLength(2))
-  fireEvent.mouseDown(within(stripOf()).getByRole('tab', { name: 'A' }))
+  const tab = within(stripOf()).getByRole('tab', { name: 'A' })
+  fireEvent.mouseDown(tab)
+  expect(views()).toHaveLength(2)
+  fireEvent.click(tab)
   await waitFor(() => expect(views()).toHaveLength(1))
   expect(store.get(shellWorkspaceAtom).active).toBe('A.md')
   expect(within(stripOf()).getByRole('tab', { name: /Split view/ })).toBeTruthy()
+})
+
+test('primary-modifier click opens a background tab beside the active tab', async () => {
+  const store = mount()
+  const tab = within(stripOf()).getByRole('tab', { name: 'A' })
+  fireEvent.click(tab, { metaKey: true })
+  await waitFor(() => expect(views()).toHaveLength(2))
+  expect(activeSplit(store.get(shellWorkspaceAtom))?.views).toEqual(['B.md', 'A.md'])
+  expect(focusedTab(store.get(shellWorkspaceAtom))).toBe('A.md')
+})
+
+test.each([{ metaKey: true }, { ctrlKey: true }, { altKey: true }])(
+  'a modifier click opens a tab beside the current view (%o)',
+  async (modifier) => {
+    const store = mount()
+    fireEvent.click(within(stripOf()).getByRole('tab', { name: 'A' }), modifier)
+    await waitFor(() => expect(views()).toHaveLength(2))
+    expect(activeSplit(store.get(shellWorkspaceAtom))?.views).toEqual(['B.md', 'A.md'])
+  },
+)
+
+test('pressing a background tab does not activate it before native drag starts', async () => {
+  const store = mount()
+  const tab = document.querySelector<HTMLElement>("[data-tab-key='A.md']")!
+  fireEvent.pointerDown(tab, { button: 0 })
+  expect(store.get(shellWorkspaceAtom).active).toBe('B.md')
+  expect(views()).toHaveLength(1)
+  fireEvent.dragStart(tab, { dataTransfer: transfer() })
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).active).toBe('B.md'))
+  fireEvent.dragEnd(tab)
+  expect(store.get(shellWorkspaceAtom).active).toBe('B.md')
 })
 
 test("a tab's menu opens it in split view with the active tab", async () => {
@@ -761,6 +795,9 @@ test("dragging a strip tab onto the view's right part opens a gap there, and the
   layOut()
   const dataTransfer = transfer()
   const tab = document.querySelector<HTMLElement>("[data-tab-key='A.md']")!
+  fireEvent.mouseDown(tab, { button: 0 })
+  expect(store.get(shellWorkspaceAtom).active).toBe('B.md')
+  expect(views()).toHaveLength(1)
   fireEvent.dragStart(tab, { dataTransfer })
   await vi.runAllTimersAsync()
   vi.useRealTimers()
@@ -791,6 +828,26 @@ test("dragging a strip tab onto the view's right part opens a gap there, and the
   // The drag is over: no catcher left over the views.
   await waitFor(() => expect(document.querySelector('[data-drop-target]')).toBeNull())
   expect(store.get(tabDragAtom)).toBeNull()
+  vi.restoreAllMocks()
+})
+
+test('a background tab dropped at the left edge splits beside the original active view', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout'] })
+  const store = mount()
+  layOut()
+  const dataTransfer = transfer()
+  const tab = document.querySelector<HTMLElement>("[data-tab-key='A.md']")!
+  fireEvent.mouseDown(tab, { button: 0 })
+  expect(store.get(shellWorkspaceAtom).active).toBe('B.md')
+  fireEvent.dragStart(tab, { dataTransfer })
+  await vi.runAllTimersAsync()
+  vi.useRealTimers()
+  const target = await catcher()
+  fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 50))
+  fireEvent(target, at(createEvent.drop(target, { dataTransfer }), 50))
+  await waitFor(() => expect(activeSplit(store.get(shellWorkspaceAtom))).not.toBeNull())
+  expect(activeSplit(store.get(shellWorkspaceAtom))?.views).toEqual(['A.md', 'B.md'])
+  expect(store.get(shellWorkspaceAtom).active).toBe(activeSplit(store.get(shellWorkspaceAtom))?.id)
   vi.restoreAllMocks()
 })
 

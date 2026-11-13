@@ -5,13 +5,13 @@
  * for real. The `holi` script's reading is in `bridge-cli.test.ts`.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { registerAgentRoutes } from '../src/plugins/agent/main/claude/routes'
-import { STATUS_LINE } from '../src/plugins/agent/main/claude/seed'
+import { WINDOWS_STATUS_LINE } from '../src/plugins/agent/main/claude/seed'
 import { BRIDGE_ENV_FILE, createBridgeEnv } from '../src/main/bridge/env-file'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
@@ -266,17 +266,57 @@ describe('turn-signal.mjs', () => {
 
 describe('the seeded status line', () => {
   /** Run as Claude Code runs it: the settings command, through a shell. */
-  const command = STATUS_LINE
+  const command = WINDOWS_STATUS_LINE
   const status = { model: { display_name: 'Opus 5.5' }, context_window: { used_percentage: 41.6 } }
   const statusLine = (env: NodeJS.ProcessEnv, input: string) =>
     run('/bin/sh', ['-c', command], env, input)
 
-  it('prints the footer and hands the status to Holi under its job', async () => {
+  it('prints the footer and hands the status to Holi under the normalized job id', async () => {
     await writeFor()
-    const res = await statusLine(sessionEnv('abcd1234'), JSON.stringify(status))
-    expect(res).toMatchObject({ code: 0, stdout: 'Opus 5.5 · 42% context' })
+    for (const jobDir of [
+      '/Users/ada/Vault café/jobs/abcd1234',
+      'C:\\Users\\ada\\Vault café\\jobs\\abcd1234',
+    ]) {
+      const res = await statusLine(
+        { ...sessionEnv(), CLAUDE_JOB_DIR: jobDir },
+        JSON.stringify(status),
+      )
+      expect(res).toMatchObject({ code: 0, stdout: 'Opus 5.5 · 42% context', stderr: '' })
+    }
     // Detached, so the footer never waits on it.
-    await vi.waitFor(() => expect(statuses).toEqual([['syv/vault', 'abcd1234', status]]))
+    await vi.waitFor(() =>
+      expect(statuses).toEqual([
+        ['syv/vault', 'abcd1234', status],
+        ['syv/vault', 'abcd1234', status],
+      ]),
+    )
+  })
+
+  it('renders without jq and quietly ignores malformed JSON', async () => {
+    const tools = join(dir, 'minimal-path')
+    await mkdir(tools)
+    for (const tool of ['node', 'cat', 'tr', 'sed']) {
+      await symlink(
+        tool === 'node' ? process.execPath : tool === 'cat' ? '/bin/cat' : `/usr/bin/${tool}`,
+        join(tools, tool),
+      )
+    }
+    const env = { PATH: tools }
+    expect(await statusLine(env, JSON.stringify(status))).toMatchObject({
+      code: 0,
+      stdout: 'Opus 5.5 · 42% context',
+      stderr: '',
+    })
+    expect(await statusLine(env, '{not json')).toMatchObject({ code: 0, stdout: '', stderr: '' })
+    expect(await statusLine(env, '{"model":{"display_name":"Opus"}}')).toMatchObject({
+      code: 0,
+      stdout: 'Opus',
+      stderr: '',
+    })
+    const marker = join(dir, 'injected')
+    const payload = JSON.stringify({ model: { display_name: `$(touch ${marker})` } })
+    expect(await statusLine(env, payload)).toMatchObject({ code: 0, stderr: '' })
+    await expect(readFile(marker, 'utf8')).rejects.toThrow()
   })
 
   it('prints the same footer without Holi, and only the model before the first message', async () => {

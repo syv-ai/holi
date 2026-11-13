@@ -55,6 +55,7 @@ import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
+import { useHoliLinkPaste } from '@/hooks/use-holi-link-paste'
 import { useActivityLog } from '@/state/activity'
 import { useDocChangeMarks } from '@/state/doc-changes'
 import { usePanelTerminals } from '@/state/panel-terminals'
@@ -281,6 +282,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   })
 
   useShortcutDispatcher()
+  useHoliLinkPaste()
   // The activity log and the panel's shells are followed from here, for the
   // window's life, so the Output collects while the panel is closed.
   const retryActivity = useActivityLog()
