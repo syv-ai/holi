@@ -103,6 +103,8 @@
     "next-themes": "^0.4.6",
     "node-pty": "^1.0.0",
     "onnxruntime-web": "1.30.0",
+    "postcss": "8.5.28",
+    "postcss-value-parser": "4.2.0",
     "prosemirror-search": "^1.1.1",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",

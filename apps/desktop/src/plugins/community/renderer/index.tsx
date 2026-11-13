@@ -5,7 +5,7 @@
  * so under the file tree.
  */
 import { atom, useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Puzzle, X } from 'lucide-react'
 import { isPluginFolder, opensPath } from '@holi/shared'
 import {
@@ -18,6 +18,7 @@ import {
   type Surface,
 } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { IconButton } from '@/composites/icon-button'
 import { COMMUNITY_INFO } from '../info'
 import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './install-flow'
@@ -125,6 +126,19 @@ const updatableAtom = atom((get): readonly { row: PluginRow; version: string }[]
  * be dismissed for this vault on this machine: the person may not want the
  * plugin here, and Settings still installs it.
  */
+function BusyLabel({ busy, children }: { busy: boolean; children: React.ReactNode }) {
+  return (
+    <span className="relative">
+      <span className={busy ? 'opacity-0' : undefined}>{children}</span>
+      {busy && (
+        <span className="absolute inset-0 grid place-items-center" aria-hidden="true">
+          <Spinner />
+        </span>
+      )}
+    </span>
+  )
+}
+
 function WaitingNotice(): React.JSX.Element | null {
   const waiting = useAtomValue(waitingAtom)
   const notWorking = useAtomValue(notWorkingAtom)
@@ -136,6 +150,8 @@ function WaitingNotice(): React.JSX.Element | null {
   const setDismissed = useSetAtom(dismissedNoticesAtom)
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState<string | null>(null)
+  const [acting, setActing] = useState<string | null>(null)
+  const actionLock = useRef(false)
   // A plugin ready in the vault owes no dismissal: drop it, so a later pin
   // this machine cannot run yet raises its line again.
   useEffect(() => {
@@ -176,6 +192,19 @@ function WaitingNotice(): React.JSX.Element | null {
     if (read === null) return
     setDismissed((all) => ({ ...all, [read.remote]: [...(all[read.remote] ?? []), row.id] }))
   }
+  const runAction = async (id: string, action: () => Promise<unknown>) => {
+    if (actionLock.current) return
+    actionLock.current = true
+    setActing(id)
+    try {
+      await action()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      actionLock.current = false
+      setActing(null)
+    }
+  }
   const checkAgain = async (row: PluginRow) => {
     setError(null)
     setChecking(row.id)
@@ -198,8 +227,16 @@ function WaitingNotice(): React.JSX.Element | null {
           </span>
           <div className="flex shrink-0 items-center gap-1">
             {(row.pin !== null || row.install !== null) && (
-              <Button size="xs" variant="secondary" onClick={() => void next(row)}>
-                {row.status === 'not-installed' ? 'Install…' : 'Set up…'}
+              <Button
+                size="xs"
+                variant="secondary"
+                disabled={acting !== null}
+                aria-label={row.status === 'not-installed' ? 'Install…' : 'Set up…'}
+                onClick={() => void runAction(row.id, () => next(row))}
+              >
+                <BusyLabel busy={acting === row.id}>
+                  {row.status === 'not-installed' ? 'Install…' : 'Set up…'}
+                </BusyLabel>
               </Button>
             )}
             <IconButton
@@ -237,9 +274,13 @@ function WaitingNotice(): React.JSX.Element | null {
           <Button
             size="xs"
             variant="secondary"
-            onClick={() => void updatePlugin(flow, row, version).then(setError)}
+            disabled={acting !== null}
+            aria-label="Update…"
+            onClick={() =>
+              void runAction(row.id, async () => setError(await updatePlugin(flow, row, version)))
+            }
           >
-            Update…
+            <BusyLabel busy={acting === row.id}>Update…</BusyLabel>
           </Button>
         </div>
       ))}

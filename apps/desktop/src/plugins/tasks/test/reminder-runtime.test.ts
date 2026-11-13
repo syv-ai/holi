@@ -10,10 +10,17 @@ afterEach(() => {
 
 function makeDelivered(): DeliveredLog {
   const store = new Map<string, Delivered>()
+  const receipts = new Set<string>()
   return {
     read: (remote) => store.get(remote) ?? {},
     markDelivered: (remote, path, fireAt) => {
       store.set(remote, { ...(store.get(remote) ?? {}), [path]: fireAt })
+    },
+    fallbackReceipts: () => ({
+      has: (remote, path, due) => receipts.has(JSON.stringify([remote, path, due])),
+    }),
+    markFallback: (remote, path, due) => {
+      receipts.add(JSON.stringify([remote, path, due]))
     },
   }
 }
@@ -76,6 +83,42 @@ describe('createReminderRuntime', () => {
     expect(events).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(60_000) // interval fires a second tick
     expect(events).toHaveLength(1)
+    rt.close()
+  })
+
+  it('marks a fallback attempt once even when the notifier suppresses presentation', async () => {
+    vi.useFakeTimers()
+    let attempts = 0
+    const delivered = makeDelivered()
+    const vault: VaultTasks = {
+      remote: 'o/r',
+      tasks: [
+        {
+          path: 'task.late.md',
+          title: 'late',
+          status: 'todo',
+          tags: [],
+          assignees: [],
+          description: '',
+          due: '2026-07-27',
+        },
+      ],
+    }
+    const rt = createReminderRuntime({
+      now: () => '2026-07-28T10:00',
+      corpus: { all: async () => [vault] },
+      notifier: {
+        fire: () => {
+          attempts += 1
+        },
+      },
+      delivered,
+      tickMs: 60_000,
+    })
+    rt.start()
+    await flush()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(attempts).toBe(1)
     rt.close()
   })
 

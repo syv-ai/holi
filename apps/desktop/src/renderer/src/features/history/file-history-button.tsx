@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { HistoryIcon } from 'lucide-react'
 
@@ -15,12 +15,16 @@ import { useFileAuthors, useFileHistory } from './use-file-history'
  * dialog. The same for a document and for code. A local file with no
  * commits shows Local instead.
  */
-export function FileHistoryButton({ path }: { path: string }) {
+export function FileHistoryButton({ path, visible = true }: { path: string; visible?: boolean }) {
   const { history, retry } = useFileHistory(path)
   const authors = useFileAuthors(path)
   const [open, setOpen] = useState(false)
   const latest = history.kind === 'ready' ? history.commits[0] : undefined
   const unsynced = useAtomValue(ignoredPathsAtom).has(path)
+
+  useEffect(() => {
+    if (!visible) setOpen(false)
+  }, [visible])
 
   // A file git ignores has no history to show unless it was committed before
   // it was ignored: it says where it lives instead.

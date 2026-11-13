@@ -38,11 +38,13 @@ export function MailReader({
   mail,
   composer,
   onCompose,
+  visible,
 }: {
   mail: MailState
   /** The inline reply or forward, at the foot of the thread it answers. */
   composer: ReactNode
   onCompose: () => void
+  visible: boolean
 }) {
   const reader = mail.reader
 
@@ -116,6 +118,7 @@ export function MailReader({
             initiallyOpen={index === thread.messages.length - 1}
             position={index + 1}
             total={thread.messages.length}
+            visible={visible}
           />
         ))}
         {composer}
@@ -130,12 +133,14 @@ function MessageBlock({
   initiallyOpen,
   position,
   total,
+  visible,
 }: {
   message: ThreadMessage
   threadUrl: string
   initiallyOpen: boolean
   position: number
   total: number
+  visible: boolean
 }) {
   const [expanded, setExpanded] = useState(initiallyOpen)
 
@@ -192,7 +197,7 @@ function MessageBlock({
           <div className="flex flex-col gap-3 md:pl-10.5">
             <MessageAddresses message={message} />
             <MessageBody message={message} />
-            <Attachments attachments={message.attachments} webUrl={threadUrl} />
+            <Attachments attachments={message.attachments} webUrl={threadUrl} visible={visible} />
           </div>
         </CollapsibleContent>
       </article>
@@ -248,7 +253,15 @@ function MessageBody({ message }: { message: ThreadMessage }) {
  * What came with a message, in the block's attachment group. Each opens the
  * thread in Gmail: Holi does not fetch attachment bytes.
  */
-function Attachments({ attachments, webUrl }: { attachments: MailAttachment[]; webUrl: string }) {
+function Attachments({
+  attachments,
+  webUrl,
+  visible,
+}: {
+  attachments: MailAttachment[]
+  webUrl: string
+  visible: boolean
+}) {
   if (attachments.length === 0) return null
   const open = () => openExternal(webUrl)
   return (
@@ -273,7 +286,7 @@ function Attachments({ attachments, webUrl }: { attachments: MailAttachment[]; w
                 <ExternalLinkIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Opens in Gmail</TooltipContent>
+            {visible && <TooltipContent>Opens in Gmail</TooltipContent>}
           </Tooltip>
         </ButtonGroup>
       ))}

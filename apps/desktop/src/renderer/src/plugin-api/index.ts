@@ -116,6 +116,8 @@ export { byRecency, recentsAtom } from '@/state/recents'
 export { FileHistoryDialog } from '@/features/history/file-history-button'
 export {
   openDialogAtom,
+  /** @public */ shownDialogAtom,
+  closePluginDialogAtom,
   /** @public */ type ActiveDialog,
   /** @public */ type PluginDialog,
 } from '@/state/dialogs'
