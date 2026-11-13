@@ -162,7 +162,7 @@ export function TabStrip({
   }
   const act = (change: (w: ShellWorkspace) => ShellWorkspace) => setWs(change)
   const close = (change: (w: ShellWorkspace) => ShellWorkspace) =>
-    void saveBeforeClosing(() => setWs(change))
+    void saveBeforeClosing(() => setWs(change), true).catch(() => {})
   const split = activeSplit(ws)
   const count = ws.entries.length
   /** Whether the strip holds more tabs than it shows, which is when it says

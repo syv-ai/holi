@@ -18,6 +18,7 @@ export interface ChipInputProps {
   suggestions?: ChipAddress[]
   placeholder?: string
   label: string
+  disabled?: boolean
 }
 
 /**
@@ -54,6 +55,7 @@ export function ChipInput({
   suggestions = [],
   placeholder,
   label,
+  disabled = false,
 }: ChipInputProps): React.JSX.Element {
   const [text, setText] = React.useState('')
   const [invalid, setInvalid] = React.useState(false)
@@ -163,6 +165,7 @@ export function ChipInput({
             variant="ghost"
             size="icon-xs"
             aria-label={`Remove ${address.name}`}
+            disabled={disabled}
             className="-my-1 -me-1.5"
             onClick={() => onChange(value.filter((a) => a.email !== address.email))}
           >
@@ -174,6 +177,7 @@ export function ChipInput({
       <div className="relative min-w-40 flex-1">
         <InputGroupInput
           id={inputId}
+          disabled={disabled}
           aria-label={label}
           aria-invalid={invalid}
           // Not an ARIA combobox: without `aria-activedescendant` wiring the
@@ -201,6 +205,7 @@ export function ChipInput({
               <li key={person.email}>
                 <Button
                   type="button"
+                  disabled={disabled}
                   variant="ghost"
                   size="row"
                   role="option"
