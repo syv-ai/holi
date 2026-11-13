@@ -31,7 +31,7 @@ function CardStatus({
   const { item, state } = row
   if (state === 'needs-you') {
     const badge = (
-      <Badge variant="warning-light">
+      <Badge variant="warning">
         <CircleAlertIcon aria-hidden="true" />
         Needs you
       </Badge>

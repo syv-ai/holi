@@ -151,16 +151,14 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
           )}
         </PopoverContent>
       </Popover>
-      {meeting.blocked === 'no-key' && (
-        <Badge variant="warning-light">Transcription needs a key</Badge>
-      )}
+      {meeting.blocked === 'no-key' && <Badge variant="warning">Transcription needs a key</Badge>}
       {meeting.blocked === 'bad-key' && (
-        <Badge variant="destructive-light">Transcription key refused</Badge>
+        <Badge variant="destructive">Transcription key refused</Badge>
       )}
       {failed.length > 0 && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Badge variant="destructive-light" tabIndex={0}>
+            <Badge variant="destructive" tabIndex={0}>
               {failed.length} not transcribed
             </Badge>
           </TooltipTrigger>
@@ -169,10 +167,8 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
           </TooltipContent>
         </Tooltip>
       )}
-      {meeting.scribeUnreachable === true && (
-        <Badge variant="warning-light">Topics unreachable</Badge>
-      )}
-      {unsupported && <Badge variant="warning-light">No topics with this agent</Badge>}
+      {meeting.scribeUnreachable === true && <Badge variant="warning">Topics unreachable</Badge>}
+      {unsupported && <Badge variant="warning">No topics with this agent</Badge>}
     </div>
   )
 }

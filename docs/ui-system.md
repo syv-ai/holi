@@ -52,8 +52,11 @@ design system on top of the stock one.
   `destructive`, `border`, `input`, `ring`, the `sidebar-*` set, and pairs), and `@theme inline`
   exposes them as `--color-*` utilities that hold `var()` pointers, so overriding a token
   re-cascades every utility. State tokens (`success`, `info`, `warning`, `invert`) are exposed the
-  same way. One token departs from the published theme: `muted-foreground` is `oklch(0.54 0 0)` in
-  light (not `0.556`) and `oklch(0.8 0 0)` in dark (not `0.708`), so muted text meets WCAG AA
+  same way. `destructive` retains the configurable Danger fill; solid destructive controls use the
+  separate neutral `destructive-solid-foreground` (pale in light mode, dark in dark mode), while
+  Alerts keep using `destructive-foreground`. One token departs from the published theme:
+  `muted-foreground` is `oklch(0.54 0 0)` in light (not `0.556`) and `oklch(0.8 0 0)` in dark
+  (not `0.708`), so muted text meets WCAG AA
   (4.5:1) at full opacity on every surface in both modes. Holi's seeded `theme.css`, which reaches
   vault-app frames as their base (`plugins/apps/main/tokens.ts`), raises its dark value the same
   way; its light one already passes.
@@ -76,10 +79,9 @@ counts or aligns is `tabular-nums`; a path, a slug or a code is Geist Mono.
 
 ### Colour
 
-The palette is shadcn's neutral ramp, monotone: the brand is the grey ramp itself. **Hue identifies, it does not decorate:** a brand mark, a file type, a task status, the
-destructive red. State is a `Badge` variant (`success-light`, `destructive-light`) or an `Alert`
-variant. A raw palette class is for categorical identity only (a tag or folder colour) and always
-carries its `dark:` pair. Never coloured text on a tinted background of the same hue.
+The palette is shadcn's neutral ramp, monotone: the brand is the grey ramp itself. **Hue identifies, it does not decorate:** a brand mark, a file type, a task status, the destructive red. State is a `Badge` solid variant or an `Alert` variant. Solid badge text uses a neutral foreground with at least 4.5:1 contrast against its fill in both default themes. Solid destructive
+badges and buttons use `destructive` with `destructive-solid-foreground`; Alerts retain the
+distinct `destructive-foreground` text token. A neutral badge uses `secondary`. A raw palette class is for categorical identity only (a tag or folder colour) and always carries its `dark:` pair. Never pair coloured text with a same-hue tinted background.
 
 ### Window
 
@@ -236,6 +238,7 @@ motion, header and edge through the injected stylesheet and cannot resize.
 ## Rules
 
 - State shows by background colour, not by borders or rings, except focus, above.
+- Badges never have a border, and never pair text and background of the same hue. Use a readable solid state variant or `secondary`; do not recreate tinted or outlined badge styles at the call site.
 - Only floating things (dialogs, menus, popovers, tooltips, toasts) get `--popover` and a shadow,
   in React and CodeMirror alike, and no border of their own.
 - Tokens or nothing: no colour literal and no motion number at a call site.
