@@ -1,5 +1,6 @@
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
+import { toast } from 'sonner'
 import { GITKEEP, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
@@ -49,6 +50,15 @@ export const activeRemoteAtom = atom(
 /** The remote whose main-process `vaults.open` has completed. Plugin vault
  * hooks must not run until main has finished opening that vault. */
 export const openedRemoteAtom = atom<string | null>(null)
+
+const attemptedOpenRevisionAtom = atom<number | null>(null)
+
+/** The selected vault has an open owner already, whether the shell, a document
+ *  intent, or recovery. Readiness can temporarily clear without inviting a
+ *  duplicate shell open that would supersede that owner. */
+export const selectedVaultOpenAttemptedAtom = atom(
+  (get) => get(attemptedOpenRevisionAtom) === get(activeRemoteRevisionAtom),
+)
 
 /**
  * Per-vault "show hidden files" preference, persisted across launches. One
@@ -182,8 +192,41 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
  * here may keep a snapshot keyed by remote.
  */
 const openRequestAtom = atom(0)
-const documentOpenIntentAtom = atom<{ id: number; remote: string } | null>(null)
-const documentOpenIntentSequenceAtom = atom(0)
+const documentOpenIntentAtom = atom(0)
+
+// Return main to the unchanged renderer selection, never depart from it. No
+// buffers or tabs are touched: a failed departure flush must retain dirty text.
+// Consuming the expected request deduplicates recovery; a newer request,
+// selection (including A→B→A), or document intent owns any later completion.
+const restoreSelectedVaultAtom = atom(
+  null,
+  async (get, set, expected: { request: number; revision: number; documentIntentId: number }) => {
+    const remote = get(activeRemoteAtom)
+    if (
+      !remote ||
+      get(openRequestAtom) !== expected.request ||
+      get(activeRemoteRevisionAtom) !== expected.revision ||
+      get(documentOpenIntentAtom) !== expected.documentIntentId
+    )
+      return
+    const request = expected.request + 1
+    set(openRequestAtom, request)
+    set(attemptedOpenRevisionAtom, expected.revision)
+    set(openedRemoteAtom, null)
+    const snapshot = await trpc.vaults.open.mutate({ remote })
+    if (
+      get(openRequestAtom) !== request ||
+      get(activeRemoteRevisionAtom) !== expected.revision ||
+      get(documentOpenIntentAtom) !== expected.documentIntentId
+    )
+      return
+    set(snapshotAtom, snapshot)
+    set(openedRemoteAtom, remote)
+    // VaultHost's initial attempt may have been superseded, so it cannot send
+    // this acknowledgement for us. Only the winning recovery releases main.
+    window.holi.vault.openReady()
+  },
+)
 
 export const openVaultAtom = atom(
   null,
@@ -197,6 +240,7 @@ export const openVaultAtom = atom(
     const request = get(openRequestAtom) + 1
     set(openRequestAtom, request)
     const selectionRevision = get(activeRemoteRevisionAtom)
+    set(attemptedOpenRevisionAtom, selectionRevision)
 
     // A cross-vault open (`onOpen` below) arrives with the old vault's editors
     // still mounted: what was typed goes into the vault it was typed in, before
@@ -208,15 +252,17 @@ export const openVaultAtom = atom(
     if (
       get(openRequestAtom) !== request ||
       get(activeRemoteRevisionAtom) !== selectionRevision ||
-      (documentIntentId !== undefined && get(documentOpenIntentAtom)?.id !== documentIntentId)
+      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId)
     )
       return false
 
+    // Main can now leave the selected vault, even if this request later loses.
+    set(openedRemoteAtom, null)
     const snapshot = await trpc.vaults.open.mutate({ remote })
     if (
       get(openRequestAtom) !== request ||
       get(activeRemoteRevisionAtom) !== selectionRevision ||
-      (documentIntentId !== undefined && get(documentOpenIntentAtom)?.id !== documentIntentId)
+      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId)
     )
       return false
 
@@ -224,6 +270,7 @@ export const openVaultAtom = atom(
     // it. This lets VaultHost observe openedRemote alongside activeRemote and
     // avoid starting a duplicate open for the same request.
     set(activeRemoteAtom, remote)
+    set(attemptedOpenRevisionAtom, get(activeRemoteRevisionAtom))
     set(snapshotAtom, snapshot)
     set(openedRemoteAtom, remote)
     return true
@@ -304,29 +351,39 @@ export function subscribeToVault(
   const offReminder = window.holi.vault.onOpen(({ remote, path, heading }) => {
     const targetRemote = remote || store.get(activeRemoteAtom)
     if (!targetRemote) return
-    const id = store.get(documentOpenIntentSequenceAtom) + 1
-    store.set(documentOpenIntentSequenceAtom, id)
-    store.set(documentOpenIntentAtom, { id, remote: targetRemote })
+    const id = store.get(documentOpenIntentAtom) + 1
+    store.set(documentOpenIntentAtom, id)
+
+    const revision = store.get(activeRemoteRevisionAtom)
+    const reportError = (error: unknown) =>
+      toast.error('Couldn’t open the document.', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    const restoreSelection = (request: number) =>
+      store
+        .set(restoreSelectedVaultAtom, { request, revision, documentIntentId: id })
+        .catch(reportError)
 
     if (targetRemote !== store.get(activeRemoteAtom)) {
-      void store
-        .set(openVaultAtom, { remote: targetRemote, documentIntentId: id })
+      const pending = store.set(openVaultAtom, { remote: targetRemote, documentIntentId: id })
+      const request = store.get(openRequestAtom)
+      void pending
         .then((landed) => {
-          const latest = store.get(documentOpenIntentAtom)
-          if (landed && latest?.id === id) {
+          if (landed && store.get(documentOpenIntentAtom) === id)
             store.set(openDocumentAtom, path, heading)
-          } else if (
-            !landed &&
-            latest?.remote === store.get(activeRemoteAtom) &&
-            store.get(openedRemoteAtom) === store.get(activeRemoteAtom)
-          ) {
-            // A newer same-vault open superseded this request while main was
-            // opening the other vault. Restore main to the still-active remote.
-            void store.set(openVaultAtom, latest.remote)
-          }
+        })
+        .catch((error: unknown) => {
+          reportError(error)
+          // The failed intent still superseded older opens. Restore the selected
+          // vault without retrying its failed flush or opening either stale path.
+          return restoreSelection(request)
         })
     } else {
       store.set(openDocumentAtom, path, heading)
+      // Main may be opening another vault, or the initial open may not yet
+      // have landed. Recover now; stale completions never start another loop.
+      if (store.get(openedRemoteAtom) !== targetRemote)
+        void restoreSelection(store.get(openRequestAtom))
     }
   })
   // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
