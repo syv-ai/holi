@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import { lstat, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 const exec = promisify(execFile)
@@ -9,8 +9,10 @@ const preparations = new Map<string, Promise<void>>()
 type IndexEntry = { mode: string; oid: string; stage: number; path: string }
 
 /** Prepare one managed clone before any seed, scan, watcher or runtime sees it. */
-export function prepareManagedClone(root: string): Promise<void> {
-  const key = resolve(root)
+export async function prepareManagedClone(root: string): Promise<void> {
+  // Resolve physical identity before queue admission so symlink and filesystem
+  // case aliases cannot prepare the same clone concurrently.
+  const key = await realpath(root)
   const previous = preparations.get(key) ?? Promise.resolve()
   const run = previous.then(() => prepare(key))
   const settled = run.catch(() => {})

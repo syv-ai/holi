@@ -7,6 +7,7 @@ import {
   mkdir,
   readFile,
   readlink,
+  realpath,
   rm,
   stat,
   symlink,
@@ -18,13 +19,27 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 
 const hooks = vi.hoisted(() => ({
   beforeTempOpen: undefined as (() => Promise<void>) | undefined,
+  afterRealpath: undefined as ((path: string) => void) | undefined,
+  beforeConfigWrite: undefined as (() => void) | undefined,
   failCheckAttr: false,
   failBlobRead: false,
 }))
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
+  const { promisify } = await import('node:util')
+  const exec = promisify(actual.execFile)
+  const execFile = actual.execFile.bind(actual)
+  Object.defineProperty(execFile, promisify.custom, {
+    value: (...args: Parameters<typeof exec>) => {
+      const commandArgs = args[1]
+      if (args[0] === 'git' && commandArgs?.join(' ') === 'config --local core.autocrlf false')
+        hooks.beforeConfigWrite?.()
+      return exec(...args)
+    },
+  })
   return {
     ...actual,
+    execFile,
     spawn: (...args: Parameters<typeof actual.spawn>) => {
       const commandArgs = args[1]
       if (hooks.failBlobRead && Array.isArray(commandArgs) && commandArgs[0] === 'cat-file') {
@@ -49,6 +64,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    realpath: async (...args: Parameters<typeof actual.realpath>) => {
+      const path = await actual.realpath(...args)
+      hooks.afterRealpath?.(String(args[0]))
+      return path
+    },
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args)
       if (String(args[0]).includes('.holi-line-ending-')) await hooks.beforeTempOpen?.()
@@ -69,6 +89,109 @@ const updatedShipped = previousShipped.replace(/^[^\n]*/, '# updated shipped lin
 const contents = { ...appsSeed, shipped: { [shippedPath]: updatedShipped } }
 
 describe('prepareManagedClone', () => {
+  it.each(['symlink', 'case'] as const)(
+    'serializes concurrent preparations through a %s alias',
+    async (kind, context) => {
+      const root = await makeClone(await makeRemote(), 'alias-clone')
+      const alias = join(dirname(root), kind === 'symlink' ? 'linked-clone' : 'ALIAS-CLONE')
+      if (kind === 'symlink') {
+        // Junctions do not need symlink privileges on Windows.
+        await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
+      } else if ((await realpath(alias).catch(() => null)) !== (await realpath(root))) {
+        context.skip()
+        return
+      }
+      await writeFile(join(root, 'candidate.md'), 'base\n')
+      await plainGit(root, ['add', 'candidate.md'])
+      await plainGit(root, ['commit', '-m', 'candidate'])
+      await plainGit(root, ['config', '--local', 'core.autocrlf', 'true'])
+      await writeFile(join(root, 'candidate.md'), 'base\r\n')
+      const indexBefore = await readFile(join(root, '.git', 'index'))
+      const headBefore = await plainGit(root, ['rev-parse', 'HEAD'])
+
+      let release!: () => void
+      let entered!: () => void
+      let canonicalized!: () => void
+      const barrier = new Promise<void>((resolve) => (release = resolve))
+      const opened = new Promise<void>((resolve) => (entered = resolve))
+      const admitted = new Promise<void>((resolve) => (canonicalized = resolve))
+      let configWrites = 0
+      hooks.beforeConfigWrite = () => configWrites++
+      hooks.beforeTempOpen = async () => {
+        entered()
+        await barrier
+      }
+      hooks.afterRealpath = (path) => {
+        if (path === alias) canonicalized()
+      }
+      const lock = join(root, '.git', 'config.lock')
+      const preparing = [prepareManagedClone(root)]
+      try {
+        await opened
+        // Keep a real Git config lock while the first preparation is paused.
+        // A second preparation entering through an alias must queue, not fail
+        // its config write against this lock.
+        await writeFile(lock, '', { flag: 'wx' })
+        let finishedEarly = false
+        const second = prepareManagedClone(alias)
+        preparing.push(second)
+        const settled = second.then(
+          () => (finishedEarly = true),
+          () => (finishedEarly = true),
+        )
+        // The canonical preparer resolves the alias before queue admission;
+        // the old preparer instead reaches Git and rejects against the lock.
+        await Promise.race([admitted, settled])
+        // Drain the admission continuation, without a contention sleep.
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        const overlapped = finishedEarly
+        const writesWhilePaused = configWrites
+        await rm(lock)
+        release()
+        const results = await Promise.allSettled(preparing)
+
+        expect(results).toEqual([
+          { status: 'fulfilled', value: undefined },
+          { status: 'fulfilled', value: undefined },
+        ])
+        expect(overlapped).toBe(false)
+        expect(writesWhilePaused).toBe(1)
+        expect(configWrites).toBe(2)
+        expect(await readFile(join(root, 'candidate.md'), 'utf8')).toBe('base\n')
+        expect(await readFile(join(root, '.git', 'index'))).toEqual(indexBefore)
+        expect(await plainGit(root, ['rev-parse', 'HEAD'])).toBe(headBefore)
+        expect(await plainGit(root, ['config', '--local', 'core.autocrlf'])).toBe('false')
+      } finally {
+        await rm(lock, { force: true })
+        release()
+        await Promise.allSettled(preparing)
+        hooks.beforeTempOpen = undefined
+        hooks.afterRealpath = undefined
+        hooks.beforeConfigWrite = undefined
+      }
+    },
+  )
+
+  it('rejects a missing physical root and allows preparation once it exists', async () => {
+    const root = join(await tmp('holi-missing-clone-'), 'clone')
+    await expect(prepareManagedClone(root)).rejects.toMatchObject({ code: 'ENOENT' })
+    await mkdir(root)
+    await plainGit(root, ['init', '-b', 'main'])
+    await expect(prepareManagedClone(root)).resolves.toBeUndefined()
+  })
+
+  it('propagates preparation failures and allows a later retry through an alias', async () => {
+    const root = await makeClone(await makeRemote(), 'retry-clone')
+    const alias = join(dirname(root), 'retry-alias')
+    await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const lock = join(root, '.git', 'config.lock')
+    await writeFile(lock, '', { flag: 'wx' })
+    await expect(prepareManagedClone(root)).rejects.toThrow(/config/)
+    await rm(lock)
+    await expect(prepareManagedClone(alias)).resolves.toBeUndefined()
+    expect(await plainGit(root, ['config', '--local', 'core.autocrlf'])).toBe('false')
+  })
+
   it('does not load Git blobs for binary assets or already-LF text', async () => {
     const root = await makeClone(await makeRemote(), 'no-blob-candidates')
     const binary = Buffer.from([0, 13, 10, 42])
