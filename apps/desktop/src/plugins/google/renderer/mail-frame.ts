@@ -336,7 +336,23 @@ function backgroundTokens(nodes: valueParser.Node[]): BackgroundToken[] {
 /** Recover CSS priority written with escapes before paint tokens are filtered. */
 function preserveEscapedImportant(declaration: Declaration): void {
   const parsed = valueParser(declaration.value)
-  const nodes = parsed.nodes
+  // CSS does not require a space before !important. The value parser keeps
+  // the delimiter attached to a preceding word when the priority is escaped.
+  const nodes = parsed.nodes.flatMap((node): valueParser.Node[] => {
+    if (node.type !== 'word') return [node]
+    let escaped = false
+    for (let index = 0; index < node.value.length; index += 1) {
+      const character = node.value[index]
+      if (character === '!' && !escaped && index > 0) {
+        return [
+          { ...node, value: node.value.slice(0, index) },
+          { ...node, value: node.value.slice(index) },
+        ]
+      }
+      escaped = character === '\\' && !escaped
+    }
+    return [node]
+  })
   const isTrivia = (node: valueParser.Node) => node.type === 'space' || node.type === 'comment'
   let end = nodes.length - 1
   while (end >= 0 && isTrivia(nodes[end]!)) end -= 1

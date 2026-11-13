@@ -220,6 +220,24 @@ describe('mailFrameDocument — theming', () => {
     },
   )
 
+  it('preserves escaped priority attached to the preceding background word', () => {
+    const style =
+      'background:url(data:image/png;base64,AA==) right top/20px 30px no-repeat!\\69mportant;background-position:left bottom'
+    const parsed = new DOMParser().parseFromString(
+      doc({ html: `<div style="${style}">image</div>`, css: `.priority{${style}}` }),
+      'text/html',
+    )
+    const inline = postcss.parse(`x{${parsed.querySelector('div')?.getAttribute('style')}}`).first
+    const sheet = postcss.parse(parsed.querySelectorAll('style')[1]?.textContent ?? '').first
+    for (const rule of [inline, sheet] as Rule[]) {
+      const background = rule.nodes.find(
+        (node): node is postcss.Declaration => node.type === 'decl' && node.prop === 'background',
+      )
+      expect(background?.important).toBe(true)
+      expect(background?.value).toMatch(/no-repeat$/)
+    }
+  })
+
   it('normalizes escaped paint properties and preserves escaped background layout', () => {
     const html = doc({
       html: '<div style="c\\6f lor:#111!important;back\\67 round-color:#fff!important">inline</div>',
