@@ -100,15 +100,9 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
   element.afterMove = () => {
     const documentId = registry.getStore().getState().core.activeDocumentId
     if (documentId === null) return
-    const metrics = viewport.forDocument(documentId).getMetrics()
     // moveBefore invokes this after the DOM move, by which point layout may
     // already have reset the viewer's page and viewport metrics.
-    position ??= lastPosition ?? {
-      documentId,
-      page: scroll.forDocument(documentId).getCurrentPage(),
-      x: metrics.scrollLeft,
-      y: metrics.scrollTop,
-    }
+    position ??= lastPosition ?? readPosition(documentId)
     settle()
   }
   const changed = () => {
