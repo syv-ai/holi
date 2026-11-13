@@ -327,6 +327,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     whileTyping: true,
   },
   {
+    id: 'scratchpad.open',
+    label: 'Open scratchpad',
+    group: 'Files',
+    keys: ['⌥⌘S'],
+    whileTyping: true,
+  },
+  {
     id: 'session.new',
     label: 'New agent session',
     group: 'Files',
