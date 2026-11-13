@@ -299,7 +299,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
   /** Each acquire's server key, by the lease it returned: a release names
    *  its lease, so it drops exactly what its acquire took, whatever has
    *  changed about the plugin since. */
-  const leases = new Map<string, string>()
+  const leases = new Map<string, () => Promise<void>>()
 
   const installOf = async (id: string): Promise<Install> => {
     const install = await deps.store.get(id)
@@ -328,7 +328,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
   /** Set up afresh: what its check said before no longer holds. Asked now
    *  when it runs in the vault; otherwise once it is turned on there. */
   const checkAfterSetup = async (root: string, id: string) => {
-    deps.checks.forget(root, id)
+    await deps.checks.forget(root, id)
     await runChecks(root, deps, { ids: [id], fresh: true })
   }
 
@@ -417,7 +417,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             manifest: fetched.manifest,
             setup: 'none',
           })
-          deps.checks.forget(ctx.root, fetched.manifest.id)
+          await deps.checks.forget(ctx.root, fetched.manifest.id)
           // A new release of a running plugin waits for consent: its commands go
           // until then.
           await linkRunningCommands(ctx.root, deps)
@@ -441,7 +441,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             manifest,
             setup: 'none',
           })
-          deps.checks.forget(ctx.root, manifest.id)
+          await deps.checks.forget(ctx.root, manifest.id)
           await linkRunningCommands(ctx.root, deps)
           const rows = await listPlugins(ctx.root, deps)
           return rows.find((r) => r.id === manifest.id)!
@@ -579,10 +579,10 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       cli: { args: ['id'], summary: "a running community plugin's folder on this machine" },
       params: idParams,
       run: async (ctx, { id }) => {
-        const row = (await listPlugins(ctx.root, deps)).find((r) => r.id === id)
-        if (row === undefined || !row.running)
+        const entry = (await pluginEntries(ctx.root, deps)).find(({ row }) => row.id === id)
+        if (entry === undefined || !entry.row.running || entry.install === null)
           throw new CapabilityError('NOT_FOUND', `${id} does not run in this vault here`)
-        return deps.store.codeDir(await installOf(id))
+        return deps.store.codeDir(entry.install)
       },
       text: (dir) => dir,
     }),
@@ -643,7 +643,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
           const install = await deps.store.remove(id)
           await deps.consent.forget(id)
-          deps.checks.forget(ctx.root, id)
+          await deps.checks.forget(ctx.root, id)
           await linkRunningCommands(ctx.root, deps)
           if (install?.source.kind === 'release')
             await rm(join(deps.store.releaseDir(id, install.source.commit), '..'), {
@@ -666,7 +666,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         const file = await resolveRelative(ctx.root, servedFile(row, path)!)
         const key = serverKey(ctx.root, row.id, path)
         const bridge = deps.bridgeScript()
-        const { port } = await deps.supervisor.acquire(key, {
+        const acquired = await deps.supervisor.acquire(key, {
           cwd: deps.store.codeDir(install),
           argv: (port) => expandCommand(install.manifest.serve!, { file, vault: ctx.root, port }),
           env: (port) =>
@@ -678,8 +678,8 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             }),
         })
         const lease = randomUUID()
-        leases.set(lease, key)
-        return { id: row.id, port, lease }
+        leases.set(lease, acquired.release)
+        return { id: row.id, port: acquired.port, lease }
       },
     }),
 
@@ -687,10 +687,10 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       doors: ['ui'],
       params: (raw: unknown) => ({ lease: stringParam(paramsObject(raw), 'lease') }),
       run: async (_ctx, { lease }) => {
-        const key = leases.get(lease)
-        if (key === undefined) return
+        const release = leases.get(lease)
+        if (release === undefined) return
         leases.delete(lease)
-        await deps.supervisor.release(key)
+        await release()
       },
     }),
 
@@ -752,7 +752,7 @@ export async function runChecks(
       // Turned off, or no longer ready: what its check said no longer holds,
       // so turning it on again asks afresh.
       if (!row.running) {
-        deps.checks.forget(root, row.id)
+        await deps.checks.forget(root, row.id)
         continue
       }
       if (opts.ids !== undefined && !opts.ids.includes(row.id)) continue

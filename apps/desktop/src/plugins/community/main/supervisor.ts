@@ -49,7 +49,7 @@ export interface SupervisorDeps {
 export interface Supervisor {
   /** The server for `key`, started with `spec` if none is up; resolves when it
    *  is ready. Each call is one reference. */
-  acquire(key: string, spec: ServeSpec): Promise<{ port: number }>
+  acquire(key: string, spec: ServeSpec): Promise<{ port: number; release(): Promise<void> }>
   /** Drop one reference; the last stops the server. */
   release(key: string): Promise<void>
   /** Stop every server whose key `which` accepts (all, without it),
@@ -232,13 +232,22 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     throw new Error(message)
   }
 
+  const releaseServer = async (key: string, server: Server) => {
+    if (!current(key, server)) return
+    server.refs--
+    if (server.refs <= 0) await stop(key, server)
+  }
+
   return {
     acquire(key, spec) {
       if (disposed) return Promise.reject(new Error('the supervisor is disposed'))
       const existing = servers.get(key)
       if (existing !== undefined) {
         existing.refs++
-        return existing.ready
+        return existing.ready.then(({ port }) => ({
+          port,
+          release: () => releaseServer(key, existing),
+        }))
       }
       const server: Server = {
         refs: 1,
@@ -256,13 +265,11 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
       server.ready = start(key, server, spec)
       // A failure is reported through `onState`; whoever awaits sees it too.
       server.ready.catch(() => {})
-      return server.ready
+      return server.ready.then(({ port }) => ({ port, release: () => releaseServer(key, server) }))
     },
     async release(key) {
       const server = servers.get(key)
-      if (server === undefined) return
-      server.refs--
-      if (server.refs <= 0) await stop(key, server)
+      if (server !== undefined) await releaseServer(key, server)
     },
     async stopAll(which = () => true) {
       await Promise.all(

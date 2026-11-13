@@ -27,9 +27,9 @@ export interface Checks {
   run(root: string, id: string, check: PluginCheck, cwd: string): Promise<CheckResult>
   /** Drop the answer, for a plugin removed, replaced, set up again or turned
    *  off. A check still running from before is not kept when it ends. */
-  forget(root: string, id: string): void
+  forget(root: string, id: string): Promise<void>
   /** Stop every check still running, as the vault's plugins stop. */
-  stop(): void
+  stop(): Promise<void>
 }
 
 const keyOf = (root: string, id: string) => `${root}\0${id}`
@@ -38,7 +38,10 @@ export function createChecks(runner: typeof runCheck = runCheck): Checks {
   const results = new Map<string, CheckResult>()
   /** Bumped by `forget`: an answer from an older generation is stale. */
   const generations = new Map<string, number>()
-  const running = new Map<string, { generation: number; ask: Promise<CheckResult> }>()
+  const running = new Map<
+    string,
+    { generation: number; ask: Promise<CheckResult>; abort: AbortController }
+  >()
   const stopping = new AbortController()
   const generationOf = (key: string) => generations.get(key) ?? 0
   return {
@@ -48,13 +51,16 @@ export function createChecks(runner: typeof runCheck = runCheck): Checks {
       const generation = generationOf(key)
       const pending = running.get(key)
       if (pending !== undefined && pending.generation === generation) return pending.ask
+      const abort = new AbortController()
+      const stop = () => abort.abort()
+      stopping.signal.addEventListener('abort', stop, { once: true })
       const ask = (async (): Promise<CheckResult> => {
         let ok = false
         try {
           ok = await runner({
             argv: expandCommand(check.run, { vault: root }),
             cwd,
-            signal: stopping.signal,
+            signal: abort.signal,
           })
         } catch {
           // Could not be run: it cannot pass.
@@ -63,16 +69,23 @@ export function createChecks(runner: typeof runCheck = runCheck): Checks {
         if (generationOf(key) === generation) results.set(key, result)
         return result
       })().finally(() => {
+        stopping.signal.removeEventListener('abort', stop)
         if (running.get(key)?.ask === ask) running.delete(key)
       })
-      running.set(key, { generation, ask })
+      running.set(key, { generation, ask, abort })
       return ask
     },
-    forget(root, id) {
+    async forget(root, id) {
       const key = keyOf(root, id)
       results.delete(key)
       generations.set(key, generationOf(key) + 1)
+      const pending = running.get(key)
+      pending?.abort.abort()
+      if (pending !== undefined) await pending.ask
     },
-    stop: () => stopping.abort(),
+    async stop() {
+      stopping.abort()
+      await Promise.all([...running.values()].map(({ ask }) => ask))
+    },
   }
 }
