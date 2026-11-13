@@ -9,13 +9,13 @@
  * and on refresh, never polled. The renderer paints a move first and Google's
  * answer corrects it.
  *
- * What it may change is what the agent may: the person's own events on the
- * primary calendar with nobody invited, since any other change emails people.
- * Everything else reads, and opens in Google Calendar.
+ * Editing and deleting remain limited to solo primary-calendar events, as
+ * on the agent's path. UI creation can invite guests and request Google Meet.
+ * Existing attendee events read and open in Google Calendar.
  *
  * It owns its layout (`h-full`), so whatever mounts it gives it a sized box.
  */
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   EventCalendar,
@@ -34,6 +34,7 @@ import type {
   EventCalendarSlotInfo,
 } from '@/components/ui/event-calendar/event-calendar-types'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   Empty,
   EmptyContent,
@@ -128,7 +129,16 @@ function WheelSwipe(): null {
 
 export function CalendarView(): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
-  const { account } = useGoogleAccount()
+  const { account, currentSub } = useGoogleAccount()
+  if (account === undefined) {
+    return <Skeleton className="h-full w-full" role="status" aria-label="Loading calendar" />
+  }
+  return <CalendarForAccount key={`${remote}:${currentSub}`} />
+}
+
+function CalendarForAccount(): React.JSX.Element {
+  const remote = useAtomValue(activeRemoteAtom)
+  const { account, currentSub } = useGoogleAccount()
   const calendar = useGoogleCalendar(remote)
   const openSettings = useSetAtom(openSettingsSectionAtom)
   const openNote = useSetAtom(openDocumentAtom)
@@ -140,6 +150,14 @@ export function CalendarView(): React.JSX.Element {
   const [sheet, setSheet] = useState<EventSheetState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const sheetRef = useRef(sheet)
+  sheetRef.current = sheet
+  useEffect(
+    () => () => {
+      sheetRef.current = null
+    },
+    [],
+  )
   // The visible date, shared by the rail's mini calendar and the grid. One
   // source of truth: the mini calendar and grid nav both write it, both read it.
   const [date, setDate] = useState<Date>(() => new Date())
@@ -196,6 +214,7 @@ export function CalendarView(): React.JSX.Element {
   const openCreate = useCallback(
     (start: Date, allDay = false, end?: Date) => {
       setError(null)
+      setSaving(false)
       const startDay = localDate(start)
       // Slot ends are exclusive; store the inclusive last day so multi-day
       // drag-creates keep their span.
@@ -211,6 +230,7 @@ export function CalendarView(): React.JSX.Element {
           // A timed quick-add defaults to 30 min so Save passes on the first try.
           end: allDay ? '10:00' : hhmm(end ?? addMinutes(start, 30)),
           allDay,
+          key: crypto.randomUUID(),
           calendarName: ownCalendar?.name ?? account?.email ?? 'Your calendar',
           color: ownCalendar?.color ?? FALLBACK_COLOR,
         },
@@ -220,17 +240,20 @@ export function CalendarView(): React.JSX.Element {
   )
 
   const openView = useCallback((occurrence: Occurrence) => {
+    setSaving(false)
     setError(null)
     setSheet({ mode: 'view', draft: draftFromOccurrence(occurrence) })
   }, [])
 
   const startEdit = useCallback(() => {
+    setSaving(false)
     setError(null)
     setSheet((prev) => (prev ? { mode: 'edit', draft: prev.draft } : prev))
   }, [])
 
   const closeSheet = useCallback((open: boolean) => {
     if (!open) {
+      setSaving(false)
       setSheet(null)
       setError(null)
     }
@@ -249,26 +272,26 @@ export function CalendarView(): React.JSX.Element {
       const times = { title, start, end, allDay: draft.allDay }
       if (sheet.mode === 'edit' && draft.googleId !== undefined) {
         await calendar.update(draft.googleId, times)
-      } else {
-        await calendar.create({ ...times, location: draft.location.trim() })
       }
-      setSheet(null)
+      if (sheetRef.current === sheet) setSheet(null)
     } catch (err) {
-      setError(messageOf(err, 'Could not save the event.'))
+      if (sheetRef.current === sheet) setError(messageOf(err, 'Could not save the event.'))
     } finally {
-      setSaving(false)
+      if (sheetRef.current === sheet) setSaving(false)
     }
   }
 
   const deleteDraft = async (): Promise<void> => {
-    const googleId = sheet?.draft.googleId
+    const opened = sheet
+    const googleId = opened?.draft.googleId
     if (googleId === undefined) return
     try {
       await calendar.remove(googleId)
+      if (sheetRef.current !== opened) return
       toast.success('Event deleted.')
       setSheet(null)
     } catch (err) {
-      setError(messageOf(err, 'Could not delete the event.'))
+      if (sheetRef.current === opened) setError(messageOf(err, 'Could not delete the event.'))
     }
   }
 
@@ -277,7 +300,8 @@ export function CalendarView(): React.JSX.Element {
    * permalink goes in the body as an ordinary markdown link.
    */
   const createTask = async (): Promise<void> => {
-    const draft = sheet?.draft
+    const opened = sheet
+    const draft = opened?.draft
     if (remote === null || draft?.data === undefined) return
     try {
       const { path } = await tasksCreateCap.create(remote, {
@@ -287,10 +311,11 @@ export function CalendarView(): React.JSX.Element {
           `[${draft.title}](${draft.data.htmlLink})\n` +
           (draft.data.description === null ? '' : `\n${draft.data.description}\n`),
       })
+      if (sheetRef.current !== opened) return
       setSheet(null)
       openNote(path)
     } catch (err) {
-      setError(messageOf(err, 'Could not make a task.'))
+      if (sheetRef.current === opened) setError(messageOf(err, 'Could not make a task.'))
     }
   }
 
@@ -527,6 +552,8 @@ export function CalendarView(): React.JSX.Element {
         </EventCalendar>
 
         <EventSheet
+          meetingIdentity={remote && currentSub ? { remote, sub: currentSub } : null}
+          onCreated={calendar.reload}
           state={sheet}
           error={error}
           saving={saving}

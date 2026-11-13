@@ -3,8 +3,9 @@
  * events ReUI's event calendar draws, and the writes that view makes.
  *
  * Everything here goes through the capabilities the Agenda already uses
- * (`google.agenda`, `agendaCached`, `calendars`, `setCalendar`, `schedule`)
- * plus `reschedule` and `unschedule`, the agent's own attendee-free writes.
+ * (`google.agenda`, `agendaCached`, `calendars`, `setCalendar`) plus
+ * `reschedule` and `unschedule`, the agent's own attendee-free writes.
+ * The create sheet owns UI-only meeting creation and its recovery journal.
  * Main computes nothing about "today": the window is the visible range the
  * calendar reports, in this machine's time, as the Agenda's is.
  */
@@ -156,7 +157,6 @@ export interface GoogleCalendarData {
   setCalendarEnabled: (id: string, enabled: boolean) => void
   /** Paint a move before Google answers it; the next load corrects it. */
   patchLocal: (key: string, times: Pick<EventTimes, 'start' | 'end' | 'allDay'>) => void
-  create: (times: EventTimes & { title: string; location: string }) => Promise<void>
   update: (googleId: string, times: EventTimes) => Promise<void>
   remove: (googleId: string) => Promise<void>
 }
@@ -266,19 +266,6 @@ export function useGoogleCalendar(remote: string | null): GoogleCalendarData {
     [],
   )
 
-  const create = useCallback(
-    async (times: EventTimes & { title: string; location: string }) => {
-      if (remote === null) throw new Error('No vault is open.')
-      await googleCap.schedule(remote, {
-        ...eventParams(times),
-        title: times.title,
-        ...(times.location === '' ? {} : { location: times.location }),
-      })
-      load()
-    },
-    [remote, load],
-  )
-
   const update = useCallback(
     async (googleId: string, times: EventTimes) => {
       if (remote === null) throw new Error('No vault is open.')
@@ -306,7 +293,6 @@ export function useGoogleCalendar(remote: string | null): GoogleCalendarData {
     reload,
     setCalendarEnabled,
     patchLocal,
-    create,
     update,
     remove,
   }

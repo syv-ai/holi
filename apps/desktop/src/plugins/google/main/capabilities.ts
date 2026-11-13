@@ -75,6 +75,7 @@ import type { OutgoingMail } from './mime'
 import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
+import { meetingParams, type MeetingCreation } from './meeting-creation'
 import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 
@@ -88,6 +89,7 @@ export const GOOGLE_NAMESPACES = ['google'] as const
 
 export interface GoogleCapabilityDeps {
   accounts: GoogleAccountsManager
+  meetings?: MeetingCreation
   /** The vault's cached data layer; null when no account is connected to it. */
   dataFor(remote: string): Promise<GoogleData | null>
   /** This vault's Google settings on this machine (`GOOGLE_INFO.settings`):
@@ -150,6 +152,7 @@ function windowParams(raw: unknown): { from: string; to: string } {
   const p = paramsObject(raw)
   const fromText = optionalStringParam(p, 'from')
   const toText = optionalStringParam(p, 'to')
+  // Main's CLI default, evaluated per request; this clock never runs in React render.
   const start = fromText === undefined ? Date.now() : instant(fromText, 'from')
   const end = toText === undefined ? start + DEFAULT_AGENDA_DAYS * DAY_MS : instant(toText, 'to')
   if (end <= start) throw new CapabilityError('BAD_REQUEST', 'from must be before to')
@@ -924,8 +927,49 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
-    /** A solo event, the agent's and the agenda's alike. There is no way to
-     *  invite anyone: inviting would email them. */
+    /** Person-created meetings only. Every send is an explicit UI action;
+     * the agent and app doors never reach this surface. */
+    'google.meetingState': cap({
+      doors: ['ui'],
+      params: (raw) => ({ sub: stringParam(paramsObject(raw), 'sub') }),
+      run: async (ctx, { sub }) =>
+        google(() => {
+          if (!deps.meetings) throw new Error('Meeting creation is unavailable.')
+          return deps.meetings.state(ctx.remote, sub)
+        }),
+    }),
+    'google.createMeeting': cap({
+      doors: ['ui'],
+      params: meetingParams,
+      run: async (ctx, input) =>
+        google(() => {
+          if (!deps.meetings) throw new Error('Meeting creation is unavailable.')
+          return deps.meetings.submit(ctx.remote, input)
+        }),
+    }),
+    'google.checkMeeting': cap({
+      doors: ['ui'],
+      params: (raw) => ({ sub: stringParam(paramsObject(raw), 'sub') }),
+      run: async (ctx, { sub }) =>
+        google(() => {
+          if (!deps.meetings) throw new Error('Meeting creation is unavailable.')
+          return deps.meetings.check(ctx.remote, sub)
+        }),
+    }),
+    'google.finishMeeting': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return { sub: stringParam(p, 'sub'), operation: stringParam(p, 'operation') }
+      },
+      run: async (ctx, { sub, operation }) => {
+        if (!deps.meetings) throw new Error('Meeting creation is unavailable.')
+        await google(() => deps.meetings!.finish(ctx.remote, sub, operation))
+        return ok
+      },
+    }),
+
+    /** The agent and Agenda's existing solo-only creation path stays silent. */
     'google.schedule': cap({
       doors: ['ui', 'cli'],
       cli: {
