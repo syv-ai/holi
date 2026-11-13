@@ -39,6 +39,7 @@ const row = (id = 'dash', status: PluginRow['status'] = 'ready'): PluginRow => (
   serve: null,
   apps: [],
   bin: [],
+  cli: null,
   commandsNote: null,
   check: null,
 })

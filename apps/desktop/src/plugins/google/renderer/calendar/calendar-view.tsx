@@ -533,9 +533,9 @@ export function CalendarView(): React.JSX.Element {
       {/* The calendar is the page: no card, inset or fill of its own, so the
           window's surface shows through and the rail's border is the only
           divider. */}
-      <div className="flex h-full w-full min-w-0 flex-row overflow-hidden">
+      <div className="@container/calendar-host flex h-full w-full min-w-0 flex-row overflow-hidden">
         <CalendarRail
-          className="hidden w-72 shrink-0 flex-col border-e lg:flex"
+          className="hidden w-72 shrink-0 flex-col border-e @min-[64rem]/calendar-host:flex"
           date={date}
           onDateChange={setDate}
           events={items}
@@ -619,17 +619,17 @@ export function CalendarView(): React.JSX.Element {
             </div>
           )}
           renderNoEvents={renderNoEvents}
-          className="min-w-0 flex-1"
+          className="@container/calendar min-w-0 flex-1"
         >
           {/* EventCalendarNav already carries px-2 py-2, so
-                the row only needs matching right padding. Below sm the toolbar
-                takes a full row of its own. */}
+                the row only needs matching right padding. Below 48rem of calendar
+                width, the toolbar takes a full row of its own. */}
           <div className="flex flex-wrap items-center gap-x-2 pe-2">
-            <EventCalendarNav className="w-full min-w-0 flex-nowrap sm:w-auto sm:flex-1" />
-            <EventCalendarToolbar className="w-full sm:w-auto">
-              {/* The rail owns the calendars list at lg+, so this menu is
-                    only the narrow host for it. */}
-              <div className="lg:hidden">
+            <EventCalendarNav className="w-full min-w-0 flex-nowrap @min-[48rem]/calendar:w-auto @min-[48rem]/calendar:flex-1" />
+            <EventCalendarToolbar className="w-full @min-[48rem]/calendar:w-auto">
+              {/* The rail owns the calendars list when the calendar pane is
+                    at least 64rem wide, so keep the menu in narrower panes. */}
+              <div className="@min-[64rem]/calendar-host:hidden">
                 <CalendarsMenu
                   calendars={calendar.calendars}
                   onToggle={calendar.setCalendarEnabled}
@@ -645,7 +645,7 @@ export function CalendarView(): React.JSX.Element {
               </IconButton>
               <Button
                 ref={newEventTrigger}
-                className="flex-1 sm:flex-none"
+                className="flex-1 @min-[48rem]/calendar:flex-none"
                 onClick={(event) =>
                   openCreate(quickAddStart(date), false, undefined, {
                     rect: event.currentTarget.getBoundingClientRect(),

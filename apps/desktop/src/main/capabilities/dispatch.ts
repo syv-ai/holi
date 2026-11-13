@@ -122,6 +122,12 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       isCurrent,
       beforeInvoke,
     )
+    if (result.run !== undefined) {
+      if (!(await enabled(name, root, remote))) {
+        throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+      }
+      result.validateRun?.()
+    }
     if (result.writes) {
       const active = deps.active()
       if (active?.remote === remote && active.root === root) {

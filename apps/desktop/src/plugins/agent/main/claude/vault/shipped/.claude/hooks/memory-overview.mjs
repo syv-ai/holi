@@ -319,7 +319,12 @@ function communityPlugins() {
       pin.bin !== null && typeof pin.bin === 'object' && !Array.isArray(pin.bin)
         ? Object.keys(pin.bin).filter((name) => /^[a-z0-9][a-z0-9._-]*$/.test(name))
         : []
-    pins.push({ id, bin })
+    const cliVerbs = pin.cli !== null && typeof pin.cli === 'object' ? pin.cli.verbs : null
+    const verbs =
+      cliVerbs !== null && typeof cliVerbs === 'object' && !Array.isArray(cliVerbs)
+        ? Object.keys(cliVerbs).filter((verb) => /^[a-z][a-z0-9-]*$/.test(verb))
+        : []
+    pins.push({ id, bin, verbs })
   }
   if (pins.length === 0) return null
   const committed = pluginSwitches(readOr(join(root, '.holi/settings/plugins.yaml')))
@@ -333,9 +338,14 @@ function communityPlugins() {
   if (hostState !== 'on') {
     return `Community plugins: ${pins.map((p) => p.id).join(', ')}, none running: community plugins are ${hostState}. Turned on in ${where}.`
   }
-  const each = pins.map(({ id, bin }) => {
+  const each = pins.map(({ id, bin, verbs }) => {
     const s = state(id)
-    return s === 'on' && bin.length > 0 ? `${id} (on, commands: ${bin.join(', ')})` : `${id} (${s})`
+    if (s !== 'on') return `${id} (${s})`
+    const gives = [
+      ...(bin.length > 0 ? [`commands: ${bin.join(', ')}`] : []),
+      ...(verbs.length > 0 ? [`verbs: holi plugin ${id} ${verbs.join('|')}`] : []),
+    ]
+    return gives.length === 0 ? `${id} (on)` : `${id} (on, ${gives.join('; ')})`
   })
   return `Community plugins: ${each.join(', ')}. Turned on and off in ${where}.`
 }

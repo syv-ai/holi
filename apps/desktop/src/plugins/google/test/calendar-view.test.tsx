@@ -187,6 +187,28 @@ describe('mapping Google onto the calendar', () => {
 })
 
 describe('the calendar view', () => {
+  test('uses pane-width containers for the rail and toolbar controls', async () => {
+    const { container } = render(<CalendarView />)
+    const host = container.querySelector<HTMLElement>('[class*="@container/calendar-host"]')!
+    const rail = container.querySelector<HTMLElement>('aside')!
+    const calendar = container.querySelector<HTMLElement>('[data-slot="event-calendar"]')!
+    const nav = container.querySelector<HTMLElement>('[data-slot="event-calendar-nav"]')!
+    const toolbar = container.querySelector<HTMLElement>('[data-slot="event-calendar-toolbar"]')!
+    const calendarsMenu = container.querySelector<HTMLElement>(
+      '[class*="@min-[64rem]/calendar-host:hidden"]',
+    )
+
+    expect(host).toBeInTheDocument()
+    expect(rail).toHaveClass('@min-[64rem]/calendar-host:flex')
+    expect(calendar).toHaveClass('@container/calendar')
+    expect(nav).toHaveClass('@min-[48rem]/calendar:w-auto')
+    expect(toolbar).toHaveClass('@min-[48rem]/calendar:w-auto')
+    expect(calendarsMenu).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Calendars' })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Select view' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New event' })).toBeInTheDocument()
+  })
+
   test('one sideways swipe pages one week, and a vertical scroll pages none', async () => {
     const { container } = render(<CalendarView />)
     await screen.findAllByText('Focus block')
