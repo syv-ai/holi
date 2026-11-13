@@ -323,6 +323,37 @@ describe('vaults', () => {
     expect(await caller.vaults.list()).toEqual([])
   })
 
+  it('deleteClones closes every runtime before trashing any clone', async () => {
+    const { caller, host, registry, base, root } = await rig({ 'a.md': '# A\n' })
+    const secondRoot = join(base, 'second-clone')
+    await mkdir(secondRoot, { recursive: true })
+    await seedVault(secondRoot)
+    for (const cloneRoot of [root, secondRoot]) {
+      await plainGit(cloneRoot, ['init', '-b', 'main'])
+      await plainGit(cloneRoot, ['config', 'user.name', 'Test'])
+      await plainGit(cloneRoot, ['config', 'user.email', 'test@example.com'])
+      await plainGit(cloneRoot, ['add', '-A'])
+      await plainGit(cloneRoot, ['commit', '-m', 'seed'])
+    }
+    await registry.add({
+      remote: 'syv-ai/second',
+      path: secondRoot,
+      name: 'second',
+      lastOpenedAt: '2026-07-01T00:00:00Z',
+    })
+
+    await caller.vaults.open({ remote: REMOTE })
+    await host.getOrOpen('syv-ai/second')
+    expect(host.get(REMOTE)).not.toBeNull()
+    expect(host.get('syv-ai/second')).not.toBeNull()
+
+    await caller.vaults.deleteClones()
+
+    expect(host.get(REMOTE)).toBeNull()
+    expect(host.get('syv-ai/second')).toBeNull()
+    expect(await caller.vaults.list()).toEqual([])
+  })
+
   it('deleteClones keeps a clone registered if trashing it fails (never orphaned)', async () => {
     const { caller, trashItem } = await rig({ 'a.md': '# A\n' })
     trashItem.mockRejectedValueOnce(new Error('trash unavailable'))
