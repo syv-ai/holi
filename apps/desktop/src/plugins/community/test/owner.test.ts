@@ -35,21 +35,20 @@ describe('community installation owner', () => {
     expect(entered).toEqual(['a-start', 'a-end', 'b'])
   })
 
-  test('forwards server events only to the attachment for the captured vault', async () => {
+  test('forwards server events only to its captured vault and stops its own servers', async () => {
     const userData = await mkdtemp(join(tmpdir(), 'holi-community-owner-'))
     roots.push(userData)
     const owner = communityOwner({ userData })
     const eventsA: unknown[] = []
     const eventsB: unknown[] = []
-    const detachA = owner.attach('/vault/a', 'a', {
+    const a = owner.attach('/vault/a', 'a', {
       emit: (_remote, _name, payload) => eventsA.push(payload),
       frameOrigin: () => () => {},
     })
-    owner.attach('/vault/b', 'b', {
+    const b = owner.attach('/vault/b', 'b', {
       emit: (_remote, _name, payload) => eventsB.push(payload),
       frameOrigin: () => () => {},
     })
-    // State changes from the shared supervisor carry the starting vault root.
     owner.supervisor
       .acquire('/vault/a\0sample\0a.md', {
         cwd: userData,
@@ -57,10 +56,69 @@ describe('community installation owner', () => {
         env: () => process.env,
       })
       .catch(() => {})
-    // The starting state is synchronous, before readiness waits for the child.
     expect(eventsA).toHaveLength(1)
     expect(eventsB).toHaveLength(0)
-    await detachA()
+    await a.close(async () => {})
+    await a.close(async () => {})
+    expect(a.isLive()).toBe(false)
+    expect(eventsA).toHaveLength(1)
+    await b.close(async () => {})
+    await owner.supervisor.dispose()
+  })
+
+  test('notifies every attachment and closes admission before draining work', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'holi-community-owner-'))
+    roots.push(userData)
+    const owner = communityOwner({ userData })
+    let notificationsA = 0
+    let notificationsB = 0
+    const a = owner.attach('/vault/a', 'a', { emit: () => {}, frameOrigin: () => () => {} })
+    const b = owner.attach('/vault/b', 'b', { emit: () => {}, frameOrigin: () => () => {} })
+    a.observeMutations(async () => {
+      notificationsA++
+    })
+    b.observeMutations(async () => {
+      notificationsB++
+    })
+    await owner.mutate(async () => {})
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(notificationsA).toBe(1)
+    expect(notificationsB).toBe(1)
+
+    let release!: () => void
+    let entered!: () => void
+    const enteredWork = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const running = a.run(async () => {
+      entered()
+      await blocked
+    })
+    await enteredWork
+    let cleanupCount = 0
+    const closing = a.close(async () => {
+      cleanupCount++
+    })
+    expect(a.isLive()).toBe(false)
+    await expect(a.run(async () => {})).rejects.toThrow('closed')
+    const sameClose = a.close(async () => {
+      cleanupCount++
+    })
+    expect(() =>
+      owner.attach('/vault/a', 'a-new', { emit: () => {}, frameOrigin: () => () => {} }),
+    ).toThrow('already active')
+    release()
+    await Promise.all([running, closing, sameClose])
+    expect(cleanupCount).toBe(1)
+    const reopened = owner.attach('/vault/a', 'a-new', {
+      emit: () => {},
+      frameOrigin: () => () => {},
+    })
+    await reopened.close(async () => {})
+    await b.close(async () => {})
     await owner.supervisor.dispose()
   })
 })

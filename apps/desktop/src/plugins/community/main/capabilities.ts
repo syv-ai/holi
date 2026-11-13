@@ -127,6 +127,10 @@ export interface CommunityDeps {
   checks: Checks
   /** Serialize machine-wide install, consent, setup and removal transitions. */
   mutate<T>(work: () => Promise<T>): Promise<T>
+  /** Attachment lifetime, supplied by the main-process owner; omitted by focused tests. */
+  signal?: AbortSignal
+  live?: () => boolean
+  run?<T>(work: () => Promise<T>): Promise<T>
   /** The `PATH` the vault's agent inherits, before Holi's own folders: a
    *  plugin's command may not take a name already on it. By default
    *  `toolPath()`: a Dock-launched Holi's own `PATH` lacks the folders the
@@ -301,6 +305,11 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
    *  changed about the plugin since. */
   const leases = new Map<string, () => Promise<void>>()
 
+  const ensureLive = () => {
+    if (deps.live?.() === false || deps.signal?.aborted)
+      throw new CapabilityError('FORBIDDEN', 'community attachment is closed')
+  }
+
   const installOf = async (id: string): Promise<Install> => {
     const install = await deps.store.get(id)
     if (install === null) throw new CapabilityError('NOT_FOUND', `${id} is not installed here`)
@@ -332,7 +341,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     await runChecks(root, deps, { ids: [id], fresh: true })
   }
 
-  return {
+  const table = {
     'community.list': cap({
       doors: ['ui'],
       params: noParams,
@@ -410,6 +419,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             },
             deps.git,
           )
+          ensureLive()
           claimFirstParty(fetched.manifest.id)
           await deps.store.put({
             id: fetched.manifest.id,
@@ -460,6 +470,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           // The commit the dialog showed: a re-fetch in between asks again.
           if (installCommit(install) !== commit)
             throw new CapabilityError('BAD_REQUEST', `${id} changed since it was shown; look again`)
+          ensureLive()
           await deps.consent.grant(id, commit)
         }),
     }),
@@ -474,6 +485,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           const commit = installCommit(install)
           if (commit !== null && !(await deps.consent.has(id, commit)))
             throw new CapabilityError('FORBIDDEN', `nobody here has agreed to run ${id} ${commit}`)
+          ensureLive()
           if (install.manifest.setup === undefined) {
             await deps.store.setSetup(id, 'ok')
             await seedRunningApps(ctx.root, deps)
@@ -484,10 +496,14 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           deps.emit(ctx.remote, 'setup-log', { id, line: null })
           const ok = await runSetup({
             argv: expandCommand(install.manifest.setup, { vault: ctx.root }),
+            signal: deps.signal,
             cwd: deps.store.codeDir(install),
             logPath: deps.store.setupLog(id),
-            onLine: (line) => deps.emit(ctx.remote, 'setup-log', { id, line }),
+            onLine: (line) => {
+              if (deps.live?.() !== false) deps.emit(ctx.remote, 'setup-log', { id, line })
+            },
           })
+          ensureLive()
           await deps.store.setSetup(id, ok ? 'ok' : 'failed')
           // Set up in a vault that runs it: its apps and commands arrive now, not
           // at the next open.
@@ -641,6 +657,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         deps.mutate(async () => {
           // Its servers first: their code is about to go.
           await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
+          ensureLive()
           const install = await deps.store.remove(id)
           await deps.consent.forget(id)
           await deps.checks.forget(ctx.root, id)
@@ -708,6 +725,22 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       },
     }),
   } satisfies CapabilityTable
+  for (const capability of Object.values(table)) {
+    const mutable = capability as { run: (ctx: never, params: never) => Promise<unknown> }
+    const run = mutable.run
+    mutable.run = async (ctx, params) => {
+      if (deps.live?.() === false)
+        throw new CapabilityError('FORBIDDEN', 'community attachment is closed')
+      try {
+        return await (deps.run ? deps.run(() => run(ctx, params)) : run(ctx, params))
+      } catch (error) {
+        if (deps.signal?.aborted || deps.live?.() === false)
+          throw new CapabilityError('FORBIDDEN', 'community attachment is closed')
+        throw error
+      }
+    }
+  }
+  return table
 }
 
 /** The vault a server key belongs to, and its file, for events. */
