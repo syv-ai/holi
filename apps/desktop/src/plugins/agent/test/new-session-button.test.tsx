@@ -179,6 +179,81 @@ test('loading, error retry, and ready-empty states are announced', async () => {
   expect(screen.getByRole('status')).toHaveTextContent(/no agents available/i)
 })
 
+test('error retry keeps keyboard focus in the menu after providers load', async () => {
+  const store = setup()
+  store.set(providersAtom, { kind: 'error', message: 'offline' })
+  let resolveListing!: (value: typeof providers) => void
+  providerListing.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveListing = resolve
+      }),
+  )
+  await userEvent.click(screen.getByRole('button', { name: /^New .*session/ }))
+  await userEvent.keyboard('{ArrowDown}{Enter}')
+  await waitFor(() => expect(providerListing).toHaveBeenCalledTimes(1))
+  await act(async () => resolveListing(providers))
+  const choices = await screen.findAllByRole('menuitem')
+  await waitFor(() => expect(choices[0]).toHaveFocus())
+  await userEvent.keyboard('{ArrowDown}{Enter}')
+  await waitFor(() =>
+    expect(starts).toHaveBeenCalledWith('o/vault', expect.objectContaining({ provider: 'codex' })),
+  )
+})
+
+test('empty-list retry keeps keyboard focus in the menu after providers load', async () => {
+  const store = setup()
+  store.set(providersAtom, { kind: 'ready', providers: [] })
+  let resolveListing!: (value: typeof providers) => void
+  providerListing.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveListing = resolve
+      }),
+  )
+  await userEvent.click(screen.getByRole('button', { name: /^New .*session/ }))
+  await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+  await waitFor(() => expect(providerListing).toHaveBeenCalledTimes(1))
+  await act(async () => resolveListing(providers))
+  const choices = await screen.findAllByRole('menuitem')
+  await waitFor(() => expect(choices[0]).toHaveFocus())
+  await userEvent.keyboard('{ArrowDown}{Enter}')
+  await waitFor(() =>
+    expect(starts).toHaveBeenCalledWith('o/vault', expect.objectContaining({ provider: 'codex' })),
+  )
+})
+
+test.each(['Escape', 'outside click'] as const)(
+  'delayed error retry completion after %s does not steal focus',
+  async (dismissal) => {
+    const store = setup()
+    store.set(providersAtom, { kind: 'error', message: 'offline' })
+    let resolveListing!: (value: typeof providers) => void
+    providerListing.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveListing = resolve
+        }),
+    )
+    const trigger = screen.getByRole('button', { name: /^New .*session/ })
+    const outside = document.createElement('button')
+    outside.textContent = 'Outside'
+    document.body.append(outside)
+    try {
+      await userEvent.click(trigger)
+      await userEvent.keyboard('{ArrowDown}{Enter}')
+      await waitFor(() => expect(providerListing).toHaveBeenCalledTimes(1))
+      if (dismissal === 'Escape') await userEvent.keyboard('{Escape}')
+      else await userEvent.click(outside)
+      await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+      await act(async () => resolveListing(providers))
+      await waitFor(() => expect(dismissal === 'Escape' ? trigger : outside).toHaveFocus())
+    } finally {
+      outside.remove()
+    }
+  },
+)
+
 test('outside dismissal keeps focus on the outside control', async () => {
   setup()
   const outside = document.createElement('button')
