@@ -36,7 +36,7 @@ describe('Windows askpass', () => {
     try {
       expect((await runHelper('uSeRnAmE: prompt')).trimEnd()).toBe('x-access-token')
       expect(await runHelper("Password for 'https://myusername@example.test/path'")).toBe(token)
-      expect(await runHelper(`Password: \\"$(touch ${marker})\\"`)).toBe(token)
+      expect(await runHelper(`Password: \\"$(touch '${marker}')\\"`)).toBe(token)
       for (const literal of ['-n', '-e', 'literal\\nbackslash']) {
         expect(await runHelper('Password: literal token', literal)).toBe(literal)
       }
