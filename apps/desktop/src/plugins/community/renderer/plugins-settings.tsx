@@ -59,7 +59,13 @@ async function turnOnHere(remote: string, id: string): Promise<void> {
   if (row !== undefined && !row.on) await setOn(remote, row, true)
 }
 
-export function PluginsSettings({ remote }: { remote: string }): React.JSX.Element {
+export function PluginsSettings({
+  remote,
+  visible = true,
+}: {
+  remote: string
+  visible?: boolean
+}): React.JSX.Element {
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
   const rows = useAtomValue(rowsAtom)?.rows ?? []
@@ -67,8 +73,8 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
 
   // Opening the section asks GitHub now rather than trusting the hourly check.
   useEffect(() => {
-    void refreshUpdates(remote, store, true)
-  }, [remote, store])
+    if (visible) void refreshUpdates(remote, store, true)
+  }, [remote, store, visible])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [acting, setActing] = useState<string | null>(null)

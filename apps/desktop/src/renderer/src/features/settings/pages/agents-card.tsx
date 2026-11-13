@@ -9,7 +9,7 @@
  * first. A file Holi could not read, or entries in it that it left out, are
  * said with a way forward.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { EllipsisIcon, PlusIcon } from 'lucide-react'
@@ -40,6 +40,7 @@ import { activeRemoteAtom } from '@/state/vaults'
 import { SettingsFieldRow, SettingsGroup, SettingsRowsLoading } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
 import { HarnessDialog, type HarnessRecord } from './harness-dialog'
+import { useSettingsVisible } from '../settings-view'
 
 /** Mirrors `HarnessSummary` in the agent's main/harness/capabilities.ts. */
 interface HarnessSummary {
@@ -92,13 +93,43 @@ async function agentCall<T>(remote: string, name: string, params: unknown): Prom
 /** The command a harness runs, as one line to read (never to run). */
 const commandLine = (h: HarnessRecord): string => [h.command.bin, ...h.command.args].join(' ')
 
+function AgentActionsMenu({
+  label,
+  actions,
+  visible,
+}: {
+  label: string
+  actions: MenuAction[]
+  visible: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!visible) setOpen(false)
+  }, [visible])
+  return (
+    <DropdownMenu open={visible && open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <IconButton label={`More for ${label}`}>
+          <EllipsisIcon aria-hidden="true" />
+        </IconButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuActions actions={actions} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function AgentsCard() {
+  const visible = useSettingsVisible()
   const { resolved, write } = useVaultSettings()
   const current = resolved?.agentProvider ?? VAULT_SETTING_DEFAULTS.agentProvider
   const remote = useAtomValue(activeRemoteAtom)
   const [asking, setAsking] = useState<DefaultAsk | null>(null)
   const [resetting, setResetting] = useState(false)
   const [state, setState] = useState<ListState>({ kind: 'loading' })
+  const request = useRef(0)
+  const pageVisible = useRef(true)
   // The dialog mounts afresh each time it opens (`key`), so its form is
   // filled from the agent it opens on; `open` false keeps it while it closes.
   const [editing, setEditing] = useState<{
@@ -116,20 +147,44 @@ export function AgentsCard() {
 
   const read = useCallback(() => {
     if (remote === null) return
+    const current = ++request.current
     setState({ kind: 'loading' })
     agentCall<HarnessListing>(remote, 'agent.harnesses', {})
-      .then((listing) =>
+      .then((listing) => {
+        if (request.current !== current || !pageVisible.current) return
         setState(
           Array.isArray(listing?.agents)
             ? { kind: 'ready', listing }
             : { kind: 'error', message: 'The agent did not answer with a list.' },
-        ),
-      )
-      .catch((err: unknown) =>
-        setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) }),
-      )
+        )
+      })
+      .catch((err: unknown) => {
+        if (request.current === current && pageVisible.current) {
+          setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
+        }
+      })
   }, [remote])
-  useEffect(read, [read])
+  useEffect(() => {
+    if (!visible) {
+      pageVisible.current = false
+      request.current++
+      return
+    }
+    pageVisible.current = true
+    read()
+    return () => {
+      pageVisible.current = false
+    }
+  }, [read, visible])
+
+  useEffect(() => {
+    if (visible) return
+    setAsking(null)
+    setResetting(false)
+    setEditing((current) => ({ ...current, open: false }))
+    setRemoving(null)
+    setTesting(null)
+  }, [visible])
 
   const makeDefault = (v: HarnessSummary): void => {
     const id = v.harness.id
@@ -291,29 +346,20 @@ export function AgentsCard() {
               <Button variant="outline" size="sm" onClick={() => void test(v.harness)}>
                 Test
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <IconButton label={`More for ${v.harness.label}`}>
-                    <EllipsisIcon aria-hidden="true" />
-                  </IconButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuActions actions={actionsOf(v)} />
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <AgentActionsMenu label={v.harness.label} actions={actionsOf(v)} visible={visible} />
             </div>
           </SettingsFieldRow>
         ))
       )}
       <HarnessDialog
         key={`${editing.harness?.id ?? 'new'}-${editing.n}`}
-        open={editing.open}
+        open={visible && editing.open}
         onOpenChange={(open) => !open && setEditing((e) => ({ ...e, open: false }))}
         harness={editing.harness}
         onSave={save}
       />
       <ConfirmDialog
-        open={removing !== null}
+        open={visible && removing !== null}
         onOpenChange={(open) => !open && setRemoving(null)}
         title={
           removing?.builtIn === true
@@ -333,7 +379,7 @@ export function AgentsCard() {
           read()
         }}
       />
-      <Dialog open={testing !== null} onOpenChange={(open) => !open && setTesting(null)}>
+      <Dialog open={visible && testing !== null} onOpenChange={(open) => !open && setTesting(null)}>
         <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>Test {testing?.label}</DialogTitle>
@@ -358,7 +404,7 @@ export function AgentsCard() {
         </DialogContent>
       </Dialog>
       <ConfirmDialog
-        open={asking !== null}
+        open={visible && asking !== null}
         onOpenChange={(open) => !open && setAsking(null)}
         title={asking?.title ?? ''}
         description={asking?.description}
@@ -369,7 +415,7 @@ export function AgentsCard() {
         }}
       />
       <ConfirmDialog
-        open={resetting}
+        open={visible && resetting}
         onOpenChange={setResetting}
         title="Reset this machine's agents file?"
         description="Holi keeps a copy of it beside it as .bad, then starts it over: the agents you added are gone from Settings, and the built-in ones go back to what Holi ships."

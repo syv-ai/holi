@@ -3,10 +3,13 @@ import { useEffect, useState } from 'react'
 import { Switch } from '@/components/ui/switch'
 import { trpc } from '@/lib/trpc'
 import { SettingsFieldRow } from '../settings-kit'
+import { useSettingsVisible } from '../settings-view'
 
 export function OpenAtLoginRow() {
   const [open, setOpen] = useState<boolean | null>(null)
+  const visible = useSettingsVisible()
   useEffect(() => {
+    if (!visible) return
     let live = true
     trpc.app.loginItem
       .query()
@@ -15,7 +18,7 @@ export function OpenAtLoginRow() {
     return () => {
       live = false
     }
-  }, [])
+  }, [visible])
   return (
     <SettingsFieldRow
       title="Open at login"
