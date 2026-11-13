@@ -164,7 +164,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
     },
     commands: {
       getCommandByShortcut: (s: string) =>
-        s === 'h' || s === 'f+meta' || s === 'meta+p' ? { id: s } : undefined,
+        s === 'h' || s === 'f+meta' || s === 'meta+p' ? { id: s } : null,
       // ⌘P is print, which Holi disables by category; a disabled command must
       // not be claimed, or the palette never opens while a PDF is on screen.
       resolve: (id: string) => ({ disabled: id === 'meta+p', visible: true }),
@@ -244,7 +244,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
         )
           return
         const commands = registry.getPlugin('commands')?.provides() as {
-          getCommandByShortcut: (shortcut: string) => { id: string } | undefined
+          getCommandByShortcut: (shortcut: string) => { id: string } | null
           resolve: (id: string) => { disabled: boolean; visible: boolean }
           execute: (id: string, documentId?: string, source?: string) => void
         }
@@ -252,7 +252,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
         if (shortcut === null) return
         seam.seen.push(shortcut)
         const command = commands.getCommandByShortcut(shortcut)
-        if (command === undefined) return
+        if (command === null) return
         const state = commands.resolve(command.id)
         if (state.disabled || !state.visible) return
         e.preventDefault()

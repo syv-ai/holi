@@ -200,7 +200,7 @@ interface ViewerPlugins {
     onEntriesChange(cb: (entries: SignatureEntry[]) => void): () => void
   }
   commands: {
-    getCommandByShortcut(shortcut: string): { id: string } | undefined
+    getCommandByShortcut(shortcut: string): { id: string } | null
     resolve(id: string, documentId?: string): { disabled: boolean; visible: boolean }
     execute(id: string, documentId?: string, source?: string): void
     registerCommand(command: ViewerCommand): void
@@ -691,7 +691,7 @@ export function PdfDocument({
       const shortcut = shortcutOf(event)
       if (commands === null || shortcut === null) return
       const command = commands.getCommandByShortcut(shortcut)
-      if (command === undefined) return
+      if (command === null) return
       const state = commands.resolve(command.id)
       if (state.disabled || !state.visible) return
 
