@@ -9,7 +9,7 @@
 import { readFile } from 'node:fs/promises'
 import { rewriteWikiLinksMulti, vaultRelPath } from '@holi/shared'
 import { followNoteComments } from '../note-comments'
-import { isScratchpadPath } from '../scratchpad'
+import { scratchpadContentPaths } from '../scratchpad'
 import { absPathFor, listFiles, writeAtomic } from '../vault-files'
 import type { StagedChanges } from './staged'
 
@@ -43,13 +43,11 @@ async function relinkLinks(root: string, staged: StagedChanges): Promise<Transfo
   // Each pair maps an original file to its final path, not a sequential move.
   // Protect the scratchpad's destination without protecting a different file
   // whose original name happens to match that destination.
-  const protectedPaths = new Set(
-    staged.renamed.filter((r) => isScratchpadPath(r.from)).map((r) => r.to),
-  )
+  const protectedPaths = scratchpadContentPaths(staged.renamed)
   const changed: string[] = []
 
   for (const path of await listFiles(root)) {
-    if (!path.endsWith('.md') || isScratchpadPath(path) || protectedPaths.has(path)) continue
+    if (!path.endsWith('.md') || protectedPaths.has(path)) continue
     const rel = vaultRelPath(path)
     const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
     if (text === null) continue
