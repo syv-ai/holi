@@ -79,11 +79,18 @@ interface FrameLease {
 }
 
 /** Each iframe document gets a fresh lease, including late acquisitions. */
-function useFrameLease(remote: string, bundle: string, enabled: boolean): FrameLease | null {
+function useFrameLease(
+  remote: string,
+  bundle: string,
+  enabled: boolean,
+): { lease: FrameLease | null; error: boolean; retry: () => void } {
   const [lease, setLease] = useState<FrameLease | null>(null)
+  const [error, setError] = useState(false)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     if (!enabled) {
       setLease(null)
+      setError(false)
       return
     }
     let live = true
@@ -91,11 +98,17 @@ function useFrameLease(remote: string, bundle: string, enabled: boolean): FrameL
     appsCap.frameLease(remote, { bundle }).then(
       (value) => {
         issued = value
-        if (live) setLease(value)
-        else void appsCap.releaseFrameLease(remote, { bundle, token: value.token }).catch(() => {})
+        if (live) {
+          setLease(value)
+          setError(false)
+        } else
+          void appsCap.releaseFrameLease(remote, { bundle, token: value.token }).catch(() => {})
       },
       () => {
-        if (live) setLease(null)
+        if (live) {
+          setLease(null)
+          setError(true)
+        }
       },
     )
     return () => {
@@ -104,8 +117,12 @@ function useFrameLease(remote: string, bundle: string, enabled: boolean): FrameL
         void appsCap.releaseFrameLease(remote, { bundle, token: issued.token }).catch(() => {})
       }
     }
-  }, [remote, bundle, enabled])
-  return enabled ? lease : null
+  }, [remote, bundle, enabled, attempt])
+  return {
+    lease: enabled ? lease : null,
+    error: enabled && error,
+    retry: () => setAttempt((value) => value + 1),
+  }
 }
 
 /**
@@ -224,24 +241,32 @@ function AppLoad({
   recheck: () => void
 }): React.JSX.Element {
   const store = useStore()
+  const activeRemote = useAtomValue(activeRemoteAtom)
+  const remoteGeneration = useRef(0)
   const frameRef = useRef<HTMLIFrameElement>(null)
   const documentLoaded = useRef(false)
   const live = useRef(false)
   const [ask, setAsk] = useState<{ affordances: AppAffordance[]; codeHash: string } | null>(null)
   const [gateOpen, setGateOpen] = useState(false)
-  const previewLease = useFrameLease(remote, path, ask !== null)
-  const mainLease = useFrameLease(remote, path, gateOpen)
+  const previewLeaseState = useFrameLease(remote, path, ask !== null)
+  const mainLeaseState = useFrameLease(remote, path, gateOpen)
+  const previewLease = previewLeaseState.lease
+  const mainLease = mainLeaseState.lease
   useLayoutEffect(() => {
     live.current = true
     return () => {
       live.current = false
     }
   }, [])
+  useLayoutEffect(() => {
+    remoteGeneration.current += 1
+  }, [activeRemote])
   const name = appName(path)
   // Every message from the frame we mounted is answered as any frame of
   // this app's code is (`bridge-host.ts`), with the bundle it was mounted
   // with and the vault open now.
   useLayoutEffect(() => {
+    const activation = remoteGeneration.current
     const onMessage = (event: MessageEvent): void => {
       const frame = frameRef.current
       if (
@@ -254,6 +279,7 @@ function AppLoad({
       const target = frame.contentWindow
       const current = () =>
         live.current &&
+        remoteGeneration.current === activation &&
         store.get(activeRemoteAtom) === remote &&
         frameRef.current === frame &&
         frame.contentWindow === target
@@ -391,12 +417,15 @@ function AppLoad({
     )
   }
 
-  if (error) {
+  if (error || (gateOpen && mainLeaseState.error)) {
     return (
       <EmptyState
         icon={AppWindow}
-        title="Could not check app permissions."
-        action={{ label: 'Retry', onClick: recheck }}
+        title={error ? 'Could not check app permissions.' : 'Could not open this app.'}
+        action={{
+          label: 'Retry',
+          onClick: error ? recheck : mainLeaseState.retry,
+        }}
       />
     )
   }

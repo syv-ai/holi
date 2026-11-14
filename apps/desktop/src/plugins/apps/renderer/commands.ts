@@ -113,7 +113,8 @@ function runInFrame(
         .finally(() => finish(undefined, error))
     }, COMMAND_TIMEOUT_MS)
     const onMessage = (event: MessageEvent): void => {
-      if (frame === null || lease === null || event.source !== frame.contentWindow) return
+      if (frame === null || lease === null || event.source !== frame.contentWindow || !isCurrent())
+        return
       const data = event.data as { nonce?: unknown; command?: CommandOutcome } | null
       if (data?.nonce !== lease.nonce) return
       if (typeof data.command === 'object') {
@@ -164,9 +165,9 @@ function runInFrame(
         bundle,
         token: lease.token,
         nonce: lease.nonce,
-        current: () => !settled && store.get(activeRemoteAtom) === remote,
+        current: () => !settled && isCurrent() && store.get(activeRemoteAtom) === remote,
         reply: (response) => {
-          if (!settled && store.get(activeRemoteAtom) === remote) {
+          if (!settled && isCurrent() && store.get(activeRemoteAtom) === remote) {
             frame?.contentWindow?.postMessage(response, '*')
           }
         },
@@ -176,7 +177,7 @@ function runInFrame(
     window.addEventListener('message', onMessage)
     void appsCap.frameLease(remote, { bundle }).then(
       (issued) => {
-        if (settled || store.get(activeRemoteAtom) !== remote) {
+        if (settled || !isCurrent() || store.get(activeRemoteAtom) !== remote) {
           void appsCap.releaseFrameLease(remote, { bundle, token: issued.token }).catch(() => {})
           finish(undefined, new Error('the vault was left'))
           return
@@ -190,7 +191,7 @@ function runInFrame(
         const mode = store.get(activeModeAtom)
         frame.src = `holi-app://${leasedAppHost(bundle, lease.token)}/?${COMMAND_PARAM}=${encodeURIComponent(command)}&mode=${mode}`
         frame.addEventListener('load', () => {
-          if (!settled && store.get(activeRemoteAtom) === remote) {
+          if (!settled && isCurrent() && store.get(activeRemoteAtom) === remote) {
             frame?.contentWindow?.postMessage({ run: input, nonce: lease?.nonce }, '*')
           }
         })

@@ -294,7 +294,7 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
       }
       const current = () => lease.valid(lease.window)
       if (!current()) return { saved: false }
-      const revision = deps.previews.revision?.(ctx.remote, bundle) ?? 0
+      const revision = deps.previews.revision(ctx.remote, bundle)
       const jpeg = await deps.capture(rect, lease.window, current)
       if (!current() || jpeg === null) return { saved: false }
       const saved = await deps.previews.save(ctx.remote, ctx.root, bundle, jpeg, current, revision)

@@ -47,7 +47,7 @@ const { FRAME_TOKEN, FRAME_NONCE } = vi.hoisted(() => ({
   FRAME_NONCE: 'b'.repeat(48),
 }))
 const frameLeaseMock = vi.hoisted(() => vi.fn())
-const releaseLeaseMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
+const releaseLeaseMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => Promise.resolve(true)))
 
 /** Main's side of the app door, answering the way the registry would. */
 const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<unknown> => {
@@ -196,6 +196,14 @@ test('releases a lease acquired after its frame has unmounted', async () => {
   mounted.unmount()
   await act(async () => acquire({ token: FRAME_TOKEN, nonce: FRAME_NONCE }))
   await waitFor(() => expect(releaseLeaseMock).toHaveBeenCalledWith(REMOTE, expect.any(Object)))
+})
+
+test('shows Retry when a main frame lease is refused', async () => {
+  frameLeaseMock.mockRejectedValueOnce(new Error('lease unavailable'))
+  render(<AppFrame path="Team/Retro.app" />)
+  expect(await screen.findByText('Could not open this app.')).toBeTruthy()
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(frameOf()).not.toBeNull())
 })
 
 test('serves the app from its own origin, the host encoding its bundle', async () => {
@@ -473,6 +481,20 @@ for (const replacement of ['reload', 'path', 'remote', 'mode', 'code', 'dispose'
     if (newPost) expect(newPost).not.toHaveBeenCalled()
   })
 }
+
+test('an A to B to A return cannot revive an old bridge reply', async () => {
+  await renderApp()
+  const pending = deferred<unknown>()
+  bridgeMock.mockReturnValueOnce(pending.promise)
+  const frame = frameOf()
+  const post = vi.spyOn(frame.contentWindow!, 'postMessage')
+  fromFrame({ id: 'late', method: 'docs.read', params: { path: 'a.md' } })
+  await waitFor(() => expect(bridgeMock).toHaveBeenCalled())
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  act(() => store.set(activeRemoteAtom, REMOTE))
+  await act(async () => pending.resolve('stale vault data'))
+  expect(post).not.toHaveBeenCalled()
+})
 
 test('a failed permission check recovers when main registers the apps capability', async () => {
   grantsMock.mockRejectedValueOnce(new Error('no such method'))

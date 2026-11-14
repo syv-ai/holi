@@ -118,7 +118,12 @@ test.each(['close', 'disable', 'depart', 'unmount'] as const)(
       window.dispatchEvent(
         new MessageEvent('message', {
           source: old.contentWindow,
-          data: { id: 'late', method: 'docs.read', params: { path: 'private.md' } },
+          data: {
+            id: 'late',
+            method: 'docs.read',
+            params: { path: 'private.md' },
+            nonce: 'b'.repeat(48),
+          },
         }),
       ),
     )
