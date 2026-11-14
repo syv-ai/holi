@@ -3,7 +3,7 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import { isRemote, isSecretPath, vaultRelPath } from '@holi/shared'
 import { jsonFileStore } from '../json-file-store'
 
-export interface SubscriptionScope {
+interface SubscriptionScope {
   path: string
   baseline: string | null
 }
