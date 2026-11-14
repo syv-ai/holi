@@ -4,7 +4,8 @@ import { gzipSync } from 'node:zlib'
 import { completionStream } from './owned-process-stream'
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, win32 } from 'node:path'
+import { join, resolve, win32 } from 'node:path'
+import { fileURLToPath, URL } from 'node:url'
 import type { Launch } from './launch'
 
 function windowsAdapterLaunch(env: NodeJS.ProcessEnv): {
@@ -36,6 +37,8 @@ export function spawnOwnedLaunch(
   parentPid: number,
   retainDescendantsOnSuccess = false,
 ): ChildProcess {
+  const cwd =
+    options.cwd instanceof URL ? fileURLToPath(options.cwd) : resolve(options.cwd ?? process.cwd())
   const launchEnv = { ...(options.env ?? process.env) }
   let traceEnabled = false
   for (const key of Object.keys(launchEnv)) {
@@ -93,7 +96,7 @@ export function spawnOwnedLaunch(
     bin: plan.file,
     args: plan.args,
     verbatim: plan.verbatim,
-    cwd: options.cwd,
+    cwd,
     env: { ...launchEnv, ...plan.env },
     parentPid,
     stopFile,

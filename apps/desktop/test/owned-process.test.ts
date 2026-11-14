@@ -1,7 +1,8 @@
 import { ChildProcess, execFile } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { getSystemErrorName, promisify } from 'node:util'
 import { describe, expect, it, onTestFailed } from 'vitest'
 import { spawnOwnedProgram } from '../src/main/owned-process'
@@ -60,26 +61,34 @@ function completion(child: ReturnType<typeof spawnOwnedProgram>): Promise<number
 
 describe('spawnOwnedProgram', () => {
   it('preserves exact argv and output', async () => {
-    const args = ['one two', '', '☃', 'one\r\ntwo', 'q"uote', 'x'.repeat(12_000)]
-    const child = spawnOwnedProgram(
-      process.execPath,
-      ['-e', 'process.stdout.write(JSON.stringify(process.argv.slice(1)))', '--', ...args],
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, ...(windows ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
-      },
-    )
-    let error = ''
-    child.stderr!.setEncoding('utf8').on('data', (chunk: string) => (error += chunk))
-    diagnostics(child)
-    const done = completion(child)
-    let output = ''
-    child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
-    try {
-      expect(await done, error).toBe(0)
-      expect(JSON.parse(output)).toEqual(args)
-    } finally {
-      await cleanup(child)
+    for (const cwd of [undefined, '.', pathToFileURL(process.cwd() + sep)]) {
+      const args = ['one two', '', '☃', 'one\r\ntwo', 'q"uote', 'x'.repeat(12_000)]
+      const child = spawnOwnedProgram(
+        process.execPath,
+        [
+          '-e',
+          'process.stdout.write(JSON.stringify({ args: process.argv.slice(1), cwd: process.cwd() }))',
+          '--',
+          ...args,
+        ],
+        {
+          cwd,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, ...(windows ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
+        },
+      )
+      let error = ''
+      child.stderr!.setEncoding('utf8').on('data', (chunk: string) => (error += chunk))
+      diagnostics(child)
+      const done = completion(child)
+      let output = ''
+      child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
+      try {
+        expect(await done, error).toBe(0)
+        expect(JSON.parse(output)).toEqual({ args, cwd: process.cwd() })
+      } finally {
+        await cleanup(child)
+      }
     }
   })
 
