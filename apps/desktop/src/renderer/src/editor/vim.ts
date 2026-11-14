@@ -92,6 +92,8 @@ export function useVimEditor(
     if (
       enabled &&
       view !== null &&
+      event.target instanceof Node &&
+      view.contentDOM.contains(event.target) &&
       event.key === 'f' &&
       !event.metaKey &&
       !event.ctrlKey &&
