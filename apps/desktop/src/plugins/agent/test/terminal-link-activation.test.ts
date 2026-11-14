@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { activateTerminalLink, fileUrlLinks } from '../renderer/lib/terminal-link-activation'
+import {
+  activateTerminalLink,
+  fileUrlLinks,
+  isTerminalLinkActivation,
+  wrappedTerminalLine,
+} from '../renderer/lib/terminal-link-activation'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
 const FILES = new Set(['notes/a.md'])
@@ -62,5 +67,37 @@ describe('embedded terminal link activation', () => {
     expect(fileUrlLinks('See file:///tmp/report%20draft.pdf, then continue')).toEqual([
       { text: 'file:///tmp/report%20draft.pdf', start: 4, end: 34 },
     ])
+  })
+
+  it('requires a modified primary click for activation', () => {
+    const event = (button: number, metaKey = false, ctrlKey = false) =>
+      ({ button, metaKey, ctrlKey }) as MouseEvent
+    expect(isTerminalLinkActivation(event(0))).toBe(false)
+    expect(isTerminalLinkActivation(event(2, true))).toBe(false)
+    expect(isTerminalLinkActivation(event(0, true))).toBe(true)
+    expect(isTerminalLinkActivation(event(0, false, true))).toBe(true)
+  })
+
+  it('finds a wrapped file URL across rows and maps offsets to terminal cells', () => {
+    const url = 'file:///Users/ada/notes/a%20draft.md'
+    const rows = [
+      { isWrapped: false, text: `prefix ${url.slice(0, 17)}` },
+      { isWrapped: true, text: url.slice(17) },
+    ]
+    const logical = wrappedTerminalLine(1, 24, (row) => {
+      const item = rows[row]
+      if (!item) return undefined
+      return {
+        isWrapped: item.isWrapped,
+        getCell: (index: number) => ({
+          getChars: () => item.text[index] ?? '',
+          getWidth: () => 1,
+        }),
+      }
+    })
+    const link = fileUrlLinks(logical.text)[0]!
+    expect(link.text).toBe(url)
+    expect(logical.cellAt(link.start)).toEqual({ x: 8, y: 1 })
+    expect(logical.cellAt(link.end - 1)).toEqual({ x: url.length - 17, y: 2 })
   })
 })
