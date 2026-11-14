@@ -27,20 +27,22 @@ function enabledRouter() {
 }
 
 describe('Pi wheel routing', () => {
-  it.each(['\x1b[?1049h', '\x1b[?1000h', '\x1b[?1002h', '\x1b[?1006h'])(
-    'observes every split boundary in enable %j',
-    (sequence) => {
-      for (let split = 1; split < sequence.length; split++) {
-        const write = vi.fn()
-        const router = createPiWheelRouter(write)
-        router.observeOutput(sequence.slice(0, split))
-        router.observeOutput(sequence.slice(split))
-        router.observeOutput('\x1b[?1049h\x1b[?1000h\x1b[?1006h')
-        expect(router.onWheel(wheel(), bounds(), 98, 24)).toBe(true)
-        expect(write).toHaveBeenCalled()
-      }
-    },
-  )
+  it.each([
+    ['\x1b[?1049h', '\x1b[?1000h\x1b[?1006h'],
+    ['\x1b[?1000h', '\x1b[?1049h\x1b[?1006h'],
+    ['\x1b[?1002h', '\x1b[?1049h\x1b[?1006h'],
+    ['\x1b[?1006h', '\x1b[?1049h\x1b[?1000h'],
+  ])('observes every split boundary in enable %j', (sequence, prerequisites) => {
+    for (let split = 1; split < sequence.length; split++) {
+      const write = vi.fn()
+      const router = createPiWheelRouter(write)
+      router.observeOutput(sequence.slice(0, split))
+      router.observeOutput(sequence.slice(split))
+      router.observeOutput(prerequisites)
+      expect(router.onWheel(wheel(), bounds(), 98, 24)).toBe(true)
+      expect(write).toHaveBeenCalled()
+    }
+  })
 
   it.each(['\x1b[?1049l', '\x1b[?1000l', '\x1b[?1006l'])(
     'observes every split boundary in %j',
