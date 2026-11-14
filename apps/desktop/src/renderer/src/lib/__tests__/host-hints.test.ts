@@ -151,6 +151,7 @@ it('discovers and activates only controls in an explicitly owned PDF shadow root
   const control = document.createElement('button')
   control.textContent = 'PDF toolbar'
   shadow.append(control)
+  place(owner, 400, 100, 200, 100)
   place(control, 420, 120)
   Object.defineProperty(shadow, 'elementFromPoint', {
     configurable: true,
@@ -165,6 +166,29 @@ it('discovers and activates only controls in an explicitly owned PDF shadow root
   expect(click).toHaveBeenCalledOnce()
   unregister()
   expect(activateHostHint(target!)).toBe(false)
+})
+
+it('does not look through a light-DOM overlay when hit-testing a PDF shadow control', () => {
+  const owner = document.createElement('holi-pdf-container')
+  root.append(owner)
+  const shadow = owner.attachShadow({ mode: 'open' })
+  const control = document.createElement('button')
+  control.textContent = 'PDF toolbar'
+  shadow.append(control)
+  place(owner, 400, 100, 200, 100)
+  place(control, 420, 120)
+  Object.defineProperty(shadow, 'elementFromPoint', {
+    configurable: true,
+    value: () => control,
+  })
+  const unregister = registerHostHintSurface(shadow, owner)
+  expect(discoverHostHintTargets(root).some(({ element }) => element === control)).toBe(true)
+
+  const cover = document.createElement('div')
+  root.append(cover)
+  place(cover, 400, 100, 200, 100)
+  expect(discoverHostHintTargets(root).some(({ element }) => element === control)).toBe(false)
+  unregister()
 })
 
 it('keeps painted-label click coordinates and folder-document activation semantics', () => {

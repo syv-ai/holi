@@ -90,6 +90,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       invalidate()
     }
     window.addEventListener(HOST_HINT_SURFACE, onSurface)
+    window.dispatchEvent(new Event('holi:vim-host-hint-surface-request'))
     return () => {
       window.removeEventListener(HOST_HINT_SURFACE, onSurface)
       for (const [root, surface] of registered) {

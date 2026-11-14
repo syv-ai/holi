@@ -208,13 +208,19 @@ export const PdfViewerAdapter = forwardRef<PDFViewerRef, PdfViewerAdapterProps>(
       elementRef.current = element
       holder.append(element)
       const ownedRoot = element.shadowRoot
-      if (ownedRoot) {
+      const publishSurface = (registered: boolean) => {
+        if (!ownedRoot) return
         window.dispatchEvent(
           new CustomEvent('holi:vim-host-hint-surface', {
-            detail: { root: ownedRoot, owner: element, registered: true },
+            detail: { root: ownedRoot, owner: element, registered },
           }),
         )
       }
+      const replaySurface = () => publishSurface(true)
+      // The shell may mount after a retained PDF pane. Keep this narrow plugin
+      // seam replayable rather than relying on React effect ordering.
+      window.addEventListener('holi:vim-host-hint-surface-request', replaySurface)
+      publishSurface(true)
       onInit?.(element)
       let live = true
       let releasePosition: (() => void) | undefined
@@ -231,13 +237,8 @@ export const PdfViewerAdapter = forwardRef<PDFViewerRef, PdfViewerAdapterProps>(
       return () => {
         live = false
         releasePosition?.()
-        if (ownedRoot) {
-          window.dispatchEvent(
-            new CustomEvent('holi:vim-host-hint-surface', {
-              detail: { root: ownedRoot, owner: element, registered: false },
-            }),
-          )
-        }
+        window.removeEventListener('holi:vim-host-hint-surface-request', replaySurface)
+        publishSurface(false)
         element.remove()
         elementRef.current = null
       }

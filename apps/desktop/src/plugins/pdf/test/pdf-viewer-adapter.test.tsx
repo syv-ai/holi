@@ -42,6 +42,14 @@ test('registers and unregisters only the viewer-owned open root', async () => {
   expect(registered.registered).toBe(true)
   expect(registered.root).toBe(registered.owner.shadowRoot)
   expect(registered.owner.tagName.toLowerCase()).toBe('holi-pdf-container')
+  surface.mockClear()
+  window.dispatchEvent(new Event('holi:vim-host-hint-surface-request'))
+  expect(surface).toHaveBeenCalledOnce()
+  expect((surface.mock.calls[0]![0] as CustomEvent).detail).toMatchObject({
+    root: registered.root,
+    owner: registered.owner,
+    registered: true,
+  })
   mounted.unmount()
   expect(surface).toHaveBeenCalledTimes(2)
   expect((surface.mock.calls[1]![0] as CustomEvent).detail).toMatchObject({
