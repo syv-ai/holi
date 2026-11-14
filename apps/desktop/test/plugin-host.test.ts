@@ -60,6 +60,8 @@ function rig(
     appDoor?: boolean
     call?: Parameters<typeof createPluginHost>[0]['call']
     rootFor?: (remote: string) => Promise<string | null>
+    window?: () => import('electron').BrowserWindow | null
+    frameOrigin?: (origin: string) => () => void
   } = {},
 ) {
   const calls = { started: 0, stopped: 0 }
@@ -118,9 +120,10 @@ function rig(
     route: (path, route, remote) => opts.bridge?.route(path, route, remote) ?? (() => {}),
     binDir: () => '/holi/bin',
     githubToken: () => null,
-    frameOrigin: () => () => {},
+    frameOrigin: opts.frameOrigin ?? (() => () => {}),
     notify: () => false,
     focused: () => false,
+    window: opts.window,
     activity: (entry) => activity.push(entry),
     call:
       opts.call ??
@@ -668,6 +671,75 @@ describe('the lifecycle', () => {
     await host.reconcile(vault, 'open')
     expect(starts).toBe(1)
     await host.stop('A')
+  })
+
+  it('releases a failed activation frame-origin lease before retry', async () => {
+    const { createFrameOrigins } = await import('../src/main/frame-origins')
+    const frameOrigins = createFrameOrigins()
+    let fail = true
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        ctx.frameOrigin('http://127.0.0.1:3040')
+        if (fail) throw new Error('activation failed')
+        return () => {}
+      },
+    }
+    const { host, enter, reconcile } = rig({ plugins: [plugin], frameOrigin: frameOrigins.acquire })
+    await enter(openVault('A', await tempDir()))
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(false)
+    fail = false
+    await reconcile('settings')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(true)
+    await host.stop('A')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(false)
+  })
+
+  it('leases duplicate frame origins across retained vault activations', async () => {
+    const { createFrameOrigins } = await import('../src/main/frame-origins')
+    const frameOrigins = createFrameOrigins()
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        ctx.frameOrigin('http://127.0.0.1:3040')
+        return () => {}
+      },
+    }
+    const { host, enter } = rig({ plugins: [plugin], frameOrigin: frameOrigins.acquire })
+    await enter(openVault('A', await tempDir()))
+    await host.reconcile(openVault('B', await tempDir()), 'open')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(true)
+    await host.stop('A')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(true)
+    await host.stop('B')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(false)
+  })
+
+  it('only exposes the native window to a live activation for the displayed vault', async () => {
+    const contexts: PluginCtx[] = []
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        contexts.push(ctx)
+        return () => {}
+      },
+    }
+    const win = {} as import('electron').BrowserWindow
+    const { host, enter } = rig({ plugins: [plugin], window: () => win })
+    await enter(openVault('A', await tempDir()))
+    const a = contexts[0]!
+    expect(a.window()).toBe(win)
+    host.setDisplayed('B')
+    expect(a.window()).toBeNull()
+    const bRoot = await tempDir()
+    // Keep both plugin contexts alive without changing selected-vault lifetime.
+    await host.reconcile(openVault('B', bRoot), 'open')
+    const b = contexts[1]!
+    expect(b.window()).toBe(win)
+    host.setDisplayed('A')
+    expect(a.window()).toBe(win)
+    await host.stopAll()
+    expect(a.window()).toBeNull()
   })
 
   it('revokes an old context on reactivation and exposes display changes through ctx', async () => {

@@ -65,6 +65,7 @@ interface PageKey {
 
 export interface PagesDeps {
   window(): BrowserWindow | null
+  onDisplayChange?(cb: (remote: string | null) => void): () => void
   /** The tabs changed: their list, as the renderer draws them. */
   changed(list: PageInfo[]): void
   /** Show tab `id` in Holi: one the agent or a page opened. */
@@ -188,12 +189,17 @@ export function createPages(deps: PagesDeps): Pages & {
   const tabs = new Map<string, Tab>()
   let current: string | null = null
   let telling = false
+  let displayEpoch = 0
+  let disposed = false
 
   const tabOf = (id: string): Tab => {
     const tab = tabs.get(id)
     if (tab === undefined) throw new CapabilityError('NOT_FOUND', `no browser tab ${id}`)
     return tab
   }
+
+  const isLive = (tab: Tab): boolean =>
+    !disposed && tabs.get(tab.id) === tab && !tab.view.webContents.isDestroyed()
 
   const info = (tab: Tab): PageInfo => {
     const wc = tab.view.webContents
@@ -217,11 +223,11 @@ export function createPages(deps: PagesDeps): Pages & {
   /** Tell the renderer once per turn of the event loop, however many of a
    *  page's events fired in it. */
   const changed = (): void => {
-    if (telling) return
+    if (disposed || telling) return
     telling = true
     queueMicrotask(() => {
       telling = false
-      deps.changed(list())
+      if (!disposed) deps.changed(list())
     })
   }
 
@@ -256,14 +262,33 @@ export function createPages(deps: PagesDeps): Pages & {
   }
 
   function contextMenu(tab: Tab, params: Electron.ContextMenuParams): void {
+    const win = deps.window()
+    if (!isLive(tab) || win === null) return
+    const epoch = displayEpoch
+    const live = (): boolean => isLive(tab) && displayEpoch === epoch && deps.window() === win
     const wc = tab.view.webContents
     const items: MenuItemConstructorOptions[] = []
     const link = params.linkURL
     if (link !== '' && isPageUrl(link)) {
       items.push(
-        { label: 'Open Link in New Tab', click: () => void open({ url: link, reveal: true }) },
-        { label: 'Open Link in Your Browser', click: () => void shell.openExternal(link) },
-        { label: 'Copy Link Address', click: () => clipboard.writeText(link) },
+        {
+          label: 'Open Link in New Tab',
+          click: () => {
+            if (live()) void open({ url: link, reveal: true })
+          },
+        },
+        {
+          label: 'Open Link in Your Browser',
+          click: () => {
+            if (live()) void shell.openExternal(link)
+          },
+        },
+        {
+          label: 'Copy Link Address',
+          click: () => {
+            if (live()) clipboard.writeText(link)
+          },
+        },
         { type: 'separator' },
       )
     }
@@ -276,22 +301,31 @@ export function createPages(deps: PagesDeps): Pages & {
       {
         label: 'Back',
         enabled: wc.navigationHistory.canGoBack(),
-        click: () => wc.navigationHistory.goBack(),
+        click: () => {
+          if (live()) wc.navigationHistory.goBack()
+        },
       },
       {
         label: 'Forward',
         enabled: wc.navigationHistory.canGoForward(),
-        click: () => wc.navigationHistory.goForward(),
+        click: () => {
+          if (live()) wc.navigationHistory.goForward()
+        },
       },
-      { label: 'Reload', click: () => wc.reload() },
+      {
+        label: 'Reload',
+        click: () => {
+          if (live()) wc.reload()
+        },
+      },
     )
-    const win = deps.window()
-    Menu.buildFromTemplate(items).popup(win === null ? {} : { window: win })
+    Menu.buildFromTemplate(items).popup({ window: win })
   }
 
   function watch(tab: Tab): void {
     const wc = tab.view.webContents
     wc.setWindowOpenHandler(({ url }) => {
+      if (!isLive(tab)) return { action: 'deny' }
       if (isPageUrl(url) && url !== 'about:blank') void open({ url, reveal: true })
       else if (/^(mailto|tel):/i.test(url)) toSystem(url)
       return { action: 'deny' }
@@ -338,17 +372,25 @@ export function createPages(deps: PagesDeps): Pages & {
     // ⌘L, ⌘R, ⌘[ and ⌘] are the tab's; editing keys are the page's; any
     // other ⌘ key goes back to Holi's window as if pressed there.
     wc.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown') return
+      if (!isLive(tab) || input.type !== 'keyDown') return
       const command = process.platform === 'darwin' ? input.meta : input.control
       if (!command) return
+      const win = deps.window()
+      if (win === null) return
+      const epoch = displayEpoch
+      const live = (): boolean => isLive(tab) && displayEpoch === epoch && deps.window() === win
       const key = input.key.toLowerCase()
       if (PAGE_KEYS.has(key) && !input.alt) return
       event.preventDefault()
-      if (key === 'l') return deps.address(tab.id)
+      if (key === 'l') {
+        if (live()) deps.address(tab.id)
+        return
+      }
       if (key === 'r') return void wc.reload()
       if (key === '[') return void wc.navigationHistory.goBack()
       if (key === ']') return void wc.navigationHistory.goForward()
-      deps.window()?.webContents.focus()
+      if (!live()) return
+      win.webContents.focus()
       deps.key(tab.id, {
         key: input.key,
         code: input.code,
@@ -396,7 +438,7 @@ export function createPages(deps: PagesDeps): Pages & {
     current = tab.id
     watch(tab)
     changed()
-    if (reveal) deps.reveal(tab.id)
+    if (reveal && deps.window() !== null) deps.reveal(tab.id)
     return url === undefined ? info(tab) : load(tab, url)
   }
 
@@ -419,6 +461,15 @@ export function createPages(deps: PagesDeps): Pages & {
     if (char !== null) wc.sendInputEvent({ type: 'char', keyCode: char, modifiers })
     wc.sendInputEvent({ type: 'keyUp', keyCode: code, modifiers })
   }
+
+  const offDisplay = deps.onDisplayChange?.((remote) => {
+    displayEpoch += 1
+    if (remote === null) for (const tab of tabs.values()) hide(tab)
+    else if (remote !== undefined) {
+      // A returning vault must receive fresh renderer placement messages.
+      for (const tab of tabs.values()) hide(tab)
+    }
+  })
 
   return {
     list,
@@ -574,6 +625,7 @@ export function createPages(deps: PagesDeps): Pages & {
     place(id, rect) {
       const tab = tabs.get(id)
       if (tab === undefined) return
+      if (disposed) return
       const win = deps.window()
       if (rect === null || win === null || rect.width < 1 || rect.height < 1) return hide(tab)
       if (tab.shownIn !== win) {
@@ -593,6 +645,10 @@ export function createPages(deps: PagesDeps): Pages & {
     },
 
     dispose() {
+      if (disposed) return
+      disposed = true
+      displayEpoch += 1
+      offDisplay?.()
       for (const id of [...tabs.keys()]) {
         const tab = tabs.get(id)!
         hide(tab)

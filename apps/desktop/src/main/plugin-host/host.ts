@@ -658,7 +658,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       notify: (notice) => (valid() || draining() ? deps.notify(notice) : false),
       focused: deps.focused,
-      window: () => deps.window?.() ?? null,
+      // Display authority is separate from vault lifetime: a retained vault's
+      // activation may work on its data but cannot touch Holi's native window.
+      window: () => (valid() && displayed === remote ? deps.window?.() : null) ?? null,
       onSnapshot: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const entry = {
