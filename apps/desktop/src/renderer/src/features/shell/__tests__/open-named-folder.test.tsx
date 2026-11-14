@@ -47,7 +47,9 @@ vi.mock('@/lib/trpc', () => {
         ? {}
         : name === 'github.collaborators'
           ? { visibility: 'private', collaborators: [] }
-          : null
+          : name === 'subscriptions.list'
+            ? []
+            : null
   const procedure = (name: string) => ({
     query: name === 'vaults.snapshot' ? snapshot : async () => answer(name),
     mutate: name === 'notes.move' ? move : async () => ({ ok: true }),
