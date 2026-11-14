@@ -8,8 +8,26 @@ export function completionStream(marker: Buffer): Transform {
 
   return new Transform({
     transform(chunk: Buffer | string, _encoding, callback: TransformCallback) {
-      if (complete) return callback(new Error('data received after completion marker'))
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      if (complete) {
+        const kind = bytes.includes(Buffer.from('[holi-complete-'))
+          ? 'private-completion'
+          : bytes.includes(Buffer.from('[holi-owned-process]'))
+            ? 'private-trace'
+            : bytes.includes(Buffer.from('CLIXML')) || bytes.includes(Buffer.from('<Objs'))
+              ? 'powershell-xml'
+              : bytes.length === 0
+                ? 'empty'
+                : /^\s+$/.test(bytes.toString('utf8'))
+                  ? 'whitespace'
+                  : 'other'
+        return callback(
+          Object.assign(new Error('data received after completion marker'), {
+            afterMarkerBytes: bytes.length,
+            afterMarkerKind: kind,
+          }),
+        )
+      }
       pending = Buffer.concat([pending, bytes])
       const markerAt = pending.indexOf(marker)
       if (markerAt >= 0) {

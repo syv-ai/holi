@@ -355,9 +355,9 @@ export function execProgram(
     }
     const timeoutMetadata = () => ({
       helperLastPhase: trace.phase,
-      helperStarted: trace.helperPid !== null,
+      helperStarted: child.pid !== undefined,
       rootStarted: trace.rootPid !== null && trace.rootPid > 0,
-      helperPid: trace.helperPid,
+      helperPid: trace.helperPid ?? child.pid ?? null,
       rootPid: trace.rootPid,
       rootState: trace.state,
     })
