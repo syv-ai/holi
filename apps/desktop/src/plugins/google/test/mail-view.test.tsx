@@ -243,6 +243,7 @@ beforeEach(() => {
   window.holi = { openExternal }
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   // @ts-expect-error — as above.
   delete window.holi
 })
@@ -2396,8 +2397,20 @@ test('failed dirty Close keeps the subject editable and Retry lets Close finish'
   await screen.findByRole('article')
   await user.click(screen.getByRole('button', { name: 'Reply' }))
   const subject = screen.getByRole('textbox', { name: 'Subject' })
+  const setTimeout = globalThis.setTimeout
+  const pendingAutosaves: TimerHandler[] = []
+  // Keep the two-second idle autosave pending so it cannot consume the failed
+  // save's Retry state; all other timers (including test-library waits) stay real.
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) {
+      pendingAutosaves.push(callback)
+      return 0 as never
+    }
+    return setTimeout(callback, delay, ...args)
+  })
   await user.clear(subject)
   await user.type(subject, 'Keep this subject')
+  expect(pendingAutosaves.length).toBeGreaterThan(0)
   let rejectSave!: (error: Error) => void
   saveDraftMock.mockImplementationOnce(
     () => new Promise((_resolve, reject) => (rejectSave = reject)),
