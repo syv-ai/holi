@@ -19,6 +19,7 @@ import { GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
 import { accountApi } from './account-api'
 import { googleSeed } from './seed'
+import { createMeetingCreation } from './meeting-creation'
 import { startGoogleTriggers } from './triggers'
 import type { GoogleSession } from './session'
 
@@ -86,6 +87,7 @@ export const googleMain: MainPlugin = {
       GOOGLE_NAMESPACES,
       googleCapabilities({
         accounts,
+        meetings: createMeetingCreation({ userData: ctx.userData, accounts }),
         dataFor,
         dataForSession,
         settings: {
