@@ -1143,10 +1143,18 @@ export function createRouter(deps: RouterDeps) {
           code: 'NOT_FOUND',
           message: 'Vault is not registered on this machine',
         })
-      return {
-        trusted: await deps.mdxTrust.status({ accountId: String(viewer.accountId), remote }),
-        identityAvailable: true,
-      }
+      const accountId = String(viewer.accountId)
+      const owner = { accountId, remote }
+      const current = () =>
+        deps.session.viewer?.accountId === viewer.accountId &&
+        deps.host.active()?.remote === input.remote
+      const trusted = await deps.mdxTrust.status(owner)
+      if (!current())
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Vault or account context changed',
+        })
+      return { trusted, identityAvailable: true }
     }),
     approve: t.procedure.input(fields({ remote: 'string' })).mutation(async ({ input }) => {
       const viewer = deps.session.viewer
@@ -1173,7 +1181,10 @@ export function createRouter(deps: RouterDeps) {
           code: 'PRECONDITION_FAILED',
           message: 'Vault or account context changed',
         })
-      await deps.mdxTrust.approve({ accountId: String(viewer.accountId), remote })
+      await deps.mdxTrust.approve(
+        { accountId: String(viewer.accountId), remote },
+        () => deps.host.active() === active && deps.session.viewer?.accountId === viewer.accountId,
+      )
       return { trusted: true }
     }),
     revoke: t.procedure.input(fields({ remote: 'string' })).mutation(async ({ input }) => {
@@ -1198,7 +1209,10 @@ export function createRouter(deps: RouterDeps) {
           code: 'PRECONDITION_FAILED',
           message: 'Vault or account context changed',
         })
-      await deps.mdxTrust.revoke({ accountId: String(viewer.accountId), remote })
+      await deps.mdxTrust.revoke(
+        { accountId: String(viewer.accountId), remote },
+        () => deps.host.active() === active && deps.session.viewer?.accountId === viewer.accountId,
+      )
       return { trusted: false }
     }),
   })

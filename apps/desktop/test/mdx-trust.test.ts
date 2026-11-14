@@ -44,6 +44,16 @@ describe('mdx trust', () => {
     await expect(store.approve(alice)).rejects.toThrow()
   })
 
+  it('rechecks ownership immediately before the atomic persistence commit', async () => {
+    const store = createMdxTrustStore(file)
+    let owned = true
+    await store.approve(alice, () => owned)
+    expect(await store.status(alice)).toBe(true)
+    owned = false
+    await expect(store.revoke(alice, () => owned)).rejects.toThrow(/context changed/)
+    expect(await store.status(alice)).toBe(true)
+  })
+
   it('fails writes without reporting approval and keeps concurrent grants', async () => {
     const store = createMdxTrustStore(dir)
     await expect(store.approve(alice)).rejects.toThrow()
