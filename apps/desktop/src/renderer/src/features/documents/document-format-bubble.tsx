@@ -94,6 +94,7 @@ interface DocumentFormatBubbleProps {
   onLinkOpenChange: (open: boolean) => void
   /** Null when there is no agent to ask. */
   onQuickCommand: ((instruction: string, passage: string) => void) | null
+  onAddToBatch?: ((instruction: string, passage: string) => void) | null
   /** Start a conversation about the passage; null when none can start. */
   onStartChat?: ((passage: string) => void) | null
   /** Start a comment thread on the selection; null when the note takes none. */
@@ -105,6 +106,7 @@ export function DocumentFormatBubble({
   linkOpen,
   onLinkOpenChange,
   onQuickCommand,
+  onAddToBatch = null,
   onStartChat = null,
   onComment = null,
 }: DocumentFormatBubbleProps) {
@@ -239,6 +241,12 @@ export function DocumentFormatBubble({
                       <PencilLineIcon aria-hidden="true" />
                       Custom instruction…
                     </DropdownMenuItem>
+                    {onAddToBatch ? (
+                      <DropdownMenuItem onClick={() => onAddToBatch('', selectedPassage())}>
+                        <PencilLineIcon aria-hidden="true" />
+                        Add to batch…
+                      </DropdownMenuItem>
+                    ) : null}
                   </DropdownMenuGroup>
                   {onStartChat ? (
                     <>

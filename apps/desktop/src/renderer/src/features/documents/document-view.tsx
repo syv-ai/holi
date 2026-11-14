@@ -56,6 +56,8 @@ import {
   RichTextTableBubble,
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { cn } from '@/lib/cn'
 import { TaskProperties, useHasTaskProperties } from '@/features/planning/task-properties'
@@ -325,6 +327,13 @@ function DocumentEditor({
     if (found) onOpen(found)
   }
 
+  const mapTargetsRef = useRef<
+    (
+      _mapping: import('@tiptap/pm/transform').Mapping,
+      _doc: import('@tiptap/pm/model').Node,
+    ) => void
+  >(() => {})
+
   const extensions = useMemo(
     () => [
       Extension.create({
@@ -379,6 +388,9 @@ function DocumentEditor({
           'aria-multiline': 'true',
         },
       },
+      onTransaction: ({ transaction }) => {
+        if (transaction.docChanged) mapTargetsRef.current(transaction.mapping, transaction.doc)
+      },
       onUpdate: ({ transaction }) => {
         if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
         dirty.current = true
@@ -395,8 +407,22 @@ function DocumentEditor({
 
   const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
-  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp } =
-    useDocumentAgentPrompt({ editor, path, agent, handlers, save })
+  const {
+    promptOpen,
+    promptInitial,
+    closePrompt,
+    sendPrompt,
+    quickCommand,
+    createVaultApp,
+    rewriteQueue,
+    addToBatch,
+    submitBatch,
+    removeFromBatch,
+    editBatchItem,
+    reselection,
+    mapTargets,
+  } = useDocumentAgentPrompt({ editor, path, agent, handlers, save })
+  mapTargetsRef.current = mapTargets
 
   const comments = useDocumentComments({ editor, path, docs, head, save })
   const {
@@ -869,6 +895,60 @@ function DocumentEditor({
                 )}
               />
               <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
+                {rewriteQueue.length > 0 ? (
+                  <section
+                    aria-label="Queued rewrite requests"
+                    className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-4 sm:px-16"
+                  >
+                    <h2 className="text-sm font-medium">Rewrite batch ({rewriteQueue.length})</h2>
+                    {rewriteQueue.map((item, index) => (
+                      <div key={item.id} className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-sm">{item.passage}</span>
+                        <Input
+                          aria-label={`Request for target ${index + 1}`}
+                          value={item.instruction}
+                          placeholder="Change this passage…"
+                          onChange={(event) => editBatchItem(item.id, event.target.value)}
+                          className="max-w-56"
+                        />
+                        {!item.valid ? (
+                          <span role="status" className="text-sm text-muted-foreground">
+                            Target changed; reselect
+                          </span>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => reselection(item.id)}
+                        >
+                          {item.valid ? 'Reselect' : 'Use selection'}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeFromBatch(item.id)}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={
+                          !canAsk ||
+                          rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
+                        }
+                        onClick={() => void submitBatch()}
+                      >
+                        Submit batch
+                      </Button>
+                    </div>
+                  </section>
+                ) : null}
                 {editor ? (
                   <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
                     <EditorContent
@@ -903,6 +983,7 @@ function DocumentEditor({
                           ? (instruction, passage) => void quickCommand(instruction, passage)
                           : null
                       }
+                      onAddToBatch={canAsk ? addToBatch : null}
                       onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
                       onComment={commentable ? () => void commentOnSelection() : null}
                     />

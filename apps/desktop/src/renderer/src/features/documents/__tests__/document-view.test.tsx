@@ -1770,9 +1770,42 @@ test("Ask AI's rewrite commands read as one group, and Start chat comes after th
     'Simplify',
     'Make shorter',
     'Custom instruction…',
+    'Add to batch…',
     '---',
     'Start chat',
   ])
+})
+
+test('queued paragraph requests launch together as one rewrite run', async () => {
+  const user = userEvent.setup()
+  open('# Plan\n\nShip the beta.\n\nKeep the title.\n')
+  const { editor, askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Make it clearer')
+
+  let second = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (second === -1 && node.isText && node.text!.startsWith('Keep the title')) second = pos
+  })
+  act(() =>
+    editor
+      .chain()
+      .focus()
+      .setTextSelection({ from: second, to: second + 'Keep the title'.length })
+      .run(),
+  )
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 2' }), 'Shorten it')
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+
+  await waitFor(() => expect(cap).toHaveBeenCalledTimes(1))
+  const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.prompt).toContain('Make it clearer')
+  expect(launch.prompt).toContain('Shorten it')
+  expect(launch.prompt).toContain('<target index="1">\nShip the beta\n</target>')
+  expect(launch.prompt).toContain('<target index="2">\nKeep the title\n</target>')
 })
 
 test('Start chat opens a new session beside the document, the passage as its context', async () => {

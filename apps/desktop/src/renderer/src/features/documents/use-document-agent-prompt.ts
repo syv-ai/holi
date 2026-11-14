@@ -4,7 +4,7 @@
  * into the marker the agent writes at. The prompt is the editor's to track
  * (`agentPromptKey`) and renders into the view's `promptBox` on that line.
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { useAtomValue } from 'jotai'
 import type { Editor } from '@tiptap/react'
@@ -15,6 +15,16 @@ import { pluginSlashCommandsAtom } from '@/state/plugins'
 import { agentPromptKey, agentPromptPos, onEmptyLineAt, setAgentPrompt } from './agent-trigger'
 import type { useDocumentAgent } from './document-agent'
 import { AGENT_MARKER } from './markdown'
+import {
+  enqueueRewrite,
+  mapRewriteTargets,
+  removeRewrite,
+  reselectRewrite,
+  updateRewrite,
+} from './rewrite-queue'
+import type { Mapping } from '@tiptap/pm/transform'
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+import type { RewriteQueue } from './rewrite-queue'
 import { pluginSlashItem } from './plugin-slash'
 import type { RichTextSlashItem } from './rich-text/rich-text-slash-menu'
 
@@ -42,6 +52,81 @@ export function useDocumentAgentPrompt({
   const [promptOpen, setPromptOpen] = useState(false)
   /** What the ask prompt opens with: an app command's instruction. */
   const [promptInitial, setPromptInitial] = useState('')
+  const [rewriteQueue, setRewriteQueue] = useState<RewriteQueue>([])
+  const batchInFlight = useRef(false)
+
+  function addToBatch(instruction: string, passage: string) {
+    if (!editor || !activity.focused) return
+    const { from, to, $from, $to } = editor.state.selection
+    if (from === to || $from.parent !== $to.parent || !$from.parent.isTextblock) return
+    setRewriteQueue((queue) =>
+      enqueueRewrite(
+        queue,
+        {
+          from,
+          to,
+          blockFrom: $from.before(),
+          blockTo: $from.after(),
+          passage,
+          instruction,
+          blockType: $from.parent.type.name,
+        },
+        crypto.randomUUID(),
+      ),
+    )
+  }
+
+  function reselection(id: string) {
+    const item = rewriteQueue.find((request) => request.id === id)
+    if (!item || !editor) return
+    if (item.valid) {
+      editor.commands.setTextSelection({ from: item.from, to: item.to })
+      editor.commands.focus()
+      return
+    }
+    const { from, to, $from, $to } = editor.state.selection
+    if (from === to || $from.parent !== $to.parent || !$from.parent.isTextblock) return
+    setRewriteQueue((queue) =>
+      reselectRewrite(queue, id, {
+        from,
+        to,
+        blockFrom: $from.before(),
+        blockTo: $from.after(),
+        passage: editor.state.doc.textBetween(from, to, '\n'),
+        blockType: $from.parent.type.name,
+      }),
+    )
+  }
+
+  async function submitBatch() {
+    if (
+      batchInFlight.current ||
+      !rewriteQueue.length ||
+      rewriteQueue.some((item) => !item.valid) ||
+      !activity.focused
+    )
+      return
+    batchInFlight.current = true
+    const batch = rewriteQueue
+    const request = batch.map((item, index) => `${index + 1}. ${item.instruction}`).join('\n')
+    const passages = batch
+      .map((item, index) => `<target index="${index + 1}">\n${item.passage}\n</target>`)
+      .join('\n\n')
+    try {
+      await save()
+      const started = await agent.start(
+        'rewrite',
+        `Apply each numbered request only to its corresponding target.\n${request}`,
+        passages,
+        activity.capture(),
+      )
+      if (started) setRewriteQueue([])
+    } catch {
+      // Keep the queue available for retry after save or launch failure.
+    } finally {
+      batchInFlight.current = false
+    }
+  }
 
   handlers.current.trigger = (pos, instruction) => {
     if (!activity.focused || !editor || !agent.available || isRunLive(agent.run)) return
@@ -101,5 +186,21 @@ export function useDocumentAgentPrompt({
     await agent.start('vault-app', 'Creating a vault app', undefined, current)
   }
 
-  return { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp }
+  return {
+    promptOpen,
+    promptInitial,
+    closePrompt,
+    sendPrompt,
+    quickCommand,
+    createVaultApp,
+    rewriteQueue,
+    addToBatch,
+    submitBatch,
+    mapTargets: (mapping: Mapping, doc: ProseMirrorNode) =>
+      setRewriteQueue((queue) => mapRewriteTargets(queue, mapping, doc)),
+    removeFromBatch: (id: string) => setRewriteQueue((queue) => removeRewrite(queue, id)),
+    editBatchItem: (id: string, instruction: string) =>
+      setRewriteQueue((queue) => updateRewrite(queue, id, { instruction })),
+    reselection,
+  }
 }
