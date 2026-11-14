@@ -6,7 +6,14 @@ import type { Terminal } from '@xterm/xterm'
 import { SessionTerminal } from '../renderer/session-terminal'
 import { receivePtyData } from '../renderer/lib/session-terminals'
 
-const fixture = vi.hoisted(() => ({ terminals: [] as Terminal[], send: vi.fn() }))
+const fixture = vi.hoisted(() => ({
+  terminals: [] as Terminal[],
+  send: vi.fn(),
+  openExternal: vi.fn(),
+  linkProvider: null as {
+    provideLinks: (y: number, callback: (links: unknown) => void) => void
+  } | null,
+}))
 vi.mock('../renderer/agent-cap', () => ({ agentCap: { attach: async () => '' } }))
 vi.mock('@/lib/terminal-theme', () => ({
   terminalTheme: () => ({}),
@@ -53,7 +60,10 @@ vi.mock('@xterm/xterm', async (original) => {
         }
         term.focus = () => textarea.focus()
         term.loadAddon = () => {}
-        term.registerLinkProvider = () => ({ dispose() {} })
+        term.registerLinkProvider = (provider) => {
+          fixture.linkProvider = provider
+          return { dispose() {} }
+        }
         fixture.terminals.push(term)
         return term
       }
@@ -65,7 +75,48 @@ afterEach(() => {
   cleanup()
   fixture.terminals.length = 0
   fixture.send.mockClear()
+  fixture.openExternal.mockClear()
+  fixture.linkProvider = null
   vi.unstubAllGlobals()
+})
+
+test('native OSC 8 HTTP links activate through the external browser helper', async () => {
+  vi.stubGlobal('holi', {
+    plugin: { send: fixture.send },
+    openExternal: fixture.openExternal,
+  })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'fixture/links')
+  store.set(openTabAtom, { kind: 'surface', surface: 'agent', id: 'links-terminal' })
+  const view = (visible: boolean) => (
+    <Provider store={store}>
+      <SessionTerminal terminalId="links-terminal" provider="pi" visible={visible} />
+    </Provider>
+  )
+  const ui = render(view(true))
+  await waitFor(() => expect(fixture.terminals).toHaveLength(1))
+  const handler = fixture.terminals[0]!.options.linkHandler
+  const preventDefault = vi.fn()
+  const activate = (button = 0, metaKey = true) =>
+    handler?.activate(
+      { preventDefault, button, metaKey } as unknown as MouseEvent,
+      'https://example.com/docs',
+      {
+        start: { x: 1, y: 1 },
+        end: { x: 28, y: 1 },
+      },
+    )
+  activate(0, false)
+  activate(2, true)
+  expect(preventDefault).not.toHaveBeenCalled()
+  expect(fixture.openExternal).not.toHaveBeenCalled()
+  activate()
+  expect(preventDefault).toHaveBeenCalledOnce()
+  expect(fixture.openExternal).toHaveBeenCalledWith('https://example.com/docs')
+
+  ui.rerender(view(false))
+  activate()
+  expect(fixture.openExternal).toHaveBeenCalledTimes(1)
 })
 
 test('a hidden retained terminal answers real xterm protocol queries without enabling its textarea', async () => {
@@ -91,6 +142,43 @@ test('a hidden retained terminal answers real xterm protocol queries without ena
   })
   expect(fixture.terminals[0]!.textarea).toBeDisabled()
   expect(fixture.terminals[0]!.options.disableStdin).toBe(false)
+})
+
+test('registered provider finds and activates a plaintext file URL wrapped by xterm', async () => {
+  const openPath = vi.fn()
+  vi.stubGlobal('holi', { plugin: { send: fixture.send }, openPath })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'fixture/wrapped-links')
+  store.set(openTabAtom, { kind: 'surface', surface: 'agent', id: 'wrapped-terminal' })
+  const ui = render(
+    <Provider store={store}>
+      <SessionTerminal terminalId="wrapped-terminal" provider="claude" visible />
+    </Provider>,
+  )
+  await waitFor(() => expect(fixture.linkProvider).not.toBeNull())
+  const terminal = fixture.terminals[0]!
+  terminal.resize(80, 24)
+  const url = `file:///tmp/${'a'.repeat(160)}.pdf`
+  act(() => receivePtyData({ id: 'wrapped-terminal', data: `\n\n${'x'.repeat(70)}${url}` }))
+  await waitFor(() => expect(terminal.buffer.active.getLine(3)?.isWrapped).toBe(true))
+  const queryResults = [3, 4, 5].map((y) => {
+    let links: Array<{
+      range: { start: { x: number; y: number }; end: { x: number; y: number } }
+      text: string
+      activate: (event: MouseEvent, text: string) => void
+    }> = []
+    act(() => fixture.linkProvider!.provideLinks(y, (value) => (links = value as typeof links)))
+    return links
+  })
+  for (const links of queryResults) {
+    expect(links).toHaveLength(1)
+    expect(links[0]!.text).toBe(url)
+    expect(links[0]!.range.start.y).toBe(3)
+    expect(links[0]!.range.end.y).toBe(6)
+  }
+  queryResults[1]![0]!.activate({ button: 0, metaKey: true } as MouseEvent, url)
+  expect(openPath).toHaveBeenCalledWith(`/tmp/${'a'.repeat(160)}.pdf`)
+  ui.unmount()
 })
 
 test('Pi fullscreen wheel routing sends accumulated native SGR events only in mouse mode', async () => {
