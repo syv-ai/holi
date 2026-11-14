@@ -99,6 +99,15 @@ export const SHORTCUTS: readonly Shortcut[] = [
     listOnly: true,
   },
 
+  {
+    id: 'vim.hints',
+    label: 'Show host control hints',
+    group: 'Navigation',
+    keys: ['f'],
+    inDialogs: true,
+    capture: true,
+  },
+
   // Navigation
   {
     id: 'search.open',

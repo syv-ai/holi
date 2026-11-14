@@ -20,6 +20,9 @@ import { editorSelectionAtom } from '@/state/ui-report'
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { FileView, isCoreTextFilePath } from '../file-view'
+import { HostHintLayer } from '@/features/shell/host-hint-layer'
+import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
+import { installHintLayout } from '@/test/host-hint-layout'
 
 let lastStore: ReturnType<typeof createStore>
 const read = vi.fn()
@@ -50,7 +53,12 @@ afterEach(() => {
   fileDiff.mockReset()
 })
 
-function setup(path: string, claims = false, vimEnabled = false) {
+function HintKeys() {
+  useShortcutDispatcher()
+  return <HostHintLayer scopeKey="fixture:file" />
+}
+
+function setup(path: string, claims = false, vimEnabled = false, hints = false) {
   const store = createStore()
   lastStore = store
   store.set(activeRemoteAtom, 'syv-ai/site')
@@ -74,6 +82,7 @@ function setup(path: string, claims = false, vimEnabled = false) {
   return render(
     <Provider store={store}>
       <FileView path={path} />
+      {hints ? <HintKeys /> : null}
     </Provider>,
   )
 }
@@ -439,6 +448,79 @@ test('Vim key events drive modes, motions, edits, yank, paste, undo and redo', a
   expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(3)
 })
 
+test('normal Vim f opens host hints without edits; insert and visual mode keep native input', async () => {
+  installHintLayout()
+  try {
+    read.mockResolvedValue('alpha beta\n')
+    historyList.mockResolvedValue([])
+    const result = setup('src/hints.txt', false, true, true)
+    const content = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('.cm-content')
+      if (node === null) throw new Error('no editor')
+      return node
+    })
+    const { EditorView } = await import('@codemirror/view')
+    const view = EditorView.findFromDOM(content)!
+    view.focus()
+    await userEvent.keyboard('f')
+    expect(screen.getByLabelText('Vim host hints')).toBeInTheDocument()
+    expect(view.state.doc.toString()).toBe('alpha beta\n')
+    const selection = view.state.selection
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    expect(view.hasFocus).toBe(true)
+    expect(view.state.selection.eq(selection)).toBe(true)
+    await userEvent.keyboard('if')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    expect(view.state.doc.toString()).toBe('falpha beta\n')
+    await userEvent.keyboard('{Escape}vf')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    await act(async () => lastStore.set(vimCodeEditingAtom, false))
+    await userEvent.keyboard('f')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    expect(view.state.doc.toString()).toContain('ff')
+    result.unmount()
+  } finally {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  }
+})
+
+test.each([
+  { prefix: 'd', after: '{Escape}w', expected: 'alpha beta\n' },
+  { prefix: 'r', after: '', expected: 'flpha beta\n' },
+  { prefix: '2', after: '{Escape}w', expected: 'alpha beta\n' },
+  { prefix: '"a', after: '{Escape}w', expected: 'alpha beta\n' },
+  { prefix: 'g', after: '{Escape}', expected: 'alpha beta\n' },
+  { prefix: 'z', after: '{Escape}', expected: 'alpha beta\n' },
+])('pending Vim $prefix keeps f inside the editor', async ({ prefix, after, expected }) => {
+  installHintLayout()
+  try {
+    const user = userEvent.setup()
+    read.mockResolvedValue('alpha beta\n')
+    historyList.mockResolvedValue([])
+    setup('src/pending-vim.txt', false, true, true)
+    const content = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('.cm-content')
+      if (node === null) throw new Error('no editor')
+      return node
+    })
+    const { EditorView } = await import('@codemirror/view')
+    const view = EditorView.findFromDOM(content)!
+    content.focus()
+
+    await user.keyboard(prefix)
+    await user.keyboard('f')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    if (after) await user.keyboard(after)
+    expect(view.state.doc.toString()).toBe(expected)
+  } finally {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  }
+})
+
 test('changing Vim preference reconfigures the same dirty editor and retains history', async () => {
   const user = userEvent.setup()
   read.mockResolvedValue('alpha beta\n')
@@ -476,6 +558,36 @@ test('changing Vim preference reconfigures the same dirty editor and retains his
   await user.keyboard('u')
   expect(view.state.doc.toString()).toBe(edited)
   expect(result.container.querySelector('[data-file-editor="src/list.txt"]')).toBeInTheDocument()
+})
+
+test.each([
+  ['Find', false],
+  ['Replace', true],
+])('normal Vim lets the %s field keep typed f and focus', async (_label, replace) => {
+  const user = userEvent.setup()
+  read.mockResolvedValue('alpha beta\n')
+  historyList.mockResolvedValue([])
+  setup('src/find-vim.txt', false, true, true)
+
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  content.focus()
+  await user.keyboard('{Meta>}f{/Meta}')
+  const findField = await screen.findByRole('textbox', { name: 'Find' })
+  if (replace) {
+    await user.click(screen.getByRole('button', { name: 'Show replace' }))
+  }
+  const field = replace ? screen.getByRole('textbox', { name: 'Replace' }) : findField
+
+  await user.type(field, 'f')
+  await user.type(field, 'moretext')
+
+  expect(field).toHaveValue('fmoretext')
+  expect(field).toHaveFocus()
+  expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
 })
 
 test.each([

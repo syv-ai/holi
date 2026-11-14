@@ -209,6 +209,49 @@ describe('the calendar view', () => {
     expect(screen.getByRole('button', { name: 'New event' })).toBeInTheDocument()
   })
 
+  test('collapses and restores the calendar rail without losing calendar controls or view state', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+
+    const rail = container.querySelector<HTMLElement>('aside')!
+    const title = container.querySelector('[data-slot="event-calendar-title"]')?.textContent
+    expect(rail).toHaveClass('@min-[64rem]/calendar-host:flex')
+    expect(screen.getByRole('button', { name: 'Hide calendar rail' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Hide calendar rail' }))
+    expect(rail).toHaveClass('hidden')
+    expect(rail).not.toHaveClass('@min-[64rem]/calendar-host:flex')
+    expect(
+      container.querySelector('[class*="@min-[64rem]/calendar-host:hidden"]'),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show calendar rail' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(screen.getAllByRole('button', { name: 'Calendars' })).toHaveLength(2)
+    expect(container.querySelector('[data-slot="event-calendar-title"]')?.textContent).toBe(title)
+    expect(screen.getAllByText('Focus block').length).toBeGreaterThan(0)
+
+    const pickers = screen.getAllByRole('button', { name: 'Calendars' })
+    await user.click(pickers.at(-1)!)
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: 'Team' }))
+    expect(setCalendarMock).toHaveBeenCalledWith({ id: 'team', enabled: true })
+    await user.keyboard('{Escape}')
+
+    await user.click(screen.getByRole('button', { name: 'Show calendar rail' }))
+    expect(rail).toHaveClass('@min-[64rem]/calendar-host:flex')
+    expect(screen.getByRole('button', { name: 'Hide calendar rail' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(container.querySelector('[data-slot="event-calendar-title"]')?.textContent).toBe(title)
+    expect(screen.getAllByText('Focus block').length).toBeGreaterThan(0)
+  })
+
   test('one sideways swipe pages one week, and a vertical scroll pages none', async () => {
     const { container } = render(<CalendarView />)
     await screen.findAllByText('Focus block')
