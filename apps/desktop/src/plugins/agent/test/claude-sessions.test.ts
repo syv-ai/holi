@@ -1,4 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,9 +12,12 @@ import {
   sessionName,
   type RunOptions,
 } from '../main/claude/cli'
+import { POSIX_STATUS_LINE } from '../main/claude/seed'
 import {
   isLive,
   parseListing,
+  readContextPercent,
+  readModelName,
   summarise,
   watchConfigDir,
   type ClaudeRow,
@@ -18,6 +25,7 @@ import {
 import { delimiter } from 'node:path'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
+const target = { root: ROOT, configDir: '/cfg/vault', binDir: '/holi/bin' }
 
 /** A row as `claude agents --json` prints it (2.1.284). */
 const LIVE = {
@@ -34,7 +42,235 @@ const LIVE = {
 
 const listing = (rows: unknown[]): string => JSON.stringify(rows, null, 2) + '\n'
 
+describe('attributed Claude Code 2.1.319 fixture consumers', () => {
+  it('exercises launch output, status fields, and consumed CLI argv', async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        resolve(
+          fileURLToPath(new URL('.', import.meta.url)),
+          'fixtures/claude-compatibility/agents-2.1.319.json',
+        ),
+        'utf8',
+      ),
+    ) as {
+      sourceVersion: string
+      reference: string
+      provenance: string
+      launchOutput: string
+      statusLineInput: unknown
+      rows: unknown[]
+    }
+    expect(fixture).toMatchObject({ sourceVersion: '2.1.319', provenance: 'constructed' })
+    expect(fixture.reference).toMatch(/Claude Code 2.1.319/)
+    expect(parseBackgrounded(fixture.launchOutput)).toBe('1234abcd')
+    expect(readModelName(fixture.statusLineInput)).toBe('Sonnet 4')
+    expect(readContextPercent(fixture.statusLineInput)).toBe(43)
+
+    const calls: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/fake/claude',
+      run: async (_bin, args) => {
+        calls.push(args)
+        return fixture.launchOutput
+      },
+    })
+    expect(
+      await cli.startBg(target, {
+        name: 'Compatibility run',
+        prompt: 'Inspect',
+        model: 'sonnet',
+        allow: ['Read'],
+        deny: ['Bash'],
+        appendSystemPrompt: 'Rules',
+        mcpConfig: '/tmp/mcp.json',
+      }),
+    ).toEqual({ ok: true, id: '1234abcd' })
+    expect(calls[0]).toEqual([
+      '--bg',
+      '--model',
+      'sonnet',
+      '--append-system-prompt',
+      'Rules',
+      '--mcp-config=/tmp/mcp.json',
+      '--allowedTools=Read',
+      '--disallowedTools=Bash',
+      '--name',
+      'Compatibility run',
+      '--',
+      'Inspect',
+    ])
+  })
+})
+
+describe('shipped Claude turn signal hook', () => {
+  it('sends turn edges, Claude pid, pending work, and session-channel data locally', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'claude-turn-hook-'))
+    const received: Array<{ url: string; body: string }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', (chunk: string) => {
+        body += chunk
+      })
+      request.on('end', () => {
+        received.push({ url: request.url ?? '', body })
+        response.statusCode = request.url?.startsWith('/turn/end') ? 200 : 204
+        if (response.statusCode === 200) response.end(JSON.stringify({ tree: '0123456789abcdef' }))
+        else response.end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('No loopback server address')
+    try {
+      const vault = dir
+      await mkdir(join(vault, '.holi/state'), { recursive: true })
+      await writeFile(join(vault, '.holi/vault'), '')
+      await writeFile(
+        join(vault, '.holi/state/bridge.local.env'),
+        `HOLI_BRIDGE_PORT=${address.port}\nHOLI_BRIDGE_TOKEN=abc123\n`,
+      )
+      const hook = resolve(
+        fileURLToPath(new URL('.', import.meta.url)),
+        '../main/claude/vault/shipped/.claude/hooks/turn-signal.mjs',
+      )
+      const run = (edge: string, input: unknown, extra: NodeJS.ProcessEnv = {}) =>
+        new Promise<void>((resolve, reject) => {
+          const child = spawn(process.execPath, [hook, edge], {
+            cwd: vault,
+            env: {
+              ...process.env,
+              CLAUDE_JOB_DIR: join(vault, '.claude/jobs/1234abcd'),
+              CLAUDE_PID: '7788',
+              ...extra,
+            },
+            stdio: ['pipe', 'ignore', 'pipe'],
+          })
+          let stderr = ''
+          child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+            stderr += chunk
+          })
+          child.stdin.end(JSON.stringify(input))
+          const timer = setTimeout(() => {
+            child.kill()
+            reject(new Error(`${edge} hook timed out`))
+          }, 4000)
+          child.once('error', (error) => {
+            clearTimeout(timer)
+            reject(error)
+          })
+          child.once('close', (code) => {
+            clearTimeout(timer)
+            code === 0 ? resolve() : reject(new Error(`${edge} hook exited ${code}: ${stderr}`))
+          })
+        })
+      await run('start', {})
+      await run('end', { background_tasks: [{ id: 'pending' }], session_crons: [{}] })
+      await run(
+        'session',
+        {},
+        {
+          CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/inbox.sock',
+          CLAUDE_CODE_MESSAGING_TOKEN: 'inbox-secret',
+        },
+      )
+      expect(received).toHaveLength(3)
+      expect(received[0]?.url).toContain('/turn/start?t=abc123&job=1234abcd&pid=7788')
+      expect(received[1]?.url).toContain('/turn/end?t=abc123&job=1234abcd&pending=2')
+      expect(received[2]?.url).toContain('/session?t=abc123&job=1234abcd')
+      expect(JSON.parse(received[2]!.body)).toEqual({
+        socket: '/tmp/inbox.sock',
+        token: 'inbox-secret',
+      })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('shipped Claude statusline command', () => {
+  it('emits current status fields to a bounded loopback bridge', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'claude-statusline-'))
+    const requests: Array<{ url: string; body: string }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', (chunk: string) => {
+        body += chunk
+      })
+      request.on('end', () => {
+        requests.push({ url: request.url ?? '', body })
+        response.end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('No loopback server address')
+    try {
+      await mkdir(join(dir, '.holi/state'), { recursive: true })
+      await writeFile(join(dir, '.holi/vault'), '')
+      await writeFile(
+        join(dir, '.holi/state/bridge.local.env'),
+        `HOLI_BRIDGE_PORT=${address.port}\nHOLI_BRIDGE_TOKEN=abc123\n`,
+      )
+      const child = spawn('sh', ['-c', POSIX_STATUS_LINE], {
+        cwd: dir,
+        env: { ...process.env, CLAUDE_JOB_DIR: join(dir, '.claude/jobs/1234abcd') },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      let stdout = ''
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+        stdout += chunk
+      })
+      child.stdin.end(
+        JSON.stringify({
+          model: { display_name: 'Sonnet 4' },
+          context_window: { used_percentage: 42.6 },
+        }),
+      )
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('statusline subprocess timed out')), 3000)
+        child.once('error', (error) => {
+          clearTimeout(timer)
+          reject(error)
+        })
+        child.once('close', (code) => {
+          clearTimeout(timer)
+          code === 0 ? resolve() : reject(new Error(`statusline exited ${code}`))
+        })
+      })
+      await vi.waitFor(() => expect(requests).toHaveLength(1), { timeout: 2500 })
+      expect(stdout).toContain('Sonnet 4 · 43% context')
+      expect(requests[0]).toMatchObject({
+        url: '/statusline?t=abc123&job=1234abcd',
+        body: expect.stringContaining('Sonnet 4'),
+      })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('parseListing', () => {
+  it('consumes the attributed constructed compatibility listing, including history', async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        resolve(
+          fileURLToPath(new URL('.', import.meta.url)),
+          'fixtures/claude-compatibility/agents-2.1.319.json',
+        ),
+        'utf8',
+      ),
+    ) as { sourceVersion: string; provenance: string; rows: unknown[] }
+    expect(fixture).toMatchObject({ sourceVersion: '2.1.319', provenance: 'constructed' })
+    const rows = parseListing(listing(fixture.rows), '/fixture/vault')
+    expect(rows.map((row) => row.id)).toEqual(['20c9f6e8', '7b1e0c42'])
+    expect(isLive(rows[0]!)).toBe(true)
+    expect(isLive(rows[1]!)).toBe(false)
+  })
+
   it('reads a background row keyed by its job id', () => {
     expect(parseListing(listing([LIVE]), ROOT)).toEqual([
       {
@@ -124,8 +360,6 @@ describe('summarise', () => {
 })
 
 describe('claude-cli', () => {
-  const target = { root: ROOT, configDir: '/cfg/vault', binDir: '/holi/bin' }
-
   it('parses the documented --bg line, colour codes and all', () => {
     expect(
       parseBackgrounded('backgrounded · \x1b[36maeea37bf\x1b[39m · lab\n  claude agents'),
