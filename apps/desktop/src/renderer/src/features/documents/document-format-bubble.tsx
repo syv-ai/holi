@@ -244,7 +244,10 @@ export function DocumentFormatBubble({
                     {onAddToBatch ? (
                       <DropdownMenuItem
                         disabled={
-                          editor.state.selection.$from.parent !== editor.state.selection.$to.parent
+                          editor.state.selection.$from.parent !==
+                            editor.state.selection.$to.parent ||
+                          editor.state.selection.$from.start() !==
+                            editor.state.selection.$to.start()
                         }
                         onClick={() => onAddToBatch('', selectedPassage())}
                       >
