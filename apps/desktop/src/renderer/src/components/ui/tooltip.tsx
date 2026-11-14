@@ -1,3 +1,4 @@
+import { OverlayActivityContext, useActivityOpen } from "@/hooks/use-editor-activity"
 import * as React from "react"
 import { cn } from "@/lib/cn"
 import { Tooltip as TooltipPrimitive } from "radix-ui"
@@ -18,7 +19,9 @@ function TooltipProvider({
 function Tooltip({
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+  const { open, defaultOpen, onOpenChange, ...rest } = props
+  const overlay = useActivityOpen(open, defaultOpen, onOpenChange)
+  return <OverlayActivityContext value={overlay.valid}><TooltipPrimitive.Root key={overlay.epoch} data-slot="tooltip" {...rest} open={overlay.open} onOpenChange={overlay.onOpenChange} /></OverlayActivityContext>
 }
 
 function TooltipTrigger({

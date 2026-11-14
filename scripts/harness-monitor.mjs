@@ -23,7 +23,14 @@ export const providers = [
 ]
 
 const requiredChecks = {
-  'claude-code': ['compatibility'],
+  'claude-code': [
+    'CLI surface',
+    'fixture consumers',
+    'historical-session inclusion',
+    'actual hook emission',
+    'permissions',
+    'messaging',
+  ],
   codex: [
     'CLI surface',
     'fixture consumers',
@@ -32,7 +39,7 @@ const requiredChecks = {
     'inference events',
     'sandbox enforcement',
   ],
-  pi: ['compatibility'],
+  pi: ['cli-contract', 'rpc-consumer', 'rpc-producer'],
 }
 
 const issueMarker = (id) => `<!-- holi-harness-monitor:${id} -->`
@@ -65,8 +72,17 @@ export async function discover({ fetchImpl = fetch, sha, runNumber, runUrl }) {
 
 export function normalizeReport(observation, checks = observation.checks ?? []) {
   const allowed = new Set(['pass', 'mismatch', 'unverified'])
+  if (!Array.isArray(checks)) throw new Error('Invalid normalized checks')
   for (const check of checks) {
-    if (!allowed.has(check.outcome) || !check.name) throw new Error('Invalid normalized check')
+    if (
+      !check ||
+      typeof check !== 'object' ||
+      !allowed.has(check.outcome) ||
+      typeof check.name !== 'string' ||
+      !check.name.trim() ||
+      (check.detail !== undefined && typeof check.detail !== 'string')
+    )
+      throw new Error('Invalid normalized check')
   }
   const normalizedChecks = [...checks]
   for (const name of requiredChecks[observation.id] ?? []) {
@@ -160,7 +176,8 @@ function renderBody(report) {
   )
   const mismatches = report.checks.filter((check) => check.outcome === 'mismatch')
   return [
-    `Monitoring-only observation for **${report.name}** (\`${report.package}\`).`,
+    `Monitoring-only observation for **${report.name}** (\`${report.package}\`). ${report.id === 'pi' ? 'The isolated CLI contract executes the exact npm version without provider credentials or live prompts; RPC consumer fixtures are constructed from attributed upstream sources, and producer emission remains unverified.' : report.id === 'codex' || report.id === 'claude-code' ? 'The exact npm CLI surface and production consumer fixtures are checked in an isolated, read-only job; live provider execution and output not captured by fixtures remain unverified.' : 'No provider harness was installed or executed.'}`,
+
     '',
     `Observed npm latest: \`${report.version}\``,
     `npm: ${report.npmUrl}`,
@@ -243,12 +260,30 @@ export function githubAdapter() {
   }
 }
 
-if (process.argv[2] === 'merge-codex') {
+if (process.argv[2] === 'merge-codex' || process.argv[2] === 'merge-claude') {
   const report = JSON.parse(await readFile(process.argv[3], 'utf8'))
   const checks = JSON.parse(await readFile(process.argv[4], 'utf8'))
-  const codex = report.providers.find((provider) => provider.id === 'codex')
-  if (!codex) throw new Error('Codex observation is missing')
-  codex.checks = checks
+  const id = process.argv[2] === 'merge-codex' ? 'codex' : 'claude-code'
+  const provider = report.providers.find((item) => item.id === id)
+  if (!provider) throw new Error(`${id} observation is missing`)
+  provider.checks = checks
+  process.stdout.write(JSON.stringify(report))
+} else if (process.argv[2] === 'merge-pi') {
+  const report = JSON.parse(await readFile(process.argv[3], 'utf8'))
+  const cli = JSON.parse(await readFile(process.argv[4], 'utf8'))
+  const consumer = JSON.parse(await readFile(process.argv[5], 'utf8'))
+  const pi = report.providers.find((provider) => provider.id === 'pi')
+  if (!pi) throw new Error('Pi observation is missing')
+  pi.checks = [
+    { name: 'cli-contract', ...cli },
+    { name: 'rpc-consumer', ...consumer },
+    {
+      name: 'rpc-producer',
+      outcome: 'unverified',
+      detail:
+        'No JSONL transcript was captured from the exact npm release; fixtures attributed to upstream revision b4899f59ef0fba6507c2e619fd804dcde51920ba do not prove producer emission.',
+    },
+  ]
   process.stdout.write(JSON.stringify(report))
 } else if (process.argv[2] === 'discover') {
   const report = await discover({

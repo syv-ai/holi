@@ -11,7 +11,7 @@ import { PdfViewer } from './pdf-viewer'
 export const pdfRenderer: RendererPlugin = {
   info: PDF_INFO,
   claims: [
-    { match: (path) => fileKind(path) === 'pdf', view: PdfViewer },
+    { match: (path) => fileKind(path) === 'pdf', view: PdfViewer, retainView: true },
     {
       match: (path) => fileKind(path) === 'markdown',
       rowMenu: [

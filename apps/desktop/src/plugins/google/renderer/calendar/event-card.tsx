@@ -99,6 +99,7 @@ interface EventCardProps {
   onEdit: () => void
   /** Save what the form holds: the draft it was opened with, as edited. */
   onSave: (draft: EventDraft) => Promise<boolean>
+  onDraftChange: (draft: EventDraft) => void
   onDelete: () => Promise<void>
   onCreateTask: () => Promise<void>
   onOpenExternal: (url: string) => void
@@ -209,6 +210,7 @@ export function EventCard({
   onOpenChange,
   onEdit,
   onSave,
+  onDraftChange,
   onDelete,
   onCreateTask,
   onOpenExternal,
@@ -287,6 +289,7 @@ export function EventCard({
             <EventForm
               key={state.identity}
               draft={state.draft}
+              onDraftChange={onDraftChange}
               mode={state.mode as 'edit' | 'create'}
               error={error}
               saving={saving}
@@ -549,6 +552,7 @@ function EventView({
  */
 function EventForm({
   draft: initial,
+  onDraftChange,
   mode,
   error,
   saving,
@@ -557,6 +561,7 @@ function EventForm({
   onClose,
 }: {
   draft: EventDraft
+  onDraftChange: (draft: EventDraft) => void
   mode: 'edit' | 'create'
   error: string | null
   saving: boolean
@@ -566,8 +571,13 @@ function EventForm({
 }) {
   const [draft, setDraft] = useState(initial)
   const patch = useCallback(
-    (partial: Partial<EventDraft>) => setDraft((prev) => ({ ...prev, ...partial })),
-    [],
+    (partial: Partial<EventDraft>) =>
+      setDraft((previous) => {
+        const next = { ...previous, ...partial }
+        onDraftChange(next)
+        return next
+      }),
+    [onDraftChange],
   )
   // Stable, so the memoised time selects skip a keystroke in the title.
   const setStart = useCallback((start: string) => patch({ start }), [patch])

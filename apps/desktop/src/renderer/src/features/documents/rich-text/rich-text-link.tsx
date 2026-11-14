@@ -1,4 +1,5 @@
-import { useId, useRef, useState, type RefObject } from 'react'
+import { useEffect, useId, useRef, useState, type RefObject } from 'react'
+import { editorActivity, useEditorActivity } from '@/hooks/use-editor-activity'
 import { useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 
@@ -17,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { RichTextSnapshot } from './rich-text-state'
 import { ShortcutKeys } from '@/composites/shortcut-keys'
 import { keepEditorFocus } from './rich-text-toolbar'
+import { setRichTextBubble } from './rich-text-bubble-bar'
 import { LinkIcon, CheckIcon, Link2OffIcon, ExternalLinkIcon, PencilIcon } from 'lucide-react'
 
 const BARE_DOMAIN = /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#]\S*)?$/
@@ -39,16 +41,18 @@ interface LinkFormProps {
   href: string | null
   inputRef: RefObject<HTMLInputElement | null>
   onDone: () => void
+  draft: string
+  setDraft: (draft: string) => void
 }
 
-function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
-  const [draft, setDraft] = useState(href ?? '')
+function LinkForm({ editor, href, inputRef, onDone, draft, setDraft }: LinkFormProps) {
+  const activity = useEditorActivity(editor)
   const [invalid, setInvalid] = useState(false)
   const errorId = useId()
 
   function apply() {
     // Enter on an empty field is a no-op, not an error.
-    if (!draft.trim()) return
+    if (!activity.focused || !draft.trim()) return
 
     const next = normalizeHref(draft)
 
@@ -148,6 +152,17 @@ export function RichTextLinkPopover({
   open,
   onOpenChange,
 }: RichTextLinkPopoverProps) {
+  const activity = useEditorActivity(editor)
+  const [draft, setDraft] = useState(state.link ?? '')
+  const [draftTarget, setDraftTarget] = useState('')
+  const target = editor
+    ? `${editor.state.selection.from}:${editor.state.selection.to}:${state.link ?? ''}`
+    : ''
+  // Suspension keeps this target's draft; a different passage starts from its own link.
+  if (open && target !== draftTarget) {
+    setDraftTarget(target)
+    setDraft(state.link ?? '')
+  }
   const inputRef = useRef<HTMLInputElement>(null)
 
   return (
@@ -178,20 +193,22 @@ export function RichTextLinkPopover({
       <PopoverContent
         onOpenAutoFocus={(event) => {
           event.preventDefault()
-          inputRef.current?.focus()
+          if (activity.focused) inputRef.current?.focus()
         }}
         align="start"
         aria-label="Link"
         className="w-80"
         onCloseAutoFocus={(event) => {
           event.preventDefault()
-          editor?.view.focus()
+          if (activity.focused) editor?.view.focus()
         }}
       >
-        {/* Mounts per open, so the field always starts from the current link. */}
+        {/* The field may unmount; its draft belongs to this passage, not the portal. */}
         <LinkForm
           editor={editor}
           href={state.link}
+          draft={draft}
+          setDraft={setDraft}
           inputRef={inputRef}
           onDone={() => onOpenChange(false)}
         />
@@ -204,6 +221,7 @@ const BUBBLE_OPTIONS = { placement: 'bottom-start', offset: 6 } as const
 
 function showAtLink({ editor, element }: { editor: Editor; element: HTMLElement }) {
   return (
+    editorActivity(editor).focused &&
     editor.isEditable &&
     editor.isActive('link') &&
     (editor.view.hasFocus() || element.contains(document.activeElement))
@@ -217,6 +235,11 @@ interface RichTextLinkBubbleProps {
 
 /** Surfaces the address under the caret, which the text alone never shows. */
 export function RichTextLinkBubble({ editor, onEdit }: RichTextLinkBubbleProps) {
+  const activity = useEditorActivity(editor)
+  useEffect(() => {
+    if (!activity.focused && !editor.isDestroyed)
+      setRichTextBubble(editor, 'richTextLinkBubble', 'hide')
+  }, [activity, activity.focused, editor])
   const href = useEditorState({
     editor,
     selector: ({ editor: current }) =>

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildDailyNoteContent } from '@holi/shared'
+import { buildDailyNoteContent, SCRATCHPAD_PATH } from '@holi/shared'
 import { afterAll, describe, expect, it } from 'vitest'
 import { getOrCreateDaily, sweepDaily } from '../src/main/vault/daily'
 
@@ -62,6 +62,23 @@ describe('sweepDaily', () => {
     )
     expect(await exists(root, '21-07-2026.md')).toBe(true) // today left at root
     expect(await exists(root, '31-12-1999.md')).toBe(true) // hand-authored, untouched
+  })
+
+  it('does not read, classify, archive, or delete the canonical scratchpad', async () => {
+    const scratchpad = Buffer.from(
+      '---\r\ntype: daily-note\r\n---\r\n# 20-07-2026  \r\n[[ordinary.md]]  \nlast line',
+    )
+    const root = await vault({
+      [SCRATCHPAD_PATH]: '',
+      'ordinary.md': '[[20-07-2026.md]]',
+      '20-07-2026.md': buildDailyNoteContent('2026-07-20') + 'notes\n',
+    })
+    await writeFile(join(root, SCRATCHPAD_PATH), scratchpad)
+
+    expect(await sweepDaily(root, TODAY)).toEqual({ archived: 1, deleted: 0 })
+    expect(await readFile(join(root, SCRATCHPAD_PATH))).toEqual(scratchpad)
+    expect(await readFile(join(root, 'ordinary.md'), 'utf8')).toBe('[[journal/20-07-2026.md]]')
+    expect(await exists(root, 'journal/20-07-2026.md')).toBe(true)
   })
 
   it('is a no-op on a re-run', async () => {

@@ -8,6 +8,12 @@ import { parseTabKey } from '@/state/tab-descriptor'
 import { activeRemoteAtom } from '@/state/vaults'
 import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 
+/** Whether a view is one of the shell's in-vault launchers. */
+export function isLauncherSurfaceKey(key: string): boolean {
+  const tab = parseTabKey(key)
+  return key === 'holi:none' || tab?.kind === 'new' || tab?.kind === 'apps'
+}
+
 /** One vault's visited surfaces, behind stable, connected portal hosts.
  * Slots may change with the shell layout; the iframe's document must not. */
 export function useRetainedSurfaces(
@@ -55,7 +61,9 @@ export function useRetainedSurfaces(
   ) {
     setVisited({ remote, keys })
   }
-  const displayed = [...new Set([...visibleKeys, ...keys])]
+  // Keep retained portals in a stable sibling order as focus moves between tabs.
+  // Their physical hosts move into visible slots below; React need not reorder them.
+  const displayed = [...new Set([...keys, ...visibleKeys])]
   const identity = (key: string) => JSON.stringify([remote, key])
   function hostFor(key: string): HTMLDivElement {
     const id = identity(key)

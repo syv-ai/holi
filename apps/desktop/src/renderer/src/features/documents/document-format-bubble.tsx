@@ -50,6 +50,7 @@ import { useAgentLabel } from '@/state/document-runs'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { useAtomValue } from 'jotai'
 import { extraSelections } from './multi-cursor'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 
 const FORMAT_BUBBLE_KEY = 'documentFormatBubble'
 
@@ -107,6 +108,8 @@ export function DocumentFormatBubble({
   onStartChat = null,
   onComment = null,
 }: DocumentFormatBubbleProps) {
+  const activity = useEditorActivity(editor)
+  const [customDraft, setCustomDraft] = useState('')
   const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const state = useRichTextState(editor)
   /** The passage the person's own instruction is for, taken when its prompt
@@ -131,7 +134,7 @@ export function DocumentFormatBubble({
   const shouldShow = useCallback(
     ({ editor: current, element, state: doc, from, to }: ShouldShowProps) => {
       // The bubble's debounced check can outlive the editor (a closed tab).
-      if (current.isDestroyed || !current.isEditable) return false
+      if (!activity.focused || current.isDestroyed || !current.isEditable) return false
       if (holdOpenRef.current) return true
       if (!isTextSelection(doc.selection) || doc.selection.empty) return false
       // Marks would reach only the newest of several ⌘D selections.
@@ -142,7 +145,7 @@ export function DocumentFormatBubble({
       }
       return current.view.hasFocus() || element.contains(document.activeElement)
     },
-    [],
+    [activity],
   )
 
   const selectedPassage = () => {
@@ -170,6 +173,7 @@ export function DocumentFormatBubble({
   const submitCustom = (instruction: string) => {
     const passage = customPassage
     setCustomPassage(null)
+    setCustomDraft('')
     if (passage !== null) onQuickCommand?.(instruction, passage)
   }
 
@@ -262,17 +266,15 @@ export function DocumentFormatBubble({
                   event.preventDefault()
                   // Back to the text, the passage still selected, unless the
                   // person clicked somewhere else.
-                  if (
-                    !dismissedOutsideRef.current &&
-                    !editor.isDestroyed &&
-                    editor.view.dom.isConnected
-                  ) {
+                  if (!dismissedOutsideRef.current && !editor.isDestroyed && activity.focused) {
                     editor.view.focus()
                   }
                 }}
               >
                 {/* Mounts per open, so the field always starts empty. */}
                 <AgentPrompt
+                  value={customDraft}
+                  onValueChange={setCustomDraft}
                   task="change the selection"
                   placeholder="Make it more formal, turn it into a list…"
                   onSubmit={submitCustom}

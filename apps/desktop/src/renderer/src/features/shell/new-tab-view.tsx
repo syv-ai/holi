@@ -38,9 +38,12 @@ function dayLabel(today: string): string {
  * Holis' arcade (docs/features/tabs-panes.md, The arcade).
  */
 export function NewTabView({
+  visible = true,
   onOpen,
   onNewDocument,
 }: {
+  /** Whether this launcher is displayed in a pane. */
+  visible?: boolean
   /** Open a vault path or the board, in place of a New tab. */
   onOpen: (id: string) => void
   onNewDocument: () => void
@@ -68,9 +71,13 @@ export function NewTabView({
   const wasPlaying = useRef(false)
 
   useEffect(() => {
-    if (wasPlaying.current && !playing) takeControlRef.current?.focus()
+    if (!arcadeOn) setPlaying(false)
+  }, [arcadeOn])
+
+  useEffect(() => {
+    if (wasPlaying.current && !playing && arcadeOn && visible) takeControlRef.current?.focus()
     wasPlaying.current = playing
-  }, [playing])
+  }, [arcadeOn, playing, visible])
 
   /** Over the board when the pointer is on the scroller or the column itself
    *  (the gaps between things), or on the take-control pill's own row. */
@@ -107,6 +114,7 @@ export function NewTabView({
         <HoliArcade
           cast={cast}
           playing={playing}
+          displayed={visible}
           onRelease={() => setPlaying(false)}
           className="hidden @3xl:block"
         />

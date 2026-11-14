@@ -7,6 +7,7 @@
  * elsewhere; one in the vault then opens in a tab.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useState } from 'react'
 import { ChevronDown, Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { activeRemoteAtom, openPathAtom, useHasCapability } from '@/plugin-api'
@@ -18,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { MeetingState } from '../shared/meeting'
+import { useMeetingsDisplayed } from './displayed'
 import { meetingCap } from './meeting-cap'
 import { pdfCap } from './pdf-cap'
 import { message } from './state'
@@ -33,6 +35,11 @@ export function ExportMinutes({
   const openPath = useSetAtom(openPathAtom)
   const pdf = useHasCapability('pdf.render')
   const source = meeting.minutesPath
+  const displayed = useMeetingsDisplayed()
+  const [menuOpen, setMenuOpen] = useState(false)
+  useEffect(() => {
+    if (!displayed) setMenuOpen(false)
+  }, [displayed])
 
   const saveAs = async (extension: 'md' | 'pdf') => {
     if (remote === null || source === undefined) return
@@ -68,7 +75,10 @@ export function ExportMinutes({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      open={displayed && menuOpen}
+      onOpenChange={(next) => setMenuOpen(displayed && next)}
+    >
       <DropdownMenuTrigger asChild>
         <Button size="sm" variant="secondary" disabled={disabled}>
           <Download aria-hidden />

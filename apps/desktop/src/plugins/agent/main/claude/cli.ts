@@ -15,11 +15,17 @@
  *
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */
-import { execFile } from 'node:child_process'
-import { accessSync, constants } from 'node:fs'
 import { join } from 'node:path'
 import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
-import { nodeFallbackDir, resolveBin, toolPath } from '../../../../main/plugin-api'
+import {
+  delimiterFor,
+  execProgram,
+  isRunnable,
+  nodeFallbackDir,
+  resolveBin,
+  toolPath,
+  withPath,
+} from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
 
 /**
@@ -52,6 +58,8 @@ export interface AgentEnvOpts {
    * nothing from the machine's config. Absolute path only.
    */
   configDir?: string | null
+  /** The OS the environment is for; tests run both branches on any machine. */
+  platform?: NodeJS.Platform
 }
 
 export function buildAgentEnv(
@@ -110,32 +118,30 @@ export function buildAgentEnv(
   // a `node` the machine has always wins (`main/bridge/node-fallback.ts`).
   // The plugin commands come last of all, so a plugin adds a command but
   // never stands in for one the machine or Holi has.
-  env.PATH = [
-    opts.binDir,
-    toolPath(env),
-    opts.binDir ? nodeFallbackDir(opts.binDir) : undefined,
-    opts.commandsDir,
-  ]
-    .filter((dir): dir is string => !!dir)
-    .join(':')
-  return env
+  // One key, whatever case the inherited one had: a Windows environment copied
+  // from an Explorer launch holds `Path`, and a second `PATH` beside it would
+  // be read by some children and not by others.
+  const platform = opts.platform ?? process.platform
+  return withPath(
+    env,
+    [
+      opts.binDir,
+      toolPath(env, platform),
+      opts.binDir ? nodeFallbackDir(opts.binDir, platform) : undefined,
+      opts.commandsDir,
+    ]
+      .filter((dir): dir is string => !!dir)
+      .join(delimiterFor(platform)),
+    platform,
+  )
 }
 
 /** `HOLI_CLAUDE_BIN` when it is set and runs, else `claude` as `resolveBin`
  *  finds it. */
 export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HOLI_CLAUDE_BIN
-  if (override && isExecutable(override)) return override
+  if (override && isRunnable(override)) return override
   return resolveBin('claude', env)
-}
-
-function isExecutable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
 }
 
 /** A listing is read on a filesystem edge, so a hung CLI would queue reads. */
@@ -158,6 +164,8 @@ export interface RunOptions {
   cwd: string
   env: Record<string, string>
   timeoutMs: number
+  /** Successful `--bg` is the only launch whose descendants outlive the CLI. */
+  retainDescendantsOnSuccess?: boolean
 }
 
 export interface ClaudeCliDeps {
@@ -247,9 +255,17 @@ function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string,
   })
 }
 
+/** The text for a machine without the binary: Windows gets its install command,
+ *  and every other OS the text it has always had.
+ * @public exported for its test */
+export function notInstalledText(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32'
+    ? 'Claude CLI not found on PATH. Install it with `irm https://claude.ai/install.ps1 | iex` in PowerShell (or `npm install -g @anthropic-ai/claude-code`) and restart Holi.'
+    : 'Claude CLI not found on PATH. Install it (https://claude.com/claude-code) and restart Holi.'
+}
+
 /** The binary when it is not on the machine. */
-export const NOT_INSTALLED =
-  'Claude CLI not found on PATH. Install it (https://claude.com/claude-code) and restart Holi.'
+export const NOT_INSTALLED = notInstalledText()
 
 /** What a terminal runs: `claude agents` (the list), `claude attach <id>`,
  *  a copy of a chat session's conversation (`--resume <id>
@@ -280,15 +296,18 @@ export function terminalCommand(
 
 function defaultRun(bin: string, args: string[], opts: RunOptions): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = execFile(
+    // A `.cmd` goes through `cmd.exe` on Windows, with its tree stopped at the
+    // timeout (`main/launch.ts`).
+    const child = execProgram(
       bin,
       args,
       {
         cwd: opts.cwd,
         env: opts.env,
-        timeout: opts.timeoutMs,
+        timeoutMs: opts.timeoutMs,
         maxBuffer: 1024 * 1024,
         encoding: 'utf8',
+        retainDescendantsOnSuccess: opts.retainDescendantsOnSuccess,
       },
       (err, stdout, stderr) => (err ? reject(new Error(stderr || String(err))) : resolve(stdout)),
     )
@@ -304,12 +323,22 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
   const resolveBin = deps.resolveBin ?? (() => resolveClaudeBin())
   const run = deps.run ?? defaultRun
 
-  async function exec(target: VaultCliTarget, args: string[], timeoutMs: number): Promise<string> {
+  async function exec(
+    target: VaultCliTarget,
+    args: string[],
+    timeoutMs: number,
+    retainDescendantsOnSuccess = false,
+  ): Promise<string> {
     const bin = resolveBin()
     if (bin === null) {
       throw new Error(NOT_INSTALLED)
     }
-    return run(bin, args, { cwd: target.root, env: cliEnv(process.env, target), timeoutMs })
+    return run(bin, args, {
+      cwd: target.root,
+      env: cliEnv(process.env, target),
+      timeoutMs,
+      ...(retainDescendantsOnSuccess ? { retainDescendantsOnSuccess: true } : {}),
+    })
   }
 
   async function action(target: VaultCliTarget, args: string[]): Promise<ActionResult> {
@@ -325,7 +354,7 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
   async function start(target: VaultCliTarget, args: string[]): Promise<StartResult> {
     let stdout: string
     try {
-      stdout = await exec(target, args, ACTION_TIMEOUT_MS)
+      stdout = await exec(target, args, ACTION_TIMEOUT_MS, true)
     } catch (err: unknown) {
       log(`--bg failed: ${String(err)}`)
       return { ok: false, message: err instanceof Error ? err.message : String(err) }

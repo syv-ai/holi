@@ -3,6 +3,7 @@
  * line (Space) or over a selection, and the status pill that says what a run is doing, with Stop.
  */
 import { useState } from 'react'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ArrowUpIcon, SparklesIcon, SquareIcon, XIcon } from 'lucide-react'
 
@@ -31,9 +32,13 @@ export function AgentPrompt({
   placeholder = 'Draft an introduction, turn the list into a table…',
   onSubmit,
   onCancel,
+  value,
+  onValueChange,
 }: {
   /** Written in already, for the person to send or change: an app
    *  command's instruction. */
+  value?: string
+  onValueChange?: (value: string) => void
   initial?: string
   /** What the agent is asked to do, above the field after "Ask <agent> to"
    *  ("Ask AI to" until the agent's name is known). */
@@ -42,11 +47,14 @@ export function AgentPrompt({
   onSubmit: (request: string) => void
   onCancel: () => void
 }) {
-  const [text, setText] = useState(initial)
+  const activity = useEditorActivity()
+  const [local, setLocal] = useState(initial)
+  const text = value ?? local
+  const setText = onValueChange ?? setLocal
   const agent = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const send = () => {
     const request = text.trim()
-    if (request !== '') onSubmit(request)
+    if (activity.focused && request !== '') onSubmit(request)
   }
 
   return (
@@ -59,7 +67,7 @@ export function AgentPrompt({
         </InputGroupText>
       </InputGroupAddon>
       <InputGroupTextarea
-        autoFocus
+        autoFocus={activity.focused}
         rows={1}
         value={text}
         aria-label="What should the agent do?"

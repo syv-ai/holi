@@ -4,6 +4,7 @@
  * docs/features/note-comments.md), sent with ⌘Enter or its button.
  */
 import { useId, useRef, useState } from 'react'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { useAtomValue } from 'jotai'
 
 import { Button } from '@/components/ui/button'
@@ -38,8 +39,10 @@ export function CommentField({
   onSubmit: (body: string) => Promise<void>
   onCancel?: () => void
 }) {
+  const activity = useEditorActivity()
   const members = useAtomValue(memberLoginsAtom)
   const [text, setText] = useState('')
+  const [focused, setFocused] = useState(false)
   const [caret, setCaret] = useState(0)
   const [picked, setPicked] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -53,7 +56,7 @@ export function CommentField({
       : members
           .filter((login) => login.toLowerCase().startsWith(mention.query))
           .slice(0, MAX_SUGGESTIONS)
-  const open = suggestions.length > 0
+  const open = activity.focused && focused && suggestions.length > 0
   const current = Math.min(picked, suggestions.length - 1)
 
   const complete = (login: string) => {
@@ -63,7 +66,9 @@ export function CommentField({
     setText(next)
     setCaret(at)
     setPicked(0)
+    const current = activity.capture()
     requestAnimationFrame(() => {
+      if (!current()) return
       box.current?.focus()
       box.current?.setSelectionRange(at, at)
     })
@@ -92,8 +97,10 @@ export function CommentField({
             ref={box}
             aria-label={label}
             placeholder={placeholder}
-            autoFocus={autoFocus}
+            autoFocus={autoFocus && activity.focused}
             value={text}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             disabled={busy}
 
             role="combobox"

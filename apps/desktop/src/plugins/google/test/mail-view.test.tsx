@@ -11,7 +11,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../renderer/mail-view'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, loadVaultSettingsAtom } from '@/plugin-api'
 import { getDefaultStore } from 'jotai'
 
 const threadMock = vi.fn()
@@ -26,6 +26,7 @@ const untrashMock = vi.fn()
 const toastMock = vi.fn()
 const categoryCountsMock = vi.fn()
 const imageSendersMock = vi.fn()
+const setImagesFromAllSendersMock = vi.fn()
 const allowImagesFromMock = vi.fn()
 const forgetImageSendersMock = vi.fn()
 const sendAsMock = vi.fn()
@@ -57,7 +58,16 @@ const google: Record<string, (params: unknown) => unknown> = {
   untrash: (p) => untrashMock(p),
   categoryCounts: () => categoryCountsMock(),
   imageSenders: () => imageSendersMock(),
-  allowImagesFrom: (p) => allowImagesFromMock(p),
+  setImagesFromAllSenders: (p) => setImagesFromAllSendersMock(p),
+  allowImagesFrom: async (p) => {
+    const result = await allowImagesFromMock(p)
+    const before = await imageSendersMock()
+    imageSendersMock.mockResolvedValue({
+      ...before,
+      imageSenders: [...before.imageSenders, (p as { sender: string }).sender],
+    })
+    return result
+  },
   forgetImageSenders: () => forgetImageSendersMock(),
   sendAs: () => sendAsMock(),
   saveDraft: (p) => saveDraftMock(p),
@@ -83,6 +93,14 @@ vi.mock('sonner', async (original) => ({
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    settings: {
+      read: {
+        query: async () => ({
+          pluginValues: { google: await imageSendersMock() },
+          plugins: { vault: {}, localOff: [] },
+        }),
+      },
+    },
     cap: {
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
@@ -220,7 +238,8 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   categoryCountsMock.mockReset().mockResolvedValue({})
   meetingMock.mockReset().mockResolvedValue(null)
-  imageSendersMock.mockReset().mockResolvedValue([])
+  imageSendersMock.mockReset().mockResolvedValue({ imageSenders: [], imagesFromAllSenders: false })
+  setImagesFromAllSendersMock.mockReset().mockResolvedValue({ ok: true })
   allowImagesFromMock.mockReset().mockResolvedValue({ ok: true })
   forgetImageSendersMock.mockReset().mockResolvedValue({ ok: true })
   sendAsMock.mockReset().mockResolvedValue(['ada@syv.ai'])
@@ -243,6 +262,7 @@ beforeEach(() => {
   window.holi = { openExternal }
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   // @ts-expect-error — as above.
   delete window.holi
 })
@@ -1282,7 +1302,11 @@ test('“always from this sender” is remembered in main, keyed on the address'
 })
 
 test('a sender already allowed never shows the banner at all', async () => {
-  imageSendersMock.mockResolvedValue(['jane@example.com'])
+  imageSendersMock.mockResolvedValue({
+    imageSenders: ['jane@example.com'],
+    imagesFromAllSenders: false,
+  })
+  await getDefaultStore().set(loadVaultSettingsAtom, { force: true })
   withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
 
   const article = await openThread()
@@ -2396,8 +2420,20 @@ test('failed dirty Close keeps the subject editable and Retry lets Close finish'
   await screen.findByRole('article')
   await user.click(screen.getByRole('button', { name: 'Reply' }))
   const subject = screen.getByRole('textbox', { name: 'Subject' })
+  const setTimeout = globalThis.setTimeout
+  const pendingAutosaves: TimerHandler[] = []
+  // Keep the two-second idle autosave pending so it cannot consume the failed
+  // save's Retry state; all other timers (including test-library waits) stay real.
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) {
+      pendingAutosaves.push(callback)
+      return 0 as never
+    }
+    return setTimeout(callback, delay, ...args)
+  })
   await user.clear(subject)
   await user.type(subject, 'Keep this subject')
+  expect(pendingAutosaves.length).toBeGreaterThan(0)
   let rejectSave!: (error: Error) => void
   saveDraftMock.mockImplementationOnce(
     () => new Promise((_resolve, reject) => (rejectSave = reject)),

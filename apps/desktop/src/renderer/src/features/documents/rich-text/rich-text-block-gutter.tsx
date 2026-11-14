@@ -1,3 +1,4 @@
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import {
   useEffect,
   useRef,
@@ -119,7 +120,12 @@ function gutterPoint(
 
 /** dragstart on the grip: it sits outside the editor, so ProseMirror's own
  * dragstart never runs and everything it would set is set here. */
-function startBlockDrag(view: EditorView, target: BlockTarget, event: DragEvent) {
+function startBlockDrag(
+  view: EditorView,
+  target: BlockTarget,
+  event: DragEvent,
+  current: () => boolean,
+) {
   const data = event.dataTransfer
   if (!data || !view.editable) return undefined
   const selection = NodeSelection.create(view.state.doc, target.pos)
@@ -141,7 +147,7 @@ function startBlockDrag(view: EditorView, target: BlockTarget, event: DragEvent)
   view.dragging = dragging
   // After the browser snapshots the drag image, so the ghost is not faded.
   window.setTimeout(() => {
-    if (view.isDestroyed || view.dragging !== dragging) return
+    if (!current() || view.isDestroyed || view.dragging !== dragging) return
     const mark = { pos: dragging.node.from, kind: 'drag' } satisfies ActiveBlock
     view.dispatch(view.state.tr.setMeta(ACTIVE_BLOCK_KEY, mark))
   }, 0)
@@ -184,6 +190,7 @@ export function RichTextBlockGutter({
   onDeleteTable,
   headingLink = null,
 }: RichTextBlockGutterProps) {
+  const activity = useEditorActivity(editor)
   const [shown, setShown] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -197,11 +204,11 @@ export function RichTextBlockGutter({
   const pointerRef = useRef<number | null>(null)
   const followRef = useRef<(() => void) | null>(null)
   const openMenuRef = useRef(openMenu)
-  const visible = editable && ((shown && !dragging) || menuOpen)
+  const visible = activity.focused && editable && ((shown && !dragging) || menuOpen)
 
   function openMenu(pos: number | null) {
     const target = pos === null ? null : blockTargetAtPos(editor.state.doc, pos)
-    if (menuRef.current || !target) return
+    if (!activity.focused || menuRef.current || !target) return
     menuRef.current = true
     const { view } = editor
     const selection = blockMenuSelection(editor, target)
@@ -253,7 +260,7 @@ export function RichTextBlockGutter({
     // Moves the gutter beside the target; force re-measures the same one.
     function place(target: BlockTarget | null, force: boolean) {
       if (!scroller || !gutter) return
-      if (!target || !view.editable) {
+      if (!activity.focused || !target || !view.editable) {
         targetRef.current = null
         show(false)
         return
@@ -304,7 +311,7 @@ export function RichTextBlockGutter({
     // Mod-/: the menu hangs off the grip, which is not laid out below sm.
     function openFromShortcut() {
       const target = selectionBlockTarget(view.state)
-      if (!wide.matches || !target) return false
+      if (!activity.focused || !wide.matches || !target) return false
       place(target, true)
       openMenuRef.current(target.pos)
       return true
@@ -379,7 +386,7 @@ export function RichTextBlockGutter({
       editor.off('focus', refresh)
       editor.off('blur', handleBlur)
     }
-  }, [editor, scrollerRef])
+  }, [editor, scrollerRef, activity])
 
   function insertRow(event: ReactMouseEvent) {
     const pos = targetRef.current
@@ -396,16 +403,30 @@ export function RichTextBlockGutter({
   function handleDragStart(event: ReactDragEvent<HTMLButtonElement>) {
     const pos = targetRef.current
     const target = pos === null ? null : blockTargetAtPos(editor.state.doc, pos)
-    const started = target ? startBlockDrag(editor.view, target, event.nativeEvent) : undefined
+    const started = target
+      ? startBlockDrag(editor.view, target, event.nativeEvent, activity.capture())
+      : undefined
     if (!started) return event.preventDefault()
     dragRef.current = started
     // Next task: nothing on the drag source changes while the drag starts.
+    const current = activity.capture()
     window.setTimeout(() => {
+      if (!current()) return
       if (dragRef.current !== started) return
       setTipOpen(false)
       setDragging(true)
     }, 0)
   }
+
+  useEffect(() => {
+    if (activity.focused) return
+    menuRef.current = false
+    setMenuOpen(false)
+    setTipOpen(false)
+    endBlockDrag(editor.view, dragRef.current)
+    dragRef.current = undefined
+    setDragging(false)
+  }, [activity, activity.focused, editor])
 
   function handleDragEnd() {
     endBlockDrag(editor.view, dragRef.current)
@@ -484,7 +505,7 @@ export function RichTextBlockGutter({
           className="w-52"
           onCloseAutoFocus={(event) => {
             event.preventDefault()
-            editor.view.focus()
+            if (activity.focused) editor.view.focus()
           }}
         >
           {menu ? (

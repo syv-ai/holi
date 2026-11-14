@@ -14,13 +14,14 @@ export function useSelectionReport(
   editor: Editor | null,
   path: string,
   head: React.RefObject<string>,
+  active = true,
 ): void {
   // The lines selected, for the agent's per-turn context: worked out once
   // the selection holds still, since it serialises the document. A caret
   // clears what this document reported, never another's.
   const setEditorSelection = useSetAtom(editorSelectionAtom)
   useEffect(() => {
-    if (!editor) return
+    if (!editor || !active) return
     let timer: number | undefined
     const report = () => {
       window.clearTimeout(timer)
@@ -37,10 +38,11 @@ export function useSelectionReport(
         })
       }, SELECTION_DELAY_MS)
     }
+    report()
     editor.on('selectionUpdate', report)
     return () => {
       editor.off('selectionUpdate', report)
       window.clearTimeout(timer)
     }
-  }, [editor, path, head, setEditorSelection])
+  }, [editor, path, head, setEditorSelection, active])
 }

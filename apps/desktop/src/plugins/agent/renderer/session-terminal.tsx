@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { agentCap } from './agent-cap'
 import { terminalKeyAction } from './lib/terminal-keys'
 import { createPiMouseSelectionFilter } from './lib/pi-mouse-selection'
+import { createPiWheelRouter } from './lib/pi-wheel-routing'
 import { vaultLinks } from './lib/terminal-links'
 import { terminalTheme, watchTerminalTheme, suppressTerminalColorQueries } from '@/plugin-api'
 import {
@@ -197,8 +198,10 @@ export function SessionTerminal({
     // keyboard, its focus: see `session-terminals.ts` for the case the
     // visible effect below misses.
     const filterPiOutput = provider === 'pi' ? createPiMouseSelectionFilter() : undefined
+    const wheelRouter = provider === 'pi' ? createPiWheelRouter(sendData) : undefined
     const writeOutput = (data: string) => {
       if (!isLive()) return
+      wheelRouter?.observeOutput(data)
       const filtered = filterPiOutput ? filterPiOutput(data) : data
       if (filtered) term.write(filtered)
     }
@@ -249,6 +252,18 @@ export function SessionTerminal({
       }
       return false
     })
+
+    const routeWheel = (event: WheelEvent) => {
+      if (!isLive() || !visibleRef.current || !wheelRouter || !mount.isConnected) return
+      // PTY observation leads xterm's asynchronous write queue. The live buffer
+      // is authoritative: don't capture native wheel scrolling until xterm has
+      // actually entered the alternate screen.
+      if (term.buffer.active.type !== 'alternate') return
+      const screen = mount.querySelector<HTMLElement>('.xterm-screen')
+      if (!screen) return
+      wheelRouter.onWheel(event, screen.getBoundingClientRect(), term.cols, term.rows)
+    }
+    mount.addEventListener('wheel', routeWheel, { capture: true, passive: false })
 
     const stopColorQueries = suppressTerminalColorQueries(term)
     const typed = term.onData(sendData)
@@ -307,6 +322,7 @@ export function SessionTerminal({
       lifetime.live = false
       clearTimeout(reHide)
       unregister()
+      mount.removeEventListener('wheel', routeWheel, true)
       typed.dispose()
       stopColorQueries()
       links.dispose()

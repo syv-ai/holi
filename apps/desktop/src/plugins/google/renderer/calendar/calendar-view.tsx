@@ -131,7 +131,7 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
   }
 }
 
-export function CalendarView(): React.JSX.Element {
+export function CalendarView({ visible = true }: { visible?: boolean }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const { account, currentSub } = useGoogleAccount()
   const accountIdentity = account ? `${account.email}:${currentSub ?? ''}` : null
@@ -159,6 +159,7 @@ export function CalendarView(): React.JSX.Element {
   const i18n = useMemo(() => ({ formats: CLOCK_FORMATS[clock] }), [clock])
 
   const [card, setCard] = useState<EventCardState | null>(null)
+  const cardDraft = useRef<EventDraft | null>(null)
   const [cardAnchor, setCardAnchor] = useState<EventCardAnchor | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -231,21 +232,23 @@ export function CalendarView(): React.JSX.Element {
       // Slot ends are exclusive; store the inclusive last day so multi-day
       // drag-creates keep their span.
       const lastDay = end && end > start ? localDate(allDay ? subDays(end, 1) : end) : startDay
+      const draft: EventDraft = {
+        title: '',
+        location: '',
+        date: startDay,
+        dateEnd: lastDay < startDay ? startDay : lastDay,
+        start: allDay ? '09:00' : hhmm(start),
+        // A timed quick-add defaults to 30 min so Save passes on the first try.
+        end: allDay ? '10:00' : hhmm(end ?? addMinutes(start, 30)),
+        allDay,
+        calendarName: ownCalendar?.name ?? account?.email ?? 'Your calendar',
+        color: ownCalendar?.color ?? FALLBACK_COLOR,
+      }
+      cardDraft.current = draft
       setCard({
         mode: 'create',
         identity: cardIdentity.current,
-        draft: {
-          title: '',
-          location: '',
-          date: startDay,
-          dateEnd: lastDay < startDay ? startDay : lastDay,
-          start: allDay ? '09:00' : hhmm(start),
-          // A timed quick-add defaults to 30 min so Save passes on the first try.
-          end: allDay ? '10:00' : hhmm(end ?? addMinutes(start, 30)),
-          allDay,
-          calendarName: ownCalendar?.name ?? account?.email ?? 'Your calendar',
-          color: ownCalendar?.color ?? FALLBACK_COLOR,
-        },
+        draft,
       })
     },
     [ownCalendar, account],
@@ -267,14 +270,20 @@ export function CalendarView(): React.JSX.Element {
         (event ? new DOMRect(event.clientX, event.clientY, 1, 1) : new DOMRect())
       setCardAnchor({ rect, element, fallback: newEventTrigger.current })
       setError(null)
+      const draft = draftFromOccurrence(occurrence)
+      cardDraft.current = draft
       setCard({
         mode: 'view',
         identity: cardIdentity.current,
-        draft: draftFromOccurrence(occurrence),
+        draft,
       })
     },
     [],
   )
+
+  const updateDraft = useCallback((draft: EventDraft) => {
+    cardDraft.current = draft
+  }, [])
 
   const startEdit = useCallback(() => {
     if (pending.current) return
@@ -541,10 +550,12 @@ export function CalendarView(): React.JSX.Element {
           events={items}
           calendars={calendar.calendars}
           loading={firstLoad}
+          displayed={visible}
           onToggleCalendar={calendar.setCalendarEnabled}
           onOpenOccurrence={openView}
         />
         <EventCalendar
+          visible={visible}
           events={items}
           date={date}
           onDateChange={setDate}
@@ -556,7 +567,7 @@ export function CalendarView(): React.JSX.Element {
           showWeekNumbers={weekNumbers}
           loading={calendar.loading}
           navButtonSize="default"
-          nowIndicator
+          nowIndicator={visible}
           scrollToHour={8}
           snapDuration={15}
           scrollMode="contained"
@@ -633,6 +644,7 @@ export function CalendarView(): React.JSX.Element {
                 <CalendarsMenu
                   calendars={calendar.calendars}
                   onToggle={calendar.setCalendarEnabled}
+                  displayed={visible}
                 />
               </div>
               <IconButton
@@ -676,14 +688,15 @@ export function CalendarView(): React.JSX.Element {
         </EventCalendar>
 
         <EventCard
-          state={card}
-          anchor={cardAnchor}
+          state={card === null ? null : { ...card, draft: cardDraft.current ?? card.draft }}
+          anchor={visible ? cardAnchor : null}
           error={error}
           saving={saving}
           canCreateTask={canCreateTask}
           onOpenChange={closeCard}
           onEdit={startEdit}
           onSave={saveDraft}
+          onDraftChange={updateDraft}
           onDelete={deleteDraft}
           onCreateTask={createTask}
           onOpenExternal={(url) => openExternal(url)}

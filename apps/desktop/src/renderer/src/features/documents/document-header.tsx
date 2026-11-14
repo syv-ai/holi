@@ -97,6 +97,7 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
     sidebar: boolean
     onSidebarChange: (sidebar: boolean) => void
   } | null
+  visible?: boolean
   compact?: boolean
 }
 
@@ -111,6 +112,7 @@ export function DocumentHeader({
   comments = null,
   properties = null,
   compact = false,
+  visible = true,
   ...actions
 }: DocumentHeaderProps) {
   const state = useRichTextState(editor)
@@ -147,7 +149,7 @@ export function DocumentHeader({
         />
 
         <Contributors path={path} />
-        <FileHistoryButton path={path} />
+        <FileHistoryButton path={path} visible={visible} />
         {comments ? (
           <Toggle
             size="sm"

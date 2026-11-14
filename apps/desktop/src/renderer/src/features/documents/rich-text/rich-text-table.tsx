@@ -1,3 +1,4 @@
+import { editorActivity } from '@/hooks/use-editor-activity'
 import { useCallback } from 'react'
 import { TableKit } from '@tiptap/extension-table'
 import { findParentNodeClosestToPos, type Editor } from '@tiptap/react'
@@ -134,6 +135,7 @@ const TABLE_BUBBLE_OPTIONS = { placement: 'top-start', offset: 4 } as const
 
 function showInTable({ editor, element }: { editor: Editor; element: HTMLElement }) {
   return (
+    editorActivity(editor).focused &&
     editor.isEditable &&
     editor.isActive('table') &&
     (editor.view.hasFocus() || element.contains(document.activeElement))
@@ -152,6 +154,7 @@ export function RichTextTableBubble({ editor, onDeleteTable }: RichTextTableBubb
 
   // Anchors to the whole table, so the bar holds still while the caret moves.
   const getTableRect = useCallback(() => {
+    if (editor.isDestroyed || !editorActivity(editor).focused) return null
     const found = findTable(editor)
     const dom = found ? editor.view.nodeDOM(found.pos) : null
 
