@@ -402,6 +402,7 @@ const ACTIVITY_FILES = 5
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? (() => localDate(new Date()))
+  let vaultOpenRevision = 0
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const capabilities =
     deps.capabilities ??
@@ -795,6 +796,7 @@ export function createRouter(deps: RouterDeps) {
     open: t.procedure
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
+        const revision = ++vaultOpenRevision
         // Opening is what starts the watcher and the sync loop — the snapshot
         // is a by-product, and comes from the vault that is now live rather
         // than from a second read that could already disagree with it.
@@ -809,9 +811,12 @@ export function createRouter(deps: RouterDeps) {
          */
         await deps.seed(root)
         await deps.registry.touch(input.remote, now())
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         const active = await deps.host.open(input.remote)
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         deps.plugins.setDisplayed(input.remote)
         await deps.plugins.reconcile(active, 'open')
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         deps.opened?.(input.remote)
         return active.snapshot()
       }),

@@ -17,7 +17,7 @@ Correct: `transition-colors` for a hover color; a lift is `transform` over a sta
 ### 3. Raw palette for a state (Detector: C3; source: runs 08, 15)
 
 Incorrect: `<span className="text-green-600">Active</span>`
-Correct: `<Badge variant="success-light">Active</Badge>`
+Correct: `<Badge variant="success">Active</Badge>` (neutral foreground, readable solid fill)
 
 ### 4. Animated table rows (Detector: C1; source: runs 01, 08, 17)
 
@@ -71,8 +71,8 @@ Correct: FramePanels for both, or Cards for the KPIs and a Frame for the table; 
 
 ### 14. Small badges (Detector: visual; source: runs 03, 04, 06, 07, 10, 13, 16, 18)
 
-Incorrect: `<Badge variant="success-light" size="sm">Paid</Badge>`
-Correct: `<Badge variant="success-light">Paid</Badge>` with `size` left off
+Incorrect: `<Badge variant="success" size="sm">Paid</Badge>`
+Correct: `<Badge variant="success">Paid</Badge>` with `size` left off
 
 ### 15. A colored circle behind every KPI icon (Detector: visual; source: default)
 

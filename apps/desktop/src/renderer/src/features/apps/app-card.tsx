@@ -169,7 +169,7 @@ export function AppCard({
           </div>
 
           <div className="flex items-center justify-between gap-5">
-            <Badge variant="outline">
+            <Badge variant="secondary">
               {personal ? <LockIcon aria-hidden="true" /> : <UsersIcon aria-hidden="true" />}
               {personal ? 'Personal' : 'Shared'}
             </Badge>

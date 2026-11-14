@@ -145,11 +145,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/desktop/scripts/check-windows-launch-results.cjs "$env:RUNNER_TEMP/windows-agent-tests.json"
 
-      - name: Install Electron and rebuild the native PTY
-        run: |
-          node apps/desktop/node_modules/electron/install.js
-          # electron-builder uses the locked rebuild toolchain that supports VS 2026.
-          pnpm --filter @holi/desktop exec electron-builder install-app-deps
+      - name: Install Electron
+        run: node apps/desktop/node_modules/electron/install.js
 
       - name: Check native PTY under Electron
         shell: pwsh

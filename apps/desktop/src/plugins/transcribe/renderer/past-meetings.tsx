@@ -82,7 +82,7 @@ export function PastMeetings(): React.JSX.Element {
               >
                 <span className="min-w-0 flex-1 truncate text-sm">{m.title}</span>
                 {PHASE_BADGE[m.phase] !== undefined && (
-                  <Badge variant={m.phase === 'finishing' ? 'secondary' : 'destructive-light'}>
+                  <Badge variant={m.phase === 'finishing' ? 'secondary' : 'destructive'}>
                     {PHASE_BADGE[m.phase]}
                   </Badge>
                 )}
