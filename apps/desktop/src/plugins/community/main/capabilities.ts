@@ -487,6 +487,9 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             await checkAfterSetup(ctx.root, id)
             return true
           }
+          // Setup can partially change machine state before failing or being
+          // cancelled. Invalidate shared readiness before starting it.
+          await deps.store.setSetup(id, 'failed')
           deps.emit(ctx.remote, 'setup-log', { id, line: null })
           const ok = await runSetup({
             argv: expandCommand(install.manifest.setup, { vault: ctx.root }),
@@ -497,7 +500,8 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
               if (deps.live?.() !== false) deps.emit(ctx.remote, 'setup-log', { id, line })
             },
           })
-          ensureLive()
+          // Persist the outcome even if this attachment closed while setup ran:
+          // the install state is machine-wide and other vaults must see failure.
           await deps.store.setSetup(id, ok ? 'ok' : 'failed')
           // Set up in a vault that runs it: its apps and commands arrive now, not
           // at the next open.
@@ -698,8 +702,12 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           const file = await resolveRelative(ctx.root, servedFile(row, path)!)
           const key = serverKey(ctx.root, row.id, path)
           const bridge = deps.bridgeScript()
+          const cwd = deps.store.codeDir(install)
+          // Path canonicalization can yield while this attachment is closed.
+          // Do not acquire a server after close's stopAll sweep has passed.
+          ensureLive()
           const start = deps.supervisor.acquire(key, {
-            cwd: deps.store.codeDir(install),
+            cwd,
             argv: (port) => expandCommand(install.manifest.serve!, { file, vault: ctx.root, port }),
             env: (port) =>
               pluginEnv({
@@ -713,27 +721,35 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         })
         // Keep readiness outside the FIFO so a remove/update can stop this start.
         const acquired = await admitted.start
-        return admit(async () => {
-          const current = await deps.store.get(admitted.row.id)
-          const same =
-            current !== null &&
-            current.source.kind === admitted.install.source.kind &&
-            JSON.stringify(current.source) === JSON.stringify(admitted.install.source) &&
-            current.manifest.version === admitted.install.manifest.version &&
-            deps.store.codeDir(current) === deps.store.codeDir(admitted.install)
-          if (
-            !same ||
-            !acquired.isCurrentAndRunning() ||
-            deps.live?.() === false ||
-            deps.signal?.aborted
-          ) {
-            await acquired.release()
-            throw new CapabilityError('FORBIDDEN', 'community installation changed while starting')
-          }
-          const lease = randomUUID()
-          leases.set(lease, acquired.release)
-          return { id: admitted.row.id, port: acquired.port, lease }
-        })
+        try {
+          return await admit(async () => {
+            ensureLive()
+            const current = await deps.store.get(admitted.row.id)
+            const same =
+              current !== null &&
+              current.source.kind === admitted.install.source.kind &&
+              JSON.stringify(current.source) === JSON.stringify(admitted.install.source) &&
+              current.manifest.version === admitted.install.manifest.version &&
+              deps.store.codeDir(current) === deps.store.codeDir(admitted.install)
+            if (
+              !same ||
+              !acquired.isCurrentAndRunning() ||
+              deps.live?.() === false ||
+              deps.signal?.aborted
+            ) {
+              throw new CapabilityError(
+                'FORBIDDEN',
+                'community installation changed while starting',
+              )
+            }
+            const lease = randomUUID()
+            leases.set(lease, acquired.release)
+            return { id: admitted.row.id, port: acquired.port, lease }
+          })
+        } catch (error) {
+          await acquired.release()
+          throw error
+        }
       },
     }),
 

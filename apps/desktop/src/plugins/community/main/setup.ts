@@ -87,8 +87,14 @@ export async function runSetup(args: {
       log.end(() => resolve(ok))
     }
     const stop = () => {
-      if (child.exitCode === null && child.signalCode === null) {
-        if (process.platform === 'win32' || !killChildTree(child, 'SIGKILL')) child.kill('SIGKILL')
+      // POSIX descendants can keep the output pipes open after their group
+      // leader exits. Probe before signalling the group so a recycled leader
+      // pid is never targeted. On Windows the owned launcher drains its Job
+      // Object before close; while live, its kill channel terminates that job.
+      if (process.platform === 'win32') {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      } else if (!killChildTree(child, 'SIGKILL') && child.exitCode === null) {
+        child.kill('SIGKILL')
       }
     }
     args.signal?.addEventListener('abort', stop, { once: true })
