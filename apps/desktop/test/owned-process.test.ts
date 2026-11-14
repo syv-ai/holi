@@ -1,8 +1,8 @@
-import { ChildProcess } from 'node:child_process'
-import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { ChildProcess, execFile } from 'node:child_process'
+import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { getSystemErrorName } from 'node:util'
+import { getSystemErrorName, promisify } from 'node:util'
 import { describe, expect, it, onTestFailed } from 'vitest'
 import { spawnOwnedProgram } from '../src/main/owned-process'
 
@@ -80,6 +80,59 @@ describe('spawnOwnedProgram', () => {
       expect(JSON.parse(output)).toEqual(args)
     } finally {
       await cleanup(child)
+    }
+  })
+
+  it.skipIf(!windows)('creates a console root without a visible console', async () => {
+    const child = spawnOwnedProgram(
+      process.execPath,
+      ['-e', 'console.log(process.pid);setInterval(()=>0,1000)'],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    try {
+      const pid = await new Promise<number>((resolve) =>
+        child.stdout!.once('data', (data: Buffer) => resolve(Number(String(data).trim()))),
+      )
+      const probe = [
+        'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; public static class HoliConsoleProbe { [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AttachConsole(uint pid); }\'',
+        `[HoliConsoleProbe]::AttachConsole(${pid})`,
+      ].join('; ')
+      const { stdout } = await promisify(execFile)(
+        join(
+          process.env.SystemRoot ?? process.env.WINDIR!,
+          'System32',
+          'WindowsPowerShell',
+          'v1.0',
+          'powershell.exe',
+        ),
+        ['-NoProfile', '-NonInteractive', '-Command', probe],
+        { windowsHide: true, encoding: 'utf8' },
+      )
+      expect(stdout.trim()).toBe('False')
+    } finally {
+      await cleanup(child)
+    }
+  })
+
+  it.skipIf(!windows)('resolves a relative executable against the requested cwd', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-relative-exe-'))
+    const bin = join(dir, 'bin')
+    await mkdir(bin)
+    await copyFile(process.execPath, join(bin, 'tool.exe'))
+    const child = spawnOwnedProgram(
+      '.\\bin\\tool.exe',
+      ['-e', 'process.stdout.write(process.cwd())'],
+      { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    try {
+      const done = completion(child)
+      let output = ''
+      child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
+      expect(await done).toBe(0)
+      expect(output).toBe(dir)
+    } finally {
+      await cleanup(child)
+      await rm(dir, { recursive: true, force: true })
     }
   })
 

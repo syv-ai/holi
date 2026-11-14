@@ -166,6 +166,12 @@ describe('claude-cli', () => {
       expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/cfg/vault')
       expect(opts.env.PATH?.split(delimiter)[0]).toBe('/holi/bin')
     }
+    expect(calls.map(({ opts }) => opts.retainDescendantsOnSuccess ?? false)).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ])
   })
 
   it('lists finished sessions with --all, and without it on a Claude Code that refuses it', async () => {

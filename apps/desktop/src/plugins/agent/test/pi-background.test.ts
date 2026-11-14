@@ -6,7 +6,7 @@ import { agentCapabilities } from '../main/host/capabilities'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
 import { join } from 'node:path'
 
-function fake() {
+function fake(autoClose = true) {
   const stdin = new PassThrough()
   const stdout = new PassThrough()
   const stderr = new PassThrough()
@@ -36,6 +36,7 @@ function fake() {
     }
   })
   let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
+  let onClose: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
   let killed = false
   const child: PiChild = {
     stdin,
@@ -43,14 +44,27 @@ function fake() {
     stderr,
     once(event, listener) {
       if (event === 'exit') onExit = listener as typeof onExit
+      else if (event === 'close') onClose = listener as typeof onClose
       return this
     },
     kill() {
       killed = true
+      onExit?.(null, 'SIGTERM')
+      if (autoClose) onClose?.(null, 'SIGTERM')
       return true
     },
   }
-  return { child, stdout, commands, exit: () => onExit?.(0, null), wasKilled: () => killed }
+  return {
+    child,
+    stdout,
+    commands,
+    exit: () => {
+      onExit?.(0, null)
+      onClose?.(0, null)
+    },
+    close: () => onClose?.(null, null),
+    wasKilled: () => killed,
+  }
 }
 
 afterEach(() => vi.useRealTimers())
@@ -396,6 +410,56 @@ describe('Pi background runs', () => {
     await active.leave()
     expect(brackets).toEqual(['begin', 'forget'])
     expect(active.sessions()).toEqual([])
+  })
+
+  it('waits for child close before Stop releases the turn bracket', async () => {
+    const rpc = fake(false)
+    const brackets: string[] = []
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: () => rpc.child,
+      bracket: (_id, edge) => brackets.push(edge),
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const started = await manager.launch({ name: 'x', prompt: 'x' })
+    if (!started.ok) throw new Error(started.message)
+    let stopped = false
+    const stopping = manager.stop(started.sessionId).then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    expect(brackets).toEqual(['begin'])
+    rpc.close()
+    await stopping
+    expect(stopped).toBe(true)
+    expect(brackets).toEqual(['begin', 'forget'])
+  })
+
+  it('waits for child close before vault leave releases the turn bracket', async () => {
+    const rpc = fake(false)
+    const brackets: string[] = []
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: () => rpc.child,
+      bracket: (_id, edge) => brackets.push(edge),
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    await manager.launch({ name: 'x', prompt: 'x' })
+    let left = false
+    const leaving = manager.leave().then(() => {
+      left = true
+    })
+    await Promise.resolve()
+    expect(left).toBe(false)
+    expect(brackets).toEqual(['begin'])
+    expect(manager.sessions()).toEqual([])
+    rpc.close()
+    await leaving
+    expect(left).toBe(true)
+    expect(brackets).toEqual(['begin', 'forget'])
   })
 
   it('keeps failed runs visible as failures, not approval prompts', async () => {

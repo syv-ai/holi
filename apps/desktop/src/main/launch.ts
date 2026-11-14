@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path'
 import { win32 } from 'node:path'
 import { resolveBin, type Platform } from './bin'
 import { killTree } from './process-group'
+import { spawnOwnedLaunch } from './owned-process-launch'
 
 /** What to hand `spawn`, `execFile` or node-pty. */
 export interface Launch {
@@ -91,10 +92,12 @@ export interface LaunchOptions {
   bundledWindowsNode?: () => string | null
   /** Tests exercise Electron's fallback branch without importing Electron. */
   electronRuntime?: boolean
+  /** Resolve relative Windows executables from the caller's working directory. */
+  cwd?: string
 }
 
 /** A bare name: no folder in it, so only the `PATH` can say where it is. */
-const isBare = (name: string): boolean => !/[\\/]/.test(name) && win32.extname(name) === ''
+const isBare = (name: string): boolean => !/[\\/]/.test(name)
 
 /** Resolve the optional runtime without making it a requirement on other OSes. */
 function resolveBundledWindowsNode(): string | null {
@@ -124,6 +127,7 @@ export function launchPlan(
     resolve,
     bundledWindowsNode = resolveBundledWindowsNode,
     electronRuntime = process.versions.electron !== undefined,
+    cwd = process.cwd(),
   }: LaunchOptions = {},
 ): Launch {
   if ([file, ...args].some((value) => value.includes('\0'))) {
@@ -131,7 +135,11 @@ export function launchPlan(
   }
   if (platform !== 'win32') return { file, args: [...args], verbatim: false }
   const look = resolve ?? ((name, e) => resolveBin(name, e, { platform }))
-  const target = isBare(file) ? (look(file, env) ?? file) : file
+  const target = isBare(file)
+    ? (look(file, env) ?? file)
+    : win32.isAbsolute(file)
+      ? file
+      : win32.resolve(cwd, file)
   if (!BATCH.test(target)) return { file: target, args: [...args], verbatim: false }
 
   // npm's generated .cmd launchers are only a command-shell wrapper around a
@@ -173,7 +181,7 @@ export function launchPlan(
   // cmd.exe cannot represent arbitrary argv: % expansion happens even inside
   // quotes, delayed expansion can consume !, and line breaks are commands. Do
   // not silently alter these inputs or risk executing them as shell syntax.
-  const unsafe = args.find((arg) => /[\x00-\x1f"%!^&|<>]/u.test(arg))
+  const unsafe = args.find((arg) => /[\x00-\x1f"%!^&|<>]/u.test(arg) || arg.endsWith('\\'))
   if (unsafe !== undefined || /[\x00-\x1f"%!^&|<>]/u.test(target)) {
     throw new Error(
       `Cannot pass this argument safely to batch file ${target}; install a Node-based CLI shim or use an executable instead.`,
@@ -212,19 +220,14 @@ export function spawnProgram(
   let plan: Launch
   const platform = launch.platform ?? process.platform
   try {
-    plan = launchPlan(file, args, { env: options.env ?? process.env, ...launch })
+    plan = launchPlan(file, args, {
+      env: options.env ?? process.env,
+      cwd: typeof options.cwd === 'string' ? options.cwd : process.cwd(),
+      ...launch,
+    })
   } catch (failure) {
     if (platform !== 'win32') throw failure
-    const child = new ChildProcess()
-    const out = new PassThrough()
-    const err = new PassThrough()
-    child.stdout = out
-    child.stderr = err
-    child.stdin = new PassThrough()
-    out.end()
-    err.end()
-    process.nextTick(() => child.emit('error', failure))
-    return child
+    return failedChild(failure)
   }
   try {
     return spawn(plan.file, plan.args, {
@@ -241,17 +244,28 @@ export function spawnProgram(
     })
   } catch (failure) {
     if (platform !== 'win32') throw failure
-    const child = new ChildProcess()
-    const out = new PassThrough()
-    const err = new PassThrough()
-    child.stdout = out
-    child.stderr = err
-    child.stdin = new PassThrough()
+    return failedChild(failure)
+  }
+}
+
+function failedChild(failure: unknown): ChildProcess {
+  const child = new ChildProcess()
+  const out = new PassThrough()
+  const err = new PassThrough()
+  const input = new PassThrough()
+  // Callers may queue input before the asynchronous planning error arrives.
+  input.on('error', () => undefined)
+  child.stdin = input
+  child.stdout = out
+  child.stderr = err
+  process.nextTick(() => {
+    child.emit('error', failure)
+    input.destroy()
     out.end()
     err.end()
-    process.nextTick(() => child.emit('error', failure))
-    return child
-  }
+    child.emit('close', null, null)
+  })
+  return child
 }
 
 /**
@@ -270,19 +284,139 @@ export function execProgram(
     timeoutMs: number
     maxBuffer: number
     encoding: BufferEncoding
+    /** Only a successful Claude `--bg` launch may detach its descendants. */
+    retainDescendantsOnSuccess?: boolean
   },
   done: (err: ExecFileException | null, stdout: string, stderr: string) => void,
   launch: LaunchOptions = {},
 ): ChildProcess {
   let plan: Launch
   try {
-    plan = launchPlan(file, args, { env: options.env, ...launch })
+    plan = launchPlan(file, args, {
+      env: options.env,
+      cwd: options.cwd ?? process.cwd(),
+      ...launch,
+    })
   } catch (failure) {
     const error = failure as ExecFileException
     process.nextTick(() => done(error, '', ''))
     return new ChildProcess()
   }
   const ownTimeout = (launch.platform ?? process.platform) === 'win32'
+  if (ownTimeout) {
+    const child = spawnOwnedLaunch(
+      plan,
+      {
+        cwd: options.cwd,
+        env: plan.env ? { ...options.env, ...plan.env } : options.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        ...(plan.verbatim ? { windowsVerbatimArguments: true } : {}),
+      },
+      process.pid,
+      options.retainDescendantsOnSuccess ?? false,
+    )
+    let stdout = ''
+    let stderr = ''
+    let failure: ExecFileException | null = null
+    let completed = false
+    let committedSuccess = false
+    let stdoutEnded = false
+    let stderrEnded = false
+    const ownedControl = child as ChildProcess & {
+      ownedSuccessReady?: () => boolean
+      acknowledgeOwnedSuccess?: () => boolean
+    }
+    const acknowledge = ownedControl.acknowledgeOwnedSuccess
+    const timer = setTimeout(() => {
+      if (committedSuccess) return
+      failure = Object.assign(new Error(`timed out after ${options.timeoutMs} ms`), {
+        killed: true,
+        code: 'ETIMEDOUT',
+      }) as ExecFileException
+      child.kill('SIGKILL')
+    }, options.timeoutMs)
+    const append = (target: 'stdout' | 'stderr', chunk: Buffer | string) => {
+      if (failure) return
+      const text = Buffer.isBuffer(chunk) ? chunk.toString(options.encoding) : chunk
+      if (target === 'stdout') stdout += text
+      else stderr += text
+      if (
+        !failure &&
+        Buffer.byteLength(stdout, options.encoding) + Buffer.byteLength(stderr, options.encoding) >
+          options.maxBuffer
+      ) {
+        failure = Object.assign(new Error('maxBuffer exceeded'), {
+          code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+        }) as ExecFileException
+        child.kill('SIGKILL')
+      }
+    }
+    child.stdout?.setEncoding(options.encoding)
+    child.stderr?.setEncoding(options.encoding)
+    child.stdout?.on('data', (chunk: Buffer | string) => append('stdout', chunk))
+    child.stderr?.on('data', (chunk: Buffer | string) => append('stderr', chunk))
+    let readinessPoll: NodeJS.Timeout | undefined
+    const maybeAcknowledge = () => {
+      if (
+        committedSuccess ||
+        failure ||
+        !stdoutEnded ||
+        !stderrEnded ||
+        !acknowledge ||
+        !ownedControl.ownedSuccessReady?.()
+      ) {
+        return
+      }
+      try {
+        if (!acknowledge()) throw new Error('managed launch success acknowledgement was rejected')
+        committedSuccess = true
+        clearTimeout(timer)
+        if (readinessPoll) clearInterval(readinessPoll)
+      } catch (error) {
+        failure = error as ExecFileException
+        child.kill('SIGKILL')
+      }
+    }
+    child.stdout?.once('end', () => {
+      stdoutEnded = true
+      maybeAcknowledge()
+    })
+    child.stderr?.once('end', () => {
+      stderrEnded = true
+      maybeAcknowledge()
+    })
+    if (acknowledge) readinessPoll = setInterval(maybeAcknowledge, 10)
+    const stopOnStreamError = (error: Error) => {
+      failure ??= error as ExecFileException
+      child.kill('SIGKILL')
+    }
+    child.stdout?.on('error', stopOnStreamError)
+    child.stderr?.on('error', stopOnStreamError)
+    child.stdin?.on('error', (error) => {
+      failure ??= error as ExecFileException
+      child.kill('SIGKILL')
+    })
+    child.on('error', (error) => {
+      failure ??= error as ExecFileException
+    })
+    child.on('close', (code, signal) => {
+      if (completed) return
+      completed = true
+      clearTimeout(timer)
+      if (readinessPoll) clearInterval(readinessPoll)
+      if (!failure && (code !== 0 || signal !== null)) {
+        failure = Object.assign(new Error(`command failed with ${signal ?? code}`), {
+          code,
+          signal,
+          killed: signal !== null,
+        }) as ExecFileException
+      }
+      done(failure, stdout, stderr)
+    })
+    child.stdin?.end()
+    return child
+  }
   let timedOut = false
   const child = execFile(
     plan.file,

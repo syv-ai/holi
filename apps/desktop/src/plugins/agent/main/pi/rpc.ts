@@ -39,6 +39,7 @@ export interface PiChild {
   stderr: Readable
   once(event: 'error', listener: (error: Error) => void): this
   once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
+  once(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
   kill(signal?: NodeJS.Signals): boolean
 }
 
@@ -86,12 +87,17 @@ export class PiRpcRun {
   private lastError?: string
   private phase: 'prompt' | 'setting-model' | 'idle' = 'idle'
   private readonly commands = new Map<string, string>()
+  readonly drained: Promise<void>
+  private resolveDrained!: () => void
 
   get isAlive(): boolean {
     return !this.exited && !this.closed
   }
 
   constructor(options: PiRpcOptions) {
+    this.drained = new Promise((resolve) => {
+      this.resolveDrained = resolve
+    })
     this.maxOutputBytes = options.maxOutputBytes ?? 1024 * 1024
     this.maxLineBytes = options.maxLineBytes ?? 1024 * 1024
     this.onStats = options.onStats
@@ -125,9 +131,16 @@ export class PiRpcRun {
     this.child.stdout.on('data', (chunk: string) => this.consume(chunk))
     this.child.stderr.setEncoding('utf8')
     this.child.stderr.on('data', () => {})
+    this.child.stdin.on('error', (error: Error) => this.fail(error.message))
     this.child.once('error', (error) => {
       this.finish({ status: 'failed', output: this.output, error: error.message })
       this.kill()
+    })
+    this.child.once('close', () => {
+      this.exited = true
+      if (this.killTimer) clearTimeout(this.killTimer)
+      this.killTimer = undefined
+      this.resolveDrained()
     })
     this.child.once('exit', (code, signal) => {
       this.exited = true
@@ -181,8 +194,8 @@ export class PiRpcRun {
     this.send({ type: 'prompt', message, streamingBehavior: 'followUp' })
   }
 
-  cancel(): void {
-    if (this.closed) return
+  cancel(): Promise<void> {
+    if (this.closed) return this.drained
     try {
       this.send({ type: 'abort' })
     } catch {
@@ -191,13 +204,15 @@ export class PiRpcRun {
     this.closed = true
     this.finish({ status: 'aborted', output: this.output })
     this.kill()
+    return this.drained
   }
 
-  close(): void {
-    if (this.closed) return
+  close(): Promise<void> {
+    if (this.closed) return this.drained
     this.closed = true
     if (this.active) this.finish({ status: 'aborted', output: this.output })
     this.kill()
+    return this.drained
   }
 
   private kill(): void {
@@ -228,7 +243,9 @@ export class PiRpcRun {
   private send(command: Record<string, unknown>): string {
     const id = `holi-${++this.requestId}`
     this.commands.set(id, String(command.type))
-    this.child.stdin.write(`${JSON.stringify({ id, ...command })}\n`)
+    this.child.stdin.write(`${JSON.stringify({ id, ...command })}\n`, (error?: Error | null) => {
+      if (error) this.fail(error.message)
+    })
     return id
   }
 

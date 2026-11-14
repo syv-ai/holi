@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -62,6 +62,7 @@ describe('launchPlan', () => {
     ]) {
       expect(() => launchPlan('x.BAT', [unsafe], { ...WIN, env: {} })).toThrow(/safely/)
     }
+    expect(() => launchPlan('x.cmd', ['path\\'], { ...WIN, env: {} })).toThrow(/safely/)
     expect(launchPlan('x.BAT', [], { ...WIN, env: {} }).file).toBe('cmd.exe')
   })
 
@@ -140,6 +141,23 @@ describe('launchPlan', () => {
     const plan = launchPlan('x.cmd', ['snowman ☃'], { ...WIN, env: {} })
     expect(plan.verbatim).toBe(true)
     expect(plan.args[3]).toContain('snowman ☃')
+  })
+
+  it('resolves filename-only Windows commands, including node.exe', () => {
+    const resolve = vi.fn((name: string) => `C:\\tools\\${name}`)
+    expect(launchPlan('node.exe', ['-v'], { ...WIN, env: {}, resolve }).file).toBe(
+      'C:\\tools\\node.exe',
+    )
+    expect(resolve).toHaveBeenCalledWith('node.exe', {})
+  })
+
+  it('resolves relative executables from the requested cwd', () => {
+    expect(
+      launchPlan('.\\bin\\tool.exe', [], {
+        ...WIN,
+        cwd: 'C:\\vault\\project',
+      }).file,
+    ).toBe('C:\\vault\\project\\bin\\tool.exe')
   })
 
   it('looks a bare name up first, and runs what it finds the way its file needs', () => {
@@ -221,7 +239,12 @@ describe('a real .cmd on Windows', () => {
 describe('spawnProgram', () => {
   it('reports rejected batch planning through the expected error event', async () => {
     const child = spawnProgram('opaque.cmd', ['%PATH%'], { stdio: 'pipe' }, WIN)
+    const writes = child.stdin!.write('queued prompt')
+    child.stdin!.end('queued tail')
+    const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
     const error = await new Promise<Error>((resolve) => child.once('error', resolve))
+    await closed
+    expect(writes).toBe(true)
     expect(error.message).toContain('safely')
   })
 
@@ -243,6 +266,19 @@ describe('spawnProgram', () => {
     expect(() =>
       spawnProgram(process.execPath, ['a\0b'], { stdio: 'ignore' }, { platform: 'linux' }),
     ).toThrow()
+  })
+
+  it.runIf(process.platform === 'win32')('resolves node.exe from PATH on Windows', async () => {
+    const child = spawnProgram('node.exe', ['-e', 'process.stdout.write(process.version)'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let output = ''
+    child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('close', (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))))
+    })
+    expect(output).toBe(process.version)
   })
 
   it('starts a program and hides its console window on Windows only', async () => {
@@ -360,6 +396,230 @@ describe('execProgram', () => {
       await vi.waitFor(() => expect(defaultProbePid(pid, 'win32')).toBe('gone'), {
         timeout: 10_000,
       })
+    },
+    30_000,
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'drains a descendant that holds output after the root exits at timeout',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-exec-drain-'))
+      const pidFile = join(dir, 'pid')
+      const script = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.stdout.write('ready');setInterval(()=>0,1000)`)}],{stdio:['ignore','pipe','ignore'],windowsHide:true});c.stdout.once('data',()=>process.exit(0))`
+      const { execProgram } = await import('../src/main/launch')
+      let reported = false
+      try {
+        const result = new Promise<{ err: Error | null; out: string }>((resolve) => {
+          execProgram(
+            process.execPath,
+            ['-e', script],
+            { env: process.env, timeoutMs: 500, maxBuffer: 65536, encoding: 'utf8' },
+            (err, out) => {
+              reported = true
+              resolve({ err, out })
+            },
+          )
+        })
+        const { err } = await result
+        expect(err).not.toBeNull()
+        const pid = Number(await readFile(pidFile, 'utf8'))
+        expect(pid).toBeGreaterThan(1)
+        expect(reported).toBe(true)
+        expect(defaultProbePid(pid, 'win32')).toBe('gone')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'keeps a successful explicitly detached Claude background child alive',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-'))
+      const pidFile = join(dir, 'pid')
+      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
+      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});console.log('backgrounded · 12345678 · test')`
+      const { execProgram } = await import('../src/main/launch')
+      let pid = 0
+      try {
+        const result = await new Promise<{ err: Error | null; out: string }>((resolve) => {
+          execProgram(
+            process.execPath,
+            ['-e', script],
+            {
+              env: process.env,
+              timeoutMs: 10_000,
+              maxBuffer: 65536,
+              encoding: 'utf8',
+              retainDescendantsOnSuccess: true,
+            },
+            (err, out) => resolve({ err, out }),
+          )
+        })
+        expect(result.err).toBeNull()
+        expect(result.out).toContain('backgrounded')
+        await vi.waitFor(async () =>
+          expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
+        )
+        pid = Number(await readFile(pidFile, 'utf8'))
+        expect(defaultProbePid(pid, 'win32')).toBe('group-leader')
+      } finally {
+        if (pid > 1) killTree(pid, 'SIGKILL', 'win32')
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'drains a successful root with a pipe-holding descendant at timeout',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-pipe-timeout-'))
+      const pidFile = join(dir, 'pid')
+      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
+      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','pipe','ignore'],windowsHide:true});console.log('root done')`
+      const { execProgram } = await import('../src/main/launch')
+      try {
+        const result = await new Promise<Error | null>((resolve) => {
+          execProgram(
+            process.execPath,
+            ['-e', script],
+            {
+              env: process.env,
+              timeoutMs: 3_000,
+              maxBuffer: 65536,
+              encoding: 'utf8',
+              retainDescendantsOnSuccess: true,
+            },
+            (err) => {
+              const pid = Number(readFileSync(pidFile, 'utf8'))
+              expect(defaultProbePid(pid, 'win32')).toBe('gone')
+              resolve(err)
+            },
+          )
+        })
+        expect(result).not.toBeNull()
+        expect(result?.message).toContain('timed out')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'drains failed detached background launches before callback',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-fail-'))
+      const pidFile = join(dir, 'pid')
+      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
+      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','pipe','ignore'],windowsHide:true});console.error('failed');process.exit(7)`
+      const { execProgram } = await import('../src/main/launch')
+      try {
+        const result = await new Promise<{ err: Error | null }>((resolve) => {
+          execProgram(
+            process.execPath,
+            ['-e', script],
+            {
+              env: process.env,
+              timeoutMs: 10_000,
+              maxBuffer: 65536,
+              encoding: 'utf8',
+              retainDescendantsOnSuccess: true,
+            },
+            (err) => resolve({ err }),
+          )
+        })
+        expect(result.err).not.toBeNull()
+        await vi.waitFor(async () =>
+          expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
+        )
+        const pid = Number(await readFile(pidFile, 'utf8'))
+        expect(defaultProbePid(pid, 'win32')).toBe('gone')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'drains timed-out detached background launches before callback',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-timeout-'))
+      const pidFile = join(dir, 'pid')
+      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
+      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});setInterval(()=>0,1000)`
+      const { execProgram } = await import('../src/main/launch')
+      try {
+        const result = await new Promise<Error | null>((resolve) => {
+          execProgram(
+            process.execPath,
+            ['-e', script],
+            {
+              env: process.env,
+              timeoutMs: 500,
+              maxBuffer: 65536,
+              encoding: 'utf8',
+              retainDescendantsOnSuccess: true,
+            },
+            (err) => resolve(err),
+          )
+        })
+        expect(result).not.toBeNull()
+        await vi.waitFor(async () =>
+          expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
+        )
+        const pid = Number(await readFile(pidFile, 'utf8'))
+        expect(defaultProbePid(pid, 'win32')).toBe('gone')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
+
+  it.runIf(process.platform === 'win32').each(['maxBuffer', 'stdin error'] as const)(
+    'stops descendants after %s cleanup',
+    async (failureKind) => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-exec-error-'))
+      const pidFile = join(dir, 'pid')
+      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
+      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});${failureKind === 'maxBuffer' ? "process.stdout.write('x'.repeat(100000));" : ''}setInterval(()=>0,1000)`
+      const { execProgram } = await import('../src/main/launch')
+      let child: ReturnType<typeof execProgram> | undefined
+      try {
+        const result = new Promise<Error | null>((resolve) => {
+          child = execProgram(
+            process.execPath,
+            ['-e', script],
+            {
+              env: process.env,
+              timeoutMs: 10_000,
+              maxBuffer: failureKind === 'maxBuffer' ? 100 : 65536,
+              encoding: 'utf8',
+              retainDescendantsOnSuccess: true,
+            },
+            (err) => resolve(err),
+          )
+        })
+        if (failureKind === 'stdin error') {
+          await vi.waitFor(async () =>
+            expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
+          )
+          child!.stdin!.emit(
+            'error',
+            Object.assign(new Error('test input failure'), { code: 'EPIPE' }),
+          )
+        }
+        expect(await result).not.toBeNull()
+        const pid = Number(await readFile(pidFile, 'utf8'))
+        expect(defaultProbePid(pid, 'win32')).toBe('gone')
+      } finally {
+        if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+        await rm(dir, { recursive: true, force: true })
+      }
     },
     30_000,
   )
