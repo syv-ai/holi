@@ -241,6 +241,7 @@ function drawConflict(
 export function HoliArcade({
   cast,
   playing,
+  displayed = true,
   onRelease,
   className,
 }: {
@@ -249,6 +250,8 @@ export function HoliArcade({
   /** Someone has taken control (`ArcadeTakeControl`): the board covers the
    *  pane at full brightness and takes the keys. */
   playing: boolean
+  /** Whether the owning launcher is displayed rather than parked. */
+  displayed?: boolean
   /** Escape or Release: the only ways out. */
   onRelease: () => void
   className?: string
@@ -258,10 +261,13 @@ export function HoliArcade({
   const probeRef = useRef<HTMLSpanElement>(null)
   const arcadeRef = useRef<GridArcade | null>(null)
   const playingRef = useRef(false)
+  const displayedRef = useRef(displayed)
+  displayedRef.current = displayed
   const scoreRef = useRef(0)
   const carryRef = useRef(0)
   /** Wakes the loop from outside the effect (take control, say). */
   const kickRef = useRef<() => void>(() => undefined)
+  const pauseRef = useRef<() => void>(() => undefined)
   /** Measures the keep-out again: a game in play has none, since the
    *  board covers the logo then. */
   const refreshRef = useRef<() => void>(() => undefined)
@@ -310,12 +316,12 @@ export function HoliArcade({
     if (playing) {
       arcade?.setMode(modeRef.current)
       arcade?.takeControl()
-      rootRef.current?.focus()
+      if (displayed) rootRef.current?.focus()
     } else {
       arcade?.releaseControl()
     }
     kickRef.current()
-  }, [playing])
+  }, [displayed, playing])
 
   const release = useCallback(() => onReleaseRef.current(), [])
 
@@ -415,7 +421,7 @@ export function HoliArcade({
     // Hidden views collapse to zero size, so the loop parks itself there and
     // the resize observer wakes it once the pane shows again.
     const start = () => {
-      if (raf || document.hidden || !onScreen) return
+      if (raf || document.hidden || !onScreen || !displayedRef.current) return
       if (width <= 0 || height <= 0) return
       if (still()) {
         paintStill()
@@ -425,8 +431,14 @@ export function HoliArcade({
       raf = requestAnimationFrame(draw)
     }
     kickRef.current = start
+    pauseRef.current = () => {
+      cancelAnimationFrame(raf)
+      raf = 0
+      lastFrame = 0
+    }
 
     const layout = () => {
+      if (!displayedRef.current) return
       const rect = root.getBoundingClientRect()
       width = rect.width
       height = rect.height
@@ -534,7 +546,7 @@ export function HoliArcade({
     }
 
     function draw(time: number) {
-      if (document.hidden || !onScreen || width <= 0 || height <= 0) {
+      if (document.hidden || !onScreen || !displayedRef.current || width <= 0 || height <= 0) {
         raf = 0
         return
       }
@@ -616,6 +628,7 @@ export function HoliArcade({
     return () => {
       cancelAnimationFrame(raf)
       kickRef.current = () => undefined
+      pauseRef.current = () => undefined
       refreshRef.current = () => undefined
       document.removeEventListener('visibilitychange', start)
       reducedQuery.removeEventListener('change', start)
@@ -630,6 +643,16 @@ export function HoliArcade({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    if (displayed) {
+      kickRef.current()
+      return
+    }
+    // Park the loop immediately; a later display starts with a fresh frame
+    // timestamp, so time spent hidden is never simulated as a burst.
+    pauseRef.current()
+  }, [displayed])
+
   const pickMode = useCallback((next: ArcadeMode) => {
     arcadeRef.current?.setMode(next)
     runModeRef.current = slowerMode(runModeRef.current, next)
@@ -641,10 +664,11 @@ export function HoliArcade({
   // elsewhere (the sidebar, say) leaves the game running and the keys alone;
   // only Escape or Release ends it.
   useEffect(() => {
-    if (!playing) return
+    if (!playing || !displayed) return
     const root = rootRef.current
 
     const onKey = (event: KeyboardEvent) => {
+      if (!displayedRef.current) return
       if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) {
         return
       }
@@ -667,7 +691,7 @@ export function HoliArcade({
 
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [playing, release])
+  }, [displayed, playing, release])
 
   return (
     <div

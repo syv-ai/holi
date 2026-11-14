@@ -28,7 +28,14 @@ const NO_VERSIONS = atom<Readonly<Record<string, number>>>({})
 const NO_ARCHIVE = atom(null, async () => {})
 const NO_REFRESH = atom(null, async (_get, _set, _id: string) => {})
 
-export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
+export function AppsView({
+  visible = true,
+  onOpen,
+}: {
+  /** Whether this launcher is displayed in a pane. */
+  visible?: boolean
+  onOpen: (path: string) => void
+}) {
   const surface = useAtomValue(surfacesAtom).get('app')
   const live = useAtomValue(surface?.instances ?? NO_APPS)
   const archivedApps = useAtomValue(surface?.archived ?? NO_APPS)
@@ -235,6 +242,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
                         : () => preview(remote, path)
                     }
                     previewVersion={versions[path] ?? 0}
+                    visible={visible}
                     archived={inArchive}
                     onOpen={() => onOpen(path)}
                     actions={actionsFor(path)}
