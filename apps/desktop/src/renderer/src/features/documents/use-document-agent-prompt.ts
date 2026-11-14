@@ -72,7 +72,10 @@ export function useDocumentAgentPrompt({
 
   useEffect(() => {
     if (!batchAwaitingRun.current || !agent.run || isRunLive(agent.run)) return
+    // A stopped/finished run ends ownership of its pending start continuation.
+    // Invalidate it before unlocking so it cannot clear a retained or retried queue.
     batchAwaitingRun.current = false
+    batchGeneration.current += 1
     batchInFlight.current = false
     freeze(false)
     setBatchSubmitting(false)
@@ -223,7 +226,7 @@ export function useDocumentAgentPrompt({
       )
         updateQueue(() => [])
     } catch (error) {
-      if (isCurrentVisit())
+      if (batchGeneration.current === submission && isCurrentVisit())
         setBatchError(
           error instanceof Error ? error.message : 'Could not submit the batch. Try again.',
         )

@@ -29,6 +29,7 @@ import { vaultSettingsAtom } from '@/state/settings'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { forgetAgentLabelsAtom } from '@/state/document-runs'
+import { duplicateBlock, selectionBlockTarget } from '../rich-text/rich-text-block-actions'
 
 import { DocumentView } from '../document-view'
 
@@ -2080,4 +2081,113 @@ test('stopping a submitted batch unlocks its document', async () => {
   await user.click(stop)
   await waitFor(() => expect(editor.isEditable).toBe(true))
   expect(screen.getByText('Stopped')).toBeVisible()
+})
+
+test('duplicate text blocks cannot be added to the batch selection', async () => {
+  const user = userEvent.setup()
+  open('Repeat this paragraph.\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  let first = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (first === -1 && node.isText && node.text!.includes('Repeat this paragraph')) first = pos
+  })
+  act(() =>
+    editor.commands.setTextSelection({ from: first, to: first + 'Repeat this paragraph'.length }),
+  )
+  const target = selectionBlockTarget(editor.state)!
+  act(() => editor.view.dispatch(duplicateBlock(editor.state, target)!))
+  expect(editor.state.doc.child(0)).toBe(editor.state.doc.child(1))
+  let firstText = -1
+  let lastEnd = -1
+  let occurrences = 0
+  editor.state.doc.descendants((node, pos) => {
+    if (node.isText && node.text!.includes('Repeat this paragraph')) {
+      occurrences += 1
+      if (occurrences === 1) firstText = pos + node.text!.indexOf('Repeat this paragraph')
+      if (occurrences === 2)
+        lastEnd = pos + node.text!.indexOf('Repeat this paragraph') + 'Repeat this paragraph'.length
+    }
+  })
+  act(() => editor.chain().focus().setTextSelection({ from: firstText, to: lastEnd }).run())
+  expect(editor.state.selection.$from.before()).not.toBe(editor.state.selection.$to.before())
+  const askAi = await screen.findByRole('button', { name: 'Ask AI' })
+  await user.click(askAi)
+  const add = await screen.findByRole('menuitem', { name: 'Add to batch…' })
+  await user.click(add)
+  expect(screen.queryByRole('textbox', { name: 'Request for target 1' })).not.toBeInTheDocument()
+})
+
+test('stopping during a deferred batch launch unlocks edits and retains requests', async () => {
+  const user = userEvent.setup()
+  const launch = deferred<{ ok: true; sessionId: string }>()
+  cap.mockImplementation(({ name }: { name: string }) =>
+    name === 'agent.launch' ? launch.promise : Promise.resolve({ ok: true }),
+  )
+  open('Ship the beta.\n')
+  const { editor, askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.launch' })),
+  )
+  await user.click(await screen.findByRole('button', { name: 'Stop' }))
+  await waitFor(() => expect(editor.isEditable).toBe(true))
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled()
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue('Improve')
+  await act(async () => launch.resolve({ ok: true, sessionId: 'latebatch123' }))
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'agent.stop',
+        paramsJson: JSON.stringify({ id: 'latebatch123' }),
+      }),
+    ),
+  )
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue('Improve')
+})
+
+test('a late stopped launch cannot clear or contaminate a retried batch', async () => {
+  const user = userEvent.setup()
+  const oldLaunch = deferred<{ ok: true; sessionId: string }>()
+  const newLaunch = deferred<{ ok: true; sessionId: string }>()
+  let launches = 0
+  cap.mockImplementation(({ name }: { name: string }) => {
+    if (name === 'agent.launch') return ++launches === 1 ? oldLaunch.promise : newLaunch.promise
+    return Promise.resolve({ ok: true })
+  })
+  open('Ship the beta.\n')
+  const { editor, askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+  await waitFor(() => expect(launches).toBe(1))
+  await user.click(await screen.findByRole('button', { name: 'Stop' }))
+  await waitFor(() => expect(editor.isEditable).toBe(true))
+  expect(screen.getByRole('button', { name: 'Submit batch' })).toBeEnabled()
+  cap.mockImplementation(({ name }: { name: string }) => {
+    if (name === 'agent.launch') return ++launches === 2 ? newLaunch.promise : oldLaunch.promise
+    return Promise.resolve({ ok: true })
+  })
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+  await waitFor(() => expect(launches).toBe(2))
+  await act(async () => oldLaunch.resolve({ ok: true, sessionId: 'oldbatch123' }))
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'agent.stop',
+        paramsJson: JSON.stringify({ id: 'oldbatch123' }),
+      }),
+    ),
+  )
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue('Improve')
+  expect(editor.isEditable).toBe(false)
+  expect(screen.getByRole('button', { name: 'Submit batch' })).toBeDisabled()
+  await act(async () => newLaunch.resolve({ ok: true, sessionId: 'newbatch123' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('textbox', { name: 'Request for target 1' })).toBeNull(),
+  )
 })
