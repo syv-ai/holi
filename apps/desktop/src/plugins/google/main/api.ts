@@ -102,7 +102,12 @@ export class GoogleApi {
    * No query-parameter path, deliberately: every write carries its arguments in
    * the body, bar the literal `?sendUpdates=none` the calendar appends itself.
    */
-  async #write(method: string, url: string, body?: unknown): Promise<Response> {
+  async #write(
+    method: string,
+    url: string,
+    body?: unknown,
+    validate?: () => Promise<void>,
+  ): Promise<Response> {
     let token: string
     try {
       token = await this.#deps.accessToken()
@@ -117,6 +122,7 @@ export class GoogleApi {
     }
 
     this.#deps.beforeRequest?.()
+    await validate?.()
     const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
       method,
       headers: {
@@ -206,8 +212,13 @@ export class GoogleApi {
    * empty answer (a 204) as `null`, anything else as its text. Read as text
    * first because a 2xx is a done thing whether or not its body parses.
    */
-  async request(method: string, url: string, body?: unknown): Promise<unknown> {
-    const res = await this.#write(method, url, body)
+  async request(
+    method: string,
+    url: string,
+    body?: unknown,
+    validate?: () => Promise<void>,
+  ): Promise<unknown> {
+    const res = await this.#write(method, url, body, validate)
     const text = await res.text().catch(() => '')
     if (text === '') return null
     try {
