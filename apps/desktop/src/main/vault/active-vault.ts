@@ -1556,6 +1556,8 @@ export async function openActiveVault(args: {
  */
 export interface VaultHost {
   active(): ActiveVault | null
+  /** Share cold-start preparation without starting or selecting the runtime. */
+  prepare(remote: string, preparation?: (coldStart: boolean) => Promise<void>): Promise<void>
   /** Open and select a vault, admitting cold-start work before selection. */
   open(remote: string, prepare?: (coldStart: boolean) => Promise<void>): Promise<ActiveVault>
   /** Get an existing runtime or start one without changing the selected vault. */
@@ -1684,6 +1686,7 @@ export function createVaultHost(args: {
       current = null
     }
     runtimes.delete(remote)
+    preparedStarts.delete(remote)
     stopCallbacks.get(remote)?.()
     stopCallbacks.delete(remote)
     try {
@@ -1821,6 +1824,10 @@ export function createVaultHost(args: {
 
   return {
     active: () => current,
+    prepare: (remote, preparation) => {
+      const priorClose = closeQueues.get(remote) ?? Promise.resolve()
+      return admit(() => priorClose.then(() => prepareForOpen(remote, preparation)))
+    },
     get: (remote) => runtimes.get(remote) ?? null,
     getOrOpen: (remote) => {
       const priorClose = closeQueues.get(remote) ?? Promise.resolve()
@@ -1866,7 +1873,11 @@ export function createVaultHost(args: {
               const selected = current?.remote
               if (selected !== undefined) await serialise(selected, () => closeRuntime(selected))
             })
-          : serialiseClose(remote, selectionQueue),
+          : serialiseClose(remote, selectionQueue).finally(() => {
+              // A cold preparation is only valid for the runtime lifetime it
+              // preceded, even when no runtime ever made it to closeRuntime.
+              preparedStarts.delete(remote)
+            }),
       ),
     closeAll: () => {
       if (closingAll !== null) return closingAll
@@ -1881,6 +1892,7 @@ export function createVaultHost(args: {
         const results = await Promise.allSettled(
           remotes.map((remote) => serialise(remote, () => closeRuntime(remote))),
         )
+        preparedStarts.clear()
         const errors = results.flatMap((result) =>
           result.status === 'rejected' ? [result.reason] : [],
         )

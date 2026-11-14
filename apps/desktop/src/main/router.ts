@@ -407,7 +407,6 @@ export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? (() => localDate(new Date()))
   let vaultOpenRevision = 0
-  const clonePreparations = new Map<string, Promise<void>>()
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const capabilities =
     deps.capabilities ??
@@ -823,18 +822,9 @@ export function createRouter(deps: RouterDeps) {
          * ahead of the `.gitignore`.
          */
         if (deps.host.get(input.remote) === null) {
-          let preparation = clonePreparations.get(input.remote)
-          if (!preparation) {
-            preparation = (deps.prepareClone ?? prepareManagedClone)(root)
-            clonePreparations.set(input.remote, preparation)
-          }
-          try {
-            await preparation
-          } finally {
-            if (clonePreparations.get(input.remote) === preparation) {
-              clonePreparations.delete(input.remote)
-            }
-          }
+          await deps.host.prepare(input.remote, (coldStart) =>
+            coldStart ? (deps.prepareClone ?? prepareManagedClone)(root) : Promise.resolve(),
+          )
         }
         await deps.seed(root)
         await deps.registry.touch(input.remote, now())

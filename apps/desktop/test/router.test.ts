@@ -321,7 +321,7 @@ describe('vaults', () => {
     } finally {
       release()
     }
-    expect(order).toEqual(['prepare', 'seed'])
+    expect(order).toEqual(['prepare', 'seed', 'seed'])
     order.length = 0
     await caller.vaults.open({ remote: REMOTE })
     expect(order).toEqual(['seed'])
@@ -477,7 +477,11 @@ describe('vaults', () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => (release = resolve))
     let seeds = 0
+    let preparations = 0
     const { caller, host } = await rig({}, undefined, {
+      prepareClone: async () => {
+        preparations++
+      },
       seed: async (root) => {
         if (seeds++ === 0) {
           await gate
@@ -491,6 +495,7 @@ describe('vaults', () => {
     release()
     await expect(failed).rejects.toThrow('seed failed')
     expect(host.active()?.remote).toBe(REMOTE)
+    expect(preparations).toBe(1)
     await expect(caller.vaults.open({ remote: REMOTE })).resolves.toHaveProperty('docs')
   })
 
