@@ -20,13 +20,18 @@
  * `resolveArgv` refuses any word before the verb, and a `positionalOnly`
  * command's arguments given as options, so that match stays sound.
  *
+ * **A command can hand the script a program to run in its place** (`cliRun`):
+ * `holi plugin <id> <verb> …` is resolved here and run by the script, so the
+ * plugin's own arguments, stdin, output and exit code pass straight through.
+ *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { CapabilityError, NEXT_STEP } from '../capabilities/error'
-import type { CliCommand } from '../capabilities/registry'
-import { shellReadBridgeEnv } from './env-file'
+import type { CliCommand, CliRun } from '../capabilities/registry'
+import { isRemote } from '@holi/shared'
+import { shellJobId } from './env-file'
 
 /** What argv asks for. */
 export type CliRequest =
@@ -42,14 +47,15 @@ export type CliRequest =
       json: boolean
       /** Selected own-property paths for JSON output, when requested. */
       fields?: readonly (readonly string[])[]
+      vault: string | null
     }
   /** Not a command: the text says why and what is (exit 2). */
   | { kind: 'usage'; text: string }
   /** Asked for usage, bare or with --help: the text is the answer (exit 0). */
-  | { kind: 'help'; text: string }
+  | { kind: 'help'; text: string; vault: string | null }
   /** The command reads a param from stdin and it was not given: ask the
    *  script for stdin, and run nothing yet. */
-  | { kind: 'stdin' }
+  | { kind: 'stdin'; vault: string | null }
 
 /** `--name`: a param's name, as a capability spells it. */
 const OPTION_NAME = /^[a-zA-Z][a-zA-Z0-9_-]*$/
@@ -58,11 +64,15 @@ const argName = (arg: string): string => arg.replace(/\?$/, '')
 
 /** One command's line: `holi store put <bundle> <collection> <value> [<id>]`. */
 function commandLine({ name, cli }: CliCommand): string {
-  const words = [`holi ${name.replace('.', ' ')}`]
+  if (cli.rest === true) return `holi ${name.slice(0, name.indexOf('.'))} [<arguments>...]`
+  const words = [
+    `holi ${cli.standalone === true ? name.slice(0, name.indexOf('.')) : name.replace('.', ' ')}`,
+  ]
   for (const arg of cli.args) {
     words.push(arg.endsWith('?') ? `[<${argName(arg)}>]` : `<${arg}>`)
   }
   for (const flag of cli.flags ?? []) words.push(`[--${flag}]`)
+  for (const value of cli.values ?? []) words.push(`[--${value} <${value}>]`)
   for (const name of cli.many ?? []) words.push(`[--${name} <${name}>]...`)
   return words.join(' ')
 }
@@ -73,13 +83,14 @@ const HELP = new Set(['--help', '-h'])
 /** Every command and its summary, for bare `holi`. */
 function usageText(commands: readonly CliCommand[]): string {
   return [
-    'usage: holi <namespace> <verb> [arguments] [--json]',
+    'usage: holi <namespace> <verb> [arguments] [--vault owner/repo] [--json]',
     '',
     ...commands.flatMap((c) => [`  ${commandLine(c)}`, `      ${c.cli.summary}`]),
     '',
     'Most arguments can also be given as --name value. --json prints the result as JSON.',
     '--fields <paths> selects comma-separated dotted fields from the JSON result and requires --json.',
     'Example: holi google search --json --fields threads.id,threads.subject,nextPageToken',
+    'Use --vault owner/repo after the command to target a managed vault from any directory.',
   ].join('\n')
 }
 
@@ -101,25 +112,91 @@ export function resolveArgv(
     kind: 'usage',
     text: `${why}\n\n${usageText(commands)}`,
   })
+  // A command that is its namespace reads every word itself, `--help` too:
+  // what follows `holi plugin <id> <verb>` is the plugin's grammar.
+  const whole =
+    argv[0] === undefined
+      ? undefined
+      : commands.find((c) => c.cli.rest === true && c.name.startsWith(`${argv[0]}.`))
+  if (whole !== undefined) {
+    return {
+      kind: 'run',
+      name: whole.name,
+      label: `holi ${argv[0]}`,
+      usage: commandLine(whole),
+      params: { argv: argv.slice(1) },
+      json: false,
+      vault: null,
+    }
+  }
   // Asking for usage is not an error: bare `holi` and any `--help` before a
   // `--` answer it and run nothing, the one command's line when one is named.
+  const standalone = commands.filter((c) => c.cli.standalone === true)
+  const standaloneByNamespace = new Map<string, CliCommand>()
+  for (const command of standalone) {
+    const namespace = command.name.slice(0, command.name.indexOf('.'))
+    if (standaloneByNamespace.has(namespace)) {
+      throw new Error(`multiple standalone CLI commands for namespace ${namespace}`)
+    }
+    standaloneByNamespace.set(namespace, command)
+  }
   const end = argv.indexOf('--')
   if (argv.length === 0 || (end < 0 ? argv : argv.slice(0, end)).some((w) => HELP.has(w))) {
     const named = commands.find((c) => c.name === `${argv[0]}.${argv[1]}`)
+    const root = argv[0] === undefined ? undefined : standaloneByNamespace.get(argv[0])
     const text =
-      named === undefined
-        ? usageText(commands)
-        : `usage: ${commandLine(named)} [--json] [--fields <paths>]\n${named.cli.summary}\n--fields selects comma-separated dotted fields and requires --json.`
-    return { kind: 'help', text }
+      named !== undefined
+        ? `usage: ${commandLine(named)} [--json] [--fields <paths>]\n${named.cli.summary}\n--fields selects comma-separated dotted fields and requires --json.`
+        : root !== undefined
+          ? `usage: ${commandLine(root)} [--json] [--fields <paths>]\n${root.cli.summary}\n--fields selects comma-separated dotted fields and requires --json.`
+          : usageText(commands)
+    const target = named ?? root
+    let vault: string | null = null
+    if (target !== undefined) {
+      const rest = argv.slice(named === undefined ? 1 : 2)
+      let options = true
+      for (let i = 0; i < rest.length; i++) {
+        const word = rest[i]!
+        if (options && word === '--') {
+          options = false
+          continue
+        }
+        if (!options || HELP.has(word) || !word.startsWith('--')) continue
+        const eq = word.indexOf('=')
+        const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
+        const takesValue =
+          name === 'fields' ||
+          target.cli.values?.includes(name) === true ||
+          target.cli.many?.includes(name) === true ||
+          target.cli.args.some((arg) => argName(arg) === name) ||
+          name === target.cli.stdin ||
+          name === target.cli.stdinUnless ||
+          name === target.cli.job ||
+          (target.cli.values === undefined && !target.cli.flags?.includes(name))
+        if (name === 'vault') {
+          const value = eq < 0 ? rest[++i] : word.slice(eq + 1)
+          if (value && isRemote(value)) vault = value
+        } else if (eq < 0 && name !== 'json' && takesValue) {
+          i++
+        }
+      }
+    }
+    return { kind: 'help', text, vault }
   }
-  const [ns, verb] = argv
+  const ns = argv[0]
+  const standaloneCommand = ns === undefined ? undefined : standaloneByNamespace.get(ns)
+  const bare =
+    standaloneCommand !== undefined && (argv[1] === undefined || argv[1]!.startsWith('-'))
+  const verb = bare
+    ? standaloneCommand!.name.slice(standaloneCommand!.name.indexOf('.') + 1)
+    : argv[1]
   if (ns === undefined || ns.startsWith('-') || verb === undefined || verb.startsWith('-')) {
     return usage('holi: say the command first: holi <namespace> <verb>')
   }
-  const command = commands.find((c) => c.name === `${ns}.${verb}`)
+  const command = bare ? standaloneCommand : commands.find((c) => c.name === `${ns}.${verb}`)
   if (command === undefined) return usage(`holi: no such command: ${ns} ${verb}`)
 
-  const label = `holi ${ns} ${verb}`
+  const label = `holi ${ns}${bare ? '' : ` ${verb}`}`
   const wrong = (why: string): CliRequest => ({
     kind: 'usage',
     text: `${label}: ${why}\nusage: ${commandLine(command)}`,
@@ -130,8 +207,9 @@ export function resolveArgv(
   let json = false
   let fields: readonly (readonly string[])[] | undefined
   let fieldsGiven = false
+  let vault: string | null = null
   let options = true
-  const rest = argv.slice(2)
+  const rest = argv.slice(bare ? 1 : 2)
   for (let i = 0; i < rest.length; i++) {
     const word = rest[i]!
     if (options && word === '--') {
@@ -140,7 +218,19 @@ export function resolveArgv(
       const eq = word.indexOf('=')
       const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
       if (!OPTION_NAME.test(name)) return wrong(`not an option: ${word}`)
-      if (options && name === 'fields') {
+      if (name === 'vault') {
+        if (vault !== null) return wrong('--vault is given twice')
+        const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
+        if (!value) return wrong('--vault needs a non-empty owner/repo')
+        if (!isRemote(value)) return wrong('--vault must be owner/repo')
+        vault = value
+        continue
+      }
+      if (name === 'json' && eq < 0) {
+        json = true
+        continue
+      }
+      if (name === 'fields') {
         if (fieldsGiven) return wrong('--fields is given twice')
         fieldsGiven = true
         const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
@@ -157,20 +247,35 @@ export function resolveArgv(
         params[name] = [...(Array.isArray(prior) ? prior : []), value]
         continue
       }
-      if (Object.hasOwn(params, name)) return wrong(`--${name} is given twice`)
+      const isFlag = cli.flags?.includes(name) === true
+      const takesValue =
+        cli.values?.includes(name) === true ||
+        cli.many?.includes(name) === true ||
+        cli.args.some((arg) => argName(arg) === name) ||
+        name === cli.stdin ||
+        name === cli.stdinUnless ||
+        name === cli.job
+      // `values` opts a command into strict option validation. Older commands
+      // rely on undeclared named values, so leave their grammar unchanged.
+      if (cli.values !== undefined && !isFlag && !takesValue)
+        return wrong(`unknown option --${name}`)
+      if (Object.hasOwn(params, name) && !cli.many?.includes(name))
+        return wrong(`--${name} is given twice`)
       if (cli.positionalOnly === true && cli.args.some((arg) => argName(arg) === name)) {
         return wrong(`give ${name} in its place, not as --${name}`)
       }
-      if (eq < 0 && name === 'json') {
-        json = true
-      } else if (eq < 0 && cli.flags?.includes(name)) {
+      if (isFlag && eq >= 0 && cli.values !== undefined)
+        return wrong(`--${name} does not take a value`)
+      if (isFlag && eq < 0) {
         params[name] = 'true'
-      } else if (eq >= 0) {
-        params[name] = word.slice(eq + 1)
       } else {
-        const value = rest[++i]
-        if (value === undefined) return wrong(`--${name} needs a value`)
-        params[name] = value
+        const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
+        if (value === undefined || (eq < 0 && cli.values !== undefined && value.startsWith('--')))
+          return wrong(`--${name} needs a value`)
+        if (cli.many?.includes(name)) {
+          const prior = params[name]
+          params[name] = [...(Array.isArray(prior) ? prior : []), value]
+        } else params[name] = value
       }
     } else if (options && word.startsWith('-') && word !== '-') {
       return wrong(`unknown option ${word}`)
@@ -208,7 +313,7 @@ export function resolveArgv(
     cli.stdin !== undefined &&
     (cli.stdinOnDash === true ? params[cli.stdin] === '-' : !Object.hasOwn(params, cli.stdin))
   if (cli.stdin !== undefined && !bodyless && wantsStdin) {
-    if (stdin === null) return { kind: 'stdin' }
+    if (stdin === null) return { kind: 'stdin', vault }
     params[cli.stdin] = stdin
   }
   return {
@@ -219,6 +324,7 @@ export function resolveArgv(
     params,
     json,
     ...(fields === undefined ? {} : { fields }),
+    vault,
   }
 }
 
@@ -266,69 +372,101 @@ export function refusalText(request: { label: string; usage: string }, error: un
   return lines.join('\n')
 }
 
-const SCRIPT = `#!/bin/sh
+const shellWord = (word: string): string => `'${word.replaceAll("'", `'\\''`)}'`
+
+const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/
+
+/** Build the shell run by the CLI script when a capability hands off a program. */
+export function runScript(run: CliRun): string {
+  if (!isAbsolute(run.cwd)) throw new Error(`a run's folder must be absolute: ${run.cwd}`)
+  if (run.argv.length === 0) throw new Error('a run needs a program')
+  const lines = [`cd ${shellWord(run.cwd)} || exit 1`]
+  for (const [name, value] of Object.entries(run.env)) {
+    if (!ENV_NAME.test(name)) throw new Error(`not an environment variable: ${name}`)
+    lines.push(`export ${name}=${shellWord(value)}`)
+  }
+  lines.push(`exec ${run.argv.map(shellWord).join(' ')}`)
+  return lines.join('\n')
+}
+
+const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`
+
+const SCRIPT = (descriptorPath: string, platform: NodeJS.Platform) => {
+  const regexQuote = platform === 'win32' ? '"' : '\\"'
+  const jobField =
+    platform === 'win32'
+      ? `${shellJobId(platform)}\n[ -n "$job" ] && set -- "$@" --data-urlencode "job=$job"`
+      : `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then\n  set -- "$@" --data-urlencode "job=\${CLAUDE_JOB_DIR##*/}"\nfi`
+  return `#!/bin/sh
 # holi: ask the running Holi app something. Run it bare for every command.
-# Generated by Holi. Talks to the app over 127.0.0.1 and holds no secret of
-# yours: the port and the token come from the vault you are in.
-#
-# Nearly every command is reversible or read-only. Those that reach other
-# people (sending mail, answering an invite) are asked about before they run,
-# by a hook in the vault, not here. If this says Holi is not running, it is not running, or you are not inside one of
-# its vaults.
+# Generated by Holi. Talks to the running app via a private machine credential.
+# A vault-local hook separately gates commands that reach other people.
 set -eu
 
-# The port and token are in .holi/state/bridge.local.env at the vault's root,
-# found by walking up from here to the folder holding .holi/vault. Holi writes
-# it when it opens the vault and deletes it when it leaves. Read key by key
-# and checked, never sourced: a file in a synced folder is not code to run.
-${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('\n')}
-
-if [ -z "\$HOLI_BRIDGE_PORT" ] || [ -z "\$HOLI_BRIDGE_TOKEN" ]; then
-  echo "holi: Holi is not running, or this is not inside one of its vaults." >&2
+endpoint=${shellQuote(descriptorPath)}
+if [ -L "\$endpoint" ] || [ ! -f "\$endpoint" ]; then
+  echo "holi: Holi is not running (CLI endpoint descriptor is missing or unsafe)." >&2
   exit 1
 fi
 
-out=\$(mktemp)
-trap 'rm -f "\$out"' EXIT
+# Accept only the canonical descriptor written by Holi, in exact field order.
+# Parsing as data avoids ever evaluating content from a file.
+parsed=\$(awk '
+  NR == 1 && \$0 == "{" { next }
+  NR == 2 && \$0 == "  \\"host\\": \\"127.0.0.1\\"," { host=1; next }
+  NR == 3 && \$0 ~ /^  ${regexQuote}port${regexQuote}: [0-9]+,\$/ { port=\$0; sub(/^  ${regexQuote}port${regexQuote}: /, "", port); sub(/,\$/, "", port); next }
+  NR == 4 && \$0 ~ /^  ${regexQuote}token${regexQuote}: ${regexQuote}[0-9a-f]+${regexQuote}\$/ { token=\$0; sub(/^  ${regexQuote}token${regexQuote}: ${regexQuote}/, "", token); sub(/${regexQuote}\$/, "", token); next }
+  NR == 5 && \$0 == "}" { closed=1; next }
+  { bad=1 }
+  END {
+    if (NR != 5 || !host || !closed || bad || port !~ /^[0-9]+\$/ || length(token) != 64) exit 1
+    if (port < 1 || port > 65535) exit 1
+    print port " " token
+  }
+' "\$endpoint") || {
+  echo "holi: Holi is not running (CLI endpoint descriptor is malformed)." >&2
+  exit 1
+}
+port=\${parsed%% *}
+token=\${parsed#* }
 
-# Every word rides in the body so curl encodes it: hand-rolling
-# percent-encoding in POSIX sh is how a path with a space silently becomes a
-# different path. The list \`for\` walks is fixed when it starts, so
-# rebuilding "\$@" inside it is safe.
+umask 077
+out=\$(mktemp) || { echo "holi: cannot create a private response file." >&2; exit 1; }
+config=\$(mktemp) || { rm -f "\$out"; echo "holi: cannot create a private credential file." >&2; exit 1; }
+cleanup() { rm -f "\$out" "\$config"; }
+trap cleanup EXIT
+trap 'cleanup; exit 1' HUP INT TERM
+printf 'header = "x-holi-cli-token: %s"\\n' "\$token" > "\$config"
+unset token parsed
+
+cwd=\$(pwd -P) || { echo "holi: cannot determine physical working directory." >&2; exit 1; }
+# Build form fields without losing spaces, Unicode, --, or empty arguments.
 for a in "\$@"; do
   shift
   set -- "\$@" --data-urlencode "argv=\$a"
 done
-
-# Inside a background Claude Code session, its job id: a command that
-# points back at the session (holi agent notify) needs no flag for it.
-if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then
-  set -- "\$@" --data-urlencode "job=\${CLAUDE_JOB_DIR##*/}"
-fi
+set -- "\$@" --data-urlencode "cwd=\$cwd"
+${jobField}
 
 send() {
-  curl -sS -X POST -o "\$out" -w '%{http_code}' \\
-    "http://127.0.0.1:\$HOLI_BRIDGE_PORT/cli?t=\$HOLI_BRIDGE_TOKEN" "\$@"
+  curl -q --noproxy '*' -sS --config "\$config" -X POST -o "\$out" -w '%{http_code}' \\
+    "http://127.0.0.1:\$port/cli" "\$@"
 }
-
-code=\$(send "\$@") || exit 1
+code=\$(send "\$@") || { echo "holi: could not reach the running Holi app." >&2; exit 1; }
 if [ "\$code" = 428 ]; then
-  # The command reads its body from stdin and none was given as an
-  # argument. Holi ran nothing; send stdin, once.
-  code=\$(send "\$@" --data-urlencode "stdin@-") || exit 1
+  code=\$(send "\$@" --data-urlencode "stdin@-") || { echo "holi: could not reach the running Holi app." >&2; exit 1; }
 fi
-
-# The status decides where the answer goes: 200 to stdout, a refusal (422)
-# to stderr and exit 1, a usage error (400) to stderr and exit 2. The body
-# goes through a file so that nothing about it, a trailing newline included,
-# is lost on the way.
+# 202 carries a program for this script to run in place of the CLI.
 case "\$code" in
   200) cat "\$out"; echo ;;
+  202) run=\$(cat "\$out"); cleanup; trap - EXIT; eval "\$run" ;;
   400) cat "\$out" >&2; echo >&2; exit 2 ;;
   422) cat "\$out" >&2; echo >&2; exit 1 ;;
+  401|403) echo "holi: this CLI endpoint rejected the request." >&2; exit 1 ;;
   *) echo "holi: Holi answered \$code" >&2; exit 1 ;;
 esac
 `
+}
 
 /**
  * Write the script and make it executable. Returns its absolute path, which
@@ -337,10 +475,13 @@ esac
  * Rewritten on every launch rather than written once: it is generated content,
  * so an app update must not leave an older copy in place.
  */
-export async function installHoliCli(userDataDir: string): Promise<string> {
+export async function installHoliCli(
+  userDataDir: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string> {
   const path = join(userDataDir, 'bin', 'holi')
   await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, SCRIPT, { mode: 0o755 })
+  await writeFile(path, SCRIPT(join(userDataDir, 'cli-endpoint.json'), platform), { mode: 0o755 })
   // `writeFile`'s mode is ignored when the file already exists.
   await chmod(path, 0o755)
   return path

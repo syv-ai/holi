@@ -16,7 +16,7 @@ import { cap, createCapabilityRegistry } from '../src/main/capabilities/registry
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
-import { createRouter } from '../src/main/router'
+import { createRouter, type RouterDeps } from '../src/main/router'
 import { withFileLock } from '../src/main/vault/vault-files'
 import { exactPath } from '@holi/shared/path-safety-node'
 
@@ -69,7 +69,14 @@ afterEach(async () => {
   for (const h of hosts.splice(0)) await h.close().catch(() => {})
 })
 
-async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
+async function rig(
+  files: Record<string, string> = {},
+  auth?: StoredAuth,
+  overrides: Pick<RouterDeps, 'seed' | 'opened'> & {
+    reconcile?: RouterDeps['plugins']['reconcile']
+    setDisplayed?: RouterDeps['plugins']['setDisplayed']
+  } = {},
+) {
   const base = await mkdtemp(join(tmpdir(), 'holi-rt-'))
   dirs.push(base)
   const root = join(base, 'clone')
@@ -127,10 +134,18 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     pluginEnabled: async () => true,
     claims: TASKS,
   })
+  const openPastedHoliLink = vi.fn(async (url: string) =>
+    url.includes('valid')
+      ? { ok: true as const }
+      : { ok: false as const, message: 'failure', detail: 'detail' },
+  )
   const caller = createRouter({
-    seed: seedVault,
+    openPastedHoliLink,
+    seed: overrides.seed ?? seedVault,
     plugins: {
-      reconcile: async () => {},
+      reconcile: overrides.reconcile ?? (async () => {}),
+      invalidate: () => {},
+      setDisplayed: overrides.setDisplayed ?? (() => {}),
       syncBackground: async () => {},
       failures: () => ({}),
       scanClaimsFor: TASKS,
@@ -145,9 +160,30 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     showItemInFolder,
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
+    opened: overrides.opened,
   }).createCaller({})
-  return { caller, root, registry, host, session, base, trashItem, showItemInFolder, capabilities }
+  return {
+    caller,
+    root,
+    registry,
+    host,
+    session,
+    base,
+    trashItem,
+    showItemInFolder,
+    capabilities,
+    openPastedHoliLink,
+  }
 }
+
+describe('pasted Holi links', () => {
+  it('routes the raw URL to the shared main-side opener and returns its result', async () => {
+    const { caller, openPastedHoliLink } = await rig()
+    const url = 'holi://open?valid=true'
+    await expect(caller.holiLinks.openPasted({ url })).resolves.toEqual({ ok: true })
+    expect(openPastedHoliLink).toHaveBeenCalledWith(url)
+  })
+})
 
 describe('settings', () => {
   // Reachability, not resolution: the resolver is tested on strings in
@@ -293,6 +329,117 @@ describe('vaults', () => {
     expect(after.permissions.ask).toContain('Bash(holi google send:*)')
   })
 
+  it('does not let an older seed completion reopen a superseded vault', async () => {
+    let releaseSeed!: () => void
+    const seedGate = new Promise<void>((resolve) => (releaseSeed = resolve))
+    const setDisplayed = vi.fn()
+    const opened = vi.fn()
+    const { caller, registry, host, base } = await rig({ 'alpha.md': '# Alpha\n' }, undefined, {
+      seed: async (root) => {
+        if (root.endsWith('beta')) await seedGate
+        else await seedVault(root)
+      },
+      setDisplayed,
+      opened,
+    })
+    const betaRoot = join(base, 'beta')
+    await mkdir(betaRoot, { recursive: true })
+    await writeFile(join(betaRoot, 'beta-only.md'), '# Beta\n')
+    await seedVault(betaRoot)
+    await registry.add({
+      remote: 'syv-ai/beta',
+      path: betaRoot,
+      name: 'beta',
+      lastOpenedAt: '2026-07-01T00:00:00Z',
+    })
+    await caller.vaults.open({ remote: REMOTE })
+    setDisplayed.mockClear()
+    opened.mockClear()
+
+    const beta = caller.vaults.open({ remote: 'syv-ai/beta' })
+    await caller.vaults.open({ remote: REMOTE })
+    releaseSeed()
+    const betaSnapshot = await beta
+
+    expect(host.active()?.remote).toBe(REMOTE)
+    expect(betaSnapshot.docs.map((doc) => doc.path)).toContain('beta-only.md')
+    expect(setDisplayed.mock.calls).toEqual([[REMOTE]])
+    expect(opened.mock.calls).toEqual([[REMOTE]])
+  })
+
+  it('supersedes a vault open waiting on registry touch', async () => {
+    const { caller, registry, host, base } = await rig()
+    const betaRoot = join(base, 'touch-beta')
+    await mkdir(betaRoot, { recursive: true })
+    await seedVault(betaRoot)
+    await registry.add({
+      remote: 'syv-ai/touch-beta',
+      path: betaRoot,
+      name: 'beta',
+      lastOpenedAt: '',
+    })
+    const originalTouch = registry.touch.bind(registry)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    vi.spyOn(registry, 'touch').mockImplementation(async (remote, stamp) => {
+      if (remote === 'syv-ai/touch-beta') await gate
+      return originalTouch(remote, stamp)
+    })
+
+    const old = caller.vaults.open({ remote: 'syv-ai/touch-beta' })
+    await caller.vaults.open({ remote: REMOTE })
+    release()
+    await old
+    expect(host.active()?.remote).toBe(REMOTE)
+  })
+
+  it('does not publish opened for a vault superseded during reconciliation', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const opened = vi.fn()
+    let reconcileCount = 0
+    let signalReconcile!: () => void
+    const reconcileStarted = new Promise<void>((resolve) => (signalReconcile = resolve))
+    const { caller, host } = await rig({}, undefined, {
+      reconcile: async () => {
+        if (reconcileCount++ === 0) {
+          signalReconcile()
+          await gate
+        }
+      },
+      opened,
+    })
+    const slow = caller.vaults.open({ remote: REMOTE })
+    await reconcileStarted
+    const latest = caller.vaults.open({ remote: REMOTE })
+    await latest
+    release()
+    await slow
+    expect(host.active()?.remote).toBe(REMOTE)
+    expect(opened).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a later open proceed after an obsolete preparation fails', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    let seeds = 0
+    const { caller, host } = await rig({}, undefined, {
+      seed: async (root) => {
+        if (seeds++ === 0) {
+          await gate
+          throw new Error('seed failed')
+        }
+        await seedVault(root)
+      },
+    })
+    const failed = caller.vaults.open({ remote: REMOTE })
+    await caller.vaults.open({ remote: REMOTE })
+    release()
+    await expect(failed).rejects.toThrow('seed failed')
+    expect(host.active()?.remote).toBe(REMOTE)
+    await expect(caller.vaults.open({ remote: REMOTE })).resolves.toHaveProperty('docs')
+  })
+
   it('open makes the vault active, so the loop is running behind the snapshot', async () => {
     const { caller, host } = await rig({ 'a.md': '# A\n' })
     await caller.vaults.open({ remote: REMOTE })
@@ -320,6 +467,37 @@ describe('vaults', () => {
     // Recoverable delete: the clone went to the OS trash, not an rm — so the
     // private vault, or one deleted by mistake, can be restored and re-ingested.
     expect(trashItem).toHaveBeenCalledWith(root)
+    expect(await caller.vaults.list()).toEqual([])
+  })
+
+  it('deleteClones closes every runtime before trashing any clone', async () => {
+    const { caller, host, registry, base, root } = await rig({ 'a.md': '# A\n' })
+    const secondRoot = join(base, 'second-clone')
+    await mkdir(secondRoot, { recursive: true })
+    await seedVault(secondRoot)
+    for (const cloneRoot of [root, secondRoot]) {
+      await plainGit(cloneRoot, ['init', '-b', 'main'])
+      await plainGit(cloneRoot, ['config', 'user.name', 'Test'])
+      await plainGit(cloneRoot, ['config', 'user.email', 'test@example.com'])
+      await plainGit(cloneRoot, ['add', '-A'])
+      await plainGit(cloneRoot, ['commit', '-m', 'seed'])
+    }
+    await registry.add({
+      remote: 'syv-ai/second',
+      path: secondRoot,
+      name: 'second',
+      lastOpenedAt: '2026-07-01T00:00:00Z',
+    })
+
+    await caller.vaults.open({ remote: REMOTE })
+    await host.getOrOpen('syv-ai/second')
+    expect(host.get(REMOTE)).not.toBeNull()
+    expect(host.get('syv-ai/second')).not.toBeNull()
+
+    await caller.vaults.deleteClones()
+
+    expect(host.get(REMOTE)).toBeNull()
+    expect(host.get('syv-ai/second')).toBeNull()
     expect(await caller.vaults.list()).toEqual([])
   })
 
@@ -1331,6 +1509,8 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
     seed: seedVault,
     plugins: {
       reconcile: async () => {},
+      invalidate: () => {},
+      setDisplayed: () => {},
       syncBackground: async () => {},
       failures: () => ({}),
       scanClaimsFor: TASKS,

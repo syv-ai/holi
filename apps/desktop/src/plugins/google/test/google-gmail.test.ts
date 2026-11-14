@@ -1149,6 +1149,93 @@ describe('readThread', () => {
 })
 
 describe('textOnly', () => {
+  it('keeps an HTML bottom-posted reply after a bounded forwarded quote', async () => {
+    const html =
+      '<p>-----Original Message-----</p><p>From: Ada</p><p>Date: Tue</p><p>Subject: Plan</p><blockquote><p>Old proposal.</p><p>Old dates.</p></blockquote><p>The dates work for me.</p>'
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+      },
+    })
+
+    const thread = await readThread(api, 't1')
+    expect(textOnly(thread).messages[0]!.body).toBe('The dates work for me.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(thread.messages[0]!.body)
+    expect(thread.messages[0]!.html).toBe(html)
+  })
+
+  it('cleans complete HTML quote spans only for the CLI and leaves the original projection intact', async () => {
+    const html =
+      '<p>On Tuesday Ada wrote:</p><blockquote><p>Old first paragraph.</p><p>Old second paragraph.</p><blockquote><p>Nested older history.</p></blockquote></blockquote><p>New bottom-posted answer.</p>'
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+      },
+    })
+    const thread = await readThread(api, 't1')
+    const before = structuredClone(thread)
+    // The pre-existing HTML-to-text reader representation must not gain quote markers.
+    expect(thread.messages[0]!.body).toBe(
+      'On Tuesday Ada wrote:\n\nOld first paragraph.\n\nOld second paragraph.\n\nNested older history.\n\nNew bottom-posted answer.',
+    )
+    expect(textOnly(thread).messages[0]!.body).toBe('New bottom-posted answer.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(thread.messages[0]!.body)
+    expect(thread).toEqual(before)
+    expect(thread.messages[0]!.html).toBe(html)
+  })
+
+  it('prefers plain originals over HTML alternatives and retains ambiguous malformed HTML', async () => {
+    const plain = 'The complete authored plain message.\r\n--\r\nKeep this separator.'
+    const html = '<p>On Tuesday Ada wrote:</p><blockquote><p>Old quoted text.</p>'
+    const { api } = gmail([], {
+      t1: {
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              mimeType: 'multipart/alternative',
+              parts: [
+                { mimeType: 'text/plain', body: { data: b64(plain) } },
+                { mimeType: 'text/html', body: { data: b64(html) } },
+              ],
+            },
+          },
+          { id: 'm2', payload: { mimeType: 'text/html', body: { data: b64(html) } } },
+        ],
+      },
+    })
+    const thread = await readThread(api, 't1')
+    const result = textOnly(thread)
+    expect(result.messages.map(({ id }) => id)).toEqual(['m1', 'm2'])
+    expect(result.messages[0]!.body).toBe(plain.replace(/\r\n/g, '\n'))
+    expect(result.messages[1]!.body).toContain('Old quoted text.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(plain)
+  })
+
+  it('drops recognized quoted history by default and preserves the complete body with full', () => {
+    const thread = {
+      id: 't1',
+      subject: 'Plan',
+      webUrl: 'https://mail.google.com/…',
+      messages: [
+        {
+          id: 'm1',
+          from: 'Jane',
+          to: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: 'The plan is ready.\n\nOn Tue, Jane wrote:\n> previous message',
+          html: null,
+        },
+      ],
+    } as never
+    expect(textOnly(thread).messages[0]!.body).toBe('The plan is ready.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(
+      'The plan is ready.\n\nOn Tue, Jane wrote:\n> previous message',
+    )
+  })
+
   it('drops html entirely, so the agent never receives markup', () => {
     // The shape the agent's JSON had before senders became addresses: the
     // projection passes each field through as it finds it.
@@ -1548,9 +1635,9 @@ describe('send, draft and reply', () => {
   /** A Gmail that serves one thread and accepts writes — validating `raw` the
    *  way Gmail does, so an encoding bug fails here rather than in a mailbox. */
   function mailbox(thread?: Record<string, unknown>, sendResponse: unknown = { id: 'm-9' }) {
-    const posts: { url: string; body: unknown }[] = []
+    const posts: { url: string; method: string; body: unknown }[] = []
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      if (init?.method !== 'POST') {
+      if (init?.method !== 'POST' && init?.method !== 'PUT') {
         return { ok: true, status: 200, json: async () => thread ?? {}, text: async () => '{}' }
       }
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
@@ -1565,7 +1652,7 @@ describe('send, draft and reply', () => {
           json: async () => ({}),
         }
       }
-      posts.push({ url, body })
+      posts.push({ url, method: init?.method ?? 'POST', body })
       return { ok: true, status: 200, json: async () => sendResponse, text: async () => '{}' }
     })
     const api = new GoogleApi({
@@ -1658,8 +1745,25 @@ describe('send, draft and reply', () => {
     ).resolves.toEqual({ id: null })
   })
 
+  it('normalizes RFC comments and adjacent references when threading a draft', async () => {
+    const thread = structuredClone(THREAD)
+    thread.messages[2]!.payload.headers = [
+      header('Message-ID', ' (latest) <msg-3@mail.example> (comment)'),
+      header('References', '<msg-1@mail.example>(root) <msg-2@mail.example>'),
+    ]
+    const { posts, api } = mailbox(thread)
+
+    await createDraft(api, { to: ['ada@syv.ai'], subject: 'Reply', body: 'Hi' }, 't1')
+
+    const raw = rawOf(posts[0]!.body)
+    expect(headerIn(raw, 'In-Reply-To')).toBe('<msg-3@mail.example>')
+    expect(headerIn(raw, 'References')).toBe(
+      '<msg-1@mail.example> <msg-2@mail.example> <msg-3@mail.example>',
+    )
+  })
+
   it('drafts through the drafts endpoint, filed into its thread', async () => {
-    const { posts, api } = mailbox(undefined, { id: 'd-1' })
+    const { posts, api } = mailbox(THREAD, { id: 'd-1' })
 
     const result = await createDraft(
       api,
@@ -1670,7 +1774,29 @@ describe('send, draft and reply', () => {
     expect(posts[0]!.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/drafts')
     // Without threadId the draft is a loose message that never joins the thread.
     expect((posts[0]!.body as { message: { threadId?: string } }).message.threadId).toBe('t1')
+    expect(headerIn(rawOf(posts[0]!.body), 'In-Reply-To')).toBe('<msg-3@mail.example>')
+    expect(headerIn(rawOf(posts[0]!.body), 'References')).toBe('<msg-3@mail.example>')
     expect(result.id).toBe('d-1')
+  })
+
+  it('updates a draft in place and preserves its id', async () => {
+    const { posts, api } = mailbox(undefined, { id: 'd-1' })
+
+    const result = await createDraft(
+      api,
+      {
+        to: ['ada@syv.ai'],
+        subject: 'Revised',
+        body: 'Replacement body',
+      },
+      undefined,
+      'd-1',
+    )
+
+    expect(posts[0]!.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/drafts/d-1')
+    expect(posts[0]!.method).toBe('PUT')
+    expect(headerIn(rawOf(posts[0]!.body), 'Subject')).toBe('Revised')
+    expect(result).toEqual({ id: 'd-1' })
   })
 
   it('carries In-Reply-To AND References so the reply stays in its thread', async () => {
@@ -2378,11 +2504,15 @@ describe('the composer surface', () => {
       expect(draft.markdown).toBe(markdown)
     })
 
-    it('carries cc, which is what a reply-all draft is for', async () => {
-      const raw = toBase64Url(buildRfc822({ ...MAIL, cc: ['cec@example.com'] }))
+    it('carries cc and bcc recipients back from an existing draft', async () => {
+      const raw = toBase64Url(
+        buildRfc822({ ...MAIL, cc: ['cec@example.com'], bcc: ['hidden@example.com'] }),
+      )
       const { api } = composer({ drafts: [{ id: 'd-1', raw }] })
+      const draft = await readDraft(api, 'd-1')
 
-      expect((await readDraft(api, 'd-1')).cc.map((a) => a.email)).toEqual(['cec@example.com'])
+      expect(draft.cc.map((a) => a.email)).toEqual(['cec@example.com'])
+      expect(draft.bcc.map((a) => a.email)).toEqual(['hidden@example.com'])
     })
 
     it('reports a 404 for a draft that is gone', async () => {

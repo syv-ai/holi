@@ -31,7 +31,8 @@ import { OverviewStats } from './overview-stats'
 import { ActivityTimeline } from './activity-timeline'
 import type { ActivityItem } from './activity-data'
 import { RegionEmpty, RegionError } from './states'
-import { PeopleStack, PersonAvatar } from '@/composites/person-avatar'
+import { PersonAvatar } from '@/composites/person-avatar'
+import { PlanningPeopleStack } from './planning-visibility'
 import { DateBadge, PriorityBadge, ProjectStatusBadge, StatusBadge } from './task-bits'
 
 /** A titled panel: the Overview's one container. */
@@ -86,6 +87,7 @@ export interface OverviewProps {
   onOpenTask: (path: string) => void
   onShowStatus: (status: string) => void
   onNewTask: () => void
+  visible: boolean
 }
 
 export function Overview({
@@ -101,6 +103,7 @@ export function Overview({
   onOpenTask,
   onShowStatus,
   onNewTask,
+  visible,
 }: OverviewProps) {
   const project = projectState.state === 'ready' ? projectState.project : null
   const summary = progressSummary(tasks, statuses, now)
@@ -160,7 +163,7 @@ export function Overview({
                   </span>
                 ) : null}
                 {summary.overdue > 0 ? (
-                  <Badge variant="destructive-light">{summary.overdue} overdue</Badge>
+                  <Badge variant="destructive">{summary.overdue} overdue</Badge>
                 ) : null}
               </>
             }
@@ -257,7 +260,7 @@ export function Overview({
           )}
         </Section>
 
-        <RecentActivity tasks={tasks} onOpen={onOpenTask} />
+        <RecentActivity tasks={tasks} onOpen={onOpenTask} visible={visible} />
       </div>
     </div>
   )
@@ -297,7 +300,7 @@ function ComingUpRow({
               <PriorityBadge priority={task.priority} />
             </span>
           ) : null}
-          <PeopleStack logins={task.assignees} max={2} />
+          <PlanningPeopleStack logins={task.assignees} max={2} />
           <DateBadge stamp={task.due!} today={today} overdue={overdue} label="Due" />
         </span>
       </Button>
@@ -359,7 +362,7 @@ function DetailRows({
           none
         ) : (
           <span className="flex items-center gap-2">
-            <PeopleStack logins={members} max={4} />
+            <PlanningPeopleStack logins={members} max={4} />
             <span className="tabular-nums">{members.length}</span>
           </span>
         ),
@@ -391,9 +394,11 @@ type Activity =
 function RecentActivity({
   tasks,
   onOpen,
+  visible,
 }: {
   tasks: readonly Task[]
   onOpen: (path: string) => void
+  visible: boolean
 }) {
   const epochs = useAtomValue(historyEpochsAtom)
   const [retry, setRetry] = useState(0)
@@ -401,6 +406,7 @@ function RecentActivity({
   const titles = new Map(tasks.map((t) => [t.path, t.title]))
 
   useEffect(() => {
+    if (!visible) return
     let live = true
     setActivity((current) => (current.state === 'ready' ? current : { state: 'loading' }))
     trpc.history.activity
@@ -439,7 +445,7 @@ function RecentActivity({
     return () => {
       live = false
     }
-  }, [epochs.all, retry])
+  }, [epochs.all, retry, visible])
 
   return (
     <Section title="Recent activity">

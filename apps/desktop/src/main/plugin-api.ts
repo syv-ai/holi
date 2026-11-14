@@ -67,6 +67,10 @@ export interface PluginScheme {
  * undo below the host also runs when it stops.
  */
 export interface PluginCtx extends LiveVault, SchemeContext {
+  /** The renderer's displayed vault, independent of plugin lifetimes. */
+  displayed(): string | null
+  /** Hear when the renderer's displayed vault changes. Returns the undo. */
+  onDisplayChange(cb: (remote: string | null) => void): () => void
   /** Holi's own data directory on this machine, for state a plugin keeps
    *  outside any vault. */
   userData: string
@@ -291,6 +295,7 @@ export {
   type CapabilityContext,
   type CapabilityTable,
   type Admit,
+  type CliRun,
   type CliSpec,
   type Door,
 } from './capabilities/registry'
@@ -348,5 +353,5 @@ export { readVaultSettings, writePluginSettings } from './vault/settings'
 export { readVaultEnv } from './vault/dotenv'
 export type { SafeStorageLike } from './github/token-store'
 export { installedInfos } from './plugin-host/installed'
-export { shellReadBridgeEnv } from './bridge/env-file'
+export { shellJobId, shellReadBridgeEnv } from './bridge/env-file'
 export { mimeFor } from './vault/asset-protocol'

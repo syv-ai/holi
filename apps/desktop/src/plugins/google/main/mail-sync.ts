@@ -88,10 +88,6 @@ export async function syncThreads(
   options: ListThreadsOptions = {},
   knownAddresses?: string[],
 ): Promise<MailPage> {
-  // "Load more" asks for what is past the tail: the one thing a last-N cache
-  // does not hold.
-  if (options.pageToken !== undefined) return listThreads(api, options, knownAddresses)
-
   // Recipient classification depends on the resolved account identities. Keep
   // summaries from an outage/previous identity from becoming authoritative once
   // send-as addresses recover or change.
@@ -105,6 +101,13 @@ export async function syncThreads(
             .join(',') || 'unknown'
         }`
   const key = `${cacheKey(options)}${identityKey}`
+
+  // "Load more" asks for what is past the tail: the one thing a last-N cache
+  // does not hold. An explicit search also goes to Gmail: mailbox history cannot
+  // evaluate arbitrary Gmail query grammar or reproduce a current search page's
+  // pagination token. Unfiltered/category/unread/mailbox lists remain delta-backed.
+  if (options.pageToken !== undefined) return listThreads(api, options, knownAddresses)
+  if (options.query?.trim()) return fullSync(api, cache, options, key, knownAddresses)
   const cached = cache.readThreads(key)
   // The cursor THIS list was written at. Gmail's cursor is mailbox-wide, but
   // each cached list was written at a different moment.

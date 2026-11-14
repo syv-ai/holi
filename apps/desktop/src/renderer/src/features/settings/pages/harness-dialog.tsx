@@ -5,8 +5,8 @@
  * fields alone; how it starts and resumes is its own, and Claude Code takes
  * no arguments or environment at all.
  *
- * The form is filled once, when it mounts: the card mounts it afresh (a new
- * `key`) each time it opens on an agent.
+ * The form is filled once, when it mounts. The card retains it when Settings
+ * hides, and gives it a new key after an explicit close or a different agent.
  */
 import { useState } from 'react'
 import { AGENT_ID } from '@holi/shared'

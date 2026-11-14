@@ -854,10 +854,10 @@ function EventCalendarMonthCell({
       data-slot="event-calendar-drop-placeholder"
       data-drop-invalid={!inlineDrop.valid || undefined}
       className={cn(
-        "shrink-0 rounded-sm border border-dashed",
+        "shrink-0 rounded-sm border-dashed",
         inlineDrop.valid
-          ? "border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
-          : "border-destructive/70 bg-destructive/10",
+          ? "border border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
+          : "bg-destructive",
         viewConfig.classNames?.dragGhost
       )}
       style={
@@ -1114,6 +1114,7 @@ function EventCalendarMoreIndicator({
   const settings = useEventCalendarSettings()
   const viewConfig = useEventCalendarViewConfig()
   const [open, setOpen] = useState(false)
+  const suppressCloseRestore = useRef(false)
   const headerId = useId()
 
   // Grabbing a chip from this list starts a drag; close the popover so it does
@@ -1138,10 +1139,10 @@ function EventCalendarMoreIndicator({
           // chip tall, so the drop target is unmistakable.
           dropInto &&
             cn(
-              "flex shrink-0 items-center border border-dashed",
+              "flex shrink-0 items-center border-dashed",
               dropInto.valid
-                ? "text-foreground border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
-                : "border-destructive/70 bg-destructive/10 text-destructive"
+                ? "border text-foreground border-(--ec-event-color)/50 bg-(--ec-event-color)/8"
+                : "bg-destructive text-destructive-solid-foreground"
             ),
           viewConfig.classNames?.moreIndicator
         )}
@@ -1171,6 +1172,10 @@ function EventCalendarMoreIndicator({
       </PopoverTrigger>
       <PopoverContent
         data-slot="event-calendar-more-popover"
+        onCloseAutoFocus={(event) => {
+          if (suppressCloseRestore.current) event.preventDefault()
+          suppressCloseRestore.current = false
+        }}
         align={viewConfig.morePopoverAlign}
         // The popover is a dialog, so it needs a name. The built-in body already
         // renders the day header this list belongs to, so point at that; a
@@ -1199,7 +1204,10 @@ function EventCalendarMoreIndicator({
           viewConfig.renderMoreContent({
             day,
             segments,
-            close: () => setOpen(false),
+            close: (options) => {
+              suppressCloseRestore.current = options?.restoreFocus === false
+              setOpen(false)
+            },
           })
         ) : (
           <EventCalendarMoreDefaultContent

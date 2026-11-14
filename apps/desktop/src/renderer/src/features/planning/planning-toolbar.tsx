@@ -13,7 +13,6 @@ import { ArrowUpDownIcon, FilterIcon, PlusIcon, SearchIcon, XIcon } from 'lucide
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -38,6 +37,7 @@ import {
   type PlanningFilter,
   type PlanningSort,
 } from '@/lib/planning'
+import { PlanningDropdownMenu } from './planning-visibility'
 
 function toggled<T>(list: readonly T[], item: T, on: boolean): T[] {
   return on ? (list.includes(item) ? [...list] : [...list, item]) : list.filter((x) => x !== item)
@@ -95,13 +95,13 @@ export function PlanningToolbar({
       </InputGroup>
 
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 lg:justify-end">
-        <DropdownMenu modal={false}>
+        <PlanningDropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="ghost" size="sm">
               <FilterIcon data-icon="inline-start" aria-hidden="true" />
               Filter
               {active > 0 ? (
-                <Badge variant="outline" className="tabular-nums">
+                <Badge variant="secondary" className="tabular-nums">
                   {active}
                 </Badge>
               ) : null}
@@ -190,9 +190,9 @@ export function PlanningToolbar({
               </>
             ) : null}
           </DropdownMenuContent>
-        </DropdownMenu>
+        </PlanningDropdownMenu>
 
-        <DropdownMenu modal={false}>
+        <PlanningDropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="ghost" size="sm">
               <ArrowUpDownIcon data-icon="inline-start" aria-hidden="true" />
@@ -212,7 +212,7 @@ export function PlanningToolbar({
               ))}
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
-        </DropdownMenu>
+        </PlanningDropdownMenu>
 
         {extra}
 

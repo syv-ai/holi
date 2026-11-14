@@ -6,7 +6,7 @@ import { emptyVaultSnapshot } from '@holi/shared'
 import { createStore, Provider } from 'jotai'
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from 'vitest'
 
-import { fireEvent, render, screen, waitFor } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { GraphView } from '../graph-view'
@@ -72,6 +72,290 @@ test('a vault with no notes says how to get some', async () => {
   graph.mockResolvedValue({ nodes: [], edges: [], total: 0 })
   mount()
   expect(await screen.findByText('No notes to draw yet')).toBeInTheDocument()
+})
+
+test('a hidden graph stays lazy and an unchanged redisplay keeps its graph instance', async () => {
+  graph.mockResolvedValue({ nodes: ['Plan.md'], edges: [], total: 1 })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const result = render(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} displayed={false} />
+    </Provider>,
+  )
+  expect(graph).not.toHaveBeenCalled()
+  result.rerender(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} displayed />
+    </Provider>,
+  )
+  expect(await screen.findByText(/1 note · 0 links/)).toBeInTheDocument()
+  await waitFor(() => expect(document.querySelector('[data-graph-node="Plan.md"]')).not.toBeNull())
+  const node = document.querySelector('[data-graph-node="Plan.md"]')
+  const picture = document.querySelector('[data-graph-view] svg[aria-label]')!
+  const viewport = picture.parentElement!
+  fireEvent.wheel(viewport, { deltaY: 25, ctrlKey: true })
+  fireEvent.wheel(viewport, { deltaX: 45, deltaY: 30 })
+  const transform = picture.firstElementChild!.getAttribute('transform')
+  result.rerender(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} displayed={false} />
+    </Provider>,
+  )
+  result.rerender(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} displayed />
+    </Provider>,
+  )
+  expect(document.querySelector('[data-graph-node="Plan.md"]')).toBe(node)
+  expect(picture.firstElementChild).toHaveAttribute('transform', transform)
+  expect(graph).toHaveBeenCalledTimes(1)
+})
+
+test('hiding and unmounting release an active graph drag and hidden wheel input is ignored', async () => {
+  graph.mockResolvedValue({ nodes: ['Plan.md'], edges: [], total: 1 })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const view = (displayed: boolean) => (
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} displayed={displayed} />
+    </Provider>
+  )
+  const result = render(view(true))
+  await waitFor(() => expect(document.querySelector('[data-graph-node="Plan.md"]')).not.toBeNull())
+  const picture = document.querySelector('[data-graph-view] svg[aria-label]')!
+  const viewport = picture.parentElement!
+  const capture = vi.spyOn(viewport, 'hasPointerCapture').mockReturnValue(true)
+  const release = vi.spyOn(viewport, 'releasePointerCapture')
+  fireEvent(
+    viewport,
+    Object.assign(
+      new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }),
+      { pointerId: 1 },
+    ),
+  )
+  result.rerender(view(false))
+  expect(release).toHaveBeenCalledTimes(1)
+  const transform = picture.firstElementChild!.getAttribute('transform')
+  fireEvent.wheel(viewport, { deltaY: 80, ctrlKey: true })
+  fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 300, clientY: 300 })
+  expect(picture.firstElementChild).toHaveAttribute('transform', transform)
+  result.rerender(view(true))
+  fireEvent(
+    viewport,
+    Object.assign(
+      new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }),
+      { pointerId: 2 },
+    ),
+  )
+  result.unmount()
+  expect(release).toHaveBeenCalledTimes(2)
+  capture.mockRestore()
+  release.mockRestore()
+})
+
+test('hidden layout work is terminated, stale worker replies are ignored, and layout resumes', async () => {
+  const previousWorker = globalThis.Worker
+  const workers: {
+    request: { id: number } | null
+    listener: ((event: MessageEvent) => void) | null
+    terminated: boolean
+    deliver(): void
+  }[] = []
+  class TestWorker {
+    onerror: ((event: ErrorEvent) => void) | null = null
+    request: { id: number } | null = null
+    listener: ((event: MessageEvent) => void) | null = null
+    terminated = false
+    constructor() {
+      workers.push(this)
+    }
+    postMessage(request: { id: number }) {
+      this.request = request
+    }
+    addEventListener(_type: string, listener: (event: MessageEvent) => void) {
+      this.listener = listener
+    }
+    removeEventListener(_type: string, listener: (event: MessageEvent) => void) {
+      if (this.listener === listener) this.listener = null
+    }
+    terminate() {
+      this.terminated = true
+    }
+    deliver() {
+      this.listener?.({
+        data: { id: this.request!.id, points: [{ x: 0, y: 0 }] },
+      } as MessageEvent)
+    }
+  }
+  globalThis.Worker = TestWorker as unknown as typeof Worker
+  try {
+    graph.mockResolvedValue({ nodes: ['Plan.md'], edges: [], total: 1 })
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv/vault')
+    store.set(snapshotAtom, emptyVaultSnapshot())
+    const result = render(
+      <Provider store={store}>
+        <GraphView onOpen={() => {}} />
+      </Provider>,
+    )
+    await waitFor(() => expect(workers).toHaveLength(1))
+    await waitFor(() => expect(workers[0]!.request).not.toBeNull())
+    result.rerender(
+      <Provider store={store}>
+        <GraphView onOpen={() => {}} displayed={false} />
+      </Provider>,
+    )
+    expect(workers[0]!.terminated).toBe(true)
+    expect(workers[0]!.listener).toBeNull()
+    workers[0]!.deliver()
+    expect(document.querySelector('[data-graph-view]')).toBeNull()
+
+    result.rerender(
+      <Provider store={store}>
+        <GraphView onOpen={() => {}} displayed />
+      </Provider>,
+    )
+    await waitFor(() => expect(workers).toHaveLength(2))
+    await waitFor(() => expect(workers[1]!.request).not.toBeNull())
+    workers[0]!.deliver()
+    expect(document.querySelector('[data-graph-view]')).toBeNull()
+    workers[1]!.deliver()
+    expect(await screen.findByText(/1 note · 0 links/)).toBeInTheDocument()
+  } finally {
+    globalThis.Worker = previousWorker
+  }
+})
+
+test('a query interrupted while hidden cannot publish and is resumed on display', async () => {
+  let finish!: (value: { nodes: string[]; edges: [number, number][]; total: number }) => void
+  graph.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  graph.mockResolvedValue({ nodes: ['Plan.md'], edges: [], total: 1 })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const result = render(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} />
+    </Provider>,
+  )
+  await waitFor(() => expect(graph).toHaveBeenCalledTimes(1))
+  result.rerender(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} displayed={false} />
+    </Provider>,
+  )
+  finish({ nodes: ['Stale.md'], edges: [], total: 1 })
+  result.rerender(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} displayed />
+    </Provider>,
+  )
+  expect(await screen.findByText(/1 note · 0 links/)).toBeInTheDocument()
+  expect(graph).toHaveBeenCalledTimes(2)
+  expect(document.querySelector('[data-graph-node="Stale.md"]')).toBeNull()
+})
+
+test('document changes debounce while an earlier graph read is unresolved', async () => {
+  vi.useFakeTimers()
+  const previousWorker = globalThis.Worker
+  globalThis.Worker = undefined as unknown as typeof Worker
+  let resolveFirst!: (value: { nodes: string[]; edges: [number, number][]; total: number }) => void
+  graph.mockImplementationOnce(
+    () => new Promise((resolve) => (resolveFirst = resolve as typeof resolveFirst)),
+  )
+  graph.mockResolvedValue({ nodes: ['Newest.md', 'Also-new.md'], edges: [], total: 2 })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const result = render(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} />
+    </Provider>,
+  )
+
+  try {
+    act(() => vi.advanceTimersByTime(0))
+    expect(graph).toHaveBeenCalledTimes(1)
+    act(() =>
+      store.set(snapshotAtom, (snapshot) => ({
+        ...snapshot,
+        docs: [{ path: 'Plan.md', kind: 'note', updatedAt: '1' }],
+      })),
+    )
+    act(() => vi.advanceTimersByTime(400))
+    act(() =>
+      store.set(snapshotAtom, (snapshot) => ({
+        ...snapshot,
+        docs: [{ path: 'Plan.md', kind: 'note', updatedAt: '2' }],
+      })),
+    )
+    act(() => vi.advanceTimersByTime(799))
+    expect(graph).toHaveBeenCalledTimes(1)
+    act(() => vi.advanceTimersByTime(1))
+    expect(graph).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+
+    await waitFor(() => expect(screen.getByText(/2 notes · 0 links/)).toBeInTheDocument())
+    act(() => resolveFirst({ nodes: ['Stale.md'], edges: [], total: 1 }))
+    await Promise.resolve()
+    expect(screen.getByText(/2 notes · 0 links/)).toBeInTheDocument()
+    expect(screen.queryByText(/1 note · 0 links/)).not.toBeInTheDocument()
+  } finally {
+    result.unmount()
+    vi.useRealTimers()
+    globalThis.Worker = previousWorker
+  }
+})
+
+test('a canceled A read does not suppress a valid A read after A→B→A', async () => {
+  vi.useFakeTimers()
+  const previousWorker = globalThis.Worker
+  globalThis.Worker = undefined as unknown as typeof Worker
+  let resolveFirst!: (value: { nodes: string[]; edges: [number, number][]; total: number }) => void
+  graph.mockImplementationOnce(
+    () => new Promise((resolve) => (resolveFirst = resolve as typeof resolveFirst)),
+  )
+  graph.mockResolvedValue({ nodes: [], edges: [], total: 0 })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(snapshotAtom, emptyVaultSnapshot())
+  const result = render(
+    <Provider store={store}>
+      <GraphView onOpen={() => {}} />
+    </Provider>,
+  )
+
+  try {
+    act(() => vi.advanceTimersByTime(0))
+    expect(graph).toHaveBeenCalledTimes(1)
+    act(() =>
+      store.set(snapshotAtom, (snapshot) => ({
+        ...snapshot,
+        docs: [{ path: 'Temporary.md', kind: 'note', updatedAt: '1' }],
+      })),
+    )
+    act(() => vi.advanceTimersByTime(400))
+    act(() => store.set(snapshotAtom, emptyVaultSnapshot()))
+    act(() => vi.advanceTimersByTime(799))
+    expect(graph).toHaveBeenCalledTimes(1)
+    act(() => vi.advanceTimersByTime(1))
+    expect(graph).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+
+    expect(await screen.findByText('No notes to draw yet')).toBeInTheDocument()
+    act(() => resolveFirst({ nodes: ['Stale.md'], edges: [], total: 1 }))
+    await Promise.resolve()
+    expect(screen.getByText('No notes to draw yet')).toBeInTheDocument()
+    expect(screen.queryByText(/1 note · 0 links/)).not.toBeInTheDocument()
+    expect(graph).toHaveBeenCalledTimes(2)
+  } finally {
+    result.unmount()
+    vi.useRealTimers()
+    globalThis.Worker = previousWorker
+  }
 })
 
 test('a read that failed offers Retry, which asks again', async () => {

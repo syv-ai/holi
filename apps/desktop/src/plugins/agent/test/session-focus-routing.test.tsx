@@ -190,10 +190,12 @@ test.each([false, true])(
   async (split) => {
     const t = await setup()
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'New Codex session' }))
+    await user.click(screen.getByRole('button', { name: 'New session' }))
+    await user.click(await screen.findByRole('menuitem', { name: /^Codex/ }))
     await waitFor(() => expect(t.own.sessions()).toHaveLength(1))
     const first = t.own.sessions()[0]!
-    await user.click(screen.getByRole('button', { name: 'New Codex session' }))
+    await user.click(screen.getByRole('button', { name: 'New session' }))
+    await user.click(await screen.findByRole('menuitem', { name: /^Codex/ }))
     await waitFor(() => expect(t.own.sessions()).toHaveLength(2))
     const second = t.own.sessions().find((session) => session.id !== first.id)!
     const firstKey = sessionKey({ owner: 'agent', id: `session:${first.id}` })

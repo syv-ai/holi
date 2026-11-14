@@ -69,7 +69,9 @@ export interface Terminals {
   resize(remote: string, id: string, cols: number, rows: number): void
   /** Stop one (its ×), and forget it. Resolves once it is gone. */
   kill(remote: string, id: string): Promise<void>
-  /** Stop every one: leaving the vault, quitting. */
+  /** Stop the terminals belonging to one vault. */
+  closeRemote(remote: string): Promise<void>
+  /** Stop every one: quitting. */
   closeAll(): Promise<void>
 }
 
@@ -357,6 +359,10 @@ export function createTerminals(deps: TerminalsDeps): Terminals {
     async kill(remote, id) {
       const t = find(remote, id)
       if (t !== null) await stop(t)
+    },
+
+    async closeRemote(remote) {
+      await Promise.all([...live.values()].filter((t) => t.remote === remote).map((t) => stop(t)))
     },
 
     async closeAll() {

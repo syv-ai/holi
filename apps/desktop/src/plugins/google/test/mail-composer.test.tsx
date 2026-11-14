@@ -5,15 +5,17 @@
  * *drafts that should not fork*: both surface later in Gmail as half-written
  * messages the user does not remember making.
  *
- * The body editor is CodeMirror and is exercised in
- * core's `editor/__tests__/plain-markdown-extensions.test.tsx`; dirtiness is driven
- * here through the header fields, which is the same state machine.
+ * The body editor is exercised through its real CodeMirror contenteditable so
+ * its document/history survive the composer busy-state transitions.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getDefaultStore } from 'jotai'
-import { MailComposer } from '../renderer/mail-composer'
+import { Provider, createStore } from 'jotai'
+import { createRef, useState } from 'react'
+import { undo, redo } from '@codemirror/commands'
+import { EditorView } from '@codemirror/view'
+import { MailComposer, type MailComposerHandle } from '../renderer/mail-composer'
 import { activeRemoteAtom } from '@/plugin-api'
 import type { ComposeIntent } from '../renderer/compose-intent'
 import type { ThreadMessage } from '../renderer/mail-types'
@@ -23,8 +25,22 @@ const send = vi.fn()
 const discardDraft = vi.fn()
 const draftQuery = vi.fn()
 
+// CodeMirror measures its selection; jsdom has no layout engine.
+Range.prototype.getBoundingClientRect ??= () => new DOMRect()
+Range.prototype.getClientRects ??= () =>
+  ({
+    length: 0,
+    item: () => null,
+    [Symbol.iterator]: [][Symbol.iterator],
+  }) as unknown as DOMRectList
+
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
+  'google.status': () => ({ account: { email: 'ada@syv.ai' }, missingScopes: [] }),
+  'google.accounts': () => ({
+    accounts: [{ sub: 'sub-1', email: 'ada@syv.ai' }],
+    current: 'sub-1',
+  }),
   'google.saveDraft': (p) => saveDraft(p),
   'google.send': (p) => send(p),
   'google.discardDraft': (p) => discardDraft(p),
@@ -74,15 +90,20 @@ function mount(props: Partial<React.ComponentProps<typeof MailComposer>> = {}) {
   const onSent = vi.fn()
   const onDiscarded = vi.fn()
   const onClose = vi.fn()
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv-ai/vault')
   const { unmount } = render(
-    <MailComposer
-      intent={REPLY}
-      sendAs={['ada@syv.ai']}
-      onSent={onSent}
-      onDiscarded={onDiscarded}
-      onClose={onClose}
-      {...props}
-    />,
+    <Provider store={store}>
+      <MailComposer
+        intent={REPLY}
+        sendAs={['ada@syv.ai']}
+        accountSub="sub-1"
+        onSent={onSent}
+        onDiscarded={onDiscarded}
+        onClose={onClose}
+        {...props}
+      />
+    </Provider>,
   )
   return { onSent, onDiscarded, onClose, unmount }
 }
@@ -92,8 +113,6 @@ const saveState = (): string => screen.getByTestId('save-state').textContent ?? 
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // The composer writes in the vault open when it mounts.
-  getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
   saveDraft.mockResolvedValue({ id: 'd-1' })
   send.mockResolvedValue({ id: 'm-9' })
   discardDraft.mockResolvedValue(undefined)
@@ -111,6 +130,81 @@ afterEach(() => {
 function setup() {
   return userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 }
+
+describe('composer focus', () => {
+  it('focuses the recipient for a new message and the real editor for a reply', async () => {
+    const { unmount } = mount({ intent: { kind: 'new' } })
+    expect(screen.getByRole('textbox', { name: /to/i })).toHaveFocus()
+    unmount()
+
+    mount()
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus())
+  })
+
+  it('does not steal focus outside while a draft is loading', async () => {
+    let resolveDraft: ((draft: unknown) => void) | undefined
+    draftQuery.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDraft = resolve
+        }),
+    )
+    const outside = document.createElement('button')
+    document.body.append(outside)
+    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    outside.focus()
+
+    resolveDraft?.({
+      draftId: 'd-7',
+      threadId: null,
+      to: [],
+      cc: [],
+      subject: 'Loaded',
+      markdown: 'Body',
+      html: null,
+      foreign: false,
+    })
+    await waitFor(() => expect(subjectField()).toHaveValue('Loaded'))
+    expect(outside).toHaveFocus()
+    outside.remove()
+  })
+
+  it('restores focus to the opening control when the composer unmounts', async () => {
+    const user = setup()
+    const onSent = vi.fn()
+    const onDiscarded = vi.fn()
+    const onClose = vi.fn()
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/vault')
+    function Host() {
+      const [open, setOpen] = useState(false)
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>Compose</button>
+          {open && (
+            <Provider store={store}>
+              <MailComposer
+                intent={{ kind: 'new' }}
+                onSent={onSent}
+                onDiscarded={onDiscarded}
+                onClose={() => {
+                  onClose()
+                  setOpen(false)
+                }}
+              />
+            </Provider>
+          )}
+        </>
+      )
+    }
+    render(<Host />)
+    const trigger = screen.getByRole('button', { name: 'Compose' })
+    await user.click(trigger)
+    expect(screen.getByRole('textbox', { name: /to/i })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+})
 
 describe('the pristine guard', () => {
   it('creates no draft when the composer is opened and closed untouched', async () => {
@@ -135,6 +229,255 @@ describe('the pristine guard', () => {
     await user.keyboard('{Escape}')
 
     expect(onClose).toHaveBeenCalled()
+  })
+})
+
+describe('leaving the composer', () => {
+  it('pristine leave creates no draft; dirty leave waits for the latest content', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    mount({ ref: handle })
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+    expect(saveDraft).not.toHaveBeenCalled()
+
+    await user.type(subjectField(), ' latest')
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+    expect(saveDraft.mock.calls[0]![0]).toMatchObject({
+      expectedAccountSub: 'sub-1',
+      mail: { subject: 'Re: Q2 budget latest' },
+    })
+  })
+
+  it('refuses to leave while a send is in flight', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let resolveSend: ((value: { id: string }) => void) | undefined
+    send.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSend = resolve
+        }),
+    )
+    mount({ ref: handle })
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(subjectField()).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: /to/i })).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute(
+      'contenteditable',
+      'false',
+    )
+    expect(send).toHaveBeenCalledTimes(1)
+
+    resolveSend?.({ id: 'm-9' })
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+  })
+
+  it('allows the parent close gate to prepare again after a successful save', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    mount({ ref: handle })
+    await user.type(subjectField(), ' latest')
+
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+    expect(subjectField()).not.toBeDisabled()
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+  })
+
+  it('does not queue a trailing save when blur and leave only await the same write', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let resolveSave: ((value: { id: string }) => void) | undefined
+    saveDraft.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSave = resolve
+        }),
+    )
+    mount({ ref: handle })
+    await user.type(subjectField(), ' latest')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+
+    fireEvent.blur(subjectField())
+    const leaving = handle.current!.prepareToLeave()
+    resolveSave?.({ id: 'd-1' })
+    expect(await leaving).toBe(true)
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves CodeMirror body, caret, and history when a leave save fails', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    saveDraft.mockRejectedValueOnce(new Error('offline'))
+    mount({ intent: { kind: 'new' }, ref: handle })
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    await user.type(body, 'first body')
+
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(body).toHaveTextContent('first body')
+    expect(body).toHaveAttribute('contenteditable', 'true')
+
+    const editor = EditorView.findFromDOM(body)!
+    editor.dispatch({ selection: { anchor: editor.state.doc.length } })
+    expect(undo(editor)).toBe(true)
+    expect(body).not.toHaveTextContent('first body')
+    expect(redo(editor)).toBe(true)
+    expect(body).toHaveTextContent('first body')
+    editor.dispatch({ changes: { from: editor.state.doc.length, insert: '!' } })
+    expect(body).toHaveTextContent('first body!')
+    await vi.advanceTimersByTimeAsync(2000)
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(2))
+    expect(saveDraft.mock.calls[1]![0]).toMatchObject({ mail: { body: 'first body!' } })
+  })
+
+  it('preserves the body through a rejected send and saves the next edit exactly', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let rejectSend: ((error: Error) => void) | undefined
+    send.mockImplementationOnce(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectSend = reject
+        }),
+    )
+    mount({ intent: { kind: 'new' }, ref: handle })
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    await user.type(body, 'body')
+    await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
+    await user.type(subjectField(), 'Subject')
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(body).toHaveAttribute('contenteditable', 'false'))
+    rejectSend?.(new Error('offline'))
+    await waitFor(() => expect(body).toHaveAttribute('contenteditable', 'true'))
+    expect(body).toHaveTextContent('body')
+
+    const editor = EditorView.findFromDOM(body)!
+    editor.dispatch({ changes: { from: editor.state.doc.length, insert: ' latest' } })
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+    expect(saveDraft.mock.calls.at(-1)![0]).toMatchObject({ mail: { body: 'body latest' } })
+  })
+
+  it('keeps the composer when the leave save fails', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    saveDraft.mockRejectedValue(new Error('offline'))
+    mount({ ref: handle })
+    await user.type(subjectField(), ' latest')
+
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(subjectField()).toHaveValue('Re: Q2 budget latest')
+    expect(subjectField()).not.toBeDisabled()
+    await waitFor(() => expect(saveState()).toBe('Not saved'))
+    expect(send).not.toHaveBeenCalled()
+  })
+})
+
+describe('Bcc recipients', () => {
+  it('autosaves and sends committed Bcc recipients in the payload', async () => {
+    const user = setup()
+    mount({ intent: { kind: 'new' } })
+    await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Bcc' }))
+    await user.type(screen.getByRole('textbox', { name: 'Bcc' }), 'hidden@example.com{Enter}')
+    await user.type(subjectField(), 'Bcc payload')
+
+    await vi.advanceTimersByTimeAsync(2000)
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledOnce())
+    expect(saveDraft.mock.calls[0]![0]).toMatchObject({ mail: { bcc: ['hidden@example.com'] } })
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(send).toHaveBeenCalledOnce())
+    expect(send.mock.calls[0]![0]).toMatchObject({ mail: { bcc: ['hidden@example.com'] } })
+  })
+
+  it('keeps the Bcc reveal button disabled while a draft is loading', async () => {
+    let resolveDraft!: (draft: unknown) => void
+    draftQuery.mockImplementationOnce(() => new Promise((resolve) => (resolveDraft = resolve)))
+    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+
+    const reveal = screen.getByRole('button', { name: 'Bcc' })
+    expect(reveal).toBeDisabled()
+    await setup().click(reveal)
+    expect(screen.queryByRole('textbox', { name: 'Bcc' })).not.toBeInTheDocument()
+
+    resolveDraft({
+      draftId: 'd-7',
+      threadId: null,
+      to: [],
+      cc: [],
+      bcc: [],
+      subject: '',
+      markdown: '',
+      html: null,
+      foreign: false,
+    })
+    await waitFor(() => expect(reveal).not.toBeDisabled())
+  })
+
+  it('does not accept Bcc edits while sending', async () => {
+    const user = setup()
+    let resolveSend!: (value: { id: string }) => void
+    send.mockImplementationOnce(() => new Promise((resolve) => (resolveSend = resolve)))
+    mount({ intent: { kind: 'new' } })
+    await user.type(subjectField(), 'Bcc send guard')
+    await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Bcc' }))
+    const bcc = screen.getByRole('textbox', { name: 'Bcc' })
+    await user.type(bcc, 'hidden@example.com{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => expect(bcc).toBeDisabled())
+    expect(send.mock.calls[0]![0]).toMatchObject({ mail: { bcc: ['hidden@example.com'] } })
+    resolveSend({ id: 'm-9' })
+  })
+
+  it('does not accept Bcc edits while departure saves are pending', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let resolveSave!: (value: { id: string }) => void
+    saveDraft.mockImplementationOnce(() => new Promise((resolve) => (resolveSave = resolve)))
+    mount({ intent: { kind: 'new' }, ref: handle })
+    await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Bcc' }))
+    await user.type(screen.getByRole('textbox', { name: 'Bcc' }), 'hidden@example.com{Enter}')
+
+    const leaving = handle.current!.prepareToLeave()
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Bcc' })).toBeDisabled())
+    expect(saveDraft.mock.calls[0]![0]).toMatchObject({ mail: { bcc: ['hidden@example.com'] } })
+    resolveSave({ id: 'd-1' })
+    expect(await leaving).toBe(true)
+  })
+
+  it('does not accept Bcc edits while discarding a draft', async () => {
+    const user = setup()
+    let resolveDiscard!: () => void
+    discardDraft.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (resolveDiscard = resolve)),
+    )
+    draftQuery.mockResolvedValueOnce({
+      draftId: 'd-7',
+      threadId: null,
+      to: [{ email: 'bo@example.com', name: 'bo@example.com' }],
+      cc: [],
+      bcc: [{ email: 'hidden@example.com', name: 'hidden@example.com' }],
+      subject: 'Subject',
+      markdown: '',
+      html: null,
+      foreign: false,
+    })
+    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    const bcc = await screen.findByRole('textbox', { name: 'Bcc' })
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+
+    await waitFor(() => expect(bcc).toBeDisabled())
+    expect(bcc).toHaveValue('')
+    resolveDiscard()
   })
 })
 
@@ -269,6 +612,18 @@ describe('autosave', () => {
     expect(subjectField()).toHaveValue('Re: Q2 budgethello')
   })
 
+  it('does not treat a save without an id as durable', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    saveDraft.mockResolvedValueOnce({ id: null })
+    mount({ intent: { kind: 'new' }, ref: handle })
+    await user.type(subjectField(), 'draft')
+
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(subjectField()).not.toBeDisabled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
   it('retries a refused save on the next edit', async () => {
     const user = setup()
     saveDraft.mockRejectedValueOnce(new Error('offline'))
@@ -281,6 +636,92 @@ describe('autosave', () => {
     await vi.advanceTimersByTimeAsync(2000)
 
     await waitFor(() => expect(saveState()).toBe('Saved'))
+  })
+})
+
+describe('operation-specific retries', () => {
+  it('retries a failed discard of a saved draft without saving or sending', async () => {
+    const user = setup()
+    draftQuery.mockResolvedValue({
+      draftId: 'd-1',
+      threadId: 't1',
+      to: [],
+      cc: [],
+      subject: 'Draft',
+      markdown: 'saved body',
+      html: '<p>saved body</p>',
+      text: 'saved body',
+      foreign: false,
+    })
+    discardDraft.mockRejectedValueOnce(new Error('offline'))
+    mount({ intent: { kind: 'new' }, draftId: 'd-1' })
+    await waitFor(() => expect(subjectField()).toHaveValue('Draft'))
+
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
+    expect(subjectField()).not.toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(discardDraft).toHaveBeenCalledTimes(2))
+    expect(saveDraft).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('retries a dirty draft discard instead of saving it', async () => {
+    const user = setup()
+    draftQuery.mockResolvedValue({
+      draftId: 'd-1',
+      threadId: 't1',
+      to: [],
+      cc: [],
+      subject: 'Draft',
+      markdown: 'saved body',
+      html: '<p>saved body</p>',
+      text: 'saved body',
+      foreign: false,
+    })
+    discardDraft.mockRejectedValueOnce(new Error('offline'))
+    mount({ intent: { kind: 'new' }, draftId: 'd-1' })
+    await waitFor(() => expect(subjectField()).toHaveValue('Draft'))
+    await user.type(subjectField(), ' edited')
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
+
+    const savesBeforeRetry = saveDraft.mock.calls.length
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(discardDraft).toHaveBeenCalledTimes(2))
+    expect(saveDraft).toHaveBeenCalledTimes(savesBeforeRetry)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('explicitly retries a send whose outcome is unknown', async () => {
+    const user = setup()
+    send.mockRejectedValueOnce(new Error('offline'))
+    mount()
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
+    expect(send).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2))
+  })
+
+  it('retries only the save when a send is blocked by save failure', async () => {
+    const user = setup()
+    saveDraft.mockRejectedValueOnce(new Error('offline'))
+    mount()
+    await user.type(subjectField(), ' latest')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(2))
+    expect(send).not.toHaveBeenCalled()
   })
 })
 
@@ -401,15 +842,56 @@ describe('sending', () => {
     expect(send).toHaveBeenCalledTimes(1)
   })
 
-  it('offers no retry at all for an unexplained failure', async () => {
+  it('offers an explicit retry for an unexplained send failure without retrying by itself', async () => {
     const user = setup()
-    send.mockRejectedValue(new Error('something went wrong'))
+    send.mockRejectedValueOnce(new Error('something went wrong'))
     mount()
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
     await waitFor(() => expect(screen.getByText('something went wrong')).toBeVisible())
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible()
+    expect(send).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('an existing draft with Bcc recipients', () => {
+  it('shows Bcc and carries it through autosave and send', async () => {
+    draftQuery.mockResolvedValue({
+      draftId: 'd-1',
+      threadId: null,
+      to: [{ name: 'Bo', email: 'bo@example.com' }],
+      cc: [],
+      bcc: [{ name: 'Archive', email: 'hidden@example.com' }],
+      subject: 'Draft',
+      markdown: 'Body',
+      html: '<p>Body</p>',
+      text: 'Body',
+      foreign: false,
+    })
+    const user = setup()
+    mount({ intent: { kind: 'new' }, draftId: 'd-1' })
+
+    await screen.findByRole('textbox', { name: 'Bcc' })
+    expect(screen.getByText('hidden@example.com')).toBeInTheDocument()
+
+    await user.type(subjectField(), '!')
+    await vi.advanceTimersByTimeAsync(2_000)
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled())
+    expect(saveDraft.mock.calls[0]?.[0]).toMatchObject({
+      draftId: 'd-1',
+      mail: { bcc: ['hidden@example.com'] },
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(send).toHaveBeenCalled())
+    expect(send.mock.calls.at(-1)?.[0]).toMatchObject({
+      draftId: 'd-1',
+      mail: { bcc: ['hidden@example.com'] },
+    })
   })
 })
 
@@ -452,6 +934,7 @@ describe('a draft written outside Holi', () => {
     await waitFor(() =>
       expect(screen.getByTestId('mail-body')).toHaveTextContent('Hello from the draft'),
     )
+    expect(screen.getByRole('textbox', { name: /to/i })).toHaveFocus()
   })
 
   it('does not save a loaded draft back over itself before it is touched', async () => {
@@ -523,6 +1006,27 @@ describe('a draft written outside Holi', () => {
 })
 
 describe('discarding', () => {
+  it('does not discard a pristine reply while send is in flight', async () => {
+    const user = setup()
+    const { onDiscarded } = mount()
+    let resolveSend: ((value: { id: string }) => void) | undefined
+    send.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSend = resolve
+        }),
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+
+    expect(onDiscarded).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(discardDraft).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeDisabled()
+    resolveSend?.({ id: 'm-9' })
+    await waitFor(() => expect(onDiscarded).not.toHaveBeenCalled())
+  })
   it('asks before discarding a draft that exists', async () => {
     const user = setup()
     const { onDiscarded } = mount()
@@ -535,13 +1039,41 @@ describe('discarding', () => {
 
     await user.click(screen.getByRole('button', { name: 'Discard draft' }))
     await waitFor(() => expect(onDiscarded).toHaveBeenCalled())
-    expect(discardDraft).toHaveBeenCalledWith({ draftId: 'd-1', threadId: 't1' })
+    expect(discardDraft).toHaveBeenCalledWith({
+      draftId: 'd-1',
+      threadId: 't1',
+      expectedAccountSub: 'sub-1',
+    })
   })
 
   /**
    * A failed discard leaves the draft in Gmail, so the composer must stay open
    * and show the failure rather than close as if the draft were gone.
    */
+  it('refuses to leave while discard is in flight', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let resolveDiscard: (() => void) | undefined
+    discardDraft.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDiscard = resolve
+        }),
+    )
+    await mount({ ref: handle })
+    await user.type(subjectField(), 'a')
+    await vi.advanceTimersByTimeAsync(2000)
+    await waitFor(() => expect(saveState()).toBe('Saved'))
+
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    const discarding = user.click(screen.getByRole('button', { name: 'Discard draft' }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(subjectField()).toBeDisabled()
+    resolveDiscard?.()
+    await discarding
+  })
+
   it('stays open and says so when the discard is refused', async () => {
     const user = setup()
     discardDraft.mockRejectedValue(new Error('offline'))
@@ -599,8 +1131,7 @@ describe('discarding', () => {
 
     await user.keyboard('{Escape}')
 
-    expect(onClose).not.toHaveBeenCalled()
-    expect(screen.getByText('Discard this draft?')).toBeInTheDocument()
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 })
 

@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom } from '@/state/vaults'
+import { useSettingsVisible } from '../settings-visibility'
 import { ExternalLinkIcon } from 'lucide-react'
 import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from '../settings-kit'
 import { EmptyState } from '@/composites/empty-state'
@@ -18,12 +19,12 @@ type MembersState =
 
 export function MembersPage() {
   const remote = useAtomValue(activeRemoteAtom)
+  const visible = useSettingsVisible()
   const [state, setState] = useState<MembersState>({ kind: 'loading' })
 
   const read = useCallback(() => {
-    if (remote === null) return () => {}
+    if (remote === null || !visible) return () => {}
     let live = true
-    setState({ kind: 'loading' })
     trpc.github.collaborators
       .query({ remote })
       .then(
@@ -43,7 +44,7 @@ export function MembersPage() {
     return () => {
       live = false
     }
-  }, [remote])
+  }, [remote, visible])
 
   useEffect(() => read(), [read])
 
@@ -83,7 +84,7 @@ export function MembersPage() {
             title="Visibility"
             description="A public vault can be read by anyone on GitHub."
           >
-            <Badge variant={state.visibility === 'public' ? 'warning-light' : 'secondary'}>
+            <Badge variant={state.visibility === 'public' ? 'warning' : 'secondary'}>
               {state.visibility}
             </Badge>
           </SettingsFieldRow>
@@ -111,7 +112,7 @@ export function MembersPage() {
                   </span>
                 }
               >
-                <Badge variant="outline">{person.permission}</Badge>
+                <Badge variant="secondary">{person.permission}</Badge>
               </SettingsFieldRow>
             ))
           )}

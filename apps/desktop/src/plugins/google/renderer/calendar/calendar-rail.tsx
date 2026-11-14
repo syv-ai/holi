@@ -55,7 +55,10 @@ export function CalendarRail({
   /** The first answer has not arrived: the day sheet shows skeleton rows. */
   loading: boolean
   onToggleCalendar: (id: string, enabled: boolean) => void
-  onOpenOccurrence: (occurrence: EventCalendarOccurrence<GoogleEventData>) => void
+  onOpenOccurrence: (
+    occurrence: EventCalendarOccurrence<GoogleEventData>,
+    event: React.MouseEvent<HTMLButtonElement>,
+  ) => void
   className?: string
 }) {
   // The month the mini calendar paints. It is its own state so the user can
@@ -250,7 +253,10 @@ function DaySheetRows({
   onOpen,
 }: {
   occurrences: EventCalendarOccurrence<GoogleEventData>[]
-  onOpen: (occurrence: EventCalendarOccurrence<GoogleEventData>) => void
+  onOpen: (
+    occurrence: EventCalendarOccurrence<GoogleEventData>,
+    event: React.MouseEvent<HTMLButtonElement>,
+  ) => void
 }) {
   const clock = useTimeFormat()
   if (occurrences.length === 0) {
@@ -266,7 +272,7 @@ function DaySheetRows({
             type="button"
             variant="ghost"
             size="row"
-            onClick={() => onOpen(occurrence)}
+            onClick={(event) => onOpen(occurrence, event)}
             className="w-full"
           >
             <IconTile variant="outline" size="xs" radius="full">
@@ -300,12 +306,12 @@ function DaySheetRows({
               </span>
             </span>
             {data?.myResponse === 'needsAction' && (
-              <Badge variant="warning-light" className="shrink-0">
+              <Badge variant="warning" className="shrink-0">
                 Invited
               </Badge>
             )}
             {data?.myResponse === 'tentative' && (
-              <Badge variant="info-light" className="shrink-0">
+              <Badge variant="info" className="shrink-0">
                 Maybe
               </Badge>
             )}

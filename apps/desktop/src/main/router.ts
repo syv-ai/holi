@@ -32,6 +32,7 @@ import {
   isHiddenPath,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
+import type { OpenVault } from './plugin-host/host'
 import { searchBodies, type SearchHit } from './vault/search'
 import { CapabilityError, trpcCodeOf } from './capabilities/error'
 import { createCapabilityHost, type CapabilityHost } from './capabilities/dispatch'
@@ -131,6 +132,10 @@ export type VaultMembership =
 
 export interface RouterDeps {
   registry: VaultRegistry
+  /** The shared main-side Holi link validation/opener, used by paste. */
+  openPastedHoliLink?: (
+    url: string,
+  ) => Promise<{ ok: true } | { ok: false; message: string; detail: string }>
   session: GitHubSession
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
@@ -148,7 +153,9 @@ export interface RouterDeps {
    * looks again at what runs across vaults, after a vault leaves the registry.
    */
   plugins: {
-    reconcile(why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    reconcile(vault: OpenVault, why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    invalidate(remote?: string): void
+    setDisplayed(remote: string | null): void
     syncBackground(): Promise<void>
     failures(remote: string): Record<string, string>
     scanClaimsFor(root: string): Promise<readonly ScanClaim[]>
@@ -395,6 +402,7 @@ const ACTIVITY_FILES = 5
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? (() => localDate(new Date()))
+  let vaultOpenRevision = 0
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const capabilities =
     deps.capabilities ??
@@ -500,7 +508,8 @@ export function createRouter(deps: RouterDeps) {
       lastOpenedAt: now(),
     })
     const active = await deps.host.open(remote)
-    await deps.plugins.reconcile('open')
+    deps.plugins.setDisplayed(remote)
+    await deps.plugins.reconcile(active, 'open')
     deps.opened?.(remote)
     return active.snapshot()
   }
@@ -649,7 +658,7 @@ export function createRouter(deps: RouterDeps) {
    */
   async function removeClone(remote: string): Promise<void> {
     const root = await rootFor(remote)
-    if (deps.host.active()?.remote === remote) await deps.host.close()
+    await deps.host.close(remote)
     await deps.trashItem(root)
     await deps.registry.remove(remote)
     await deps.plugins.syncBackground()
@@ -787,6 +796,7 @@ export function createRouter(deps: RouterDeps) {
     open: t.procedure
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
+        const revision = ++vaultOpenRevision
         // Opening is what starts the watcher and the sync loop — the snapshot
         // is a by-product, and comes from the vault that is now live rather
         // than from a second read that could already disagree with it.
@@ -801,8 +811,12 @@ export function createRouter(deps: RouterDeps) {
          */
         await deps.seed(root)
         await deps.registry.touch(input.remote, now())
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         const active = await deps.host.open(input.remote)
-        await deps.plugins.reconcile('open')
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
+        deps.plugins.setDisplayed(input.remote)
+        await deps.plugins.reconcile(active, 'open')
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         deps.opened?.(input.remote)
         return active.snapshot()
       }),
@@ -893,7 +907,9 @@ export function createRouter(deps: RouterDeps) {
     // best-effort: one that won't trash stays on disk AND in the registry, never
     // orphaned.
     deleteClones: t.procedure.mutation(async (): Promise<{ ok: true }> => {
-      await deps.host.close()
+      // Every registered clone may have a runtime: background runtimes keep
+      // their own watcher and timers even when another vault is selected.
+      await deps.host.closeAll()
       for (const e of await deps.registry.list()) {
         try {
           await deps.trashItem(e.path)
@@ -1740,8 +1756,10 @@ export function createRouter(deps: RouterDeps) {
         // A plugin just turned on gets its files and starts now, and one
         // turned off stops now, not at the vault's next open.
         if ('plugins' in committed.patch || 'plugins' in local.patch) {
+          deps.plugins.invalidate(input.remote)
           if (deps.host.active()?.remote === input.remote) {
-            await deps.plugins.reconcile('settings')
+            const active = deps.host.active()
+            if (active !== null) await deps.plugins.reconcile(active, 'settings')
           } else {
             await deps.seed(root)
           }
@@ -2025,6 +2043,17 @@ export function createRouter(deps: RouterDeps) {
   })
 
   return t.router({
+    holiLinks: t.router({
+      openPasted: t.procedure.input(fields({ url: 'string' })).mutation(({ input }) =>
+        deps.openPastedHoliLink === undefined
+          ? Promise.resolve({
+              ok: false as const,
+              message: 'This link cannot be opened.',
+              detail: 'Link opening is unavailable.',
+            })
+          : deps.openPastedHoliLink(input.url),
+      ),
+    }),
     auth,
     github,
     vaults,

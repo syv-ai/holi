@@ -135,6 +135,41 @@ describe('the transform half never vetoes', () => {
 })
 
 describe('it actually reaches Holi', () => {
+  it('normalizes slash and backslash Claude job directories on a real commit', async () => {
+    const dir = await repo()
+    await installGitHook(dir, 1024, 'win32')
+    const jobs: string[] = []
+    const server = createServer((req, res) => {
+      jobs.push(new URL(req.url ?? '/', 'http://localhost').searchParams.get('job') ?? '')
+      req.resume()
+      req.on('end', () => res.writeHead(200).end('{}'))
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    const port = (server.address() as AddressInfo).port
+    try {
+      await writeVaultEnv(dir, bridgeLines(port, 'abc123'))
+      for (const jobDir of [
+        '/Users/ada/Vault café/jobs/abcd1234',
+        'C:\\Users\\ada\\Vault café\\jobs\\abcd1234',
+      ]) {
+        await stage(dir, `small-${jobs.length}.md`, '# small\n')
+        const result = await new Promise<{ code: number; stderr: string }>((resolve) => {
+          exec('git', ['-C', dir, 'commit', '-m', `fixture-${jobs.length}`], {
+            env: { ...process.env, CLAUDE_JOB_DIR: jobDir },
+          }).then(
+            ({ stderr }) => resolve({ code: 0, stderr }),
+            (error: { code?: number; stderr?: string }) =>
+              resolve({ code: error.code ?? 1, stderr: error.stderr ?? '' }),
+          )
+        })
+        expect(result).toMatchObject({ code: 0, stderr: expect.not.stringContaining('refusing') })
+      }
+      expect(jobs).toEqual(['abcd1234', 'abcd1234'])
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  })
+
   it('POSTs the commit to the endpoint, with the token', async () => {
     const dir = await repo()
     await installGitHook(dir, 1024)

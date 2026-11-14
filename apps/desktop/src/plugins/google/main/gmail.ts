@@ -14,11 +14,13 @@
  * - The **agent** reads `body`, via `textOnly()` below. An LLM wants prose, not
  *   a table layout.
  *
- * Nothing here sanitizes, and that is deliberate: main hands over exactly what
- * Google returned, so there is one sanitizer, in the one process with a DOM,
- * rather than two half-measures that each assume the other did the work.
+ * Raw message bodies and HTML remain exactly as Google returned them. Only the
+ * agent's text projection applies conservative quoted-span cleanup; the UI's
+ * HTML sanitizer remains in the renderer, where a DOM is available.
  */
+import { Parser } from 'htmlparser2'
 import { GoogleApiError, type GoogleApi } from './api'
+import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
 
@@ -1023,6 +1025,37 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
   }
 }
 
+/** Preserve each HTML quote's extent only for the CLI's HTML-only fallback.
+ * The reader and --full retain the original htmlToText projection. */
+function quotedHtmlText(html: string): string {
+  const spans: { start: number; end: number }[] = []
+  let depth = 0
+  let start = 0
+  const parser = new Parser({
+    onopentag(name) {
+      if (name === 'blockquote' && depth++ === 0) start = parser.startIndex
+    },
+    onclosetag(name, implied) {
+      if (name !== 'blockquote' || depth === 0) return
+      if (--depth === 0 && !implied) spans.push({ start, end: parser.endIndex + 1 })
+    },
+  })
+  parser.end(html)
+  let marked = html
+  for (const { start, end } of spans.reverse()) {
+    const quote = htmlToText(html.slice(start, end))
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>')
+    marked = `${marked.slice(0, start)}<p>${quote}</p>${marked.slice(end)}`
+  }
+  return htmlToText(marked)
+}
+
 /**
  * The thread as the agent should see it: text bodies, no markup.
  *
@@ -1031,12 +1064,24 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
  * unsanitized markup should reach exactly one consumer, the renderer that
  * sanitizes it.
  */
-export function textOnly(thread: MailThread): AgentMailThread {
+export function textOnly(
+  thread: MailThread,
+  { full = false }: { full?: boolean } = {},
+): AgentMailThread {
   return {
     id: thread.id,
     subject: thread.subject,
     webUrl: thread.webUrl,
-    messages: thread.messages.map(({ html: _html, ...message }) => message),
+    messages: thread.messages.map(({ html: _html, ...message }) => ({
+      ...message,
+      body: full
+        ? message.body
+        : cleanMailText(
+            typeof _html === 'string' && message.body === htmlToText(_html)
+              ? quotedHtmlText(_html)
+              : message.body,
+          ),
+    })),
   }
 }
 
@@ -1187,14 +1232,95 @@ export async function createDraft(
   api: GoogleApi,
   mail: OutgoingMail,
   threadId?: string,
+  updateId?: string,
 ): Promise<{ id: string | null }> {
-  const draft = await api.postJson<{ id?: string }>(`${BASE}/drafts`, {
-    message: {
-      raw: toBase64Url(buildRfc822(mail)),
-      ...(threadId === undefined ? {} : { threadId }),
-    },
+  if (updateId !== undefined && (!updateId.trim() || /[\r\n]/.test(updateId))) {
+    throw new Error('invalid draft id')
+  }
+  const threading = threadId === undefined ? {} : await replyHeaders(api, threadId)
+  const message = {
+    raw: toBase64Url(buildRfc822({ ...mail, ...threading })),
+    ...(threadId === undefined ? {} : { threadId }),
+  }
+  const draft =
+    updateId === undefined
+      ? await api.postJson<{ id?: string }>(`${BASE}/drafts`, { message })
+      : await api.putJson<{ id?: string }>(`${BASE}/drafts/${encodeURIComponent(updateId)}`, {
+          id: updateId,
+          message,
+        })
+  if (updateId !== undefined && draft?.id !== undefined && draft.id !== updateId) {
+    throw new Error('Gmail returned a different draft id while updating')
+  }
+  return { id: draft?.id ?? updateId ?? null }
+}
+
+function normalizeMessageIds(value: string): string[] | null {
+  const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
+  if (/[\r\n]/.test(unfolded)) return null
+  let clean = ''
+  let comments = 0
+  let escaped = false
+  let quoted = false
+  for (const char of unfolded) {
+    if (escaped) {
+      if (comments === 0) clean += char
+      escaped = false
+    } else if (char === '\\') {
+      if (comments === 0) clean += char
+      escaped = true
+    } else if (comments > 0) {
+      if (char === '(') comments++
+      else if (char === ')') comments--
+    } else if (char === '"') {
+      quoted = !quoted
+      clean += char
+    } else if (char === '(' && !quoted) comments++
+    else clean += char
+  }
+  if (comments !== 0 || escaped || quoted) return null
+  const text = clean.trim()
+  if (text === '') return []
+  const ids = text.match(/<[^<>]+>/g) ?? []
+  if (ids.length === 0 || !/^\s*$/.test(text.replace(/<[^<>]+>/g, ''))) return null
+  const valid = ids.every((token) => {
+    const id = token.slice(1, -1)
+    const at = id.lastIndexOf('@')
+    if (at < 1 || at === id.length - 1) return false
+    const atom = "[A-Za-z0-9!#$%&'*+\\-/=?^_`{|}~]+"
+    const local = id.slice(0, at)
+    const domain = id.slice(at + 1)
+    return (
+      new RegExp(`^(?:${atom}(?:\\.${atom})*|\"(?:[^\"\\\\\\r\\n]|\\\\[\\x00-\\x7f])*\")$`).test(
+        local,
+      ) && new RegExp(`^(?:${atom}(?:\\.${atom})*|\\[[^\\]\\r\\n]+\\])$`).test(domain)
+    )
   })
-  return { id: draft?.id ?? null }
+  return valid ? ids : null
+}
+
+async function replyHeaders(
+  api: GoogleApi,
+  threadId: string,
+): Promise<Pick<OutgoingMail, 'inReplyTo' | 'references'>> {
+  if (!threadId.trim() || /[\r\n]/.test(threadId)) throw new Error('invalid thread id')
+  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
+    format: 'full',
+  })
+  const parent = [...(thread.messages ?? [])]
+    .reverse()
+    .find((message) => !message.labelIds?.includes('DRAFT'))
+  const messageId = headerOf(parent?.payload, 'Message-ID')
+  const ids = messageId === null ? null : normalizeMessageIds(messageId)
+  if (ids?.length !== 1) throw new Error('thread has no valid Message-ID to reply to')
+  const normalizedReferences = normalizeMessageIds(headerOf(parent?.payload, 'References') ?? '')
+  if (normalizedReferences === null) throw new Error('thread has an invalid References header')
+  const validMessageId = ids[0]!
+  const references = normalizedReferences
+  return {
+    inReplyTo: validMessageId,
+    references: references.at(-1) === validMessageId ? references : [...references, validMessageId],
+  }
 }
 
 /**
@@ -1300,6 +1426,7 @@ export interface DraftBody {
   threadId: string | null
   to: MailAddress[]
   cc: MailAddress[]
+  bcc: MailAddress[]
   subject: string
   /**
    * The markdown source, byte-exact, when `X-Holi-Source` says this draft came
@@ -1470,6 +1597,7 @@ export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftB
     threadId: threadIdOf(message),
     to: parseAddresses(headerOf(payload, 'To')),
     cc: parseAddresses(headerOf(payload, 'Cc')),
+    bcc: parseAddresses(headerOf(payload, 'Bcc')),
     subject: headerOf(payload, 'Subject') ?? '',
     // The marker means the text/plain part IS the markdown that produced this
     // draft, so it round-trips byte-exact. Without it there is nothing here to

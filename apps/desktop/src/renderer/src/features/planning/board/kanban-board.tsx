@@ -4,7 +4,7 @@
  * kanban-board-6's cards. The block's column grip is left out, since the
  * columns' order is `.holi/statuses.yaml`'s and the board does not write it.
  */
-import { type ComponentProps } from 'react'
+import { type ComponentProps, useEffect, useRef } from 'react'
 import type { StatusDef, Task } from '@holi/shared'
 
 import { Badge } from '@/components/ui/badge'
@@ -19,7 +19,8 @@ import {
 } from '@/components/ui/kanban'
 
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
-import { InlineAdd } from '../inline-add'
+import { captureBoardScroll, restoreBoardScroll, type BoardScrollPosition } from '../board-scroll'
+import { InlineAdd, type InlineAddState } from '../inline-add'
 import { StatusIcon } from '../task-bits'
 import { TaskCard, type CardContext } from './task-card'
 
@@ -31,9 +32,21 @@ interface StatusColumnProps extends Omit<
   tasks: Task[]
   context: CardContext
   onAddTask: (status: string, title: string) => Promise<void>
+  inlineAddState: Record<string, InlineAddState>
+  onInlineAddStateChange: (status: string, state: InlineAddState) => void
+  focused: boolean
 }
 
-function StatusColumn({ status, tasks, context, onAddTask, ...props }: StatusColumnProps) {
+function StatusColumn({
+  status,
+  tasks,
+  context,
+  onAddTask,
+  inlineAddState,
+  onInlineAddStateChange,
+  focused,
+  ...props
+}: StatusColumnProps) {
   const isDone = status.category === 'completed'
   const addLabel = `Add task to ${status.name}`
 
@@ -48,7 +61,7 @@ function StatusColumn({ status, tasks, context, onAddTask, ...props }: StatusCol
                 <FrameTitle className="min-w-0">
                   <span className="block truncate">{status.name}</span>
                 </FrameTitle>
-                <Badge variant="outline" size="sm" className="bg-background">
+                <Badge variant="secondary" size="sm" className="bg-background">
                   {tasks.length}
                 </Badge>
               </div>
@@ -64,6 +77,9 @@ function StatusColumn({ status, tasks, context, onAddTask, ...props }: StatusCol
             label={addLabel}
             dashed={tasks.length === 0}
             onAdd={(title) => onAddTask(status.id, title)}
+            state={inlineAddState[status.id]}
+            onStateChange={(state) => onInlineAddStateChange(status.id, state)}
+            focused={focused}
           />
         </KanbanColumnContent>
       </Frame>
@@ -79,8 +95,14 @@ export interface KanbanBoardProps {
   onValueCommit: (value: Record<string, Task[]>, meta: KanbanCommitMeta<Task>) => void
   onDragEnd: () => void
   onDragCancel: () => void
+  cancelDrop: () => boolean
   context: CardContext
   onAddTask: (status: string, title: string) => Promise<void>
+  inlineAddState: Record<string, InlineAddState>
+  onInlineAddStateChange: (status: string, state: InlineAddState) => void
+  focused: boolean
+  scrollPosition: BoardScrollPosition
+  onScrollPositionChange: (position: BoardScrollPosition) => void
 }
 
 export function KanbanBoard({
@@ -90,9 +112,25 @@ export function KanbanBoard({
   onValueCommit,
   onDragEnd,
   onDragCancel,
+  cancelDrop,
   context,
   onAddTask,
+  inlineAddState,
+  onInlineAddStateChange,
+  focused,
+  scrollPosition,
+  onScrollPositionChange,
 }: KanbanBoardProps) {
+  const scrollArea = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const viewport = scrollArea.current?.querySelector<HTMLElement>(
+      '[data-radix-scroll-area-viewport]',
+    )
+    if (!viewport) return
+    const frame = requestAnimationFrame(() => restoreBoardScroll(viewport, scrollPosition))
+    return () => cancelAnimationFrame(frame)
+  }, [onScrollPositionChange, scrollPosition])
+
   const find = (path: string) => {
     for (const [column, tasks] of Object.entries(value)) {
       const task = tasks.find((item) => item.path === path)
@@ -109,12 +147,21 @@ export function KanbanBoard({
       onValueCommit={onValueCommit}
       onDragEnd={onDragEnd}
       onDragCancel={onDragCancel}
+      cancelDrop={cancelDrop}
       restoreOnCancel
       // The board fills the pane and scrolls inside it, so the horizontal bar
       // holds the pane's foot however tall a column grows mid-drag.
       className="flex min-h-0 w-full flex-1 flex-col"
     >
-      <ScrollArea className="min-h-0 w-full min-w-0 flex-1">
+      <ScrollArea
+        ref={scrollArea}
+        className="min-h-0 w-full min-w-0 flex-1"
+        onScrollCapture={(event) => {
+          if (event.target instanceof HTMLElement) {
+            onScrollPositionChange(captureBoardScroll(event.target))
+          }
+        }}
+      >
         <KanbanBoardPrimitive variant="row">
           {statuses.map((status) => (
             <StatusColumn
@@ -123,6 +170,9 @@ export function KanbanBoard({
               tasks={value[status.id] ?? []}
               context={context}
               onAddTask={onAddTask}
+              inlineAddState={inlineAddState}
+              onInlineAddStateChange={onInlineAddStateChange}
+              focused={focused}
             />
           ))}
         </KanbanBoardPrimitive>
