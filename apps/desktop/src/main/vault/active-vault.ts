@@ -1556,8 +1556,8 @@ export async function openActiveVault(args: {
  */
 export interface VaultHost {
   active(): ActiveVault | null
-  /** Open and select a vault, closing the previously selected runtime first. */
-  open(remote: string): Promise<ActiveVault>
+  /** Open and select a vault, admitting cold-start work before selection. */
+  open(remote: string, prepare?: (coldStart: boolean) => Promise<void>): Promise<ActiveVault>
   /** Get an existing runtime or start one without changing the selected vault. */
   getOrOpen(remote: string): Promise<ActiveVault>
   /** Look up a running runtime without starting it. */
@@ -1573,7 +1573,9 @@ export interface VaultHost {
 export function createVaultHost(args: {
   registry: VaultRegistry
   /** Work required before a vault can start its plugins or agent. */
-  beforeOpen?: () => Promise<void>
+  beforeOpen?: (remote: string) => Promise<void>
+  /** Default cold-clone preparation when the caller does not supply seeding work. */
+  prepareClone?: (remote: string) => Promise<void>
   gitDeps?: GitDeps
   /** What the scanner claims in the vault at `root` (`openActiveVault`). */
   claims: (root: string) => Promise<readonly ScanClaim[]>
@@ -1609,6 +1611,8 @@ export function createVaultHost(args: {
   let current: ActiveVault | null = null
   const runtimes = new Map<string, ActiveVault>()
   const starts = new Map<string, Promise<ActiveVault>>()
+  const startPreparations = new Map<string, Promise<void>>()
+  const preparedStarts = new Set<string>()
   const locks = new Map<string, Promise<unknown>>()
   const closeQueues = new Map<string, Promise<unknown>>()
   let selectionQueue: Promise<unknown> = Promise.resolve()
@@ -1714,13 +1718,16 @@ export function createVaultHost(args: {
     if (errors.length > 0) throw new AggregateError(errors, `Could not cleanly close ${remote}`)
   }
 
-  async function start(remote: string, prepared = false): Promise<ActiveVault> {
+  async function start(remote: string): Promise<ActiveVault> {
     const existing = runtimes.get(remote)
     if (existing !== undefined) return existing
     const pending = starts.get(remote)
     if (pending !== undefined) return pending
     const opening = (async () => {
-      if (!prepared) await args.beforeOpen?.()
+      if (!preparedStarts.delete(remote)) {
+        await args.beforeOpen?.(remote)
+        await args.prepareClone?.(remote)
+      }
       const entry = (await args.registry.list()).find((e) => e.remote === remote)
       if (!entry) throw new Error(`no such vault: ${remote}`)
       let callbacksEnabled = true
@@ -1778,6 +1785,40 @@ export function createVaultHost(args: {
     }
   }
 
+  async function prepareForOpen(
+    remote: string,
+    preparation?: (coldStart: boolean) => Promise<void>,
+  ): Promise<void> {
+    const starting = starts.get(remote)
+    if (starting !== undefined) {
+      await starting
+      return
+    }
+    if (runtimes.has(remote)) {
+      await serialise(remote, () => preparation?.(false) ?? Promise.resolve())
+      return
+    }
+    if (preparedStarts.has(remote)) return
+    const pending = startPreparations.get(remote)
+    if (pending !== undefined) return pending
+    const opening = serialise(remote, async () => {
+      if (runtimes.has(remote)) {
+        await preparation?.(false)
+        return
+      }
+      if (preparedStarts.has(remote)) return
+      await args.beforeOpen?.(remote)
+      if (preparation) await preparation(true)
+      else await args.prepareClone?.(remote)
+      preparedStarts.add(remote)
+    })
+    const settled = opening.finally(() => {
+      if (startPreparations.get(remote) === settled) startPreparations.delete(remote)
+    })
+    startPreparations.set(remote, settled)
+    return settled
+  }
+
   return {
     active: () => current,
     get: (remote) => runtimes.get(remote) ?? null,
@@ -1785,22 +1826,29 @@ export function createVaultHost(args: {
       const priorClose = closeQueues.get(remote) ?? Promise.resolve()
       return admit(() => priorClose.then(() => serialise(remote, () => start(remote))))
     },
-    open: (remote) => {
+    open: (remote, preparation) => {
       const priorClose = closeQueues.get(remote) ?? Promise.resolve()
-      return admit(() =>
-        serialiseSelection(async () => {
-          await priorClose
+      return admit(() => {
+        // Prepare independent remotes concurrently, but reserve selection now so
+        // a later close cannot overtake an open still awaiting prerequisites.
+        const preparing = priorClose.then(() => prepareForOpen(remote, preparation))
+        void preparing.catch(() => {})
+        return serialiseSelection(async () => {
+          await preparing
+          // An earlier selection may have closed a runtime that was live when
+          // this request's preparation was admitted. Prepare that new lifetime.
+          if (!runtimes.has(remote) && !preparedStarts.has(remote)) {
+            await prepareForOpen(remote, preparation)
+          }
           if (current?.remote === remote) {
             notify(() => args.onSnapshot(remote, current!.snapshot()))
             notify(() => args.onSyncState(remote, current!.syncState()))
             notify(() => args.onHeldBack?.(remote, current!.heldBack()))
             return current
           }
-          // Keep the selected runtime usable until startup prerequisites succeed.
-          await args.beforeOpen?.()
           const previous = current?.remote
           if (previous !== undefined) await serialise(previous, () => closeRuntime(previous))
-          const vault = await serialise(remote, () => start(remote, true))
+          const vault = await serialise(remote, () => start(remote))
           current = vault
           // Startup callbacks can precede the runtime's insertion into `runtimes`.
           // Replay its authoritative view after selection so those first updates survive.
@@ -1808,8 +1856,8 @@ export function createVaultHost(args: {
           notify(() => args.onSyncState(remote, vault.syncState()))
           notify(() => args.onHeldBack?.(remote, vault.heldBack()))
           return vault
-        }),
-      )
+        })
+      })
     },
     close: (remote?: string) =>
       trackClose(
