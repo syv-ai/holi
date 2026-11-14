@@ -161,7 +161,7 @@ test('registered provider finds and activates a plaintext file URL wrapped by xt
   const url = `file:///tmp/${'a'.repeat(160)}.pdf`
   act(() => receivePtyData({ id: 'wrapped-terminal', data: `\n\n${'x'.repeat(70)}${url}` }))
   await waitFor(() => expect(terminal.buffer.active.getLine(3)?.isWrapped).toBe(true))
-  const queryResults = [3, 4, 5].map((y) => {
+  const queryResults = [3, 4, 5, 6].map((y) => {
     let links: Array<{
       range: { start: { x: number; y: number }; end: { x: number; y: number } }
       text: string
@@ -178,6 +178,66 @@ test('registered provider finds and activates a plaintext file URL wrapped by xt
   }
   queryResults[1]![0]!.activate({ button: 0, metaKey: true } as MouseEvent, url)
   expect(openPath).toHaveBeenCalledWith(`/tmp/${'a'.repeat(160)}.pdf`)
+  ui.unmount()
+})
+
+test('provider returns only links intersecting the queried row for xterm link pruning', async () => {
+  vi.stubGlobal('holi', { plugin: { send: fixture.send }, openPath: vi.fn() })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'fixture/multiple-wrapped-links')
+  store.set(openTabAtom, { kind: 'surface', surface: 'agent', id: 'multiple-links-terminal' })
+  const ui = render(
+    <Provider store={store}>
+      <SessionTerminal terminalId="multiple-links-terminal" provider="claude" visible />
+    </Provider>,
+  )
+  await waitFor(() => expect(fixture.linkProvider).not.toBeNull())
+  const terminal = fixture.terminals[0]!
+  terminal.resize(40, 24)
+  const first = 'file:///tmp/first.pdf'
+  const second = 'file:///tmp/second.pdf'
+  const text = `${first} ${'x'.repeat(70)} ${second}`
+  act(() => receivePtyData({ id: 'multiple-links-terminal', data: `\n\n${text}` }))
+  await waitFor(() => expect(terminal.buffer.active.getLine(3)?.isWrapped).toBe(true))
+
+  type QueriedLink = {
+    range: { start: { x: number; y: number }; end: { x: number; y: number } }
+    text: string
+  }
+  const queried = new Map<number, QueriedLink[]>()
+  for (const y of [3, 4, 5, 6]) {
+    act(() =>
+      fixture.linkProvider!.provideLinks(y, (value) =>
+        queried.set(y, (value ?? []) as QueriedLink[]),
+      ),
+    )
+  }
+  const firstRow = [...queried].find(([, links]) => links.some((link) => link.text === first))
+  const secondRow = [...queried].find(([, links]) => links.some((link) => link.text === second))
+  expect(firstRow).toBeDefined()
+  expect(secondRow).toBeDefined()
+  expect(firstRow![0]).not.toBe(secondRow![0])
+  const xtermPrune = (y: number, links: QueriedLink[]) => {
+    const occupied = new Set<number>()
+    return links.filter((link) => {
+      const startX = link.range.start.y < y ? 1 : link.range.start.x
+      const endX = link.range.end.y > y ? 40 : link.range.end.x
+      for (let x = startX; x <= endX; x++) {
+        if (occupied.has(x)) return false
+        occupied.add(x)
+      }
+      return true
+    })
+  }
+  for (const [y, links] of queried) {
+    expect(links.every((link) => link.range.start.y <= y && link.range.end.y >= y)).toBe(true)
+    expect(xtermPrune(y, links)).toEqual(links)
+  }
+  // xterm's overlap-pruner compares x coordinates on the requested row even
+  // for ranges on other rows; these two full-line ranges collide at row 3.
+  expect(xtermPrune(3, [firstRow![1][0]!, secondRow![1][0]!])).toHaveLength(1)
+  expect(firstRow![1][0]!.range.start.y).toBe(firstRow![0])
+  expect(secondRow![1][0]!.range.start.y).toBe(secondRow![0])
   ui.unmount()
 })
 

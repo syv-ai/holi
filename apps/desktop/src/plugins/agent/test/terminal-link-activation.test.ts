@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   activateTerminalLink,
   fileUrlLinks,
@@ -8,6 +8,8 @@ import {
 
 const ROOT = '/Users/ada/Holi/syv/vault'
 const FILES = new Set(['notes/a.md'])
+
+afterEach(() => vi.unstubAllGlobals())
 
 function handlers() {
   return {
@@ -49,18 +51,48 @@ describe('embedded terminal link activation', () => {
     expect(actions.openDocument).not.toHaveBeenCalled()
   })
 
-  it('ignores unsafe schemes and malformed file URLs', () => {
+  it('ignores unsafe schemes, remote file URLs, and Windows network/device paths', () => {
     const actions = handlers()
+    vi.stubGlobal('navigator', { userAgent: 'Windows' })
     for (const link of [
       'javascript:alert(1)',
       'data:text/html,hello',
       'file://remote/etc/passwd',
+      'file:////attacker/share/report.pdf',
+      'file:////\\\\attacker\\share\\report.pdf',
+      'file:////%2fattacker/share/report.pdf',
+      'file:////%5c%5cattacker%5cshare%5creport.pdf',
+      'file:///\\\\.\\pipe\\name',
+      'file:///\\\\?\\C:\\secret',
+      'file:///%5c%5c.%5cpipe%5cname',
+      'file:///%5c%5c%3f%5cC:%5csecret',
     ]) {
       activateTerminalLink(link, { ...actions, paths: FILES, root: ROOT })
     }
     expect(actions.openExternal).not.toHaveBeenCalled()
     expect(actions.openDocument).not.toHaveBeenCalled()
     expect(actions.revealLocalFile).not.toHaveBeenCalled()
+  })
+
+  it('keeps POSIX double-slash paths and ordinary Windows drive URLs local', () => {
+    const actions = handlers()
+    vi.stubGlobal('navigator', { userAgent: 'Windows' })
+    activateTerminalLink('file://localhost/C:/Users/ada/report.pdf', {
+      ...actions,
+      paths: FILES,
+      root: ROOT,
+    })
+    expect(actions.revealLocalFile).toHaveBeenCalledWith('C:/Users/ada/report.pdf')
+    expect(actions.openExternal).not.toHaveBeenCalled()
+
+    vi.stubGlobal('navigator', { userAgent: 'Macintosh' })
+    activateTerminalLink('file:////tmp/report.pdf', {
+      ...actions,
+      paths: FILES,
+      root: ROOT,
+    })
+    expect(actions.revealLocalFile).toHaveBeenCalledWith('//tmp/report.pdf')
+    vi.unstubAllGlobals()
   })
 
   it('recognizes plaintext file URLs without trailing punctuation', () => {
