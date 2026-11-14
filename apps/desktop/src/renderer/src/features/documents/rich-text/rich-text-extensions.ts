@@ -7,6 +7,8 @@ import { StarterKit } from '@tiptap/starter-kit'
 
 import { RichTextHighlight } from './rich-text-highlight'
 import { RichTextTaskItem } from './rich-text-task-item'
+import { RichTextActivity } from './rich-text-activity'
+import { editorActivity } from '@/hooks/use-editor-activity'
 
 interface RichTextExtensionOptions {
   /** Hint on the empty line under the caret. */
@@ -76,8 +78,9 @@ const RichTextSelection = Selection.extend({
             },
             focus(view) {
               if (pressed || !isRange(view.state)) return false
+              const current = editorActivity(editor).capture()
               requestAnimationFrame(() => {
-                if (!editor.isDestroyed && view.hasFocus()) view.focus()
+                if (current() && !editor.isDestroyed && view.hasFocus()) view.focus()
               })
               return false
             },
@@ -107,5 +110,6 @@ export function createRichTextExtensions({ placeholder }: RichTextExtensionOptio
     }),
     CharacterCount,
     RichTextSelection,
+    RichTextActivity,
   ]
 }
