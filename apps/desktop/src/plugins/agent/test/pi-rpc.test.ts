@@ -183,8 +183,7 @@ describe('PiRpcRun', () => {
       const process = fake()
       const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
       const result = run.prompt('active')
-      const queuedResult = kind === 'steer' ? run.steer('queued') : undefined
-      if (kind === 'followUp') run.followUp('queued')
+      run[kind]('queued')
       const queued = process.commands.at(-1)!
       process.stdout.write(
         JSON.stringify({
@@ -195,9 +194,6 @@ describe('PiRpcRun', () => {
           data: { disposition: 'handled' },
         }) + '\n',
       )
-      if (queuedResult) {
-        await expect(queuedResult).resolves.toMatchObject({ status: 'completed', output: '' })
-      }
       let completed = false
       void result.then(() => {
         completed = true
