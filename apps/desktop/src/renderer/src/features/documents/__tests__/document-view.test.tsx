@@ -1804,8 +1804,129 @@ test('queued paragraph requests launch together as one rewrite run', async () =>
   const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
   expect(launch.prompt).toContain('Make it clearer')
   expect(launch.prompt).toContain('Shorten it')
-  expect(launch.prompt).toContain('<target index="1">\nShip the beta\n</target>')
-  expect(launch.prompt).toContain('<target index="2">\nKeep the title\n</target>')
+  expect(launch.prompt).toContain('Exact target: "Ship the beta"')
+  expect(launch.prompt).toContain('Exact target: "Keep the title"')
+})
+
+test('external deletion of a duplicate paragraph requires explicit target reselection', async () => {
+  const user = userEvent.setup()
+  open('Repeat this paragraph.\n\nRepeat this paragraph.\n')
+  const { askAi } = await selectForAskAi('Repeat this paragraph')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
+
+  changeOnDisk('Repeat this paragraph.\n', '2026-10-23T10:01:00Z')
+
+  expect(await screen.findByText('Target changed; reselect')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Submit batch' })).toBeDisabled()
+  expect(cap).not.toHaveBeenCalled()
+})
+
+test('duplicate rewrite targets carry distinct saved-document locations', async () => {
+  const user = userEvent.setup()
+  open('# Plan\n\nRepeat this paragraph.\n\nRepeat this paragraph.\n')
+  const { editor, askAi } = await selectForAskAi('Repeat this paragraph')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'First')
+
+  let second = -1
+  let occurrences = 0
+  editor.state.doc.descendants((node, pos) => {
+    if (node.isText && node.text!.includes('Repeat this paragraph') && ++occurrences === 2)
+      second = pos + node.text!.indexOf('Repeat this paragraph')
+  })
+  const targetLength = 'Repeat this paragraph'.length
+  act(() =>
+    editor
+      .chain()
+      .focus()
+      .setTextSelection({ from: second, to: second + targetLength })
+      .run(),
+  )
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 2' }), 'Second')
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+
+  await waitFor(() => expect(cap).toHaveBeenCalledOnce())
+  const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.prompt).toContain(`document=\"${PATH}\" body-block=\"3\"`)
+  expect(launch.prompt).toContain('identical-block-occurrence=\"1\"')
+  expect(launch.prompt).toContain('identical-block-occurrence=\"2\"')
+  expect(launch.prompt).toContain('Previous block: "Plan"')
+  expect(launch.prompt).toContain('Exact target: "Repeat this paragraph"')
+})
+
+test('batch submission locks queue changes and refuses a changed revision after deferred save', async () => {
+  const user = userEvent.setup()
+  const pending = deferred<void>()
+  open('Repeat this paragraph.\n\nAnother paragraph.\n')
+  const { editor, askAi } = await selectForAskAi('Repeat this paragraph')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
+  write.mockImplementationOnce(() => pending.promise)
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' unsaved change'))
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+  await waitFor(() => expect(write).toHaveBeenCalledOnce())
+  const remove = screen.getAllByRole('button', { name: 'Remove' })[0]!
+  expect(remove).toBeDisabled()
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+  expect(cap).not.toHaveBeenCalled()
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' changed while saving'))
+
+  await act(async () => pending.resolve())
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled())
+  expect(cap).not.toHaveBeenCalled()
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue('Improve')
+})
+
+test('disposed document cannot launch a batch after its deferred save', async () => {
+  const user = userEvent.setup()
+  const pending = deferred<void>()
+  const view = open('Repeat this paragraph.\n')
+  const { editor, askAi } = await selectForAskAi('Repeat this paragraph')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Request for target 1' }), {
+    target: { value: 'Improve' },
+  })
+  write.mockImplementationOnce(() => pending.promise)
+  act(() => editor.commands.insertContent(' changed'))
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+  await waitFor(() => expect(write).toHaveBeenCalledOnce())
+
+  act(() => view.unmount())
+  await act(async () => pending.resolve())
+
+  expect(cap).not.toHaveBeenCalled()
+})
+
+test('batch save and launch failures preserve requests and release the submission lock', async () => {
+  const user = userEvent.setup()
+  open('Repeat this paragraph.\n')
+  const { askAi } = await selectForAskAi('Repeat this paragraph')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
+
+  write.mockRejectedValueOnce(new Error('save failed'))
+  act(() =>
+    (
+      screen.getByRole('textbox', { name: 'Plan document' }) as WithEditor
+    ).editor.commands.insertContent(' dirty'),
+  )
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled())
+  expect(cap).not.toHaveBeenCalled()
+
+  cap.mockImplementationOnce(() => Promise.resolve({ ok: false, message: 'launch failed' }))
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled())
+  expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue('Improve')
 })
 
 test('Start chat opens a new session beside the document, the passage as its context', async () => {

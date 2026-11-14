@@ -36,7 +36,10 @@ export function applyReload(editor: Editor, body: string): boolean {
     transaction.setSelection(between(clamp(anchor), clamp(head)))
   }
 
-  transaction.setMeta('addToHistory', false).setMeta('preventUpdate', true)
+  transaction
+    .setMeta('addToHistory', false)
+    .setMeta('preventUpdate', true)
+    .setMeta('externalDocumentReload', true)
   editor.view.dispatch(transaction)
   return true
 }
