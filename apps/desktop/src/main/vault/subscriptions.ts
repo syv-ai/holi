@@ -30,7 +30,8 @@ function parseSubscription(raw: unknown, text: string | null): SubscriptionFile 
     Array.isArray(raw) ||
     (raw as { version?: unknown }).version !== 1 ||
     typeof (raw as { remotes?: unknown }).remotes !== 'object' ||
-    (raw as { remotes?: unknown }).remotes === null
+    (raw as { remotes?: unknown }).remotes === null ||
+    Array.isArray((raw as { remotes?: unknown }).remotes)
   )
     throw new Error('Subscription state is invalid; it was not changed.')
   const remotes = (raw as { remotes: Record<string, unknown> }).remotes
@@ -49,7 +50,7 @@ function parseSubscription(raw: unknown, text: string | null): SubscriptionFile 
         isSecretPath(normalized) ||
         seen.has(normalized) ||
         (baseline !== null &&
-          (typeof baseline !== 'string' || !/^[0-9a-f]{40,64}$/i.test(baseline)))
+          (typeof baseline !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(baseline)))
       )
         throw new Error('Subscription state is invalid; it was not changed.')
       seen.add(normalized)
@@ -106,21 +107,22 @@ export function createSubscriptions(file: string) {
       head: () => Promise<string | null>,
     ) {
       if (!isRemote(remote)) throw new Error('Invalid vault remote.')
-      const normalized = await validateScope(root, path)
-      const existing = (await store.read()).remotes[remote]?.find(
-        (scope) => scope.path === normalized,
-      )
-      if (enabled && existing !== undefined) return existing
-      if (!enabled && existing === undefined) return null
-      const baseline = enabled ? await head() : null
       let outcome: SubscriptionScope | null = null
-      await store.update((current) => {
+      await store.update(async (current) => {
+        const normalized = await validateScope(root, path)
         const scopes = current.remotes[remote] ?? []
-        const found = scopes.find((scope) => scope.path === normalized)
-        if (enabled && found !== undefined) {
-          outcome = found
+        const existing = scopes.find((scope) => scope.path === normalized)
+        if (enabled && existing !== undefined) {
+          outcome = existing
           return current
         }
+        if (!enabled && existing === undefined) {
+          outcome = null
+          return current
+        }
+        const baseline = enabled ? await head() : null
+        if (baseline !== null && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(baseline))
+          throw new Error('Git returned an invalid HEAD revision.')
         const next = enabled
           ? [...scopes, { path: normalized, baseline }]
           : scopes.filter((scope) => scope.path !== normalized)

@@ -6,7 +6,7 @@
  * plugin's folder document (a deck) opens from its row and expands from its
  * chevron. A note's menu has Create vault app, as the document's own does.
  */
-import { Provider, createStore, useAtomValue } from 'jotai'
+import { Provider, createStore } from 'jotai'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { emptyVaultSnapshot, TASKS_CLAIM, VAULT_SETTING_DEFAULTS } from '@holi/shared'
@@ -105,8 +105,7 @@ vi.mock('@/lib/trpc', () => ({
 }))
 
 function KeyedFiles({ onOpen }: { onOpen: (path: string) => void }) {
-  const remote = useAtomValue(activeRemoteAtom)
-  return <FilesSection key={remote} activeId={null} onOpen={onOpen} onMoved={() => undefined} />
+  return <FilesSection activeId={null} onOpen={onOpen} onMoved={() => undefined} />
 }
 
 function mount({ tasks = true }: { tasks?: boolean } = {}) {
@@ -232,6 +231,80 @@ test('vault and folder subscription controls persist explicit scopes and explain
       enabled: true,
     }),
   )
+})
+
+test('tree rows activate by Enter and Space without consuming nested controls', async () => {
+  const { onOpen } = mount()
+  const folder = await screen.findByRole('treeitem', { name: 'kunder' })
+  fireEvent.keyDown(folder, { key: ' ' })
+  expect(folder).toHaveAttribute('aria-expanded', 'true')
+  const file = await screen.findByRole('treeitem', { name: 'brief.md' })
+  fireEvent.keyDown(file, { key: 'Enter' })
+  expect(onOpen).toHaveBeenCalledWith('kunder/brief.md')
+  const subscribe = screen.getByRole('button', { name: 'Subscribe this vault' })
+  fireEvent.keyDown(subscribe, { key: 'Enter' })
+  expect(onOpen).not.toHaveBeenCalledWith('')
+})
+
+test('an older list response cannot erase a completed subscription refresh', async () => {
+  const { store } = mount()
+  let resolveOld!: (scopes: typeof subscriptionScopes.values) => void
+  const oldResponse = new Promise<typeof subscriptionScopes.values>((resolve) => {
+    resolveOld = resolve
+  })
+  subscriptionList.mockImplementationOnce(async () => oldResponse)
+  let finishMutation!: () => void
+  const mutationGate = new Promise<void>((resolve) => {
+    finishMutation = resolve
+  })
+  subscriptionSet.mockImplementationOnce(async ({ path, enabled }) => {
+    await mutationGate
+    subscriptionScopes.values = subscriptionScopes.values.filter((scope) => scope.path !== path)
+    if (enabled)
+      subscriptionScopes.values.push({
+        path,
+        explicit: true,
+        coveredBy: null,
+        baseline: 'f'.repeat(40),
+      })
+  })
+
+  await userEvent.click(await screen.findByRole('button', { name: 'Subscribe this vault' }))
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      dirs: ['kunder', 'new-folder'],
+    }),
+  )
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(2))
+  finishMutation()
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(3))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Unsubscribe this vault' })).toBeInTheDocument(),
+  )
+  resolveOld([])
+  await act(async () => oldResponse)
+  expect(screen.getByRole('button', { name: 'Unsubscribe this vault' })).toBeInTheDocument()
+})
+
+test('an earlier activation is discarded across an A-B-A vault switch', async () => {
+  const { store } = mount()
+  let resolveFirst!: (scopes: typeof subscriptionScopes.values) => void
+  const firstResponse = new Promise<typeof subscriptionScopes.values>((resolve) => {
+    resolveFirst = resolve
+  })
+  subscriptionList.mockImplementationOnce(async () => firstResponse)
+  act(() => store.set(activeRemoteAtom, 'other/repo'))
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(2))
+  subscriptionScopes.values = [
+    { path: '', explicit: true, coveredBy: null, baseline: 'f'.repeat(40) },
+  ]
+  act(() => store.set(activeRemoteAtom, 'mara/notes'))
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(3))
+  expect(await screen.findByRole('button', { name: 'Unsubscribe this vault' })).toBeInTheDocument()
+  resolveFirst([])
+  await act(async () => firstResponse)
+  expect(screen.getByRole('button', { name: 'Unsubscribe this vault' })).toBeInTheDocument()
 })
 
 test('subscription storage errors offer retry without hiding the tree', async () => {

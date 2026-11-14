@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
-import { openRepo } from '../src/main/git'
+import { GitError, openRepo } from '../src/main/git'
 import { createSubscriptions } from '../src/main/vault/subscriptions'
 
 const exec = promisify(execFile)
@@ -97,6 +97,77 @@ describe('machine-local subscriptions', () => {
         openRepo(root).head(),
       ),
     ).rejects.toThrow()
+  })
+
+  it('rejects schema-shaped arrays and invalid baseline lengths without changing bytes', async () => {
+    const root = await fixture()
+    const file = join(root, 'state.json')
+    const manager = createSubscriptions(file)
+    for (const text of [
+      '{"version":1,"remotes":[]}',
+      `{"version":1,"remotes":{"one/repo":[{"path":"","baseline":"${'a'.repeat(41)}"}]}}`,
+    ]) {
+      await writeFile(file, text)
+      await expect(manager.set('one/repo', root, '', true, async () => null)).rejects.toThrow()
+      expect(await readFile(file, 'utf8')).toBe(text)
+    }
+  })
+
+  it('serializes the full enable/disable intent and captures one valid baseline', async () => {
+    const root = await fixture()
+    const manager = createSubscriptions(join(root, 'state.json'))
+    let releaseHead!: (sha: string | null) => void
+    const delayedHead = new Promise<string | null>((resolve) => (releaseHead = resolve))
+    const enable = manager.set('one/repo', root, '', true, () => delayedHead)
+    await Promise.resolve()
+    const disable = manager.set('one/repo', root, '', false, async () => null)
+    releaseHead('a'.repeat(40))
+    await Promise.all([enable, disable])
+    expect(await manager.list('one/repo', root, [''])).toMatchObject([{ explicit: false }])
+
+    let reads = 0
+    await Promise.all([
+      manager.set('one/repo', root, '', true, async () => {
+        reads += 1
+        return 'b'.repeat(40)
+      }),
+      manager.set('one/repo', root, '', true, async () => {
+        reads += 1
+        return 'c'.repeat(40)
+      }),
+    ])
+    expect(reads).toBe(1)
+    expect(await manager.list('one/repo', root, [''])).toMatchObject([
+      { explicit: true, baseline: 'b'.repeat(40) },
+    ])
+    const disableThenEnableDisable = manager.set('one/repo', root, '', false, async () => null)
+    const disableThenEnableEnable = manager.set('one/repo', root, '', true, async () =>
+      'e'.repeat(40),
+    )
+    await Promise.all([disableThenEnableDisable, disableThenEnableEnable])
+    expect(await manager.list('one/repo', root, [''])).toMatchObject([
+      { explicit: true, baseline: 'e'.repeat(40) },
+    ])
+    await expect(
+      manager.set('one/repo', root, 'notes', true, async () => 'd'.repeat(41)),
+    ).rejects.toThrow('invalid HEAD')
+  })
+
+  it('returns null only for a verified unborn branch and rejects other HEAD failures', async () => {
+    const unborn = await fixture(false)
+    await expect(openRepo(unborn).head()).resolves.toBeNull()
+
+    const notRepo = await mkdtemp(join(tmpdir(), 'holi-not-repo-'))
+    roots.push(notRepo)
+    await expect(openRepo(notRepo).head()).rejects.toBeInstanceOf(GitError)
+
+    const corrupt = await fixture()
+    await writeFile(join(corrupt, '.git', 'HEAD'), 'not a ref\n')
+    await expect(openRepo(corrupt).head()).rejects.toBeInstanceOf(GitError)
+
+    const missingObject = await fixture()
+    await writeFile(join(missingObject, '.git', 'refs', 'heads', 'main'), `${'d'.repeat(40)}\n`)
+    await expect(openRepo(missingObject).head()).rejects.toBeInstanceOf(GitError)
   })
 
   it('refuses directory symlink aliases', async () => {
