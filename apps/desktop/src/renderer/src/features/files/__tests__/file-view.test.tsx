@@ -111,6 +111,7 @@ test('only paths actually routed to the core text editor are retainable', () => 
   expect(isCoreTextFilePath('extensionless', [])).toBe(true)
   expect(isCoreTextFilePath('data.json', [])).toBe(true)
   expect(isCoreTextFilePath('note.md', [])).toBe(false)
+  expect(isCoreTextFilePath('page.mdx', [pdfClaim])).toBe(true)
   expect(isCoreTextFilePath('photo.png', [])).toBe(false)
   expect(isCoreTextFilePath('archive.docx', [])).toBe(false)
   expect(isCoreTextFilePath('paper.pdf', [pdfClaim])).toBe(false)
