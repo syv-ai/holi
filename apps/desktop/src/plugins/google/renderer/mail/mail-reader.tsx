@@ -38,15 +38,23 @@ export function MailReader({
   mail,
   composer,
   onCompose,
+  standaloneComposer = null,
   visible,
 }: {
   mail: MailState
   /** The inline reply or forward, at the foot of the thread it answers. */
   composer: ReactNode
   onCompose: () => void
+  standaloneComposer?: ReactNode
   visible: boolean
 }) {
   const reader = mail.reader
+
+  if (standaloneComposer !== null) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">{standaloneComposer}</div>
+    )
+  }
 
   if (reader.kind === 'idle') {
     return (

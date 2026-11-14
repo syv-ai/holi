@@ -6,7 +6,7 @@
  * with no server, a check running on the machine of the person it restricts is
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
-import { readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import { resolveRelative } from '@holi/shared/path-safety-node'
@@ -30,6 +30,7 @@ import {
   MEMORY_DIR,
   MEMORY_INDEX,
   isHiddenPath,
+  SCRATCHPAD_PATH,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
 import type { OpenVault } from './plugin-host/host'
@@ -63,6 +64,7 @@ import type { ActivityEntry, ActivityLog } from './activity/log'
 import type { AppLog, AppLogEntry } from './logs/app-log'
 import type { TerminalInfo, TerminalOpened, Terminals } from './terminal/terminals'
 import { ensureClone } from './vault/clone'
+import { prepareManagedClone } from './vault/prepare-clone'
 import {
   absPathFor,
   carryFolder,
@@ -170,6 +172,8 @@ export interface RouterDeps {
    *  tests. Passed in rather than read from `vaultRoot()` here so the router
    *  has no ambient dependency on the environment. */
   vaultRoot: string
+  /** Clone preparation, injectable for router tests that use non-Git fixture roots. */
+  prepareClone?: (root: string) => Promise<void>
   /**
    * Where to clone a remote *from*. Defaults to its credential-free GitHub URL.
    *
@@ -402,6 +406,7 @@ const ACTIVITY_FILES = 5
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? (() => localDate(new Date()))
+  let vaultOpenRevision = 0
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const capabilities =
     deps.capabilities ??
@@ -470,43 +475,41 @@ export function createRouter(deps: RouterDeps) {
     url: string | undefined,
     opts: { requireVault?: boolean; readme?: string } = {},
   ): Promise<VaultSnapshot> {
-    const { repo, outcome } = await ensureClone({
-      root: deps.vaultRoot,
-      remote,
-      url: url ?? cloneUrlFor(remote),
-      deps: { token: () => deps.session.token() },
+    const active = await deps.host.open(remote, async (coldStart) => {
+      if (!coldStart) return
+      const { repo, outcome } = await ensureClone({
+        root: deps.vaultRoot,
+        remote,
+        url: url ?? cloneUrlFor(remote),
+        deps: { token: () => deps.session.token() },
+      })
+      // Validate before any preparation or seed side effects. A rejected clone
+      // is never entered into the registry.
+      if (opts.requireVault && !(await isVaultClone(repo.root))) {
+        if (outcome.kind === 'cloned') await rm(repo.root, { recursive: true, force: true })
+        throw new Error(
+          `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
+        )
+      }
+      await (deps.prepareClone ?? prepareManagedClone)(repo.root)
+      await deps.seed(repo.root)
+      // A new vault's README, beside the seed so it lands in the first commit.
+      // Not a once-seed file: it is written from this vault's own answer. Never
+      // over one that is already there (`wx`).
+      if (opts.readme !== undefined) {
+        await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
+          (err: NodeJS.ErrnoException) => {
+            if (err.code !== 'EEXIST') throw err
+          },
+        )
+      }
+      await deps.registry.add({
+        remote,
+        path: repo.root,
+        name: repoName(remote),
+        lastOpenedAt: now(),
+      })
     })
-    // Joining an existing vault (not creating one) — refuse anything that is not
-    // already a vault. The seed below would otherwise write `AGENTS.md`,
-    // `.claude/` and friends into a plain code repo and the auto-push would carry
-    // them upstream, quietly turning someone's codebase into a half-vault. The
-    // marker is the `.holi/vault` the seed commits at creation. A repo we
-    // just cloned for this is removed on refusal so nothing is left behind; a
-    // pre-existing adopted path is left exactly as we found it.
-    if (opts.requireVault && !(await isVaultClone(repo.root))) {
-      if (outcome.kind === 'cloned') await rm(repo.root, { recursive: true, force: true })
-      throw new Error(
-        `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
-      )
-    }
-    await deps.seed(repo.root)
-    // A new vault's README, beside the seed so it lands in the first commit.
-    // Not a once-seed file: it is written from this vault's own answer. Never
-    // over one that is already there (`wx`).
-    if (opts.readme !== undefined) {
-      await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
-        (err: NodeJS.ErrnoException) => {
-          if (err.code !== 'EEXIST') throw err
-        },
-      )
-    }
-    await deps.registry.add({
-      remote,
-      path: repo.root,
-      name: repoName(remote),
-      lastOpenedAt: now(),
-    })
-    const active = await deps.host.open(remote)
     deps.plugins.setDisplayed(remote)
     await deps.plugins.reconcile(active, 'open')
     deps.opened?.(remote)
@@ -538,6 +541,16 @@ export function createRouter(deps: RouterDeps) {
       return vaultRelPath(path)
     } catch (err) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message })
+    }
+  }
+
+  /** Refuse a planted scratchpad link rather than reading through it or
+   * replacing it with the atomic writer. Missing leaves remain valid writes. */
+  async function guardScratchpadLink(root: string, rel: VaultRelPath): Promise<void> {
+    if (rel.toLowerCase() !== SCRATCHPAD_PATH.toLowerCase()) return
+    const info = await lstat(join(root, rel)).catch(() => null)
+    if (info?.isSymbolicLink()) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'scratchpad path cannot be a symlink' })
     }
   }
 
@@ -795,6 +808,7 @@ export function createRouter(deps: RouterDeps) {
     open: t.procedure
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
+        const revision = ++vaultOpenRevision
         // Opening is what starts the watcher and the sync loop — the snapshot
         // is a by-product, and comes from the vault that is now live rather
         // than from a second read that could already disagree with it.
@@ -807,11 +821,19 @@ export function createRouter(deps: RouterDeps) {
          * Before `host.open`, for `addVault`'s reason: nothing can be committed
          * ahead of the `.gitignore`.
          */
+        if (deps.host.get(input.remote) === null) {
+          await deps.host.prepare(input.remote, (coldStart) =>
+            coldStart ? (deps.prepareClone ?? prepareManagedClone)(root) : Promise.resolve(),
+          )
+        }
         await deps.seed(root)
         await deps.registry.touch(input.remote, now())
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         const active = await deps.host.open(input.remote)
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         deps.plugins.setDisplayed(input.remote)
         await deps.plugins.reconcile(active, 'open')
+        if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         deps.opened?.(input.remote)
         return active.snapshot()
       }),
@@ -1105,7 +1127,10 @@ export function createRouter(deps: RouterDeps) {
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
       .query(async ({ input }): Promise<string> => {
-        const abs = absPathFor(await rootFor(input.remote), safe(input.path))
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        await guardScratchpadLink(root, rel)
+        const abs = absPathFor(root, rel)
         const text = await readFile(abs, 'utf8').catch(() => null)
         if (text === null) throw new TRPCError({ code: 'NOT_FOUND', message: input.path })
         return text
@@ -1183,7 +1208,10 @@ export function createRouter(deps: RouterDeps) {
         // Under the file's lock, keyed as an app's `docs.write` keys it (the
         // canonical path), so an app's check of the text it read and its
         // write are never split by this save.
-        await withFileLock(await lockPath(root, rel), () => writeAtomic(root, rel, input.text))
+        await withFileLock(await lockPath(root, rel), async () => {
+          await guardScratchpadLink(root, rel)
+          await writeAtomic(root, rel, input.text)
+        })
         return { ok: true as const }
       }),
 

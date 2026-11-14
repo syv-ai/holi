@@ -217,7 +217,7 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
                           {repo.remote.split('/')[1]}
                         </span>
                         {repo.visibility !== 'private' && (
-                          <Badge variant="outline" radius="full">
+                          <Badge variant="secondary" radius="full">
                             {repo.visibility === 'public' ? 'Public' : 'Internal'}
                           </Badge>
                         )}

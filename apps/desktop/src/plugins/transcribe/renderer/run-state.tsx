@@ -34,13 +34,13 @@ export function RunState({
     return now - sentAt < JUST_SENT_MS ? (
       <Badge variant="secondary">Sent</Badge>
     ) : (
-      <Badge variant="success-light">Done</Badge>
+      <Badge variant="success">Done</Badge>
     )
   }
-  if (row.state === 'needs-you') return <Badge variant="warning-light">Needs you</Badge>
+  if (row.state === 'needs-you') return <Badge variant="warning">Needs you</Badge>
   if (row.state === 'working') {
     return (
-      <Badge variant="info-light">
+      <Badge variant="info">
         <Spinner />
         Running
       </Badge>

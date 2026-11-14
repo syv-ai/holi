@@ -27,7 +27,7 @@ import {
   type PreCommitHook,
   type PreCommitStatus,
 } from '@holi/shared'
-import { resolveBin, toolPath } from '../../bin'
+import { resolveBin, toolPath, withPath } from '../../bin'
 import { jsonFileStore } from '../../json-file-store'
 import type { Transform } from './runner'
 import type { StagedChanges } from './staged'
@@ -121,7 +121,7 @@ export function createVaultPreCommit(opts: {
   const lastRuns = new Map<string, NonNullable<PreCommitStatus['lastRun']>>()
   /** Each vault's environment setup this session, by root. */
   const setups = new Map<string, Promise<void>>()
-  const runEnv = () => ({ ...env, PATH: toolPath(env) })
+  const runEnv = () => withPath({ ...env }, toolPath(env))
 
   const tool = () => resolveBin('pre-commit', env)
 

@@ -32,7 +32,8 @@ describe('agent.version', () => {
 
   it('uses Holi’s Claude binary even when the Dock PATH cannot find it', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-agent-version-'))
-    const bin = join(dir, 'claude')
+    // Windows runs only a file with a program's extension.
+    const bin = join(dir, process.platform === 'win32' ? 'claude.cmd' : 'claude')
     try {
       await writeFile(bin, '#!/bin/sh\n')
       await chmod(bin, 0o755)

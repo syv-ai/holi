@@ -2,7 +2,7 @@ import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 import { PiRpcRun, type PiChild } from '../main/pi/rpc'
 
-function fake() {
+function fake(autoClose = true) {
   const stdin = new PassThrough()
   const stdout = new PassThrough()
   const stderr = new PassThrough()
@@ -12,6 +12,8 @@ function fake() {
       if (line) commands.push(JSON.parse(line) as Record<string, unknown>)
   })
   let exit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
+  let close: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
+  let childError: ((error: Error) => void) | undefined
   const child: PiChild = {
     stdin,
     stdout,
@@ -19,11 +21,14 @@ function fake() {
     once(event, listener) {
       if (event === 'exit')
         exit = listener as (code: number | null, signal: NodeJS.Signals | null) => void
-      else if (event === 'error') stdin.once('error', listener as (error: Error) => void)
+      else if (event === 'close')
+        close = listener as (code: number | null, signal: NodeJS.Signals | null) => void
+      else if (event === 'error') childError = listener as (error: Error) => void
       return this
     },
     kill() {
       exit?.(null, 'SIGTERM')
+      if (autoClose) close?.(null, 'SIGTERM')
       return true
     },
   }
@@ -31,7 +36,12 @@ function fake() {
     child,
     stdout,
     commands,
-    exit: () => exit?.(1, null),
+    exit: () => {
+      exit?.(1, null)
+      close?.(1, null)
+    },
+    error: (error: Error) => childError?.(error),
+    close: () => close?.(null, null),
   }
 }
 
@@ -206,6 +216,60 @@ describe('PiRpcRun', () => {
       contextPercent: 13,
     })
     run.close()
+  })
+
+  it('keeps close and cancel pending until the child close event', async () => {
+    const process = fake(false)
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
+    const result = run.prompt('x')
+    let closeDone = false
+    const closing = run.close().then(() => {
+      closeDone = true
+    })
+    const repeated = run.close()
+    await expect(result).resolves.toMatchObject({ status: 'aborted' })
+    await Promise.resolve()
+    expect(closeDone).toBe(false)
+    process.close()
+    await Promise.all([closing, repeated])
+    expect(closeDone).toBe(true)
+  })
+
+  it('keeps cancel pending until the child close event', async () => {
+    const process = fake(false)
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
+    const result = run.prompt('x')
+    let cancelled = false
+    const cancelling = run.cancel().then(() => {
+      cancelled = true
+    })
+    await expect(result).resolves.toMatchObject({ status: 'aborted' })
+    await Promise.resolve()
+    expect(cancelled).toBe(false)
+    process.close()
+    await Promise.all([cancelling, run.cancel()])
+    expect(cancelled).toBe(true)
+  })
+
+  it('fails queued input on stdin errors and drains after launch errors', async () => {
+    const input = fake()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => input.child })
+    const result = run.prompt('queued')
+    input.child.stdin.destroy(new Error('EPIPE'))
+    await expect(result).resolves.toMatchObject({ status: 'failed', error: 'EPIPE' })
+    await run.drained
+
+    const launch = fake(false)
+    const failed = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => launch.child })
+    launch.error(new Error('spawn failed'))
+    let drained = false
+    const draining = failed.close().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+    launch.close()
+    await draining
   })
 
   it('cancels and kills the managed child', async () => {

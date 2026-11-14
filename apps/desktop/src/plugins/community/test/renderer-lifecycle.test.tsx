@@ -40,6 +40,7 @@ const row: PluginRow = {
   serve: null,
   apps: [],
   bin: [],
+  cli: null,
   commandsNote: null,
   check: null,
 }
@@ -173,7 +174,8 @@ test('a frame acquires only for its current remote and serving row', async () =>
 })
 
 test('visibility toggles keep the same iframe document and lease', async () => {
-  capability.acquire.mockResolvedValue(releaseResult)
+  const acquisition = deferred<typeof releaseResult>()
+  capability.acquire.mockReturnValue(acquisition.promise)
   const store = createStore()
   store.set(activeRemoteAtom, 'ada/notes')
   store.set(rowsAtom, { remote: 'ada/notes', rows: [row] })
@@ -183,6 +185,11 @@ test('visibility toggles keep the same iframe document and lease', async () => {
     </Provider>,
   )
   await waitFor(() => expect(capability.acquire).toHaveBeenCalledTimes(1))
+  expect(view.container.querySelector('iframe')).toBeNull()
+  await act(async () => {
+    acquisition.resolve(releaseResult)
+  })
+  await waitFor(() => expect(view.container.querySelector('iframe')).not.toBeNull())
   const iframe = view.container.querySelector('iframe')!
   const attributes = ['src', 'sandbox', 'allow'].map((name) => iframe.getAttribute(name))
   view.rerender(

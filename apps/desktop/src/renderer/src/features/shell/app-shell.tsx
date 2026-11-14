@@ -1,5 +1,5 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
-import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { SCRATCHPAD_PATH, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 
@@ -53,7 +53,12 @@ import {
 import { openingBeside } from '@/state/alt-open'
 import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
 import { shellTabForPathAtom } from '@/state/surfaces'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  openedRemoteAtom,
+  snapshotAtom,
+  snapshotLoadedAtom,
+} from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
@@ -95,6 +100,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const snapshotLoaded = useAtomValue(snapshotLoadedAtom)
   const settings = useAtomValue(vaultSettingsAtom)
   const loadSettings = useSetAtom(loadVaultSettingsAtom)
   const store = useStore()
@@ -209,7 +215,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   function closeTab(key: string) {
-    void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)))
+    void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)), true).catch(() => {})
   }
 
   function requestEntryClose(request: EntryCloseRequest) {
@@ -265,6 +271,18 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   const createDocument = useNewDocument(openTabKey)
+  const openScratchpad =
+    remote !== null && snapshotLoaded && store.get(openedRemoteAtom) === remote
+      ? () => {
+          if (
+            store.get(activeRemoteAtom) === remote &&
+            store.get(openedRemoteAtom) === remote &&
+            store.get(snapshotLoadedAtom)
+          ) {
+            openTabKey(SCRATCHPAD_PATH)
+          }
+        }
+      : undefined
   function newDocument() {
     void createDocument()
   }
@@ -309,6 +327,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     reopenTab: () => setWs(reopenClosed),
     splitRight: () => setWs(splitActive),
     newDocument,
+    openScratchpad,
     toggleFiles: toggleSidebar,
     showFiles,
     openApp,
@@ -577,6 +596,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           beside ? setWs((w) => openInSplit(w, keyFor(id))) : openTabKey(id)
         }
         onAddVault={onAddVault}
+        onOpenScratchpad={openScratchpad}
       />
       <ShortcutsDialog />
       <ConfirmDialog

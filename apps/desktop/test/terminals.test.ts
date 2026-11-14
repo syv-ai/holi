@@ -3,7 +3,7 @@
  * which shell runs where, what crosses to the renderer, and that one vault's
  * terminal is never another's.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { PtyProcess, SpawnPtyOptions } from '../src/main/terminal/pty'
 import {
   createTerminals,
@@ -11,6 +11,7 @@ import {
   type TerminalEvent,
   type TerminalsDeps,
 } from '../src/main/terminal/terminals'
+import { delimiter } from 'node:path'
 
 class FakePty implements PtyProcess {
   static nextPid = 1000
@@ -99,7 +100,7 @@ describe('terminals', () => {
     expect(pty.opts.env).toMatchObject({
       TERM: 'xterm-256color',
       HOME: '/home/me',
-      PATH: '/app/bin:/usr/bin',
+      PATH: `/app/bin${delimiter}/usr/bin`,
     })
     expect(pty.opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
   })
@@ -208,9 +209,10 @@ describe('terminals', () => {
     })
     terminals.create({ remote: 'o/r', root: '/r', cols: 80, rows: 24 })
     ptys[0]!.print('$ ')
-    await settle()
-    expect(asked).toEqual([ptys[0]!.pid])
-    expect(contexts(events).at(-1)?.cwd).toBe('/r/sub')
+    await vi.waitFor(() => {
+      expect(asked).toEqual([ptys[0]!.pid])
+      expect(contexts(events).at(-1)?.cwd).toBe('/r/sub')
+    })
   })
 
   it('starts zsh through the integration when there is one', () => {
