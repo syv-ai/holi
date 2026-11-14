@@ -9,8 +9,9 @@
  *   truncated file, which a read would discard along with every entry in it.
  * - **One change at a time.** An update reads the file, changes it and writes
  *   it back; two at once would each read the same file, and the second rename
- *   would drop the first's change. Updates queue, and each sees the file as
- *   the one before it left it.
+ *   would drop the first's change. Updates from every handle in this main
+ *   process queue, and each sees the file as the one before it left it. Paths
+ *   are matched lexically; symlinks and other processes do not share ordering.
  *
  * `parse` validates what is on disk and is handed `null` for a file that is
  * missing or not JSON, so each store decides what its empty state is and what
@@ -19,11 +20,29 @@
  *
  * Read from disk every time unless `cache` is set: these are files a developer
  * may open and fix, and a read that ignores the fix is a confusing bug. Main is
- * the only writer, so a cache is safe where reads are hot (the registry is
- * read by every path-taking procedure).
+ * the only writer, so handles invalidate each other's caches after completed
+ * writes. A cache is safe where reads are hot (the registry is read by every
+ * path-taking procedure).
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
+
+interface FileState {
+  tail: Promise<void>
+  pending: number
+  writes: number
+}
+
+const fileStates = new Map<string, FileState>()
+
+function stateFor(path: string): FileState {
+  let state = fileStates.get(path)
+  if (state === undefined) {
+    state = { tail: Promise.resolve(), pending: 0, writes: 0 }
+    fileStates.set(path, state)
+  }
+  return state
+}
 
 export interface JsonFileStore<T> {
   read(): Promise<T>
@@ -39,16 +58,15 @@ export function jsonFileStore<T>(
   parse: (raw: unknown, text: string | null) => T,
   options: { cache?: boolean } = {},
 ): JsonFileStore<T> {
-  let cached: { value: T } | null = null
-  let queue: Promise<unknown> = Promise.resolve()
-  /** Bumped by every write, so a read that began before one cannot cache
-   *  what the write replaced. */
-  let writes = 0
+  const filename = resolve(path)
+  const state = stateFor(filename)
+  let cached: { value: T; writes: number } | null = null
 
   const read = async (): Promise<T> => {
-    if (cached !== null) return cached.value
-    const began = writes
-    const text = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (cached !== null && cached.writes === state.writes) return cached.value
+    cached = null
+    const began = state.writes
+    const text = await readFile(filename, 'utf8').catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return null
       throw error
     })
@@ -61,17 +79,17 @@ export function jsonFileStore<T>(
       }
     }
     const value = parse(raw, text)
-    if (options.cache === true && cached === null && writes === began) cached = { value }
+    if (options.cache === true && state.writes === began) cached = { value, writes: began }
     return value
   }
 
   const write = async (value: T): Promise<void> => {
-    await mkdir(dirname(path), { recursive: true })
-    const temporary = `${path}.tmp`
+    await mkdir(dirname(filename), { recursive: true })
+    const temporary = `${filename}.tmp`
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-    await rename(temporary, path)
-    writes += 1
-    if (options.cache === true) cached = { value }
+    await rename(temporary, filename)
+    state.writes += 1
+    if (options.cache === true) cached = { value, writes: state.writes }
   }
 
   return {
@@ -82,8 +100,17 @@ export function jsonFileStore<T>(
         await write(next)
         return next
       }
-      const done = queue.then(run, run)
-      queue = done.catch(() => {})
+      const done = state.tail.then(run, run)
+      state.pending += 1
+      const tail = done.then(
+        () => undefined,
+        () => undefined,
+      )
+      state.tail = tail
+      void tail.then(() => {
+        state.pending -= 1
+        if (state.pending === 0 && state.tail === tail) state.tail = Promise.resolve()
+      })
       return done
     },
   }
