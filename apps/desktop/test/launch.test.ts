@@ -473,7 +473,7 @@ describe('execProgram', () => {
       const readyFile = join(dir, 'ready')
       const releaseFile = join(dir, 'release')
       const descendant = `require('node:fs').writeFileSync(${JSON.stringify(readyFile)},'ready');process.stdout.write('descendant output');setInterval(()=>0,1000)`
-      const script = `const fs=require('node:fs');require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','inherit','ignore'],windowsHide:true,detached:true}).on('spawn',c=>fs.writeFileSync(${JSON.stringify(pidFile)},String(c.pid)));const wait=()=>fs.existsSync(${JSON.stringify(releaseFile)})?process.exit(0):setTimeout(wait,10);wait()`
+      const script = `const fs=require('node:fs');const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','inherit','ignore'],windowsHide:true,detached:true});c.on('spawn',()=>fs.writeFileSync(${JSON.stringify(pidFile)},String(c.pid)));const wait=()=>fs.existsSync(${JSON.stringify(releaseFile)})?process.exit(0):setTimeout(wait,10);wait()`
       const { execProgram } = await import('../src/main/launch')
       let reported = false
       let pid = 0
