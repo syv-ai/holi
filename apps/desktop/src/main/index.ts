@@ -532,6 +532,39 @@ async function main(): Promise<void> {
     get: (remote) => host.get(remote),
   })
 
+  // Electron 43's protocol Request has no `webContentsId`. Capture the native
+  // requester in webRequest before Chromium hands the URL to protocol.handle.
+  // Ambiguous concurrent identical URLs fail closed instead of selecting a
+  // window by guesswork.
+  const appRequestWindows = new Map<string, { window: BrowserWindow | null }[]>()
+  const requestWindows = new WeakMap<Request, BrowserWindow | null>()
+  electronSession.defaultSession.webRequest.onBeforeRequest(
+    { urls: ['holi-app://*/*'] },
+    (details, callback) => {
+      let window: BrowserWindow | null = null
+      try {
+        const contents =
+          details.webContentsId === undefined
+            ? undefined
+            : webContents.fromId(details.webContentsId)
+        window = contents === undefined ? null : BrowserWindow.fromWebContents(contents)
+      } catch {
+        window = null
+      }
+      const pending = appRequestWindows.get(details.url) ?? []
+      const context = { window }
+      pending.push(context)
+      appRequestWindows.set(details.url, pending)
+      setTimeout(() => {
+        const index = pending.indexOf(context)
+        if (index >= 0) pending.splice(index, 1)
+        if (pending.length === 0 && appRequestWindows.get(details.url) === pending)
+          appRequestWindows.delete(details.url)
+      }, 5_000).unref()
+      callback({})
+    },
+  )
+
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
   for (const entry of SCHEMES) {
     protocol.handle(
@@ -541,14 +574,13 @@ async function main(): Promise<void> {
         runs: async (owner, root) => (await plugins.enabled(root)).has(owner),
         appFrames,
         windowForRequest: (request) => {
-          const id = (request as Request & { webContentsId?: number }).webContentsId
-          if (id === undefined) return null
-          try {
-            const contents = webContents.fromId(id)
-            return contents === undefined ? null : BrowserWindow.fromWebContents(contents)
-          } catch {
-            return null
-          }
+          if (requestWindows.has(request)) return requestWindows.get(request) ?? null
+          const pending = appRequestWindows.get(request.url)
+          if (pending === undefined || pending.length !== 1) return null
+          const window = pending[0]!.window
+          appRequestWindows.delete(request.url)
+          requestWindows.set(request, window)
+          return window
         },
       }),
     )
