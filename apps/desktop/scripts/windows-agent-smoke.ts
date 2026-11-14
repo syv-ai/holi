@@ -87,7 +87,7 @@ async function run() {
     cliBody,
     `
 const fs=require('node:fs'),cp=require('node:child_process');
-if(process.env.HOLI_NODE_PTY_SPEC || process.env.HOLI_NODE_PTY_EXEC)throw new Error('private launch transport leaked');
+if(Object.keys(process.env).some(k=>k.toUpperCase().startsWith('HOLI_OWNED_PROCESS_PTY_')))throw new Error('private launch transport leaked');
 module.exports=function(){const args=process.argv.slice(2);
 if(args[0]==='--pty') {
  if(process.platform==='win32'){

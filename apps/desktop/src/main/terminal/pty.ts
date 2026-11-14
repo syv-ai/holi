@@ -7,6 +7,7 @@
  * real spawn path only; tests inject a fake PTY and never touch it.
  */
 import { commandLine, launchPlan } from '../launch'
+import { windowsPtyFallbackPlan } from '../owned-process'
 import { defaultProbePid, killTree, type PidState, type Taskkill } from '../process-group'
 
 /** The slice of node-pty's IPty Holi depends on (tests implement it directly). */
@@ -38,25 +39,13 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
   const launch = launchPlan(file, args, { env: opts.env })
   const env = launch.env ? { ...opts.env, ...launch.env } : opts.env
   if (process.platform === 'win32' && launch.env?.ELECTRON_RUN_AS_NODE === '1') {
-    // Electron is a GUI executable: its Node mode attaches to its parent's
-    // console. A console parent keeps it on ConPTY rather than Holi's console.
-    // User argv travels as JSON, never as command-shell source.
-    const spec = JSON.stringify({ file: launch.args[0], args: launch.args.slice(1) })
-    if (spec.length > 30_000)
-      throw new Error(
-        'The Node fallback arguments exceed the Windows environment limit. Install Node.js to run this command.',
-      )
-    const bootstrap = String.raw`const s=JSON.parse(process.env.HOLI_NODE_PTY_SPEC);delete process.env.HOLI_NODE_PTY_SPEC;delete process.env.HOLI_NODE_PTY_EXEC;process.argv=[process.execPath,s.file,...s.args];process.execArgv=[];const tty=require('node:tty');if(!tty.isatty(0)){const f=require('node:fs');try{f.closeSync(0)}catch(e){if(e.code!=='EBADF')throw e}let fd;try{fd=f.openSync('\\\\.\\CONIN$','r')}catch(e){throw Error('Could not attach Electron Node fallback to console input: '+e.message)}if(fd!==0){try{f.closeSync(fd)}catch{}throw Error('Could not attach Electron Node fallback to console input: expected descriptor 0, received '+fd)}if(!tty.isatty(0))throw Error('Could not attach Electron Node fallback to console input: reopened descriptor is not a TTY')}if(!process.stdin.isTTY)Object.defineProperty(process,'stdin',{value:new tty.ReadStream(0,{highWaterMark:0}),configurable:true,enumerable:true});require('node:module').runMain(s.file)`
-    const key = Object.keys(env).find((key) => key.toUpperCase() === 'COMSPEC')
-    return pty.spawn(
-      key ? env[key]! : 'cmd.exe',
-      `/d /v:off /s /c "start "" /b /wait "%HOLI_NODE_PTY_EXEC%" -e "${bootstrap}"`,
-      {
-        name: 'xterm-256color',
-        ...opts,
-        env: { ...env, HOLI_NODE_PTY_EXEC: launch.file, HOLI_NODE_PTY_SPEC: spec },
-      },
-    ) as unknown as PtyProcess
+    const fallback = windowsPtyFallbackPlan(launch, opts)
+    return pty.spawn(fallback.file, fallback.args, {
+      name: 'xterm-256color',
+      ...opts,
+      cwd: fallback.cwd,
+      env: fallback.env as Record<string, string>,
+    }) as unknown as PtyProcess
   }
   return pty.spawn(launch.file, commandLine(launch), {
     name: 'xterm-256color',
