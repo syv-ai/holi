@@ -50,12 +50,14 @@ export function removeRewrite(queue: RewriteQueue, id: string): RewriteQueue {
   return queue.filter((request) => request.id !== id)
 }
 
-/** Map queued positions through an editor transaction; uncertain targets require reselection. */
+/** Map local edits; disk reloads are ambiguous and require explicit reselection. */
 export function mapRewriteTargets(
   queue: RewriteQueue,
   mapping: Mapping,
   doc: ProseMirrorNode,
+  externalReload = false,
 ): RewriteQueue {
+  if (externalReload) return queue.map((request) => ({ ...request, valid: false }))
   return queue.map((request) => {
     if (!request.valid) return request
     const from = mapping.map(request.from, 1)

@@ -53,13 +53,22 @@ export function useDocumentAgentPrompt({
   /** What the ask prompt opens with: an app command's instruction. */
   const [promptInitial, setPromptInitial] = useState('')
   const [rewriteQueue, setRewriteQueue] = useState<RewriteQueue>([])
+  const rewriteQueueRef = useRef(rewriteQueue)
+  rewriteQueueRef.current = rewriteQueue
+  const [batchSubmitting, setBatchSubmitting] = useState(false)
   const batchInFlight = useRef(false)
 
+  function updateQueue(update: (queue: RewriteQueue) => RewriteQueue) {
+    const next = update(rewriteQueueRef.current)
+    rewriteQueueRef.current = next
+    setRewriteQueue(next)
+  }
+
   function addToBatch(instruction: string, passage: string) {
-    if (!editor || !activity.focused) return
+    if (batchInFlight.current || !editor || !activity.focused) return
     const { from, to, $from, $to } = editor.state.selection
     if (from === to || $from.parent !== $to.parent || !$from.parent.isTextblock) return
-    setRewriteQueue((queue) =>
+    updateQueue((queue) =>
       enqueueRewrite(
         queue,
         {
@@ -77,7 +86,8 @@ export function useDocumentAgentPrompt({
   }
 
   function reselection(id: string) {
-    const item = rewriteQueue.find((request) => request.id === id)
+    if (batchInFlight.current) return
+    const item = rewriteQueueRef.current.find((request) => request.id === id)
     if (!item || !editor) return
     if (item.valid) {
       editor.commands.setTextSelection({ from: item.from, to: item.to })
@@ -86,7 +96,7 @@ export function useDocumentAgentPrompt({
     }
     const { from, to, $from, $to } = editor.state.selection
     if (from === to || $from.parent !== $to.parent || !$from.parent.isTextblock) return
-    setRewriteQueue((queue) =>
+    updateQueue((queue) =>
       reselectRewrite(queue, id, {
         from,
         to,
@@ -99,32 +109,77 @@ export function useDocumentAgentPrompt({
   }
 
   async function submitBatch() {
-    if (
-      batchInFlight.current ||
-      !rewriteQueue.length ||
-      rewriteQueue.some((item) => !item.valid) ||
-      !activity.focused
-    )
-      return
+    if (batchInFlight.current || !editor || !activity.focused) return
+    const batch = rewriteQueueRef.current
+    if (!batch.length || batch.some((item) => !item.valid)) return
+
+    // Lock synchronously before save yields, so inputs, removals, reselections,
+    // and duplicate submits cannot change the request being saved/launched.
     batchInFlight.current = true
-    const batch = rewriteQueue
+    setBatchSubmitting(true)
+    const isCurrentVisit = activity.capture()
+    const savedRevision = editor.state.doc
+    const getLocation = (item: RewriteQueue[number]) => {
+      const targetBlock = savedRevision.resolve(item.from).parent
+      const blocks: string[] = []
+      let targetIndex = -1
+      savedRevision.descendants((node) => {
+        if (!node.isTextblock) return
+        blocks.push(node.textContent)
+        if (node === targetBlock) targetIndex = blocks.length - 1
+        return false
+      })
+      const current = blocks[targetIndex] ?? ''
+      const occurrence = blocks.slice(0, targetIndex + 1).filter((text) => text === current).length
+      return {
+        ordinal: targetIndex + 1,
+        occurrence,
+        previous: blocks[targetIndex - 1] ?? '',
+        current,
+        next: blocks[targetIndex + 1] ?? '',
+      }
+    }
+    const targets = batch.map((item) => ({ item, location: getLocation(item) }))
     const request = batch.map((item, index) => `${index + 1}. ${item.instruction}`).join('\n')
-    const passages = batch
-      .map((item, index) => `<target index="${index + 1}">\n${item.passage}\n</target>`)
+    const passages = targets
+      .map(
+        ({ item, location }, index) =>
+          `<target index="${index + 1}" document="${path}" body-block="${location.ordinal}" ` +
+          `identical-block-occurrence="${location.occurrence}">\n` +
+          `Previous block: ${JSON.stringify(location.previous)}\n` +
+          `Exact target: ${JSON.stringify(item.passage)}\n` +
+          `Current block: ${JSON.stringify(location.current)}\n` +
+          `Next block: ${JSON.stringify(location.next)}\n</target>`,
+      )
       .join('\n\n')
     try {
       await save()
+      // A save can yield to disk reloads, editor changes, tab/vault switches,
+      // or disposal. Never launch if the captured target revision is stale.
+      if (
+        editor.isDestroyed ||
+        !isCurrentVisit() ||
+        !editor.state.doc.eq(savedRevision) ||
+        rewriteQueueRef.current !== batch ||
+        batch.some((item) => !item.valid)
+      )
+        return
       const started = await agent.start(
         'rewrite',
-        `Apply each numbered request only to its corresponding target.\n${request}`,
+        `In the saved document ${path}, apply each numbered request only to its corresponding target. ` +
+          'Locate it by document path, 1-based Markdown body text-block order, occurrence among identical blocks, ' +
+          'neighboring blocks, and exact target text; ' +
+          'if those do not identify exactly one block, do not edit it.\n' +
+          request,
         passages,
-        activity.capture(),
+        isCurrentVisit,
       )
-      if (started) setRewriteQueue([])
+      if (started && isCurrentVisit() && rewriteQueueRef.current === batch) updateQueue(() => [])
     } catch {
       // Keep the queue available for retry after save or launch failure.
     } finally {
       batchInFlight.current = false
+      setBatchSubmitting(false)
     }
   }
 
@@ -196,11 +251,15 @@ export function useDocumentAgentPrompt({
     rewriteQueue,
     addToBatch,
     submitBatch,
-    mapTargets: (mapping: Mapping, doc: ProseMirrorNode) =>
-      setRewriteQueue((queue) => mapRewriteTargets(queue, mapping, doc)),
-    removeFromBatch: (id: string) => setRewriteQueue((queue) => removeRewrite(queue, id)),
-    editBatchItem: (id: string, instruction: string) =>
-      setRewriteQueue((queue) => updateRewrite(queue, id, { instruction })),
+    batchSubmitting,
+    mapTargets: (mapping: Mapping, doc: ProseMirrorNode, externalReload = false) =>
+      updateQueue((queue) => mapRewriteTargets(queue, mapping, doc, externalReload)),
+    removeFromBatch: (id: string) => {
+      if (!batchInFlight.current) updateQueue((queue) => removeRewrite(queue, id))
+    },
+    editBatchItem: (id: string, instruction: string) => {
+      if (!batchInFlight.current) updateQueue((queue) => updateRewrite(queue, id, { instruction }))
+    },
     reselection,
   }
 }

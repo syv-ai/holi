@@ -66,13 +66,13 @@ describe('rewrite request queue', () => {
     expect(mapRewriteTargets(mergedTarget, new Mapping(), doc('one two'))[0]?.valid).toBe(false)
   })
 
-  it('does not guess between duplicate text; identity is position-mapped', () => {
+  it('invalidates targets on an external reload instead of guessing among duplicates', () => {
     const queue = enqueueRewrite([], item, 'a')
-    const duplicate = new Mapping([new StepMap([0, 0, 4])])
-    expect(mapRewriteTargets(queue, duplicate, doc('one one'))[0]).toMatchObject({
-      from: 5,
-      to: 8,
-      valid: true,
+    const remainingDuplicate = doc('one')
+    expect(mapRewriteTargets(queue, new Mapping(), remainingDuplicate, true)[0]).toMatchObject({
+      valid: false,
+      from: item.from,
+      to: item.to,
     })
   })
 })

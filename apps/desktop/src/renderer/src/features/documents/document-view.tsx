@@ -331,6 +331,7 @@ function DocumentEditor({
     (
       _mapping: import('@tiptap/pm/transform').Mapping,
       _doc: import('@tiptap/pm/model').Node,
+      _externalReload?: boolean,
     ) => void
   >(() => {})
 
@@ -389,7 +390,12 @@ function DocumentEditor({
         },
       },
       onTransaction: ({ transaction }) => {
-        if (transaction.docChanged) mapTargetsRef.current(transaction.mapping, transaction.doc)
+        if (transaction.docChanged)
+          mapTargetsRef.current(
+            transaction.mapping,
+            transaction.doc,
+            transaction.getMeta('externalDocumentReload') === true,
+          )
       },
       onUpdate: ({ transaction }) => {
         if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
@@ -421,6 +427,7 @@ function DocumentEditor({
     editBatchItem,
     reselection,
     mapTargets,
+    batchSubmitting,
   } = useDocumentAgentPrompt({ editor, path, agent, handlers, save })
   mapTargetsRef.current = mapTargets
 
@@ -909,6 +916,7 @@ function DocumentEditor({
                           value={item.instruction}
                           placeholder="Change this passage…"
                           onChange={(event) => editBatchItem(item.id, event.target.value)}
+                          disabled={batchSubmitting}
                           className="max-w-56"
                         />
                         {!item.valid ? (
@@ -921,6 +929,7 @@ function DocumentEditor({
                           variant="outline"
                           size="sm"
                           onClick={() => reselection(item.id)}
+                          disabled={batchSubmitting}
                         >
                           {item.valid ? 'Reselect' : 'Use selection'}
                         </Button>
@@ -929,6 +938,7 @@ function DocumentEditor({
                           variant="ghost"
                           size="sm"
                           onClick={() => removeFromBatch(item.id)}
+                          disabled={batchSubmitting}
                         >
                           Remove
                         </Button>
@@ -939,6 +949,7 @@ function DocumentEditor({
                         type="button"
                         size="sm"
                         disabled={
+                          batchSubmitting ||
                           !canAsk ||
                           rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
                         }
