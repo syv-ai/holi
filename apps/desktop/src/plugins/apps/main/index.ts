@@ -32,18 +32,23 @@ const CODE_HEAL_MS = 30_000
  * the page's zoom. A hidden or minimised window gives an empty image, which
  * is no preview.
  */
-async function capture(rect: PreviewRect): Promise<Buffer | null> {
-  const { BrowserWindow } = await import('electron')
-  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isVisible())
-  if (win === undefined || win.isMinimized()) return null
-  const zoom = win.webContents.getZoomFactor()
-  const image = await win.webContents.capturePage({
+async function capture(
+  rect: PreviewRect,
+  win: Electron.BrowserWindow | null,
+  current: () => boolean,
+): Promise<Buffer | null> {
+  if (!current() || win === null || win.isDestroyed() || !win.isVisible() || win.isMinimized()) {
+    return null
+  }
+  const contents = win.webContents
+  const zoom = contents.getZoomFactor()
+  const image = await contents.capturePage({
     x: Math.round(rect.x * zoom),
     y: Math.round(rect.y * zoom),
     width: Math.round(rect.width * zoom),
     height: Math.round(rect.height * zoom),
   })
-  if (image.isEmpty()) return null
+  if (!current() || win.isDestroyed() || contents.isDestroyed() || image.isEmpty()) return null
   const { width } = image.getSize()
   const small =
     width > PREVIEW_WIDTH ? image.resize({ width: PREVIEW_WIDTH, quality: 'good' }) : image
@@ -70,9 +75,18 @@ export const appsMain: MainPlugin = {
     // The app door's one opener: the approvals an entry's `appGrant` asks for.
     const door: AppDoor = ctx.openAppDoor({ admit: admitApps(grants) })
     const previews = createAppPreviews(join(ctx.userData, 'app-previews'))
+    const presentation = ctx.presentationLease()
+    const captureForActivation = (rect: PreviewRect) => capture(rect, ctx.window(), presentation)
     ctx.register(
       ['apps'],
-      appsCapabilities({ events: ctx, appDoor: () => door, grants, previews, capture }),
+      appsCapabilities({
+        events: ctx,
+        appDoor: () => door,
+        grants,
+        previews,
+        capture: captureForActivation,
+        captureCurrent: presentation,
+      }),
     )
     ctx.register(['store'], storeCapabilities())
     ctx.register(ENV_NAMESPACES, envCapabilities())

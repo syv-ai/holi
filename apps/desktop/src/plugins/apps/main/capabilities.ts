@@ -94,6 +94,8 @@ export interface AppCapabilitiesDeps {
    *  page), as a small JPEG; null when there is nothing to take, such as a
    *  hidden window. Electron's, injected so this file loads under Node. */
   capture(rect: PreviewRect): Promise<Buffer | null>
+  /** The activation's display lifetime, checked around every asynchronous capture step. */
+  captureCurrent(): boolean
 }
 
 /** Where on the page an app's frame is, in CSS pixels. */
@@ -246,8 +248,9 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
       return { bundle: bundleParam(p), rect: rectParam(p.rect) }
     },
     run: async (ctx, { bundle, rect }) => {
+      if (!deps.captureCurrent()) return { saved: false }
       const jpeg = await deps.capture(rect)
-      if (jpeg === null) return { saved: false }
+      if (jpeg === null || !deps.captureCurrent()) return { saved: false }
       await deps.previews.save(ctx.remote, ctx.root, bundle, jpeg)
       return { saved: true }
     },
