@@ -1,5 +1,5 @@
 // ReUI: @reui/tree (`npx shadcn@latest view @reui/tree` shows the published source)
-import type { CSSProperties, HTMLAttributes } from "react"
+import type { CSSProperties, HTMLAttributes, KeyboardEvent as ReactKeyboardEvent } from "react"
 import { createContext, Fragment, useContext } from "react"
 import type { ItemInstance } from "@headless-tree/core"
 import { Slot } from "radix-ui"
@@ -137,9 +137,36 @@ function TreeItem<T = any>({
   // permits accessible row actions without nesting interactive elements.
   const Comp = asChild ? Slot.Root : "div"
 
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const headlessKeyDown = itemProps.onKeyDown as
+      | ((event: ReactKeyboardEvent<HTMLDivElement>) => void)
+      | undefined
+    const callerKeyDown = props.onKeyDown
+    callerKeyDown?.(event)
+    headlessKeyDown?.(event)
+    if (
+      event.defaultPrevented ||
+      (event.key !== "Enter" && event.key !== " ") ||
+      event.target !== event.currentTarget ||
+      event.currentTarget.closest("[data-disabled='true']") !== null
+    )
+      return
+    event.preventDefault()
+    event.currentTarget.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+      }),
+    )
+  }
+
   return (
     <TreeContext.Provider value={{ ...parentContext, currentItem: item }}>
-      <Comp {...defaultProps} {...otherProps}>
+      <Comp {...defaultProps} {...otherProps} onKeyDown={handleKeyDown}>
         {children}
       </Comp>
     </TreeContext.Provider>

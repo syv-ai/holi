@@ -112,6 +112,8 @@ export function FilesSection({
   const loaded = useAtomValue(snapshotLoadedAtom)
   const order = useAtomValue(treeOrderAtom)
   const setOrder = useSetAtom(setTreeOrderAtom)
+  const subscriptionRequest = useRef(0)
+  const activationEpoch = useRef(0)
   const [subscriptionData, setSubscriptionData] = useState<{
     remote: string
     scopes: { path: string; explicit: boolean; coveredBy: string | null; baseline: string | null }[]
@@ -219,34 +221,52 @@ export function FilesSection({
   }, [])
 
   const loadSubscriptions = useCallback(
-    async (remote: string) => {
+    async (remote: string, clearPending = false) => {
+      const request = ++subscriptionRequest.current
+      const epoch = activationEpoch.current
       setSubscriptionData((current) => ({
         remote,
         scopes: current?.remote === remote ? current.scopes : [],
         error: null,
-        pending: null,
+        pending: current?.remote === remote ? current.pending : null,
         loading: true,
       }))
+      const currentRequest = () =>
+        request === subscriptionRequest.current &&
+        epoch === activationEpoch.current &&
+        stillCurrent(remote)
       try {
         const scopes = await trpc.subscriptions.list.query({
           remote,
           paths: JSON.stringify(['', ...files.dirs]),
         })
-        if (!stillCurrent(remote)) return
-        setSubscriptionData({ remote, scopes, error: null, pending: null, loading: false })
+        if (!currentRequest()) return
+        setSubscriptionData((current) => ({
+          remote,
+          scopes,
+          error: null,
+          pending: clearPending ? null : current?.remote === remote ? current.pending : null,
+          loading: false,
+        }))
       } catch (error) {
-        if (!stillCurrent(remote)) return
+        if (!currentRequest()) return
         setSubscriptionData((current) => ({
           remote,
           scopes: current?.remote === remote ? current.scopes : [],
           error: error instanceof Error ? error.message : 'Could not load subscriptions.',
-          pending: null,
+          pending: clearPending ? null : current?.remote === remote ? current.pending : null,
           loading: false,
         }))
       }
     },
     [files.dirs, stillCurrent],
   )
+
+  useEffect(() => {
+    activationEpoch.current += 1
+    subscriptionRequest.current += 1
+    setSubscriptionData((current) => (current === null ? null : { ...current, pending: null }))
+  }, [files.remote])
 
   useEffect(() => {
     if (files.remote === null) {
@@ -257,6 +277,8 @@ export function FilesSection({
   }, [files.remote, loadSubscriptions])
 
   async function toggleSubscription(path: string) {
+    subscriptionRequest.current += 1
+    const epoch = activationEpoch.current
     const remote = files.remote
     if (remote === null || subscriptionData?.remote !== remote) return
     setSubscriptionData((current) =>
@@ -265,10 +287,10 @@ export function FilesSection({
     try {
       const scope = subscriptionData.scopes.find((entry) => entry.path === path)
       await trpc.subscriptions.set.mutate({ remote, path, enabled: scope?.explicit !== true })
-      if (!stillCurrent(remote)) return
-      await loadSubscriptions(remote)
+      if (epoch !== activationEpoch.current || !stillCurrent(remote)) return
+      await loadSubscriptions(remote, true)
     } catch (error) {
-      if (!stillCurrent(remote)) return
+      if (epoch !== activationEpoch.current || !stillCurrent(remote)) return
       setSubscriptionData((current) =>
         current === null
           ? current
