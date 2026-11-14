@@ -27,7 +27,7 @@ export function EditorPage() {
     >
       <SettingsFieldRow
         title="Vim mode"
-        description="Use Vim editing in code, plain-text files and ordinary Holi text fields on this machine. In normal mode, f shows labels for available Holi controls. Notes, mail, browser pages and terminals are unchanged."
+        description="Use Vim editing in code, plain-text files, mail message bodies and ordinary Holi text fields on this machine. In normal mode, f shows labels for available Holi controls. Notes, mail recipients and subjects, browser pages and terminals are unchanged."
         htmlFor="settings-vim-code-editing"
       >
         <Switch

@@ -132,7 +132,8 @@ export {
   /** @public */ type PluginDialog,
 } from '@/state/dialogs'
 export { askPrompt } from '@/lib/ask-agent'
-export { useGlobalPanelLayout } from '@/state/preferences'
+export { useGlobalPanelLayout, vimCodeEditingAtom } from '@/state/preferences'
+export { useVimEditor } from '@/editor/vim'
 /** @public Shared native field editing seam for core and plugin fields. */
 export { useVimField } from '@/hooks/use-vim-field'
 /** @public Mode presentation for native fields attached through the plugin seam. */

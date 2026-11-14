@@ -64,8 +64,8 @@ async function rig(files: Record<string, string> = {}, useFakeTypst = false) {
     claims: async () => [],
     core: noCoreServices(),
   }
-  const run = async (name: string, params?: unknown) =>
-    (await registry.run(name, 'ui', ctx, params)).value
+  const run = async (name: string, params?: unknown, door: 'ui' | 'cli' = 'ui') =>
+    (await registry.run(name, door, ctx, params)).value
   return { root, run }
 }
 
@@ -123,9 +123,9 @@ describe('pdf capabilities', () => {
     ).rejects.toThrow(/meta/)
   })
 
-  it('render writes to the given out, fills fields and threads meta through (needs typst)', async () => {
-    if ((await resolveTypstBin()) === null) return // no typst: skip, don't fail
-    const { run } = await rig({
+  it('renders captioned code through both UI and CLI doors (needs typst)', async (ctx) => {
+    if ((await resolveTypstBin()) === null) ctx.skip('Typst is required for real PDF compilation')
+    const { root, run } = await rig({
       '.holi/document-templates/plain/template.json': JSON.stringify({
         name: 'Plain',
         fields: [
@@ -135,7 +135,7 @@ describe('pdf capabilities', () => {
       }),
       '.holi/document-templates/plain/template.typ': plainTemplateTyp,
       'note.md':
-        '---\nrecipient: ACME\n---\n\n## Heading\n\n```mermaid\nflowchart LR\n  A --> B\n```\n',
+        '---\nrecipient: ACME\n---\n\n## Heading\n\n<!-- holi:figure -->\n\n```js\nconst path = "[[path/to/file.md|shown]]"; // @@FIG:literal@@\n```\n\n<!-- holi:caption -->\n\n**Caption**\n\n<!-- /holi:figure -->\n',
     })
     const out = join(base, 'chosen.pdf')
     const result = await run('pdf.render', { path: 'note.md', out, meta: { date: '2026-07-26' } })
@@ -147,6 +147,19 @@ describe('pdf capabilities', () => {
     })
     const bytes = await readFile(out)
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    const original = await readFile(join(root, 'note.md'), 'utf8')
+    expect(original).toContain('[[path/to/file.md|shown]]')
+
+    const cliOut = join(base, 'cli.pdf')
+    const cliResult = await run(
+      'pdf.render',
+      { path: 'note.md', out: cliOut, meta: { date: '2026-07-26' } },
+      'cli',
+    )
+    expect(cliResult).toMatchObject({ pdfPath: cliOut, vaultPath: null, bytes: expect.any(Number) })
+    const cliBytes = await readFile(cliOut)
+    expect(cliBytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(await readFile(join(root, 'note.md'), 'utf8')).toBe(original)
   }, 30_000)
 
   it('a unique render goes beside the note and never replaces a file there (needs typst)', async () => {
