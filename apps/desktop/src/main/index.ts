@@ -20,6 +20,7 @@ import {
   nativeImage,
   net,
   protocol,
+  webContents,
   session as electronSession,
   shell,
   type Tray,
@@ -45,6 +46,7 @@ import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
+import { createAppFrameLeases } from './plugin-host/app-frame-leases'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
@@ -368,6 +370,7 @@ async function main(): Promise<void> {
   // the plugin host can register into it; `host` and `rootFor` are read
   // lazily.
   const capabilities = createCapabilityRegistry()
+  const appFrames = createAppFrameLeases()
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
     registry: capabilities,
@@ -379,6 +382,7 @@ async function main(): Promise<void> {
     events: eventsDeps,
     // `capabilityHost` is built below, long before any vault opens.
     openAppDoor: (opener, remote) => capabilityHost.openAppDoor(opener, remote),
+    appFrames,
     // The bridge and the `holi` command exist before any vault can open.
     route: (path, route, remote) => bridge.route(path, route, remote),
     binDir: () => binDir,
@@ -535,6 +539,17 @@ async function main(): Promise<void> {
       serveScheme(entry, {
         active: () => host.active(),
         runs: async (owner, root) => (await plugins.enabled(root)).has(owner),
+        appFrames,
+        windowForRequest: (request) => {
+          const id = (request as Request & { webContentsId?: number }).webContentsId
+          if (id === undefined) return null
+          try {
+            const contents = webContents.fromId(id)
+            return contents === undefined ? null : BrowserWindow.fromWebContents(contents)
+          } catch {
+            return null
+          }
+        },
       }),
     )
   }

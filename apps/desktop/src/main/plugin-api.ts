@@ -42,6 +42,49 @@ export interface LiveVault {
 export interface SchemeContext {
   /** The open vault, or null with none open. */
   active(): LiveVault | null
+  /** Main-owned authority for vault-app frame and resource leases. */
+  appFrames?: AppFrameLeases
+  /** Resolve the native top-level window that initiated a protocol request. */
+  windowForRequest?(request: Request): BrowserWindow | null
+  appFrameLease?: AppFrameLease | null
+}
+
+export interface AppFrameLease {
+  token: string
+  nonce: string
+  remote: string
+  root: string
+  bundle: string
+  activation: number
+  window: BrowserWindow
+  /** Revalidate against this exact native window and current presentation. */
+  valid(window: BrowserWindow): boolean
+  /** Consume the single top-level document load; a reload needs a fresh lease. */
+  claimDocument(): boolean
+}
+
+export interface AppFrameLeases {
+  issue(input: {
+    remote: string
+    root: string
+    bundle: string
+    activation: number
+    window: BrowserWindow
+    current(): boolean
+  }): AppFrameLease
+  resolve(token: string, window: BrowserWindow): AppFrameLease | null
+  validate(input: {
+    token: string
+    nonce: string
+    window: BrowserWindow
+    remote: string
+    bundle: string
+  }): AppFrameLease | null
+  revoke(lease: AppFrameLease): void
+  release(token: string, remote: string, bundle: string): boolean
+  revokeActivation(remote: string, activation: number): void
+  revokeRemote(remote: string): void
+  revokeAll(): void
 }
 
 /**
@@ -57,6 +100,8 @@ export interface PluginScheme {
   /** It serves pages in frames: a frame on it may move within the scheme,
    *  and a link out of it opens in the browser (`window-guard.ts`). */
   frame?: true
+  /** Resolve the app-origin owner before plugin enablement is consulted. */
+  ownerForRequest?(request: Request, ctx: SchemeContext): Promise<LiveVault | null>
   handle(request: Request, ctx: SchemeContext): Response | Promise<Response>
 }
 
@@ -106,6 +151,17 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * it is open throws. Closed when the plugin stops.
    */
   openAppDoor(opener: AppDoorOpener): AppDoor
+  /** Issue a document/resource lease for an app in this activation. The returned token is
+   *  bound to this vault presentation and the exact Holi window. */
+  issueAppFrameLease(bundle: string): AppFrameLease
+  releaseAppFrameLease(token: string, bundle: string): boolean
+  /** Validate a capability/log/capture caller against its document generation. */
+  validateAppFrameLease(input: {
+    token: string
+    nonce: string
+    window: BrowserWindow
+    bundle: string
+  }): AppFrameLease | null
   /**
    * Ask before Holi quits. `check` runs when someone quits: null lets the
    * quit go on, a question puts it to them, and Cancel keeps Holi open. A

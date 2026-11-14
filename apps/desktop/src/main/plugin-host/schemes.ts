@@ -6,7 +6,8 @@
  *
  * No `electron` import: the composition root registers and handles them.
  */
-import type { LiveVault, MainPlugin, PluginScheme } from '../plugin-api'
+import type { AppFrameLeases, LiveVault, MainPlugin, PluginScheme } from '../plugin-api'
+import type { BrowserWindow } from 'electron'
 
 export interface SchemeEntry {
   /** The plugin serving it, or null for core. */
@@ -39,6 +40,8 @@ export interface ServeDeps {
   active(): LiveVault | null
   /** Does the vault at `root` run the plugin `owner`? */
   runs(owner: string, root: string): Promise<boolean>
+  appFrames?: AppFrameLeases
+  windowForRequest?(request: Request): BrowserWindow | null
 }
 
 /** A request handler for one entry: a plugin's answers 404 while the open
@@ -47,14 +50,27 @@ export function serveScheme(
   entry: SchemeEntry,
   deps: ServeDeps,
 ): (request: Request) => Promise<Response> {
-  const ctx = { active: deps.active }
   return async (request) => {
+    const ctx = {
+      active: deps.active,
+      appFrames: deps.appFrames,
+      windowForRequest: deps.windowForRequest,
+      appFrameLease: null as import('../plugin-api').AppFrameLease | null,
+    }
+    const owner = entry.scheme.ownerForRequest
+      ? await entry.scheme.ownerForRequest(request, ctx)
+      : null
+    if (entry.scheme.ownerForRequest !== undefined && owner === null) {
+      return new Response(null, { status: 404 })
+    }
     if (entry.owner !== null) {
-      const vault = deps.active()
+      const vault = owner ?? deps.active()
       if (vault === null || !(await deps.runs(entry.owner, vault.root))) {
         return new Response(null, { status: 404 })
       }
+      // An app request is pinned to its lease's vault, never whichever vault
+      // became active while enablement was being read.
     }
-    return entry.scheme.handle(request, ctx)
+    return entry.scheme.handle(request, { ...ctx, appFrameLease: ctx.appFrameLease })
   }
 }

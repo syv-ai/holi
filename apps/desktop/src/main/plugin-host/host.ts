@@ -27,6 +27,7 @@ import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
   AppCtx,
+  AppFrameLeases,
   BridgeRoute,
   Disposer,
   LiveVault,
@@ -41,6 +42,7 @@ import type { ActiveVault } from '../vault/active-vault'
 import type { ScanClaim } from '../vault/vault-store'
 import type { Transform } from '../vault/hooks/runner'
 import { pluginEvents, type PluginEventsDeps } from './events'
+import { createAppFrameLeases } from './app-frame-leases'
 import { ensureSeeded, withoutOwned } from '../vault/seed/seed'
 import type { SeedContribution, SeedResult } from '../vault/seed/types'
 import { readVaultSettings } from '../vault/settings'
@@ -72,6 +74,7 @@ export interface PluginHostDeps {
   /** The capability host's app door, which one plugin opens and the host
    *  closes when that plugin stops. */
   openAppDoor(opener: AppDoorOpener, remote: string): AppDoor
+  appFrames?: AppFrameLeases
   /** Serve a path on the bridge. Returns the undo. */
   route(path: string, route: BridgeRoute, remote: string): () => void
   /** Where the `holi` command lives. */
@@ -189,6 +192,7 @@ interface Started {
 }
 
 export function createPluginHost(deps: PluginHostDeps): PluginHost {
+  const appFrames = deps.appFrames ?? createAppFrameLeases()
   const infos = deps.plugins.map((p) => p.info)
   const readSettings = deps.readSettings ?? readVaultSettings
   const quitGuards = new Set<() => QuitQuestion | null>()
@@ -531,6 +535,28 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         keep(() => door.close())
         return door
       },
+      issueAppFrameLease: (bundle) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+        const win = ctx.window()
+        if (win === null) throw new Error('no Holi window for the displayed vault')
+        const presentation = ctx.presentationLease()
+        const lease = appFrames.issue({
+          remote,
+          root,
+          bundle,
+          activation,
+          window: win,
+          current: () => valid() && presentation() && ctx.window() === win,
+        })
+        keep(() => appFrames.revoke(lease))
+        return lease
+      },
+      releaseAppFrameLease: (token, bundle) => {
+        if (!valid()) return false
+        return appFrames.release(token, remote, bundle)
+      },
+      validateAppFrameLease: ({ token, nonce, window: frameWindow, bundle }) =>
+        appFrames.validate({ token, nonce, window: frameWindow, remote, bundle }),
       guardQuit: (check) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const guarded = (): QuitQuestion | null => (valid() ? check() : null)
@@ -933,6 +959,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     async stop(remote) {
       const state = runsByRemote.get(remote)
       if (state === undefined) return
+      appFrames.revokeActivation(remote, state.generation)
       state.generation += 1
       state.parked = true
       for (const lease of state.leases) lease.events.cancelPending()
@@ -944,7 +971,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
 
     async stopAll() {
       const entries = [...runsByRemote.entries()]
-      for (const [, state] of entries) {
+      for (const [remote, state] of entries) {
+        appFrames.revokeActivation(remote, state.generation)
         state.generation += 1
         state.parked = true
         for (const lease of state.leases) lease.events.cancelPending()
@@ -960,6 +988,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     displayed: () => displayed,
     setDisplayed(remote) {
       if (displayed === remote) return
+      if (displayed !== null) appFrames.revokeRemote(displayed)
       displayed = remote
       displayEpoch += 1
       for (const cb of [...displayListeners]) tell(cb, remote, 'display')

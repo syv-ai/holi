@@ -49,3 +49,16 @@ export function bundleFromAppHost(host: string): string | null {
   }
   return isAppBundlePath(path) ? path : null
 }
+
+/** Host carrying a per-document lease without changing the bundle encoding. */
+export function leasedAppHost(bundle: string, token: string): string {
+  if (!/^[a-f0-9]{48}$/.test(token)) throw new Error('invalid app frame lease token')
+  return `t${token}.${appHost(bundle)}`
+}
+
+export function appLeaseFromHost(host: string): { bundle: string; token: string } | null {
+  const match = /^t([a-f0-9]{48})\.(.+)$/i.exec(host)
+  if (match === null) return null
+  const bundle = bundleFromAppHost(match[2]!)
+  return bundle === null ? null : { bundle, token: match[1]!.toLowerCase() }
+}

@@ -96,6 +96,10 @@ export interface AppCapabilitiesDeps {
   capture(rect: PreviewRect): Promise<Buffer | null>
   /** The activation's display lifetime, checked around every asynchronous capture step. */
   captureCurrent(): boolean
+  issueFrameLease(
+    bundle: string,
+  ): Pick<import('../../../main/plugin-api').AppFrameLease, 'token' | 'nonce'>
+  releaseFrameLease(token: string, bundle: string): boolean
 }
 
 /** Where on the page an app's frame is, in CSS pixels. */
@@ -140,6 +144,20 @@ const readManifest = (root: string, bundle: string) =>
   readFile(join(root, vaultRelPath(`${bundle}/${APP_MANIFEST_FILE}`)), 'utf8').catch(() => null)
 
 export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
+  /** Frame document authority is issued only to Holi's UI door, never an app. */
+  'apps.frameLease': cap({
+    doors: ['ui'],
+    params: (raw) => ({ bundle: bundleParam(paramsObject(raw)) }),
+    run: async (_ctx, { bundle }) => deps.issueFrameLease(bundle),
+  }),
+  'apps.releaseFrameLease': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const p = paramsObject(raw)
+      return { bundle: bundleParam(p), token: stringParam(p, 'token') }
+    },
+    run: async (_ctx, { bundle, token }) => deps.releaseFrameLease(token, bundle),
+  }),
   /**
    * One bridge call from the frame `AppFrame` mounted for `bundle`, through
    * the app door. Not a write itself: the call it carries refreshes the vault
