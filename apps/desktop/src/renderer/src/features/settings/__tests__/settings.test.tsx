@@ -226,6 +226,7 @@ test('the machine-wide Vim switch works while vault settings load and never writ
 
   expect(screen.getByRole('status', { name: 'Reading the settings' })).toBeInTheDocument()
   const toggle = screen.getByRole('switch', { name: 'Vim mode' })
+  expect(screen.getByText(/code, plain-text files and mail message bodies/)).toBeVisible()
   fireEvent.click(toggle)
   expect(store.get(vimCodeEditingAtom)).toBe(true)
   expect(localStorage.getItem('holi:vimCodeEditing')).toBe('true')
