@@ -52,6 +52,15 @@ const read = vi.fn(
 const write = vi.fn(async (_input: { remote: string; path: string; text: string }) => ({
   ok: true,
 }))
+const move = vi.fn(async (input: { moves: { from: string; to: string }[] }) => {
+  for (const pair of input.moves) {
+    const text = disk.get(`${REMOTE}:${pair.from}`)
+    if (text !== undefined) disk.set(`${REMOTE}:${pair.to}`, text)
+    disk.delete(`${REMOTE}:${pair.from}`)
+  }
+  return { rewritten: [] }
+})
+let movedSnapshot: ReturnType<typeof emptyVaultSnapshot>
 const capability = vi.fn(async (_input: unknown) => ({ ok: true }))
 const comments = vi.fn(async (_input: unknown): Promise<CommentThread[]> => [])
 const reply = vi.fn(async (_input: unknown) => ({ ok: true }))
@@ -62,41 +71,45 @@ vi.mock('@/lib/trpc', () => {
   const answer = (name: string, input?: unknown): unknown =>
     name === 'notes.read'
       ? read(input as { remote: string; path: string })
-      : name === 'comments.list'
-        ? comments(input)
-        : name === 'settings.read'
-          ? settings
-          : name === 'settings.pluginFailures'
-            ? {}
-            : name === 'history.list'
-              ? [
-                  {
-                    sha: 'abcdef012345',
-                    subject: 'save note',
-                    date: '2026-11-01T12:00:00Z',
-                    author: 'Ada',
-                    added: 1,
-                    removed: 0,
-                  },
-                ]
-              : name === 'github.fileContributors' ||
-                  name === 'activity.entries' ||
-                  name === 'logs.entries' ||
-                  name === 'terminal.list'
-                ? []
-                : name === 'github.collaborators'
-                  ? { visibility: 'private', collaborators: [] }
-                  : null
+      : name === 'vaults.snapshot'
+        ? movedSnapshot
+        : name === 'comments.list'
+          ? comments(input)
+          : name === 'settings.read'
+            ? settings
+            : name === 'settings.pluginFailures'
+              ? {}
+              : name === 'history.list'
+                ? [
+                    {
+                      sha: 'abcdef012345',
+                      subject: 'save note',
+                      date: '2026-11-01T12:00:00Z',
+                      author: 'Ada',
+                      added: 1,
+                      removed: 0,
+                    },
+                  ]
+                : name === 'github.fileContributors' ||
+                    name === 'activity.entries' ||
+                    name === 'logs.entries' ||
+                    name === 'terminal.list'
+                  ? []
+                  : name === 'github.collaborators'
+                    ? { visibility: 'private', collaborators: [] }
+                    : null
   const procedure = (name: string) => ({
     query: (input?: unknown) => Promise.resolve(answer(name, input)),
     mutate:
       name === 'notes.write'
         ? write
-        : name === 'cap.run'
-          ? capability
-          : name === 'comments.reply'
-            ? reply
-            : async () => ({ ok: true }),
+        : name === 'notes.move'
+          ? move
+          : name === 'cap.run'
+            ? capability
+            : name === 'comments.reply'
+              ? reply
+              : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
   })
   const router = (name: string) =>
@@ -144,6 +157,15 @@ beforeEach(() => {
     disk.set(`${remote}:${path}`, text)
     return { ok: true }
   })
+  move.mockReset().mockImplementation(async (input) => {
+    for (const pair of input.moves) {
+      const text = disk.get(`${REMOTE}:${pair.from}`)
+      if (text !== undefined) disk.set(`${REMOTE}:${pair.to}`, text)
+      disk.delete(`${REMOTE}:${pair.from}`)
+    }
+    return { rewritten: [] }
+  })
+  movedSnapshot = emptyVaultSnapshot()
   comments.mockReset().mockResolvedValue([])
   reply.mockReset().mockResolvedValue({ ok: true })
   capability.mockReset().mockResolvedValue({ ok: true })
@@ -231,6 +253,33 @@ function passage(ed: Editor) {
 async function openActions() {
   await userEvent.setup().click(within(host()).getByRole('button', { name: 'Document actions' }))
 }
+
+test('upgrading a note preserves source text and transitions its retained tab to CodeMirror', async () => {
+  const source = "---\ntitle: Source\n---\n\nimport Thing from 'thing'\n\n<Thing />  \n"
+  fixture([ONE])
+  disk.set(`${REMOTE}:${ONE}`, source)
+  movedSnapshot = {
+    ...emptyVaultSnapshot(),
+    docs: [],
+    files: [{ path: 'notes/one.mdx', updatedAt: 'two' }],
+  }
+  await editor()
+  await openActions()
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Upgrade to MDX' }))
+  await waitFor(() =>
+    expect(document.querySelector('[data-file-editor="notes/one.mdx"]')).toBeInstanceOf(
+      HTMLElement,
+    ),
+  )
+  expect(disk.get(`${REMOTE}:notes/one.mdx`)).toBe(source)
+  expect(disk.has(`${REMOTE}:${ONE}`)).toBe(false)
+  expect(move).toHaveBeenCalledWith({
+    remote: REMOTE,
+    moves: [{ from: ONE, to: 'notes/one.mdx' }],
+    folders: [],
+  })
+  expect(write).not.toHaveBeenCalled()
+})
 function run(): AgentRun {
   return {
     kind: 'vault-app',

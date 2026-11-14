@@ -543,19 +543,39 @@ export const moveNotesAtom = atom(
     {
       moves,
       folders = [],
-    }: { moves: { from: string; to: string }[]; folders?: { from: string; to: string }[] },
+      expectedRemote,
+    }: {
+      moves: { from: string; to: string }[]
+      folders?: { from: string; to: string }[]
+      /** Refuse an action whose initiating editor no longer owns the active vault. */
+      expectedRemote?: string
+    },
   ) => {
     const remote = get(activeRemoteAtom)
-    if (!remote || (moves.length === 0 && folders.length === 0)) return
-    await restorePoint()
+    const revision = get(activeRemoteRevisionAtom)
+    const stillOwned = () =>
+      get(activeRemoteAtom) === remote &&
+      get(activeRemoteRevisionAtom) === revision &&
+      (expectedRemote === undefined || remote === expectedRemote)
+    if (!remote || !stillOwned() || (moves.length === 0 && folders.length === 0)) return
+    // Keep every awaited stage on the initiating vault. In particular, a
+    // vault switch while buffers flush must not make the restore-point commit
+    // land in the replacement vault.
+    await flushAllBuffers()
+    if (!stillOwned()) return
+    await trpc.sync.commitNow.mutate()
+    if (!stillOwned()) return
     const release = freezeBuffers()
     try {
       await flushAllBuffers()
+      if (!stillOwned()) return
       await trpc.notes.move.mutate({ remote, moves, folders })
+      if (!stillOwned()) return
       flushSync(() => {
         set(shellWorkspaceAtom, (ws) => retargetShellTabs(ws, moves, get(folderSurfacesAtom)))
       })
       await set(loadSnapshotAtom)
+      if (!stillOwned()) return
       await trpc.sync.commitNow.mutate()
     } finally {
       release()

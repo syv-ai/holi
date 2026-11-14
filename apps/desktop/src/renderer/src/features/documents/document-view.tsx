@@ -30,6 +30,7 @@ import {
   parseTaskFile,
   SCRATCHPAD_PATH,
   TASKS_CLAIM,
+  type VaultSnapshot,
 } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
@@ -70,7 +71,7 @@ import { activeVaultSettingsAtom, useAppSetting } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTab, entryOf, focusedTab } from '@/state/shell-workspace'
 import { tabKey, tabPath } from '@/state/tab-descriptor'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, moveNotesAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
@@ -83,6 +84,7 @@ import { createDocumentExtensions } from './document-extensions'
 import { headingAtCaret } from './document-headings'
 import { DocumentFindBar } from './document-find-bar'
 import { resolveLink } from './resolve-link'
+import { mdxUpgradeMove } from './upgrade-mdx'
 import { DocumentSkeleton } from './document-skeleton'
 import { useDocumentAgentPrompt } from './use-document-agent-prompt'
 import { useDocumentComments } from './use-document-comments'
@@ -148,6 +150,7 @@ export function DocumentView({
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const docs = snapshot.docs
+  const mdxFiles = snapshot.files.filter((file) => file.path.toLowerCase().endsWith('.mdx'))
   const mtime =
     docs.find((doc) => doc.path === path)?.updatedAt ??
     (path === SCRATCHPAD_PATH
@@ -199,6 +202,8 @@ export function DocumentView({
         initial={load}
         mtime={mtime}
         docs={docs}
+        mdxFiles={mdxFiles}
+        snapshot={snapshot}
         onOpen={onOpen}
         onMoved={onMoved}
         visible={visible}
@@ -214,6 +219,8 @@ function DocumentEditor({
   initial,
   mtime,
   docs,
+  mdxFiles,
+  snapshot,
   onOpen,
   onMoved,
   visible,
@@ -224,6 +231,8 @@ function DocumentEditor({
   initial: { head: string; body: string; text: string }
   mtime: string | undefined
   docs: readonly { path: string }[]
+  mdxFiles: readonly { path: string }[]
+  snapshot: VaultSnapshot
   onOpen: (path: string) => void
   onMoved?: (from: string, to: string) => void
   visible: boolean
@@ -252,6 +261,7 @@ function DocumentEditor({
   const locked = locksDocument(agent.run)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [donePending, setDonePending] = useState(false)
+  const upgradeInFlight = useRef(false)
   const [doneError, setDoneError] = useState<string | null>(null)
   const doneInFlight = useRef(false)
   const [linkOpen, setLinkOpen] = useState(false)
@@ -321,7 +331,7 @@ function DocumentEditor({
   })
   handlers.current.openLink = (target) => {
     if (!activity.displayed) return
-    const found = resolveLink(target, path, docs)
+    const found = resolveLink(target, path, docs, mdxFiles)
     if (found) onOpen(found)
   }
 
@@ -753,6 +763,31 @@ function DocumentEditor({
   }
 
   const canAsk = agent.available && !isRunLive(agent.run)
+  const upgradeMove = mdxUpgradeMove(path, snapshot, claims)
+
+  async function upgradeToMdx() {
+    if (
+      !upgradeMove ||
+      upgradeInFlight.current ||
+      lockedRef.current ||
+      frozen.current ||
+      !editor?.isEditable
+    )
+      return
+    upgradeInFlight.current = true
+    try {
+      await store.set(moveNotesAtom, {
+        moves: [upgradeMove],
+        expectedRemote: remote,
+      })
+    } catch (error) {
+      toast.error('Could not upgrade to MDX.', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      upgradeInFlight.current = false
+    }
+  }
   const canStartChat = useAtomValue(canStartConversationAtom)
   const startConversation = useSetAtom(startConversationAtom)
 
@@ -800,6 +835,9 @@ function DocumentEditor({
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
             onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
+            onUpgradeToMdx={
+              upgradeMove && !locked && editor?.isEditable ? () => void upgradeToMdx() : null
+            }
             holiLink={holiLinks?.file ?? null}
             headingLink={holiLinks?.heading ?? null}
             properties={
