@@ -157,7 +157,16 @@ export function TabView({
       )
     case 'doc':
       if (/\.md$/i.test(descriptor.path)) {
-        return <DocumentView key={tab} path={descriptor.path} onOpen={onOpen} onMoved={onMoved} />
+        return (
+          <DocumentView
+            key={tab}
+            path={descriptor.path}
+            onOpen={onOpen}
+            onMoved={onMoved}
+            visible={visible}
+            focused={focused}
+          />
+        )
       }
       // Any other file: css, yaml, json, an image, a PDF.
       if (vaultFiles.some((file) => file.path === descriptor.path)) {

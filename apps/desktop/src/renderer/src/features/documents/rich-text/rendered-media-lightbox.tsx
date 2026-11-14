@@ -1,3 +1,4 @@
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -27,6 +28,7 @@ export function RenderedMediaLightbox({
   onOpenChange?: (open: boolean) => void
   restoreFocus?: () => void
 }) {
+  const activity = useEditorActivity()
   const controlled = open !== undefined
   const content = controlled ? (
     children
@@ -52,7 +54,10 @@ export function RenderedMediaLightbox({
         onCloseAutoFocus={(event) => {
           if (!controlled || !restoreFocus) return
           event.preventDefault()
-          queueMicrotask(restoreFocus)
+          const current = activity.capture()
+          queueMicrotask(() => {
+            if (current()) restoreFocus()
+          })
         }}
       >
         <DialogHeader>

@@ -1,3 +1,4 @@
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { useEffect, useRef, type ReactNode } from 'react'
 import type { Editor } from '@tiptap/react'
 
@@ -12,13 +13,14 @@ export function RenderedMediaToolbar({
   children: ReactNode
   editor: Editor
 }) {
+  const activity = useEditorActivity(editor)
   const toolbarRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const { dom } = editor.view
     const handleShortcut = (event: KeyboardEvent) => {
       const toolbar = toolbarRef.current
-      if (!event.altKey || event.key !== 'F10' || !toolbar?.isConnected) return
+      if (!event.altKey || event.key !== 'F10' || !activity.focused || !toolbar?.isConnected) return
       const nodeView = toolbar.closest('[data-node-view-wrapper]')
       if (!nodeView) return
       let position: number
@@ -38,11 +40,12 @@ export function RenderedMediaToolbar({
     }
     dom.addEventListener('keydown', handleShortcut)
     return () => dom.removeEventListener('keydown', handleShortcut)
-  }, [editor])
+  }, [editor, activity])
 
   return (
     <div
       ref={toolbarRef}
+      hidden={!activity.focused}
       className="absolute -top-10 right-0 z-10 overflow-hidden rounded-xl bg-card p-1 text-sm text-card-foreground opacity-0 ring-1 ring-foreground/10 motion-respond group-hover/media:opacity-100 group-focus-within/media:opacity-100"
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
@@ -50,7 +53,7 @@ export function RenderedMediaToolbar({
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node)) return
         event.preventDefault()
-        editor.commands.focus()
+        if (activity.focused) editor.commands.focus()
       }}
     >
       <RichTextToolbar aria-label="Rendered media" aria-keyshortcuts="Alt+F10">
