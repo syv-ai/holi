@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -71,4 +71,27 @@ describe('mdx trust', () => {
       2,
     )
   })
+})
+
+it('rejects malformed grant entries even alongside a valid matching grant', async () => {
+  await writeFile(file, JSON.stringify({ version: 1, grants: ['42:syv-ai/notes', 'not-a-grant'] }))
+  await expect(createMdxTrustStore(file).status(alice)).rejects.toThrow(/unreadable/)
+})
+
+it('refuses unverified account identities and recovers after a failed atomic write', async () => {
+  const store = createMdxTrustStore(file)
+  await expect(store.approve({ ...alice, accountId: '-1' })).rejects.toThrow(/identity/)
+  await mkdir(`${file}.tmp`)
+  await expect(store.approve(alice)).rejects.toThrow()
+  expect(await store.status(alice)).toBe(false)
+  await rm(`${file}.tmp`, { recursive: true })
+  await store.approve(alice)
+  expect(await store.status(alice)).toBe(true)
+})
+
+it('treats an unreadable directory as an error, not an approved or repairable trust file', async () => {
+  await mkdir(file)
+  const store = createMdxTrustStore(file)
+  await expect(store.status(alice)).rejects.toThrow()
+  await expect(store.approve(alice)).rejects.toThrow()
 })

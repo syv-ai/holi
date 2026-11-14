@@ -20,18 +20,9 @@ import { findNext, findPrevious } from '@codemirror/search'
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { FileTextIcon } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Badge } from '@/components/ui/badge'
 
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { plainTextExtensions } from '@/editor/extensions'
 import { syntaxValid } from '@/editor/languages'
@@ -52,150 +43,9 @@ import type { FindCount, FindRequest } from '../../composites/find-bar'
 import { codeFind, codeFindCount } from './code-find'
 import { CodeFindBar } from './code-find-bar'
 import { codeLook } from './code-look'
+import { MdxTrustControl } from './mdx-trust-control'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
 import { basename } from '@/lib/tree-paths'
-
-function MdxTrustControl({ remote, path }: { remote: string; path: string }) {
-  const activeRemote = useAtomValue(activeRemoteAtom)
-  const [state, setState] = useState<
-    | { kind: 'loading' }
-    | { kind: 'error'; message: string }
-    | { kind: 'ready'; trusted: boolean; identityAvailable: boolean }
-  >({ kind: 'loading' })
-  const [attempt, setAttempt] = useState(0)
-  const [confirm, setConfirm] = useState(false)
-  const [pending, setPending] = useState(false)
-  const context = useRef({ remote, path, activeRemote, generation: 0 })
-  context.current = { ...context.current, remote, path, activeRemote }
-  useEffect(() => {
-    const generation = ++context.current.generation
-    let current = true
-    setConfirm(false)
-    setPending(false)
-    setState({ kind: 'loading' })
-    trpc.mdxTrust.status
-      .query({ remote })
-      .then((result) => {
-        if (
-          current &&
-          context.current.generation === generation &&
-          context.current.remote === remote &&
-          context.current.path === path &&
-          context.current.activeRemote === remote
-        )
-          setState({ kind: 'ready', ...result })
-      })
-      .catch((error: unknown) => {
-        if (current && context.current.generation === generation)
-          setState({
-            kind: 'error',
-            message: error instanceof Error ? error.message : String(error),
-          })
-      })
-    return () => {
-      current = false
-      if (context.current.generation === generation) context.current.generation += 1
-    }
-  }, [remote, path, activeRemote, attempt])
-  const refresh = () => setAttempt((value) => value + 1)
-  async function change(trust: boolean) {
-    if (pending || context.current.remote !== remote || context.current.activeRemote !== remote)
-      return
-    const generation = context.current.generation
-    setPending(true)
-    try {
-      if (trust) await trpc.mdxTrust.approve.mutate({ remote })
-      else await trpc.mdxTrust.revoke.mutate({ remote })
-      if (
-        context.current.generation === generation &&
-        context.current.remote === remote &&
-        context.current.path === path &&
-        context.current.activeRemote === remote
-      ) {
-        setConfirm(false)
-        refresh()
-      }
-    } catch (error) {
-      if (context.current.generation === generation)
-        setState({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
-    } finally {
-      if (context.current.generation === generation) setPending(false)
-    }
-  }
-  const action =
-    state.kind === 'ready' && state.trusted ? (
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={pending || activeRemote !== remote}
-        onClick={() => void change(false)}
-      >
-        Revoke MDX trust
-      </Button>
-    ) : (
-      <Button
-        size="sm"
-        disabled={
-          state.kind === 'loading' ||
-          pending ||
-          activeRemote !== remote ||
-          (state.kind === 'ready' && !state.identityAvailable)
-        }
-        onClick={() => setConfirm(true)}
-      >
-        Review MDX trust
-      </Button>
-    )
-  return (
-    <div className="flex items-center gap-2">
-      {state.kind === 'loading' ? (
-        <span role="status" className="text-xs text-muted-foreground">
-          Checking MDX trust…
-        </span>
-      ) : null}
-      {state.kind === 'error' ? (
-        <span role="status" className="text-xs text-destructive">
-          MDX trust unavailable. {state.message}
-        </span>
-      ) : null}
-      {state.kind === 'ready' ? (
-        <Badge variant={state.trusted ? 'success' : 'secondary'}>
-          {state.trusted
-            ? 'Approved'
-            : state.identityAvailable
-              ? 'Not approved'
-              : 'Sign in required'}
-        </Badge>
-      ) : null}
-      {state.kind === 'error' ? (
-        <Button size="sm" variant="outline" onClick={refresh}>
-          Retry
-        </Button>
-      ) : null}
-      {action}
-      <Dialog open={confirm} onOpenChange={(open) => !pending && setConfirm(open)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Approve MDX source</DialogTitle>
-            <DialogDescription>
-              This grants trust to all MDX in {remote}, including future documents and synced
-              changes, until revoked. It does not enable preview or grant network, dependency,
-              filesystem, shell, or other capabilities.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" disabled={pending} onClick={() => setConfirm(false)}>
-              Cancel
-            </Button>
-            <Button disabled={pending || activeRemote !== remote} onClick={() => void change(true)}>
-              Approve vault
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
 
 function FileHeader({
   path,
@@ -641,8 +491,8 @@ function TextFileView({
         editorMode={vimMode || undefined}
         actions={
           <div className="flex items-center gap-2">
-            {/\\.mdx$/i.test(path) && remote !== null ? (
-              <MdxTrustControl remote={remote} path={path} />
+            {/\.mdx$/i.test(path) && remote !== null ? (
+              <MdxTrustControl remote={remote} path={path} visible={visible} focused={focused} />
             ) : null}
             <FileHistoryButton path={path} visible={visible} />
           </div>

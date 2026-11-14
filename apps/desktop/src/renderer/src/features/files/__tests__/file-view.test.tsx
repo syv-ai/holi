@@ -19,6 +19,7 @@ import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { sessionAtom } from '@/state/session'
 import { FileView, isCoreTextFilePath } from '../file-view'
 import { HostHintLayer } from '@/features/shell/host-hint-layer'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
@@ -73,6 +74,7 @@ function setup(path: string, claims = false, vimEnabled = false, hints = false) 
   const store = createStore()
   lastStore = store
   store.set(activeRemoteAtom, 'syv-ai/site')
+  store.set(sessionAtom, { login: 'fixture-user' })
   store.set(vimCodeEditingAtom, vimEnabled)
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
@@ -847,7 +849,7 @@ test('Vim-off find handling respects keys consumed inside CodeMirror', async () 
 test('MDX trust requires explicit confirmation and can be cancelled or approved', async () => {
   read.mockResolvedValue('# source')
   historyList.mockResolvedValue([])
-  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true })
+  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true, context: 'consent-1' })
   mdxApprove.mockResolvedValue({ trusted: true })
   setup('content/page.mdx')
   await screen.findByText('Not approved')
@@ -857,25 +859,29 @@ test('MDX trust requires explicit confirmation and can be cancelled or approved'
   expect(mdxApprove).not.toHaveBeenCalled()
   await userEvent.click(screen.getByRole('button', { name: 'Review MDX trust' }))
   await userEvent.click(screen.getByRole('button', { name: 'Approve vault' }))
-  await waitFor(() => expect(mdxApprove).toHaveBeenCalledWith({ remote: 'syv-ai/site' }))
+  await waitFor(() =>
+    expect(mdxApprove).toHaveBeenCalledWith({ remote: 'syv-ai/site', context: 'consent-1' }),
+  )
 })
 
 test('MDX trust can be revoked from a source view', async () => {
   read.mockResolvedValue('# source')
   historyList.mockResolvedValue([])
-  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true })
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
   mdxRevoke.mockResolvedValue({ trusted: false })
   setup('content/page.mdx')
   await screen.findByText('Approved')
   await userEvent.click(screen.getByRole('button', { name: 'Revoke MDX trust' }))
-  await waitFor(() => expect(mdxRevoke).toHaveBeenCalledWith({ remote: 'syv-ai/site' }))
+  await waitFor(() =>
+    expect(mdxRevoke).toHaveBeenCalledWith({ remote: 'syv-ai/site', context: 'consent-1' }),
+  )
 })
 
 test('MDX trust reports status failure with a retry action', async () => {
   read.mockResolvedValue('# source')
   historyList.mockResolvedValue([])
   mdxStatus.mockRejectedValueOnce(new Error('offline'))
-  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true })
+  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true, context: 'consent-1' })
   setup('content/page.mdx')
   expect(await screen.findByText(/MDX trust unavailable/)).toBeInTheDocument()
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }))

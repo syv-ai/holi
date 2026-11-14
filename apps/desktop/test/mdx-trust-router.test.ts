@@ -97,7 +97,7 @@ const dirs: string[] = []
 afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true })
 })
-async function rig(options: { signedIn?: StoredAuth } = {}) {
+async function rig(options: Parameters<typeof fixture>[0] = {}) {
   const result = await fixture(options)
   dirs.push(result.dir)
   return result
@@ -150,7 +150,7 @@ describe('MDX trust through the router', () => {
 
   it('invalidates contexts on account change and same-account relogin generations', async () => {
     const grants = ['grant-43', 'grant-42']
-    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/login/device/code'))
         return Response.json({
@@ -163,11 +163,7 @@ describe('MDX trust through the router', () => {
       if (url.endsWith('/login/oauth/access_token'))
         return Response.json({ access_token: grants.shift(), scope: 'repo' })
       if (url.endsWith('/user')) {
-        const token = fetch.mock.calls.at(-1)?.[1]?.headers
-        const bearer =
-          typeof token === 'object' && token !== null && 'Authorization' in token
-            ? String((token as Record<string, string>).Authorization)
-            : ''
+        const bearer = new Headers(init?.headers).get('Authorization') ?? ''
         const accountId = bearer.includes('grant-43') ? 43 : 42
         return Response.json({
           id: accountId,
@@ -299,9 +295,54 @@ describe('MDX trust through the router', () => {
     const { caller } = await rig({ signedIn: auth(42, 'alice') })
     const earlier = await caller.mdxTrust.status({ remote: REMOTE })
     const later = await caller.mdxTrust.status({ remote: REMOTE })
-    expect(later.context).not.toBe(earlier.context)
+    expect(later.context).toBe(earlier.context)
     await expect(
       caller.mdxTrust.approve({ remote: REMOTE, context: earlier.context! }),
     ).resolves.toEqual({ trusted: true })
   })
+})
+
+it('refuses a missing or forged consent context without persisting a grant', async () => {
+  const { caller, mdxTrust } = await rig({ signedIn: auth(42, 'alice') })
+  await expect(caller.mdxTrust.approve({ remote: REMOTE, context: '' })).rejects.toThrow(/context/)
+  await expect(caller.mdxTrust.approve({ remote: REMOTE } as never)).rejects.toThrow()
+  expect(await mdxTrust.status({ accountId: '42', remote: REMOTE })).toBe(false)
+})
+
+it('never mints consent for the provisional identity during account verification', async () => {
+  const entered = gate<void>()
+  const finish = gate<void>()
+  const fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.endsWith('/login/device/code'))
+      return Response.json({
+        device_code: 'fixture',
+        user_code: 'CODE',
+        verification_uri: 'https://github.com/login/device',
+        expires_in: 600,
+        interval: 1,
+      })
+    if (url.endsWith('/login/oauth/access_token'))
+      return Response.json({ access_token: 'fixture-token', scope: 'repo' })
+    if (url.endsWith('/user')) {
+      entered.resolve()
+      await finish.promise
+      return Response.json({ id: 43, login: 'other', name: null, avatar_url: null })
+    }
+    throw new Error('Unexpected network')
+  }) as typeof globalThis.fetch
+  const { caller, session } = await rig({ signedIn: auth(42, 'alice'), fetch })
+  const flow = await session.signIn()
+  const adopting = flow.wait()
+  await entered.promise
+  try {
+    expect(await caller.mdxTrust.status({ remote: REMOTE })).toEqual({
+      trusted: false,
+      identityAvailable: false,
+      context: null,
+    })
+  } finally {
+    finish.resolve()
+    await adopting
+  }
 })

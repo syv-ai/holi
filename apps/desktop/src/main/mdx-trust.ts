@@ -28,9 +28,20 @@ export function canonicalGitHubRemote(value: string): string {
 }
 
 function ownerKey(owner: MdxTrustOwner): string {
-  if (!owner.accountId || owner.accountId.trim() !== owner.accountId)
+  if (!/^[1-9]\d*$/.test(owner.accountId) || !Number.isSafeInteger(Number(owner.accountId)))
     throw new Error('Verified GitHub identity is required')
   return `${owner.accountId}:${canonicalGitHubRemote(owner.remote)}`
+}
+
+function validGrant(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const [accountId, remote, extra] = value.split(':')
+  if (accountId === undefined || remote === undefined || extra !== undefined) return false
+  try {
+    return ownerKey({ accountId, remote }) === value
+  } catch {
+    return false
+  }
 }
 
 function parseState(value: unknown): State {
@@ -39,7 +50,7 @@ function parseState(value: unknown): State {
     value === null ||
     (value as { version?: unknown }).version !== VERSION ||
     !Array.isArray((value as { grants?: unknown }).grants) ||
-    !(value as { grants: unknown[] }).grants.every((entry) => typeof entry === 'string')
+    !(value as { grants: unknown[] }).grants.every(validGrant)
   )
     throw new Error('MDX trust state is unreadable or unsupported')
   return { version: VERSION, grants: [...new Set((value as { grants: string[] }).grants)] }

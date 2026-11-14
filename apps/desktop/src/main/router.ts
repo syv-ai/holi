@@ -413,16 +413,16 @@ export function createRouter(deps: RouterDeps) {
   const today = deps.today ?? (() => localDate(new Date()))
   let vaultOpenRevision = 0
   let completedVaultOpenRevision = 0
-  const trustContexts = new Map<
-    string,
-    {
-      accountGeneration: number
-      accountId: string
-      remote: string
-      openRevision: number
-      active: ActiveVault
-    }
-  >()
+  // One token per live ownership context, shared by split source views. Never
+  // retain every status request or references to a growing set of old vaults.
+  let trustContext: {
+    token: string
+    accountGeneration: number
+    accountId: string
+    remote: string
+    openRevision: number
+    active: ActiveVault
+  } | null = null
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const capabilities =
     deps.capabilities ??
@@ -1164,8 +1164,13 @@ export function createRouter(deps: RouterDeps) {
   const mdxTrust = t.router({
     status: t.procedure.input(fields({ remote: 'string' })).query(async ({ input }) => {
       const viewer = deps.session.viewer
-      if (!deps.mdxTrust || viewer === null)
-        return { trusted: false, identityAvailable: viewer !== null, context: null }
+      if (
+        !deps.mdxTrust ||
+        viewer === null ||
+        !Number.isSafeInteger(viewer.accountId) ||
+        viewer.accountId <= 0
+      )
+        return { trusted: false, identityAvailable: false, context: null }
       const remote = canonicalGitHubRemote(input.remote)
       const active = deps.host.active()
       const revision = vaultOpenRevision
@@ -1198,14 +1203,18 @@ export function createRouter(deps: RouterDeps) {
           code: 'PRECONDITION_FAILED',
           message: 'Vault or account context changed',
         })
-      const token = randomBytes(32).toString('hex')
-      trustContexts.set(token, {
+      const token =
+        trustContext !== null && trustContextCurrent(trustContext, input.remote)
+          ? trustContext.token
+          : randomBytes(32).toString('hex')
+      trustContext = {
+        token,
         accountGeneration,
         accountId,
         remote,
         openRevision: revision,
         active,
-      })
+      }
       return { trusted, identityAvailable: true, context: token }
     }),
     approve: t.procedure
@@ -1220,7 +1229,7 @@ export function createRouter(deps: RouterDeps) {
     input: { remote: string; context: string },
     approve: boolean,
   ): Promise<{ trusted: boolean }> {
-    const context = trustContexts.get(input.context)
+    const context = trustContext?.token === input.context ? trustContext : null
     if (!context || !deps.mdxTrust || !trustContextCurrent(context, input.remote))
       throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
     const remote = canonicalGitHubRemote(input.remote)
