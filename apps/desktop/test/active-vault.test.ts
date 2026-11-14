@@ -2212,6 +2212,59 @@ describe('VaultHost', () => {
     return { registry, a, b }
   }
 
+  it('shares cold preparation and retries it after a failure', async () => {
+    const { registry } = await twoVaults()
+    let attempts = 0
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const preparing = new Promise<void>((resolve) => (entered = resolve))
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      prepareClone: async () => {
+        attempts++
+        entered()
+        await gate
+        if (attempts === 1) throw new Error('prepare failed')
+      },
+    })
+    hosts.push(h)
+
+    const first = h.prepare('syv-ai/a')
+    await preparing
+    const second = h.prepare('syv-ai/a')
+    release()
+    await expect(first).rejects.toThrow('prepare failed')
+    await expect(second).rejects.toThrow('prepare failed')
+    await h.prepare('syv-ai/a')
+
+    expect(attempts).toBe(2)
+  })
+
+  it('invalidates prepared cold work when closing before startup', async () => {
+    const { registry } = await twoVaults()
+    let preparations = 0
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      prepareClone: async () => {
+        preparations++
+      },
+    })
+    hosts.push(h)
+
+    await h.prepare('syv-ai/a')
+    await h.close('syv-ai/a')
+    await h.open('syv-ai/a')
+
+    expect(preparations).toBe(2)
+  })
+
   it('drains a held-back override before switching vaults', async () => {
     const { registry, a } = await twoVaults()
     const heldBackUpdates: string[][] = []
