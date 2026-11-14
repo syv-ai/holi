@@ -9,10 +9,17 @@
  * body; backrefs are a grep).
  */
 import type { Task, TaskStatus } from '@holi/shared'
-import { isOverdue, privateTaskPath, sharedTaskPath, snapshotTasks, stampDate } from '@holi/shared'
+import {
+  isClosedStatus,
+  isOverdue,
+  privateTaskPath,
+  sharedTaskPath,
+  snapshotTasks,
+  stampDate,
+} from '@holi/shared'
 import { atom } from 'jotai'
 import { capClient, type UiCapability } from '@/lib/cap-client'
-import { isClosedAtom } from './planning'
+import { activeStatusesAtom, isClosedAtom } from './planning'
 import { nowAtom, todayAtom } from './clock'
 import {
   activeRemoteAtom,
@@ -54,8 +61,11 @@ export const taskDueAttentionAtom = atom((get) => {
   const remote = get(activeRemoteAtom)
   if (!remote || get(openedRemoteAtom) !== remote) return null
 
+  const statuses = get(activeStatusesAtom)
+  if (statuses === null) return null
+
   const tasks = get(snapshotTasksAtom).items
-  const isClosed = get(isClosedAtom)
+  const isClosed = (status: string) => isClosedStatus(statuses, status)
   const now = get(nowAtom)
   const today = get(todayAtom)
   let open = 0

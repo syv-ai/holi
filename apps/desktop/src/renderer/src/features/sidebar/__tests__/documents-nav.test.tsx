@@ -2,10 +2,16 @@ import { Provider, createStore } from 'jotai'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 import type { Task } from '@holi/shared'
-import { emptyVaultSnapshot } from '@holi/shared'
+import { DEFAULT_STATUSES, emptyVaultSnapshot } from '@holi/shared'
 import { render, screen, waitFor } from '@/test/render'
 import { nowAtom } from '@/state/clock'
-import { activeRemoteAtom, openedRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { recordStatusesReadAtom } from '@/state/planning'
+import {
+  activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  openedRemoteAtom,
+  snapshotAtom,
+} from '@/state/vaults'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { BOARD_KEY } from '@/state/tab-descriptor'
 import { AppSidebar } from '../app-sidebar'
@@ -29,6 +35,13 @@ function setup(tasks: Task[] | null = []) {
   const store = createStore()
   store.set(activeRemoteAtom, 'owner/vault')
   store.set(openedRemoteAtom, tasks === null ? null : 'owner/vault')
+  store.set(recordStatusesReadAtom, {
+    remote: 'owner/vault',
+    revision: store.get(activeRemoteRevisionValueAtom),
+    stamp: null,
+    retry: 0,
+    file: { state: 'ready', value: [...DEFAULT_STATUSES], warnings: [] },
+  })
   store.set(nowAtom, '2026-11-12T10:30')
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
@@ -109,6 +122,29 @@ test('empty/loading states have no count; active Board remains keyboard-operable
   render(loadingNav())
   expect(screen.getByRole('button', { name: 'Board, 0 open tasks' })).toBeInTheDocument()
   expect(document.querySelector('[data-slot="sidebar-menu-badge"]')).not.toBeInTheDocument()
+})
+
+test('Board badge stays hidden until the displayed vault statuses settle', async () => {
+  const { store, nav } = setup([task('projects/task.open.md')])
+  store.set(recordStatusesReadAtom, {
+    remote: 'owner/vault',
+    revision: store.get(activeRemoteRevisionValueAtom) - 1,
+    stamp: null,
+    retry: 0,
+    file: { state: 'ready', value: [...DEFAULT_STATUSES], warnings: [] },
+  })
+  render(nav())
+  expect(screen.getByRole('button', { name: 'Board, 0 open tasks' })).toBeInTheDocument()
+  expect(document.querySelector('[data-slot="sidebar-menu-badge"]')).not.toBeInTheDocument()
+
+  store.set(recordStatusesReadAtom, {
+    remote: 'owner/vault',
+    revision: store.get(activeRemoteRevisionValueAtom),
+    stamp: null,
+    retry: 0,
+    file: { state: 'ready', value: [...DEFAULT_STATUSES], warnings: [] },
+  })
+  expect(await screen.findByRole('button', { name: 'Board, 1 open tasks' })).toBeInTheDocument()
 })
 
 test('live snapshot changes update counts and collapsed rail shows only numeric due attention', async () => {
