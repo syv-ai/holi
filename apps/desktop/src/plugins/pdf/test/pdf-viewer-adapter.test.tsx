@@ -196,6 +196,10 @@ function viewportFixture() {
       metrics.scrollTop = 0
       metrics.scrollLeft = 0
     },
+    navigateToNextPage: () => {
+      page += 1
+      metrics.scrollTop = pageTop(page)
+    },
     searchHitScroll: () => {
       page = 1
       metrics.scrollTop = 0
@@ -291,6 +295,70 @@ test('keeps the same page-relative point when responsive layout changes scale', 
   expect(viewport.metrics.scrollTop).toBe(2907)
 })
 
+test('keyboard navigation from the outer PDF focus host cancels pending restoration', async () => {
+  const viewport = viewportFixture()
+  const interactionHost = createRef<HTMLDivElement>()
+  const ready = vi.fn()
+  const mounted = render(
+    <div ref={interactionHost} tabIndex={-1}>
+      <PdfViewerAdapter getInteractionHost={() => interactionHost.current} onReady={ready} />
+    </div>,
+  )
+  await waitFor(() => expect(ready).toHaveBeenCalled())
+  const outerHost = interactionHost.current!
+  outerHost.addEventListener('keydown', (event) => {
+    if ((event as KeyboardEvent).key === 'ArrowRight') viewport.navigateToNextPage()
+  })
+  vi.useFakeTimers()
+  try {
+    act(() => {
+      viewport.resize()
+      outerHost.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    expect(viewport.scrollToPage).not.toHaveBeenCalled()
+    await act(() => vi.advanceTimersByTimeAsync(1000))
+    expect(viewport.scrollToPage).not.toHaveBeenCalled()
+    expect(viewport.metrics.scrollTop).toBe(1560)
+  } finally {
+    vi.useRealTimers()
+    mounted.unmount()
+  }
+})
+
+test('input in a sibling view does not cancel this viewer’s restoration', async () => {
+  const viewport = viewportFixture()
+  const interactionHost = createRef<HTMLDivElement>()
+  const siblingHost = createRef<HTMLDivElement>()
+  const ready = vi.fn()
+  const mounted = render(
+    <div>
+      <div ref={interactionHost}>
+        <PdfViewerAdapter getInteractionHost={() => interactionHost.current} onReady={ready} />
+      </div>
+      <div ref={siblingHost} />
+    </div>,
+  )
+  await waitFor(() => expect(ready).toHaveBeenCalled())
+  vi.useFakeTimers()
+  try {
+    act(() => {
+      viewport.resize()
+      viewport.searchHitScroll()
+      siblingHost.current!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+      )
+    })
+    await act(() => vi.advanceTimersByTimeAsync(400))
+    expect(viewport.scrollToPage).toHaveBeenCalledExactlyOnceWith({
+      pageNumber: 3,
+      behavior: 'instant',
+    })
+  } finally {
+    vi.useRealTimers()
+    mounted.unmount()
+  }
+})
+
 test.each(['pointerdown', 'keydown', 'wheel'])(
   '%s in the PDF cancels pending position restoration',
   async (event) => {
@@ -300,11 +368,13 @@ test.each(['pointerdown', 'keydown', 'wheel'])(
     render(<PdfViewerAdapter ref={ref} onReady={ready} />)
     await waitFor(() => expect(ready).toHaveBeenCalled())
     const element = ref.current!.container!
+    const input = document.createElement('input')
+    element.append(input)
     vi.useFakeTimers()
     try {
       act(() => {
         customElements.get('holi-pdf-container')!.prototype.connectedMoveCallback.call(element)
-        element.dispatchEvent(new Event(event, { bubbles: true, composed: true }))
+        input.dispatchEvent(new Event(event, { bubbles: true, composed: true }))
         viewport.resize()
       })
       await act(() => vi.advanceTimersByTimeAsync(1000))

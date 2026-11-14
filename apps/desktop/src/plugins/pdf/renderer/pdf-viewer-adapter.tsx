@@ -29,7 +29,11 @@ if (!customElements.get(TAG)) customElements.define(TAG, HoliPdfContainer)
 
 /** Responsive search sidebars re-scroll their selected hit when they remount.
  * Keep the reading position while a resize or pane move settles, unless the person acts. */
-function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegistry): () => void {
+function preserveReadingPosition(
+  element: HoliPdfContainer,
+  registry: PluginRegistry,
+  getInteractionHost: () => HTMLElement | null,
+): () => void {
   const viewport = registry.getPlugin('viewport')?.provides?.() as ViewportCapability | undefined
   const scroll = registry.getPlugin('scroll')?.provides?.() as ScrollCapability | undefined
   const zoom = registry.getPlugin('zoom')?.provides?.() as ZoomCapability | undefined
@@ -147,7 +151,8 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
   const unsubscribeScroll = viewport.onScrollChange(changed)
   // Window capture precedes Holi's document-level PDF shortcut guard.
   const userInput = (event: Event) => {
-    if (!event.composedPath().includes(element)) return
+    const interactionHost = getInteractionHost() ?? element
+    if (!event.composedPath().includes(interactionHost)) return
     if (position !== null) {
       suppressResize = true
       clearTimeout(resizeSuppressionTimer)
@@ -172,48 +177,59 @@ function preserveReadingPosition(element: HoliPdfContainer, registry: PluginRegi
 }
 
 /** Keeps EmbedPDF's viewer alive when Holi parks and reattaches a PDF pane. */
-export const PdfViewerAdapter = forwardRef<PDFViewerRef, PDFViewerProps>(function PdfViewerAdapter(
-  { config = {}, className, style, onInit, onReady },
-  ref,
-) {
-  const holderRef = useRef<HTMLDivElement>(null)
-  const elementRef = useRef<HoliPdfContainer | null>(null)
-  useImperativeHandle(ref, () => ({
-    get container() {
-      return elementRef.current
-    },
-    get registry() {
-      return elementRef.current?.registry ?? null
-    },
-  }))
+type PdfViewerAdapterProps = PDFViewerProps & {
+  /** The view that owns keyboard dispatch; defaults to the viewer element. */
+  getInteractionHost?: () => HTMLElement | null
+}
 
-  useEffect(() => {
-    const holder = holderRef.current
-    if (!holder) return
-    const element = document.createElement(TAG) as HoliPdfContainer & {
-      config: typeof config
-    }
-    element.config = config
-    elementRef.current = element
-    holder.append(element)
-    onInit?.(element)
-    let live = true
-    let releasePosition: (() => void) | undefined
-    const registry = element.registry
-    void registry.then((ready) => {
-      if (!live) return
-      releasePosition = preserveReadingPosition(element, ready)
-      onReady?.(ready)
-    })
-    return () => {
-      live = false
-      releasePosition?.()
-      element.remove()
-      elementRef.current = null
-    }
-    // The stock wrapper initializes once. PdfDocument keys this adapter by src.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+export const PdfViewerAdapter = forwardRef<PDFViewerRef, PdfViewerAdapterProps>(
+  function PdfViewerAdapter(
+    { config = {}, className, style, onInit, onReady, getInteractionHost },
+    ref,
+  ) {
+    const holderRef = useRef<HTMLDivElement>(null)
+    const elementRef = useRef<HoliPdfContainer | null>(null)
+    useImperativeHandle(ref, () => ({
+      get container() {
+        return elementRef.current
+      },
+      get registry() {
+        return elementRef.current?.registry ?? null
+      },
+    }))
 
-  return <div ref={holderRef} className={className} style={style} />
-})
+    useEffect(() => {
+      const holder = holderRef.current
+      if (!holder) return
+      const element = document.createElement(TAG) as HoliPdfContainer & {
+        config: typeof config
+      }
+      element.config = config
+      elementRef.current = element
+      holder.append(element)
+      onInit?.(element)
+      let live = true
+      let releasePosition: (() => void) | undefined
+      const registry = element.registry
+      void registry.then((ready) => {
+        if (!live) return
+        releasePosition = preserveReadingPosition(
+          element,
+          ready,
+          getInteractionHost ?? (() => element),
+        )
+        onReady?.(ready)
+      })
+      return () => {
+        live = false
+        releasePosition?.()
+        element.remove()
+        elementRef.current = null
+      }
+      // The stock wrapper initializes once. PdfDocument keys this adapter by src.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+    return <div ref={holderRef} className={className} style={style} />
+  },
+)
