@@ -20,6 +20,7 @@ const saveDraftMock = vi.fn()
 const draftBodyMock = vi.fn()
 const markReadMock = vi.fn()
 const starMock = vi.fn()
+const mailMarkersMock = vi.fn()
 const archiveMock = vi.fn()
 const trashMock = vi.fn()
 const useAccountMock = vi.fn()
@@ -64,6 +65,9 @@ const google: Record<string, (params: unknown) => unknown> = {
   meeting: () => null,
   'mark-read': (p) => markReadMock(p),
   star: (p) => starMock(p),
+  mailMarkerAnnotations: (p) => mailMarkersMock(p),
+  mailMarkerPreferences: () => ({ enabledOrder: ['yellow-star'] }),
+  setMailMarkerPreferences: () => ({ ok: true }),
   archive: (p) => archiveMock(p),
   trash: (p) => trashMock(p),
   imageSenders: () => [],
@@ -164,6 +168,7 @@ beforeEach(() => {
   })
   markReadMock.mockReset().mockResolvedValue({ ok: true })
   starMock.mockReset().mockResolvedValue({ ok: true })
+  mailMarkersMock.mockReset().mockResolvedValue({})
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
   useAccountMock.mockReset().mockImplementation(async ({ sub }: { sub: string }) => {
@@ -713,4 +718,28 @@ test('thread navigation waits for the latest content save', async () => {
   finishSave?.({ id: 'd-new' })
   await waitFor(() => expect(threadMock).toHaveBeenCalledWith({ id: 't1' }))
   expect(screen.queryByRole('textbox', { name: 'Subject' })).toBeNull()
+})
+
+test('renders all configured marker symbols in the app-shell list', async () => {
+  searchMock.mockResolvedValue(
+    page([
+      summary({ id: 'yellow', subject: 'Yellow marker', starred: true }),
+      summary({ id: 'red', subject: 'Red marker', starred: true }),
+      summary({ id: 'blue', subject: 'Blue marker', starred: true }),
+    ]),
+  )
+  mailMarkersMock.mockResolvedValue({
+    yellow: 'yellow-star',
+    red: 'red-star',
+    blue: 'blue-question',
+  })
+  render(<MailShell />)
+
+  for (const label of ['Yellow star', 'Red star', 'Blue question mark'])
+    expect(await screen.findByLabelText(label)).toBeInTheDocument()
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+  expect(mailMarkersMock.mock.calls[0]![0]).toMatchObject({
+    ids: ['blue', 'red', 'yellow'],
+    expectedAccountSub: 'a',
+  })
 })

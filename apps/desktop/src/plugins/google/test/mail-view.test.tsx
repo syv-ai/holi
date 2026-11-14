@@ -5,7 +5,7 @@
  * the checks are that HTML goes through it rather than around it, that blocked
  * remote content can be unblocked, and that links open externally.
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../renderer/mail-view'
@@ -36,6 +36,7 @@ const discardDraftMock = vi.fn()
 const draftMock = vi.fn()
 const draftsMock = vi.fn()
 const meetingMock = vi.fn()
+const mailMarkersMock = vi.fn()
 /** What `openDialogAtom` was asked to open. */
 const openedDialog = vi.fn()
 const createTaskMock = vi.fn()
@@ -76,6 +77,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   draftBody: (p) => draftMock(p),
   drafts: () => draftsMock(),
   meeting: (p) => meetingMock(p),
+  mailMarkerAnnotations: (p) => mailMarkersMock(p),
 }
 
 vi.mock('@/plugin-api', async (original) => {
@@ -238,6 +240,7 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   categoryCountsMock.mockReset().mockResolvedValue({})
   meetingMock.mockReset().mockResolvedValue(null)
+  mailMarkersMock.mockReset().mockResolvedValue({})
   imageSendersMock.mockReset().mockResolvedValue({ imageSenders: [], imagesFromAllSenders: false })
   setImagesFromAllSendersMock.mockReset().mockResolvedValue({ ok: true })
   allowImagesFromMock.mockReset().mockResolvedValue({ ok: true })
@@ -2505,4 +2508,108 @@ test('failed mailbox-change save keeps the mailbox and editable text without req
   expect(screen.getByRole('button', { name: 'Choose a mailbox' })).not.toHaveTextContent('Sent')
   expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('Keep me in All mail')
+})
+
+test('renders account markers in the list and reader from one batched read', async () => {
+  const rows = [
+    summary({ id: 'yellow', subject: 'Yellow marker', starred: true }),
+    summary({ id: 'red', subject: 'Red marker', starred: true }),
+    summary({ id: 'blue', subject: 'Blue marker', starred: true }),
+  ]
+  threadMock.mockResolvedValue(page(rows))
+  mailMarkersMock.mockResolvedValue({
+    yellow: 'yellow-star',
+    red: 'red-star',
+    blue: 'blue-question',
+  })
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  for (const label of ['Yellow star', 'Red star', 'Blue question mark'])
+    expect(await screen.findByLabelText(label)).toBeInTheDocument()
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+  expect(mailMarkersMock.mock.calls[0]![0]).toMatchObject({
+    ids: ['blue', 'red', 'yellow'],
+    expectedAccountSub: 'mail-view-account',
+  })
+
+  for (const [subject, label] of Object.entries({
+    'Yellow marker': 'Yellow star',
+    'Red marker': 'Red star',
+    'Blue marker': 'Blue question mark',
+  })) {
+    await user.click(screen.getByRole('button', { name: new RegExp(subject, 'i') }))
+    await waitFor(() => expect(screen.getAllByLabelText(label).length).toBeGreaterThanOrEqual(2))
+  }
+})
+
+test('invalidates markers across an A-B-A vault switch before accepting the latest identical-id read', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+  const pending: ((value: Record<string, string>) => void)[] = []
+  mailMarkersMock.mockImplementation(
+    () =>
+      new Promise((resolve) => pending.push(resolve as (value: Record<string, string>) => void)),
+  )
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/i })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+
+  act(() => getDefaultStore().set(activeRemoteAtom, 'other/vault'))
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(2))
+  act(() => getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault'))
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(3))
+
+  await act(async () => pending[2]!({ t1: 'red-star' }))
+  expect(await screen.findByLabelText('Red star')).toBeInTheDocument()
+  await act(async () => pending[0]!({ t1: 'yellow-star' }))
+  expect(screen.queryByLabelText('Yellow star')).toBeNull()
+  expect(screen.getByLabelText('Red star')).toBeInTheDocument()
+  await act(async () => pending[1]!({ t1: 'blue-question' }))
+  expect(screen.queryByLabelText('Blue question mark')).toBeNull()
+})
+
+test('hides a persisted annotation when Gmail reports the thread unstarred', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: false })]))
+  mailMarkersMock.mockResolvedValue({ t1: 'red-star' })
+  render(<MailView />)
+
+  await screen.findByRole('button', { name: /Q2 budget/i })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+  expect(screen.queryByLabelText('Red star')).toBeNull()
+  expect(screen.queryByLabelText('Starred')).toBeNull()
+})
+
+test('refresh and Gmail star writes invalidate the visible thread marker', async () => {
+  threadMock
+    .mockResolvedValueOnce(page([summary()]))
+    .mockResolvedValue(page([summary({ starred: true })]))
+  mailMarkersMock
+    .mockResolvedValueOnce({ t1: 'red-star' })
+    .mockResolvedValueOnce({ t1: 'blue-question' })
+    .mockResolvedValue({ t1: 'yellow-star' })
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  await screen.findByRole('button', { name: /Q2 budget/i })
+  expect(screen.queryByLabelText('Red star')).toBeNull()
+  await user.click(screen.getByRole('button', { name: /Q2 budget/i }))
+  await user.click(await screen.findByRole('button', { name: 'Star this thread' }))
+  expect((await screen.findAllByLabelText('Blue question mark')).length).toBeGreaterThan(0)
+
+  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+  expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3)
+})
+
+test('shows ordinary Gmail stars only after the annotation read and retries marker errors', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+  mailMarkersMock.mockRejectedValueOnce(new Error('offline'))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  expect(await screen.findByRole('button', { name: 'Retry marker' })).toBeInTheDocument()
+  expect(await screen.findByLabelText('Starred')).toBeInTheDocument()
+  mailMarkersMock.mockResolvedValueOnce({})
+  await user.click(screen.getByRole('button', { name: 'Retry marker' }))
+  expect((await screen.findAllByLabelText('Starred')).length).toBeGreaterThan(0)
 })

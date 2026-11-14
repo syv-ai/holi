@@ -11,7 +11,6 @@ import {
   SearchIcon,
   SquarePenIcon,
   SquarePlusIcon,
-  StarIcon,
   XIcon,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -46,6 +45,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/plugin-api'
 import { listStamp } from '../mail-stamp'
+import { MailMarkerStatus } from '../mail-marker-icon'
+import type { MailMarkerStatus as MarkerState } from '../use-mail-markers'
 import { CATEGORIES, MAILBOXES, initialsOf, type MailFolder } from './data'
 import { senderIconUrl } from './sender-icon'
 import type { DraftSummary, MailState, ThreadSummary } from './use-mail'
@@ -131,10 +132,14 @@ function MailItem({
   thread,
   isSelected,
   onClick,
+  marker,
+  onRetryMarker,
 }: {
   thread: ThreadSummary
   isSelected: boolean
   onClick: () => void
+  marker: MarkerState
+  onRetryMarker: () => void
 }) {
   const chip = categoryChip(thread.category)
   return (
@@ -175,13 +180,7 @@ function MailItem({
 
           {/* Timestamp + icons */}
           <div className="flex shrink-0 items-center gap-1">
-            {thread.starred && (
-              <StarIcon
-                className="size-3 fill-amber-400 text-amber-400 dark:fill-amber-500 dark:text-amber-500"
-                role="img"
-                aria-label="Starred"
-              />
-            )}
+            <MailMarkerStatus state={marker} starred={thread.starred} onRetry={onRetryMarker} />
             {thread.hasDraft && (
               <FilePenIcon
                 className="text-muted-foreground/50 size-3"
@@ -504,6 +503,8 @@ export function MailList({
               key={thread.id}
               thread={thread}
               isSelected={mail.openId === thread.id}
+              marker={mail.markers.get(thread.id)}
+              onRetryMarker={() => mail.markers.invalidate([thread.id])}
               onClick={() => mail.openThread(thread)}
             />
           ))}

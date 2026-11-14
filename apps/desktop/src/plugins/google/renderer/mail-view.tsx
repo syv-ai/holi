@@ -102,6 +102,9 @@ import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from '.
 import { googleCap } from './google-cap'
 import { explainWriteFailure, isDisconnected } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
+import { useGoogleAccount } from './account'
+import { useMailMarkers } from './use-mail-markers'
+import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
 
 interface ThreadSummary {
   id: string
@@ -243,6 +246,7 @@ export function MailView() {
   /** The Gmail draft the composer is continuing, if any. */
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
+  const { currentSub } = useGoogleAccount()
   const remoteRef = useRef(remote)
   remoteRef.current = remote
   /** Offered only in a vault that runs tasks. */
@@ -253,6 +257,14 @@ export function MailView() {
       remote === null ? Promise.reject(new Error('No vault is open.')) : work(remote),
     [remote],
   )
+  const markers = useMailMarkers({
+    remote,
+    accountSub: currentSub,
+    ids: [
+      ...(list.kind === 'ready' ? list.threads.map((thread) => thread.id) : []),
+      ...(openId === null ? [] : [openId]),
+    ],
+  })
   const openNote = useSetAtom(openDocumentAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   /** Where Google is connected: the Connections section of Settings. */
@@ -656,11 +668,14 @@ export function MailView() {
       (threads) => threads.map((t) => (t.id === id ? { ...t, unread: !read } : t)),
     )
 
-  const setStarred = (id: string, starred: boolean) =>
-    write(
+  const setStarred = async (id: string, starred: boolean) => {
+    const result = await write(
       () => call((r) => googleCap.star(r, { id, off: !starred })),
       (threads) => threads.map((t) => (t.id === id ? { ...t, starred } : t)),
     )
+    markers.invalidate([id])
+    return result
+  }
 
   /**
    * Archive and trash, which both take the thread out of the list.
@@ -913,6 +928,7 @@ export function MailView() {
                 })
               }}
               onRefresh={() => {
+                markers.invalidate()
                 load()
                 loadCounts()
                 // Only if already loaded: refresh must not be what first spends
@@ -983,6 +999,8 @@ export function MailView() {
                 >
                   <ThreadRow
                     thread={thread}
+                    marker={markers.get(thread.id)}
+                    onRetryMarker={() => markers.invalidate([thread.id])}
                     active={openId === thread.id}
                     onOpen={() => openThread(thread)}
                     selected={live.has(thread.id)}
@@ -1057,9 +1075,18 @@ export function MailView() {
               {/* The subject on its own row, wrapping: it is the one place a
                   subject the list truncated can be read in full, and a pane at
                   its 280px floor still has room for it. */}
-              <h3 className="px-4 pt-3 text-sm font-medium text-pretty break-words">
-                {open.subject}
-              </h3>
+              <div className="flex items-start gap-2 px-4 pt-3">
+                <h3 className="min-w-0 flex-1 text-sm font-medium text-pretty break-words">
+                  {open.subject}
+                </h3>
+                {markers.get(openId).kind !== 'ready' && (
+                  <MailMarkerStatus
+                    state={markers.get(openId)}
+                    starred={openRow?.starred === true}
+                    onRetry={() => markers.invalidate([openId])}
+                  />
+                )}
+              </div>
               <PaneToolbar>
                 {/* First, as the only time-sensitive action. The link is NOT
                     parsed out of the invite: main matched its `UID` to the
@@ -1125,12 +1152,11 @@ export function MailView() {
                   aria-label={openRow?.starred === true ? 'Unstar this thread' : 'Star this thread'}
                   onClick={() => void setStarred(open.id, openRow?.starred !== true)}
                 >
-                  <Star
-                    className={cn(
-                      'size-3.5',
-                      openRow?.starred === true ? 'fill-current' : undefined,
-                    )}
-                  />
+                  {openRow?.starred === true && markers.get(openId).kind === 'ready' ? (
+                    <MailMarkerStatus state={markers.get(openId)} starred />
+                  ) : (
+                    <Star className="size-3.5" aria-hidden="true" />
+                  )}
                 </IconButton>
                 {/* Everything less frequent, in one menu, so the row fits a
                     reader at its narrowest instead of clipping off the pane. */}
@@ -1685,6 +1711,8 @@ function ago(iso: string): string {
  */
 function ThreadRow({
   thread,
+  marker,
+  onRetryMarker,
   active,
   onOpen,
   selected,
@@ -1692,6 +1720,8 @@ function ThreadRow({
   showCheckbox,
 }: {
   thread: ThreadSummary
+  marker: ReturnType<ReturnType<typeof useMailMarkers>['get']>
+  onRetryMarker: () => void
   active: boolean
   onOpen: () => void
   selected: boolean
@@ -1734,6 +1764,7 @@ function ThreadRow({
           }}
         />
       </div>
+      {marker.kind === 'error' && <MailMarkerRetry onRetry={onRetryMarker} />}
       <Button
         variant="ghost"
         size="row"
@@ -1770,11 +1801,11 @@ function ThreadRow({
               </span>
               {/* These three stay on the sender's line: they are things *you*
                   did, where the rail holds what the thread is. */}
-              {thread.starred && (
-                <span role="img" aria-label="Starred" className="flex shrink-0 self-center">
-                  <Star className="size-3.5 text-muted-foreground" />
-                </span>
-              )}
+              <MailMarkerStatus
+                state={marker}
+                starred={thread.starred}
+                className="shrink-0 self-center"
+              />
               {/* "You started replying and stopped". */}
               {thread.hasDraft && (
                 <span role="img" aria-label="Unsent draft" className="flex shrink-0 self-center">
