@@ -49,6 +49,7 @@ try {
       .join(delimiter),
     HOLI_QA372_ROOT: root,
     HOLI_QA372_DESKTOP: desktop,
+    HOLI_QA372_NODE: process.execPath,
     HOLI_QA372_EVIDENCE: evidence,
   }
   delete env.ELECTRON_RUN_AS_NODE

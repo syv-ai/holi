@@ -46,12 +46,11 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
       throw new Error(
         'The Node fallback arguments exceed the Windows environment limit. Install Node.js to run this command.',
       )
-    const bootstrap =
-      "const s=JSON.parse(process.env.HOLI_NODE_PTY_SPEC);delete process.env.HOLI_NODE_PTY_SPEC;delete process.env.HOLI_NODE_PTY_EXEC;process.argv=[process.execPath,s.file,...s.args];process.execArgv=[];require('node:module').runMain(s.file)"
+    const bootstrap = String.raw`const s=JSON.parse(process.env.HOLI_NODE_PTY_SPEC);delete process.env.HOLI_NODE_PTY_SPEC;delete process.env.HOLI_NODE_PTY_EXEC;process.argv=[process.execPath,s.file,...s.args];process.execArgv=[];const tty=require('node:tty');if(!tty.isatty(0)){const f=require('node:fs');try{f.closeSync(0)}catch(e){if(e.code!=='EBADF')throw e}let fd;try{fd=f.openSync('\\\\.\\CONIN$','r')}catch(e){throw Error('Could not attach Electron Node fallback to console input: '+e.message)}if(fd!==0){try{f.closeSync(fd)}catch{}throw Error('Could not attach Electron Node fallback to console input: expected descriptor 0, received '+fd)}if(!tty.isatty(0))throw Error('Could not attach Electron Node fallback to console input: reopened descriptor is not a TTY')}if(!process.stdin.isTTY)Object.defineProperty(process,'stdin',{value:new tty.ReadStream(0,{highWaterMark:0}),configurable:true,enumerable:true});require('node:module').runMain(s.file)`
     const key = Object.keys(env).find((key) => key.toUpperCase() === 'COMSPEC')
     return pty.spawn(
       key ? env[key]! : 'cmd.exe',
-      `/d /v:off /s /c "start "" /b /wait "%HOLI_NODE_PTY_EXEC%" -e "${bootstrap}" <CONIN$"`,
+      `/d /v:off /s /c "start "" /b /wait "%HOLI_NODE_PTY_EXEC%" -e "${bootstrap}"`,
       {
         name: 'xterm-256color',
         ...opts,

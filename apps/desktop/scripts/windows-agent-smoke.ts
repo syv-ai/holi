@@ -14,7 +14,8 @@ import { AgentRuntime } from '../src/plugins/agent/main/host/pty'
 const root = process.env.HOLI_QA372_ROOT!
 const evidence = process.env.HOLI_QA372_EVIDENCE!
 const desktop = process.env.HOLI_QA372_DESKTOP!
-assert(root && evidence && desktop)
+const nativeNode = process.env.HOLI_QA372_NODE!
+assert(root && evidence && desktop && nativeNode)
 const profile = join(root, 'profile')
 const vault = join(root, 'vault')
 for (const dir of [profile, vault, join(root, 'session'), join(root, 'app-data')]) {
@@ -79,15 +80,20 @@ async function run() {
   const packageDir = join(bin, 'node_modules', 'fixture')
   await mkdir(packageDir, { recursive: true })
   const script = join(packageDir, 'cli.js')
+  const esmScript = join(packageDir, 'cli.mjs')
+  const cliBody = join(packageDir, 'cli-body.cjs')
   const stateFile = join(root, 'terminal-state.json')
   await writeFile(
-    script,
+    cliBody,
     `
 const fs=require('node:fs'),cp=require('node:child_process');
-if(require.main!==module)throw new Error('not the CLI entrypoint');
 if(process.env.HOLI_NODE_PTY_SPEC || process.env.HOLI_NODE_PTY_EXEC)throw new Error('private launch transport leaked');
-const args=process.argv.slice(2);
+module.exports=function(){const args=process.argv.slice(2);
 if(args[0]==='--pty') {
+ if(process.platform==='win32'){
+  const inherited=cp.spawnSync(${JSON.stringify(nativeNode)},['-e','process.stdout.write(String(!!process.stdin.isTTY))'],{stdio:['inherit','pipe','inherit'],windowsHide:true});
+  if(inherited.status!==0 || inherited.stdout.toString()!==String(!!process.stdin.isTTY))throw new Error('child did not inherit the actual stdin descriptor');
+ }
  fs.writeFileSync(${JSON.stringify(stateFile)},JSON.stringify({input:!!process.stdin.isTTY,output:!!process.stdout.isTTY}));
  if(process.stdin.isTTY)process.stdin.setRawMode(true);
  fs.writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(args.slice(1)));
@@ -95,11 +101,22 @@ if(args[0]==='--pty') {
  fs.writeFileSync(${JSON.stringify(pidFile)},JSON.stringify([process.pid,c.pid]));
  process.stdout.write('READY\\n');
  let input=''; process.stdin.on('data',d=>{input+=d.toString().replace(/\\r/g,'\\n');let n;while((n=input.indexOf('\\n'))>=0){const line=input.slice(0,n).replace(/\\r/g,'');input=input.slice(n+1);process.stdout.write(line==='size'?'SIZE:'+process.stdout.getWindowSize().join('x')+'\\n':'INPUT:'+line+'\\n')}});
-} else { console.log(JSON.stringify(args)); }
+} else { console.log(JSON.stringify(args)); }};
 `,
   )
+  await writeFile(
+    script,
+    "if(require.main!==module)throw new Error('not the CLI entrypoint');require('./cli-body.cjs')();",
+  )
+  await writeFile(
+    esmScript,
+    "import { createRequire } from 'node:module';if(!import.meta.main)throw new Error('not the CLI entrypoint');await Promise.resolve();createRequire(import.meta.url)('./cli-body.cjs')();",
+  )
   const shim = join(bin, 'claude.cmd')
-  await writeFile(shim, await readFile(join(desktop, 'test/fixtures/npm-node-shim.cmd'), 'utf8'))
+  const shimContents = await readFile(join(desktop, 'test/fixtures/npm-node-shim.cmd'), 'utf8')
+  await writeFile(shim, shimContents)
+  const esmShim = join(bin, 'claude-esm.cmd')
+  await writeFile(esmShim, shimContents.replaceAll('cli.js', 'cli.mjs'))
   const lookupEnv = { ...env, Path: bin, PATH: undefined }
   if (process.platform === 'win32') {
     assert.equal(resolveBin('claude', lookupEnv), shim)
@@ -191,33 +208,44 @@ if(args[0]==='--pty') {
     for (const key of Object.keys(fallbackEnv))
       if (key.toUpperCase() === 'PATH') delete fallbackEnv[key]
     fallbackEnv.Path = root
-    assert.equal(launchPlan(shim, [], { env: fallbackEnv }).env?.ELECTRON_RUN_AS_NODE, '1')
-    const fallbackRuntime = new AgentRuntime()
-    active.push(fallbackRuntime)
-    let fallbackOutput = ''
-    fallbackRuntime.onData((data) => {
-      fallbackOutput += data
-      output += data
-    })
-    fallbackRuntime.start({
-      bin: shim,
-      args: ['--pty', ...args],
-      cwd: vault,
-      env: fallbackEnv,
-      cols: 100,
-      rows: 30,
-    })
-    await until(() => fallbackOutput.includes('READY'))
-    assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), args)
-    assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')), { input: true, output: true })
-    const fallbackPids = await readPids()
-    fallbackRuntime.write('ping\r')
-    await until(() => fallbackOutput.includes('INPUT:ping'))
-    await fallbackRuntime.kill()
-    await until(() => fallbackPids.every((pid) => !alive(pid)))
-    checks.push(
-      'Electron-as-Node fallback uses a real console parent, preserves argv and require.main, hides private transport, and stops its full ConPTY tree',
-    )
+    for (const [entryShim, entryName] of [
+      [shim, 'CommonJS'],
+      [esmShim, 'ESM with top-level await'],
+    ] as const) {
+      assert.equal(launchPlan(entryShim, [], { env: fallbackEnv }).env?.ELECTRON_RUN_AS_NODE, '1')
+      const fallbackRuntime = new AgentRuntime()
+      active.push(fallbackRuntime)
+      let fallbackOutput = ''
+      fallbackRuntime.onData((data) => {
+        fallbackOutput += data
+        output += data
+      })
+      fallbackRuntime.start({
+        bin: entryShim,
+        args: ['--pty', ...args],
+        cwd: vault,
+        env: fallbackEnv,
+        cols: 100,
+        rows: 30,
+      })
+      await until(() => fallbackOutput.includes('READY'))
+      assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), args)
+      assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')), { input: true, output: true })
+      const fallbackPids = await readPids()
+      fallbackRuntime.write('ping\r')
+      await until(() => fallbackOutput.includes('INPUT:ping'))
+      fallbackRuntime.resize(113, 37)
+      await until(() => {
+        if (fallbackOutput.includes('SIZE:113x37')) return true
+        fallbackRuntime.write('size\r')
+        return false
+      })
+      await fallbackRuntime.kill()
+      await until(() => fallbackPids.every((pid) => !alive(pid)))
+      checks.push(
+        `Electron-as-Node ${entryName} fallback restores console stdin, preserves argv, entry semantics and inherited stdin, responds to input, resizes, hides private transport and stops its full ConPTY tree`,
+      )
+    }
   }
 
   const managed = spawnOwnedProgram(plan.file, [script, '--pty'], {
