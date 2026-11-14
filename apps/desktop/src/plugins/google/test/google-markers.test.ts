@@ -32,6 +32,42 @@ describe('account-bound personal mail markers', () => {
     })
   })
 
+  it('keeps thread queue keys separate from the store queue', async () => {
+    const markers = createMailMarkerStore(await temp(), 'account-a')
+    let release!: () => void
+    let entered!: () => void
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    const first = markers.runExclusive('store', async () => {
+      entered()
+      await blocked
+    })
+    await started
+    const second = markers.set('store', 'red-star')
+    release()
+    await first
+    let timer: ReturnType<typeof setTimeout>
+    const bounded = Promise.race([
+      second,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('hung')), 500)
+      }),
+    ])
+    await expect(bounded).resolves.toBeUndefined()
+    clearTimeout(timer!)
+    expect(await markers.read(['store'])).toEqual({ store: 'red-star' })
+  })
+
+  it('roundtrips prototype-named Gmail thread ids as ordinary keys', async () => {
+    const markers = createMailMarkerStore(await temp(), 'account-a')
+    const ids = ['__proto__', 'constructor', 'toString']
+    expect(await markers.read(ids)).toEqual(Object.fromEntries(ids.map((id) => [id, null])))
+    for (const id of ids) await markers.set(id, 'blue-question')
+    expect(await markers.read(ids)).toEqual(
+      Object.fromEntries(ids.map((id) => [id, 'blue-question'])),
+    )
+  })
+
   it('serializes competing marker writes and validates thread ids and stored identity', async () => {
     const root = await temp()
     const markers = createMailMarkerStore(root, 'account-a')

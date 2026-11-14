@@ -78,7 +78,7 @@ import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
 import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
-import { isMailMarker, validateBatch, type MarkerValue } from './markers'
+import { isMailMarker, validateBatch, validateThreadId, type MarkerValue } from './markers'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -463,6 +463,14 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     return { session, data }
   }
 
+  const validateSession = (remote: string, session: GoogleSession) => async () => {
+    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+    const current = await deps.accounts.sessionFor(remote)
+    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+    if (current !== session)
+      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+  }
+
   const dataOf = async (remote: string): Promise<GoogleData> => {
     const data = await deps.dataFor(remote)
     if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
@@ -826,11 +834,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
       run: async (ctx, { ids, expectedAccountSub }) => {
         const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
-        const validate = async () => {
-          if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-          if ((await deps.accounts.sessionFor(ctx.remote)) !== session)
-            throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
-        }
+        const validate = validateSession(ctx.remote, session)
         return google(() => data.mailMarkers(ids, validate))
       },
     }),
@@ -853,11 +857,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
       run: async (ctx, { id, marker, expectedAccountSub }) => {
         const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
-        const validate = async () => {
-          if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-          if ((await deps.accounts.sessionFor(ctx.remote)) !== session)
-            throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
-        }
+        const validate = validateSession(ctx.remote, session)
         await google(() => data.setMailMarker(id, marker, validate))
         return ok
       },
@@ -868,11 +868,21 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       cli: { args: ['id'], flags: ['off'], summary: 'star a thread (--off: unstar)' },
       params: (raw) => {
         const p = paramsObject(raw)
-        return { id: stringParam(p, 'id'), off: flagParam(p, 'off') }
+        const id = stringParam(p, 'id')
+        try {
+          validateThreadId(id)
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return { id, off: flagParam(p, 'off') }
       },
       run: async (ctx, { id, off }) => {
-        const data = await dataOf(ctx.remote)
-        await google(() => data.setStarred(id, !off))
+        const { data, session } = await accountOf(ctx.remote)
+        const validate = validateSession(ctx.remote, session)
+        await google(() => data.setStarred(id, !off, validate))
         return ok
       },
     }),
