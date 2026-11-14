@@ -20,6 +20,7 @@ async function run(): Promise<void> {
   app.setPath('sessionData', join(root, 'session'))
   assert.equal(app.getPath('userData'), join(root, 'profile'))
   await app.whenReady()
+  console.log('[472] electron-ready')
 
   const server = createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -42,9 +43,8 @@ async function run(): Promise<void> {
     show: true,
     webPreferences: { sandbox: true },
   })
-  const other = new BrowserWindow({ width: 400, height: 300, show: true })
   await win.loadURL('data:text/html,<body style="font:20px sans-serif">Holi shell window</body>')
-  await other.loadURL('data:text/html,<body>Independent native window</body>')
+  console.log('[472] shell-loaded')
   let displayed: string | null = 'owner-a'
   const listeners = new Set<(remote: string | null) => void>()
   let presentationEpoch = 0
@@ -96,7 +96,7 @@ async function run(): Promise<void> {
       for (const handler of [...handlers]) handler(message)
     }
     return {
-      open: (id: string, address: string) => invoke('open', { tab: id, url: address }),
+      open: (id: string, address: string) => invoke('open', { reopen: id, url: address }),
       sendPlace,
       place: async (id: string, rect: unknown) => {
         sendPlace(id, rect)
@@ -117,13 +117,19 @@ async function run(): Promise<void> {
   const ownerA = await makeOwner('owner-a')
   const ownerB = await makeOwner('owner-b')
   const viewA = await ownerA.open('duplicate-page-id', url)
+  console.log('[472] owner-a-opened', viewA.id)
   await ownerA.place(viewA.id, { x: 0, y: 0, width: 500, height: 400 })
   assert.equal(win.contentView.children.length, 1, 'displayed page attaches to native parent')
   const attachedA = win.contentView.children[0]!
+  console.log('[472] attached')
   const initial = await ownerA.read(viewA.id)
+  console.log('[472] read-complete')
   assert.match(initial.text, /Browser page owned by vault A/)
   assert(initial.text.length > 30, 'the page must contain real non-empty content')
   checks.push('displayed-page-attached-with-loaded-content')
+  await attachedA.webContents.executeJavaScript(
+    'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  )
   const pageImage = await attachedA.webContents.capturePage()
   assert(!pageImage.isEmpty(), 'attached native browser child screenshot was empty')
   writeFileSync(join(evidence, 'browser-before.png'), pageImage.toPNG())
@@ -148,8 +154,8 @@ async function run(): Promise<void> {
     'departure to null synchronously removes native child',
   )
   checks.push('departure-detaches-synchronously')
-  other.focus()
-  const focusedOther = other.isFocused()
+  win.blur()
+  const focusedOther = BrowserWindow.getFocusedWindow()
   await ownerA.type(viewA.id, inputRef, 'hidden-value', true)
   const hiddenRead = await ownerA.read(viewA.id)
   assert.match(hiddenRead.text, /hidden-value/)
@@ -159,7 +165,11 @@ async function run(): Promise<void> {
   assert.equal(reveals, 0, 'hidden work cannot reveal a tab')
   assert.equal(shortcuts, 0, 'hidden work cannot forward a shortcut')
   assert.equal(addresses, 0, 'hidden work cannot request address focus')
-  assert.equal(other.isFocused(), focusedOther, 'detached native input cannot focus Holi')
+  assert.equal(
+    BrowserWindow.getFocusedWindow(),
+    focusedOther,
+    'detached native input cannot focus Holi',
+  )
   await ownerA.read(viewA.id)
   const hiddenOpened = await ownerA.open('hidden-tab', url)
   await ownerA.place(viewA.id, { x: 1, y: 1, width: 400, height: 300 })
@@ -213,7 +223,6 @@ async function run(): Promise<void> {
   await ownerA.dispose()
   await ownerB.dispose()
   win.destroy()
-  other.destroy()
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
   )
