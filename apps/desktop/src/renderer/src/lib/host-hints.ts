@@ -220,23 +220,30 @@ function composedContains(parent: Element, child: Element): boolean {
 }
 
 function deepHitTest(x: number, y: number, surface: ShadowRoot | null): Element | null {
-  let hit: Element | null = surface
-    ? ((
+  const documentHit = document.elementFromPoint(x, y)
+  // The document hit test sees host overlays and other light-DOM occluders,
+  // while a shadow-root hit test alone would incorrectly see through them.
+  if (surface) {
+    const owned = [...ownedSurfaces].find((item) => item.root === surface)
+    if (!owned?.owner.isConnected || !documentHit || !composedContains(owned.owner, documentHit))
+      return documentHit
+    return (
+      (
         surface as ShadowRoot & { elementFromPoint?: (x: number, y: number) => Element | null }
-      ).elementFromPoint?.(x, y) ?? null)
-    : document.elementFromPoint(x, y)
-  // Shadow DOM retargets document.elementFromPoint to the host. Descend only
-  // through an explicitly registered PDF root, never arbitrary open roots.
-  if (!surface) {
-    for (const owned of ownedSurfaces) {
-      if (owned.owner !== hit && !composedContains(owned.owner, hit ?? owned.owner)) continue
-      const inner = (
-        owned.root as ShadowRoot & { elementFromPoint?: (x: number, y: number) => Element | null }
-      ).elementFromPoint?.(x, y)
-      if (inner) hit = inner
-    }
+      ).elementFromPoint?.(x, y) ?? null
+    )
   }
-  return hit
+  // Descend only through an explicitly registered PDF root, never arbitrary
+  // open roots. The document hit test above remains authoritative for occlusion.
+  for (const owned of ownedSurfaces) {
+    if (owned.owner !== documentHit && !composedContains(owned.owner, documentHit ?? owned.owner))
+      continue
+    const inner = (
+      owned.root as ShadowRoot & { elementFromPoint?: (x: number, y: number) => Element | null }
+    ).elementFromPoint?.(x, y)
+    if (inner) return inner
+  }
+  return documentHit
 }
 
 /** Clip before hit-testing: a visible edge still counts when a centre is covered. */
