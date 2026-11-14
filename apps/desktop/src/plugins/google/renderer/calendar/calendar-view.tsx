@@ -292,7 +292,7 @@ export function CalendarView(): React.JSX.Element {
   }, [])
 
   const saveDraft = async (draft: EventDraft): Promise<boolean> => {
-    if (!card || pending.current) return false
+    if (!card || card.mode !== 'edit' || pending.current) return false
     const identity = cardIdentity.current
     const title = draft.title.trim()
     if (title === '') {
@@ -310,11 +310,8 @@ export function CalendarView(): React.JSX.Element {
     setSaving(true)
     try {
       const times = { title, start, end, allDay: draft.allDay }
-      if (card.mode === 'edit' && draft.googleId !== undefined) {
-        await calendar.update(draft.googleId, times)
-      } else {
-        await calendar.create({ ...times, location: draft.location.trim() })
-      }
+      if (draft.googleId === undefined) return false
+      await calendar.update(draft.googleId, times)
       if (identity === cardIdentity.current) {
         setCard(null)
         setCardAnchor(null)
@@ -676,6 +673,8 @@ export function CalendarView(): React.JSX.Element {
         </EventCalendar>
 
         <EventCard
+          meetingIdentity={remote && currentSub ? { remote, sub: currentSub } : null}
+          onCreated={calendar.reload}
           state={card}
           anchor={cardAnchor}
           error={error}
