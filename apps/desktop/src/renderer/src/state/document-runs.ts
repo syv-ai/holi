@@ -73,7 +73,7 @@ export interface AgentRun {
 export const documentRunsAtom = atom<Readonly<Record<string, AgentRun>>>({})
 
 /** Documents whose paths are being upgraded; new agent runs must wait. */
-export const documentUpgradesAtom = atom<ReadonlySet<string>>(new Set())
+export const documentUpgradesAtom = atom<ReadonlySet<string>>(new Set<string>())
 
 export function isRunLive(run: AgentRun | undefined): boolean {
   return (

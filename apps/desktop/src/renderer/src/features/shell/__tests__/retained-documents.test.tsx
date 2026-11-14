@@ -15,10 +15,11 @@ import {
   VAULT_SETTING_DEFAULTS,
   type CommentThread,
 } from '@holi/shared'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@/test/render'
+import { useDocumentAgent } from '@/features/documents/document-agent'
 import { flushAllBuffers, freezeBuffers } from '@/lib/buffer-registry'
 import { activeRemoteAtom, openedRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
-import { installedPluginsAtom } from '@/state/plugins'
+import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { AGENTS_HOME_KEY } from '@/state/tab-descriptor'
 import {
@@ -32,7 +33,7 @@ import {
 } from '@/state/shell-workspace'
 import { changedDocsAtom } from '@/state/doc-changes'
 import { editorSelectionAtom } from '@/state/ui-report'
-import { documentRunsAtom, type AgentRun } from '@/state/document-runs'
+import { documentRunsAtom, documentUpgradesAtom, type AgentRun } from '@/state/document-runs'
 import { vaultSettingsAtom } from '@/state/settings'
 import { sessionAtom } from '@/state/session'
 import { pendingHeadingAtom } from '@/state/open-document'
@@ -60,6 +61,7 @@ const move = vi.fn(async (input: { moves: { from: string; to: string }[] }) => {
   }
   return { rewritten: [] }
 })
+const commitNow = vi.fn(async () => ({ ok: true }))
 let movedSnapshot: ReturnType<typeof emptyVaultSnapshot>
 const capability = vi.fn(async (_input: unknown) => ({ ok: true }))
 const comments = vi.fn(async (_input: unknown): Promise<CommentThread[]> => [])
@@ -107,9 +109,11 @@ vi.mock('@/lib/trpc', () => {
           ? move
           : name === 'cap.run'
             ? capability
-            : name === 'comments.reply'
-              ? reply
-              : async () => ({ ok: true }),
+            : name === 'sync.commitNow'
+              ? commitNow
+              : name === 'comments.reply'
+                ? reply
+                : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
   })
   const router = (name: string) =>
@@ -166,6 +170,7 @@ beforeEach(() => {
     return { rewritten: [] }
   })
   movedSnapshot = emptyVaultSnapshot()
+  commitNow.mockReset().mockResolvedValue({ ok: true })
   comments.mockReset().mockResolvedValue([])
   reply.mockReset().mockResolvedValue({ ok: true })
   capability.mockReset().mockResolvedValue({ ok: true })
@@ -257,7 +262,19 @@ async function openActions() {
 
 test('upgrading a note preserves source text and transitions its retained tab to CodeMirror', async () => {
   const source = "---\ntitle: Source\n---\n\nimport Thing from 'thing'\n\n<Thing />  \n"
-  fixture([ONE])
+  const store = fixture([ONE])
+  act(() =>
+    store.set(coreContributionAtom, {
+      surfaces: [],
+      rail: [],
+      claims: [
+        {
+          match: (path) => path.endsWith('.md'),
+          rowMenu: [{ label: 'Convert to PDF…', run: () => {} }],
+        },
+      ],
+    }),
+  )
   disk.set(`${REMOTE}:${ONE}`, source)
   movedSnapshot = {
     ...emptyVaultSnapshot(),
@@ -281,6 +298,55 @@ test('upgrading a note preserves source text and transitions its retained tab to
   })
   expect(write).not.toHaveBeenCalled()
 })
+test('an upgrade reserves the source against agent launches while its restore point is pending', async () => {
+  const pending = deferred<{ ok: boolean }>()
+  commitNow.mockImplementationOnce(() => pending.promise)
+  const store = fixture([ONE])
+  const ed = await editor()
+  const agent = renderHook(() => useDocumentAgent(ONE), {
+    wrapper: ({ children }) => <Provider store={store}>{children}</Provider>,
+  })
+  movedSnapshot = {
+    ...emptyVaultSnapshot(),
+    files: [{ path: 'notes/one.mdx', updatedAt: 'two' }],
+  }
+  await openActions()
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Upgrade to MDX' }))
+  await waitFor(() => expect(commitNow).toHaveBeenCalledTimes(1))
+  expect(store.get(documentUpgradesAtom).has(ONE)).toBe(true)
+  expect(ed.isEditable).toBe(false)
+  await act(async () => {
+    await agent.result.current.start('rewrite', 'Rewrite the passage', 'First passage')
+    await agent.result.current.start('write', 'Write a paragraph')
+  })
+  expect(store.get(documentRunsAtom)[ONE]).toBeUndefined()
+  expect(capability.mock.calls.map(([input]) => (input as { name: string }).name)).not.toEqual(
+    expect.arrayContaining(['agent.launch', 'agent.job', 'agent.scoped']),
+  )
+  await act(async () => pending.resolve({ ok: true }))
+  await waitFor(() => expect(store.get(documentUpgradesAtom).size).toBe(0))
+  expect(move).toHaveBeenCalledTimes(1)
+})
+
+test('a failed upgrade releases its reservation and restores the editable source for retry', async () => {
+  move.mockRejectedValueOnce(new Error('Destination already exists'))
+  const store = fixture([ONE])
+  const ed = await editor()
+  await openActions()
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Upgrade to MDX' }))
+  await waitFor(() => expect(move).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(store.get(documentUpgradesAtom).size).toBe(0))
+  expect(ed.isEditable).toBe(true)
+  expect(store.get(shellWorkspaceAtom).entries).toContain(ONE)
+  movedSnapshot = {
+    ...emptyVaultSnapshot(),
+    files: [{ path: 'notes/one.mdx', updatedAt: 'two' }],
+  }
+  await openActions()
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Upgrade to MDX' }))
+  await waitFor(() => expect(move).toHaveBeenCalledTimes(2))
+})
+
 function run(): AgentRun {
   return {
     kind: 'vault-app',
