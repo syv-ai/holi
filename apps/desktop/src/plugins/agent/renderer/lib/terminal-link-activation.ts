@@ -45,7 +45,7 @@ export function activateTerminalLink(text: string, actions: TerminalLinkActions)
     return
   // On Windows, a hostname-empty file URL can still name a UNC share through
   // its path. Keep POSIX's valid double-leading-slash local paths unchanged.
-  if (isWindows && /^\/{2,}[^/]+\//.test(windowsPath)) return
+  if (isWindows && windowsPath.startsWith('//')) return
   // WHATWG URL represents a Windows drive path with a leading slash.
   if (/^\/[a-zA-Z]:\//.test(path)) path = path.slice(1)
 

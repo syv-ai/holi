@@ -58,6 +58,8 @@ describe('embedded terminal link activation', () => {
       'javascript:alert(1)',
       'data:text/html,hello',
       'file://remote/etc/passwd',
+      'file:////attacker',
+      'file:///%5cattacker',
       'file:////attacker/share/report.pdf',
       'file:////\\\\attacker\\share\\report.pdf',
       'file:////%2fattacker/share/report.pdf',
