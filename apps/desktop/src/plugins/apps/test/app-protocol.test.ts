@@ -199,6 +199,15 @@ describe('appHeadHtml', () => {
 })
 
 describe('BRIDGE_JS', () => {
+  it('places the document nonce before the bridge and requires it in messages', () => {
+    const html = appHeadHtml({}, 'dark', 'document-nonce')
+    expect(html.indexOf('document-nonce')).toBeLessThan(
+      html.indexOf(`<script>${BRIDGE_JS}</script>`),
+    )
+    expect(BRIDGE_JS).toContain('msg.nonce !== nonce')
+    expect(BRIDGE_JS).toContain('{ nonce, log:')
+  })
+
   it('implements every method on the wire', () => {
     // The shim is a string, so nothing typechecks it against APP_METHODS. This
     // is what goes red when a method is added to the wire and not to the shim.
@@ -219,13 +228,17 @@ describe('BRIDGE_JS', () => {
   it('routes a push to its listeners and a reply to its caller', () => {
     // Run the shim against a minimal fake frame: parent, message events, crypto.
     const handlers: ((e: { source: unknown; data: unknown }) => void)[] = []
-    const sent: { id: string; method: string }[] = []
-    const parent = { postMessage: (m: { id: string; method: string }) => sent.push(m) }
+    const sent: { id: string; method: string; nonce: string }[] = []
+    const nonce = 'document-nonce'
+    const parent = {
+      postMessage: (m: { id: string; method: string; nonce: string }) => sent.push(m),
+    }
     const win: Record<string, unknown> = {}
     const fake = {
       addEventListener: (_: string, fn: (e: { source: unknown; data: unknown }) => void) =>
         handlers.push(fn),
       parent,
+      document: { querySelector: () => ({ content: nonce }) },
       window: win,
       crypto: { randomUUID: () => `id${sent.length}` },
       // The frame's own, which the shim wraps; never the test runner's.
@@ -240,7 +253,8 @@ describe('BRIDGE_JS', () => {
     }
     const heard: string[] = []
     const off = holi.on('docs', () => heard.push('docs'))
-    const deliver = (data: unknown) => handlers.forEach((h) => h({ source: parent, data }))
+    const deliver = (data: unknown) =>
+      handlers.forEach((h) => h({ source: parent, data: { nonce, ...(data as object) } }))
 
     deliver({ push: 'docs' })
     off()
@@ -248,7 +262,7 @@ describe('BRIDGE_JS', () => {
     expect(heard).toEqual(['docs'])
 
     const status = holi.sync.status()
-    expect(sent.at(-1)).toMatchObject({ method: 'sync.status' })
+    expect(sent.at(-1)).toMatchObject({ method: 'sync.status', nonce })
     deliver({ id: sent.at(-1)!.id, ok: true, value: { kind: 'up-to-date' } })
     return expect(status).resolves.toEqual({ kind: 'up-to-date' })
   })

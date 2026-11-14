@@ -75,8 +75,6 @@ export const appsMain: MainPlugin = {
     // The app door's one opener: the approvals an entry's `appGrant` asks for.
     const door: AppDoor = ctx.openAppDoor({ admit: admitApps(grants) })
     const previews = createAppPreviews(join(ctx.userData, 'app-previews'))
-    const presentation = ctx.presentationLease()
-    const captureForActivation = (rect: PreviewRect) => capture(rect, ctx.window(), presentation)
     ctx.register(
       ['apps'],
       appsCapabilities({
@@ -84,13 +82,18 @@ export const appsMain: MainPlugin = {
         appDoor: () => door,
         grants,
         previews,
-        capture: captureForActivation,
-        captureCurrent: presentation,
+        capture: (rect, window, current) => capture(rect, window, current),
         issueFrameLease: (bundle) => {
           const { token, nonce } = ctx.issueAppFrameLease(bundle)
           return { token, nonce }
         },
         releaseFrameLease: (token, bundle) => ctx.releaseAppFrameLease(token, bundle),
+        validateFrameLease: (token, nonce, bundle) => {
+          const window = ctx.window()
+          return window === null
+            ? null
+            : ctx.validateAppFrameLease({ token, nonce, window, bundle })
+        },
       }),
     )
     ctx.register(['store'], storeCapabilities())
