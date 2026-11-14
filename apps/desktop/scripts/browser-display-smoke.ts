@@ -10,9 +10,10 @@ import { noCoreServices } from '../src/main/capabilities/services'
 import type { MainPlugin } from '../src/main/plugin-api'
 import type { PluginEvent } from '../src/main/plugin-host/events'
 import type { PageInfo, PageRead } from '../src/plugins/browser/shared/page'
+import { runAppFrameSmoke } from './app-frame-smoke'
 
-const root = process.env.HOLI_472_ROOT!
-const evidence = process.env.HOLI_472_EVIDENCE!
+const root = process.env.HOLI_473_ROOT!
+const evidence = process.env.HOLI_473_EVIDENCE!
 assert(root && evidence)
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 const rect = { x: 0, y: 0, width: 700, height: 450 }
@@ -379,6 +380,7 @@ async function run(): Promise<void> {
     mark(check)
   }
   assert.equal(listeners.size, 0)
+  checks.push(...(await runAppFrameSmoke(root, evidence)))
   win.destroy()
   server.closeAllConnections()
   await new Promise<void>((resolve, reject) =>
@@ -401,7 +403,13 @@ async function run(): Promise<void> {
           vaultA: roots.A,
           vaultB: roots.B,
         },
-        screenshots: ['browser-before.png', 'shell-before.png', 'browser-after.png'],
+        screenshots: [
+          'browser-before.png',
+          'shell-before.png',
+          'browser-after.png',
+          'vault-app-a.png',
+          'vault-app-b.png',
+        ],
       },
       null,
       2,

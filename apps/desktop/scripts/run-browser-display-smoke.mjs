@@ -9,8 +9,8 @@ import { build } from 'vite'
 import { externalizeDepsPlugin } from 'electron-vite'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const evidence = resolve(process.argv[2] ?? join(tmpdir(), 'holi-472-evidence'))
-const root = await mkdtemp(join(tmpdir(), 'holi-472-smoke-'))
+const evidence = resolve(process.argv[2] ?? join(tmpdir(), 'holi-473-app-evidence'))
+const root = await mkdtemp(join(tmpdir(), 'holi-473-smoke-'))
 await mkdir(evidence, { recursive: true })
 for (const name of [
   'result.json',
@@ -18,6 +18,8 @@ for (const name of [
   'browser-before.png',
   'shell-before.png',
   'browser-after.png',
+  'vault-app-a.png',
+  'vault-app-b.png',
 ])
   await rm(join(evidence, name), { force: true })
 let child
@@ -54,8 +56,8 @@ try {
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
       .join(delimiter),
-    HOLI_472_ROOT: root,
-    HOLI_472_EVIDENCE: evidence,
+    HOLI_473_ROOT: root,
+    HOLI_473_EVIDENCE: evidence,
   }
   delete env.ELECTRON_RUN_AS_NODE
   child = spawn(electron, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -109,6 +111,18 @@ try {
     'pending-reconcile-stop-detaches-to-null',
     'pending-reconcile-stop-all-detaches-to-b',
     'pending-reconcile-stop-all-detaches-to-null',
+    'leased-real-app-frame-owner-a-resources',
+    'actual-vault-app-screenshot-a',
+    'revoked-app-lease-denied-a',
+    'leased-real-app-frame-owner-b-resources',
+    'actual-vault-app-screenshot-b',
+    'revoked-app-lease-denied-b',
+    'production-command-runner-result-a',
+    'production-command-runner-result-b',
+    'legacy-unleased-app-url-denied-a',
+    'legacy-unleased-app-url-denied-b',
+    'foreign-window-app-request-denied-a',
+    'foreign-window-app-request-denied-b',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
   assert(result.checks.length >= 18, 'native smoke produced too few assertions')
@@ -122,7 +136,13 @@ try {
   )
   assert.deepEqual(
     result.screenshots,
-    ['browser-before.png', 'shell-before.png', 'browser-after.png'],
+    [
+      'browser-before.png',
+      'shell-before.png',
+      'browser-after.png',
+      'vault-app-a.png',
+      'vault-app-b.png',
+    ],
     'native smoke screenshot list is incomplete',
   )
   for (const name of result.screenshots)
