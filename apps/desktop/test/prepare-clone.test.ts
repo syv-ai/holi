@@ -21,6 +21,7 @@ const hooks = vi.hoisted(() => ({
   beforeTempOpen: undefined as (() => Promise<void>) | undefined,
   afterRealpath: undefined as ((path: string) => void) | undefined,
   beforeConfigWrite: undefined as (() => void) | undefined,
+  afterCheckAttr: undefined as ((args: string[]) => Promise<void>) | undefined,
   failCheckAttr: false,
   failBlobRead: false,
 }))
@@ -28,13 +29,16 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
   const { promisify } = await import('node:util')
   const exec = promisify(actual.execFile)
-  const execFile = actual.execFile.bind(actual)
+  const execFile = ((...args: Parameters<typeof actual.execFile>) =>
+    actual.execFile(...args)) as typeof actual.execFile
   Object.defineProperty(execFile, promisify.custom, {
-    value: (...args: Parameters<typeof exec>) => {
+    value: async (...args: Parameters<typeof exec>) => {
       const commandArgs = args[1]
       if (args[0] === 'git' && commandArgs?.join(' ') === 'config --local core.autocrlf false')
         hooks.beforeConfigWrite?.()
-      return exec(...args)
+      const result = await exec(...args)
+      if (args[0] === 'git' && Array.isArray(commandArgs)) await hooks.afterCheckAttr?.(commandArgs)
+      return result
     },
   })
   return {
@@ -259,6 +263,51 @@ describe('prepareManagedClone', () => {
       hooks.beforeTempOpen = undefined
     }
   })
+
+  it.each(['edit', 'stage'] as const)(
+    'preserves a user %s made during final attribute validation',
+    async (change) => {
+      const root = await makeClone(await makeRemote(), `late-${change}`)
+      const path = 'candidate.md'
+      const original = Buffer.from('base\n')
+      const crlf = Buffer.from('base\r\n')
+      await writeFile(join(root, path), original)
+      await plainGit(root, ['add', path])
+      await plainGit(root, ['commit', '-m', 'candidate'])
+      await plainGit(root, ['config', '--local', 'core.autocrlf', 'true'])
+      await writeFile(join(root, path), crlf)
+
+      let attributeChecks = 0
+      hooks.afterCheckAttr = async (args) => {
+        if (args[0] !== 'check-attr' || args.includes('--stdin')) return
+        attributeChecks++
+        // The second non-stdin check-attr is refresh()'s final validation,
+        // after its temporary replacement has been written.
+        if (attributeChecks !== 2) return
+        if (change === 'edit') {
+          await writeFile(join(root, path), 'user edit\r\n')
+        } else {
+          await writeFile(join(root, path), 'staged content\n')
+          await plainGit(root, ['add', path])
+          await writeFile(join(root, path), crlf)
+        }
+      }
+      try {
+        await prepareManagedClone(root)
+        expect(attributeChecks).toBe(2)
+        if (change === 'edit') {
+          expect(await readFile(join(root, path), 'utf8')).toBe('user edit\r\n')
+          expect(await plainGit(root, ['diff', '--cached', '--name-only'])).toBe('')
+        } else {
+          expect(await readFile(join(root, path))).toEqual(crlf)
+          expect(await plainGit(root, ['diff', '--cached', '--name-only'])).toBe(path)
+          expect(await plainGit(root, ['show', ':candidate.md'])).toBe('staged content')
+        }
+      } finally {
+        hooks.afterCheckAttr = undefined
+      }
+    },
+  )
 
   it('skips filter, encoding, ident, and explicit text attributes', async () => {
     const root = await makeClone(await makeRemote(), 'attribute-skips')

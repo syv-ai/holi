@@ -309,33 +309,8 @@ async function refresh(
     await handle.writeFile(blob)
     await handle.chmod(info.mode & 0o777)
     await handle.close()
-    // Revalidate every mutable eligibility condition after writing the temp
-    // file. The index and attributes can change while that write is in flight.
-    const [index, staged, unmerged, latest] = await Promise.all([
-      git(root, ['ls-files', '--stage', '-z']),
-      git(root, ['diff-index', '--cached', '--name-only', '-z', 'HEAD']),
-      git(root, ['ls-files', '--unmerged', '-z']),
-      safeRegularPath(root, entry.path),
-    ])
-    const entries = parseIndex(index)
-    const currentEntry = entries.find((item) => item.path === entry.path && item.stage === 0)
-    const latestInfo = latest === file ? await lstat(file) : null
-    if (
-      latest !== file ||
-      latestInfo === null ||
-      !latestInfo.isFile() ||
-      latestInfo.dev !== info.dev ||
-      latestInfo.ino !== info.ino ||
-      (latestInfo.mode & 0o777) !== (info.mode & 0o777) ||
-      nulFields(staged).some((path) => path.toString('utf8') === entry.path) ||
-      entries.some((item) => item.path === entry.path && item.stage !== 0) ||
-      parseIndex(unmerged).some((item) => item.path === entry.path) ||
-      !currentEntry ||
-      currentEntry.mode !== entry.mode ||
-      currentEntry.oid !== entry.oid ||
-      !(await readFile(file)).equals(original)
-    )
-      return
+    // Validate attributes before the final plumbing and filesystem snapshot.
+    // No Git subprocess may run after the last read of the user's file.
     const latestAttrs = await git(root, [
       'check-attr',
       '-z',
@@ -356,6 +331,35 @@ async function refresh(
       !safeTextAttributes(latestMap) ||
       !attributes ||
       [...attributes].some(([key, value]) => latestMap.get(key) !== value)
+    )
+      return
+    const [index, staged, unmerged] = await Promise.all([
+      git(root, ['ls-files', '--stage', '-z']),
+      git(root, ['diff-index', '--cached', '--name-only', '-z', 'HEAD']),
+      git(root, ['ls-files', '--unmerged', '-z']),
+    ])
+    const entries = parseIndex(index)
+    const currentEntry = entries.find((item) => item.path === entry.path && item.stage === 0)
+    if (
+      nulFields(staged).some((path) => path.toString('utf8') === entry.path) ||
+      entries.some((item) => item.path === entry.path && item.stage !== 0) ||
+      parseIndex(unmerged).some((item) => item.path === entry.path) ||
+      !currentEntry ||
+      currentEntry.mode !== entry.mode ||
+      currentEntry.oid !== entry.oid
+    )
+      return
+    // Re-check path safety after the slower Git plumbing, then inspect the
+    // identity and bytes without awaiting another Git subprocess.
+    const latest = await safeRegularPath(root, entry.path)
+    if (latest !== file) return
+    const latestInfo = await lstat(file)
+    if (
+      !latestInfo.isFile() ||
+      latestInfo.dev !== info.dev ||
+      latestInfo.ino !== info.ino ||
+      (latestInfo.mode & 0o777) !== (info.mode & 0o777) ||
+      !(await readFile(file)).equals(original)
     )
       return
     await rename(temporary, file)
