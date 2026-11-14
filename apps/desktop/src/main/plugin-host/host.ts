@@ -219,6 +219,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     leases: new Set(),
   })
   let displayed: string | null = null
+  let displayEpoch = 0
   const displayListeners = new Set<(remote: string | null) => void>()
   const onDisplayChange = (cb: (remote: string | null) => void): (() => void) => {
     displayListeners.add(cb)
@@ -490,12 +491,18 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       root,
       userData: deps.userData,
       displayed: () => displayed,
+      presentationLease: () => {
+        const epoch = displayEpoch
+        return () => valid() && displayed === remote && displayEpoch === epoch
+      },
       onDisplayChange: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(
-          onDisplayChange((at) => {
-            if (valid()) cb(at)
-          }),
+          // Display changes must still reach presentation owners while stop is
+          // queued behind activation/reconcile work. Their callback may detach
+          // owned native UI; window access and presentation leases stay revoked
+          // by valid() immediately when the run generation changes.
+          onDisplayChange(cb),
         )
       },
       active: () => vault,
@@ -503,15 +510,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(deps.registry.register(namespaces, table, id, remote))
       },
-      emit: (at, name, payload) => {
-        if (valid() || draining()) eventBus.emit(at, name, payload)
+      emit: (at, name, payload, guard) => {
+        if (valid() || draining()) eventBus.emit(at, name, payload, guard)
       },
-      on: (name, handler) => {
+      on: (name, handler, deliveryGuard) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(
-          eventBus.on(name, (at, payload) => {
-            if (valid() && eventsLive) handler(at, payload)
-          }),
+          eventBus.on(
+            name,
+            (at, payload) => {
+              if (valid() && eventsLive) handler(at, payload)
+            },
+            deliveryGuard,
+          ),
         )
       },
       openAppDoor: (opener) => {
@@ -658,7 +669,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       notify: (notice) => (valid() || draining() ? deps.notify(notice) : false),
       focused: deps.focused,
-      window: () => deps.window?.() ?? null,
+      // Display authority is separate from vault lifetime: a retained vault's
+      // activation may work on its data but cannot touch Holi's native window.
+      window: () => (valid() && displayed === remote ? deps.window?.() : null) ?? null,
       onSnapshot: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const entry = {
@@ -948,6 +961,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     setDisplayed(remote) {
       if (displayed === remote) return
       displayed = remote
+      displayEpoch += 1
       for (const cb of [...displayListeners]) tell(cb, remote, 'display')
     },
     onDisplayChange,

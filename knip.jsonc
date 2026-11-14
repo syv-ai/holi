@@ -33,6 +33,7 @@
         "scripts/*.{mjs,cjs,mts}",
         // Vite's disposable Electron smoke entry is selected by a filesystem path.
         "scripts/windows-agent-smoke.ts",
+        "scripts/browser-display-smoke.ts",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",

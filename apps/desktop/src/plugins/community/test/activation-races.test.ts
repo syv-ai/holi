@@ -37,7 +37,8 @@ import type { CapabilityTable, PluginCtx } from '../../../main/plugin-api'
 import { communityMain } from '../main'
 import { communityOwner } from '../main/owner'
 import type { Install } from '../main/store'
-import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
+import { PLUGIN_COMMANDS_DIR, pluginServerOrigin } from '@holi/shared'
+import { createFrameOrigins } from '../../../main/frame-origins'
 
 const roots: string[] = []
 const commandName = `holi-community-test-${process.pid}`
@@ -70,6 +71,7 @@ async function harness() {
   const userData = join(base, 'user-data')
   const owner = communityOwner({ userData })
   const activations: Activation[] = []
+  const frameOrigins = createFrameOrigins()
   for (const [name, remote] of [
     ['a', 'owner/vault-a'],
     ['b', 'owner/vault-b'],
@@ -96,7 +98,11 @@ async function harness() {
       emit: (_target: string, name: string, payload: unknown) => events.push({ name, payload }),
       frameOrigin: (origin: string) => {
         origins.add(origin)
-        return () => origins.delete(origin)
+        const release = frameOrigins.acquire(origin)
+        return () => {
+          release()
+          origins.delete(origin)
+        }
       },
       onSnapshot: () => () => {},
     } as unknown as PluginCtx)
@@ -127,7 +133,7 @@ async function harness() {
   }
   await call(activations[0]!, 'community.installFolder', { folder: pluginDir })
   await call(activations[0]!, 'community.setup', { id: 'sample' })
-  return { base, userData, owner, activations, pluginDir, call }
+  return { base, userData, owner, activations, pluginDir, call, frameOrigins }
 }
 
 const acquire = (h: Awaited<ReturnType<typeof harness>>, a: Activation) =>
@@ -142,6 +148,31 @@ const waitFor = async (predicate: () => boolean, message: string) => {
 }
 
 describe('production community activation races', () => {
+  test('releases actual server origins without revoking duplicate or replacement owners', async () => {
+    const h = await harness()
+    const a = await acquire(h, h.activations[0]!)
+    const b = await acquire(h, h.activations[1]!)
+    const originA = pluginServerOrigin(a.port)
+    const originB = pluginServerOrigin(b.port)
+    expect(h.frameOrigins.origins.has(originA)).toBe(true)
+    expect(h.frameOrigins.origins.has(originB)).toBe(true)
+    const duplicate = h.frameOrigins.acquire(originA)
+    await h.activations[0]!.dispose()
+    expect(h.frameOrigins.origins.has(originA)).toBe(true)
+    expect(h.frameOrigins.origins.has(originB)).toBe(true)
+    expect(await fetchOrigin(b.port)).toBe('ok')
+    duplicate()
+    expect(h.frameOrigins.origins.has(originA)).toBe(false)
+    const replacement = h.frameOrigins.acquire(originA)
+    duplicate()
+    await h.call(h.activations[0]!, 'community.release', { lease: a.lease }).catch(() => {})
+    expect(h.frameOrigins.origins.has(originA)).toBe(true)
+    expect(h.frameOrigins.origins.has(originB)).toBe(true)
+    replacement()
+    await h.call(h.activations[1]!, 'community.release', { lease: b.lease })
+    expect(h.frameOrigins.origins.size).toBe(0)
+  })
+
   test('isolates simultaneous vault servers and fences foreign, old, and duplicate leases', async () => {
     const h = await harness()
     const [a, b] = await Promise.all([acquire(h, h.activations[0]!), acquire(h, h.activations[1]!)])
