@@ -28,6 +28,24 @@ export function activateTerminalLink(text: string, actions: TerminalLinkActions)
     return
   }
   if (!path || path.includes('\0')) return
+  const windowsPath = path.replaceAll('\\', '/')
+  const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent)
+  // URL parsing normalizes some literal backslashes away. Check the original
+  // (also percent-decoded) spelling so device namespaces cannot disappear.
+  let decodedUrl: string
+  try {
+    decodedUrl = decodeURIComponent(text)
+  } catch {
+    return
+  }
+  const rawFilePath = decodedUrl.slice(decodedUrl.indexOf('://') + 3).replaceAll('\\', '/')
+  // Device namespaces can bypass ordinary filesystem expectations even when
+  // their separators were percent-encoded in the URL.
+  if (isWindows && [windowsPath, rawFilePath].some((candidate) => /^\/+[?.]\//.test(candidate)))
+    return
+  // On Windows, a hostname-empty file URL can still name a UNC share through
+  // its path. Keep POSIX's valid double-leading-slash local paths unchanged.
+  if (isWindows && /^\/{2,}[^/]+\//.test(windowsPath)) return
   // WHATWG URL represents a Windows drive path with a leading slash.
   if (/^\/[a-zA-Z]:\//.test(path)) path = path.slice(1)
 

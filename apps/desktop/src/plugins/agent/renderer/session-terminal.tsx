@@ -339,7 +339,10 @@ export function SessionTerminal({
             : found.flatMap((link) => {
                 const start = logical.cellAt(link.start)
                 const end = logical.cellAt(link.end - 1)
-                if (!start || !end) return []
+                // xterm prunes overlapping ranges in the queried row. Returning
+                // another link elsewhere in this logical line can evict that
+                // link before xterm gets the query for its own row.
+                if (!start || !end || start.y > y || end.y < y) return []
                 return [
                   {
                     range: { start, end },
