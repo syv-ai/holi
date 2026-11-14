@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PtyProcess } from '../main/host/pty'
 import { terminalCommand } from '../main/claude/cli'
 import { createAgentTerminals } from '../main/host/terminals'
+import { delimiter } from 'node:path'
 
 class FakePty implements PtyProcess {
   readonly writes: string[] = []
@@ -77,7 +78,7 @@ describe('agent terminals', () => {
     for (const { opts } of spawns) {
       expect(opts.cwd).toBe(TARGET.root)
       expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/cfg/vault')
-      expect(opts.env.PATH.split(':')[0]).toBe('/holi/bin')
+      expect(opts.env.PATH.split(delimiter)[0]).toBe('/holi/bin')
     }
     expect(terminals.list().map((t) => t.launchedFor)).toEqual([null, '1234abcd'])
   })

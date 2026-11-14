@@ -8,8 +8,7 @@
  *
  * No Electron import: this loads under plain Node in the tests.
  */
-import { execFile } from 'node:child_process'
-import { cap, noParams } from '../../../main/plugin-api'
+import { cap, execProgram, noParams } from '../../../main/plugin-api'
 import { buildAgentEnv, resolveClaudeBin } from './claude/cli'
 
 const VERSION_TIMEOUT_MS = 5_000
@@ -27,11 +26,11 @@ function defaultRun(bin: string, args: string[], timeoutMs: number): Promise<str
   return new Promise((resolve, reject) => {
     // The agent's environment: an npm-installed `claude` finds `node` on its
     // PATH, and the session's own Claude Code variables are not passed on.
-    const child = execFile(
+    const child = execProgram(
       bin,
       args,
       {
-        timeout: timeoutMs,
+        timeoutMs,
         maxBuffer: 64 * 1024,
         encoding: 'utf8',
         env: buildAgentEnv(process.env),

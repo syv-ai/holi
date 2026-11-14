@@ -82,9 +82,14 @@ function fakeSpawn(pid?: number) {
   return { spawn, spawns }
 }
 
+/** The POSIX branch of `buildAgentEnv`, whatever machine runs this; the
+ *  Windows branch is `windows-launch.test.ts`. */
+const buildPosixEnv = (base: NodeJS.ProcessEnv, opts: Parameters<typeof buildAgentEnv>[1] = {}) =>
+  buildAgentEnv(base, { platform: 'linux', ...opts })
+
 describe('buildAgentEnv', () => {
   it('strips the nested-session guards and sets TERM', () => {
-    const env = buildAgentEnv({
+    const env = buildPosixEnv({
       PATH: '/usr/bin',
       HOME: '/Users/nic',
       CLAUDECODE: '1',
@@ -108,7 +113,7 @@ describe('buildAgentEnv', () => {
     // started from a Claude Code terminal, because every one of these rides in on
     // `process.env`. The messaging pair is the sharper half: it is a live channel
     // back into the parent session, which a vault agent must not hold.
-    const env = buildAgentEnv({
+    const env = buildPosixEnv({
       PATH: '/usr/bin',
       CLAUDE_CODE_CHILD_SESSION: '1',
       CLAUDE_CODE_SESSION_ID: 'abc-123',
@@ -127,7 +132,7 @@ describe('buildAgentEnv', () => {
     // Not a blanket prefix strip: several CLAUDE_CODE_* variables are documented
     // configuration, and swallowing them would break someone tuning the agent on
     // purpose. Only the parent-session markers go.
-    const env = buildAgentEnv({
+    const env = buildPosixEnv({
       PATH: '/usr/bin',
       CLAUDE_CODE_MAX_OUTPUT_TOKENS: '8192',
       CLAUDE_CODE_USE_BEDROCK: '1',
@@ -137,7 +142,7 @@ describe('buildAgentEnv', () => {
   })
 
   it('hands the child no endpoint or bearer — there is no MCP server', () => {
-    const env = buildAgentEnv({ PATH: '/usr/bin' })
+    const env = buildPosixEnv({ PATH: '/usr/bin' })
     expect(env.HOLI_AGENT_ENDPOINT).toBeUndefined()
     expect(env.HOLI_AGENT_TOKEN).toBeUndefined()
   })
@@ -146,7 +151,7 @@ describe('buildAgentEnv', () => {
     // Claude Code checks its explicit "off" BEFORE our "on", and its "off" is
     // `NO_FLICKER=false` OR `DISABLE_ALTERNATE_SCREEN` set at all. Inherited
     // from a shell profile it silently wins and the flicker comes back.
-    const env = buildAgentEnv({ PATH: '/usr/bin', CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1' })
+    const env = buildPosixEnv({ PATH: '/usr/bin', CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1' })
     expect(env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBeUndefined()
     expect(env.CLAUDE_CODE_NO_FLICKER).toBe('1')
   })
@@ -155,12 +160,12 @@ describe('buildAgentEnv', () => {
     // It disables the same renderer, and that is the point: a screen-reader user
     // asking for flat output outranks our preference about flicker.
     expect(
-      buildAgentEnv({ PATH: '/usr/bin', CLAUDE_CODE_ACCESSIBILITY: '1' }).CLAUDE_CODE_ACCESSIBILITY,
+      buildPosixEnv({ PATH: '/usr/bin', CLAUDE_CODE_ACCESSIBILITY: '1' }).CLAUDE_CODE_ACCESSIBILITY,
     ).toBe('1')
   })
 
   it('forces NO_FLICKER on — the embedded xterm flickers under the full-redraw renderer', () => {
-    expect(buildAgentEnv({ PATH: '/usr/bin' }).CLAUDE_CODE_NO_FLICKER).toBe('1')
+    expect(buildPosixEnv({ PATH: '/usr/bin' }).CLAUDE_CODE_NO_FLICKER).toBe('1')
   })
 
   /**
@@ -168,14 +173,14 @@ describe('buildAgentEnv', () => {
    * has to be predictable: the agent types the bare `holi`.
    */
   it('prepends the Holi bin dir to PATH so the bare names resolve', () => {
-    const env = buildAgentEnv({ PATH: '/usr/bin:/bin', HOME: '/h' }, { binDir: '/data/bin' })
+    const env = buildPosixEnv({ PATH: '/usr/bin:/bin', HOME: '/h' }, { binDir: '/data/bin' })
 
     // Prepended, not appended: another `holi` earlier in PATH would win.
     expect(env.PATH!.startsWith('/data/bin:/usr/bin:/bin:')).toBe(true)
   })
 
   it('puts the usual tool directories after the inherited PATH, and Holi’s node last', () => {
-    const env = buildAgentEnv({ PATH: '/usr/bin:/bin', HOME: '/h' }, { binDir: '/data/bin' })
+    const env = buildPosixEnv({ PATH: '/usr/bin:/bin', HOME: '/h' }, { binDir: '/data/bin' })
     const path = env.PATH!.split(':')
 
     // What a Dock launch lacks: Homebrew's, the home directory's.
@@ -188,7 +193,7 @@ describe('buildAgentEnv', () => {
 
   it('adds the tool directories but no node of its own without a bin dir', () => {
     for (const opts of [{}, { binDir: null }]) {
-      const path = buildAgentEnv({ PATH: '/usr/bin:/bin', HOME: '/h' }, opts).PATH!.split(':')
+      const path = buildPosixEnv({ PATH: '/usr/bin:/bin', HOME: '/h' }, opts).PATH!.split(':')
       expect(path.slice(0, 2)).toEqual(['/usr/bin', '/bin'])
       expect(path).toContain('/opt/homebrew/bin')
       expect(path.some((dir) => dir.endsWith('/fallback'))).toBe(false)
@@ -196,7 +201,7 @@ describe('buildAgentEnv', () => {
   })
 
   it("appends the vault's plugin commands after Holi's node, so they never stand in for the machine's", () => {
-    const path = buildAgentEnv(
+    const path = buildPosixEnv(
       { PATH: '/usr/bin:/bin', HOME: '/h' },
       { binDir: '/data/bin', commandsDir: '/vault/.holi/state/commands.local.d' },
     ).PATH!.split(':')
@@ -205,13 +210,13 @@ describe('buildAgentEnv', () => {
   })
 
   it('still sets a usable PATH when the parent had none', () => {
-    const path = buildAgentEnv({ HOME: '/h' }, { binDir: '/data/bin' }).PATH!.split(':')
+    const path = buildPosixEnv({ HOME: '/h' }, { binDir: '/data/bin' }).PATH!.split(':')
     expect(path[0]).toBe('/data/bin')
     expect(path.at(-1)).toBe('/data/bin/fallback')
   })
 
   it('strips inherited bridge keys so a vault cannot spoof them (reserved)', () => {
-    const env = buildAgentEnv({ PATH: '/usr/bin', HOLI_BRIDGE_PORT: '9', HOLI_BRIDGE_TOKEN: 'ab' })
+    const env = buildPosixEnv({ PATH: '/usr/bin', HOLI_BRIDGE_PORT: '9', HOLI_BRIDGE_TOKEN: 'ab' })
     expect(env.HOLI_BRIDGE_PORT).toBeUndefined()
     expect(env.HOLI_BRIDGE_TOKEN).toBeUndefined()
   })
@@ -222,7 +227,7 @@ describe('buildAgentEnv', () => {
    * machine's MCP servers out of a vault session.
    */
   it('points the agent at Holi own config directory when given one', () => {
-    const env = buildAgentEnv({ PATH: '/usr/bin' }, { configDir: '/data/agent-config' })
+    const env = buildPosixEnv({ PATH: '/usr/bin' }, { configDir: '/data/agent-config' })
     expect(env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config')
   })
 
@@ -231,15 +236,15 @@ describe('buildAgentEnv', () => {
     // agent back on the machine config this decision exists to keep out — or on
     // a directory a committed `.env` chose.
     const base = { PATH: '/usr/bin', CLAUDE_CONFIG_DIR: '/Users/ada/.claude' }
-    expect(buildAgentEnv(base).CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(buildAgentEnv(base, { configDir: null }).CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(buildAgentEnv(base, { configDir: '/data/agent-config' }).CLAUDE_CONFIG_DIR).toBe(
+    expect(buildPosixEnv(base).CLAUDE_CONFIG_DIR).toBeUndefined()
+    expect(buildPosixEnv(base, { configDir: null }).CLAUDE_CONFIG_DIR).toBeUndefined()
+    expect(buildPosixEnv(base, { configDir: '/data/agent-config' }).CLAUDE_CONFIG_DIR).toBe(
       '/data/agent-config',
     )
   })
 
   it('carries the config dir alongside the PATH prepend', () => {
-    const env = buildAgentEnv(
+    const env = buildPosixEnv(
       { PATH: '/usr/bin:/bin' },
       { configDir: '/data/agent-config', binDir: '/data/bin' },
     )
@@ -264,7 +269,7 @@ describe('AgentRuntime.pid', () => {
 })
 
 describe('resolveClaudeBin', () => {
-  it('honours the HOLI_CLAUDE_BIN override', async () => {
+  it.skipIf(process.platform === 'win32')('honours the HOLI_CLAUDE_BIN override', async () => {
     const dir = await tempDir()
     const bin = join(dir, 'fake-claude.mjs')
     await writeFile(bin, '#!/usr/bin/env node\n')
@@ -272,7 +277,7 @@ describe('resolveClaudeBin', () => {
     expect(resolveClaudeBin({ HOLI_CLAUDE_BIN: bin })).toBe(bin)
   })
 
-  it('scans PATH for an executable claude', async () => {
+  it.skipIf(process.platform === 'win32')('scans PATH for an executable claude', async () => {
     const dir = await tempDir()
     const bin = join(dir, 'claude')
     await writeFile(bin, '#!/bin/sh\n')
@@ -329,7 +334,12 @@ describe('AgentRuntime', () => {
 
   it('a cooperative child dies on SIGTERM alone', async () => {
     const { spawn, spawns } = fakeSpawn(NO_SUCH_PID) // not a group leader → observable pty.kill
-    const runtime = new AgentRuntime({ spawnPty: spawn, killGraceMs: 50, probePid: probes.alive })
+    const runtime = new AgentRuntime({
+      platform: 'linux',
+      spawnPty: spawn,
+      killGraceMs: 50,
+      probePid: probes.alive,
+    })
     runtime.start(spawnArgs)
     const pty = spawns[0]!.pty
     const killed = runtime.kill()
@@ -342,6 +352,7 @@ describe('AgentRuntime', () => {
   it('a stubborn child escalates to SIGKILL after the grace period', async () => {
     const { spawn, spawns } = fakeSpawn(NO_SUCH_PID)
     const runtime = new AgentRuntime({
+      platform: 'linux',
       spawnPty: spawn,
       killGraceMs: 30,
       killBackstopMs: 200,
@@ -359,7 +370,12 @@ describe('AgentRuntime', () => {
 
   it('killing a dead runtime is a no-op (before start and after exit)', async () => {
     const { spawn, spawns } = fakeSpawn(NO_SUCH_PID)
-    const runtime = new AgentRuntime({ spawnPty: spawn, killGraceMs: 30, probePid: probes.alive })
+    const runtime = new AgentRuntime({
+      platform: 'linux',
+      spawnPty: spawn,
+      killGraceMs: 30,
+      probePid: probes.alive,
+    })
     await runtime.kill() // never started — resolves immediately
     expect(spawns).toHaveLength(0)
 
@@ -375,6 +391,7 @@ describe('AgentRuntime', () => {
     try {
       const { spawn, spawns } = fakeSpawn(4242)
       const runtime = new AgentRuntime({
+        platform: 'linux',
         spawnPty: spawn,
         killGraceMs: 50,
         probePid: probes.leader,
@@ -402,6 +419,7 @@ describe('AgentRuntime', () => {
     try {
       const { spawn, spawns } = fakeSpawn(4242)
       const runtime = new AgentRuntime({
+        platform: 'linux',
         spawnPty: spawn,
         killGraceMs: 20,
         killBackstopMs: 200,
@@ -450,15 +468,19 @@ describe('defaultProbePid', () => {
 
   it('says gone for a pid that does not exist', () => {
     expect(defaultProbePid(NO_SUCH_PID)).toBe('gone')
+    expect(defaultProbePid(NO_SUCH_PID, 'win32')).toBe('gone')
   })
 
-  it('agrees with ps about who leads a group and who does not', () => {
-    const table = pidTable().filter((p) => p.pid > 1)
-    const leader = table.find((p) => p.pid === p.pgid)
-    const follower = table.find((p) => p.pid !== p.pgid)
-    expect(leader, 'no group leader on this machine?').toBeDefined()
-    expect(follower, 'no non-leader on this machine?').toBeDefined()
-    expect(defaultProbePid(leader!.pid)).toBe('group-leader')
-    expect(defaultProbePid(follower!.pid)).toBe('alive')
-  })
+  it.skipIf(process.platform === 'win32')(
+    'agrees with ps about who leads a group and who does not',
+    () => {
+      const table = pidTable().filter((p) => p.pid > 1)
+      const leader = table.find((p) => p.pid === p.pgid)
+      const follower = table.find((p) => p.pid !== p.pgid)
+      expect(leader, 'no group leader on this machine?').toBeDefined()
+      expect(follower, 'no non-leader on this machine?').toBeDefined()
+      expect(defaultProbePid(leader!.pid)).toBe('group-leader')
+      expect(defaultProbePid(follower!.pid)).toBe('alive')
+    },
+  )
 })
