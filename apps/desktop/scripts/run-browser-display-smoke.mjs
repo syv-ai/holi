@@ -91,6 +91,11 @@ try {
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   for (const check of [
+    'production-host-and-browser-activations',
+    'queued-native-action-expires-on-tab-hide',
+    'queued-action-expires-across-return',
+    'hidden-native-input-and-placement-are-inert',
+    'stopping-a-preserves-b-native-view-and-capabilities',
     'departure-detaches-synchronously',
     'displayed-page-attached-with-loaded-content',
     'hidden-authorized-page-read-type-and-press-work',
@@ -100,7 +105,7 @@ try {
     'departure-to-null-removes-replacement',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
-  assert(result.checks.length >= 7, 'native smoke produced too few assertions')
+  assert(result.checks.length >= 12, 'native smoke produced too few assertions')
   assert(
     typeof result.electron === 'string' && result.electron.length > 0,
     'missing Electron version',
@@ -131,6 +136,9 @@ try {
       await closed.catch(() => {})
     }
   }
-  await writeFile(join(evidence, 'electron-smoke.log'), log)
-  await rm(root, { recursive: true, force: true })
+  try {
+    await writeFile(join(evidence, 'electron-smoke.log'), log)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }

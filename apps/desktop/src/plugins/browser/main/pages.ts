@@ -89,7 +89,6 @@ interface Tab {
   shownIn: BrowserWindow | null
   shownLease: (() => boolean) | null
   attachment: symbol | null
-  placementEpoch: symbol
   menu: Menu | null
 }
 
@@ -215,12 +214,7 @@ export function createPages(deps: PagesDeps): Pages & {
 
   function placementGuard(id: unknown, presentation: () => boolean): () => boolean {
     const tab = typeof id === 'string' ? tabs.get(id) : undefined
-    const epoch = tab?.placementEpoch
-    return () =>
-      tab !== undefined &&
-      tabs.get(tab.id) === tab &&
-      tab.placementEpoch === epoch &&
-      presentation()
+    return () => tab !== undefined && isLive(tab) && presentation()
   }
 
   const info = (tab: Tab): PageInfo => {
@@ -385,9 +379,14 @@ export function createPages(deps: PagesDeps): Pages & {
     const wc = tab.view.webContents
     wc.setWindowOpenHandler(({ url }) => {
       if (!isPresented(tab)) return { action: 'deny' }
-      if (isPageUrl(url) && url !== 'about:blank')
-        void open({ url, reveal: true, attachment: () => isPresented(tab) })
-      else if (/^(mailto|tel):/i.test(url) && isPresented(tab)) toSystem(url)
+      if (isPageUrl(url) && url !== 'about:blank') {
+        const attachment = tab.attachment
+        void open({
+          url,
+          reveal: true,
+          attachment: () => isPresented(tab) && tab.attachment === attachment,
+        })
+      } else if (/^(mailto|tel):/i.test(url) && isPresented(tab)) toSystem(url)
       return { action: 'deny' }
     })
     const guard = (event: { preventDefault(): void }, url: string): void => {
@@ -506,14 +505,14 @@ export function createPages(deps: PagesDeps): Pages & {
       shownIn: null,
       shownLease: null,
       attachment: null,
-      placementEpoch: Symbol('placement'),
       menu: null,
     }
     tabs.set(tab.id, tab)
     current = tab.id
     watch(tab)
     changed()
-    if (reveal && deps.window() !== null) deps.reveal(tab.id, attachment)
+    if (reveal && deps.window() !== null)
+      deps.reveal(tab.id, () => isLive(tab) && (attachment === undefined || attachment()))
     return url === undefined ? info(tab) : load(tab, url)
   }
 
@@ -522,7 +521,6 @@ export function createPages(deps: PagesDeps): Pages & {
     tab.shownIn = null
     tab.shownLease = null
     tab.attachment = null
-    tab.placementEpoch = Symbol('hidden')
     tab.menu?.closePopup()
     tab.menu = null
     if (win !== null && !win.isDestroyed()) win.contentView.removeChildView(tab.view)
@@ -714,7 +712,6 @@ export function createPages(deps: PagesDeps): Pages & {
         tab.shownIn = win
         tab.shownLease = presentation
         tab.attachment = Symbol(id)
-        tab.placementEpoch = Symbol('attached')
         // The tab the person brings up is the one "the page" means.
         current = id
       }

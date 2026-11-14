@@ -2,14 +2,19 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, type WebContentsView } from 'electron'
 import { browserMain } from '../src/plugins/browser/main/index'
-import { pluginEvents } from '../src/main/plugin-host/events'
-import type { PluginCtx } from '../src/main/plugin-api'
+import { createPluginHost, type OpenVault } from '../src/main/plugin-host/host'
+import { createCapabilityRegistry } from '../src/main/capabilities/registry'
+import { noCoreServices } from '../src/main/capabilities/services'
+import type { PluginEvent } from '../src/main/plugin-host/events'
+import type { PageInfo, PageRead } from '../src/plugins/browser/shared/page'
 
 const root = process.env.HOLI_472_ROOT!
 const evidence = process.env.HOLI_472_EVIDENCE!
 assert(root && evidence)
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
+const rect = { x: 0, y: 0, width: 700, height: 450 }
 
 async function run(): Promise<void> {
   for (const name of ['profile', 'session', 'vault-a', 'vault-b', 'app-data'])
@@ -20,209 +25,260 @@ async function run(): Promise<void> {
   app.setPath('sessionData', join(root, 'session'))
   assert.equal(app.getPath('userData'), join(root, 'profile'))
   await app.whenReady()
-  console.log('[472] electron-ready')
-
-  const server = createServer((_request, response) => {
+  const checks: string[] = []
+  const mark = (name: string) => {
+    checks.push(name)
+    console.log(`PASS ${name}`)
+  }
+  const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    response.end(
-      '<!doctype html><title>Holi isolated browser fixture</title><main><h1>Browser page owned by vault A</h1><label>Search <input aria-label="Search"></label><button>Submit</button><p id="result">ready</p><script>document.querySelector("button").onclick=()=>document.querySelector("#result").textContent=document.querySelector("input").value</script></main>',
-    )
+    response.end(`<!doctype html><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
+      <main><h1>Browser page owned by vault ${request.url === '/b' ? 'B' : 'A'}</h1>
+      <label>Search <input aria-label="Search"></label><button>Submit</button><p>Local fixture, no accounts</p></main>`)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   assert(address && typeof address === 'object')
-  const url = `http://127.0.0.1:${address.port}/`
-
-  const checks: string[] = []
-  let reveals = 0
-  let shortcuts = 0
-  let addresses = 0
+  const url = `http://127.0.0.1:${address.port}`
   const win = new BrowserWindow({
     width: 900,
     height: 650,
     show: true,
-    webPreferences: { sandbox: true },
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   })
-  await win.loadURL('data:text/html,<body style="font:20px sans-serif">Holi shell window</body>')
-  console.log('[472] shell-loaded')
-  let displayed: string | null = 'owner-a'
-  const listeners = new Set<(remote: string | null) => void>()
-  let presentationEpoch = 0
-  const makeOwner = async (remote: string) => {
-    const handlers = new Set<(message: unknown) => void>()
-    let capabilities: Record<string, { run(ctx: unknown, params: unknown): Promise<any> }> = {}
-    const events = pluginEvents(
-      {
-        send: (_channel, event) => {
-          if (event.name === 'reveal') reveals += 1
-          if (event.name === 'key') shortcuts += 1
-          if (event.name === 'address') addresses += 1
+  await win.loadURL('data:text/html,<h1>Holi shell: no browser page attached</h1>')
+  const roots = { A: join(root, 'vault-a'), B: join(root, 'vault-b') }
+  for (const vault of Object.values(roots)) {
+    mkdirSync(join(vault, '.holi/settings'), { recursive: true })
+    writeFileSync(join(vault, '.holi/settings/plugins.yaml'), 'plugins:\n  browser: true\n')
+  }
+  const registry = createCapabilityRegistry()
+  const listeners = new Set<(message: unknown) => void>()
+  const sent: PluginEvent[] = []
+  let gate: { wait: Promise<void>; entered(): void } | undefined
+  const host = createPluginHost({
+    plugins: [browserMain],
+    registry,
+    userData: join(root, 'profile'),
+    coreSeeds: [],
+    active: () => null,
+    rootFor: async (remote) => {
+      const pending = gate
+      if (pending) {
+        pending.entered()
+        await pending.wait
+      }
+      return roots[remote as keyof typeof roots] ?? null
+    },
+    events: {
+      send: (_channel, event) => {
+        sent.push(event)
+      },
+      listen: (_channel, handler) => {
+        listeners.add(handler)
+        return () => {
+          listeners.delete(handler)
+        }
+      },
+      liveRemote: () => host.displayed(),
+    },
+    openAppDoor: () => {
+      throw new Error('no app door in browser smoke')
+    },
+    route: () => () => {},
+    binDir: () => root,
+    githubToken: () => null,
+    frameOrigin: () => () => {},
+    notify: () => false,
+    focused: () => win.isFocused(),
+    window: () => win,
+  })
+  const vault = (remote: keyof typeof roots): OpenVault => ({
+    remote,
+    root: roots[remote],
+    pause: () => {},
+    resume: () => {},
+    commitNow: async () => null,
+    repo: { head: async () => null },
+  })
+  const invoke = async <T>(remote: keyof typeof roots, name: string, params: unknown): Promise<T> =>
+    (
+      await registry.run(
+        `browser.${name}`,
+        'cli',
+        {
+          remote,
+          root: roots[remote],
+          bundle: null,
+          core: noCoreServices(),
+          claims: async () => [],
+          snapshot: async () => {
+            throw new Error('unused snapshot')
+          },
         },
-        listen: (_channel, handler) => {
-          handlers.add(handler)
-          return () => handlers.delete(handler)
-        },
-        liveRemote: () => displayed,
-      },
-      'browser',
-      async () => true,
-    )
-    const ctx = {
-      remote,
-      root: join(root, remote === 'owner-a' ? 'vault-a' : 'vault-b'),
-      userData: join(root, 'app-data'),
-      displayed: () => displayed,
-      presentationLease: () => {
-        const admitted = presentationEpoch
-        return () => displayed === remote && presentationEpoch === admitted
-      },
-      window: () => (displayed === remote ? win : null),
-      onDisplayChange: (cb: (remote: string | null) => void) => {
-        listeners.add(cb)
-        return () => listeners.delete(cb)
-      },
-      emit: events.emit,
-      on: events.on,
-      register: (_namespaces: readonly string[], table: typeof capabilities) => {
-        capabilities = table
-        return () => {}
-      },
-    } as unknown as PluginCtx
-    const dispose = await browserMain.activate!(ctx)
-    const invoke = (name: string, params: unknown = {}) =>
-      capabilities[`browser.${name}`]!.run({}, params)
-    const sendPlace = (id: string, rect: unknown) => {
-      const message = { remote, name: 'place', payload: { id, rect } }
-      for (const handler of [...handlers]) handler(message)
+        params,
+      )
+    ).value as T
+  const place = (remote: string, value: typeof rect | null, id = 'same') => {
+    for (const listener of [...listeners])
+      listener({ remote, name: 'place', payload: { id, rect: value } })
+  }
+  const child = () => win.contentView.children[0] as WebContentsView
+  const block = () => {
+    let release!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    gate = {
+      wait: new Promise<void>((resolve) => {
+        release = resolve
+      }),
+      entered,
     }
     return {
-      open: (id: string, address: string) => invoke('open', { reopen: id, url: address }),
-      sendPlace,
-      place: async (id: string, rect: unknown) => {
-        sendPlace(id, rect)
-        await new Promise<void>((resolve) => setImmediate(resolve))
+      waiting,
+      release: () => {
+        gate = undefined
+        release()
       },
-      read: (id: string) => invoke('read', { tab: id }),
-      type: (id: string, ref: number, text: string, submit = false) =>
-        invoke('type', { tab: id, ref, text, submit }),
-      close: (id: string) => invoke('close', { tab: id }),
-      dispose,
     }
   }
-  const switchTo = (remote: string | null): void => {
-    displayed = remote
-    presentationEpoch += 1
-    for (const cb of [...listeners]) cb(remote)
+  const displayEvents = () => sent.filter((e) => ['reveal', 'address', 'key'].includes(e.name))
+  const nativeKey = (view: WebContentsView, key: string) => {
+    const input = {
+      type: 'keyDown',
+      key,
+      code: `Key${key.toUpperCase()}`,
+      meta: true,
+      control: true,
+      alt: false,
+      shift: false,
+    }
+    // Exercise the actual registered Electron callback deterministically, including
+    // detached views for which Chromium does not dispatch physical keyboard input.
+    view.webContents.emit('before-input-event', { preventDefault() {} }, input)
   }
-  const ownerA = await makeOwner('owner-a')
-  const ownerB = await makeOwner('owner-b')
-  const viewA = await ownerA.open('duplicate-page-id', url)
-  console.log('[472] owner-a-opened', viewA.id)
-  await ownerA.place(viewA.id, { x: 0, y: 0, width: 500, height: 400 })
-  assert.equal(win.contentView.children.length, 1, 'displayed page attaches to native parent')
-  const attachedA = win.contentView.children[0]!
-  console.log('[472] attached')
-  const initial = await ownerA.read(viewA.id)
-  console.log('[472] read-complete')
+  host.setDisplayed('A')
+  await host.reconcile(vault('A'), 'open')
+  await host.reconcile(vault('B'), 'open')
+  assert.deepEqual(host.failures('A'), {})
+  assert.deepEqual(host.failures('B'), {})
+  mark('production-host-and-browser-activations')
+  await invoke<PageInfo>('A', 'open', { reopen: 'same', shown: true })
+  place('A', rect)
+  await tick()
+  assert.equal(win.contentView.children.length, 1)
+  const a = child()
+  await invoke('A', 'open', { tab: 'same', url: `${url}/a` })
+  const initial = await invoke<PageRead>('A', 'read', { tab: 'same' })
   assert.match(initial.text, /Browser page owned by vault A/)
-  assert(initial.text.length > 30, 'the page must contain real non-empty content')
-  checks.push('displayed-page-attached-with-loaded-content')
-  await attachedA.webContents.executeJavaScript(
-    'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  mark('displayed-page-attached-with-loaded-content')
+  const capture = async (view: WebContentsView['webContents'], name: string) => {
+    // CDP requests a rendered frame even when the native test window is occluded.
+    // No debugger port, visibility override or substitute renderer is involved.
+    view.debugger.attach('1.3')
+    try {
+      await view.debugger.sendCommand('Page.enable')
+      const image = (await view.debugger.sendCommand('Page.captureScreenshot', {
+        captureBeyondViewport: true,
+        fromSurface: true,
+      })) as { data: string }
+      assert(image.data.length > 0, `empty screenshot: ${name}`)
+      writeFileSync(join(evidence, name), Buffer.from(image.data, 'base64'))
+    } finally {
+      view.debugger.detach()
+    }
+  }
+  await capture(win.webContents, 'shell-before.png')
+  await capture(a.webContents, 'browser-before.png')
+  const match = initial.text.match(/\[(\d+)\] textbox "Search"/)
+  assert(match, initial.text)
+  const ref = Number(match[1])
+  nativeKey(a, 'l')
+  await tick()
+  assert(
+    displayEvents().some((e) => e.name === 'address'),
+    'positive native input control',
   )
-  const pageImage = await attachedA.webContents.capturePage()
-  assert(!pageImage.isEmpty(), 'attached native browser child screenshot was empty')
-  writeFileSync(join(evidence, 'browser-before.png'), pageImage.toPNG())
-  await win.webContents.capturePage().then((image) => {
-    assert(!image.isEmpty(), 'native shell screenshot was empty')
-    writeFileSync(join(evidence, 'shell-before.png'), image.toPNG())
-  })
-
-  // Exercise the production browser page's isolated-world read/type/press path.
-  const controls = await ownerA.read(viewA.id)
-  assert.match(controls.text, /Search/)
-  const inputRef = Number(controls.text.match(/\[(\d+)\] textbox "Search"/)?.[1] ?? 1)
-  await ownerA.type(viewA.id, inputRef, 'smoke-value', true)
-  const typed = await ownerA.read(viewA.id)
-  assert.match(typed.text, /smoke-value/)
-  checks.push('hidden-authorized-page-read-type-and-press-work')
-
-  switchTo(null)
-  assert.equal(
-    win.contentView.children.length,
-    0,
-    'departure to null synchronously removes native child',
-  )
-  checks.push('departure-detaches-synchronously')
-  win.blur()
-  const focusedOther = BrowserWindow.getFocusedWindow()
-  await ownerA.type(viewA.id, inputRef, 'hidden-value', true)
-  const hiddenRead = await ownerA.read(viewA.id)
-  assert.match(hiddenRead.text, /hidden-value/)
-  const detached = attachedA.webContents
-  detached.sendInputEvent({ type: 'keyDown', keyCode: 'L', modifiers: ['meta'] })
-  detached.sendInputEvent({ type: 'keyUp', keyCode: 'L', modifiers: ['meta'] })
-  assert.equal(reveals, 0, 'hidden work cannot reveal a tab')
-  assert.equal(shortcuts, 0, 'hidden work cannot forward a shortcut')
-  assert.equal(addresses, 0, 'hidden work cannot request address focus')
-  assert.equal(
-    BrowserWindow.getFocusedWindow(),
-    focusedOther,
-    'detached native input cannot focus Holi',
-  )
-  await ownerA.read(viewA.id)
-  const hiddenOpened = await ownerA.open('hidden-tab', url)
-  await ownerA.place(viewA.id, { x: 1, y: 1, width: 400, height: 300 })
-  assert.equal(win.contentView.children.length, 0, 'hidden placement cannot reattach')
-  assert.equal(reveals, 0, 'hidden open cannot reveal a tab')
-  await ownerA.close(hiddenOpened.id)
-  checks.push('hidden-native-input-and-placement-are-inert')
-  await win.webContents.capturePage().then((image) => {
-    assert(!image.isEmpty(), 'native after screenshot was empty')
-    writeFileSync(join(evidence, 'browser-after.png'), image.toPNG())
-  })
-
-  switchTo('owner-b')
-  const viewB = await ownerB.open('duplicate-page-id', url)
-  await ownerB.place(viewB.id, { x: 0, y: 0, width: 400, height: 300 })
-  assert.equal(win.contentView.children.length, 1)
-  const attachedB = win.contentView.children[0]!
-  assert.notEqual(
-    attachedA,
-    attachedB,
-    'duplicate ids in separate activations are distinct native views',
-  )
-  checks.push('duplicate-page-ids-have-distinct-native-views')
-  switchTo('owner-a')
-  assert.equal(win.contentView.children.length, 0, 'return requires fresh placement')
-  await ownerA.place(viewA.id, { x: 0, y: 0, width: 500, height: 400 })
-  assert.equal(win.contentView.children.length, 1)
-  assert.equal(
-    win.contentView.children[0],
-    attachedA,
-    'reattachment preserves exact native view identity',
-  )
-  checks.push('return-requires-fresh-owner-placement')
-  ownerA.sendPlace(viewA.id, { x: 0, y: 0, width: 500, height: 400 })
-  await ownerA.close(viewA.id)
-  const reincarnated = await ownerA.open(viewA.id, url)
-  await new Promise<void>((resolve) => setImmediate(resolve))
-  assert.equal(
-    win.contentView.children.length,
-    0,
-    'queued placement cannot attach a same-id replacement',
-  )
-  await ownerA.place(reincarnated.id, { x: 0, y: 0, width: 500, height: 400 })
-  assert.equal(win.contentView.children.length, 1)
-  assert.notEqual(win.contentView.children[0], attachedA)
-  checks.push('same-id-reincarnation-rejects-stale-placement')
-  switchTo(null)
+  sent.length = 0
+  const staleKey = block()
+  nativeKey(a, 'w')
+  await staleKey.waiting
+  place('A', null)
+  staleKey.release()
+  await tick()
+  assert.equal(displayEvents().length, 0, 'hidden attachment rejects queued shortcut')
+  mark('queued-native-action-expires-on-tab-hide')
+  place('A', rect)
+  await tick()
+  const staleDisplay = block()
+  nativeKey(a, 'w')
+  await staleDisplay.waiting
+  host.setDisplayed('B')
   assert.equal(win.contentView.children.length, 0)
-  checks.push('departure-to-null-removes-replacement')
-
-  await ownerA.dispose()
-  await ownerB.dispose()
+  host.setDisplayed('A')
+  staleDisplay.release()
+  await tick()
+  assert.equal(displayEvents().length, 0)
+  assert.equal(win.contentView.children.length, 0)
+  mark('departure-detaches-synchronously')
+  mark('queued-action-expires-across-return')
+  host.setDisplayed(null)
+  assert.equal(win.contentView.children.length, 0)
+  const focus = win.webContents.isFocused()
+  await invoke('A', 'type', { tab: 'same', ref, text: 'hidden-value' })
+  await invoke('A', 'press', { tab: 'same', key: 'Enter' })
+  assert.match((await invoke<PageRead>('A', 'read', { tab: 'same' })).text, /hidden-value/)
+  nativeKey(a, 'l')
+  nativeKey(a, 'w')
+  place('A', rect)
+  await tick()
+  assert.equal(displayEvents().length, 0)
+  assert.equal(win.contentView.children.length, 0)
+  assert.equal(win.webContents.isFocused(), focus)
+  mark('hidden-authorized-page-read-type-and-press-work')
+  mark('hidden-native-input-and-placement-are-inert')
+  await capture(win.webContents, 'browser-after.png')
+  host.setDisplayed('B')
+  await invoke('B', 'open', { reopen: 'same', url: `${url}/b`, shown: true })
+  place('B', rect)
+  await tick()
+  const b = child()
+  assert(b && b !== a)
+  mark('duplicate-page-ids-have-distinct-native-views')
+  host.setDisplayed('A')
+  assert.equal(win.contentView.children.length, 0)
+  place('A', rect)
+  await tick()
+  assert.equal(child(), a)
+  mark('return-requires-fresh-owner-placement')
+  const oldPlace = block()
+  place('A', rect)
+  await oldPlace.waiting
+  await invoke('A', 'close', { tab: 'same' })
+  await invoke('A', 'open', { reopen: 'same', url: `${url}/a`, shown: true })
+  oldPlace.release()
+  await tick()
+  assert.equal(win.contentView.children.length, 0)
+  place('A', rect)
+  await tick()
+  assert(child() && child() !== a)
+  mark('same-id-reincarnation-rejects-stale-placement')
+  host.setDisplayed('B')
+  place('B', rect)
+  await tick()
+  await host.stop('A')
+  assert.equal(child(), b)
+  assert.match((await invoke<PageRead>('B', 'read', { tab: 'same' })).text, /vault B/)
+  mark('stopping-a-preserves-b-native-view-and-capabilities')
+  host.setDisplayed(null)
+  assert.equal(win.contentView.children.length, 0)
+  mark('departure-to-null-removes-replacement')
+  await host.stopAll()
+  assert.equal(listeners.size, 0)
   win.destroy()
+  server.closeAllConnections()
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
   )
@@ -240,8 +296,8 @@ async function run(): Promise<void> {
           app: root,
           profile: join(root, 'profile'),
           session: join(root, 'session'),
-          vaultA: join(root, 'vault-a'),
-          vaultB: join(root, 'vault-b'),
+          vaultA: roots.A,
+          vaultB: roots.B,
         },
         screenshots: ['browser-before.png', 'shell-before.png', 'browser-after.png'],
       },

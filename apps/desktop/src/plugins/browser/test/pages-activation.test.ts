@@ -1,4 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { createPluginHost, type OpenVault } from '../../../main/plugin-host/host'
+import { createCapabilityRegistry } from '../../../main/capabilities/registry'
+import { noCoreServices } from '../../../main/capabilities/services'
+import type { PluginEvent } from '../../../main/plugin-host/events'
+import { browserMain } from '../main/index'
 
 const native = vi.hoisted(() => ({ views: [] as any[], menus: [] as any[] }))
 vi.mock('electron', () => {
@@ -11,6 +19,11 @@ vi.mock('electron', () => {
       navigationHistory: { canGoBack: () => false, canGoForward: () => false },
       setWindowOpenHandler: vi.fn(),
       close: vi.fn(),
+      cut: vi.fn(),
+      copy: vi.fn(),
+      paste: vi.fn(),
+      reload: vi.fn(),
+      loadURL: vi.fn(async () => {}),
       on: vi.fn(function (this: any, event: string, callback: (...args: any[]) => void) {
         this.listeners ??= new Map()
         this.listeners.set(event, callback)
@@ -104,16 +117,44 @@ describe('browser page activation', () => {
     expect(admitted).toHaveLength(1)
     expect(window.children).toEqual([first])
     pages.place('same', null)
-    expect(oldPlacement()).toBe(false)
+    expect(oldPlacement()).toBe(true)
     expect(admitted[0]!()).toBe(false)
     expect(window.children).toEqual([])
     pages.place('same', { x: 0, y: 0, width: 100, height: 100 })
     expect(window.children).toEqual([first])
     pages.close('same')
+    expect(oldPlacement()).toBe(false)
     await pages.open({ id: 'same', reveal: false })
     expect(native.views).toHaveLength(2)
     pages.place('same', { x: 0, y: 0, width: 100, height: 100 })
     expect(window.children).toEqual([native.views[1]])
+    pages.dispose()
+  })
+
+  it('does not revive queued popup reveal when the source tab is reattached', async () => {
+    const { createPages } = await import('../main/pages')
+    const window = win()
+    const guards: (() => boolean)[] = []
+    const pages = createPages({
+      window: () => window,
+      presentationLease: () => () => true,
+      changed: () => {},
+      address: () => {},
+      key: () => {},
+      reveal: (_id, guard) => {
+        if (guard) guards.push(guard)
+      },
+    })
+    await pages.open({ id: 'source', reveal: false })
+    pages.place('source', { x: 0, y: 0, width: 100, height: 100 })
+    native.views[0].webContents.setWindowOpenHandler.mock.calls[0][0]({
+      url: 'https://example.com/new',
+    })
+    expect(guards).toHaveLength(1)
+    expect(guards[0]!()).toBe(true)
+    pages.place('source', null)
+    pages.place('source', { x: 0, y: 0, width: 100, height: 100 })
+    expect(guards[0]!()).toBe(false)
     pages.dispose()
   })
 
@@ -150,5 +191,247 @@ describe('browser page activation', () => {
     pages.dispose()
     expect(window.children).toEqual([other])
     expect(display).toBeUndefined()
+  })
+})
+
+const disposers: (() => Promise<void>)[] = []
+afterEach(async () => {
+  for (const dispose of disposers.splice(0)) await dispose()
+})
+
+async function hostRig() {
+  const root = await mkdtemp(join(tmpdir(), 'holi-browser-host-'))
+  const roots = { A: join(root, 'a'), B: join(root, 'b') }
+  for (const dir of Object.values(roots)) {
+    await mkdir(join(dir, '.holi/settings'), { recursive: true })
+    await writeFile(join(dir, '.holi/settings/plugins.yaml'), 'plugins:\n  browser: true\n')
+  }
+  const window = win()
+  const registry = createCapabilityRegistry()
+  const listeners = new Set<(message: unknown) => void>()
+  const sent: PluginEvent[] = []
+  let gate: { wait: Promise<void>; entered(): void } | undefined
+  const host = createPluginHost({
+    plugins: [browserMain],
+    registry,
+    userData: root,
+    coreSeeds: [],
+    active: () => null,
+    rootFor: async (remote) => {
+      const pending = gate
+      if (pending) {
+        pending.entered()
+        await pending.wait
+      }
+      return roots[remote as keyof typeof roots] ?? null
+    },
+    events: {
+      send: (_channel, event) => {
+        sent.push(event)
+      },
+      listen: (_channel, handler) => {
+        listeners.add(handler)
+        return () => {
+          listeners.delete(handler)
+        }
+      },
+      liveRemote: () => host.displayed(),
+    },
+    openAppDoor: () => {
+      throw new Error('unused app door')
+    },
+    route: () => () => {},
+    binDir: () => root,
+    githubToken: () => null,
+    frameOrigin: () => () => {},
+    notify: () => false,
+    focused: () => false,
+    window: () => window,
+  })
+  disposers.push(async () => {
+    await host.stopAll()
+    await rm(root, { recursive: true, force: true })
+  })
+  for (const remote of ['A', 'B'] as const) {
+    const vault: OpenVault = {
+      remote,
+      root: roots[remote],
+      pause: () => {},
+      resume: () => {},
+      commitNow: async () => null,
+      repo: { head: async () => null },
+    }
+    await host.reconcile(vault, 'open')
+    expect(host.failures(remote)).toEqual({})
+  }
+  host.setDisplayed('A')
+  const call = async (remote: 'A' | 'B', name: string, params: unknown) =>
+    registry.run(
+      `browser.${name}`,
+      'cli',
+      {
+        remote,
+        root: roots[remote],
+        bundle: null,
+        core: noCoreServices(),
+        claims: async () => [],
+        snapshot: async () => {
+          throw new Error('unused snapshot')
+        },
+      },
+      params,
+    )
+  const place = (remote: string, rect: unknown) => {
+    for (const listener of listeners)
+      listener({ remote, name: 'place', payload: { id: 'same', rect } })
+  }
+  const block = () => {
+    let release!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    gate = {
+      wait: new Promise<void>((resolve) => {
+        release = resolve
+      }),
+      entered,
+    }
+    return {
+      waiting,
+      release: () => {
+        gate = undefined
+        release()
+      },
+    }
+  }
+  const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
+  return { host, window, sent, call, place, block, tick, listeners }
+}
+
+const box = { x: 0, y: 0, width: 100, height: 100 }
+const command = {
+  type: 'keyDown',
+  key: 'w',
+  code: 'KeyW',
+  meta: true,
+  control: true,
+  alt: false,
+  shift: false,
+}
+
+describe('production browser activation and host event queues', () => {
+  beforeEach(() => {
+    native.views.length = 0
+    native.menus.length = 0
+  })
+  it('preserves ordered queued placement updates and overlay hide/restore', async () => {
+    const h = await hostRig()
+    await h.call('A', 'open', { reopen: 'same', shown: true })
+    await h.tick()
+    const gate = h.block()
+    h.place('A', box)
+    h.place('A', { ...box, width: 200 })
+    await gate.waiting
+    gate.release()
+    await h.tick()
+    expect(h.window.children).toEqual([native.views[0]])
+    expect(native.views[0].setBounds).toHaveBeenLastCalledWith({ ...box, width: 200 })
+    const overlay = h.block()
+    h.place('A', null)
+    h.place('A', { ...box, width: 300 })
+    await overlay.waiting
+    overlay.release()
+    await h.tick()
+    expect(h.window.children).toEqual([native.views[0]])
+    expect(native.views[0].setBounds).toHaveBeenLastCalledWith({ ...box, width: 300 })
+  })
+
+  it.each([box, null])(
+    'rejects a queued placement for a closed same-id incarnation: %j',
+    async (rect) => {
+      const h = await hostRig()
+      await h.call('A', 'open', { reopen: 'same', shown: true })
+      await h.tick()
+      const gate = h.block()
+      h.place('A', rect)
+      await gate.waiting
+      await h.call('A', 'close', { tab: 'same' })
+      await h.call('A', 'open', { reopen: 'same', shown: true })
+      gate.release()
+      await h.tick()
+      expect(h.window.children).toEqual([])
+      expect(native.views[1].setBounds).toHaveBeenCalledTimes(1)
+      h.place('A', box)
+      await h.tick()
+      expect(h.window.children).toEqual([native.views[1]])
+    },
+  )
+
+  it('drops queued key and address actions on hide, preserves bound hidden data, and requires fresh placement', async () => {
+    const h = await hostRig()
+    await h.call('A', 'open', { reopen: 'same', shown: true })
+    await h.tick()
+    h.place('A', box)
+    await h.tick()
+    const view = native.views[0]
+    const gate = h.block()
+    view.webContents.emit('before-input-event', command)
+    view.webContents.emit('before-input-event', { ...command, key: 'l' })
+    await gate.waiting
+    h.place('A', null)
+    // Display departure synchronously hides independently of the blocked event queue.
+    h.host.setDisplayed('B')
+    h.host.setDisplayed('A')
+    gate.release()
+    await h.tick()
+    expect(h.sent.filter((e) => ['key', 'address'].includes(e.name))).toEqual([])
+    expect(h.window.children).toEqual([])
+    view.webContents.emit('before-input-event', command)
+    expect(h.window.webContents.focus).toHaveBeenCalledTimes(1)
+    h.host.setDisplayed('B')
+    await h.call('A', 'open', { reopen: 'hidden', shown: true })
+    await h.tick()
+    expect(h.sent.some((e) => e.remote === 'A' && e.name === 'tabs')).toBe(true)
+    await h.call('B', 'open', { reopen: 'same', shown: true })
+    h.place('B', box)
+    await h.tick()
+    const b = h.window.children[0]
+    await h.host.stop('A')
+    expect(h.window.children).toEqual([b])
+    expect((await h.call('B', 'tabs', {})).value).toHaveLength(1)
+  })
+
+  it('invalidates saved menu actions and popup reveal leases when an attachment ends', async () => {
+    const h = await hostRig()
+    await h.call('A', 'open', { reopen: 'same', shown: true })
+    await h.tick()
+    h.place('A', box)
+    await h.tick()
+    const view = native.views[0]
+    view.webContents.emit('context-menu', {
+      linkURL: 'https://example.com/new',
+      isEditable: true,
+      selectionText: '',
+    })
+    const menu = native.menus[0]
+    h.place('A', null)
+    await h.tick()
+    expect(menu.closePopup).toHaveBeenCalled()
+    h.place('A', box)
+    await h.tick()
+    for (const item of menu.items) item.click?.()
+    expect(view.webContents.cut).not.toHaveBeenCalled()
+    expect(view.webContents.copy).not.toHaveBeenCalled()
+    expect(view.webContents.paste).not.toHaveBeenCalled()
+    const gate = h.block()
+    const popup = view.webContents.setWindowOpenHandler.mock.calls[0][0]
+    popup({ url: 'https://example.com/new' })
+    await gate.waiting
+    h.host.setDisplayed('B')
+    h.host.setDisplayed('A')
+    gate.release()
+    await h.tick()
+    expect(h.sent.filter((e) => e.name === 'reveal')).toEqual([])
   })
 })
