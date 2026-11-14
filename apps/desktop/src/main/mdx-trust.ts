@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 const VERSION = 1 as const
@@ -10,8 +10,8 @@ interface MdxTrustOwner {
 
 export interface MdxTrustStore {
   status(owner: MdxTrustOwner): Promise<boolean>
-  approve(owner: MdxTrustOwner): Promise<void>
-  revoke(owner: MdxTrustOwner): Promise<void>
+  approve(owner: MdxTrustOwner, stillOwned?: () => boolean): Promise<void>
+  revoke(owner: MdxTrustOwner, stillOwned?: () => boolean): Promise<void>
 }
 
 type State = { version: typeof VERSION; grants: string[] }
@@ -63,7 +63,11 @@ export function createMdxTrustStore(file: string): MdxTrustStore {
       throw new Error('MDX trust state is unreadable or unsupported')
     }
   }
-  async function update(owner: MdxTrustOwner, add: boolean): Promise<void> {
+  async function update(
+    owner: MdxTrustOwner,
+    add: boolean,
+    stillOwned: () => boolean = () => true,
+  ): Promise<void> {
     const key = ownerKey(owner)
     const run = async () => {
       const state = await read()
@@ -74,6 +78,10 @@ export function createMdxTrustStore(file: string): MdxTrustStore {
       await mkdir(dirname(file), { recursive: true })
       const temporary = `${file}.tmp`
       await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+      if (!stillOwned()) {
+        await rm(temporary, { force: true })
+        throw new Error('MDX trust context changed')
+      }
       await rename(temporary, file)
     }
     const pending = queue.then(run, run)
@@ -84,7 +92,7 @@ export function createMdxTrustStore(file: string): MdxTrustStore {
     async status(owner) {
       return (await read()).grants.includes(ownerKey(owner))
     },
-    approve: (owner) => update(owner, true),
-    revoke: (owner) => update(owner, false),
+    approve: (owner, stillOwned) => update(owner, true, stillOwned),
+    revoke: (owner, stillOwned) => update(owner, false, stillOwned),
   }
 }

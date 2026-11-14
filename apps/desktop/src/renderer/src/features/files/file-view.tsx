@@ -65,18 +65,28 @@ function MdxTrustControl({ remote, path }: { remote: string; path: string }) {
   const [attempt, setAttempt] = useState(0)
   const [confirm, setConfirm] = useState(false)
   const [pending, setPending] = useState(false)
-  const context = useRef({ remote, path, activeRemote })
-  context.current = { remote, path, activeRemote }
+  const context = useRef({ remote, path, activeRemote, generation: 0 })
+  context.current = { ...context.current, remote, path, activeRemote }
   useEffect(() => {
+    const generation = ++context.current.generation
     let current = true
+    setConfirm(false)
+    setPending(false)
     setState({ kind: 'loading' })
     trpc.mdxTrust.status
       .query({ remote })
       .then((result) => {
-        if (current && context.current.remote === remote) setState({ kind: 'ready', ...result })
+        if (
+          current &&
+          context.current.generation === generation &&
+          context.current.remote === remote &&
+          context.current.path === path &&
+          context.current.activeRemote === remote
+        )
+          setState({ kind: 'ready', ...result })
       })
       .catch((error: unknown) => {
-        if (current)
+        if (current && context.current.generation === generation)
           setState({
             kind: 'error',
             message: error instanceof Error ? error.message : String(error),
@@ -84,24 +94,32 @@ function MdxTrustControl({ remote, path }: { remote: string; path: string }) {
       })
     return () => {
       current = false
+      if (context.current.generation === generation) context.current.generation += 1
     }
-  }, [remote, attempt])
+  }, [remote, path, activeRemote, attempt])
   const refresh = () => setAttempt((value) => value + 1)
   async function change(trust: boolean) {
     if (pending || context.current.remote !== remote || context.current.activeRemote !== remote)
       return
+    const generation = context.current.generation
     setPending(true)
     try {
       if (trust) await trpc.mdxTrust.approve.mutate({ remote })
       else await trpc.mdxTrust.revoke.mutate({ remote })
-      if (context.current.remote === remote && context.current.activeRemote === remote) {
+      if (
+        context.current.generation === generation &&
+        context.current.remote === remote &&
+        context.current.path === path &&
+        context.current.activeRemote === remote
+      ) {
         setConfirm(false)
         refresh()
       }
     } catch (error) {
-      setState({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+      if (context.current.generation === generation)
+        setState({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
     } finally {
-      setPending(false)
+      if (context.current.generation === generation) setPending(false)
     }
   }
   const action =

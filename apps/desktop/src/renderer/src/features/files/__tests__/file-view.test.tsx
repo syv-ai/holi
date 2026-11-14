@@ -29,6 +29,9 @@ const read = vi.fn()
 const write = vi.fn()
 const historyList = vi.fn()
 const fileDiff = vi.fn()
+const mdxStatus = vi.fn()
+const mdxApprove = vi.fn()
+const mdxRevoke = vi.fn()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -43,6 +46,11 @@ vi.mock('@/lib/trpc', () => ({
       list: { query: (input: unknown) => historyList(input) },
       fileDiff: { query: (input: unknown) => fileDiff(input) },
     },
+    mdxTrust: {
+      status: { query: (input: unknown) => mdxStatus(input) },
+      approve: { mutate: (input: unknown) => mdxApprove(input) },
+      revoke: { mutate: (input: unknown) => mdxRevoke(input) },
+    },
   },
 }))
 
@@ -51,6 +59,9 @@ afterEach(() => {
   write.mockReset()
   historyList.mockReset()
   fileDiff.mockReset()
+  mdxStatus.mockReset()
+  mdxApprove.mockReset()
+  mdxRevoke.mockReset()
 })
 
 function HintKeys() {
@@ -831,4 +842,42 @@ test('Vim-off find handling respects keys consumed inside CodeMirror', async () 
   content.focus()
   await user.keyboard('{Escape}')
   expect(screen.getByRole('textbox', { name: 'Find' })).toBeInTheDocument()
+})
+
+test('MDX trust requires explicit confirmation and can be cancelled or approved', async () => {
+  read.mockResolvedValue('# source')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true })
+  mdxApprove.mockResolvedValue({ trusted: true })
+  setup('content/page.mdx')
+  await screen.findByText('Not approved')
+  await userEvent.click(screen.getByRole('button', { name: 'Review MDX trust' }))
+  expect(screen.getByText(/including future documents and synced changes/)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(mdxApprove).not.toHaveBeenCalled()
+  await userEvent.click(screen.getByRole('button', { name: 'Review MDX trust' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Approve vault' }))
+  await waitFor(() => expect(mdxApprove).toHaveBeenCalledWith({ remote: 'syv-ai/site' }))
+})
+
+test('MDX trust can be revoked from a source view', async () => {
+  read.mockResolvedValue('# source')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true })
+  mdxRevoke.mockResolvedValue({ trusted: false })
+  setup('content/page.mdx')
+  await screen.findByText('Approved')
+  await userEvent.click(screen.getByRole('button', { name: 'Revoke MDX trust' }))
+  await waitFor(() => expect(mdxRevoke).toHaveBeenCalledWith({ remote: 'syv-ai/site' }))
+})
+
+test('MDX trust reports status failure with a retry action', async () => {
+  read.mockResolvedValue('# source')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockRejectedValueOnce(new Error('offline'))
+  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true })
+  setup('content/page.mdx')
+  expect(await screen.findByText(/MDX trust unavailable/)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByText('Not approved')).toBeInTheDocument()
 })
