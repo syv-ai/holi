@@ -123,8 +123,8 @@ describe('pdf capabilities', () => {
     ).rejects.toThrow(/meta/)
   })
 
-  it('renders captioned code through both UI and CLI doors (needs typst)', async () => {
-    if ((await resolveTypstBin()) === null) return // no typst: skip, don't fail
+  it('renders captioned code through both UI and CLI doors (needs typst)', async (ctx) => {
+    if ((await resolveTypstBin()) === null) ctx.skip('Typst is required for real PDF compilation')
     const { root, run } = await rig({
       '.holi/document-templates/plain/template.json': JSON.stringify({
         name: 'Plain',

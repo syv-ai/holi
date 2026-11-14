@@ -1,10 +1,11 @@
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { writeMarkdownCaptionEnvelope } from '@holi/shared'
 import { fontPathArgs, renderPdf } from '../main/render'
+import { commentSafeString } from '../main/mermaid'
 import { resolveTypstBin } from '../main/typst-bin'
 // The ACTUAL seeded template — this test proves that exact file compiles.
 import plainTemplateTyp from '../main/vault/once/.holi/document-templates/plain/template.typ?raw'
@@ -38,6 +39,47 @@ describe('fontPathArgs', () => {
     await mkdir(templateDir, { recursive: true })
     expect(fontPathArgs(templateDir)).toEqual([])
   })
+})
+
+describe('renderPdf preprocessing', () => {
+  it.each([false, true])(
+    'preserves literal SVG wiki-link labels (caption present: %s)',
+    async (captioned) => {
+      const root = await work()
+      const templateDir = join(root, 'template')
+      await mkdir(templateDir)
+      await writeFile(join(templateDir, 'template.typ'), '')
+      const typstBin = join(root, 'capture-typst')
+      await writeFile(
+        typstBin,
+        '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
+      )
+      await chmod(typstBin, 0o755)
+      const notePath = join(root, 'note.md')
+      const prefix = captioned
+        ? writeMarkdownCaptionEnvelope('```js\nx\n```', 'Caption') + '\n\n'
+        : ''
+      await writeFile(
+        notePath,
+        prefix + 'Prose [[note.md|readable]].\n\n```mermaid\nflowchart LR\n A --> B\n```',
+      )
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>[[literal|display]]</text></svg>'
+      const outPath = join(root, 'captured.md')
+      await renderPdf({
+        typstBin,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+        diagrams: async () => [{ svg }],
+      })
+      const transformed = await readFile(outPath, 'utf8')
+      expect(transformed).toContain(commentSafeString(svg))
+      expect(transformed).toContain('Prose readable.')
+    },
+  )
 })
 
 const describeTypst = describe.skipIf((await resolveTypstBin()) === null)

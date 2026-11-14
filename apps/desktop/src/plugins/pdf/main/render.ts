@@ -151,8 +151,15 @@ export async function renderPdf({
     const pictured = await inlineImages(original, noteRel, (rel) => readVaultImage(vaultRoot, rel))
     const drawn =
       diagrams === undefined
-        ? { markdown: pictured.markdown, warnings: [] }
-        : await drawMermaid(pictured.markdown, diagrams)
+        ? {
+            markdown: frames.length ? pictured.markdown : wikiLinksToText(pictured.markdown),
+            warnings: [],
+          }
+        : await drawMermaid(
+            pictured.markdown,
+            diagrams,
+            frames.length ? undefined : wikiLinksToText,
+          )
     // Mermaid and image transforms run while the original envelopes still
     // surround their body. Then each supported element and caption becomes one
     // self-contained, non-executable-to-cmarker Typst block. The original line
@@ -177,7 +184,7 @@ export async function renderPdf({
     }
     // Keep the generated caption expression (including literal code source)
     // and Mermaid drawings intact. The uncaptained wiki-link rewrite is unchanged.
-    markdown = frames.length ? wikiLinksOutsideRawTypst(markdown) : wikiLinksToText(markdown)
+    if (frames.length) markdown = wikiLinksOutsideRawTypst(markdown)
     const noteForTypst = join(work, 'note.md')
     await writeFile(noteForTypst, markdown)
 
