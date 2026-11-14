@@ -177,7 +177,40 @@ describe('PiRpcRun', () => {
     await expect(result).resolves.toMatchObject({ status: 'failed', error: /malformed/ })
   })
 
-  it('does not let a handled queued steer settle the active turn', async () => {
+  it.each(['steer', 'followUp'] as const)(
+    'does not let a handled queued %s settle the active turn before agent_start',
+    async (kind) => {
+      const process = fake()
+      const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
+      const result = run.prompt('active')
+      const queuedResult = kind === 'steer' ? run.steer('queued') : undefined
+      if (kind === 'followUp') run.followUp('queued')
+      const queued = process.commands.at(-1)!
+      process.stdout.write(
+        JSON.stringify({
+          type: 'response',
+          id: queued.id,
+          command: 'prompt',
+          success: true,
+          data: { disposition: 'handled' },
+        }) + '\n',
+      )
+      if (queuedResult) {
+        await expect(queuedResult).resolves.toMatchObject({ status: 'completed', output: '' })
+      }
+      let completed = false
+      void result.then(() => {
+        completed = true
+      })
+      await Promise.resolve()
+      expect(completed).toBe(false)
+      process.stdout.write('{"type":"agent_start"}\n')
+      process.stdout.write('{"type":"agent_settled","aborted":false}\n')
+      await expect(result).resolves.toMatchObject({ status: 'completed' })
+    },
+  )
+
+  it('does not let a handled queued steer settle the active turn after agent_start', async () => {
     const process = fake()
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
     const result = run.prompt('active')
