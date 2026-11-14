@@ -1157,7 +1157,7 @@ export function createRouter(deps: RouterDeps) {
       vaultOpenRevision === context.openRevision &&
       completedVaultOpenRevision === context.openRevision &&
       deps.host.active() === context.active &&
-      context.active.remote === requestedRemote
+      canonicalGitHubRemote(context.active.remote) === canonicalGitHubRemote(requestedRemote)
     )
   }
 
@@ -1169,7 +1169,11 @@ export function createRouter(deps: RouterDeps) {
       const remote = canonicalGitHubRemote(input.remote)
       const active = deps.host.active()
       const revision = vaultOpenRevision
-      if (!active || active.remote !== input.remote || completedVaultOpenRevision !== revision)
+      if (
+        !active ||
+        canonicalGitHubRemote(active.remote) !== remote ||
+        completedVaultOpenRevision !== revision
+      )
         throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
       const accountGeneration = deps.session.generation
       const accountId = String(viewer.accountId)
