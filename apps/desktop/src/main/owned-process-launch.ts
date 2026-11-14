@@ -169,6 +169,7 @@ public static class HoliOwnedProcess {
     public short wShowWindow, cbReserved2; public IntPtr lpReserved2;
     public IntPtr hStdInput, hStdOutput, hStdError;
   }
+  [StructLayout(LayoutKind.Sequential)] struct STARTUPINFOEX { public STARTUPINFO StartupInfo; public IntPtr lpAttributeList; }
   [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
   [StructLayout(LayoutKind.Sequential)] struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
     public long PerProcessUserTimeLimit, PerJobUserTimeLimit; public uint LimitFlags;
@@ -184,7 +185,10 @@ public static class HoliOwnedProcess {
     public long TotalUserTime, TotalKernelTime, ThisPeriodTotalUserTime, ThisPeriodTotalKernelTime;
     public uint TotalPageFaults, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses;
   }
-  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)] static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)] static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref STARTUPINFOEX si, out PROCESS_INFORMATION pi);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returned);
+  [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);
   [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attrs, string name);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job, int cls, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, uint len);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
@@ -218,7 +222,7 @@ public static class HoliOwnedProcess {
     Console.Error.Flush();
   }
   public static int Run() {
-    IntPtr job=IntPtr.Zero, parent=IntPtr.Zero; PROCESS_INFORMATION pi=new PROCESS_INFORMATION(); bool safelyFinished=false, stopped=false;
+    IntPtr job=IntPtr.Zero, parent=IntPtr.Zero, env=IntPtr.Zero, attrList=IntPtr.Zero, handleList=IntPtr.Zero; PROCESS_INFORMATION pi=new PROCESS_INFORMATION(); bool attrInitialized=false, safelyFinished=false, stopped=false;
     string stopPath=null, readyPath=null, successPath=null;
     AnonymousPipeServerStream outputPipe=null, errorPipe=null; Thread outputRelay=null, errorRelay=null;
     Exception relayFailure=null; bool retain=false; string outputMarker=null, errorMarker=null;
@@ -247,24 +251,34 @@ public static class HoliOwnedProcess {
       bool verbatim=data.ContainsKey("verbatim") && Convert.ToBoolean(data["verbatim"]);
       var cmd=new StringBuilder(Arg(bin));
       foreach(object a in argv) cmd.Append(' ').Append(verbatim?Convert.ToString(a):Arg(Convert.ToString(a)));
-      var si=new STARTUPINFO(); si.cb=Marshal.SizeOf(typeof(STARTUPINFO)); si.dwFlags=0x100; si.hStdInput=GetStdHandle(-10); si.hStdOutput=GetStdHandle(-11); si.hStdError=GetStdHandle(-12);
+      var si=new STARTUPINFOEX(); si.StartupInfo.cb=Marshal.SizeOf(typeof(STARTUPINFO)); si.StartupInfo.dwFlags=0x100; si.StartupInfo.hStdInput=GetStdHandle(-10); si.StartupInfo.hStdOutput=GetStdHandle(-11); si.StartupInfo.hStdError=GetStdHandle(-12);
       if(retain) {
         outputPipe=new AnonymousPipeServerStream(PipeDirection.In,HandleInheritability.Inheritable);
         errorPipe=new AnonymousPipeServerStream(PipeDirection.In,HandleInheritability.Inheritable);
-        si.hStdOutput=outputPipe.ClientSafePipeHandle.DangerousGetHandle();
-        si.hStdError=errorPipe.ClientSafePipeHandle.DangerousGetHandle();
+        si.StartupInfo.hStdOutput=outputPipe.ClientSafePipeHandle.DangerousGetHandle();
+        si.StartupInfo.hStdError=errorPipe.ClientSafePipeHandle.DangerousGetHandle();
+        si.StartupInfo.cb=Marshal.SizeOf(typeof(STARTUPINFOEX));
+        IntPtr attrSize=IntPtr.Zero;
+        InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref attrSize);
+        attrList=Marshal.AllocHGlobal(attrSize);
+        Check(InitializeProcThreadAttributeList(attrList,1,0,ref attrSize)); attrInitialized=true;
+        handleList=Marshal.AllocHGlobal(IntPtr.Size*3);
+        Marshal.WriteIntPtr(handleList,0,si.StartupInfo.hStdInput);
+        Marshal.WriteIntPtr(handleList,IntPtr.Size,si.StartupInfo.hStdOutput);
+        Marshal.WriteIntPtr(handleList,IntPtr.Size*2,si.StartupInfo.hStdError);
+        Check(UpdateProcThreadAttribute(attrList,0,(IntPtr)0x20002,handleList,(IntPtr)(IntPtr.Size*3),IntPtr.Zero,IntPtr.Zero));
+        si.lpAttributeList=attrList;
       }
-      IntPtr env=IntPtr.Zero;
       var vars=data["env"] as System.Collections.Generic.Dictionary<string,object>;
       if(vars!=null) { var eb=new StringBuilder(); var keys=new System.Collections.Generic.List<string>(vars.Keys); keys.Sort(StringComparer.OrdinalIgnoreCase); foreach(string key in keys) if(vars[key]!=null) eb.Append(key).Append('=').Append(Convert.ToString(vars[key])).Append('\0'); eb.Append('\0'); env=Marshal.StringToHGlobalUni(eb.ToString()); }
       Trace("before-suspended-root-creation");
-      Check(CreateProcess(bin,cmd,IntPtr.Zero,IntPtr.Zero,true,0x4|0x400|0x08000000,env,data.ContainsKey("cwd")?(string)data["cwd"]:null,ref si,out pi));
+      Check(CreateProcess(bin,cmd,IntPtr.Zero,IntPtr.Zero,true,(uint)(0x4|0x400|0x08000000|(retain?0x80000:0)),env,data.ContainsKey("cwd")?(string)data["cwd"]:null,ref si,out pi));
       if(retain) { outputPipe.DisposeLocalCopyOfClientHandle(); errorPipe.DisposeLocalCopyOfClientHandle();
         outputRelay=new Thread(()=>{try { var target=Console.OpenStandardOutput(); outputPipe.CopyTo(target); target.Flush(); } catch(Exception e) { relayFailure=e; }});
         errorRelay=new Thread(()=>{try { var target=Console.OpenStandardError(); errorPipe.CopyTo(target); target.Flush(); } catch(Exception e) { relayFailure=e; }});
         outputRelay.IsBackground=true; errorRelay.IsBackground=true; outputRelay.Start(); errorRelay.Start(); }
       Trace("after-suspended-root-creation",pi.dwProcessId);
-      if(env!=IntPtr.Zero) Marshal.FreeHGlobal(env);
+      if(env!=IntPtr.Zero) { Marshal.FreeHGlobal(env); env=IntPtr.Zero; }
       Trace("before-job-assignment",pi.dwProcessId);
       Check(AssignProcessToJobObject(job,pi.hProcess));
       Trace("after-job-assignment",pi.dwProcessId);
@@ -316,7 +330,7 @@ public static class HoliOwnedProcess {
         Thread.Sleep(50);
       }
     } catch(Exception e) { Console.Error.WriteLine("Holi could not establish managed process ownership: "+e.Message); Trace("helper-return",pi.dwProcessId,"125"); return 125; }
-    finally { if(!safelyFinished) { if(job!=IntPtr.Zero) { TerminateJobObject(job,1); while(true) { JOBOBJECT_BASIC_ACCOUNTING_INFORMATION drain; if(!QueryInformationJobObject(job,1,out drain,(uint)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION)),IntPtr.Zero) || drain.ActiveProcesses==0) break; Thread.Sleep(25); } } if(pi.hProcess!=IntPtr.Zero) TerminateProcess(pi.hProcess,1); } try { if(outputPipe!=null) outputPipe.Dispose(); if(errorPipe!=null) errorPipe.Dispose(); if(outputRelay!=null && outputRelay.IsAlive) outputRelay.Join(2000); if(errorRelay!=null && errorRelay.IsAlive) errorRelay.Join(2000); } catch {} if(pi.hThread!=IntPtr.Zero) CloseHandle(pi.hThread); if(pi.hProcess!=IntPtr.Zero) CloseHandle(pi.hProcess); if(job!=IntPtr.Zero) CloseHandle(job); if(parent!=IntPtr.Zero) CloseHandle(parent); try { if(stopPath!=null) File.Delete(stopPath); if(readyPath!=null) File.Delete(readyPath); if(successPath!=null) File.Delete(successPath); } catch {} }
+    finally { if(!safelyFinished) { if(job!=IntPtr.Zero) { TerminateJobObject(job,1); while(true) { JOBOBJECT_BASIC_ACCOUNTING_INFORMATION drain; if(!QueryInformationJobObject(job,1,out drain,(uint)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION)),IntPtr.Zero) || drain.ActiveProcesses==0) break; Thread.Sleep(25); } } if(pi.hProcess!=IntPtr.Zero) TerminateProcess(pi.hProcess,1); } try { if(outputPipe!=null) outputPipe.Dispose(); if(errorPipe!=null) errorPipe.Dispose(); if(outputRelay!=null && outputRelay.IsAlive) outputRelay.Join(2000); if(errorRelay!=null && errorRelay.IsAlive) errorRelay.Join(2000); } catch {} if(pi.hThread!=IntPtr.Zero) CloseHandle(pi.hThread); if(pi.hProcess!=IntPtr.Zero) CloseHandle(pi.hProcess); if(job!=IntPtr.Zero) CloseHandle(job); if(parent!=IntPtr.Zero) CloseHandle(parent); if(attrInitialized) DeleteProcThreadAttributeList(attrList); if(attrList!=IntPtr.Zero) Marshal.FreeHGlobal(attrList); if(handleList!=IntPtr.Zero) Marshal.FreeHGlobal(handleList); if(env!=IntPtr.Zero) Marshal.FreeHGlobal(env); try { if(stopPath!=null) File.Delete(stopPath); if(readyPath!=null) File.Delete(readyPath); if(successPath!=null) File.Delete(successPath); } catch {} }
   }
 }
 '@
