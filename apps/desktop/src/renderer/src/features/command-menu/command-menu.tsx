@@ -21,6 +21,7 @@ import {
   ChevronsDownUpIcon,
   ColumnsIcon,
   FilePlusIcon,
+  FileTextIcon,
   KeyboardIcon,
   ListChecksIcon,
   LoaderCircleIcon,
@@ -177,6 +178,7 @@ export function CommandMenu({
   onOpenChange,
   onOpen,
   onAddVault,
+  onOpenScratchpad,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -185,6 +187,7 @@ export function CommandMenu({
   onOpen: (id: string, beside: boolean) => void
   /** Clone another GitHub repository as a vault. */
   onAddVault: () => void
+  onOpenScratchpad?: () => void
 }) {
   const [query, setQuery] = useState('')
   const snapshot = useAtomValue(snapshotAtom)
@@ -350,6 +353,18 @@ export function CommandMenu({
         ]
       },
     ),
+    ...(onOpenScratchpad === undefined
+      ? []
+      : [
+          {
+            id: 'scratchpad.open',
+            label: 'Open scratchpad',
+            keywords: ['personal', 'local', 'notes'],
+            icon: FileTextIcon,
+            keys: shortcut('scratchpad.open')?.keys[0],
+            run: onOpenScratchpad,
+          },
+        ]),
     {
       id: 'task.new',
       label: 'New task',
