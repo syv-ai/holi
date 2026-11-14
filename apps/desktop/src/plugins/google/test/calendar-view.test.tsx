@@ -224,6 +224,10 @@ describe('the calendar view', () => {
 
     await user.click(screen.getByRole('button', { name: 'Hide calendar rail' }))
     expect(rail).toHaveClass('hidden')
+    expect(rail).not.toHaveClass('@min-[64rem]/calendar-host:flex')
+    expect(
+      container.querySelector('[class*="@min-[64rem]/calendar-host:hidden"]'),
+    ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Show calendar rail' })).toHaveAttribute(
       'aria-pressed',
       'false',
