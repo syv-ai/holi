@@ -1,3 +1,4 @@
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 /**
  * An open task's properties: the same fields as New task, labelled, each
  * change written to the file at once. Where they sit is the person's
@@ -15,7 +16,7 @@
 import { useState } from 'react'
 import { isPrivateTask, type PropertiesLayout, type Task } from '@holi/shared'
 import { ChevronDownIcon } from 'lucide-react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { ConfirmDialog } from '@/composites/confirm-dialog'
 import { cn } from '@/lib/cn'
 import { todayAtom } from '@/state/clock'
+import { activeRemoteAtom } from '@/state/vaults'
 import { parentOf } from '@/lib/tree-paths'
 import { statusesAtom } from '@/state/planning'
 import {
@@ -72,6 +74,8 @@ export function TaskProperties({
   onMoved?: (from: string, to: string) => void
   className?: string
 }) {
+  const activity = useEditorActivity()
+  const store = useStore()
   const task = useAtomValue(tasksAtom).get(path)
   const statuses = useAtomValue(statusesAtom)
   const today = useAtomValue(todayAtom)
@@ -92,12 +96,17 @@ export function TaskProperties({
 
   /** A rename that gives the task a new path, followed by whatever shows it. */
   const renamed = async (rename: () => Promise<string | null>) => {
+    const remote = store.get(activeRemoteAtom)
     await beforeWrite()
+    if (remote === null || store.get(activeRemoteAtom) !== remote) return
     const to = await rename()
-    if (to !== null && to !== path) onMoved?.(path, to)
+    if (remote !== null && store.get(activeRemoteAtom) === remote && to !== null && to !== path) {
+      onMoved?.(path, to)
+    }
   }
 
   const write = async (change: TaskFieldChange) => {
+    if (!activity.focused) return
     try {
       if (change.field === 'shared') {
         if (change.value === !isPrivateTask(path)) return
@@ -105,12 +114,22 @@ export function TaskProperties({
         else setAsking(true)
         return
       }
-      await beforeWrite()
       if (change.field === 'folder') {
         if (change.value === parentOf(path)) return
+        const remote = store.get(activeRemoteAtom)
+        await beforeWrite()
+        if (remote === null || store.get(activeRemoteAtom) !== remote) return
         const to = await move(path, change.value)
-        if (to !== null && to !== path) onMoved?.(path, to)
+        if (
+          remote !== null &&
+          store.get(activeRemoteAtom) === remote &&
+          to !== null &&
+          to !== path
+        ) {
+          onMoved?.(path, to)
+        }
       } else {
+        await beforeWrite()
         await patch(path, patchOf(change))
       }
     } catch (err) {

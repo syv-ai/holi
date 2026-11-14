@@ -516,11 +516,17 @@ describe('execProgram', () => {
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-drain-'))
       const pidFile = join(dir, 'pid')
-      const script = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`process.stdout.write('ready');setInterval(()=>0,1000)`)}],{stdio:['ignore','pipe','ignore'],windowsHide:true,detached:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.stdout.once('data',()=>process.exit(0))`
+      const readyFile = join(dir, 'ready')
+      const releaseFile = join(dir, 'release')
+      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(readyFile)},'ready');process.stdout.write('descendant output');setInterval(()=>0,1000)`
+      const script = `const fs=require('node:fs');const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','inherit','ignore'],windowsHide:true,detached:true});c.on('spawn',()=>fs.writeFileSync(${JSON.stringify(pidFile)},String(c.pid)));const wait=()=>fs.existsSync(${JSON.stringify(releaseFile)})?process.exit(0):setTimeout(wait,10);wait()`
       const { execProgram } = await import('../src/main/launch')
       let reported = false
+      let pid = 0
+      let releaseWritten = false
+      let result: Promise<{ err: Error | null; out: string }> | undefined
       try {
-        const result = new Promise<{ err: Error | null; out: string }>((resolve) => {
+        result = new Promise<{ err: Error | null; out: string }>((resolve) => {
           execProgram(
             process.execPath,
             ['-e', script],
@@ -531,13 +537,32 @@ describe('execProgram', () => {
             },
           )
         })
-        const { err } = await result
+        await vi.waitFor(
+          async () => {
+            expect(await readFile(readyFile, 'utf8')).toBe('ready')
+            pid = Number(await readFile(pidFile, 'utf8'))
+            expect(pid).toBeGreaterThan(1)
+          },
+          { timeout: 10_000 },
+        )
+        expect(reported).toBe(false)
+        expect(defaultProbePid(pid, 'win32')).not.toBe('gone')
+
+        await writeFile(releaseFile, 'release')
+        releaseWritten = true
+        const { err, out } = await result
         expect(err).toBeNull()
-        const pid = Number(await readFile(pidFile, 'utf8'))
-        expect(pid).toBeGreaterThan(1)
+        expect(out).toContain('descendant output')
         expect(reported).toBe(true)
         expect(defaultProbePid(pid, 'win32')).toBe('gone')
       } finally {
+        if (!releaseWritten) await writeFile(releaseFile, 'release')
+        if (result) await result
+        if (pid > 1) {
+          await vi.waitFor(() => expect(defaultProbePid(pid, 'win32')).toBe('gone'), {
+            timeout: 10_000,
+          })
+        }
         await rm(dir, { recursive: true, force: true })
       }
     },

@@ -1,3 +1,4 @@
+import { OverlayActivityContext, useActivityOpen, useOverlayAutoFocus } from "@/hooks/use-editor-activity"
 import * as React from "react"
 import { cn } from "@/lib/cn"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
@@ -7,7 +8,9 @@ import { Button } from "@/components/ui/button"
 function AlertDialog({
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+  const { open, defaultOpen, onOpenChange, ...rest } = props
+  const overlay = useActivityOpen(open, defaultOpen, onOpenChange)
+  return <OverlayActivityContext value={overlay.valid}><AlertDialogPrimitive.Root data-slot="alert-dialog" {...rest} open={overlay.open} onOpenChange={overlay.onOpenChange} /></OverlayActivityContext>
 }
 
 function AlertDialogTrigger({
@@ -49,6 +52,8 @@ function AlertDialogContent({
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
 }) {
+  const openAutoFocus = useOverlayAutoFocus(props.onOpenAutoFocus)
+  const closeAutoFocus = useOverlayAutoFocus(props.onCloseAutoFocus)
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
@@ -60,6 +65,8 @@ function AlertDialogContent({
           className
         )}
         {...props}
+        onOpenAutoFocus={openAutoFocus}
+        onCloseAutoFocus={closeAutoFocus}
       />
     </AlertDialogPortal>
   )

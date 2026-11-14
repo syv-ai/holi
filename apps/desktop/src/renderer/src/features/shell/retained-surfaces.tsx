@@ -61,7 +61,9 @@ export function useRetainedSurfaces(
   ) {
     setVisited({ remote, keys })
   }
-  const displayed = [...new Set([...visibleKeys, ...keys])]
+  // Keep retained portals in a stable sibling order as focus moves between tabs.
+  // Their physical hosts move into visible slots below; React need not reorder them.
+  const displayed = [...new Set([...keys, ...visibleKeys])]
   const identity = (key: string) => JSON.stringify([remote, key])
   function hostFor(key: string): HTMLDivElement {
     const id = identity(key)

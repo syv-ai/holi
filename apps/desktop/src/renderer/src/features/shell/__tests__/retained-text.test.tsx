@@ -31,7 +31,10 @@ const read = vi.fn(
 )
 const write = vi.fn(async (_input: unknown) => ({ ok: true, warnings: [] as string[] }))
 const files = () =>
-  ['src/one.ts', 'src/two.ts', 'settings.json'].map((path) => ({ path, updatedAt: 'one' }))
+  ['src/one.ts', 'src/two.ts', 'notes/one.md', 'settings.json'].map((path) => ({
+    path,
+    updatedAt: 'one',
+  }))
 const settings = { ...VAULT_SETTING_DEFAULTS, warnings: [] }
 
 vi.mock('@/lib/trpc', () => {
@@ -85,7 +88,11 @@ beforeEach(() => {
   read
     .mockReset()
     .mockImplementation(async ({ path }) =>
-      path.endsWith('.json') ? '{"initial":true}' : 'first line\nsecond line\nthird line\n',
+      path.endsWith('.json')
+        ? '{"initial":true}'
+        : path.endsWith('.md')
+          ? '# Note\n\nText line\n'
+          : 'first line\nsecond line\nthird line\n',
     )
   write.mockReset().mockResolvedValue({ ok: true, warnings: [] })
 })
@@ -242,6 +249,20 @@ test('visited launchers retain scroll, close fresh, and dispose when the vault c
 })
 
 // Change-marker reads of unvisited files are existing shared-state work, not editor mounts.
+test('markdown document editors remain mounted across tabs and retain editor state', async () => {
+  const store = fixture(['notes/one.md', 'src/one.ts'])
+  await waitFor(() => expect(document.querySelector('[aria-label="one document"]')).not.toBeNull())
+  const editor = document.querySelector('[aria-label="one document"]')!
+
+  focusTab(store, 'src/one.ts')
+  await waitFor(() => expect(editor.closest('[data-retained-parking]')).not.toBeNull())
+  expect(document.querySelector('[aria-label="one document"]')).toBe(editor)
+
+  focusTab(store, 'notes/one.md')
+  await waitFor(() => expect(editor.closest('[data-retained-parking]')).toBeNull())
+  expect(document.querySelector('[aria-label="one document"]')).toBe(editor)
+})
+
 test('lazy editors retain selection, scroll, undo and Vim through tab and split changes', async () => {
   const store = fixture()
   const one = await cmFor()
