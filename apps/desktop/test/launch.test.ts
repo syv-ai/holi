@@ -507,10 +507,16 @@ describe('execProgram', () => {
         const pidFile = join(dir, 'pid')
         const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:'ignore',windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();process.stdout.write('backgrounded · 12345678 · test');process.stderr.write('detached stderr payload')`
         let pid = 0
+        let hostDiagnostic = ''
+        onTestFailed(() => {
+          for (const xml of hostDiagnostic.match(/<Objs[\s\S]*?<\/Objs>/g) ?? []) {
+            console.error('[synthetic fixture PowerShell host diagnostic]', xml)
+          }
+        })
         try {
           const result = await new Promise<{ err: Error | null; out: string; stderr: string }>(
             (resolve) => {
-              execProgram(
+              const child = execProgram(
                 process.execPath,
                 ['-e', script],
                 {
@@ -522,6 +528,9 @@ describe('execProgram', () => {
                 },
                 (err, out, stderr) => resolve({ err, out, stderr }),
               )
+              child.stdio[2]?.on('data', (chunk: Buffer) => {
+                hostDiagnostic = (hostDiagnostic + chunk.toString('utf8')).slice(-8192)
+              })
             },
           )
           pid = Number(await readFile(pidFile, 'utf8'))

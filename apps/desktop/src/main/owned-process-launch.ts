@@ -151,6 +151,7 @@ export function spawnOwnedLaunch(
 
 const WINDOWS_ADAPTER = String.raw`
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $source = @'
 using System;
 using System.IO;
