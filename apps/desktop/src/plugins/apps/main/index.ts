@@ -86,6 +86,11 @@ export const appsMain: MainPlugin = {
         previews,
         capture: captureForActivation,
         captureCurrent: presentation,
+        issueFrameLease: (bundle) => {
+          const { token, nonce } = ctx.issueAppFrameLease(bundle)
+          return { token, nonce }
+        },
+        releaseFrameLease: (token, bundle) => ctx.releaseAppFrameLease(token, bundle),
       }),
     )
     ctx.register(['store'], storeCapabilities())

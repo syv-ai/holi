@@ -74,6 +74,8 @@ async function rig(
       },
       capture: async () => (options.capture ? options.capture() : null),
       captureCurrent: options.captureCurrent ?? (() => true),
+      issueFrameLease: () => ({ token: 'a'.repeat(48), nonce: 'b'.repeat(48) }),
+      releaseFrameLease: () => true,
     }),
   )
   registry.register(['store'], storeCapabilities())

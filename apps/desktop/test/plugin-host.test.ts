@@ -193,6 +193,24 @@ function rig(
 const turn = (root: string, on: boolean) =>
   writeVaultSettings(root, { committed: { plugins: { fake: on } } })
 
+describe('app frame activation leases', () => {
+  it('binds issued frame authority to its activation and presentation window', async () => {
+    const root = await tempDir()
+    const win = { isDestroyed: () => false } as unknown as import('electron').BrowserWindow
+    const h = rig({ window: () => win })
+    await h.enter(openVault('team/a', root))
+    const lease = h.ctx().issueAppFrameLease('Tool.app')
+    expect(lease.valid(win)).toBe(true)
+    expect(lease.remote).toBe('team/a')
+    expect(lease.root).toBe(root)
+
+    h.host.setDisplayed('team/b')
+    h.host.setDisplayed('team/a')
+    expect(lease.valid(win)).toBe(false)
+    await h.host.stop('team/a')
+  })
+})
+
 /** A plugin that logs its start and stop. */
 function logged(
   log: string[],
