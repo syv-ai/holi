@@ -14,7 +14,13 @@ import { emptyVaultSnapshot, type VaultSnapshot } from '@holi/shared'
 import { FileView } from '@/features/files/file-view'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 import { act, render, waitFor } from '@/test/render'
-import { activeRemoteAtom, renameNoteAtom, moveNotesAtom, deleteManyAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  openedRemoteAtom,
+  renameNoteAtom,
+  moveNotesAtom,
+  deleteManyAtom,
+} from '@/state/vaults'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { allTabs } from '@/state/shell-workspace'
 
@@ -108,6 +114,7 @@ describe('renameNoteAtom', () => {
       })
       const store = createStore()
       store.set(activeRemoteAtom, 'syv-ai/notes')
+      store.set(openedRemoteAtom, 'syv-ai/notes')
       const view = render(
         createElement(Provider, { store }, createElement(FileView, { path: 'old.txt' })),
       )
