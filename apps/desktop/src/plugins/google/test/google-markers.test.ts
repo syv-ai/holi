@@ -106,6 +106,28 @@ describe('account-bound personal mail markers', () => {
     cache2.close()
   })
 
+  it('serializes purge before a replacement store writes the same account file', async () => {
+    const root = await temp()
+    const old = createMailMarkerStore(root, 'account-a')
+    await old.set('thread-1', 'red-star')
+    let release!: () => void
+    let started!: () => void
+    const waiting = new Promise<void>((resolve) => (release = resolve))
+    const entered = new Promise<void>((resolve) => (started = resolve))
+    const blocker = old.runExclusive('thread-1', async () => {
+      started()
+      await waiting
+    })
+    await entered
+    const purge = old.purge()
+    const replacement = createMailMarkerStore(root, 'account-a')
+    const write = replacement.set('thread-1', 'blue-question')
+    release()
+    await expect(blocker).rejects.toThrow(/no longer connected/)
+    await Promise.all([purge, write])
+    expect(await replacement.read(['thread-1'])).toEqual({ 'thread-1': 'blue-question' })
+  })
+
   it('purges only a removed account and preserves data for another account', async () => {
     const root = await temp()
     const removed = createMailMarkerStore(root, 'account-a')

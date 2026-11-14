@@ -75,8 +75,11 @@ export interface GoogleData {
   setRead(id: string, read: boolean): Promise<void>
   setStarred(id: string, starred: boolean): Promise<void>
   /** Batch marker reads are UI-only at the capability door, per account. */
-  mailMarkers(ids: readonly string[]): Promise<Record<string, MarkerValue>>
-  setMailMarker(id: string, marker: MarkerValue): Promise<void>
+  mailMarkers(
+    ids: readonly string[],
+    validate?: () => Promise<void>,
+  ): Promise<Record<string, MarkerValue>>
+  setMailMarker(id: string, marker: MarkerValue, validate?: () => Promise<void>): Promise<void>
   archive(id: string): Promise<void>
   trash(id: string): Promise<void>
   /**
@@ -291,36 +294,42 @@ export function createGoogleData({
       })
     },
 
-    mailMarkers(ids) {
+    mailMarkers(ids, validate) {
       validateBatch(ids)
       assertActive()
       return (async () => {
-        const stored = await markers.read(ids)
+        await validate?.()
+        const stored = await markers.read(ids, validate)
         assertActive()
         const result: Record<string, MarkerValue> = {}
         for (const id of ids) {
+          await validate?.()
           const starred = await threadHasStarredMessage(api(), id)
           assertActive()
+          await validate?.()
           result[id] = starred ? (stored[id] ?? 'yellow-star') : null
         }
         return result
       })()
     },
 
-    setMailMarker(id, marker) {
+    setMailMarker(id, marker, validate) {
       return markers.runExclusive(id, async () => {
         assertActive()
-        await markers.read([id])
+        await validate?.()
+        await markers.read([id], validate)
         assertActive()
+        await validate?.()
         const starred = marker !== null
         await setThreadStarred(api(), id, starred)
         assertActive()
+        await validate?.()
         cache.patchThread(id, {
           added: starred ? ['STARRED'] : [],
           removed: starred ? [] : ['STARRED'],
         })
         try {
-          await markers.set(id, marker)
+          await markers.set(id, marker, validate)
         } catch (error) {
           throw new Error(
             `Gmail star changed, but the personal marker was not saved: ${errorMessage(error)}`,

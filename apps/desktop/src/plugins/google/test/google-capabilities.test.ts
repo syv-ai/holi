@@ -149,7 +149,7 @@ describe('UI-only mail markers', () => {
     expect(
       await call('setMailMarker', { id: 't1', marker: 'red-star', expectedAccountSub: 'sub-b' }),
     ).toEqual({ ok: true })
-    expect(setMailMarker).toHaveBeenCalledWith('t1', 'red-star')
+    expect(setMailMarker).toHaveBeenCalledWith('t1', 'red-star', expect.any(Function))
   })
 })
 

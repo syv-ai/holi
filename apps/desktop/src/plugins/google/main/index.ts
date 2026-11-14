@@ -78,7 +78,7 @@ export const googleMain: MainPlugin = {
           bySub.set(sub, { data, session })
           return data
         }
-        accounts.onChange((sub) => {
+        accounts.onChange((sub, reason) => {
           if (sub === null) return
           // Linking another vault does not replace the grant or its shared cache.
           if (bySub.get(sub)?.session === accounts.sessionForSub(sub)) return
@@ -87,9 +87,10 @@ export const googleMain: MainPlugin = {
           bySub.get(sub)?.data.forget()
           bySub.delete(sub)
           if (!/^[A-Za-z0-9_-]+$/.test(sub)) return
-          // A null session means removal/expiry, not an ordinary reconnect.
-          // Only account deletion purges durable personal annotations.
-          if (accounts.sessionForSub(sub) === null) {
+          // An expired grant can be reconnected to the same Google identity;
+          // keep its durable annotations. Only deliberate account deletion
+          // removes them (including an explicit removal after expiry).
+          if (reason === 'removed') {
             const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
             markersBySub.delete(sub)
             void markers

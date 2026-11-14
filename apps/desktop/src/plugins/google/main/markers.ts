@@ -13,8 +13,11 @@ type MarkerFile = {
 }
 
 export interface MailMarkerStore {
-  read(threadIds: readonly string[]): Promise<Record<string, MarkerValue>>
-  set(threadId: string, marker: MarkerValue): Promise<void>
+  read(
+    threadIds: readonly string[],
+    validate?: () => Promise<void>,
+  ): Promise<Record<string, MarkerValue>>
+  set(threadId: string, marker: MarkerValue, validate?: () => Promise<void>): Promise<void>
   /** Orders Gmail mutations across data handles for this account and thread. */
   runExclusive<T>(threadId: string, work: () => Promise<T>): Promise<T>
   purge(): Promise<void>
@@ -23,6 +26,7 @@ export interface MailMarkerStore {
 const MAX_BATCH = 100
 const THREAD_ID = /^[A-Za-z0-9_-]{1,256}$/
 const ACCOUNT_SUB = /^[A-Za-z0-9_-]{1,256}$/
+const lifecycleQueues = new Map<string, Promise<unknown>>()
 
 /** Per-account durable annotations. A malformed file is an error, never an empty store. */
 export function createMailMarkerStore(userData: string, accountSub: string): MailMarkerStore {
@@ -47,16 +51,16 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
   })
 
   let retired = false
-  const queues = new Map<string, Promise<unknown>>()
   const serialize = <T>(key: string, work: () => Promise<T>): Promise<T> => {
-    const result = (queues.get(key) ?? Promise.resolve()).then(work, work)
+    const queueKey = `${path}:${key}`
+    const result = (lifecycleQueues.get(queueKey) ?? Promise.resolve()).then(work, work)
     const tail = result.then(
       () => undefined,
       () => undefined,
     )
-    queues.set(key, tail)
+    lifecycleQueues.set(queueKey, tail)
     void tail.then(() => {
-      if (queues.get(key) === tail) queues.delete(key)
+      if (lifecycleQueues.get(queueKey) === tail) lifecycleQueues.delete(queueKey)
     })
     return result
   }
@@ -65,22 +69,25 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
   }
 
   return {
-    async read(threadIds) {
+    async read(threadIds, validate) {
       validateBatch(threadIds)
       assertActive()
       return serialize('store', async () => {
         assertActive()
+        await validate?.()
         const file = await store.read()
         assertActive()
+        await validate?.()
         return Object.fromEntries(threadIds.map((id) => [id, file.threads[id] ?? null]))
       })
     },
-    async set(threadId, marker) {
+    async set(threadId, marker, validate) {
       validateThreadId(threadId)
       if (marker !== null && !isMailMarker(marker)) throw new Error('invalid mail marker')
       assertActive()
       return serialize('store', async () => {
         assertActive()
+        await validate?.()
         await store.update((current) => {
           assertActive()
           const threads = { ...current.threads }
@@ -89,6 +96,7 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
           return { version: 1, accountSub, threads }
         })
         assertActive()
+        await validate?.()
       })
     },
     runExclusive(threadId, work) {
