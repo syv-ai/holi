@@ -78,6 +78,7 @@ import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
 import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
+import { isMailMarker, validateBatch, validateThreadId, type MarkerValue } from './markers'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -462,6 +463,14 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     return { session, data }
   }
 
+  const validateSession = (remote: string, session: GoogleSession) => async () => {
+    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+    const current = await deps.accounts.sessionFor(remote)
+    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+    if (current !== session)
+      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+  }
+
   const dataOf = async (remote: string): Promise<GoogleData> => {
     const data = await deps.dataFor(remote)
     if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
@@ -803,16 +812,77 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
+    'google.mailMarkers': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const ids = p.ids
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'ids must be a list of Gmail thread ids')
+        try {
+          validateBatch(ids as string[])
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { ids: ids as string[], expectedAccountSub }
+      },
+      run: async (ctx, { ids, expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        const validate = validateSession(ctx.remote, session)
+        return google(() => data.mailMarkers(ids, validate))
+      },
+    }),
+
+    'google.setMailMarker': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const marker = p.marker
+        if (marker !== null && !isMailMarker(marker))
+          throw new CapabilityError('BAD_REQUEST', 'invalid mail marker')
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return {
+          id: stringParam(p, 'id'),
+          marker: marker as MarkerValue,
+          expectedAccountSub,
+        }
+      },
+      run: async (ctx, { id, marker, expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        const validate = validateSession(ctx.remote, session)
+        await google(() => data.setMailMarker(id, marker, validate))
+        return ok
+      },
+    }),
+
     'google.star': cap({
       doors: ['ui', 'cli'],
       cli: { args: ['id'], flags: ['off'], summary: 'star a thread (--off: unstar)' },
       params: (raw) => {
         const p = paramsObject(raw)
-        return { id: stringParam(p, 'id'), off: flagParam(p, 'off') }
+        const id = stringParam(p, 'id')
+        try {
+          validateThreadId(id)
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return { id, off: flagParam(p, 'off') }
       },
       run: async (ctx, { id, off }) => {
-        const data = await dataOf(ctx.remote)
-        await google(() => data.setStarred(id, !off))
+        const { data, session } = await accountOf(ctx.remote)
+        const validate = validateSession(ctx.remote, session)
+        await google(() => data.setStarred(id, !off, validate))
         return ok
       },
     }),
