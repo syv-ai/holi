@@ -170,7 +170,13 @@ test('creates one explicitly unverified issue per provider on first observation'
   assert.equal(adapter.issues.size, 3)
   for (const issue of adapter.issues.values()) {
     assert.match(issue.body, /Monitoring-only/)
-    assert.match(issue.body, /compatibility: unverified/)
+    if (issue.label === 'harness-pi') {
+      assert.match(issue.body, /cli-contract: unverified/)
+      assert.match(issue.body, /rpc-consumer: unverified/)
+      assert.match(issue.body, /rpc-producer: unverified/)
+    } else {
+      assert.match(issue.body, /compatibility: unverified/)
+    }
     assert.match(issue.body, /<!-- holi-harness-monitor:/)
     assert.equal(issue.state, 'open')
   }
@@ -212,7 +218,13 @@ test('mismatches stay open and update the tracking issue', async () => {
 test('only a current all-pass report closes; later release reopens the same issue', async () => {
   const adapter = fakeAdapter()
   await reconcile(report('pi'), adapter)
-  await reconcile(report('pi', '1.0.0', 2, 'pass'), adapter)
+  const passingPi = report('pi', '1.0.0', 2, 'pass')
+  passingPi.providers[0].checks.push(
+    { name: 'cli-contract', outcome: 'pass' },
+    { name: 'rpc-consumer', outcome: 'pass' },
+    { name: 'rpc-producer', outcome: 'pass' },
+  )
+  await reconcile(passingPi, adapter)
   const issue = [...adapter.issues.values()][0]
   assert.equal(issue.state, 'closed')
   await reconcile(report('pi', '2.0.0', 3), adapter)
@@ -294,6 +306,8 @@ test('fixture and CLI passes cannot close while Claude signals remain unverified
   assert.match(issue.body, /CLI surface: pass/)
   assert.match(issue.body, /fixture consumers: pass/)
   assert.match(issue.body, /actual hook emission: unverified/)
+  assert.match(issue.body, /exact npm CLI surface/)
+  assert.doesNotMatch(issue.body, /No provider harness was installed or executed/)
 })
 
 test('malformed runner checks cannot become a pass', () => {
@@ -318,7 +332,9 @@ test('missing required checks are unverified and cannot close an issue', async (
   await reconcile(omitted, adapter)
   const issue = [...adapter.issues.values()][0]
   assert.equal(issue.state, 'open')
-  assert.match(issue.body, /compatibility: unverified/)
+  assert.match(issue.body, /cli-contract: unverified/)
+  assert.match(issue.body, /rpc-consumer: unverified/)
+  assert.match(issue.body, /rpc-producer: unverified/)
 })
 
 test('failed reopening is retried even after report body succeeds', async () => {
