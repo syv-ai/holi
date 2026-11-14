@@ -59,6 +59,8 @@ import { GitHubApiError, type Contributor, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
+import type { MdxTrustStore } from './mdx-trust'
+import { canonicalGitHubRemote } from './mdx-trust'
 import type { ActiveVault, SyncInfo, SyncState, VaultHost } from './vault/active-vault'
 import type { ActivityEntry, ActivityLog } from './activity/log'
 import type { AppLog, AppLogEntry } from './logs/app-log'
@@ -139,6 +141,8 @@ export interface RouterDeps {
     url: string,
   ) => Promise<{ ok: true } | { ok: false; message: string; detail: string }>
   session: GitHubSession
+  /** The one machine-local MDX trust store, composed by main. */
+  mdxTrust?: MdxTrustStore
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /**
@@ -1123,6 +1127,82 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
+  const mdxTrust = t.router({
+    status: t.procedure.input(fields({ remote: 'string' })).query(async ({ input }) => {
+      const viewer = deps.session.viewer
+      if (!deps.mdxTrust || viewer === null)
+        return { trusted: false, identityAvailable: viewer !== null }
+      const remote = canonicalGitHubRemote(input.remote)
+      if (deps.host.active()?.remote !== input.remote)
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
+      const entry = (await deps.registry.list()).find(
+        (vault) => canonicalGitHubRemote(vault.remote) === remote,
+      )
+      if (!entry)
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Vault is not registered on this machine',
+        })
+      return {
+        trusted: await deps.mdxTrust.status({ accountId: String(viewer.accountId), remote }),
+        identityAvailable: true,
+      }
+    }),
+    approve: t.procedure.input(fields({ remote: 'string' })).mutation(async ({ input }) => {
+      const viewer = deps.session.viewer
+      if (!deps.mdxTrust || viewer === null)
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Sign in to approve MDX for this vault',
+        })
+      const remote = canonicalGitHubRemote(input.remote)
+      const active = deps.host.active()
+      if (active?.remote !== input.remote)
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
+      if (
+        !(await deps.registry.list()).some(
+          (vault) => canonicalGitHubRemote(vault.remote) === remote,
+        )
+      )
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Vault is not registered on this machine',
+        })
+      if (deps.host.active() !== active || deps.session.viewer?.accountId !== viewer.accountId)
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Vault or account context changed',
+        })
+      await deps.mdxTrust.approve({ accountId: String(viewer.accountId), remote })
+      return { trusted: true }
+    }),
+    revoke: t.procedure.input(fields({ remote: 'string' })).mutation(async ({ input }) => {
+      const viewer = deps.session.viewer
+      if (!deps.mdxTrust || viewer === null)
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Sign in to manage MDX trust' })
+      const remote = canonicalGitHubRemote(input.remote)
+      const active = deps.host.active()
+      if (active?.remote !== input.remote)
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
+      if (
+        !(await deps.registry.list()).some(
+          (vault) => canonicalGitHubRemote(vault.remote) === remote,
+        )
+      )
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Vault is not registered on this machine',
+        })
+      if (deps.host.active() !== active || deps.session.viewer?.accountId !== viewer.accountId)
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Vault or account context changed',
+        })
+      await deps.mdxTrust.revoke({ accountId: String(viewer.accountId), remote })
+      return { trusted: false }
+    }),
+  })
+
   const notes = t.router({
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
@@ -2081,6 +2161,7 @@ export function createRouter(deps: RouterDeps) {
     github,
     vaults,
     notes,
+    mdxTrust,
     comments,
     files,
     sync,

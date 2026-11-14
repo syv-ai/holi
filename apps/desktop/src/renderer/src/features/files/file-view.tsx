@@ -20,6 +20,15 @@ import { findNext, findPrevious } from '@codemirror/search'
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { FileTextIcon } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import { Badge } from '@/components/ui/badge'
@@ -45,6 +54,130 @@ import { CodeFindBar } from './code-find-bar'
 import { codeLook } from './code-look'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
 import { basename } from '@/lib/tree-paths'
+
+function MdxTrustControl({ remote, path }: { remote: string; path: string }) {
+  const activeRemote = useAtomValue(activeRemoteAtom)
+  const [state, setState] = useState<
+    | { kind: 'loading' }
+    | { kind: 'error'; message: string }
+    | { kind: 'ready'; trusted: boolean; identityAvailable: boolean }
+  >({ kind: 'loading' })
+  const [attempt, setAttempt] = useState(0)
+  const [confirm, setConfirm] = useState(false)
+  const [pending, setPending] = useState(false)
+  const context = useRef({ remote, path, activeRemote })
+  context.current = { remote, path, activeRemote }
+  useEffect(() => {
+    let current = true
+    setState({ kind: 'loading' })
+    trpc.mdxTrust.status
+      .query({ remote })
+      .then((result) => {
+        if (current && context.current.remote === remote) setState({ kind: 'ready', ...result })
+      })
+      .catch((error: unknown) => {
+        if (current)
+          setState({
+            kind: 'error',
+            message: error instanceof Error ? error.message : String(error),
+          })
+      })
+    return () => {
+      current = false
+    }
+  }, [remote, attempt])
+  const refresh = () => setAttempt((value) => value + 1)
+  async function change(trust: boolean) {
+    if (pending || context.current.remote !== remote || context.current.activeRemote !== remote)
+      return
+    setPending(true)
+    try {
+      if (trust) await trpc.mdxTrust.approve.mutate({ remote })
+      else await trpc.mdxTrust.revoke.mutate({ remote })
+      if (context.current.remote === remote && context.current.activeRemote === remote) {
+        setConfirm(false)
+        refresh()
+      }
+    } catch (error) {
+      setState({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setPending(false)
+    }
+  }
+  const action =
+    state.kind === 'ready' && state.trusted ? (
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={pending || activeRemote !== remote}
+        onClick={() => void change(false)}
+      >
+        Revoke MDX trust
+      </Button>
+    ) : (
+      <Button
+        size="sm"
+        disabled={
+          state.kind === 'loading' ||
+          pending ||
+          activeRemote !== remote ||
+          (state.kind === 'ready' && !state.identityAvailable)
+        }
+        onClick={() => setConfirm(true)}
+      >
+        Review MDX trust
+      </Button>
+    )
+  return (
+    <div className="flex items-center gap-2">
+      {state.kind === 'loading' ? (
+        <span role="status" className="text-xs text-muted-foreground">
+          Checking MDX trust…
+        </span>
+      ) : null}
+      {state.kind === 'error' ? (
+        <span role="status" className="text-xs text-destructive">
+          MDX trust unavailable. {state.message}
+        </span>
+      ) : null}
+      {state.kind === 'ready' ? (
+        <Badge variant={state.trusted ? 'success' : 'secondary'}>
+          {state.trusted
+            ? 'Approved'
+            : state.identityAvailable
+              ? 'Not approved'
+              : 'Sign in required'}
+        </Badge>
+      ) : null}
+      {state.kind === 'error' ? (
+        <Button size="sm" variant="outline" onClick={refresh}>
+          Retry
+        </Button>
+      ) : null}
+      {action}
+      <Dialog open={confirm} onOpenChange={(open) => !pending && setConfirm(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Approve MDX source</DialogTitle>
+            <DialogDescription>
+              This grants trust to all MDX in {remote}, including future documents and synced
+              changes, until revoked. It does not enable preview or grant network, dependency,
+              filesystem, shell, or other capabilities.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={pending} onClick={() => setConfirm(false)}>
+              Cancel
+            </Button>
+            <Button disabled={pending || activeRemote !== remote} onClick={() => void change(true)}>
+              Approve vault
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
 
 function FileHeader({
   path,
@@ -110,6 +243,8 @@ type Load =
 /** True only when FileView will choose the core CodeMirror editor. */
 export function isCoreTextFilePath(path: string, claims: readonly PathClaim[]): boolean {
   if (/\.md$/i.test(path)) return false
+  // MDX remains an inert source file even if a future file-kind or plugin claims it.
+  if (/\.mdx$/i.test(path)) return true
   if (claims.some((claim) => claim.view !== undefined && claim.match(path))) return false
   const kind = fileKind(path)
   return kind !== 'image' && kind !== 'doc' && kind !== 'pdf'
@@ -486,7 +621,14 @@ function TextFileView({
         path={path}
         status={ready ? SAVE_LABEL[saveState] : undefined}
         editorMode={vimMode || undefined}
-        actions={<FileHistoryButton path={path} visible={visible} />}
+        actions={
+          <div className="flex items-center gap-2">
+            {/\\.mdx$/i.test(path) && remote !== null ? (
+              <MdxTrustControl remote={remote} path={path} />
+            ) : null}
+            <FileHistoryButton path={path} visible={visible} />
+          </div>
+        }
       />
       {load.kind === 'error' ? (
         <ErrorState
@@ -562,9 +704,14 @@ export function FileView({
   focused?: boolean
 }) {
   const claims = useAtomValue(claimsAtom)
-  const Claimed = claims.find((claim) => claim.view !== undefined && claim.match(path))?.view
+  const isMdxSource = /\.mdx$/i.test(path)
+  const Claimed = isMdxSource
+    ? undefined
+    : claims.find((claim) => claim.view !== undefined && claim.match(path))?.view
   if (Claimed !== undefined) return <Claimed path={path} visible={visible} focused={focused} />
 
+  if (isMdxSource)
+    return <TextFileView key={path} path={path} visible={visible} focused={focused} />
   const kind = fileKind(path)
   if (kind === 'image') return <ImageFileView key={path} path={path} />
   if (kind === 'doc' || kind === 'pdf') return <UnviewableFile path={path} />
