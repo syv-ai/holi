@@ -77,10 +77,10 @@ function protectedLines(lines: Line[]): boolean[] {
       continue
     }
 
-    const list = /^( {0,3}(?:[-+*]|\d+[.)])\s+)(.*)$/.exec(line)
+    const list = /^( {0,3}(?:[-+*]|\d+[.)])\s+)(.*)$/s.exec(line)
     const container = list?.[1] ?? ''
     const content = list?.[2] ?? line
-    const fenceMatch = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(content)
+    const fenceMatch = /^( {0,3})(`{3,}|~{3,})(.*)$/s.exec(content)
     if (fence?.container && !list && line.trim() !== '' && !/^ {2,}/.test(line)) {
       fence = null
     }
@@ -107,7 +107,7 @@ function protectedLines(lines: Line[]): boolean[] {
       continue
     }
 
-    const html = /^ {0,3}(.*)$/.exec(line)![1]!
+    const html = line.replace(/^ {0,3}/, '')
     if (/^<!--/.test(html) && !MARKERS.has(html)) {
       ignored[i] = true
       if (!html.includes('-->')) htmlTerminator = '-->'

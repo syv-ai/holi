@@ -42,6 +42,21 @@ describe('Markdown caption envelopes', () => {
     }
   })
 
+  it('preserves Unicode separators without treating them as Markdown line breaks', () => {
+    for (const separator of ['\u2028', '\u2029']) {
+      expect(readMarkdownCaptionEnvelopes(`ordinary${separator}text`)).toEqual([])
+      const sourceBody = `body${separator}text`
+      const sourceCaption = `caption${separator}text`
+      const serialized = writeMarkdownCaptionEnvelope(sourceBody, sourceCaption)
+      const [found] = readMarkdownCaptionEnvelopes(serialized)
+      expect(serialized.slice(found!.body.from, found!.body.to)).toBe(sourceBody)
+      expect(serialized.slice(found!.caption.from, found!.caption.to)).toBe(sourceCaption)
+      const fenced = `\`\`\`md${separator}info\n${serialized}\n\`\`\``
+      expect(readMarkdownCaptionEnvelopes(fenced)).toEqual([])
+    }
+    expect(readMarkdownCaptionEnvelopes('ordinary\rtext')).toEqual([])
+  })
+
   it('reads adjacent independent envelopes', () => {
     const one = writeMarkdownCaptionEnvelope('![a](a.png)', 'first')
     const two = writeMarkdownCaptionEnvelope('```js\nx\n```', 'second')
