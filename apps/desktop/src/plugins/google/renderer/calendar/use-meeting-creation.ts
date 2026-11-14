@@ -24,6 +24,8 @@ export function useMeetingCreation(identity: MeetingIdentity | null, onCreated: 
   const flight = useRef(false)
   const loadEpoch = useRef(0)
   const operationId = useRef<string | null>(null)
+  const onCreatedRef = useRef(onCreated)
+  onCreatedRef.current = onCreated
   const remote = identity?.remote
   const sub = identity?.sub
 
@@ -69,7 +71,7 @@ export function useMeetingCreation(identity: MeetingIdentity | null, onCreated: 
       const result = await googleCap.createMeeting(remote, input)
       if (!live.current) return
       setOperation(result)
-      if (result.accepted) onCreated()
+      if (result.accepted) onCreatedRef.current()
     } catch (err) {
       if (!live.current) return
       setError(messageOf(err, 'Could not create the meeting. Check status before retrying.'))
@@ -100,7 +102,7 @@ export function useMeetingCreation(identity: MeetingIdentity | null, onCreated: 
       if (!live.current) return
       setOperation(result)
       if (result) setSubmitted(result.input)
-      if (result?.accepted) onCreated()
+      if (result?.accepted) onCreatedRef.current()
     } catch (err) {
       if (live.current) setError(messageOf(err, 'Could not check the meeting.'))
     } finally {

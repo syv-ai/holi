@@ -2,7 +2,7 @@
  * The calendar view (ReUI's event calendar over Google): what it asks Google
  * for, what it draws, and which writes it sends through which capability.
  */
-import { fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -105,6 +105,8 @@ const unscheduleMock = vi.fn()
 const setCalendarMock = vi.fn()
 const namesMock = vi.fn()
 const taskMock = vi.fn()
+const meetingStateMock = vi.fn()
+const checkMeetingMock = vi.fn()
 
 const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.status': () => ({ account: { email: ME }, missingScopes: [] }),
@@ -117,8 +119,9 @@ const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   ],
   'google.setCalendar': (p) => setCalendarMock(p),
   'google.schedule': (p) => scheduleMock(p),
-  'google.meetingState': () => ({ meetSupported: true, operation: null }),
+  'google.meetingState': () => meetingStateMock(),
   'google.createMeeting': (p) => scheduleMock(p),
+  'google.checkMeeting': (p) => checkMeetingMock(p),
   'google.finishMeeting': () => ({ ok: true }),
   'google.reschedule': (p) => rescheduleMock(p),
   'google.unschedule': (p) => unscheduleMock(p),
@@ -160,6 +163,8 @@ beforeEach(() => {
   setCalendarMock.mockReset().mockResolvedValue({ ok: true })
   namesMock.mockReset().mockResolvedValue([])
   taskMock.mockReset().mockResolvedValue({ path: 'Tasks/focus.md' })
+  meetingStateMock.mockReset().mockResolvedValue({ meetSupported: true, operation: null })
+  checkMeetingMock.mockReset()
   getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/notes.git')
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal: vi.fn() }
@@ -647,6 +652,79 @@ describe('the calendar view', () => {
     await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1))
     expect(screen.getByRole('textbox', { name: 'Title' })).toBeInTheDocument()
   })
+
+  test.each(['submit', 'check'] as const)(
+    '%s completion reloads the current week after navigation',
+    async (completion) => {
+      const user = userEvent.setup()
+      const operation: MeetingOperation = {
+        input: {
+          operation: '11111111-1111-4111-8111-111111111111',
+          sub: '1',
+          title: 'Planning session',
+          start: '2027-01-12T10:00:00Z',
+          end: '2027-01-12T11:00:00Z',
+          allDay: false,
+          location: '',
+          guests: ['guest@example.com'],
+          meet: true,
+        },
+        eventId: 'new',
+        conferenceRequestId: '22222222-2222-4222-8222-222222222222',
+        fingerprint: 'synthetic',
+        attempts: 1,
+        accepted: false,
+        conference: 'pending',
+        htmlLink: null,
+        conferenceUrl: null,
+      }
+      let resolve!: (value: MeetingOperation) => void
+      if (completion === 'check') {
+        meetingStateMock.mockResolvedValue({ meetSupported: true, operation })
+        checkMeetingMock.mockReturnValueOnce(new Promise((done) => (resolve = done)))
+      } else {
+        scheduleMock.mockReturnValueOnce(new Promise((done) => (resolve = done)))
+      }
+
+      const { container } = render(<CalendarView />)
+      await screen.findAllByText('Focus block')
+      let card = screen.queryByRole('dialog')
+      if (!card) {
+        await user.click(screen.getByRole('button', { name: 'New event' }))
+        card = await screen.findByRole('dialog', { name: 'New event' })
+      }
+      if (completion === 'check') {
+        await user.click(within(card).getByRole('button', { name: 'Check status' }))
+      } else {
+        await user.type(within(card).getByRole('textbox', { name: 'Title' }), 'Planning session')
+        await user.type(within(card).getByRole('textbox', { name: 'Guests' }), 'guest@example.com')
+        await user.click(within(card).getByRole('switch', { name: 'Add Google Meet' }))
+        await user.click(within(card).getByRole('button', { name: 'Create and send invitations' }))
+      }
+
+      const root = container.querySelector<HTMLElement>('[data-slot="event-calendar"]')!
+      const requestFrom = () => (agendaMock.mock.calls.at(-1)![0] as { from: string }).from
+      const originalWeek = Date.parse(requestFrom())
+      for (let i = 0; i < 12; i++) {
+        const event = new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          deltaX: 30,
+          deltaY: 2,
+        })
+        Object.defineProperty(event, 'timeStamp', { value: i * 16 })
+        fireEvent(root, event)
+      }
+      await waitFor(() => {
+        expect(Math.round((Date.parse(requestFrom()) - originalWeek) / 86_400_000)).toBe(7)
+      })
+      const currentWeek = requestFrom()
+      await act(async () => resolve({ ...operation, accepted: true }))
+      await waitFor(() =>
+        expect(agendaMock.mock.calls.at(-1)![0]).toMatchObject({ from: currentWeek }),
+      )
+    },
+  )
 
   test('a pending write is single-flight and keeps its anchored card open', async () => {
     const user = userEvent.setup()
