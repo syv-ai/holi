@@ -47,6 +47,7 @@ export function createChecks(runner: typeof runCheck = runCheck): Checks {
   return {
     get: (root, id) => results.get(keyOf(root, id)) ?? null,
     run(root, id, check, cwd) {
+      if (stopping.signal.aborted) return Promise.resolve({ ok: false, hint: check.hint })
       const key = keyOf(root, id)
       const generation = generationOf(key)
       const pending = running.get(key)
@@ -85,6 +86,7 @@ export function createChecks(runner: typeof runCheck = runCheck): Checks {
     },
     async stop() {
       stopping.abort()
+      for (const key of running.keys()) generations.set(key, generationOf(key) + 1)
       await Promise.all([...running.values()].map(({ ask }) => ask))
     },
   }

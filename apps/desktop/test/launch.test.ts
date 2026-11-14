@@ -389,9 +389,10 @@ describe('killTree', () => {
       const exited = { pid: 4242, exitCode: 0, signalCode: null }
       expect(killChildTree(exited, 'SIGKILL', 'win32', taskkill)).toBe(false)
       expect(taskkill).not.toHaveBeenCalled()
-      // A group outlives its leader elsewhere, so what it left is still stopped.
-      expect(killChildTree(exited, 'SIGKILL', 'linux')).toBe(true)
-      expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL')
+      // A stale leader pid is not enough evidence to signal a group: it may
+      // have been recycled. The setup regression covers a real orphaned group.
+      expect(killChildTree(exited, 'SIGKILL', 'linux')).toBe(false)
+      expect(kill).not.toHaveBeenCalled()
       const running = { pid: 4242, exitCode: null, signalCode: null }
       expect(killChildTree(running, 'SIGKILL', 'win32', taskkill)).toBe(true)
       expect(killChildTree({ ...running, pid: undefined }, 'SIGKILL', 'win32', taskkill)).toBe(

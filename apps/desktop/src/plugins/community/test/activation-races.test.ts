@@ -12,7 +12,27 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+
+const pathResolution = vi.hoisted(() => ({
+  target: null as string | null,
+  entered: null as (() => void) | null,
+  blocked: null as Promise<void> | null,
+}))
+
+vi.mock('@holi/shared/path-safety-node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@holi/shared/path-safety-node')>()
+  return {
+    ...actual,
+    resolveRelative: async (root: string, relative: string) => {
+      if (relative === pathResolution.target) {
+        pathResolution.entered?.()
+        await pathResolution.blocked
+      }
+      return actual.resolveRelative(root, relative)
+    },
+  }
+})
 import type { CapabilityTable, PluginCtx } from '../../../main/plugin-api'
 import { communityMain } from '../main'
 import { communityOwner } from '../main/owner'
@@ -278,23 +298,113 @@ describe('production community activation races', () => {
     }
   })
 
-  test('aborts a production setup and drains events when its activation disposes', async () => {
+  test('does not acquire a server when path resolution resumes after disposal', async () => {
+    const h = await harness()
+    let entered!: () => void
+    let release!: () => void
+    const resolving = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    pathResolution.target = 'page.md'
+    pathResolution.entered = entered
+    pathResolution.blocked = blocked
+    try {
+      const pending = acquire(h, h.activations[0]!)
+      await resolving
+      const closing = h.activations[0]!.dispose()
+      release()
+      await expect(pending).rejects.toThrow(/closed/)
+      await closing
+      expect(h.activations[0]!.origins.size).toBe(0)
+      expect(h.owner.supervisor.state(`${h.activations[0]!.root}\\0sample\\0page.md`)).toBeNull()
+    } finally {
+      release()
+      pathResolution.target = null
+      pathResolution.entered = null
+      pathResolution.blocked = null
+    }
+  })
+
+  test('releases a server lease when final admission rejects after disposal', async () => {
+    const h = await harness()
+    let entered!: () => void
+    let release!: () => void
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const supervisor = h.owner.supervisor
+    const originalAcquire = supervisor.acquire.bind(supervisor)
+    supervisor.acquire = async (key, spec) => {
+      const acquired = await originalAcquire(key, spec)
+      entered()
+      await blocked
+      return acquired
+    }
+    try {
+      const pending = acquire(h, h.activations[0]!)
+      await ready
+      const closing = h.activations[0]!.dispose()
+      release()
+      await expect(pending).rejects.toThrow(/closed/)
+      await closing
+      expect(h.activations[0]!.origins.size).toBe(0)
+      expect(supervisor.state(`${h.activations[0]!.root}\0sample\0page.md`)).toBeNull()
+    } finally {
+      release()
+      supervisor.acquire = originalAcquire
+    }
+  })
+
+  test('an aborted setup with inherited pipes kills its descendant and records failure for every vault', async () => {
     const h = await harness()
     const marker = join(h.pluginDir, 'setup-started')
+    const childPid = join(h.pluginDir, 'child-pid')
     await writeFile(
       join(h.pluginDir, 'setup.cjs'),
-      `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'yes');setInterval(()=>{},1000)`,
+      `const fs=require('node:fs');const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`fs=require('node:fs');fs.writeFileSync(${JSON.stringify(childPid)},String(process.pid));setInterval(()=>{},1000)`)}],{stdio:'inherit'});c.once('spawn',()=>{fs.writeFileSync(${JSON.stringify(marker)},'yes');process.exit(0)})`,
     )
     await writeFile(
       join(h.pluginDir, 'holi-plugin.json'),
       JSON.stringify({ ...manifest(), setup: [process.execPath, 'setup.cjs'] }),
     )
     await h.call(h.activations[0]!, 'community.installFolder', { folder: h.pluginDir })
+    const commit = 'b'.repeat(40)
+    const releaseDir = h.owner.store.releaseDir('sample', commit)
+    await mkdir(releaseDir, { recursive: true })
+    await cp(h.pluginDir, releaseDir, { recursive: true })
+    const installed = (await h.owner.store.get('sample'))!
+    await h.owner.store.put({
+      ...installed,
+      source: { kind: 'release', repo: 'owner/sample', path: '', tag: 'v1.0.0', commit },
+      setup: 'ok',
+    })
+    await h.owner.consent.grant('sample', commit)
     const pending = h.call(h.activations[0]!, 'community.setup', { id: 'sample' })
     await waitFor(() => existsSync(marker), 'setup did not start')
+    await waitFor(() => existsSync(childPid), 'setup descendant did not start')
+    const pid = Number(await readFile(childPid, 'utf8'))
     const dispose = h.activations[0]!.dispose()
-    await expect(pending).rejects.toThrow()
+    await expect(pending).resolves.toBe(false)
     await dispose
+    await waitFor(() => {
+      try {
+        process.kill(pid, 0)
+        return false
+      } catch {
+        return true
+      }
+    }, 'setup descendant survived disposal')
+    const otherVault = h.activations[1]!
+    expect(await h.call(otherVault, 'community.list')).toMatchObject([
+      { id: 'sample', status: 'setup-failed', running: false },
+    ])
+    await expect(h.call(otherVault, 'community.path', { id: 'sample' })).rejects.toThrow()
     const eventsAfterDispose = h.activations[0]!.events.length
     await new Promise((resolve) => setTimeout(resolve, 25))
     expect(h.activations[0]!.events).toHaveLength(eventsAfterDispose)
