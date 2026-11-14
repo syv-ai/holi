@@ -389,9 +389,10 @@ describe('killTree', () => {
       const exited = { pid: 4242, exitCode: 0, signalCode: null }
       expect(killChildTree(exited, 'SIGKILL', 'win32', taskkill)).toBe(false)
       expect(taskkill).not.toHaveBeenCalled()
-      // A group outlives its leader elsewhere, so what it left is still stopped.
-      expect(killChildTree(exited, 'SIGKILL', 'linux')).toBe(true)
-      expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL')
+      // A stale leader pid is not enough evidence to signal a group: it may
+      // have been recycled. The setup regression covers a real orphaned group.
+      expect(killChildTree(exited, 'SIGKILL', 'linux')).toBe(false)
+      expect(kill).not.toHaveBeenCalled()
       const running = { pid: 4242, exitCode: null, signalCode: null }
       expect(killChildTree(running, 'SIGKILL', 'win32', taskkill)).toBe(true)
       expect(killChildTree({ ...running, pid: undefined }, 'SIGKILL', 'win32', taskkill)).toBe(
@@ -401,6 +402,33 @@ describe('killTree', () => {
       kill.mockRestore()
     }
   })
+
+  it.runIf(process.platform !== 'win32')(
+    'does not signal a new group leader named by an exited child record',
+    async () => {
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore',
+      })
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve)
+        child.once('error', reject)
+      })
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+      const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+      try {
+        expect(defaultProbePid(child.pid!)).toBe('group-leader')
+        expect(killChildTree({ pid: child.pid, exitCode: 0, signalCode: null }, 'SIGKILL')).toBe(
+          false,
+        )
+        expect(kill).not.toHaveBeenCalled()
+      } finally {
+        kill.mockRestore()
+        child.kill('SIGKILL')
+        await closed
+      }
+    },
+  )
 
   it.runIf(process.platform === 'win32')(
     'really stops a program and what it started',

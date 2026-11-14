@@ -12,15 +12,14 @@ import {
   COMMUNITY_NAMESPACES,
   communityCapabilities,
   linkRunningCommands,
-  parseServerKey,
+  listPlugins,
   runChecks,
   seedRunningApps,
   unlinkWhenOff,
 } from './capabilities'
 import { createChecks } from './checks'
-import { createConsentStore } from './consent'
-import { createInstallStore, pluginsDir } from './store'
-import { createSupervisor } from './supervisor'
+import { pluginsDir } from './store'
+import { communityOwner } from './owner'
 
 export const communityMain: MainPlugin = {
   info: COMMUNITY_INFO,
@@ -34,21 +33,20 @@ export const communityMain: MainPlugin = {
     },
   },
   activate(ctx) {
-    const store = createInstallStore(ctx.userData)
-    const consent = createConsentStore(join(ctx.userData, 'plugin-consent.json'))
-    // Per activation, so per vault: switching vaults drops every answer.
+    const owner = communityOwner({ userData: ctx.userData })
+    const { store, consent, supervisor: servers } = owner
     const checks = createChecks()
-    const servers = createSupervisor({
+    const attachment = owner.attach(ctx.root, ctx.remote, {
+      emit: ctx.emit,
       frameOrigin: ctx.frameOrigin,
-      // Servers run only for the open vault; one stopping as it is left has
-      // nobody to tell.
-      onState: (key, state) => {
-        const { root, id, path } = parseServerKey(key)
-        const active = ctx.active()
-        if (active !== null && active.root === root)
-          ctx.emit(active.remote, 'server', { id, path, state })
-      },
     })
+    attachment.signal.addEventListener(
+      'abort',
+      () => {
+        void checks.stop()
+      },
+      { once: true },
+    )
     ctx.register(
       COMMUNITY_NAMESPACES,
       communityCapabilities({
@@ -58,10 +56,29 @@ export const communityMain: MainPlugin = {
         git: { url: remoteUrl, token: ctx.githubToken },
         token: ctx.githubToken,
         firstPartyIds: () => installedInfos().map((p) => p.id),
-        emit: ctx.emit,
         bridgeScript: () => null,
         scratch: join(pluginsDir(ctx.userData), '.staging'),
         checks,
+        mutate: (work) =>
+          attachment.run(() =>
+            owner.mutate(async () => {
+              if (attachment.signal.aborted) throw new Error('community attachment is closed')
+              return work()
+            }),
+          ),
+        admit: (work) =>
+          attachment.run(() =>
+            owner.admit(async () => {
+              if (attachment.signal.aborted) throw new Error('community attachment is closed')
+              return work()
+            }),
+          ),
+        signal: attachment.signal,
+        live: attachment.isLive,
+        run: (work) => attachment.run(() => work()),
+        emit: (remote, name, payload) => {
+          if (attachment.isLive()) ctx.emit(remote, name, payload)
+        },
       }),
     )
     // What runs here follows the vault: at the start, and whenever a pin or
@@ -71,18 +88,26 @@ export const communityMain: MainPlugin = {
     // renderer reads the rows again once they are linked. And the readiness
     // check of each running plugin not asked yet: every one as the vault
     // opens, and one just turned on.
-    const follow = () => {
-      void seedRunningApps(ctx.root, { store, consent }).catch((err) =>
-        console.error('[community] apps:', err),
-      )
-      void linkRunningCommands(ctx.root, { store, consent }).then(() =>
-        ctx.emit(ctx.remote, 'commands', null),
-      )
-      void runChecks(ctx.root, { store, consent, checks }).then((asked) => {
-        if (asked) ctx.emit(ctx.remote, 'check', null)
-      })
+    const refresh = async (signal: AbortSignal) => {
+      if (signal.aborted) return
+      await seedRunningApps(ctx.root, { store, consent })
+      if (signal.aborted) return
+      await linkRunningCommands(ctx.root, { store, consent })
+      if (signal.aborted) return
+      ctx.emit(ctx.remote, 'commands', null)
+      for (const row of await listPlugins(ctx.root, { store, consent })) {
+        if (signal.aborted) return
+        await checks.forget(ctx.root, row.id)
+      }
+      const asked = await runChecks(ctx.root, { store, consent, checks }, { fresh: true })
+      if (asked && !signal.aborted) ctx.emit(ctx.remote, 'check', null)
     }
-    follow()
+    const follow = () =>
+      attachment.refresh(refresh).catch((err) => {
+        if (!attachment.signal.aborted) console.error('[community] refresh:', err)
+      })
+    attachment.observeMutations(refresh)
+    void follow()
     let signature: string | null = null
     ctx.onSnapshot((snapshot) => {
       const next = communityPluginsSignature(snapshot.files)
@@ -94,9 +119,10 @@ export const communityMain: MainPlugin = {
     return async () => {
       // Stopping stops its servers: the tabs on them are gone too. And any
       // check still running.
-      checks.stop()
-      await servers.dispose()
-      await unlinkWhenOff(ctx.root, installedInfos())
+      await attachment.close(async () => {
+        await checks.stop()
+        await unlinkWhenOff(ctx.root, installedInfos())
+      })
     }
   },
 }
