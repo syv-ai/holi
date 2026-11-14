@@ -45,9 +45,8 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { accessSync, constants } from 'node:fs'
 import { dirname } from 'node:path'
-import { resolveBin, shellReadBridgeEnv } from '../../../../main/plugin-api'
+import { isRunnable, resolveBin, shellReadBridgeEnv } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
 import { personCodexHome, prepareCodexHome, releaseCodexHome } from './home'
 import { CONVERSATION_ID, PTY_SESSION_ID } from '../host/pty-sessions'
@@ -59,20 +58,22 @@ import type { AgentProvider, JobEvent, JobRun, RouteServer, TurnRouteDeps } from
  */
 export const SESSION_ENV = 'HOLI_AGENT_SESSION'
 
-const NOT_INSTALLED =
-  'Codex CLI not found on PATH. Install it (https://developers.openai.com/codex/cli) and restart Holi.'
+/** The text for a machine without the binary: Windows gets its install command,
+ *  and every other OS the text it has always had.
+ * @public exported for its test */
+export function notInstalledText(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32'
+    ? 'Codex CLI not found on PATH. Install it with `npm install -g @openai/codex` (https://developers.openai.com/codex/cli) and restart Holi.'
+    : 'Codex CLI not found on PATH. Install it (https://developers.openai.com/codex/cli) and restart Holi.'
+}
+
+const NOT_INSTALLED = notInstalledText()
 
 /** `HOLI_CODEX_BIN` when set, else `codex` on `PATH`. */
 export function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HOLI_CODEX_BIN
-  if (override) {
-    try {
-      accessSync(override, constants.X_OK)
-      return override
-    } catch {
-      // Not runnable: fall back to the one on PATH.
-    }
-  }
+  // Not runnable: fall back to the one on PATH.
+  if (override && isRunnable(override)) return override
   return resolveBin('codex', env)
 }
 
