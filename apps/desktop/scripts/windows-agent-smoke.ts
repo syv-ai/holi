@@ -122,16 +122,29 @@ if(args[0]==='--pty') {
     checks.push('Explorer Path/PATHEXT discovers actual npm shim')
   }
   // Force the same fallback inside a genuine Electron GUI parent, not Node masquerading as it.
-  const launch = { platform: 'win32' as const, resolve: () => null }
+  const launch = {
+    platform: 'win32' as const,
+    resolve: () => null,
+    ...(process.platform !== 'win32' ? { bundledWindowsNode: () => process.execPath } : {}),
+  }
   const plan = launchPlan(shim, args, { ...launch, env })
-  assert.notEqual(plan.file, process.execPath)
-  assert.match(plan.file, /node-win-x64[\\/]bin[\\/]node\.exe$/i)
-  assert.equal(plan.env?.ELECTRON_RUN_AS_NODE, undefined)
+  if (process.platform === 'win32') {
+    assert.notEqual(plan.file, process.execPath)
+    assert.match(plan.file, /node-win-x64[\\/]bin[\\/]node\.exe$/i)
+    assert.equal(plan.env?.ELECTRON_RUN_AS_NODE, undefined)
+  } else {
+    assert.equal(plan.file, process.execPath)
+    assert.equal(plan.env?.ELECTRON_RUN_AS_NODE, '1')
+  }
+  const program = process.platform === 'win32' ? shim : plan.file
+  const programArgs = process.platform === 'win32' ? args : plan.args
+  const programEnv = { ...env, ...plan.env }
+  const execution = process.platform === 'win32' ? launch : {}
   const child = spawnProgram(
-    shim,
-    args,
-    { cwd: vault, env, stdio: ['ignore', 'pipe', 'pipe'] },
-    launch,
+    program,
+    programArgs,
+    { cwd: vault, env: programEnv, stdio: ['ignore', 'pipe', 'pipe'] },
+    execution,
   )
   let stdout = '',
     stderr = ''
@@ -150,15 +163,17 @@ if(args[0]==='--pty') {
   assert.equal(env.ELECTRON_RUN_AS_NODE, undefined)
   assert.equal(process.env.ELECTRON_RUN_AS_NODE, undefined)
   checks.push(
-    'GUI Electron parent selects bundled genuine Node with exact argv and no Electron runtime flag',
+    process.platform === 'win32'
+      ? 'GUI Electron parent selects bundled genuine Node with exact argv and no Electron runtime flag'
+      : 'GUI Electron parent launches npm JS with exact argv and child-only runtime flag',
   )
   const result = await new Promise<string>((resolve, reject) =>
     execProgram(
-      shim,
-      args,
-      { cwd: vault, env, timeoutMs: 10_000, maxBuffer: 100_000, encoding: 'utf8' },
+      program,
+      programArgs,
+      { cwd: vault, env: programEnv, timeoutMs: 10_000, maxBuffer: 100_000, encoding: 'utf8' },
       (err, out) => (err ? reject(err) : resolve(out)),
-      launch,
+      execution,
     ),
   )
   assert.deepEqual(JSON.parse(result), args)
