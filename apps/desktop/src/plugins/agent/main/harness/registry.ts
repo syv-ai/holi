@@ -286,7 +286,7 @@ export async function acquireHarnessRegistry(
     entry.references -= 1
     if (entry.references === 0) {
       await entry.owner.drain()
-      if (owners.get(key) === entry) owners.delete(key)
+      if (owners.get(key) === entry && entry.references === 0) owners.delete(key)
     }
     throw err
   }
@@ -300,7 +300,7 @@ export async function acquireHarnessRegistry(
       entry!.references -= 1
       if (entry!.references === 0) {
         await entry!.owner.drain()
-        if (owners.get(key) === entry) owners.delete(key)
+        if (owners.get(key) === entry && entry!.references === 0) owners.delete(key)
       }
     },
   }
