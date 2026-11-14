@@ -48,7 +48,13 @@ import type { MailPart, OutgoingMail } from './mime'
 import { cacheKey, syncThreads } from './mail-sync'
 import { listContacts } from './people'
 import { threadHasStarredMessage } from './gmail'
-import { validateBatch, type MailMarkerStore, type MarkerValue } from './markers'
+import {
+  isMailMarker,
+  validateBatch,
+  validateThreadId,
+  type MailMarkerStore,
+  type MarkerValue,
+} from './markers'
 
 export interface GoogleData {
   /** The agenda, fetched and then cached for the next launch's first paint. */
@@ -73,7 +79,7 @@ export interface GoogleData {
    * only once Google has agreed: see the note above `write`.
    */
   setRead(id: string, read: boolean): Promise<void>
-  setStarred(id: string, starred: boolean): Promise<void>
+  setStarred(id: string, starred: boolean, validate?: () => Promise<void>): Promise<void>
   /** Batch marker reads are UI-only at the capability door, per account. */
   mailMarkers(
     ids: readonly string[],
@@ -217,6 +223,33 @@ export function createGoogleData({
     return result
   }
 
+  const setStarred = (id: string, starred: boolean, validate?: () => Promise<void>) => {
+    validateThreadId(id)
+    return markers.runExclusive(id, async () => {
+      assertActive()
+      await validate?.()
+      const prior = await markers.read([id], validate)
+      assertActive()
+      await validate?.()
+      assertActive()
+      const next = starred ? (prior[id] ?? 'yellow-star') : null
+      await setThreadStarred(api(), id, starred)
+      assertActive()
+      await validate?.()
+      cache.patchThread(id, {
+        added: starred ? ['STARRED'] : [],
+        removed: starred ? [] : ['STARRED'],
+      })
+      try {
+        await markers.set(id, next, validate)
+      } catch (error) {
+        throw new Error(
+          `Gmail star changed, but the personal marker was not saved: ${errorMessage(error)}`,
+        )
+      }
+    })
+  }
+
   return {
     async agenda(window, overrides) {
       assertActive()
@@ -272,27 +305,7 @@ export function createGoogleData({
       )
     },
 
-    setStarred(id, starred) {
-      return markers.runExclusive(id, async () => {
-        assertActive()
-        const prior = await markers.read([id])
-        assertActive()
-        const next = starred ? (prior[id] ?? 'yellow-star') : null
-        await setThreadStarred(api(), id, starred)
-        assertActive()
-        cache.patchThread(id, {
-          added: starred ? ['STARRED'] : [],
-          removed: starred ? [] : ['STARRED'],
-        })
-        try {
-          await markers.set(id, next)
-        } catch (error) {
-          throw new Error(
-            `Gmail star changed, but the personal marker was not saved: ${errorMessage(error)}`,
-          )
-        }
-      })
-    },
+    setStarred,
 
     mailMarkers(ids, validate) {
       validateBatch(ids)
@@ -314,12 +327,15 @@ export function createGoogleData({
     },
 
     setMailMarker(id, marker, validate) {
+      validateThreadId(id)
+      if (marker !== null && !isMailMarker(marker)) throw new Error('invalid mail marker')
       return markers.runExclusive(id, async () => {
         assertActive()
         await validate?.()
         await markers.read([id], validate)
         assertActive()
         await validate?.()
+        assertActive()
         const starred = marker !== null
         await setThreadStarred(api(), id, starred)
         assertActive()

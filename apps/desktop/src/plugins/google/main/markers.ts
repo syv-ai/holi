@@ -25,6 +25,9 @@ export interface MailMarkerStore {
 
 const MAX_BATCH = 100
 const THREAD_ID = /^[A-Za-z0-9_-]{1,256}$/
+export const validateThreadId = (id: string): void => {
+  if (typeof id !== 'string' || !THREAD_ID.test(id)) throw new Error('invalid Gmail thread id')
+}
 const ACCOUNT_SUB = /^[A-Za-z0-9_-]{1,256}$/
 const lifecycleQueues = new Map<string, Promise<unknown>>()
 
@@ -41,11 +44,16 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
       !isRecord(raw.threads)
     )
       throw new Error('Google mail marker data is invalid; it was not changed')
-    const threads: Record<string, MailMarker> = {}
+    const threads: Record<string, MailMarker> = Object.create(null)
     for (const [id, marker] of Object.entries(raw.threads)) {
       if (!THREAD_ID.test(id) || !isMailMarker(marker))
         throw new Error('Google mail marker data is invalid; it was not changed')
-      threads[id] = marker
+      Object.defineProperty(threads, id, {
+        value: marker,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
     }
     return { version: 1, accountSub, threads }
   })
@@ -78,7 +86,9 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
         const file = await store.read()
         assertActive()
         await validate?.()
-        return Object.fromEntries(threadIds.map((id) => [id, file.threads[id] ?? null]))
+        return Object.fromEntries(
+          threadIds.map((id) => [id, Object.hasOwn(file.threads, id) ? file.threads[id]! : null]),
+        )
       })
     },
     async set(threadId, marker, validate) {
@@ -92,7 +102,13 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
           assertActive()
           const threads = { ...current.threads }
           if (marker === null) delete threads[threadId]
-          else threads[threadId] = marker
+          else
+            Object.defineProperty(threads, threadId, {
+              value: marker,
+              enumerable: true,
+              writable: true,
+              configurable: true,
+            })
           return { version: 1, accountSub, threads }
         })
         assertActive()
@@ -101,7 +117,7 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
     },
     runExclusive(threadId, work) {
       validateThreadId(threadId)
-      return serialize(threadId, async () => {
+      return serialize(`thread:${threadId}`, async () => {
         assertActive()
         const result = await work()
         assertActive()
@@ -115,10 +131,6 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
       })
     },
   }
-}
-
-function validateThreadId(id: string): void {
-  if (typeof id !== 'string' || !THREAD_ID.test(id)) throw new Error('invalid Gmail thread id')
 }
 
 export function validateBatch(ids: readonly string[]): void {
