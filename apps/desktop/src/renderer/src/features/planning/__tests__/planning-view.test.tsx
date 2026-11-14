@@ -219,7 +219,36 @@ test('due chips distinguish today, exact-minute urgency, invalid dates and compl
   expect(within(completedCard as HTMLElement).queryByText('Due today')).not.toBeInTheDocument()
 })
 
-test('a card’s title opens the task', async () => {
+test.each(['{Enter}', ' '])(
+  'a card title opens with keyboard input %s without dragging',
+  async (key) => {
+    activity.mockResolvedValue([])
+    const { onOpenTask } = setup('board')
+    const title = screen.getByRole('button', { name: 'Ship it' })
+    title.focus()
+
+    await userEvent.keyboard(key)
+
+    expect(onOpenTask).toHaveBeenCalledWith('task.ship.md')
+    expect(document.querySelectorAll('[data-task="task.ship.md"]')).toHaveLength(1)
+  },
+)
+
+test('the focusable card starts and cancels keyboard dragging', async () => {
+  activity.mockResolvedValue([])
+  const { onOpenTask } = setup('board')
+  const card = document.querySelector('[data-value="task.ship.md"]') as HTMLElement
+  card.focus()
+
+  await userEvent.keyboard(' ')
+  expect(document.querySelectorAll('[data-task="task.ship.md"]')).toHaveLength(2)
+
+  await userEvent.keyboard('{Escape}')
+  expect(document.querySelectorAll('[data-task="task.ship.md"]')).toHaveLength(1)
+  expect(onOpenTask).not.toHaveBeenCalled()
+})
+
+test('a card title opens by pointer', async () => {
   activity.mockResolvedValue([])
   const { onOpenTask } = setup('board')
   await userEvent.click(screen.getByText('Ship it'))
