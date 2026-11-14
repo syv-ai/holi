@@ -317,7 +317,8 @@ export function SessionTerminal({
           start: link.start,
           end: link.end,
           activate: (event: MouseEvent) => {
-            if (isTerminalLinkActivation(event)) openRef.current(link.path)
+            if (isLive() && visibleRef.current && isTerminalLinkActivation(event))
+              openRef.current(link.path)
           },
         }))
         const fileUrls = fileUrlLinks(logical.text)
@@ -339,14 +340,9 @@ export function SessionTerminal({
                 const start = logical.cellAt(link.start)
                 const end = logical.cellAt(link.end - 1)
                 if (!start || !end) return []
-                const rowOffset = logical.cellAt(link.end - 1)!.y
-                const toViewport = (cell: { x: number; y: number }) => ({
-                  x: cell.x,
-                  y: y - (rowOffset - cell.y),
-                })
                 return [
                   {
-                    range: { start: toViewport(start), end: toViewport(end) },
+                    range: { start, end },
                     text: link.text,
                     activate: link.activate,
                   },

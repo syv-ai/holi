@@ -68,21 +68,20 @@ export function wrappedTerminalLine(
 ): { text: string; cellAt: (offset: number) => { x: number; y: number } | undefined } {
   let firstRow = row
   while (firstRow > 0 && getLine(firstRow)?.isWrapped) firstRow--
+  let lastRow = row
+  while (getLine(lastRow + 1)?.isWrapped) lastRow++
+
   let text = ''
   const cells: Array<{ x: number; y: number }> = []
-  for (let y = firstRow; y <= row; y++) {
+  for (let y = firstRow; y <= lastRow; y++) {
     const line = getLine(y)
     if (!line) continue
     for (let x = 0; x < columns; x++) {
       const cell = line.getCell(x)
-      if (!cell) continue
-      const chars = cell.getChars()
-      if (!chars) continue
+      if (!cell || cell.getWidth() === 0) continue
+      const chars = cell.getChars() || ' '
       text += chars
-      for (let offset = 0; offset < chars.length; offset++)
-        cells.push({ x: x + 1, y: y - firstRow + 1 })
-      // Wide glyphs occupy two terminal cells but only one text character.
-      if (cell.getWidth() === 2) continue
+      for (let offset = 0; offset < chars.length; offset++) cells.push({ x: x + 1, y: y + 1 })
     }
   }
   return { text, cellAt: (offset) => cells[offset] }

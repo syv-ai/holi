@@ -100,4 +100,27 @@ describe('embedded terminal link activation', () => {
     expect(logical.cellAt(link.start)).toEqual({ x: 8, y: 1 })
     expect(logical.cellAt(link.end - 1)).toEqual({ x: url.length - 17, y: 2 })
   })
+
+  it('preserves blank gaps, skips wide-cell continuations, and returns absolute rows', () => {
+    const rows = [
+      { isWrapped: false, cells: ['x', ' ', ''] },
+      { isWrapped: true, cells: ['y', ''] },
+    ]
+    const logical = wrappedTerminalLine(4, 3, (row) => {
+      const item = rows[row - 3]
+      if (!item) return undefined
+      return {
+        isWrapped: item.isWrapped,
+        getCell: (index: number) => {
+          if (index >= item.cells.length) return undefined
+          return {
+            getChars: () => item.cells[index]!,
+            getWidth: () => (row === 3 && index === 2 ? 0 : 1),
+          }
+        },
+      }
+    })
+    expect(logical.text).toBe('x y ')
+    expect(logical.cellAt(2)).toEqual({ x: 1, y: 5 })
+  })
 })

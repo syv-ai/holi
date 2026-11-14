@@ -158,21 +158,26 @@ test('registered provider finds and activates a plaintext file URL wrapped by xt
   await waitFor(() => expect(fixture.linkProvider).not.toBeNull())
   const terminal = fixture.terminals[0]!
   terminal.resize(80, 24)
-  const url = 'file:///tmp/a%20long%20report.pdf'
-  act(() => receivePtyData({ id: 'wrapped-terminal', data: `${'x'.repeat(70)}${url}` }))
-  await waitFor(() => expect(terminal.buffer.active.getLine(1)?.isWrapped).toBe(true))
-  let links: Array<{
-    range: { start: { x: number; y: number }; end: { x: number; y: number } }
-    text: string
-    activate: (event: MouseEvent, text: string) => void
-  }> = []
-  act(() => fixture.linkProvider!.provideLinks(2, (value) => (links = value as typeof links)))
-  expect(links).toHaveLength(1)
-  expect(links[0]!.text).toBe(url)
-  expect(links[0]!.range.start.y).toBe(1)
-  expect(links[0]!.range.end.y).toBe(2)
-  links[0]!.activate({ button: 0, metaKey: true } as MouseEvent, url)
-  expect(openPath).toHaveBeenCalledWith('/tmp/a long report.pdf')
+  const url = `file:///tmp/${'a'.repeat(160)}.pdf`
+  act(() => receivePtyData({ id: 'wrapped-terminal', data: `\n\n${'x'.repeat(70)}${url}` }))
+  await waitFor(() => expect(terminal.buffer.active.getLine(3)?.isWrapped).toBe(true))
+  const queryResults = [3, 4, 5].map((y) => {
+    let links: Array<{
+      range: { start: { x: number; y: number }; end: { x: number; y: number } }
+      text: string
+      activate: (event: MouseEvent, text: string) => void
+    }> = []
+    act(() => fixture.linkProvider!.provideLinks(y, (value) => (links = value as typeof links)))
+    return links
+  })
+  for (const links of queryResults) {
+    expect(links).toHaveLength(1)
+    expect(links[0]!.text).toBe(url)
+    expect(links[0]!.range.start.y).toBe(3)
+    expect(links[0]!.range.end.y).toBe(6)
+  }
+  queryResults[1]![0]!.activate({ button: 0, metaKey: true } as MouseEvent, url)
+  expect(openPath).toHaveBeenCalledWith(`/tmp/${'a'.repeat(160)}.pdf`)
   ui.unmount()
 })
 
