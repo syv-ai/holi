@@ -62,6 +62,8 @@ import { addMinutes, setHours, startOfDay, subDays } from 'date-fns'
 import {
   CalendarDaysIcon,
   MapPinIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   PlusIcon,
   RefreshCwIcon,
   RepeatIcon,
@@ -169,6 +171,7 @@ export function CalendarView(): React.JSX.Element {
   // The visible date, shared by the rail's mini calendar and the grid. One
   // source of truth: the mini calendar and grid nav both write it, both read it.
   const [date, setDate] = useState<Date>(() => new Date())
+  const [railCollapsed, setRailCollapsed] = useState(false)
 
   // The primary calendar is the account's address: the one Holi writes to.
   const ownCalendarId = account?.email ?? null
@@ -535,7 +538,10 @@ export function CalendarView(): React.JSX.Element {
           divider. */}
       <div className="@container/calendar-host flex h-full w-full min-w-0 flex-row overflow-hidden">
         <CalendarRail
-          className="hidden w-72 shrink-0 flex-col border-e @min-[64rem]/calendar-host:flex"
+          className={cn(
+            'w-72 shrink-0 flex-col border-e',
+            railCollapsed ? 'hidden' : 'hidden @min-[64rem]/calendar-host:flex',
+          )}
           date={date}
           onDateChange={setDate}
           events={items}
@@ -627,14 +633,26 @@ export function CalendarView(): React.JSX.Element {
           <div className="flex flex-wrap items-center gap-x-2 pe-2">
             <EventCalendarNav className="w-full min-w-0 flex-nowrap @min-[48rem]/calendar:w-auto @min-[48rem]/calendar:flex-1" />
             <EventCalendarToolbar className="w-full @min-[48rem]/calendar:w-auto">
-              {/* The rail owns the calendars list when the calendar pane is
-                    at least 64rem wide, so keep the menu in narrower panes. */}
-              <div className="@min-[64rem]/calendar-host:hidden">
+              {/* The rail owns the calendars list while open in a wide pane. */}
+              <div className={railCollapsed ? undefined : '@min-[64rem]/calendar-host:hidden'}>
                 <CalendarsMenu
                   calendars={calendar.calendars}
                   onToggle={calendar.setCalendarEnabled}
                 />
               </div>
+              <IconButton
+                className="hidden @min-[64rem]/calendar-host:inline-flex"
+                label={railCollapsed ? 'Show calendar rail' : 'Hide calendar rail'}
+                aria-pressed={!railCollapsed}
+                onClick={() => setRailCollapsed((collapsed) => !collapsed)}
+                size="icon"
+              >
+                {railCollapsed ? (
+                  <PanelLeftOpenIcon className="size-4" aria-hidden="true" />
+                ) : (
+                  <PanelLeftCloseIcon className="size-4" aria-hidden="true" />
+                )}
+              </IconButton>
               <IconButton
                 label="Refresh"
                 size="icon"
