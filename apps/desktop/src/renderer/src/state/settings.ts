@@ -43,21 +43,42 @@ const settingsReadRevisionAtom = atom(0)
  *
  * Returns `null` only when there is no active vault. `force` re-reads even on a
  * cache hit, for a caller that has just written the file and needs to see its
- * own write.
+ * own write. `invalidatePluginValues` drops only those keys before re-reading:
+ * permission values must fail closed during a read and after a failed read,
+ * without resetting unrelated settings or restarting enabled plugins.
  */
 export const loadVaultSettingsAtom = atom(
   null,
   async (
     get,
     set,
-    opts?: { force?: boolean; clear?: boolean },
+    opts?: {
+      force?: boolean
+      invalidatePluginValues?: { plugin: string; keys: readonly string[] }
+    },
   ): Promise<ResolvedVaultSettings | null> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return null
 
-    if (opts?.clear === true) set(vaultSettingsAtom, null)
     const cached = get(vaultSettingsAtom)
-    if (opts?.force !== true && cached !== null && cached.remote === remote) {
+    const invalidate = opts?.invalidatePluginValues
+    if (invalidate !== undefined && cached !== null && cached.remote === remote) {
+      const values = { ...cached.settings.pluginValues[invalidate.plugin] }
+      for (const key of invalidate.keys) delete values[key]
+      set(vaultSettingsAtom, {
+        remote,
+        settings: {
+          ...cached.settings,
+          pluginValues: { ...cached.settings.pluginValues, [invalidate.plugin]: values },
+        },
+      })
+    }
+    if (
+      opts?.force !== true &&
+      invalidate === undefined &&
+      cached !== null &&
+      cached.remote === remote
+    ) {
       return cached.settings
     }
 

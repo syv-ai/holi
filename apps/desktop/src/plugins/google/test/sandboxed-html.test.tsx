@@ -62,7 +62,7 @@ beforeEach(async () => {
   imagePolicy = { imageSenders: [], imagesFromAllSenders: false }
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
   resetMailImagesForTests()
-  await getDefaultStore().set(loadVaultSettingsAtom, { force: true, clear: true })
+  await getDefaultStore().set(loadVaultSettingsAtom, { force: true })
 })
 
 afterEach(() => {
