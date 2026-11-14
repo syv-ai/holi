@@ -6,6 +6,12 @@ import {
 } from '../src/main/plugin-host/events'
 
 describe('plugin events', () => {
+  it('checks an outbound guard on the immediate delivery path', () => {
+    const send = vi.fn()
+    const bus = pluginEvents({ send, listen: () => () => {}, liveRemote: () => 'A' }, 'sample')
+    bus.emit('A', 'output', 'stale', () => false)
+    expect(send).not.toHaveBeenCalled()
+  })
   it('drops renderer input when the displayed vault changes during its async gate', async () => {
     let displayed: string | null = 'A'
     let receive: ((message: unknown) => void) | undefined

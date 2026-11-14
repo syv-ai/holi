@@ -11,6 +11,11 @@ import { BROWSER_INFO } from '../info'
 import { browserCapabilities, BROWSER_NAMESPACES, type Rect } from './capabilities'
 import { browserSeed } from './seed'
 
+const combineLeases =
+  (presentation: () => boolean, attachment?: () => boolean): (() => boolean) =>
+  () =>
+    presentation() && (attachment === undefined || attachment())
+
 const isRect = (r: unknown): r is Rect =>
   typeof r === 'object' &&
   r !== null &&
@@ -27,9 +32,17 @@ export const browserMain: MainPlugin = {
       presentationLease: () => ctx.presentationLease(),
       onDisplayChange: (cb) => ctx.onDisplayChange(cb),
       changed: (list) => ctx.emit(ctx.remote, 'tabs', list),
-      reveal: (id) => ctx.emit(ctx.remote, 'reveal', { id }, ctx.presentationLease()),
-      address: (id) => ctx.emit(ctx.remote, 'address', { id }, ctx.presentationLease()),
-      key: (id, key) => ctx.emit(ctx.remote, 'key', { id, ...key }, ctx.presentationLease()),
+      reveal: (id, attachment) =>
+        ctx.emit(ctx.remote, 'reveal', { id }, combineLeases(ctx.presentationLease(), attachment)),
+      address: (id, attachment) =>
+        ctx.emit(ctx.remote, 'address', { id }, combineLeases(ctx.presentationLease(), attachment)),
+      key: (id, key, attachment) =>
+        ctx.emit(
+          ctx.remote,
+          'key',
+          { id, ...key },
+          combineLeases(ctx.presentationLease(), attachment),
+        ),
     })
     const undo = ctx.register(BROWSER_NAMESPACES, browserCapabilities(pages))
     // Where each tab is drawn, as the renderer lays it out: every frame it

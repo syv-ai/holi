@@ -106,7 +106,10 @@ export function pluginEvents(
       checkName(name)
       if (!allowed()) return
       const event = { remote, name, payload }
-      if (runs === undefined) return deps.send(channel, event)
+      if (runs === undefined) {
+        if (guard === undefined || guard()) deps.send(channel, event)
+        return
+      }
       const owner = epoch
       const at = generation?.()
       const current = () =>

@@ -70,11 +70,11 @@ export interface PagesDeps {
   /** The tabs changed: their list, as the renderer draws them. */
   changed(list: PageInfo[]): void
   /** Show tab `id` in Holi: one the agent or a page opened. */
-  reveal(id: string): void
+  reveal(id: string, attachment?: () => boolean): void
   /** The person asked the tab for its address bar (⌘L). */
-  address(id: string): void
+  address(id: string, attachment?: () => boolean): void
   /** A shortcut of Holi's, pressed while a page had the keyboard. */
-  key(id: string, key: PageKey): void
+  key(id: string, key: PageKey, attachment?: () => boolean): void
 }
 
 /** A `mailto:` or `tel:` link, to the system. */
@@ -88,6 +88,8 @@ interface Tab {
   /** The window it is drawn in, or null while it is off screen. */
   shownIn: BrowserWindow | null
   shownLease: (() => boolean) | null
+  attachment: symbol | null
+  placementEpoch: symbol
   menu: Menu | null
 }
 
@@ -213,7 +215,12 @@ export function createPages(deps: PagesDeps): Pages & {
 
   function placementGuard(id: unknown, presentation: () => boolean): () => boolean {
     const tab = typeof id === 'string' ? tabs.get(id) : undefined
-    return () => tab !== undefined && tabs.get(tab.id) === tab && presentation()
+    const epoch = tab?.placementEpoch
+    return () =>
+      tab !== undefined &&
+      tabs.get(tab.id) === tab &&
+      tab.placementEpoch === epoch &&
+      presentation()
   }
 
   const info = (tab: Tab): PageInfo => {
@@ -280,8 +287,10 @@ export function createPages(deps: PagesDeps): Pages & {
     const win = deps.window()
     if (!isPresented(tab) || win === null || tab.shownIn !== win) return
     const lease = tab.shownLease
+    const attachment = tab.attachment
+    const attached = (): boolean => attachment !== null && tab.attachment === attachment
     const live = (): boolean =>
-      isPresented(tab) && tab.shownLease === lease && deps.window() === win
+      isPresented(tab) && tab.shownLease === lease && attached() && deps.window() === win
     const wc = tab.view.webContents
     const items: MenuItemConstructorOptions[] = []
     const link = params.linkURL
@@ -290,7 +299,7 @@ export function createPages(deps: PagesDeps): Pages & {
         {
           label: 'Open Link in New Tab',
           click: () => {
-            if (live()) void open({ url: link, reveal: true })
+            if (live()) void open({ url: link, reveal: true, attachment: live })
           },
         },
         {
@@ -376,7 +385,8 @@ export function createPages(deps: PagesDeps): Pages & {
     const wc = tab.view.webContents
     wc.setWindowOpenHandler(({ url }) => {
       if (!isPresented(tab)) return { action: 'deny' }
-      if (isPageUrl(url) && url !== 'about:blank') void open({ url, reveal: true })
+      if (isPageUrl(url) && url !== 'about:blank')
+        void open({ url, reveal: true, attachment: () => isPresented(tab) })
       else if (/^(mailto|tel):/i.test(url) && isPresented(tab)) toSystem(url)
       return { action: 'deny' }
     })
@@ -428,13 +438,17 @@ export function createPages(deps: PagesDeps): Pages & {
       const win = deps.window()
       if (win === null) return
       const lease = tab.shownLease
+      const attachment = tab.attachment
       const live = (): boolean =>
-        isPresented(tab) && tab.shownLease === lease && deps.window() === win
+        isPresented(tab) &&
+        tab.shownLease === lease &&
+        tab.attachment === attachment &&
+        deps.window() === win
       const key = input.key.toLowerCase()
       if (PAGE_KEYS.has(key) && !input.alt) return
       event.preventDefault()
       if (key === 'l') {
-        if (live()) deps.address(tab.id)
+        if (live()) deps.address(tab.id, live)
         return
       }
       if (key === 'r') return void wc.reload()
@@ -442,14 +456,18 @@ export function createPages(deps: PagesDeps): Pages & {
       if (key === ']') return void wc.navigationHistory.goForward()
       if (!live()) return
       win.webContents.focus()
-      deps.key(tab.id, {
-        key: input.key,
-        code: input.code,
-        meta: input.meta,
-        ctrl: input.control,
-        shift: input.shift,
-        alt: input.alt,
-      })
+      deps.key(
+        tab.id,
+        {
+          key: input.key,
+          code: input.code,
+          meta: input.meta,
+          ctrl: input.control,
+          shift: input.shift,
+          alt: input.alt,
+        },
+        live,
+      )
     })
   }
 
@@ -457,10 +475,12 @@ export function createPages(deps: PagesDeps): Pages & {
     url,
     id,
     reveal,
+    attachment,
   }: {
     url?: string
     id?: string
     reveal: boolean
+    attachment?: () => boolean
   }): Promise<PageInfo> {
     const known = id === undefined ? undefined : tabs.get(id)
     if (known !== undefined) return url === undefined ? info(known) : load(known, url)
@@ -485,13 +505,15 @@ export function createPages(deps: PagesDeps): Pages & {
       favicon: null,
       shownIn: null,
       shownLease: null,
+      attachment: null,
+      placementEpoch: Symbol('placement'),
       menu: null,
     }
     tabs.set(tab.id, tab)
     current = tab.id
     watch(tab)
     changed()
-    if (reveal && deps.window() !== null) deps.reveal(tab.id)
+    if (reveal && deps.window() !== null) deps.reveal(tab.id, attachment)
     return url === undefined ? info(tab) : load(tab, url)
   }
 
@@ -499,6 +521,8 @@ export function createPages(deps: PagesDeps): Pages & {
     const win = tab.shownIn
     tab.shownIn = null
     tab.shownLease = null
+    tab.attachment = null
+    tab.placementEpoch = Symbol('hidden')
     tab.menu?.closePopup()
     tab.menu = null
     if (win !== null && !win.isDestroyed()) win.contentView.removeChildView(tab.view)
@@ -689,6 +713,8 @@ export function createPages(deps: PagesDeps): Pages & {
         win.contentView.addChildView(tab.view)
         tab.shownIn = win
         tab.shownLease = presentation
+        tab.attachment = Symbol(id)
+        tab.placementEpoch = Symbol('attached')
         // The tab the person brings up is the one "the page" means.
         current = id
       }
