@@ -24,6 +24,7 @@ export const browserMain: MainPlugin = {
     const { createPages } = await import('./pages')
     const pages = createPages({
       window: () => ctx.window(),
+      onDisplayChange: (cb) => ctx.onDisplayChange(cb),
       changed: (list) => ctx.emit(ctx.remote, 'tabs', list),
       reveal: (id) => ctx.emit(ctx.remote, 'reveal', { id }),
       address: (id) => ctx.emit(ctx.remote, 'address', { id }),

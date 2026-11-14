@@ -81,6 +81,7 @@ import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
+import { createFrameOrigins } from './frame-origins'
 import { publishCliEndpoint, type CliEndpoint } from './bridge/cli-endpoint'
 import { createCliTargetResolver } from './bridge/cli-target'
 
@@ -89,7 +90,7 @@ install(MAIN_PLUGINS)
 
 /** The origins plugins frame right now (`PluginCtx.frameOrigin`), which the
  *  window guard confines; live, as their servers start and stop. */
-const FRAME_ORIGINS = new Set<string>()
+const { origins: FRAME_ORIGINS, acquire: acquireFrameOrigin } = createFrameOrigins()
 
 /** What seeds every vault, core first: its `.gitignore` is written before
  *  any file that could be committed. Enabled plugins' seeds follow. */
@@ -382,10 +383,7 @@ async function main(): Promise<void> {
     route: (path, route, remote) => bridge.route(path, route, remote),
     binDir: () => binDir,
     githubToken: () => session.token(),
-    frameOrigin: (origin) => {
-      FRAME_ORIGINS.add(origin)
-      return () => void FRAME_ORIGINS.delete(origin)
-    },
+    frameOrigin: acquireFrameOrigin,
     // One plugin's main side calling another's, at the UI door its renderer
     // would use. `capabilityHost` is built below, before any vault opens.
     call: async (remote, name, params, beforeInvoke) =>

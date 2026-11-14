@@ -71,6 +71,8 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   displayed(): string | null
   /** Hear when the renderer's displayed vault changes. Returns the undo. */
   onDisplayChange(cb: (remote: string | null) => void): () => void
+  /** Holi's native window only while this activation's vault is displayed. */
+  window(): BrowserWindow | null
   /** Holi's own data directory on this machine, for state a plugin keeps
    *  outside any vault. */
   userData: string
