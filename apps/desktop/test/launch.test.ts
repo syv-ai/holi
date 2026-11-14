@@ -389,7 +389,7 @@ describe('execProgram', () => {
     async () => {
       const { execProgram } = await import('../src/main/launch')
       const script =
-        'const c=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>0,1000)"],{stdio:"ignore",windowsHide:true});console.log(c.pid);setInterval(()=>0,1000)'
+        'const c=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>0,1000)"],{stdio:"ignore",windowsHide:true,detached:true});console.log(c.pid);setInterval(()=>0,1000)'
       const result = await new Promise<{ err: Error | null; out: string }>((resolve) => {
         const child = execProgram(
           process.execPath,
@@ -442,7 +442,7 @@ describe('execProgram', () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-running-timeout-'))
       const pidFile = join(dir, 'grandchild')
       const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
-      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});setInterval(()=>0,1000)`
+      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true,detached:true});setInterval(()=>0,1000)`
       const { execProgram } = await import('../src/main/launch')
       try {
         const result = await new Promise<{ err: Error | null }>((resolve) => {
@@ -470,7 +470,7 @@ describe('execProgram', () => {
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-drain-'))
       const pidFile = join(dir, 'pid')
-      const script = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`process.stdout.write('ready');setInterval(()=>0,1000)`)}],{stdio:['ignore','pipe','ignore'],windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.stdout.once('data',()=>process.exit(0))`
+      const script = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`process.stdout.write('ready');setInterval(()=>0,1000)`)}],{stdio:['ignore','pipe','ignore'],windowsHide:true,detached:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.stdout.once('data',()=>process.exit(0))`
       const { execProgram } = await import('../src/main/launch')
       let reported = false
       try {
@@ -505,7 +505,7 @@ describe('execProgram', () => {
       for (const tracing of [false, true]) {
         const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-'))
         const pidFile = join(dir, 'pid')
-        const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:'ignore',windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();process.stdout.write('backgrounded · 12345678 · test');process.stderr.write('detached stderr payload')`
+        const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:'ignore',windowsHide:true,detached:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();process.stdout.write('backgrounded · 12345678 · test');process.stderr.write('detached stderr payload')`
         let pid = 0
         let hostDiagnostic = ''
         onTestFailed(() => {
@@ -559,7 +559,7 @@ describe('execProgram', () => {
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-pipe-timeout-'))
       const pidFile = join(dir, 'pid')
-      const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:['ignore','inherit','ignore'],windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();process.exit(0)`
+      const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:['ignore','inherit','ignore'],windowsHide:true,detached:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();process.exit(0)`
       const { execProgram } = await import('../src/main/launch')
       try {
         const result = await new Promise<Error | null>((resolve) => {
@@ -594,7 +594,7 @@ describe('execProgram', () => {
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-fail-'))
       const pidFile = join(dir, 'pid')
-      const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:['ignore','ignore','ignore'],windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));process.exit(7)`
+      const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:['ignore','ignore','ignore'],windowsHide:true,detached:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));process.exit(7)`
       const { execProgram } = await import('../src/main/launch')
       try {
         const result = await new Promise<{ err: Error | null }>((resolve) => {
@@ -631,7 +631,7 @@ describe('execProgram', () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-timeout-'))
       const pidFile = join(dir, 'pid')
       const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
-      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});setInterval(()=>0,1000)`
+      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true,detached:true});setInterval(()=>0,1000)`
       const { execProgram } = await import('../src/main/launch')
       try {
         const result = await new Promise<Error | null>((resolve) => {
@@ -667,7 +667,7 @@ describe('execProgram', () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-error-'))
       const pidFile = join(dir, 'pid')
       const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
-      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});${failureKind === 'maxBuffer' ? "process.stdout.write('x'.repeat(100000));" : ''}setInterval(()=>0,1000)`
+      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true,detached:true});${failureKind === 'maxBuffer' ? "process.stdout.write('x'.repeat(100000));" : ''}setInterval(()=>0,1000)`
       const { execProgram } = await import('../src/main/launch')
       let child: ReturnType<typeof execProgram> | undefined
       try {
