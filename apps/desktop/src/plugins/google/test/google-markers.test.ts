@@ -237,6 +237,24 @@ describe('account-bound personal mail markers', () => {
     cache.close()
   })
 
+  it('revalidates a marker update after its asynchronous store read', async () => {
+    const root = await temp()
+    const markers = createMailMarkerStore(root, 'account-a')
+    await markers.set('thread-1', 'red-star')
+    let linked = true
+    let entered!: () => void
+    const admitted = new Promise<void>((resolve) => (entered = resolve))
+    const validate = async () => {
+      if (!linked) throw new Error('originating vault is no longer linked')
+      entered()
+    }
+    const pending = markers.set('thread-1', 'blue-question', validate)
+    await admitted
+    linked = false
+    await expect(pending).rejects.toThrow(/no longer linked/)
+    expect(await markers.read(['thread-1'])).toEqual({ 'thread-1': 'red-star' })
+  })
+
   it('does not return a disk-read marker after its originating vault is unlinked', async () => {
     const root = await temp()
     const markers = createMailMarkerStore(root, 'account-a')
