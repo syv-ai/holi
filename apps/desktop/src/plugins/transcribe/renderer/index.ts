@@ -47,7 +47,14 @@ export const transcribeRenderer: RendererPlugin = {
   ],
   // In the sidebar's apps, after Mail and Calendar.
   sidebarApps: [
-    { id: MEETINGS_APP, label: 'Meetings', icon: AudioLines, order: 30, render: MeetingsSurface },
+    {
+      id: MEETINGS_APP,
+      label: 'Meetings',
+      icon: AudioLines,
+      order: 30,
+      render: MeetingsSurface,
+      keepMounted: true,
+    },
   ],
   commandMenu: { entries: meetingMenuEntriesAtom, run: runMeetingMenuEntryAtom },
   statusItems: [{ id: 'recording', side: 'left', order: 10, Component: RecordingStatusItem }],
