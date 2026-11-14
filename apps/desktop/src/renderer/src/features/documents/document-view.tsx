@@ -64,7 +64,12 @@ import { useSettingsWrite } from '@/features/settings/use-vault-settings'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
-import { isRunLive, useAgentLabel } from '@/state/document-runs'
+import {
+  documentRunsAtom,
+  documentUpgradesAtom,
+  isRunLive,
+  useAgentLabel,
+} from '@/state/document-runs'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { claimsAtom } from '@/state/plugins'
 import { activeVaultSettingsAtom, useAppSetting } from '@/state/settings'
@@ -259,6 +264,8 @@ function DocumentEditor({
   }, [agentLabel])
   const store = useStore()
   const locked = locksDocument(agent.run)
+  const upgrades = useAtomValue(documentUpgradesAtom)
+  const upgradePending = upgrades.has(path)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [donePending, setDonePending] = useState(false)
   const upgradeInFlight = useRef(false)
@@ -628,8 +635,10 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked && visible && !frozen.current && !doneFreeze.current)
-  }, [editor, locked, visible])
+    editor.setEditable(
+      !locked && !upgradePending && visible && !frozen.current && !doneFreeze.current,
+    )
+  }, [editor, locked, upgradePending, visible])
 
   // A finished edit clears its pill on its own. A finished vault app opens
   // when the document is still the tab in front and was never left while it
@@ -770,22 +779,36 @@ function DocumentEditor({
       !upgradeMove ||
       upgradeInFlight.current ||
       lockedRef.current ||
+      store.get(documentUpgradesAtom).has(path) ||
+      isRunLive(store.get(documentRunsAtom)[path]) ||
       frozen.current ||
       !editor?.isEditable
     )
       return
     upgradeInFlight.current = true
+    store.set(documentUpgradesAtom, (paths) => new Set(paths).add(path))
+    editor?.setEditable(false)
     try {
       await store.set(moveNotesAtom, {
         moves: [upgradeMove],
         expectedRemote: remote,
+        upgradePath: path,
       })
     } catch (error) {
       toast.error('Could not upgrade to MDX.', {
         description: error instanceof Error ? error.message : String(error),
       })
     } finally {
+      store.set(documentUpgradesAtom, (paths) => {
+        const next = new Set(paths)
+        next.delete(path)
+        return next
+      })
       upgradeInFlight.current = false
+      if (editor && !editor.isDestroyed)
+        editor.setEditable(
+          !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
+        )
     }
   }
   const canStartChat = useAtomValue(canStartConversationAtom)
@@ -813,7 +836,7 @@ function DocumentEditor({
         onKeyDown={handleViewKeyDown}
       >
         {/* Locked while a run edits the document: nothing in it answers. */}
-        <div inert={locked} className="flex min-h-0 flex-1 flex-col">
+        <div inert={locked || upgradePending} className="flex min-h-0 flex-1 flex-col">
           {/* On the page's own ground, a hairline under it; the text scrolls
               beneath the line, not under the header. */}
           <DocumentHeader
@@ -836,7 +859,9 @@ function DocumentEditor({
             onSmallTextChange={setSmallText}
             onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
             onUpgradeToMdx={
-              upgradeMove && !locked && editor?.isEditable ? () => void upgradeToMdx() : null
+              upgradeMove && !locked && !upgradePending && editor?.isEditable
+                ? () => void upgradeToMdx()
+                : null
             }
             holiLink={holiLinks?.file ?? null}
             headingLink={holiLinks?.heading ?? null}

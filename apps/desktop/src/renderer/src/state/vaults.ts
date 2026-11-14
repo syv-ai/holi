@@ -15,7 +15,7 @@ import { trpc } from '@/lib/trpc'
 // reads the other's atoms until a store does.
 import { openDocumentAtom } from './open-document'
 // A cycle too (`document-runs` reads `activeRemoteAtom`), safe the same way.
-import { documentRunsAtom } from './document-runs'
+import { documentRunsAtom, documentUpgradesAtom, isRunLive } from './document-runs'
 import { settledRect } from '@/lib/settled-rect'
 import { folderSurfacesAtom } from './plugins'
 
@@ -544,11 +544,14 @@ export const moveNotesAtom = atom(
       moves,
       folders = [],
       expectedRemote,
+      upgradePath,
     }: {
       moves: { from: string; to: string }[]
       folders?: { from: string; to: string }[]
       /** Refuse an action whose initiating editor no longer owns the active vault. */
       expectedRemote?: string
+      /** Upgrade moves must still own the path and have no live agent at commit time. */
+      upgradePath?: string
     },
   ) => {
     const remote = get(activeRemoteAtom)
@@ -560,7 +563,18 @@ export const moveNotesAtom = atom(
       get(openRequestAtom) === openRequest &&
       get(openedRemoteAtom) === remote &&
       (expectedRemote === undefined || remote === expectedRemote)
-    if (!remote || !stillOwned() || (moves.length === 0 && folders.length === 0)) return
+    const upgradeStillAllowed = () => {
+      if (upgradePath === undefined) return true
+      const run = get(documentRunsAtom)[upgradePath]
+      return get(documentUpgradesAtom).has(upgradePath) && !isRunLive(run)
+    }
+    if (
+      !remote ||
+      !stillOwned() ||
+      !upgradeStillAllowed() ||
+      (moves.length === 0 && folders.length === 0)
+    )
+      return
     // Keep every awaited stage on the initiating vault. In particular, a
     // vault switch while buffers flush must not make the restore-point commit
     // land in the replacement vault.
@@ -571,7 +585,7 @@ export const moveNotesAtom = atom(
     const release = freezeBuffers()
     try {
       await flushAllBuffers()
-      if (!stillOwned()) return
+      if (!stillOwned() || !upgradeStillAllowed()) return
       await trpc.notes.move.mutate({ remote, moves, folders })
       if (!stillOwned()) return
       flushSync(() => {

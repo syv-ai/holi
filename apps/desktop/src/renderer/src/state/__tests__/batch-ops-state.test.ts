@@ -18,6 +18,7 @@ import {
 import { registerBuffer } from '@/lib/buffer-registry'
 import { openTabAtom, workspaceOfAtom } from '@/state/shell-tabs'
 import { allTabs } from '@/state/shell-workspace'
+import { documentRunsAtom, documentUpgradesAtom } from '@/state/document-runs'
 
 let holi: FakeHoli | null = null
 afterEach(() => {
@@ -172,6 +173,40 @@ describe('moveNotesAtom', () => {
     expect(holi.calls.filter((call) => call.path === 'notes.move')).toHaveLength(1)
     expect(holi.calls.filter((call) => call.path === 'sync.commitNow')).toHaveLength(1)
     expect(holi.calls.filter((call) => call.path === 'vaults.snapshot')).toHaveLength(1)
+  })
+
+  it('rechecks an upgrade lock after its restore-point commit', async () => {
+    const commit = deferred<void>()
+    holi = installFakeHoli((op) => (op.path === 'sync.commitNow' ? commit.promise : undefined))
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/notes')
+    store.set(openedRemoteAtom, 'syv-ai/notes')
+    store.set(documentUpgradesAtom, new Set(['notes/a.md']))
+    const moving = store.set(moveNotesAtom, {
+      moves: [{ from: 'notes/a.md', to: 'notes/a.mdx' }],
+      upgradePath: 'notes/a.md',
+    })
+    await vi.waitFor(() =>
+      expect(holi!.calls.some((call) => call.path === 'sync.commitNow')).toBe(true),
+    )
+
+    store.set(documentRunsAtom, {
+      'notes/a.md': {
+        kind: 'rewrite',
+        label: 'Rewrite',
+        agent: 'Claude',
+        provider: 'claude',
+        sessionId: null,
+        status: 'starting',
+        away: false,
+        seenWorking: false,
+      },
+    })
+    commit.resolve()
+    await moving
+
+    expect(holi.calls.filter((call) => call.path === 'notes.move')).toHaveLength(0)
+    expect(holi.calls.filter((call) => call.path === 'sync.commitNow')).toHaveLength(1)
   })
 
   it('does not move after an affected buffer fails to flush', async () => {
