@@ -267,7 +267,7 @@ describe('a grant Google refuses', () => {
 
     await expect(session!.getAccessToken()).rejects.toThrow(/expired or been revoked/)
 
-    expect(changed).toHaveBeenCalledWith('sub-1')
+    expect(changed).toHaveBeenCalledWith('sub-1', 'expired')
     expect(await accounts.sessionFor(VAULT)).toBeNull()
     expect(accounts.list()).toEqual([])
     expect(await accounts.overview(VAULT)).toMatchObject({

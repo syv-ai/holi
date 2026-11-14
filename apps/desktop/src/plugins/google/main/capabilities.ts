@@ -825,8 +825,13 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         return { ids: ids as string[], expectedAccountSub }
       },
       run: async (ctx, { ids, expectedAccountSub }) => {
-        const { data } = await accountOf(ctx.remote, expectedAccountSub)
-        return google(() => data.mailMarkers(ids))
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        const validate = async () => {
+          if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+          if ((await deps.accounts.sessionFor(ctx.remote)) !== session)
+            throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+        }
+        return google(() => data.mailMarkers(ids, validate))
       },
     }),
 
@@ -847,8 +852,13 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         }
       },
       run: async (ctx, { id, marker, expectedAccountSub }) => {
-        const { data } = await accountOf(ctx.remote, expectedAccountSub)
-        await google(() => data.setMailMarker(id, marker))
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        const validate = async () => {
+          if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+          if ((await deps.accounts.sessionFor(ctx.remote)) !== session)
+            throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+        }
+        await google(() => data.setMailMarker(id, marker, validate))
         return ok
       },
     }),
