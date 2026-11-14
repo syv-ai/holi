@@ -432,6 +432,53 @@ test('clean hidden editors reload and stay Updated until shown; pending local ed
   })
 })
 
+test('a retained plugin path stays mounted while hidden, then disposes on close or claim removal', async () => {
+  const claim = {
+    match: (path: string) => path === 'docs/case.pdf',
+    retainView: true as const,
+    view: ({ path, visible, focused }: { path: string; visible?: boolean; focused?: boolean }) => (
+      <div data-retained-pdf={path} data-visible={visible} data-focused={focused} />
+    ),
+  }
+  const launcher = 'holi:new:1'
+  const store = fixture(['src/one.ts', 'docs/case.pdf', launcher])
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    files: [...files(), { path: 'docs/case.pdf', updatedAt: 'pdf-1' }],
+  })
+  act(() => store.set(coreContributionAtom, { surfaces: [], rail: [], claims: [claim] }))
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'docs/case.pdf')))
+  await waitFor(() =>
+    expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toHaveAttribute(
+      'data-visible',
+      'true',
+    ),
+  )
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, launcher)))
+  const hidden = document.querySelector('[data-retained-pdf="docs/case.pdf"]')
+  expect(hidden).toHaveAttribute('data-visible', 'false')
+  expect(hidden).toHaveAttribute('data-focused', 'false')
+  expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull()
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'src/one.ts')))
+  expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBe(hidden)
+  expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull()
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, 'docs/case.pdf')))
+  expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBeNull()
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, 'docs/case.pdf')))
+  await waitFor(() =>
+    expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).not.toBeNull(),
+  )
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'src/one.ts')))
+  act(() => store.set(coreContributionAtom, { surfaces: [], rail: [], claims: [] }))
+  await waitFor(() =>
+    expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBeNull(),
+  )
+})
+
 test('close/reopen rereads and changes in plugin ownership dispose the core editor', async () => {
   const store = fixture(['src/one.ts'])
   const first = await cmFor()

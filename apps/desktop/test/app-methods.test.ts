@@ -43,7 +43,10 @@ it('answers every bridge method that is not the renderer’s at the app door', (
     googleCapabilities({
       accounts: {} as GoogleAccountsManager,
       dataFor: async () => null,
-      settings: { read: async () => ({ calendars: {}, imageSenders: [] }), write: async () => {} },
+      settings: {
+        read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
+        write: async () => {},
+      },
     }),
   )
   registry.register(

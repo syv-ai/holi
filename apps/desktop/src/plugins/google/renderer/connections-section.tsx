@@ -41,12 +41,24 @@ import {
 } from '@/components/ui/item'
 import { IconTile } from '@/components/ui/icon-tile'
 import { pluginMark } from '@/composites/marks'
-import { activeRemoteAtom, withSavedBuffers } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  activeVaultSettingsAtom,
+  loadVaultSettingsAtom,
+  withSavedBuffers,
+} from '@/plugin-api'
+import { useSetAtom } from 'jotai'
 import { googleCap } from './google-cap'
 import { useGoogleAccount } from './account'
 import { initialsOf } from './mail/data'
 import { OAuthClient } from './oauth-client'
-import { useAlwaysAllowedSenders, useForgetImageSenders } from './mail-images'
+import {
+  useAlwaysAllowedSenders,
+  useForgetImageSenders,
+  useMailImagePolicyPending,
+  useSetAllSenderImages,
+} from './mail-images'
+import { Switch } from '@/components/ui/switch'
 
 /** The flow's transient state. "Connected" is deliberately absent: that is the
  *  shared atom's to know. */
@@ -397,11 +409,41 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
  * cannot be seen or withdrawn is not one still being given. Absent entirely
  * when there are none.
  */
-function ImageSenders(): React.JSX.Element | null {
-  const senders = useAlwaysAllowedSenders()
+function ImageSenders(): React.JSX.Element {
+  const policy = useAlwaysAllowedSenders()
+  const settings = useAtomValue(activeVaultSettingsAtom)
+  const reload = useSetAtom(loadVaultSettingsAtom)
   const forget = useForgetImageSenders()
-
-  if (senders === undefined || senders.size === 0) return null
+  const setAll = useSetAllSenderImages()
+  const sharedPending = useMailImagePolicyPending()
+  const [pending, setPending] = useState(false)
+  const busy = pending || sharedPending
+  const [error, setError] = useState<string | null>(null)
+  const [retryAction, setRetryAction] = useState<(() => Promise<void>) | null>(null)
+  const run = async (action: () => Promise<void>) => {
+    setRetryAction(() => action)
+    setPending(true)
+    setError(null)
+    try {
+      await action()
+      setRetryAction(null)
+    } catch {
+      setError('Could not save or read the remote image setting.')
+    } finally {
+      setPending(false)
+    }
+  }
+  const retryRead = async () => {
+    setPending(true)
+    setError(null)
+    try {
+      await reload({ force: true })
+    } catch {
+      setError('Could not read remote image settings.')
+    } finally {
+      setPending(false)
+    }
+  }
 
   return (
     <Item variant="muted">
@@ -409,16 +451,61 @@ function ImageSenders(): React.JSX.Element | null {
         <ImageIcon />
       </ItemMedia>
       <ItemContent>
-        <ItemTitle>Images from trusted senders</ItemTitle>
+        <ItemTitle>Remote images</ItemTitle>
         <ItemDescription>
-          Images load automatically from {senders.size} {senders.size === 1 ? 'sender' : 'senders'}.
+          Loading remote images can tell senders when you open mail.{' '}
+          {policy.allSenders
+            ? 'Images from all senders load automatically.'
+            : `Images from ${policy.senders.size} trusted ${policy.senders.size === 1 ? 'sender' : 'senders'} load automatically; others stay blocked.`}
         </ItemDescription>
       </ItemContent>
       <ItemActions>
-        <Button variant="outline" size="sm" onClick={() => void forget()}>
-          Forget them
-        </Button>
+        <Switch
+          aria-label="Always load images from all senders"
+          checked={policy.allSenders}
+          onCheckedChange={(enabled) => void run(() => setAll(enabled))}
+          disabled={busy || settings === null}
+        />
+        {policy.senders.size > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void run(forget)}
+            disabled={busy || settings === null}
+          >
+            Forget senders
+          </Button>
+        )}
       </ItemActions>
+      {settings === null && error === null && (
+        <span role="status" className="flex items-center gap-2">
+          Loading remote image settings…
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => void retryRead()}
+            disabled={pending}
+          >
+            Retry
+          </Button>
+        </span>
+      )}
+      {error !== null && (
+        <span role="status" className="flex items-center gap-2">
+          {error}
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => void (retryAction ? run(retryAction) : retryRead())}
+            disabled={pending}
+          >
+            Retry
+          </Button>
+        </span>
+      )}
     </Item>
   )
 }

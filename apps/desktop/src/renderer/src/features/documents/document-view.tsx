@@ -30,6 +30,7 @@ import {
   parseTaskFile,
   SCRATCHPAD_PATH,
   TASKS_CLAIM,
+  type VaultSnapshot,
 } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
@@ -65,14 +66,19 @@ import { useSettingsWrite } from '@/features/settings/use-vault-settings'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
-import { isRunLive, useAgentLabel } from '@/state/document-runs'
+import {
+  documentRunsAtom,
+  documentUpgradesAtom,
+  isRunLive,
+  useAgentLabel,
+} from '@/state/document-runs'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { claimsAtom } from '@/state/plugins'
 import { activeVaultSettingsAtom, useAppSetting } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTab, entryOf, focusedTab } from '@/state/shell-workspace'
 import { tabKey, tabPath } from '@/state/tab-descriptor'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, moveNotesAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
@@ -85,6 +91,7 @@ import { createDocumentExtensions } from './document-extensions'
 import { headingAtCaret } from './document-headings'
 import { DocumentFindBar } from './document-find-bar'
 import { resolveLink } from './resolve-link'
+import { mdxUpgradeMove } from './upgrade-mdx'
 import { DocumentSkeleton } from './document-skeleton'
 import { useDocumentAgentPrompt } from './use-document-agent-prompt'
 import { useDocumentComments } from './use-document-comments'
@@ -150,6 +157,7 @@ export function DocumentView({
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const docs = snapshot.docs
+  const mdxFiles = snapshot.files.filter((file) => file.path.toLowerCase().endsWith('.mdx'))
   const mtime =
     docs.find((doc) => doc.path === path)?.updatedAt ??
     (path === SCRATCHPAD_PATH
@@ -201,6 +209,8 @@ export function DocumentView({
         initial={load}
         mtime={mtime}
         docs={docs}
+        mdxFiles={mdxFiles}
+        snapshot={snapshot}
         onOpen={onOpen}
         onMoved={onMoved}
         visible={visible}
@@ -216,6 +226,8 @@ function DocumentEditor({
   initial,
   mtime,
   docs,
+  mdxFiles,
+  snapshot,
   onOpen,
   onMoved,
   visible,
@@ -226,6 +238,8 @@ function DocumentEditor({
   initial: { head: string; body: string; text: string }
   mtime: string | undefined
   docs: readonly { path: string }[]
+  mdxFiles: readonly { path: string }[]
+  snapshot: VaultSnapshot
   onOpen: (path: string) => void
   onMoved?: (from: string, to: string) => void
   visible: boolean
@@ -252,8 +266,11 @@ function DocumentEditor({
   }, [agentLabel])
   const store = useStore()
   const locked = locksDocument(agent.run)
+  const upgrades = useAtomValue(documentUpgradesAtom)
+  const upgradePending = upgrades.has(path)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [donePending, setDonePending] = useState(false)
+  const upgradeInFlight = useRef(false)
   const [doneError, setDoneError] = useState<string | null>(null)
   const doneInFlight = useRef(false)
   const [linkOpen, setLinkOpen] = useState(false)
@@ -324,7 +341,7 @@ function DocumentEditor({
   })
   handlers.current.openLink = (target) => {
     if (!activity.displayed) return
-    const found = resolveLink(target, path, docs)
+    const found = resolveLink(target, path, docs, mdxFiles)
     if (found) onOpen(found)
   }
 
@@ -670,9 +687,14 @@ function DocumentEditor({
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
     editor.setEditable(
-      !locked && visible && !frozen.current && !doneFreeze.current && !batchFreeze.current,
+      !locked &&
+        !upgradePending &&
+        visible &&
+        !frozen.current &&
+        !doneFreeze.current &&
+        !batchFreeze.current,
     )
-  }, [editor, locked, visible])
+  }, [editor, locked, upgradePending, visible])
 
   // A finished edit clears its pill on its own. A finished vault app opens
   // when the document is still the tab in front and was never left while it
@@ -808,6 +830,45 @@ function DocumentEditor({
   }
 
   const canAsk = agent.available && !isRunLive(agent.run)
+  const upgradeMove = mdxUpgradeMove(path, snapshot, claims)
+
+  async function upgradeToMdx() {
+    if (
+      !upgradeMove ||
+      upgradeInFlight.current ||
+      lockedRef.current ||
+      store.get(documentUpgradesAtom).has(path) ||
+      isRunLive(store.get(documentRunsAtom)[path]) ||
+      frozen.current ||
+      !editor?.isEditable
+    )
+      return
+    upgradeInFlight.current = true
+    store.set(documentUpgradesAtom, (paths) => new Set(paths).add(path))
+    editor?.setEditable(false)
+    try {
+      await store.set(moveNotesAtom, {
+        moves: [upgradeMove],
+        expectedRemote: remote,
+        upgradePath: path,
+      })
+    } catch (error) {
+      toast.error('Could not upgrade to MDX.', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      store.set(documentUpgradesAtom, (paths) => {
+        const next = new Set(paths)
+        next.delete(path)
+        return next
+      })
+      upgradeInFlight.current = false
+      if (editor && !editor.isDestroyed)
+        editor.setEditable(
+          !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
+        )
+    }
+  }
   const canStartChat = useAtomValue(canStartConversationAtom)
   const startConversation = useSetAtom(startConversationAtom)
 
@@ -833,7 +894,10 @@ function DocumentEditor({
         onKeyDown={handleViewKeyDown}
       >
         {/* Locked while a run edits the document: nothing in it answers. */}
-        <div inert={locked || batchSubmitting} className="flex min-h-0 flex-1 flex-col">
+        <div
+          inert={locked || batchSubmitting || upgradePending}
+          className="flex min-h-0 flex-1 flex-col"
+        >
           {/* On the page's own ground, a hairline under it; the text scrolls
               beneath the line, not under the header. */}
           <DocumentHeader
@@ -855,6 +919,11 @@ function DocumentEditor({
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
             onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
+            onUpgradeToMdx={
+              upgradeMove && !locked && !upgradePending && editor?.isEditable
+                ? () => void upgradeToMdx()
+                : null
+            }
             holiLink={holiLinks?.file ?? null}
             headingLink={holiLinks?.heading ?? null}
             properties={

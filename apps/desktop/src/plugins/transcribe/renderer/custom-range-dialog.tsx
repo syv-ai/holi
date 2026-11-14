@@ -9,7 +9,8 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useId, useState } from 'react'
-import { activeRemoteAtom, useNow } from '@/plugin-api'
+import { activeRemoteAtom } from '@/plugin-api'
+import { useDisplayedNow, useMeetingsDisplayed } from './displayed'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -38,6 +39,14 @@ const LAST: ReadonlyArray<{ id: string; label: string; seconds: number }> = [
 ]
 
 type Range = readonly [number, number]
+type CustomRangeDraft = {
+  range: Range | null
+  preset: string
+  prompt: string
+  kind: CardKind
+  busy: boolean
+  error: string | null
+}
 
 /** A row of preset chips over the slider. */
 function PresetRow({
@@ -99,16 +108,20 @@ function PreviewLine({ segment }: { segment: Segment }): React.JSX.Element {
 
 function CustomRangeForm({
   meeting,
+  draft,
+  setDraft,
   onDone,
 }: {
   meeting: MeetingState
+  draft: CustomRangeDraft
+  setDraft: React.Dispatch<React.SetStateAction<CustomRangeDraft>>
   onDone: () => void
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const put = useSetAtom(putCardAtom)
   const openTask = useSetAtom(openTaskAtom)
   const promptId = useId()
-  const now = useNow(1000)
+  const now = useDisplayedNow(1000)
   const length = lengthOf(meeting, now)
   const topics = meeting.topics
     .filter((t) => !t.open && t.title !== '')
@@ -117,12 +130,8 @@ function CustomRangeForm({
       label: t.title,
       range: [Math.floor(t.start), Math.min(length, Math.ceil(t.end))] as const,
     }))
-  const [range, setRange] = useState<Range>(() => [Math.max(0, length - 300), length])
-  const [preset, setPreset] = useState('last-5')
-  const [prompt, setPrompt] = useState('')
-  const [kind, setKind] = useState<CardKind>('feature')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { preset, prompt, kind, busy, error } = draft
+  const range = draft.range ?? [Math.max(0, length - 300), length]
   const [start, end] = range
   const lines = linesIn(meeting, range)
   const first = lines[0]
@@ -131,20 +140,20 @@ function CustomRangeForm({
 
   const pick = (id: string) => {
     if (id === '') return
-    setPreset(id)
+    setDraft((d) => ({ ...d, preset: id }))
     const lastN = LAST.find((p) => p.id === id)
-    if (lastN !== undefined) setRange([Math.max(0, length - lastN.seconds), length])
-    else if (id === 'whole') setRange([0, length])
+    if (lastN !== undefined)
+      setDraft((d) => ({ ...d, range: [Math.max(0, length - lastN.seconds), length] }))
+    else if (id === 'whole') setDraft((d) => ({ ...d, range: [0, length] }))
     else {
       const t = topics.find((x) => x.id === id)
-      if (t !== undefined) setRange(t.range)
+      if (t !== undefined) setDraft((d) => ({ ...d, range: t.range }))
     }
   }
 
   const create = async () => {
     if (!canCreate) return
-    setBusy(true)
-    setError(null)
+    setDraft((d) => ({ ...d, busy: true, error: null }))
     try {
       const card = await meetingCap['task.create'](remote, {
         meetingId: meeting.id,
@@ -156,9 +165,12 @@ function CustomRangeForm({
       openTask({ meetingId: meeting.id, cardId: card.id })
       onDone()
     } catch (e) {
-      setError(`The ${TASK_NAME.toLowerCase()} wasn’t made: ${message(e)}`)
+      setDraft((d) => ({
+        ...d,
+        error: `The ${TASK_NAME.toLowerCase()} wasn’t made: ${message(e)}`,
+      }))
     } finally {
-      setBusy(false)
+      setDraft((d) => ({ ...d, busy: false }))
     }
   }
 
@@ -181,8 +193,7 @@ function CustomRangeForm({
             value={[start, end]}
             onValueChange={([a, b]) => {
               if (a === undefined || b === undefined) return
-              setRange([a, b])
-              setPreset('')
+              setDraft((d) => ({ ...d, range: [a, b], preset: '' }))
             }}
           />
           <div className="flex flex-wrap gap-1">
@@ -232,7 +243,7 @@ function CustomRangeForm({
             placeholder="e.g. Turn this into a spec for the CI change"
             maxLength={MAX_PROMPT}
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(e) => setDraft((d) => ({ ...d, prompt: e.target.value }))}
           />
           <FieldDescription>
             The first line is the task’s title. The agent you send it to gets every line in the
@@ -248,7 +259,7 @@ function CustomRangeForm({
             spacing={0}
             aria-label="Kind"
             value={kind}
-            onValueChange={(v) => v !== '' && setKind(v as CardKind)}
+            onValueChange={(v) => v !== '' && setDraft((d) => ({ ...d, kind: v as CardKind }))}
           >
             <ToggleGroupItem value="feature">Feature</ToggleGroupItem>
             <ToggleGroupItem value="action">To-do</ToggleGroupItem>
@@ -282,8 +293,32 @@ export function CustomRangeDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }): React.JSX.Element {
+  const displayed = useMeetingsDisplayed()
+  const [draft, setDraft] = useState<CustomRangeDraft>(() => ({
+    range: null,
+    preset: 'last-5',
+    prompt: '',
+    kind: 'feature',
+    busy: false,
+    error: null,
+  }))
+  const close = () => {
+    setDraft({
+      range: null,
+      preset: 'last-5',
+      prompt: '',
+      kind: 'feature',
+      busy: false,
+      error: null,
+    })
+    onOpenChange(false)
+  }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open && displayed}
+      modal={open && displayed}
+      onOpenChange={(next) => displayed && (next ? onOpenChange(true) : close())}
+    >
       <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>A {TASK_NAME.toLowerCase()} from a custom range</DialogTitle>
@@ -292,7 +327,9 @@ export function CustomRangeDialog({
             that you made it, and suggests nothing of its own for the same thing.
           </DialogDescription>
         </DialogHeader>
-        {open && <CustomRangeForm meeting={meeting} onDone={() => onOpenChange(false)} />}
+        {open && (
+          <CustomRangeForm meeting={meeting} draft={draft} setDraft={setDraft} onDone={close} />
+        )}
       </DialogContent>
     </Dialog>
   )
