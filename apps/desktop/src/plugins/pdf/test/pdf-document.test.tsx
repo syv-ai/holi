@@ -7,10 +7,14 @@
 import { Provider, createStore } from 'jotai'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { emptyVaultSnapshot } from '@holi/shared'
-import { act, fireEvent, render, screen, waitFor } from '@/test/render'
+import { act, createEvent, fireEvent, render, screen, waitFor } from '@/test/render'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, DRAWER_WIDTH, sessionAtom, snapshotAtom } from '@/plugin-api'
 import { PDF_FONTS, PDF_SIGNATURE_NOTE, shortcutOf } from '../renderer/pdf-viewer-config'
+
+vi.mock('../renderer/pdf-viewer-adapter', async () => ({
+  PdfViewerAdapter: (await import('@embedpdf/react-pdf-viewer')).PDFViewer,
+}))
 
 const REMOTE = 'syv-ai/vault'
 const PATH = 'docs/case.pdf'
@@ -21,6 +25,8 @@ const seam = vi.hoisted(() => ({
   write: vi.fn(),
   /** Shortcuts the fake viewer's `document` listener saw. */
   seen: [] as string[],
+  keyboardExecutions: [] as { owner: string; id: string }[],
+  disabledCommands: {} as Record<string, string[]>,
   annotationCb: null as (() => void) | null,
   setTheme: vi.fn(),
   saveAsCopy: vi.fn(),
@@ -159,21 +165,43 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
     },
     commands: {
       getCommandByShortcut: (s: string) =>
-        s === 'h' || s === 'meta+f' || s === 'meta+p' ? { id: s } : undefined,
+        s === 'h' || s === 'f+meta' || s === 'meta+p' || s === 'meta+z' ? { id: s } : null,
       // ⌘P is print, which Holi disables by category; a disabled command must
       // not be claimed, or the palette never opens while a PDF is on screen.
-      resolve: (id: string) => ({ disabled: id === 'meta+p', visible: true }),
+      resolve: (id: string, owner?: string) => ({
+        disabled: id === 'meta+p' || seam.disabledCommands[owner ?? '']?.includes(id) === true,
+        visible: true,
+      }),
       execute: (id: string, documentId?: string) =>
         documentId === undefined ? seam.execute(id) : seam.execute(id, documentId),
       registerCommand: (command: unknown) => seam.registerCommand(command),
     },
   }
-  const registry = {
-    getPlugin: (id: string) => (id in plugins ? { provides: () => plugins[id] } : null),
+  const registryFor = (owner: string) => ({
+    getPlugin: (id: string) => {
+      if (!(id in plugins)) return null
+      const plugin =
+        id === 'commands'
+          ? {
+              ...(plugins.commands as object),
+              resolve: (commandId: string) =>
+                (plugins.commands as { resolve: (id: string, owner?: string) => unknown }).resolve(
+                  commandId,
+                  owner,
+                ),
+              execute: (commandId: string, documentId?: string, source?: string) => {
+                if (source === 'keyboard') seam.keyboardExecutions.push({ owner, id: commandId })
+                if (documentId === undefined) seam.execute(commandId)
+                else seam.execute(commandId, documentId)
+              },
+            }
+          : plugins[id]
+      return { provides: () => plugin }
+    },
     getStore: () => ({ getState: () => seam.store }),
     // No glyphs: the ask falls back to what the store has.
     getEngine: () => null,
-  }
+  })
   const PDFViewer = forwardRef(function FakeViewer(
     {
       config,
@@ -213,9 +241,32 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
     // test could otherwise act on a viewer with nothing wired yet.
     const [mounted, setMounted] = useState(false)
     useEffect(() => {
+      const registry = registryFor(config.src)
       const listener = (e: KeyboardEvent) => {
-        const s = shortcutOf(e)
-        if (s !== null) seam.seen.push(s)
+        const path = e.composedPath()
+        const target = path[0]
+        if (
+          e.key !== 'Tab' &&
+          (target instanceof HTMLInputElement ||
+            target instanceof HTMLTextAreaElement ||
+            (target instanceof HTMLElement && target.isContentEditable))
+        )
+          return
+        const commands = registry.getPlugin('commands')?.provides() as {
+          getCommandByShortcut: (shortcut: string) => { id: string } | null
+          resolve: (id: string) => { disabled: boolean; visible: boolean }
+          execute: (id: string, documentId?: string, source?: string) => void
+        }
+        const shortcut = shortcutOf(e)
+        if (shortcut === null) return
+        seam.seen.push(shortcut)
+        const command = commands.getCommandByShortcut(shortcut)
+        if (command === null) return
+        const state = commands.resolve(command.id)
+        if (state.disabled || !state.visible) return
+        e.preventDefault()
+        e.stopPropagation()
+        commands.execute(command.id, undefined, 'keyboard')
       }
       document.addEventListener('keydown', listener)
       seam.config = config
@@ -263,6 +314,8 @@ beforeEach(() => {
   })
   seam.setTheme.mockReset()
   seam.seen.length = 0
+  seam.keyboardExecutions.length = 0
+  seam.disabledCommands = {}
   seam.annotationCb = null
   seam.zoomCb = null
   seam.sidebarCb = null
@@ -291,10 +344,28 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function mount({ revealAfterMs }: { revealAfterMs?: number } = {}) {
+function mount({
+  revealAfterMs,
+  visible = true,
+  focused = visible,
+  path = PATH,
+  quietMs = 0,
+}: {
+  revealAfterMs?: number
+  visible?: boolean
+  focused?: boolean
+  path?: string
+  quietMs?: number
+} = {}) {
   return render(
     <Provider store={store}>
-      <PdfDocument path={PATH} quietMs={0} revealAfterMs={revealAfterMs} />
+      <PdfDocument
+        path={path}
+        visible={visible}
+        focused={focused}
+        quietMs={quietMs}
+        revealAfterMs={revealAfterMs}
+      />
     </Provider>,
   )
 }
@@ -308,6 +379,27 @@ test('fetches the bytes over the seam and hands the viewer a blob URL', async ()
   const blob = (URL.createObjectURL as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Blob
   expect(blob.type).toBe('application/pdf')
   expect(blob.size).toBe(BYTES.byteLength)
+})
+
+test('a departed vault read cannot create a blob URL or revive its PDF', async () => {
+  let finishOld!: (bytes: Uint8Array) => void
+  const oldRead = new Promise<Uint8Array>((resolve) => (finishOld = resolve))
+  seam.read.mockImplementation(({ remote }: { remote: string }) =>
+    remote === REMOTE ? oldRead : Promise.resolve(BYTES),
+  )
+  mount()
+  await waitFor(() => expect(seam.read).toHaveBeenCalledWith({ remote: REMOTE, path: PATH }))
+
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  await waitFor(() => expect(seam.read).toHaveBeenCalledWith({ remote: 'other/vault', path: PATH }))
+  await waitFor(() =>
+    expect(screen.getByTestId('pdf')).toHaveAttribute('data-pdf-src', 'blob:holi/1'),
+  )
+  finishOld(BYTES)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+  expect(seam.read).toHaveBeenCalledTimes(2)
 })
 
 test('themes the viewer through setTheme with Holi tokens', async () => {
@@ -573,6 +665,63 @@ test('writes the exported document back after a mark, and not before', async () 
   expect(Array.from(input.bytes)).toEqual([1, 2, 3, 4])
 })
 
+test('a pending annotation save survives hiding the displayed PDF', async () => {
+  const mounted = mount({ quietMs: 25 })
+  await screen.findByTestId('pdf')
+  act(() => seam.annotationCb!())
+
+  mounted.rerender(
+    <Provider store={store}>
+      <PdfDocument path={PATH} visible={false} focused={false} quietMs={25} />
+    </Provider>,
+  )
+  await waitFor(() => expect(seam.write).toHaveBeenCalledTimes(1), { timeout: 500 })
+})
+
+test('an in-flight save survives hiding and its own mtime suppresses a reload', async () => {
+  let finishWrite!: (value: { updatedAt: string }) => void
+  seam.write.mockReturnValue(new Promise((resolve) => (finishWrite = resolve)))
+  const mounted = mount()
+  await screen.findByTestId('pdf')
+  act(() => seam.annotationCb!())
+  await waitFor(() => expect(seam.write).toHaveBeenCalledTimes(1))
+
+  mounted.rerender(
+    <Provider store={store}>
+      <PdfDocument path={PATH} visible={false} focused={false} quietMs={0} />
+    </Provider>,
+  )
+  finishWrite({ updatedAt: 'T2' })
+  await act(async () => Promise.resolve())
+  act(() => store.set(snapshotAtom, snapshotWith('T2')))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(seam.read).toHaveBeenCalledTimes(1)
+
+  // A subsequent foreign mtime is not swallowed once the save has settled.
+  act(() => store.set(snapshotAtom, snapshotWith('T3')))
+  await waitFor(() => expect(seam.read).toHaveBeenCalledTimes(2))
+})
+
+test('an annotation-save failure is caught without closing the viewer', async () => {
+  const error = new Error('disk unavailable')
+  seam.write.mockRejectedValue(error)
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const mounted = mount()
+  await screen.findByTestId('pdf')
+
+  act(() => seam.annotationCb!())
+  await waitFor(() =>
+    expect(log).toHaveBeenCalledWith(`[pdf] could not save marks into ${PATH}:`, error),
+  )
+  // The failure is contained by PDF's save path; it is not a buffer flush that
+  // can reject the shell's destructive-close guard.
+  expect(screen.getByTestId('pdf')).toBeInTheDocument()
+  // A caught failure does not block closing, and the viewer still releases its URL.
+  const url = screen.getByTestId('pdf').getAttribute('data-pdf-src')!
+  mounted.unmount()
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(url)
+})
+
 test('its own write is not a reason to reload; a foreign change is', async () => {
   mount()
   await screen.findByTestId('pdf')
@@ -594,17 +743,22 @@ test('its own write is not a reason to reload; a foreign change is', async () =>
   expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:holi/1')
 })
 
-test('a key the viewer would claim reaches it only from inside the viewer', async () => {
+test('a recognized keyboard shortcut is executed by the displayed PDF exactly once', async () => {
   mount()
   const viewer = await screen.findByTestId('pdf')
+
+  const shortcut = createEvent.keyDown(viewer, { key: 'h' })
+  fireEvent(viewer, shortcut)
+
+  expect(shortcut.defaultPrevented).toBe(true)
+  expect(seam.execute).toHaveBeenCalledTimes(1)
+  expect(seam.execute).toHaveBeenCalledWith('h')
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/1', id: 'h' }])
+  expect(seam.seen).not.toContain('h')
 
   // From the body (the file tree, say): stopped before the viewer's listener.
   fireEvent.keyDown(document.body, { key: 'h' })
   expect(seam.seen).not.toContain('h')
-
-  // From inside the viewer: through.
-  fireEvent.keyDown(viewer, { key: 'h' })
-  expect(seam.seen).toContain('h')
 
   // A key the viewer does not bind is never touched.
   fireEvent.keyDown(document.body, { key: 'j', metaKey: true })
@@ -619,7 +773,67 @@ test('opening a PDF focuses it, so ⌘F reaches its search, like a note focuses 
   await waitFor(() => expect(document.activeElement).toBe(host))
 
   fireEvent.keyDown(document.activeElement!, { key: 'f', metaKey: true })
-  expect(seam.seen).toContain('f+meta')
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/1', id: 'f+meta' }])
+})
+
+test('a retained PDF only takes focus while its pane is focused', async () => {
+  const mounted = mount({ focused: false })
+  const host = (await screen.findByTestId('pdf')).parentElement!
+  expect(document.activeElement).not.toBe(host)
+
+  mounted.rerender(
+    <Provider store={store}>
+      <PdfDocument path={PATH} visible focused quietMs={0} />
+    </Provider>,
+  )
+  await waitFor(() => expect(document.activeElement).toBe(host))
+})
+
+test('a hidden viewer cannot handle keyboard shortcuts, while a displayed viewer can', async () => {
+  const mounted = mount({ visible: false, focused: false })
+  const viewer = await screen.findByTestId('pdf')
+  fireEvent.keyDown(viewer, { key: 'h' })
+  expect(seam.seen).not.toContain('h')
+
+  mounted.rerender(
+    <Provider store={store}>
+      <PdfDocument path={PATH} visible focused quietMs={0} />
+    </Provider>,
+  )
+  fireEvent.keyDown(viewer, { key: 'h' })
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/1', id: 'h' }])
+  expect(seam.seen).not.toContain('h')
+})
+
+test('two displayed PDFs keep each other’s keyboard shortcuts; hiding one silences it', async () => {
+  const mounted = render(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible focused quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible={true} focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  const viewers = await screen.findAllByTestId('pdf')
+  fireEvent.keyDown(viewers[0]!, { key: 'h' })
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/1', id: 'h' }])
+  expect(seam.seen).not.toContain('h')
+
+  seam.seen.length = 0
+  mounted.rerender(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible focused quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible={false} focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  fireEvent.keyDown(viewers[1]!, { key: 'h' })
+  expect(seam.seen).not.toContain('h')
+  seam.keyboardExecutions.length = 0
+  fireEvent.keyDown(viewers[0]!, { key: 'h' })
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/1', id: 'h' }])
+  expect(seam.seen).not.toContain('h')
 })
 
 /**
@@ -812,6 +1026,115 @@ test('a reload after a foreign change does not take focus back', async () => {
   elsewhere.remove()
 })
 
+test('a hidden earlier instance cannot steal a later displayed PDF shortcut', async () => {
+  render(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible={false} focused={false} quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  const viewers = await screen.findAllByTestId('pdf')
+
+  fireEvent.keyDown(viewers[1]!, { key: 'h' })
+
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/2', id: 'h' }])
+  expect(seam.seen).not.toContain('h')
+})
+
+test('a PDF opened after another viewer registered its listener owns its shortcuts', async () => {
+  const mounted = render(
+    <Provider store={store}>
+      <PdfDocument path={PATH} visible focused quietMs={0} />
+    </Provider>,
+  )
+  await screen.findByTestId('pdf')
+  mounted.rerender(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible focused quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  await waitFor(() => expect(screen.getAllByTestId('pdf')).toHaveLength(2))
+  const viewers = screen.getAllByTestId('pdf')
+  fireEvent.keyDown(viewers[1]!, { key: 'h' })
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/2', id: 'h' }])
+})
+
+test('editable fields and unrecognized or disabled shortcuts pass through', async () => {
+  mount()
+  const viewer = await screen.findByTestId('pdf')
+  const input = document.createElement('input')
+  viewer.append(input)
+
+  fireEvent.keyDown(input, { key: 'h' })
+  fireEvent.keyDown(input, { key: 'Tab' })
+  expect(seam.execute).not.toHaveBeenCalled()
+  expect(seam.seen).not.toContain('h')
+  expect(seam.seen).toContain('tab')
+
+  fireEvent.keyDown(viewer, { key: 'j', metaKey: true })
+  fireEvent.keyDown(viewer, { key: 'p', metaKey: true })
+  expect(seam.seen).toContain('j+meta')
+  expect(seam.seen).toContain('meta+p')
+  expect(seam.execute).not.toHaveBeenCalled()
+})
+
+test('a disabled displayed PDF shortcut cannot fall through to another viewer listener', async () => {
+  seam.disabledCommands['blob:holi/2'] = ['meta+z']
+  const mounted = render(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible={false} focused={false} quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  const viewers = await screen.findAllByTestId('pdf')
+
+  // The hidden earlier viewer can undo, but the displayed clean PDF cannot.
+  // The same mismatch can occur between two displayed split members.
+  fireEvent.keyDown(viewers[1]!, { key: 'z', metaKey: true })
+  expect(seam.keyboardExecutions).toEqual([])
+  expect(seam.seen).not.toContain('meta+z')
+
+  mounted.rerender(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible focused quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  const splitViewers = await screen.findAllByTestId('pdf')
+  delete seam.disabledCommands['blob:holi/2']
+  seam.disabledCommands['blob:holi/1'] = ['meta+z']
+  seam.seen.length = 0
+  fireEvent.keyDown(splitViewers[0]!, { key: 'z', metaKey: true })
+  expect(seam.keyboardExecutions).toEqual([])
+  expect(seam.seen).not.toContain('meta+z')
+})
+
+test('a displayed split member executes its shortcut once, regardless of focus', async () => {
+  render(
+    <Provider store={store}>
+      <>
+        <PdfDocument path={PATH} visible focused quietMs={0} />
+        <PdfDocument path="docs/other.pdf" visible focused={false} quietMs={0} />
+      </>
+    </Provider>,
+  )
+  const viewers = await screen.findAllByTestId('pdf')
+
+  fireEvent.keyDown(viewers[1]!, { key: 'h' })
+
+  expect(seam.execute).toHaveBeenCalledTimes(1)
+  expect(seam.keyboardExecutions).toEqual([{ owner: 'blob:holi/2', id: 'h' }])
+})
+
 test('a disabled viewer command is not claimed, so ⌘P still reaches Holi', async () => {
   mount()
   await screen.findByTestId('pdf')
@@ -1001,4 +1324,21 @@ test('keeps the text and says why when an ask is refused', async () => {
   fireEvent.keyDown(field, { key: 'Enter', ctrlKey: true })
   expect(await screen.findByRole('alert')).toHaveTextContent('That session has ended.')
   expect(field).toHaveValue('Look at this')
+})
+
+test('a retained hidden PDF leaves another view’s key handler intact', async () => {
+  mount({ visible: false })
+  await screen.findByTestId('pdf')
+  const editor = document.createElement('div')
+  const onKey = vi.fn()
+  editor.addEventListener('keydown', onKey)
+  document.body.append(editor)
+  try {
+    fireEvent.keyDown(editor, { key: 'h' })
+    expect(onKey).toHaveBeenCalledTimes(1)
+    expect(seam.seen).not.toContain('h')
+    expect(seam.keyboardExecutions).toEqual([])
+  } finally {
+    editor.remove()
+  }
 })
