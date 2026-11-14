@@ -487,6 +487,40 @@ test('normal Vim f opens host hints without edits; insert and visual mode keep n
   }
 })
 
+test.each([
+  { prefix: 'd', after: '{Escape}w', expected: 'alpha beta\n' },
+  { prefix: 'r', after: '', expected: 'flpha beta\n' },
+  { prefix: '2', after: '{Escape}w', expected: 'alpha beta\n' },
+  { prefix: '"a', after: '{Escape}w', expected: 'alpha beta\n' },
+  { prefix: 'g', after: '{Escape}', expected: 'alpha beta\n' },
+  { prefix: 'z', after: '{Escape}', expected: 'alpha beta\n' },
+])('pending Vim $prefix keeps f inside the editor', async ({ prefix, after, expected }) => {
+  installHintLayout()
+  try {
+    const user = userEvent.setup()
+    read.mockResolvedValue('alpha beta\n')
+    historyList.mockResolvedValue([])
+    setup('src/pending-vim.txt', false, true, true)
+    const content = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('.cm-content')
+      if (node === null) throw new Error('no editor')
+      return node
+    })
+    const { EditorView } = await import('@codemirror/view')
+    const view = EditorView.findFromDOM(content)!
+    content.focus()
+
+    await user.keyboard(prefix)
+    await user.keyboard('f')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    if (after) await user.keyboard(after)
+    expect(view.state.doc.toString()).toBe(expected)
+  } finally {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  }
+})
+
 test('changing Vim preference reconfigures the same dirty editor and retains history', async () => {
   const user = userEvent.setup()
   read.mockResolvedValue('alpha beta\n')
