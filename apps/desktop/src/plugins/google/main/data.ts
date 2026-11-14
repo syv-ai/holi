@@ -235,12 +235,12 @@ export function createGoogleData({
       const next = starred ? (prior[id] ?? 'yellow-star') : null
       await setThreadStarred(api(), id, starred)
       assertActive()
-      await validate?.()
       cache.patchThread(id, {
         added: starred ? ['STARRED'] : [],
         removed: starred ? [] : ['STARRED'],
       })
       try {
+        await validate?.()
         await markers.set(id, next, validate)
       } catch (error) {
         throw new Error(
@@ -339,12 +339,12 @@ export function createGoogleData({
         const starred = marker !== null
         await setThreadStarred(api(), id, starred)
         assertActive()
-        await validate?.()
         cache.patchThread(id, {
           added: starred ? ['STARRED'] : [],
           removed: starred ? [] : ['STARRED'],
         })
         try {
+          await validate?.()
           await markers.set(id, marker, validate)
         } catch (error) {
           throw new Error(

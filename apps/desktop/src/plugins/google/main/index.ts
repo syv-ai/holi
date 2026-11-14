@@ -78,7 +78,7 @@ export const googleMain: MainPlugin = {
           bySub.set(sub, { data, session })
           return data
         }
-        accounts.onChange((sub, reason) => {
+        accounts.onChange(async (sub, reason) => {
           if (sub === null) return
           // Linking another vault does not replace the grant or its shared cache.
           if (bySub.get(sub)?.session === accounts.sessionForSub(sub)) return
@@ -93,11 +93,13 @@ export const googleMain: MainPlugin = {
           if (reason === 'removed') {
             const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
             markersBySub.delete(sub)
-            void markers
-              .purge()
-              .catch((error: unknown) =>
-                console.error(`[google] could not remove personal mail markers: ${String(error)}`),
+            try {
+              await markers.purge()
+            } catch (error) {
+              throw new Error(
+                `Google account was removed, but personal mail markers could not be deleted: ${String(error)}`,
               )
+            }
           }
           // Also erase accounts that never opened a data handle this process.
           const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
