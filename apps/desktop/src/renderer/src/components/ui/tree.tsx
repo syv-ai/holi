@@ -1,5 +1,5 @@
 // ReUI: @reui/tree (`npx shadcn@latest view @reui/tree` shows the published source)
-import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes } from "react"
+import type { CSSProperties, HTMLAttributes } from "react"
 import { createContext, Fragment, useContext } from "react"
 import type { ItemInstance } from "@headless-tree/core"
 import { Slot } from "radix-ui"
@@ -71,10 +71,7 @@ function Tree({
   )
 }
 
-interface TreeItemProps<T = any> extends Omit<
-  ButtonHTMLAttributes<HTMLButtonElement>,
-  "indent"
-> {
+interface TreeItemProps<T = any> extends Omit<HTMLAttributes<HTMLDivElement>, "indent"> {
   item: ItemInstance<T>
   indent?: number
   asChild?: boolean
@@ -136,7 +133,9 @@ function TreeItem<T = any>({
     "aria-expanded": item.isExpanded(),
   }
 
-  const Comp = asChild ? Slot.Root : "button"
+  // Headless-tree provides the treeitem role and keyboard handlers; a div
+  // permits accessible row actions without nesting interactive elements.
+  const Comp = asChild ? Slot.Root : "div"
 
   return (
     <TreeContext.Provider value={{ ...parentContext, currentItem: item }}>

@@ -40,6 +40,45 @@ const writeNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 const snapshotQuery = vi.hoisted(() =>
   vi.fn(async () => (await import('@holi/shared')).emptyVaultSnapshot()),
 )
+const subscriptionScopes = vi.hoisted(() => ({
+  values: [] as {
+    path: string
+    explicit: boolean
+    coveredBy: string | null
+    baseline: string | null
+  }[],
+  fail: false,
+}))
+const subscriptionList = vi.hoisted(() =>
+  vi.fn(async ({ paths }: { paths: string }) => {
+    if (subscriptionScopes.fail) throw new Error('Subscription storage is unavailable.')
+    const requested = JSON.parse(paths) as string[]
+    return requested.map((path) => {
+      const own = subscriptionScopes.values.find((scope) => scope.path === path)
+      const parent = subscriptionScopes.values.find((scope) => scope.path === '')
+      return (
+        own ?? {
+          path,
+          explicit: false,
+          coveredBy: path === '' || !parent ? null : '',
+          baseline: null,
+        }
+      )
+    })
+  }),
+)
+const subscriptionSet = vi.hoisted(() =>
+  vi.fn(async ({ path, enabled }: { path: string; enabled: boolean }) => {
+    subscriptionScopes.values = subscriptionScopes.values.filter((scope) => scope.path !== path)
+    if (enabled)
+      subscriptionScopes.values.push({
+        path,
+        explicit: true,
+        coveredBy: null,
+        baseline: 'f'.repeat(40),
+      })
+  }),
+)
 const capRun = vi.hoisted(() =>
   vi.fn(async ({ name, paramsJson }: { name: string; paramsJson: string }) => {
     if (name === 'agent.providers') return []
@@ -55,6 +94,7 @@ vi.mock('@/lib/trpc', () => ({
       create: { mutate: createNote },
       write: { mutate: writeNote },
     },
+    subscriptions: { list: { query: subscriptionList }, set: { mutate: subscriptionSet } },
     cap: { run: { mutate: capRun } },
     vaults: {
       snapshot: {
@@ -70,6 +110,9 @@ function KeyedFiles({ onOpen }: { onOpen: (path: string) => void }) {
 }
 
 function mount({ tasks = true }: { tasks?: boolean } = {}) {
+  subscriptionScopes.values = []
+  subscriptionList.mockClear()
+  subscriptionSet.mockClear()
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
   store.set(showHiddenByVaultAtom, {})
@@ -165,6 +208,41 @@ function mount({ tasks = true }: { tasks?: boolean } = {}) {
   )
   return { run, makeLink, onOpen, store }
 }
+
+test('vault and folder subscription controls persist explicit scopes and explain inherited coverage', async () => {
+  mount()
+  const vault = await screen.findByRole('button', { name: 'Subscribe this vault' })
+  await userEvent.click(vault)
+  await waitFor(() =>
+    expect(subscriptionSet).toHaveBeenCalledWith({ remote: 'mara/notes', path: '', enabled: true }),
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /Unsubscribe this vault/ })).toBeInTheDocument(),
+  )
+  expect(
+    await screen.findByRole('button', {
+      name: /Subscribe kunder explicitly.*covered by the vault/,
+    }),
+  ).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: /Subscribe kunder explicitly/ }))
+  await waitFor(() =>
+    expect(subscriptionSet).toHaveBeenCalledWith({
+      remote: 'mara/notes',
+      path: 'kunder',
+      enabled: true,
+    }),
+  )
+})
+
+test('subscription storage errors offer retry without hiding the tree', async () => {
+  subscriptionScopes.fail = true
+  mount()
+  expect(await screen.findByText('Subscription storage is unavailable.')).toBeInTheDocument()
+  expect(screen.getByText('kunder')).toBeInTheDocument()
+  subscriptionScopes.fail = false
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByRole('button', { name: 'Subscribe this vault' })).toBeInTheDocument()
+})
 
 test.each(['header New', 'More file actions', 'context menu'])(
   'the task dialog takes focus after the menu releases it (%s)',
