@@ -137,6 +137,10 @@ interface HarnessFileStatus {
 }
 
 export interface HarnessRegistry {
+  /** Stop receiving shared configuration changes and drain this handle's writes. */
+  dispose(): Promise<void>
+  /** Observe a change from any activation sharing this owner. */
+  subscribe(listener: () => void): () => void
   /** Every agent, the built-in ones first. */
   providers(): readonly AgentProvider[]
   /** A harness as it is now, presets included. */
@@ -176,13 +180,142 @@ export interface HarnessRegistryDeps {
 
 const same = (a: Harness, b: Harness): boolean => JSON.stringify(a) === JSON.stringify(b)
 
-export async function createHarnessRegistry(deps: HarnessRegistryDeps): Promise<HarnessRegistry> {
-  const custom = deps.custom ?? ((h: Harness) => harnessProvider(h))
+interface HarnessConfigOwner {
+  ready(): Promise<void>
+  current(): HarnessFile
+  subscribe(listener: () => void): () => void
+  reload(): Promise<void>
+  save(harness: Harness, create: boolean): Promise<void>
+  remove(id: string): Promise<void>
+  reset(): Promise<void>
+  drain(): Promise<void>
+}
+
+const owners = new Map<string, { owner: HarnessConfigOwner; references: number }>()
+
+function createConfigOwner(deps: HarnessRegistryDeps): HarnessConfigOwner {
   const keepBad = deps.keepBad ?? (async () => {})
   let file: HarnessFile = { version: 1, harnesses: [] }
+  const listeners = new Set<() => void>()
+  let queue: Promise<void> = Promise.resolve()
+  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
+    const task = queue.then(operation)
+    queue = task.then(
+      () => {},
+      () => {},
+    )
+    return task
+  }
+  const apply = (next: HarnessFile, notify = true): void => {
+    file = next
+    if (notify) for (const listener of listeners) listener()
+  }
+  const initial = enqueue(async () => apply(await deps.store.read(), false))
+  const write = (change: (current: HarnessFile) => HarnessFile['harnesses']): Promise<void> =>
+    enqueue(async () => {
+      await initial
+      const next = await deps.store.update(async (current) => {
+        if (current.unreadable !== undefined) {
+          throw new Error(
+            `Holi could not read this machine's agents file. ${current.unreadable} It changes nothing in it until you fix the file, or reset it in Settings, General, Agents.`,
+          )
+        }
+        if ((current.ignored ?? 0) > 0) await keepBad()
+        return { version: 1, harnesses: change(current) }
+      })
+      apply(next)
+    })
+  return {
+    ready: () => initial,
+    current: () => file,
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    reload: () =>
+      enqueue(async () => {
+        await initial
+        apply(await deps.store.read())
+      }),
+    save: (h, create) =>
+      write((current) => {
+        const exists = current.harnesses.some((item) => item.id === h.id) || isIntegration(h.id)
+        if (create && exists)
+          throw new Error(`An agent with the id ${h.id} exists. Choose another.`)
+        if (!create && !exists) throw new Error(`There is no agent ${h.id} to change.`)
+        const preset = presetOf(h.id)
+        const rest = current.harnesses.filter((item) => item.id !== h.id)
+        if (preset !== undefined && same(h, preset)) return rest
+        if (!current.harnesses.some((item) => item.id === h.id)) return [...rest, h]
+        return current.harnesses.map((item) => (item.id === h.id ? h : item))
+      }),
+    remove: (id) =>
+      write((current) => {
+        if (!isIntegration(id) && !current.harnesses.some((item) => item.id === id)) {
+          throw new Error(`There is no agent ${id}.`)
+        }
+        return current.harnesses.filter((item) => item.id !== id)
+      }),
+    reset: () =>
+      enqueue(async () => {
+        await initial
+        const next = await deps.store.update(async () => {
+          await keepBad()
+          return { version: 1, harnesses: [] }
+        })
+        apply(next)
+      }),
+    drain: () => queue,
+  }
+}
+
+export async function acquireHarnessRegistry(
+  key: string,
+  deps: HarnessRegistryDeps,
+): Promise<HarnessRegistry> {
+  let entry = owners.get(key)
+  if (entry === undefined) {
+    entry = { owner: createConfigOwner(deps), references: 0 }
+    owners.set(key, entry)
+  }
+  entry.references += 1
+  let registry: HarnessRegistry
+  try {
+    registry = await createHarnessRegistry(deps, entry.owner)
+  } catch (err) {
+    entry.references -= 1
+    if (entry.references === 0) {
+      await entry.owner.drain()
+      if (owners.get(key) === entry) owners.delete(key)
+    }
+    throw err
+  }
+  let released = false
+  return {
+    ...registry,
+    async dispose() {
+      if (released) return
+      released = true
+      await registry.dispose()
+      entry!.references -= 1
+      if (entry!.references === 0) {
+        await entry!.owner.drain()
+        if (owners.get(key) === entry) owners.delete(key)
+      }
+    },
+  }
+}
+
+export async function createHarnessRegistry(
+  deps: HarnessRegistryDeps,
+  owner: HarnessConfigOwner = createConfigOwner(deps),
+): Promise<HarnessRegistry> {
+  await owner.ready()
+  const custom = deps.custom ?? ((h: Harness) => harnessProvider(h))
   let added: AgentProvider[] = []
+  const currentFile = (): HarnessFile => owner.current()
   const presetNow = (id: HarnessIntegration): Harness =>
-    file.harnesses.find((h) => h.id === id && h.integration === id) ?? presetOf(id)!
+    currentFile().harnesses.find((h) => h.id === id && h.integration === id) ?? presetOf(id)!
   const bins = Object.fromEntries(
     INTEGRATIONS.map((id) => [
       id,
@@ -194,32 +327,32 @@ export async function createHarnessRegistry(deps: HarnessRegistryDeps): Promise<
     ]),
   ) as Record<HarnessIntegration, () => string | null>
   const builtIns = INTEGRATIONS.map((id) => deps.builtIns[id](() => presetNow(id), bins[id]))
-  const apply = (next: HarnessFile): void => {
-    file = next
-    added = next.harnesses.filter((h) => h.integration === undefined).map(custom)
+  const listeners = new Set<() => void>()
+  const refresh = (): void => {
+    added = currentFile()
+      .harnesses.filter((h) => h.integration === undefined)
+      .map(custom)
+    for (const listener of listeners) listener()
   }
-  apply(await deps.store.read())
-
+  refresh()
+  const unsubscribe = owner.subscribe(refresh)
+  let disposed = false
   const get = (id: string): Harness | undefined =>
-    isIntegration(id) ? presetNow(id) : file.harnesses.find((h) => h.id === id)
-
-  /** Write `change` of the file as read now: never over a file Holi could
-   *  not read, and a copy kept first of one with entries it left out. */
-  const write = async (change: (harnesses: readonly Harness[]) => Harness[]): Promise<void> => {
-    apply(
-      await deps.store.update(async (current) => {
-        if (current.unreadable !== undefined) {
-          throw new Error(
-            `Holi could not read this machine's agents file. ${current.unreadable} It changes nothing in it until you fix the file, or reset it in Settings, General, Agents.`,
-          )
-        }
-        if ((current.ignored ?? 0) > 0) await keepBad()
-        return { version: 1, harnesses: change(current.harnesses) }
-      }),
-    )
-  }
+    isIntegration(id) ? presetNow(id) : currentFile().harnesses.find((h) => h.id === id)
 
   return {
+    async dispose() {
+      if (disposed) return
+      disposed = true
+      unsubscribe()
+      listeners.clear()
+      await owner.drain()
+    },
+    subscribe(listener) {
+      if (disposed) return () => {}
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
     providers: () => [...builtIns, ...added],
     get,
     resolve: (id) => {
@@ -232,42 +365,17 @@ export async function createHarnessRegistry(deps: HarnessRegistryDeps): Promise<
         const harness = presetNow(p.integration!)
         return { harness, builtIn: true, edited: !same(harness, p) }
       }),
-      ...file.harnesses
-        .filter((h) => h.integration === undefined)
+      ...currentFile()
+        .harnesses.filter((h) => h.integration === undefined)
         .map((harness) => ({ harness, builtIn: false, edited: false })),
     ],
-    status: () => ({ ignored: file.ignored ?? 0, unreadable: file.unreadable ?? null }),
-    async reload() {
-      apply(await deps.store.read())
-    },
-    async save(h, create) {
-      const exists = get(h.id) !== undefined
-      if (create && exists) throw new Error(`An agent with the id ${h.id} exists. Choose another.`)
-      if (!create && !exists) throw new Error(`There is no agent ${h.id} to change.`)
-      const preset = presetOf(h.id)
-      await write((current) => {
-        const rest = current.filter((x) => x.id !== h.id)
-        // A preset put back as Holi has it is no entry at all.
-        const keep = preset === undefined || !same(h, preset)
-        const at = current.findIndex((x) => x.id === h.id)
-        return keep
-          ? at === -1
-            ? [...rest, h]
-            : current.map((x) => (x.id === h.id ? h : x))
-          : rest
-      })
-    },
-    async remove(id) {
-      if (get(id) === undefined) throw new Error(`There is no agent ${id}.`)
-      await write((current) => current.filter((h) => h.id !== id))
-    },
-    async reset() {
-      apply(
-        await deps.store.update(async () => {
-          await keepBad()
-          return { version: 1, harnesses: [] }
-        }),
-      )
-    },
+    status: () => ({
+      ignored: currentFile().ignored ?? 0,
+      unreadable: currentFile().unreadable ?? null,
+    }),
+    reload: () => owner.reload(),
+    save: (h, create) => owner.save(h, create),
+    remove: (id) => owner.remove(id),
+    reset: () => owner.reset(),
   }
 }
