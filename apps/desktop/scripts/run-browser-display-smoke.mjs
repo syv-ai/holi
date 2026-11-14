@@ -92,6 +92,7 @@ try {
   assert.equal(result.ok, true)
   for (const check of [
     'production-host-and-browser-activations',
+    'electron43-webrequest-native-window-and-frame-provenance',
     'queued-native-action-expires-on-tab-hide',
     'queued-action-expires-across-return',
     'hidden-native-input-and-placement-are-inert',
@@ -110,7 +111,7 @@ try {
     'pending-reconcile-stop-all-detaches-to-null',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
-  assert(result.checks.length >= 17, 'native smoke produced too few assertions')
+  assert(result.checks.length >= 18, 'native smoke produced too few assertions')
   assert(
     typeof result.electron === 'string' && result.electron.length > 0,
     'missing Electron version',

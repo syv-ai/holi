@@ -24,6 +24,7 @@ const HOST_TAIL = '.app'
  * lookup and no collisions. The fixed last label is load-bearing: URL parsers
  * read a host whose last label is numeric as IPv4, and `41` is valid hex.
  */
+/** @public */
 export function appHost(bundle: string): string {
   let hex = ''
   for (const byte of new TextEncoder().encode(bundle)) hex += byte.toString(16).padStart(2, '0')
