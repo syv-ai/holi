@@ -1806,6 +1806,7 @@ test('queued paragraph requests launch together as one rewrite run', async () =>
   expect(launch.prompt).toContain('Shorten it')
   expect(launch.prompt).toContain('Exact target: "Ship the beta"')
   expect(launch.prompt).toContain('Exact target: "Keep the title"')
+  expect(screen.getByText(/Rewrite batch \(2\)/)).toBeVisible()
 })
 
 test('external deletion of a duplicate paragraph requires explicit target reselection', async () => {
@@ -1826,6 +1827,19 @@ test('external deletion of a duplicate paragraph requires explicit target resele
 test('duplicate rewrite targets carry distinct saved-document locations', async () => {
   const user = userEvent.setup()
   open('# Plan\n\nRepeat this paragraph.\n\nRepeat this paragraph.\n')
+  const sharedEditor = ((await editorBox()) as WithEditor).editor
+  const heading = sharedEditor.state.doc.child(0)
+  const repeated = sharedEditor.state.doc.child(1)
+  act(() =>
+    sharedEditor.view.dispatch(
+      sharedEditor.state.tr.replaceWith(0, sharedEditor.state.doc.content.size, [
+        heading,
+        repeated,
+        repeated,
+      ]),
+    ),
+  )
+  expect(sharedEditor.state.doc.child(1)).toBe(sharedEditor.state.doc.child(2))
   const { editor, askAi } = await selectForAskAi('Repeat this paragraph')
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
@@ -1852,7 +1866,10 @@ test('duplicate rewrite targets carry distinct saved-document locations', async 
 
   await waitFor(() => expect(cap).toHaveBeenCalledOnce())
   const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.prompt).toContain(`document=\"${PATH}\" body-block=\"2\"`)
   expect(launch.prompt).toContain(`document=\"${PATH}\" body-block=\"3\"`)
+  expect(launch.prompt).toContain('Prefix in target block: ""')
+  expect(launch.prompt).toContain('Suffix in target block: "."')
   expect(launch.prompt).toContain('identical-block-occurrence=\"1\"')
   expect(launch.prompt).toContain('identical-block-occurrence=\"2\"')
   expect(launch.prompt).toContain('Previous block: "Plan"')
@@ -1876,12 +1893,25 @@ test('batch submission locks queue changes and refuses a changed revision after 
   expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toBeDisabled()
   await user.click(screen.getByRole('button', { name: 'Submit batch' }))
   expect(cap).not.toHaveBeenCalled()
-  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' changed while saving'))
+  expect(editor.isEditable).toBe(false)
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' blocked edit'))
+  expect(editor.getMarkdown()).not.toContain('blocked edit')
+  // Disk reloads still cross the read-only editor, unlike local transactions.
+  act(() =>
+    editor.view.dispatch(
+      editor.state.tr
+        .insertText(' external change', editor.state.doc.content.size - 1)
+        .setMeta('preventUpdate', true)
+        .setMeta('externalDocumentReload', true),
+    ),
+  )
 
   await act(async () => pending.resolve())
   await waitFor(() => expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled())
   expect(cap).not.toHaveBeenCalled()
   expect(screen.getByRole('textbox', { name: 'Request for target 1' })).toHaveValue('Improve')
+  expect(editor.isEditable).toBe(true)
+  expect(screen.getByRole('alert')).toHaveTextContent('document changed')
 })
 
 test('disposed document cannot launch a batch after its deferred save', async () => {
@@ -2016,4 +2046,38 @@ test('Stop on a vault app wins over its app landing after it', async () => {
   appWritten('notes/Plan.app')
   expect(await screen.findByText('Stopped')).toBeInTheDocument()
   expect(onOpen).not.toHaveBeenCalled()
+})
+
+test.each(['completed', 'failed', 'aborted'] as const)(
+  'a submitted batch locks the editor until the session is %s',
+  async (outcome) => {
+    const user = userEvent.setup()
+    open('Ship the beta.\n')
+    const { editor, askAi } = await selectForAskAi('Ship the beta')
+    await user.click(askAi)
+    await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+    await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
+    expect(editor.isEditable).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+    await waitFor(() => expect(cap).toHaveBeenCalledOnce())
+    await waitFor(() => expect(editor.isEditable).toBe(false))
+    expect(screen.queryByRole('textbox', { name: 'Request for target 1' })).not.toBeInTheDocument()
+    act(() => store.set(sessions, [{ id: 'abc12345', name: 'Batch', state: 'idle', outcome }]))
+    await waitFor(() => expect(editor.isEditable).toBe(true))
+  },
+)
+
+test('stopping a submitted batch unlocks its document', async () => {
+  const user = userEvent.setup()
+  open('Ship the beta.\n')
+  const { editor, askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Add to batch…' }))
+  await user.type(screen.getByRole('textbox', { name: 'Request for target 1' }), 'Improve')
+  await user.click(screen.getByRole('button', { name: 'Submit batch' }))
+  const stop = await screen.findByRole('button', { name: 'Stop' })
+  expect(editor.isEditable).toBe(false)
+  await user.click(stop)
+  await waitFor(() => expect(editor.isEditable).toBe(true))
+  expect(screen.getByText('Stopped')).toBeVisible()
 })

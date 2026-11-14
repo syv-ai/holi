@@ -242,7 +242,12 @@ export function DocumentFormatBubble({
                       Custom instruction…
                     </DropdownMenuItem>
                     {onAddToBatch ? (
-                      <DropdownMenuItem onClick={() => onAddToBatch('', selectedPassage())}>
+                      <DropdownMenuItem
+                        disabled={
+                          editor.state.selection.$from.parent !== editor.state.selection.$to.parent
+                        }
+                        onClick={() => onAddToBatch('', selectedPassage())}
+                      >
                         <PencilLineIcon aria-hidden="true" />
                         Add to batch…
                       </DropdownMenuItem>

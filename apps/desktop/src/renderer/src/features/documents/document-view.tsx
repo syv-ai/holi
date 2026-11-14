@@ -299,6 +299,7 @@ function DocumentEditor({
   const reloadFailed = useRef(false)
   const frozen = useRef(false)
   const doneFreeze = useRef(false)
+  const batchFreeze = useRef(false)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -345,7 +346,7 @@ function DocumentEditor({
         addProseMirrorPlugins: () => [
           new Plugin({
             filterTransaction: (transaction) =>
-              (!frozen.current && !doneFreeze.current) ||
+              (!frozen.current && !doneFreeze.current && !batchFreeze.current) ||
               !transaction.docChanged ||
               transaction.getMeta('preventUpdate') === true,
           }),
@@ -428,7 +429,8 @@ function DocumentEditor({
     reselection,
     mapTargets,
     batchSubmitting,
-  } = useDocumentAgentPrompt({ editor, path, agent, handlers, save })
+    batchError,
+  } = useDocumentAgentPrompt({ editor, path, agent, handlers, save, freeze: freezeBatch })
   mapTargetsRef.current = mapTargets
 
   const comments = useDocumentComments({ editor, path, docs, head, save })
@@ -481,6 +483,18 @@ function DocumentEditor({
     : null
 
   handlers.current.pressThread = comments.pressThread
+
+  function freezeBatch(value: boolean) {
+    batchFreeze.current = value
+    if (editor && !editor.isDestroyed)
+      editor.setEditable(
+        !value &&
+          !lockedRef.current &&
+          visibleRef.current &&
+          !frozen.current &&
+          !doneFreeze.current,
+      )
+  }
 
   /** The document as it would be saved. */
   function markdown(): string {
@@ -566,7 +580,11 @@ function DocumentEditor({
         (value) => {
           frozen.current = value
           editor?.setEditable(
-            !value && visibleRef.current && !doneFreeze.current && !lockedRef.current,
+            !value &&
+              visibleRef.current &&
+              !doneFreeze.current &&
+              !batchFreeze.current &&
+              !lockedRef.current,
           )
         },
       ),
@@ -651,7 +669,9 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked && visible && !frozen.current && !doneFreeze.current)
+    editor.setEditable(
+      !locked && visible && !frozen.current && !doneFreeze.current && !batchFreeze.current,
+    )
   }, [editor, locked, visible])
 
   // A finished edit clears its pill on its own. A finished vault app opens
@@ -759,7 +779,9 @@ function DocumentEditor({
       doneInFlight.current = false
       if (!editor.isDestroyed) {
         doneFreeze.current = false
-        editor.setEditable(!lockedRef.current && activity.displayed && !frozen.current)
+        editor.setEditable(
+          !lockedRef.current && activity.displayed && !frozen.current && !batchFreeze.current,
+        )
       }
       setDonePending(false)
     }
@@ -811,7 +833,7 @@ function DocumentEditor({
         onKeyDown={handleViewKeyDown}
       >
         {/* Locked while a run edits the document: nothing in it answers. */}
-        <div inert={locked} className="flex min-h-0 flex-1 flex-col">
+        <div inert={locked || batchSubmitting} className="flex min-h-0 flex-1 flex-col">
           {/* On the page's own ground, a hairline under it; the text scrolls
               beneath the line, not under the header. */}
           <DocumentHeader
@@ -820,7 +842,7 @@ function DocumentEditor({
             path={path}
             title={documentTitle(path)}
             saveState={saveState}
-            locked={locked}
+            locked={locked || batchSubmitting}
             taskDone={
               isTaskPath(path)
                 ? { pending: donePending, error: doneError, onDone: finishTask }
@@ -909,15 +931,17 @@ function DocumentEditor({
                   >
                     <h2 className="text-sm font-medium">Rewrite batch ({rewriteQueue.length})</h2>
                     {rewriteQueue.map((item, index) => (
-                      <div key={item.id} className="flex min-w-0 items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate text-sm">{item.passage}</span>
+                      <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
+                          {item.passage}
+                        </span>
                         <Input
                           aria-label={`Request for target ${index + 1}`}
                           value={item.instruction}
                           placeholder="Change this passage…"
                           onChange={(event) => editBatchItem(item.id, event.target.value)}
                           disabled={batchSubmitting}
-                          className="max-w-56"
+                          className="min-w-0 flex-1 basis-full sm:max-w-56 sm:basis-auto"
                         />
                         {!item.valid ? (
                           <span role="status" className="text-sm text-muted-foreground">
@@ -931,7 +955,7 @@ function DocumentEditor({
                           onClick={() => reselection(item.id)}
                           disabled={batchSubmitting}
                         >
-                          {item.valid ? 'Reselect' : 'Use selection'}
+                          {item.valid ? 'Show target' : 'Use selection'}
                         </Button>
                         <Button
                           type="button"
@@ -944,6 +968,16 @@ function DocumentEditor({
                         </Button>
                       </div>
                     ))}
+                    {batchError ? (
+                      <p role="alert" className="text-destructive text-sm">
+                        {batchError}
+                      </p>
+                    ) : null}
+                    {batchSubmitting ? (
+                      <p role="status" className="text-muted-foreground text-sm">
+                        Submitting batch…
+                      </p>
+                    ) : null}
                     <div className="flex justify-end">
                       <Button
                         type="button"

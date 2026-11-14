@@ -40,12 +40,14 @@ export function useDocumentAgentPrompt({
   agent,
   handlers,
   save,
+  freeze,
 }: {
   editor: Editor | null
   path: string
   agent: ReturnType<typeof useDocumentAgent>
   handlers: React.RefObject<PromptHandlers>
   save: () => Promise<void>
+  freeze: (value: boolean) => void
 }) {
   const activity = useEditorActivity(editor)
   /** Whether the agent prompt is open. */
@@ -56,6 +58,7 @@ export function useDocumentAgentPrompt({
   const rewriteQueueRef = useRef(rewriteQueue)
   rewriteQueueRef.current = rewriteQueue
   const [batchSubmitting, setBatchSubmitting] = useState(false)
+  const [batchError, setBatchError] = useState<string | null>(null)
   const batchInFlight = useRef(false)
 
   function updateQueue(update: (queue: RewriteQueue) => RewriteQueue) {
@@ -116,17 +119,18 @@ export function useDocumentAgentPrompt({
     // Lock synchronously before save yields, so inputs, removals, reselections,
     // and duplicate submits cannot change the request being saved/launched.
     batchInFlight.current = true
+    setBatchError(null)
+    freeze(true)
     setBatchSubmitting(true)
     const isCurrentVisit = activity.capture()
     const savedRevision = editor.state.doc
     const getLocation = (item: RewriteQueue[number]) => {
-      const targetBlock = savedRevision.resolve(item.from).parent
       const blocks: string[] = []
       let targetIndex = -1
-      savedRevision.descendants((node) => {
+      savedRevision.descendants((node, pos) => {
         if (!node.isTextblock) return
         blocks.push(node.textContent)
-        if (node === targetBlock) targetIndex = blocks.length - 1
+        if (pos === item.blockFrom) targetIndex = blocks.length - 1
         return false
       })
       const current = blocks[targetIndex] ?? ''
@@ -148,6 +152,8 @@ export function useDocumentAgentPrompt({
           `identical-block-occurrence="${location.occurrence}">\n` +
           `Previous block: ${JSON.stringify(location.previous)}\n` +
           `Exact target: ${JSON.stringify(item.passage)}\n` +
+          `Prefix in target block: ${JSON.stringify(savedRevision.textBetween(item.blockFrom + 1, item.from))}\n` +
+          `Suffix in target block: ${JSON.stringify(savedRevision.textBetween(item.to, item.blockTo - 1))}\n` +
           `Current block: ${JSON.stringify(location.current)}\n` +
           `Next block: ${JSON.stringify(location.next)}\n</target>`,
       )
@@ -162,8 +168,11 @@ export function useDocumentAgentPrompt({
         !editor.state.doc.eq(savedRevision) ||
         rewriteQueueRef.current !== batch ||
         batch.some((item) => !item.valid)
-      )
+      ) {
+        if (isCurrentVisit())
+          setBatchError('The document changed before submission. Review the targets and try again.')
         return
+      }
       const started = await agent.start(
         'rewrite',
         `In the saved document ${path}, apply each numbered request only to its corresponding target. ` +
@@ -173,12 +182,17 @@ export function useDocumentAgentPrompt({
           request,
         passages,
         isCurrentVisit,
+        `Rewrite batch (${batch.length})`,
       )
       if (started && isCurrentVisit() && rewriteQueueRef.current === batch) updateQueue(() => [])
-    } catch {
-      // Keep the queue available for retry after save or launch failure.
+    } catch (error) {
+      if (isCurrentVisit())
+        setBatchError(
+          error instanceof Error ? error.message : 'Could not submit the batch. Try again.',
+        )
     } finally {
       batchInFlight.current = false
+      freeze(false)
       setBatchSubmitting(false)
     }
   }
@@ -252,6 +266,7 @@ export function useDocumentAgentPrompt({
     addToBatch,
     submitBatch,
     batchSubmitting,
+    batchError,
     mapTargets: (mapping: Mapping, doc: ProseMirrorNode, externalReload = false) =>
       updateQueue((queue) => mapRewriteTargets(queue, mapping, doc, externalReload)),
     removeFromBatch: (id: string) => {

@@ -256,6 +256,7 @@ export function useDocumentAgent(path: string, focused = true) {
     request: string,
     passage?: string,
     currentVisit: () => boolean = () => focused,
+    displayLabel?: string,
   ) => {
     if (remote === null || store.get(activeRemoteAtom) !== remote) return false
     if (kind === 'vault-app') {
@@ -265,7 +266,9 @@ export function useDocumentAgent(path: string, focused = true) {
       return store.get(documentRunsAtom)[path]?.status !== 'failed'
     }
     const name = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')
-    const label = kind === 'rewrite' ? request.charAt(0).toUpperCase() + request.slice(1) : request
+    const label =
+      displayLabel ??
+      (kind === 'rewrite' ? request.charAt(0).toUpperCase() + request.slice(1) : request)
     setRuns((all) => ({
       ...all,
       [path]: {
