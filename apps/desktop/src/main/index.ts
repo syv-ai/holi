@@ -47,6 +47,7 @@ import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
 import { createAppFrameLeases } from './plugin-host/app-frame-leases'
+import { createNativeRequestWindows } from './plugin-host/native-request-windows'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
@@ -536,34 +537,11 @@ async function main(): Promise<void> {
   // requester in webRequest before Chromium hands the URL to protocol.handle.
   // Ambiguous concurrent identical URLs fail closed instead of selecting a
   // window by guesswork.
-  const appRequestWindows = new Map<string, { window: BrowserWindow | null }[]>()
-  const requestWindows = new WeakMap<Request, BrowserWindow | null>()
-  electronSession.defaultSession.webRequest.onBeforeRequest(
-    { urls: ['holi-app://*/*'] },
-    (details, callback) => {
-      let window: BrowserWindow | null = null
-      try {
-        const contents =
-          details.webContentsId === undefined
-            ? undefined
-            : webContents.fromId(details.webContentsId)
-        window = contents === undefined ? null : BrowserWindow.fromWebContents(contents)
-      } catch {
-        window = null
-      }
-      const pending = appRequestWindows.get(details.url) ?? []
-      const context = { window }
-      pending.push(context)
-      appRequestWindows.set(details.url, pending)
-      setTimeout(() => {
-        const index = pending.indexOf(context)
-        if (index >= 0) pending.splice(index, 1)
-        if (pending.length === 0 && appRequestWindows.get(details.url) === pending)
-          appRequestWindows.delete(details.url)
-      }, 5_000).unref()
-      callback({})
-    },
-  )
+  const windowForAppRequest = createNativeRequestWindows({
+    webRequest: electronSession.defaultSession.webRequest,
+    contentsForId: (id) => webContents.fromId(id),
+    windowForContents: (contents) => BrowserWindow.fromWebContents(contents),
+  })
 
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
   for (const entry of SCHEMES) {
@@ -573,15 +551,7 @@ async function main(): Promise<void> {
         active: () => host.active(),
         runs: async (owner, root) => (await plugins.enabled(root)).has(owner),
         appFrames,
-        windowForRequest: (request) => {
-          if (requestWindows.has(request)) return requestWindows.get(request) ?? null
-          const pending = appRequestWindows.get(request.url)
-          if (pending === undefined || pending.length !== 1) return null
-          const window = pending[0]!.window
-          appRequestWindows.delete(request.url)
-          requestWindows.set(request, window)
-          return window
-        },
+        windowForRequest: windowForAppRequest,
       }),
     )
   }
