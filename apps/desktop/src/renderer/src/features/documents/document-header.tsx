@@ -128,7 +128,7 @@ export function DocumentHeader({
           title={title}
           badge={
             locked ? (
-              <Badge variant="outline" className="shrink-0 font-normal">
+              <Badge variant="secondary" className="shrink-0 font-normal">
                 Locked
               </Badge>
             ) : undefined

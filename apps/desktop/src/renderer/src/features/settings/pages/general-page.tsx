@@ -22,10 +22,10 @@ import { useSettingsVisible } from '../settings-visibility'
 
 const githubUrl = (path: string) => `https://github.com/${path}`
 
-const SYNC_BADGE: Record<SyncLabel['tone'], 'success-light' | 'info-light' | 'warning-light'> = {
-  quiet: 'success-light',
-  busy: 'info-light',
-  warn: 'warning-light',
+const SYNC_BADGE: Record<SyncLabel['tone'], 'success' | 'info' | 'warning'> = {
+  quiet: 'success',
+  busy: 'info',
+  warn: 'warning',
 }
 
 /**
@@ -50,9 +50,7 @@ function RepoSizeRow({ remote }: { remote: string }) {
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium tabular-nums">{formatRepoSize(sizeKb)}</span>
             {percent >= 60 ? (
-              <Badge variant={percent >= 90 ? 'destructive-light' : 'warning-light'}>
-                {percent}%
-              </Badge>
+              <Badge variant={percent >= 90 ? 'destructive' : 'warning'}>{percent}%</Badge>
             ) : (
               <span className="text-muted-foreground text-xs tabular-nums">{percent}%</span>
             )}

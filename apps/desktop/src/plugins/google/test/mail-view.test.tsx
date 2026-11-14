@@ -9,11 +9,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@/test/rend
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../renderer/mail-view'
-import { getDefaultStore } from 'jotai'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
 import { activeRemoteAtom } from '@/plugin-api'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { getDefaultStore } from 'jotai'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
@@ -42,6 +41,11 @@ const createTaskMock = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
+  status: () => ({ account: { sub: 'mail-view-account', email: 'ada@syv.ai' }, missingScopes: [] }),
+  allAccounts: () => ({
+    accounts: [{ sub: 'mail-view-account', email: 'ada@syv.ai' }],
+    current: 'mail-view-account',
+  }),
   search: (p) => threadMock(p),
   thread: (p) => readMock(p),
   mailCounts: () => countsMock(),
@@ -419,7 +423,7 @@ test('groups the stamp, the count and the meeting badge apart from the text', as
   const rail = document.querySelector('[data-thread-meta]')
 
   expect(rail).not.toBeNull()
-  expect(rail!.textContent).toMatch(/\d{1,2}:\d{2}/)
+  expect(rail!.textContent).toMatch(/\d{1,2}[.:]\d{2}/)
   expect(rail).toHaveTextContent('(3)')
   expect(rail!.querySelector('[aria-label="Meeting invite"]')).not.toBeNull()
   // The truncating text is NOT in here.
@@ -1932,6 +1936,39 @@ async function openForCompose() {
   return user
 }
 
+test('narrow composition hides the list without remounting, then restores the reader', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  const row = await screen.findByRole('button', { name: /Q2 budget/ })
+  const group = row.closest('[data-slot="resizable-panel-group"]')!
+  const list = group.querySelector('#mail-list')!
+  const handle = group.querySelector('[data-slot="resizable-handle"]')!
+  const reader = group.querySelector('[data-mail-pane="reader"]')!
+
+  expect(group).not.toHaveClass('@container/mail')
+  expect(group).not.toHaveClass('@max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden')
+
+  await user.click(screen.getByRole('button', { name: 'New message' }))
+  const composer = await screen.findByRole('region', { name: 'Compose mail' })
+  const subject = within(composer).getByRole('textbox', { name: 'Subject' })
+  expect(group).toHaveClass('@container/mail')
+  expect(group).toHaveClass('@max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden')
+  expect(handle).toHaveClass('@max-[40rem]/mail:hidden')
+
+  await user.type(subject, 'A narrow-window draft')
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBe(composer)
+  expect(within(composer).getByRole('textbox', { name: 'Subject' })).toBe(subject)
+
+  await user.click(within(composer).getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(group).not.toHaveClass('@container/mail')
+  expect(group).not.toHaveClass('@max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden')
+  expect(group.querySelector('#mail-list')).toBe(list)
+  expect(handle).not.toHaveClass('@max-[40rem]/mail:hidden')
+  expect(group.querySelector('[data-mail-pane="reader"]')).toBe(reader)
+})
+
 test('reply opens a composer inside the thread, not a browser', async () => {
   const user = await openForCompose()
 
@@ -2073,7 +2110,7 @@ test('opening a draft loads it into the composer', async () => {
   await user.click(await screen.findByText('Half written'))
 
   await screen.findByRole('region', { name: 'Compose mail' })
-  expect(draftMock).toHaveBeenCalledWith({ id: 'd-1' })
+  expect(draftMock).toHaveBeenCalledWith({ id: 'd-1', expectedAccountSub: 'mail-view-account' })
 })
 
 test('opening a draft closes the thread it would otherwise hide behind', async () => {
@@ -2140,7 +2177,9 @@ test('Continue draft opens the newest draft in the open thread', async () => {
 
   await moreAction(user, 'Continue your draft')
 
-  await waitFor(() => expect(draftMock).toHaveBeenCalledWith({ id: 'new' }))
+  await waitFor(() =>
+    expect(draftMock).toHaveBeenCalledWith({ id: 'new', expectedAccountSub: 'mail-view-account' }),
+  )
 })
 
 test('no Continue draft on a thread that has none', async () => {
@@ -2174,32 +2213,77 @@ test('the thread list comes back when Mail is chosen again', async () => {
  * A dialog, where a reply is inline: a fresh message has no context to
  * preserve.
  */
-test('new message opens the compose dialog rather than an inline composer', async () => {
+test('confirmed discard closes a dirty new message without recreating it', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: 'New message' }))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' throw away')
+
+  await user.click(screen.getByRole('button', { name: 'Discard' }))
+  await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(discardDraftMock).toHaveBeenCalledWith({
+    draftId: 'd-1',
+    expectedAccountSub: 'mail-view-account',
+  })
+  // Any debounced save may already have created a server draft; discarding it
+  // must not trigger another create from the unmount lifecycle.
+  const callsAtCompletion = saveDraftMock.mock.calls.length
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  expect(saveDraftMock).toHaveBeenCalledTimes(callsAtCompletion)
+  expect(screen.getByText('Pick a thread to read it')).toBeInTheDocument()
+})
+
+test('confirmed discard removes a saved draft and restores the previous reader', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  draftsMock.mockResolvedValue([draft()])
+  draftMock.mockResolvedValue({
+    draftId: 'd-1',
+    threadId: null,
+    to: [],
+    cc: [],
+    bcc: [],
+    subject: 'Half written',
+    markdown: 'body',
+    html: null,
+    foreign: false,
+  })
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await chooseMailbox(user, 'Drafts')
+  await user.click(await screen.findByText('Half written'))
+  await screen.findByRole('textbox', { name: 'Subject' })
+  await user.click(screen.getByRole('button', { name: 'Discard' }))
+  await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+
+  await waitFor(() => expect(discardDraftMock).toHaveBeenCalledTimes(1))
+  expect(discardDraftMock).toHaveBeenCalledWith({
+    draftId: 'd-1',
+    expectedAccountSub: 'mail-view-account',
+  })
+  expect(await screen.findByRole('article')).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  expect(saveDraftMock).not.toHaveBeenCalled()
+})
+
+test('new message opens in the reader pane without a compose dialog', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
 
   await user.click(await screen.findByRole('button', { name: 'New message' }))
 
-  // The plugin dialog is the contract with core's dialog host: it renders
-  // what the plugin hands it.
-  expect(openedDialog).toHaveBeenCalledWith(expect.objectContaining({ id: 'plugin', size: 'lg' }))
-  const { render: content } = openedDialog.mock.calls[0]![0] as {
-    render: (close: () => void) => React.ReactNode
-  }
-  render(
-    <Dialog open>
-      <DialogContent>{content(() => {})}</DialogContent>
-    </Dialog>,
-  )
-  // Named by its visible title, and the body field by its own label.
-  expect(await screen.findByRole('dialog', { name: 'New message' })).toBeInTheDocument()
+  expect(openedDialog).not.toHaveBeenCalled()
+  expect(await screen.findByRole('heading', { name: 'New message' })).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Subject' })).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Message' })).toBeInTheDocument()
 })
 
-test('new message does not disturb an open thread', async () => {
-  // The dialog must not close what is being read behind it.
+test('new message replaces the open thread in the reader pane', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
@@ -2208,5 +2292,181 @@ test('new message does not disturb an open thread', async () => {
 
   await user.click(screen.getByRole('button', { name: 'New message' }))
 
+  expect(screen.queryByRole('article')).not.toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'New message' })).toBeInTheDocument()
+})
+
+test('thread navigation saves the active composer before displaying the destination', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Next thread' })]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' latest')
+
+  let finish!: (result: { id: string }) => void
+  saveDraftMock.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+  await user.click(screen.getByRole('button', { name: /Next thread/ }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  finish({ id: 'saved-draft' })
+
+  await screen.findByText('Next thread')
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  expect(readMock).toHaveBeenLastCalledWith({ id: 't2' })
+  expect(saveDraftMock.mock.calls[0]![0]).toMatchObject({
+    expectedAccountSub: 'mail-view-account',
+    mail: { subject: 'Re: Q2 budget latest' },
+  })
+})
+
+test('failed navigation save keeps the composer and does not open the thread', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Next thread' })]))
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' latest')
+  await user.click(screen.getByRole('button', { name: /Next thread/ }))
+
+  expect(await screen.findByText('offline')).toBeInTheDocument()
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(readMock).not.toHaveBeenCalledWith({ id: 't2' })
+})
+
+test.each([
+  ['Archive this thread', archiveMock],
+  ['Move this thread to trash', trashMock],
+] as const)(
+  '%s waits for a reply save and refuses the write on failure',
+  async (label, mutation) => {
+    const user = userEvent.setup()
+    threadMock.mockResolvedValue(page([summary()]))
+    saveDraftMock.mockRejectedValue(new Error('offline'))
+    render(<MailView />)
+    await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+    await screen.findByRole('article')
+    await user.click(screen.getByRole('button', { name: 'Reply' }))
+    await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' latest')
+    await user.click(screen.getByRole('button', { name: label }))
+
+    expect(await screen.findByText('offline')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+    expect(mutation).not.toHaveBeenCalled()
+    expect(screen.getByRole('article')).toBeInTheDocument()
+  },
+)
+
+test('Close waits for the latest dirty reply save, then restores its thread', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  const subject = screen.getByRole('textbox', { name: 'Subject' })
+  await user.clear(subject)
+  await user.type(subject, 'Latest reply subject')
+
+  let finish!: (result: { id: string }) => void
+  saveDraftMock.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
   expect(screen.getByRole('article')).toBeInTheDocument()
+  expect(saveDraftMock.mock.calls[0]![0]).toMatchObject({
+    expectedAccountSub: 'mail-view-account',
+    mail: { subject: 'Latest reply subject' },
+  })
+
+  finish({ id: 'saved-draft' })
+
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(screen.getByRole('article')).toBeInTheDocument()
+})
+
+test('failed dirty Close keeps the subject editable and Retry lets Close finish', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  const subject = screen.getByRole('textbox', { name: 'Subject' })
+  await user.clear(subject)
+  await user.type(subject, 'Keep this subject')
+  let rejectSave!: (error: Error) => void
+  saveDraftMock.mockImplementationOnce(
+    () => new Promise((_resolve, reject) => (rejectSave = reject)),
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  rejectSave(new Error('offline'))
+
+  await waitFor(() => {
+    expect(screen.getByText('offline')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('Keep this subject')
+  })
+  saveDraftMock.mockResolvedValue({ id: 'saved-draft' })
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2))
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(screen.getByRole('article')).toBeInTheDocument()
+  expect(saveDraftMock.mock.calls[1]![0]).toMatchObject({
+    expectedAccountSub: 'mail-view-account',
+    mail: { subject: 'Keep this subject' },
+  })
+})
+
+test('mailbox change waits for a dirty save before showing Sent', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+  await user.click(screen.getByRole('button', { name: 'New message' }))
+  const subject = screen.getByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'Sent after save')
+
+  let finish!: (result: { id: string }) => void
+  saveDraftMock.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+  await user.click(screen.getByRole('button', { name: 'Choose a mailbox' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Sent' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  expect(queryOf(0).mailbox).toBeUndefined()
+  expect(threadMock).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+
+  finish({ id: 'saved-draft' })
+
+  await waitFor(() => expect(queryOf(1)).toMatchObject({ mailbox: 'sent' }))
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Choose a mailbox' })).toHaveTextContent('Sent')
+})
+
+test('failed mailbox-change save keeps the mailbox and editable text without requesting Sent', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+  await user.click(screen.getByRole('button', { name: 'New message' }))
+  const subject = screen.getByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'Keep me in All mail')
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+
+  await user.click(screen.getByRole('button', { name: 'Choose a mailbox' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Sent' }))
+
+  expect(await screen.findByText('offline')).toBeInTheDocument()
+  expect(threadMock).toHaveBeenCalledTimes(1)
+  expect(queryOf(0).mailbox).toBeUndefined()
+  expect(screen.getByRole('button', { name: 'Choose a mailbox' })).not.toHaveTextContent('Sent')
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('Keep me in All mail')
 })

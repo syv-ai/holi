@@ -325,11 +325,11 @@ export function SpeechKeyDialog({
           {status !== null && <ServiceForm key={status.service.url ?? 'syv'} onSaved={setSaid} />}
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {status?.set === true ? (
-              <Badge variant="success-light">Key set</Badge>
+              <Badge variant="success">Key set</Badge>
             ) : status?.ready === true ? (
               <Badge variant="secondary">No key</Badge>
             ) : (
-              <Badge variant="warning-light">Key not set</Badge>
+              <Badge variant="warning">Key not set</Badge>
             )}
             <span>{where}</span>
           </div>

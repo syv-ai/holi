@@ -51,6 +51,7 @@
   /* Warnings — Destructive actions, and anything that has gone wrong. */
   --destructive: var(--color-red-400);
   --destructive-foreground: var(--color-red-950);
+  --destructive-solid-foreground: var(--color-zinc-950);
 
   /* Edges — What separates one thing from another. */
   --border: color-mix(in oklab, var(--color-zinc-700) 45%, var(--color-zinc-800));
@@ -113,6 +114,7 @@
   /* Warnings — Destructive actions, and anything that has gone wrong. */
   --destructive: var(--color-red-600);
   --destructive-foreground: #ffffff;
+  --destructive-solid-foreground: #fafafa;
 
   /* Edges — What separates one thing from another. */
   --border: var(--color-neutral-300);

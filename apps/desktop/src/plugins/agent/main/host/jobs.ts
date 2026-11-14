@@ -59,7 +59,7 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, type ChildProcess } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
@@ -81,7 +81,10 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import {
   CapabilityError,
   defaultProbePid,
+  killChildTree,
+  killTree,
   readableOrNull,
+  spawnOwnedProgram,
   type PidState,
 } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
@@ -122,9 +125,11 @@ type SpawnJob = (
   opts: { cwd: string; env: Record<string, string> },
 ) => ChildProcess
 
-/** Its own group, so a stop reaches what it started too. */
+/** Its own group, so a stop reaches what it started too. (On Windows the
+ *  child is not detached, which would only open a console window for what it
+ *  starts; `killTree` stops its tree by the root pid.) */
 const defaultSpawnJob: SpawnJob = (bin, args, { cwd, env }) =>
-  spawn(bin, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  spawnOwnedProgram(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
 
 export interface JobsDeps {
   vault: VaultRef
@@ -436,11 +441,32 @@ async function filesUnder(dir: string, prefix = ''): Promise<string[]> {
   return out
 }
 
-const defaultCommandOf = (pid: number): string | null => {
+/** A live process's command line: `ps` where there is one, else (Windows)
+ *  the process table through PowerShell. Null when the pid is not running.
+ * @public exported for its test */
+export const defaultCommandOf = (
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+): string | null => {
+  if (!Number.isInteger(pid) || pid <= 1) return null
   try {
-    return execFileSync('ps', ['-o', 'args=', '-p', String(pid)], {
+    const [file, args] =
+      platform === 'win32'
+        ? [
+            'powershell.exe',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
+            ],
+          ]
+        : ['ps', ['-o', 'args=', '-p', String(pid)]]
+    return execFileSync(file as string, args as string[], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+      timeout: 10_000,
     }).trim()
   } catch {
     return null
@@ -515,13 +541,21 @@ export function createJobs(deps: JobsDeps): Jobs {
   function signal(job: Job, sig: 'SIGTERM' | 'SIGKILL'): void {
     const child = job.child
     if (child === null || child.pid === undefined) return
+    if (process.platform === 'win32') {
+      // This ChildProcess is the ownership helper itself. Killing its process
+      // handle closes the Job Object; never target a Windows pid after a probe.
+      try {
+        child.kill(sig)
+      } catch {
+        // Raced with its exit.
+      }
+      return
+    }
     switch (probePid(child.pid)) {
       case 'group-leader':
-        try {
-          process.kill(-child.pid, sig)
-        } catch {
-          // Reaped between the probe and here.
-        }
+        // Reaped between the probe and here is a no-op; on Windows a child that
+        // has exited is not stopped by pid, which may be another program's.
+        killChildTree(child, sig)
         return
       case 'alive':
         try {
@@ -550,13 +584,9 @@ export function createJobs(deps: JobsDeps): Jobs {
   /** Kill whatever the job's process left running in its group, so nothing
    *  changes the folder while it is copied back or the vault after its turn. */
   function killGroup(job: Job): void {
-    const pid = job.child?.pid
-    if (pid === undefined || pid <= 1) return
-    try {
-      process.kill(-pid, 'SIGKILL')
-    } catch {
-      // The group is already empty.
-    }
+    // The Windows ownership helper closes only after its Job Object is empty.
+    // POSIX still needs the group sweep after the root closes.
+    if (process.platform !== 'win32' && job.child) void killChildTree(job.child, 'SIGKILL')
   }
 
   /** Move the current file aside atomically, then publish the replacement
@@ -937,11 +967,8 @@ export function createJobs(deps: JobsDeps): Jobs {
       const pid = Number(first.trim())
       if (!Number.isInteger(pid) || pid <= 1 || probePid(pid) !== 'group-leader') continue
       if (folder === '' || !(commandOf(pid) ?? '').includes(folder)) continue
-      try {
-        process.kill(-pid, 'SIGKILL')
-      } catch {
-        // Gone since.
-      }
+      // Gone since: nothing to do.
+      killTree(pid, 'SIGKILL')
     }
     await rm(deps.scratchRoot, { recursive: true, force: true }).catch(() => undefined)
   }

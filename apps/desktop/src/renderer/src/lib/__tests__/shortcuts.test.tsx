@@ -118,6 +118,13 @@ describe('resolveShortcut', () => {
     expect(idOf(ev({ metaKey: true, key: 'w' }), ctx())).toBeNull()
   })
 
+  test('Alt+Mod+S resolves to the scratchpad action', () => {
+    expect(idOf(ev({ metaKey: true, altKey: true, key: 's' }), ctx())).toBe('scratchpad.open')
+    expect(idOf(ev({ ctrlKey: true, altKey: true, key: 's' }), ctx({ mac: false }))).toBe(
+      'scratchpad.open',
+    )
+  })
+
   test('⌘9 is the ninth key of one row', () => {
     const match = resolveShortcut(ev({ metaKey: true, key: '9' }), ctx())
     expect(match?.shortcut.id).toBe('tab.goto')
@@ -144,6 +151,17 @@ describe('the dispatcher', () => {
       </>
     )
   }
+
+  test('the scratchpad key invokes the registered shell action', () => {
+    const openScratchpad = vi.fn()
+    render(
+      <Provider store={createStore()}>
+        <Host handlers={{ 'scratchpad.open': openScratchpad }} />
+      </Provider>,
+    )
+    fireEvent.keyDown(document.body, { key: 's', metaKey: true, altKey: true })
+    expect(openScratchpad).toHaveBeenCalledOnce()
+  })
 
   test('runs a live key on the page and not in a field', () => {
     const show = vi.fn()

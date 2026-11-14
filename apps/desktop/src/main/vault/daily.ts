@@ -15,6 +15,7 @@ import {
   isUntouchedDailyNote,
   vaultRelPath,
 } from '@holi/shared'
+import { isScratchpadPath } from './scratchpad'
 import { scanBackrefs } from './backrefs'
 import { renameNote } from './rename'
 import { absPathFor, listFiles, removeDocFile, writeAtomic } from './vault-files'
@@ -50,7 +51,8 @@ export async function sweepDaily(
   let archived = 0
   let deleted = 0
   for (const path of await listFiles(root)) {
-    if (path.includes('/') || !path.endsWith('.md') || path === todayFile) continue
+    if (path.includes('/') || !path.endsWith('.md') || path === todayFile || isScratchpadPath(path))
+      continue
     const text = await readFile(`${root}/${path}`, 'utf8').catch(() => null)
     if (text === null || !isDailyNote(text)) continue
     // A root-level daily is named by its own stem, so the filename minus `.md`
