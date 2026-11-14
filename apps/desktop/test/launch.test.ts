@@ -403,6 +403,33 @@ describe('killTree', () => {
     }
   })
 
+  it.runIf(process.platform !== 'win32')(
+    'does not signal a new group leader named by an exited child record',
+    async () => {
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore',
+      })
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve)
+        child.once('error', reject)
+      })
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+      const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+      try {
+        expect(defaultProbePid(child.pid!)).toBe('group-leader')
+        expect(killChildTree({ pid: child.pid, exitCode: 0, signalCode: null }, 'SIGKILL')).toBe(
+          false,
+        )
+        expect(kill).not.toHaveBeenCalled()
+      } finally {
+        kill.mockRestore()
+        child.kill('SIGKILL')
+        await closed
+      }
+    },
+  )
+
   it.runIf(process.platform === 'win32')(
     'really stops a program and what it started',
     async () => {

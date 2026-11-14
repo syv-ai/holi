@@ -121,6 +121,9 @@ export function killChildTree(
     return killTree(child.pid, signal, platform, taskkill)
   }
   const leader = defaultProbePid(child.pid, platform) === 'group-leader'
+  // An exited child cannot still be a leader: this pid now belongs to a
+  // different process, even if that process also leads its own group.
+  if (leader && (child.exitCode !== null || child.signalCode !== null)) return false
   if (!leader && child.exitCode === null && child.signalCode === null) return false
   if (!leader) {
     // The leader can exit before its descendants. A group id remains reserved
