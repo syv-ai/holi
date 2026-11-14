@@ -553,9 +553,12 @@ export const moveNotesAtom = atom(
   ) => {
     const remote = get(activeRemoteAtom)
     const revision = get(activeRemoteRevisionAtom)
+    const openRequest = get(openRequestAtom)
     const stillOwned = () =>
       get(activeRemoteAtom) === remote &&
       get(activeRemoteRevisionAtom) === revision &&
+      get(openRequestAtom) === openRequest &&
+      get(openedRemoteAtom) === remote &&
       (expectedRemote === undefined || remote === expectedRemote)
     if (!remote || !stillOwned() || (moves.length === 0 && folders.length === 0)) return
     // Keep every awaited stage on the initiating vault. In particular, a
