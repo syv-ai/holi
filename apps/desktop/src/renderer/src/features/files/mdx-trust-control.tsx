@@ -14,7 +14,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { trpc } from '@/lib/trpc'
 import { sessionAtom } from '@/state/session'
-import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/state/vaults'
+import { activeRemoteAtom, activeRemoteRevisionValueAtom, openedRemoteAtom } from '@/state/vaults'
 
 // Every source view in this renderer refreshes after a vault-wide change.
 const trustRevisionAtom = atom(0)
@@ -29,6 +29,7 @@ type Props = { remote: string; path: string; visible: boolean; focused: boolean 
 export function MdxTrustControl({ remote, path, visible, focused }: Props) {
   const store = useStore()
   const activeRemote = useAtomValue(activeRemoteAtom)
+  const openedRemote = useAtomValue(openedRemoteAtom)
   const revision = useAtomValue(activeRemoteRevisionValueAtom)
   const viewer = useAtomValue(sessionAtom)
   const [trustRevision, refresh] = useAtom(trustRevisionAtom)
@@ -52,11 +53,13 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
   const current = useCallback(
     () =>
       liveOwner.current === owner &&
+      openedRemote === remote &&
       store.get(activeRemoteAtom) === remote &&
+      store.get(openedRemoteAtom) === remote &&
       store.get(activeRemoteRevisionValueAtom) === revision &&
       store.get(sessionAtom) === viewer &&
       visible,
-    [owner, store, remote, revision, viewer, visible],
+    [owner, store, remote, revision, viewer, visible, openedRemote],
   )
 
   useEffect(() => {

@@ -3,7 +3,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { act, render, screen, waitFor } from '@/test/render'
 import { sessionAtom } from '@/state/session'
-import { activeRemoteAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom } from '@/state/vaults'
 import { MdxTrustControl } from '../mdx-trust-control'
 
 const status = vi.fn()
@@ -40,6 +40,7 @@ function deferred<T>() {
 function setup() {
   const store = createStore()
   store.set(activeRemoteAtom, 'fixture/vault')
+  store.set(openedRemoteAtom, 'fixture/vault')
   store.set(sessionAtom, { login: 'fixture-person' })
   const tree = (props: { path?: string; visible?: boolean; focused?: boolean } = {}) => (
     <Provider store={store}>
@@ -59,6 +60,24 @@ async function review() {
   await userEvent.click(await screen.findByRole('button', { name: 'Review MDX trust' }))
   return screen.findByRole('dialog')
 }
+
+test('selected vault waits for open readiness before querying trust status', async () => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'fixture/vault')
+  store.set(sessionAtom, { login: 'fixture-person' })
+  render(
+    <Provider store={store}>
+      <MdxTrustControl remote="fixture/vault" path="first.mdx" visible focused />
+    </Provider>,
+  )
+
+  expect(screen.getByRole('status')).toHaveTextContent('Checking MDX trust')
+  expect(status).not.toHaveBeenCalled()
+
+  act(() => store.set(openedRemoteAtom, 'fixture/vault'))
+  await screen.findByText('Not approved')
+  expect(status).toHaveBeenCalledExactlyOnceWith({ remote: 'fixture/vault' })
+})
 
 test('confirmation explains vault-wide future changes and cancellation never grants trust', async () => {
   setup()
@@ -130,6 +149,9 @@ test('A to B to A closes the old confirmation even when transitions batch into o
   })
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(approve).not.toHaveBeenCalled()
+  expect(status).toHaveBeenCalledTimes(1)
+  act(() => store.set(openedRemoteAtom, 'fixture/vault'))
+  await screen.findByText('Not approved')
   await review()
   expect(screen.getByRole('dialog')).toBeInTheDocument()
 })
@@ -161,7 +183,11 @@ test('old status cannot replace a new A activation after departure and return', 
     store.set(activeRemoteAtom, 'fixture/other')
     store.set(activeRemoteAtom, 'fixture/vault')
   })
+  expect(status).toHaveBeenCalledTimes(1)
+  expect(screen.queryByText('Not approved')).not.toBeInTheDocument()
+  act(() => store.set(openedRemoteAtom, 'fixture/vault'))
   await screen.findByText('Not approved')
+  expect(status).toHaveBeenCalledTimes(2)
   await act(async () => oldStatus.resolve({ ...unapproved, trusted: true }))
   expect(screen.queryByText('Approved')).not.toBeInTheDocument()
 })
@@ -211,6 +237,7 @@ test('hidden and unfocused source controls cannot approve, and losing focus clos
 test('vault-wide mutations refresh other visible split source views', async () => {
   const store = createStore()
   store.set(activeRemoteAtom, 'fixture/vault')
+  store.set(openedRemoteAtom, 'fixture/vault')
   store.set(sessionAtom, { login: 'fixture-person' })
   render(
     <Provider store={store}>
@@ -250,6 +277,7 @@ test('a pending revoke refreshes both split views after focus moves to its peer'
   revoke.mockReturnValueOnce(action.promise)
   const store = createStore()
   store.set(activeRemoteAtom, 'fixture/vault')
+  store.set(openedRemoteAtom, 'fixture/vault')
   store.set(sessionAtom, { login: 'fixture-person' })
   const split = (firstFocused: boolean) => (
     <Provider store={store}>
@@ -272,6 +300,7 @@ test('an approval refreshes its peer even when the originating source view unmou
   approve.mockReturnValueOnce(action.promise)
   const store = createStore()
   store.set(activeRemoteAtom, 'fixture/vault')
+  store.set(openedRemoteAtom, 'fixture/vault')
   store.set(sessionAtom, { login: 'fixture-person' })
   const split = (firstVisible: boolean) => (
     <Provider store={store}>
