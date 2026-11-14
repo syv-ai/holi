@@ -808,56 +808,70 @@ describe('the lifecycle', () => {
     expect(a.window()).toBeNull()
   })
 
-  it('keeps display detachment callbacks live while stop waits, without restoring authority', async () => {
-    let ctx: PluginCtx | undefined
-    const displayed: (string | null)[] = []
-    let gate: { wait: Promise<void>; entered(): void } | undefined
-    const plugin: MainPlugin = {
-      info: { id: 'fake', label: 'Fake', default: true },
-      activate(context) {
-        ctx = context
-        context.onDisplayChange((remote) => displayed.push(remote))
-        return () => {}
-      },
-    }
-    const delayed: MainPlugin = {
-      info: { id: 'delayed', label: 'Delayed', default: false },
-      async activate() {
-        const pending = gate
-        if (pending) {
-          pending.entered()
-          await pending.wait
-        }
-        return () => {}
-      },
-    }
-    const win = {} as import('electron').BrowserWindow
-    const root = await tempDir()
-    const { host } = rig({ plugins: [plugin, delayed], window: () => win })
-    await writeVaultSettings(root, { committed: { plugins: { delayed: false } } })
-    await host.reconcile(openVault('A', root), 'open')
-    host.setDisplayed('A')
-    const lease = ctx!.presentationLease()
-    expect(ctx!.window()).toBe(win)
-    let entered!: () => void
-    const waiting = new Promise<void>((resolve) => (entered = resolve))
-    let release!: () => void
-    gate = {
-      wait: new Promise<void>((resolve) => (release = resolve)),
-      entered,
-    }
-    await writeVaultSettings(root, { committed: { plugins: { delayed: true } } })
-    const reconcile = host.reconcile(openVault('A', root), 'settings')
-    await waiting
-    const stopping = host.stop('A')
-    expect(lease()).toBe(false)
-    expect(ctx!.window()).toBeNull()
-    host.setDisplayed('B')
-    expect(displayed).toEqual(['A', 'B'])
-    release()
-    gate = undefined
-    await Promise.all([reconcile, stopping])
-  })
+  it.each([
+    ['stop', 'B'],
+    ['stop', null],
+    ['stopAll', 'B'],
+    ['stopAll', null],
+  ] as const)(
+    'keeps detachment live during %s to %s without restoring authority',
+    async (method, target) => {
+      let ctx: PluginCtx | undefined
+      const displayed: (string | null)[] = []
+      let gate: { wait: Promise<void>; entered(): void } | undefined
+      const plugin: MainPlugin = {
+        info: { id: 'fake', label: 'Fake', default: true },
+        activate(context) {
+          ctx = context
+          context.onDisplayChange((remote) => displayed.push(remote))
+          return () => {}
+        },
+      }
+      const delayed: MainPlugin = {
+        info: { id: 'delayed', label: 'Delayed', default: false },
+        async activate() {
+          const pending = gate
+          if (pending) {
+            pending.entered()
+            await pending.wait
+          }
+          return () => {}
+        },
+      }
+      const win = {} as import('electron').BrowserWindow
+      const root = await tempDir()
+      const { host } = rig({ plugins: [plugin, delayed], window: () => win })
+      await writeVaultSettings(root, { committed: { plugins: { delayed: false } } })
+      await host.reconcile(openVault('A', root), 'open')
+      host.setDisplayed('A')
+      const lease = ctx!.presentationLease()
+      expect(ctx!.window()).toBe(win)
+      let entered!: () => void
+      const waiting = new Promise<void>((resolve) => (entered = resolve))
+      let release!: () => void
+      gate = {
+        wait: new Promise<void>((resolve) => (release = resolve)),
+        entered,
+      }
+      await writeVaultSettings(root, { committed: { plugins: { delayed: true } } })
+      const reconcile = host.reconcile(openVault('A', root), 'settings')
+      await waiting
+      const stopping = method === 'stop' ? host.stop('A') : host.stopAll()
+      expect(lease()).toBe(false)
+      expect(ctx!.window()).toBeNull()
+      host.setDisplayed(target)
+      expect(displayed).toEqual(['A', target])
+      host.setDisplayed('A')
+      expect(lease()).toBe(false)
+      expect(ctx!.presentationLease()()).toBe(false)
+      expect(ctx!.window()).toBeNull()
+      release()
+      gate = undefined
+      await Promise.all([reconcile, stopping])
+      host.setDisplayed(target)
+      expect(displayed).toEqual(['A', target, 'A'])
+    },
+  )
 
   it('revokes an old context on reactivation and exposes display changes through ctx', async () => {
     const contexts: PluginCtx[] = []

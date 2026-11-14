@@ -60,10 +60,11 @@ async function run(): Promise<void> {
   const listeners = new Set<(message: unknown) => void>()
   const sent: PluginEvent[] = []
   let gate: { wait: Promise<void>; entered(): void } | undefined
+  let activationGate: { wait: Promise<void>; entered(): void } | undefined
   const delayed: MainPlugin = {
     info: { id: 'delayed', label: 'Delayed', default: false },
     async activate() {
-      const pending = gate
+      const pending = activationGate
       if (pending) {
         pending.entered()
         await pending.wait
@@ -77,7 +78,14 @@ async function run(): Promise<void> {
     userData: join(root, 'profile'),
     coreSeeds: [],
     active: () => null,
-    rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
+    rootFor: async (remote) => {
+      const pending = gate
+      if (pending) {
+        pending.entered()
+        await pending.wait
+      }
+      return roots[remote as keyof typeof roots] ?? null
+    },
     events: {
       send: (_channel, event) => {
         sent.push(event)
@@ -293,10 +301,12 @@ async function run(): Promise<void> {
   host.setDisplayed(null)
   assert.equal(win.contentView.children.length, 0)
   mark('departure-to-null-removes-replacement')
-  // Reconcile can hold disposal behind root lookup. Display departure must
-  // detach the native child before that lookup is released, for both stop APIs.
+  // Reconcile can hold disposal behind plugin activation. Display departure must
+  // detach the native child before that activation is released, for both stop APIs.
   for (const [index, [stop, target, check]] of [
     [() => host.stop('A'), 'B', 'pending-reconcile-stop-detaches-to-b'],
+    [() => host.stop('A'), null, 'pending-reconcile-stop-detaches-to-null'],
+    [() => host.stopAll(), 'B', 'pending-reconcile-stop-all-detaches-to-b'],
     [() => host.stopAll(), null, 'pending-reconcile-stop-all-detaches-to-null'],
   ].entries()) {
     if (index > 0) {
@@ -312,17 +322,33 @@ async function run(): Promise<void> {
     place('A', rect)
     await tick()
     assert.equal(win.contentView.children.length, 1)
-    const pending = block()
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    activationGate = {
+      wait: new Promise<void>((resolve) => {
+        release = resolve
+      }),
+      entered,
+    }
     writeFileSync(
       join(roots.A, '.holi/settings/plugins.yaml'),
       'plugins:\n  browser: true\n  delayed: true\n',
     )
     const reconciling = host.reconcile(vault('A'), 'settings')
-    await pending.waiting
+    await waiting
     const stopping = stop()
     host.setDisplayed(target)
     assert.equal(win.contentView.children.length, 0, 'stopping owner detaches synchronously')
-    pending.release()
+    host.setDisplayed('A')
+    place('A', rect)
+    await tick()
+    assert.equal(win.contentView.children.length, 0, 'stopping owner cannot reattach on return')
+    host.setDisplayed(target)
+    activationGate = undefined
+    release()
     await Promise.all([reconciling, stopping])
     mark(check)
   }
