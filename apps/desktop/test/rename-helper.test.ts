@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { SCRATCHPAD_PATH } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { moveNotes } from '../src/main/vault/move'
 import { renameNote } from '../src/main/vault/rename'
@@ -61,6 +62,16 @@ describe('renameNote', () => {
     expect(await readFile(join(root, 'ref.md'), 'utf8')).toBe(
       'see [[sub/new.md]] and again [[sub/new.md]]',
     )
+  })
+
+  it('does not rewrite the scratchpad as an incidental rename referrer', async () => {
+    const bytes = Buffer.from('[[old.md]]  \nno final newline')
+    const root = await vault({ [SCRATCHPAD_PATH]: '', 'old.md': 'body' })
+    await writeFile(join(root, SCRATCHPAD_PATH), bytes)
+
+    const result = await renameNote(root, 'old.md', 'new.md')
+    expect(result.rewritten).toEqual([])
+    expect(await readFile(join(root, SCRATCHPAD_PATH))).toEqual(bytes)
   })
 
   it("takes the note's comment threads along, merging with any left at the destination", async () => {
