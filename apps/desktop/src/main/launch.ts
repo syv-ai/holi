@@ -338,7 +338,7 @@ export function execProgram(
       if (!traceEnabled) return
       traceBuffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk
       const lines = traceBuffer.split(/\r?\n/)
-      traceBuffer = lines.pop() ?? ''
+      traceBuffer = (lines.pop() ?? '').slice(-512)
       for (const line of lines) {
         const match =
           /^\[holi-owned-process\] phase=([\w-]+) helperPid=(\d+) rootPid=(-?\d+) state=([\w=.-]+)$/.exec(

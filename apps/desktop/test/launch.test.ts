@@ -385,7 +385,7 @@ describe('killTree', () => {
 
 describe('execProgram', () => {
   it.runIf(process.platform === 'win32')(
-    'reports cold-start timeout phase and drains any started root tree',
+    'reports cold-start timeout using the actual root state',
     async () => {
       const { execProgram } = await import('../src/main/launch')
       const script =
@@ -422,9 +422,45 @@ describe('execProgram', () => {
       })
       expect(result.err).not.toBeNull()
       expect(result.err?.code).toBe('ETIMEDOUT')
-      const pid = Number(result.out.trim())
-      expect(pid).toBeGreaterThan(1)
-      expect(defaultProbePid(pid, 'win32')).toBe('gone')
+      expect(metadata?.helperStarted).toBe(true)
+      if (metadata?.rootStarted) {
+        expect(metadata.rootPid).toBeGreaterThan(1)
+        expect(defaultProbePid(metadata.rootPid!, 'win32')).toBe('gone')
+        const descendantPid = Number(result.out.trim())
+        if (descendantPid > 1) expect(defaultProbePid(descendantPid, 'win32')).toBe('gone')
+      } else {
+        expect(metadata?.rootPid).toBeNull()
+        expect(result.out).toBe('')
+      }
+    },
+    30_000,
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'times out a running root and grandchild within the original execution budget',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-exec-running-timeout-'))
+      const pidFile = join(dir, 'grandchild')
+      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
+      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});setInterval(()=>0,1000)`
+      const { execProgram } = await import('../src/main/launch')
+      try {
+        const result = await new Promise<{ err: Error | null }>((resolve) => {
+          execProgram(
+            process.execPath,
+            ['-e', script],
+            { env: process.env, timeoutMs: 3000, maxBuffer: 65536, encoding: 'utf8' },
+            (err) => resolve({ err }),
+          )
+        })
+        expect(result.err?.code).toBe('ETIMEDOUT')
+        await vi.waitFor(async () =>
+          expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
+        )
+        expect(defaultProbePid(Number(await readFile(pidFile, 'utf8')), 'win32')).toBe('gone')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
     },
     30_000,
   )
@@ -465,36 +501,45 @@ describe('execProgram', () => {
   it.runIf(process.platform === 'win32')(
     'keeps a successful explicitly detached Claude background child alive',
     async () => {
-      const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-'))
-      const pidFile = join(dir, 'pid')
-      const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:'ignore',windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();console.log('backgrounded · 12345678 · test')`
       const { execProgram } = await import('../src/main/launch')
-      let pid = 0
-      try {
-        const result = await new Promise<{ err: Error | null; out: string }>((resolve) => {
-          execProgram(
-            process.execPath,
-            ['-e', script],
-            {
-              env: process.env,
-              timeoutMs: 10_000,
-              maxBuffer: 65536,
-              encoding: 'utf8',
-              retainDescendantsOnSuccess: true,
+      for (const tracing of [false, true]) {
+        const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-'))
+        const pidFile = join(dir, 'pid')
+        const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:'ignore',windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();process.stdout.write('backgrounded · 12345678 · test');process.stderr.write('detached stderr payload')`
+        let pid = 0
+        try {
+          const result = await new Promise<{ err: Error | null; out: string; stderr: string }>(
+            (resolve) => {
+              execProgram(
+                process.execPath,
+                ['-e', script],
+                {
+                  env: { ...process.env, HOLI_OWNED_PROCESS_TRACE: tracing ? '1' : '0' },
+                  timeoutMs: 10_000,
+                  maxBuffer: 65536,
+                  encoding: 'utf8',
+                  retainDescendantsOnSuccess: true,
+                },
+                (err, out, stderr) => resolve({ err, out, stderr }),
+              )
             },
-            (err, out) => resolve({ err, out }),
           )
-        })
-        expect(result.err).toBeNull()
-        expect(result.out).toContain('backgrounded')
-        await vi.waitFor(async () =>
-          expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
-        )
-        pid = Number(await readFile(pidFile, 'utf8'))
-        expect(defaultProbePid(pid, 'win32')).toBe('group-leader')
-      } finally {
-        if (pid > 1) killTree(pid, 'SIGKILL', 'win32')
-        await rm(dir, { recursive: true, force: true })
+          pid = Number(await readFile(pidFile, 'utf8'))
+          expect(result.err).toBeNull()
+          expect(result.out).toBe('backgrounded · 12345678 · test')
+          if (tracing) {
+            expect(result.stderr).toContain('detached stderr payload')
+            expect(result.stderr).toContain('[holi-owned-process] phase=')
+          } else {
+            expect(result.stderr).toBe('detached stderr payload')
+          }
+          expect(result.stderr).not.toContain('[holi-complete-')
+          expect(pid).toBeGreaterThan(1)
+          expect(defaultProbePid(pid, 'win32')).toBe('group-leader')
+        } finally {
+          if (pid > 1) killTree(pid, 'SIGKILL', 'win32')
+          await rm(dir, { recursive: true, force: true })
+        }
       }
     },
     30_000,

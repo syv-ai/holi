@@ -1,5 +1,7 @@
 import { ChildProcess, spawn, type SpawnOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
+import { completionStream } from './owned-process-stream'
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, win32 } from 'node:path'
@@ -11,7 +13,10 @@ function windowsAdapterLaunch(env: NodeJS.ProcessEnv): {
   env: NodeJS.ProcessEnv
   cwd: string
 } {
-  const encoded = Buffer.from(WINDOWS_ADAPTER, 'utf16le').toString('base64')
+  const direct = Buffer.from(WINDOWS_ADAPTER, 'utf16le').toString('base64')
+  const bootstrap = `$b=[Convert]::FromBase64String('${gzipSync(Buffer.from(WINDOWS_ADAPTER, 'utf8')).toString('base64')}');$m=[IO.MemoryStream]::new($b);$g=[IO.Compression.GzipStream]::new($m,[IO.Compression.CompressionMode]::Decompress);$r=[IO.StreamReader]::new($g,[Text.Encoding]::UTF8);& ([ScriptBlock]::Create($r.ReadToEnd()))`
+  const encoded =
+    direct.length <= 32767 ? direct : Buffer.from(bootstrap, 'utf16le').toString('base64')
   const systemRoot =
     [process.env.SystemRoot, process.env.WINDIR].find(
       (value) => value && win32.isAbsolute(value),
@@ -61,6 +66,26 @@ export function spawnOwnedLaunch(
     ] as SpawnOptions['stdio'],
   }) as ChildProcess
   const token = `holi-owned-${randomUUID()}`
+  const stdoutMarker = `\\n[holi-complete-${randomUUID()}-stdout]\\n`
+  const stderrMarker = `\\n[holi-complete-${randomUUID()}-stderr]\\n`
+  if (retainDescendantsOnSuccess) {
+    for (const [index, marker] of [stdoutMarker, stderrMarker].entries()) {
+      const raw = index === 0 ? child.stdout : child.stderr
+      if (!raw || typeof raw === 'string') continue
+      const clean = completionStream(Buffer.from(marker))
+      raw.on('error', (error) => {
+        if (!clean.readableEnded) clean.destroy(error)
+      })
+      raw.once('close', () => {
+        if (!raw.readableEnded && !clean.destroyed && !clean.readableEnded) {
+          clean.destroy(new Error('managed output closed before completion'))
+        }
+      })
+      raw.pipe(clean)
+      if (index === 0) child.stdout = clean
+      else child.stderr = clean
+    }
+  }
   const stopFile = join(tmpdir(), `${token}.stop`)
   const readyFile = join(tmpdir(), `${token}.ready`)
   const successFile = join(tmpdir(), `${token}.success`)
@@ -75,6 +100,8 @@ export function spawnOwnedLaunch(
     readyFile,
     successFile,
     retainDescendantsOnSuccess,
+    stdoutMarker,
+    stderrMarker,
   })
   child.stdin!.on('error', () => {
     // Channel failure stops and drains the job before callers receive close.
@@ -132,6 +159,7 @@ using System.Collections;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Threading;
+using System.IO.Pipes;
 using System.Web.Script.Serialization;
 public static class HoliOwnedProcess {
   [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct STARTUPINFO {
@@ -191,11 +219,15 @@ public static class HoliOwnedProcess {
   public static int Run() {
     IntPtr job=IntPtr.Zero, parent=IntPtr.Zero; PROCESS_INFORMATION pi=new PROCESS_INFORMATION(); bool safelyFinished=false, stopped=false;
     string stopPath=null, readyPath=null, successPath=null;
+    AnonymousPipeServerStream outputPipe=null, errorPipe=null; Thread outputRelay=null, errorRelay=null;
+    Exception relayFailure=null; bool retain=false; string outputMarker=null, errorMarker=null;
     try {
       Trace("before-json-record");
       var data=(System.Collections.Generic.Dictionary<string,object>)new JavaScriptSerializer().DeserializeObject(ReadSpec());
       Trace("after-json-record");
       stopPath=(string)data["stopFile"]; readyPath=(string)data["readyFile"]; successPath=(string)data["successFile"];
+      retain=data.ContainsKey("retainDescendantsOnSuccess") && Convert.ToBoolean(data["retainDescendantsOnSuccess"]);
+      outputMarker=(string)data["stdoutMarker"]; errorMarker=(string)data["stderrMarker"];
       int parentPid=Convert.ToInt32(data["parentPid"]);
       Trace("before-parent-validation");
       parent=OpenProcess(0x00101000, false, parentPid);
@@ -215,11 +247,21 @@ public static class HoliOwnedProcess {
       var cmd=new StringBuilder(Arg(bin));
       foreach(object a in argv) cmd.Append(' ').Append(verbatim?Convert.ToString(a):Arg(Convert.ToString(a)));
       var si=new STARTUPINFO(); si.cb=Marshal.SizeOf(typeof(STARTUPINFO)); si.dwFlags=0x100; si.hStdInput=GetStdHandle(-10); si.hStdOutput=GetStdHandle(-11); si.hStdError=GetStdHandle(-12);
+      if(retain) {
+        outputPipe=new AnonymousPipeServerStream(PipeDirection.In,HandleInheritability.Inheritable);
+        errorPipe=new AnonymousPipeServerStream(PipeDirection.In,HandleInheritability.Inheritable);
+        si.hStdOutput=outputPipe.ClientSafePipeHandle.DangerousGetHandle();
+        si.hStdError=errorPipe.ClientSafePipeHandle.DangerousGetHandle();
+      }
       IntPtr env=IntPtr.Zero;
       var vars=data["env"] as System.Collections.Generic.Dictionary<string,object>;
       if(vars!=null) { var eb=new StringBuilder(); var keys=new System.Collections.Generic.List<string>(vars.Keys); keys.Sort(StringComparer.OrdinalIgnoreCase); foreach(string key in keys) if(vars[key]!=null) eb.Append(key).Append('=').Append(Convert.ToString(vars[key])).Append('\0'); eb.Append('\0'); env=Marshal.StringToHGlobalUni(eb.ToString()); }
       Trace("before-suspended-root-creation");
       Check(CreateProcess(bin,cmd,IntPtr.Zero,IntPtr.Zero,true,0x4|0x400|0x08000000,env,data.ContainsKey("cwd")?(string)data["cwd"]:null,ref si,out pi));
+      if(retain) { outputPipe.DisposeLocalCopyOfClientHandle(); errorPipe.DisposeLocalCopyOfClientHandle();
+        outputRelay=new Thread(()=>{try { var target=Console.OpenStandardOutput(); outputPipe.CopyTo(target); target.Flush(); } catch(Exception e) { relayFailure=e; }});
+        errorRelay=new Thread(()=>{try { var target=Console.OpenStandardError(); errorPipe.CopyTo(target); target.Flush(); } catch(Exception e) { relayFailure=e; }});
+        outputRelay.IsBackground=true; errorRelay.IsBackground=true; outputRelay.Start(); errorRelay.Start(); }
       Trace("after-suspended-root-creation",pi.dwProcessId);
       if(env!=IntPtr.Zero) Marshal.FreeHGlobal(env);
       Trace("before-job-assignment",pi.dwProcessId);
@@ -235,14 +277,26 @@ public static class HoliOwnedProcess {
       }
       uint code; Check(GetExitCodeProcess(pi.hProcess,out code));
       Trace("root-exit",pi.dwProcessId,code.ToString());
-      if(!stopped && !File.Exists((string)data["stopFile"]) && code==0 && data.ContainsKey("retainDescendantsOnSuccess") && Convert.ToBoolean(data["retainDescendantsOnSuccess"])) {
-        Console.SetOut(TextWriter.Null); Console.SetError(TextWriter.Null);
-        CloseHandle(GetStdHandle(-11)); CloseHandle(GetStdHandle(-12));
-        File.WriteAllText((string)data["readyFile"],"1");
-        while(true) {
-          if(WaitForSingleObject(parent,0)==0 || File.Exists((string)data["stopFile"])) { stopped=true; break; }
-          if(File.Exists((string)data["successFile"])) break;
+      if(!stopped && !File.Exists((string)data["stopFile"]) && code==0 && retain) {
+        while(outputRelay.IsAlive || errorRelay.IsAlive) {
+          if(WaitForSingleObject(parent,0)==0 || File.Exists((string)data["stopFile"])) { stopped=true; Check(TerminateJobObject(job,1)); break; }
+          if(relayFailure!=null) throw new Exception("background output relay failed",relayFailure);
           Thread.Sleep(20);
+        }
+        if(stopped) { outputPipe.Dispose(); errorPipe.Dispose(); outputRelay.Join(); errorRelay.Join(); }
+        else {
+          outputRelay.Join(); errorRelay.Join();
+          if(relayFailure!=null) throw new Exception("background output relay failed",relayFailure);
+          var stdout=Console.OpenStandardOutput(); var stderr=Console.OpenStandardError();
+          var outBytes=Encoding.UTF8.GetBytes(outputMarker); stdout.Write(outBytes,0,outBytes.Length); stdout.Flush();
+          var errBytes=Encoding.UTF8.GetBytes(errorMarker); stderr.Write(errBytes,0,errBytes.Length); stderr.Flush();
+          Console.SetOut(TextWriter.Null); Console.SetError(TextWriter.Null);
+          File.WriteAllText((string)data["readyFile"],"1");
+          while(true) {
+            if(WaitForSingleObject(parent,0)==0 || File.Exists((string)data["stopFile"])) { stopped=true; break; }
+            if(File.Exists((string)data["successFile"])) break;
+            Thread.Sleep(20);
+          }
         }
         if(!stopped && !File.Exists((string)data["stopFile"]) && WaitForSingleObject(parent,0)!=0) {
           limits.BasicLimitInformation.LimitFlags=0;
@@ -261,12 +315,12 @@ public static class HoliOwnedProcess {
         Thread.Sleep(50);
       }
     } catch(Exception e) { Console.Error.WriteLine("Holi could not establish managed process ownership: "+e.Message); Trace("helper-return",pi.dwProcessId,"125"); return 125; }
-    finally { if(!safelyFinished) { if(job!=IntPtr.Zero) TerminateJobObject(job,1); if(pi.hProcess!=IntPtr.Zero) TerminateProcess(pi.hProcess,1); } if(pi.hThread!=IntPtr.Zero) CloseHandle(pi.hThread); if(pi.hProcess!=IntPtr.Zero) CloseHandle(pi.hProcess); if(job!=IntPtr.Zero) CloseHandle(job); if(parent!=IntPtr.Zero) CloseHandle(parent); try { if(stopPath!=null) File.Delete(stopPath); if(readyPath!=null) File.Delete(readyPath); if(successPath!=null) File.Delete(successPath); } catch {} }
+    finally { if(!safelyFinished) { if(job!=IntPtr.Zero) { TerminateJobObject(job,1); while(true) { JOBOBJECT_BASIC_ACCOUNTING_INFORMATION drain; if(!QueryInformationJobObject(job,1,out drain,(uint)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION)),IntPtr.Zero) || drain.ActiveProcesses==0) break; Thread.Sleep(25); } } if(pi.hProcess!=IntPtr.Zero) TerminateProcess(pi.hProcess,1); } try { if(outputPipe!=null) outputPipe.Dispose(); if(errorPipe!=null) errorPipe.Dispose(); if(outputRelay!=null && outputRelay.IsAlive) outputRelay.Join(2000); if(errorRelay!=null && errorRelay.IsAlive) errorRelay.Join(2000); } catch {} if(pi.hThread!=IntPtr.Zero) CloseHandle(pi.hThread); if(pi.hProcess!=IntPtr.Zero) CloseHandle(pi.hProcess); if(job!=IntPtr.Zero) CloseHandle(job); if(parent!=IntPtr.Zero) CloseHandle(parent); try { if(stopPath!=null) File.Delete(stopPath); if(readyPath!=null) File.Delete(readyPath); if(successPath!=null) File.Delete(successPath); } catch {} }
   }
 }
 '@
 if ($env:HOLI_OWNED_PROCESS_TRACE -eq '1') { [Console]::Error.WriteLine('[holi-owned-process] phase=before-add-type helperPid=' + $PID + ' rootPid=-1 state=-'); [Console]::Error.Flush() }
-Add-Type -TypeDefinition $source -ReferencedAssemblies System.Web.Extensions
+Add-Type -TypeDefinition $source -ReferencedAssemblies @('System.Web.Extensions','System.Core')
 if ($env:HOLI_OWNED_PROCESS_TRACE -eq '1') { [Console]::Error.WriteLine('[holi-owned-process] phase=after-add-type helperPid=' + $PID + ' rootPid=-1 state=-'); [Console]::Error.Flush() }
 exit [HoliOwnedProcess]::Run()
 `
