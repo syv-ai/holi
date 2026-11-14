@@ -567,6 +567,45 @@ test('hidden previews are cancelled and resume only after display', async () => 
   expect(captureMock).toHaveBeenCalledTimes(1)
 })
 
+test('a pending capture is invalidated when its same-vault frame moves', async () => {
+  withApps('Team/Retro.app')
+  const view = render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  const frame = runningFrame()!
+  let left = 0
+  vi.spyOn(frame, 'getBoundingClientRect').mockImplementation(
+    () =>
+      ({
+        left,
+        top: 0,
+        right: left + 400,
+        bottom: 400,
+        width: 400,
+        height: 400,
+      }) as DOMRect,
+  )
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => frame })
+  const pending = deferred<{ saved: boolean }>()
+  captureMock.mockReturnValueOnce(pending.promise)
+  vi.useFakeTimers()
+  fireEvent.load(frame)
+  await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+  expect(captureMock).toHaveBeenCalledTimes(1)
+  left = 40
+  fireEvent.resize(window)
+  expect(fakeHoli.pluginSent).toContainEqual({
+    id: 'apps',
+    event: expect.objectContaining({
+      remote: REMOTE,
+      name: 'preview-placement',
+      payload: expect.objectContaining({ rect: null }),
+    }),
+  })
+  await act(async () => pending.resolve({ saved: true }))
+  expect(store.get(previewVersionsAtom)).toEqual({})
+  view.unmount()
+})
+
 test.each(['hide', 'reload', 'path', 'remote', 'mode', 'code', 'dispose'] as const)(
   'stale load and preview responses are ignored after %s',
   async (replacement) => {
@@ -598,6 +637,16 @@ test.each(['hide', 'reload', 'path', 'remote', 'mode', 'code', 'dispose'] as con
       if (replacement === 'code') changeCode()
       if (replacement === 'dispose') view.unmount()
     })
+    if (replacement === 'hide') {
+      expect(fakeHoli.pluginSent).toContainEqual({
+        id: 'apps',
+        event: expect.objectContaining({
+          remote: REMOTE,
+          name: 'preview-placement',
+          payload: expect.objectContaining({ rect: null }),
+        }),
+      })
+    }
     await act(async () => pending.resolve({ saved: true }))
     // A detached old iframe's load must not schedule a picture of its successor.
     fireEvent.load(frame)

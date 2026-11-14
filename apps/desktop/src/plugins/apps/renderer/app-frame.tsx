@@ -142,31 +142,85 @@ function usePreviewCapture(
   const request = useAtomValue(previewRequestsAtom)[path] ?? 0
   const taken = useSetAtom(previewTakenAtom)
   const completed = useRef<string | null>(null)
-  useEffect(() => {
+  const generation = useRef(0)
+  useLayoutEffect(() => {
     if (!visible || loaded === null || remote === null || lease === null) return
     const captureKey = JSON.stringify([remote, path, loaded, request])
     if (completed.current === captureKey) return
     let live = true
     let idle: number | null = null
+    let placement: { x: number; y: number; width: number; height: number } | null = null
+    const invalidate = (): void => {
+      if (placement === null) return
+      placement = null
+      generation.current += 1
+      window.holi.plugin.send('apps', {
+        remote,
+        name: 'preview-placement',
+        payload: {
+          bundle: path,
+          token: lease.token,
+          nonce: lease.nonce,
+          generation: generation.current,
+          rect: null,
+        },
+      })
+    }
+    const checkPlacement = (): void => {
+      const frame = frameRef.current
+      if (frame === null || placement === null) return
+      const r = frame.getBoundingClientRect()
+      if (
+        !frameIsUnobscured(frame) ||
+        placement.x !== r.left + 2 ||
+        placement.y !== r.top + 2 ||
+        placement.width !== r.width - 4 ||
+        placement.height !== r.height - 4
+      )
+        invalidate()
+    }
     const take = (): void => {
       const frame = frameRef.current
       if (!live || frame === null || !frameIsUnobscured(frame)) return
       const r = frame.getBoundingClientRect()
       // 2px in from each edge, so a pane's separator beside it is not kept.
       const rect = { x: r.left + 2, y: r.top + 2, width: r.width - 4, height: r.height - 4 }
+      placement = rect
+      const request = ++generation.current
+      window.holi.plugin.send('apps', {
+        remote,
+        name: 'preview-placement',
+        payload: {
+          bundle: path,
+          token: lease.token,
+          nonce: lease.nonce,
+          generation: request,
+          rect,
+        },
+      })
       appsCap
-        .capturePreview(remote, { bundle: path, rect, token: lease.token, nonce: lease.nonce })
-        .then(
-          (res) => {
-            if (!live || !res.saved) return
-            completed.current = captureKey
-            taken(path)
-          },
-          (e: unknown) => {
-            if (live) console.warn('[apps] preview:', e)
-          },
-        )
+        .capturePreview(remote, {
+          bundle: path,
+          rect,
+          token: lease.token,
+          nonce: lease.nonce,
+          generation: request,
+        })
+        .then((res) => {
+          if (!live || request !== generation.current || !res.saved) return
+          completed.current = captureKey
+          taken(path)
+        })
+        .catch((e: unknown) => {
+          if (live) console.warn('[apps] preview:', e)
+        })
     }
+    const observer = new ResizeObserver(checkPlacement)
+    const frame = frameRef.current
+    if (frame !== null) observer.observe(frame)
+    window.addEventListener('scroll', checkPlacement, true)
+    window.addEventListener('resize', checkPlacement)
+    document.addEventListener('visibilitychange', checkPlacement)
     const timer = window.setTimeout(() => {
       idle =
         typeof window.requestIdleCallback === 'function'
@@ -176,6 +230,11 @@ function usePreviewCapture(
     }, PREVIEW_SETTLE_MS)
     return () => {
       live = false
+      invalidate()
+      observer.disconnect()
+      window.removeEventListener('scroll', checkPlacement, true)
+      window.removeEventListener('resize', checkPlacement)
+      document.removeEventListener('visibilitychange', checkPlacement)
       window.clearTimeout(timer)
       if (idle !== null) window.cancelIdleCallback(idle)
     }

@@ -73,6 +73,11 @@ function recording(called: Called): Record<string, AnyCapability> {
         throw new Error('no app door here')
       },
       grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => true },
+      previews: { read: async () => null, save: async () => true, forget: async () => {} },
+      previewPlacements: new Map(),
+      capture: async () => null,
+      issueFrameLease: () => ({ token: '', nonce: '' }),
+      releaseFrameLease: () => true,
     }),
     ...storeCapabilities(),
     ...taskCapabilities({ today: () => '2026-09-30' }),

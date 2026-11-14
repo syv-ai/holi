@@ -79,6 +79,7 @@ export interface AppPreviews {
     jpeg: Buffer,
     current?: () => boolean,
     revision?: number,
+    expectedStamp?: number,
   ): Promise<boolean>
   /** Let the app's preview go. */
   forget(remote: string, bundle: string): Promise<void>
@@ -131,15 +132,22 @@ export function createAppPreviews(dir: string): AppPreviews {
       })
     },
 
-    async save(remote, root, bundle, jpeg, current = () => true, revision) {
+    async save(remote, root, bundle, jpeg, current = () => true, revision, expectedStamp) {
       const at = paths(remote, bundle)
       const key = operationKey(remote, bundle)
       // Capture at invocation, before waiting behind another publication.
       // Callers that captured before async work pass the revision explicitly.
       const expectedRevision = revision ?? revisions.get(key) ?? 0
+      const stamp =
+        expectedStamp === undefined ? bundleStamp(root, bundle) : Promise.resolve(expectedStamp)
       return serialize(key, async () => {
-        const stamp = await bundleStamp(root, bundle)
-        if (!current() || (revisions.get(key) ?? 0) !== expectedRevision) return false
+        const captureStamp = await stamp
+        if (
+          !current() ||
+          (revisions.get(key) ?? 0) !== expectedRevision ||
+          captureStamp !== (await bundleStamp(root, bundle))
+        )
+          return false
         await mkdir(storage, { recursive: true })
         const previous = await readFile(at.meta, 'utf8')
           .then((text) => JSON.parse(text) as Partial<PreviewMeta>)
@@ -154,16 +162,16 @@ export function createAppPreviews(dir: string): AppPreviews {
           if (
             !current() ||
             (revisions.get(key) ?? 0) !== expectedRevision ||
-            stamp !== afterPreparation
+            captureStamp !== afterPreparation
           )
             return false
           await rename(stagedImage, join(storage, imageName))
-          const meta: PreviewMeta = { remote, bundle, stamp, image: imageName }
+          const meta: PreviewMeta = { remote, bundle, stamp: captureStamp, image: imageName }
           await writeFile(stagedMeta, JSON.stringify(meta))
           if (
             !current() ||
             (revisions.get(key) ?? 0) !== expectedRevision ||
-            stamp !== (await bundleStamp(root, bundle))
+            captureStamp !== (await bundleStamp(root, bundle))
           )
             return false
           await rename(stagedMeta, at.meta)
@@ -171,7 +179,7 @@ export function createAppPreviews(dir: string): AppPreviews {
           if (
             !current() ||
             (revisions.get(key) ?? 0) !== expectedRevision ||
-            stamp !== (await bundleStamp(root, bundle))
+            captureStamp !== (await bundleStamp(root, bundle))
           ) {
             const published = await readFile(at.meta, 'utf8').catch(() => null)
             if (published === JSON.stringify(meta)) await rm(at.meta, { force: true })

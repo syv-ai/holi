@@ -66,6 +66,7 @@ it('answers every bridge method that is not the renderer’s at the app door', (
       },
       grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => true },
       previews: { read: async () => null, save: async () => true, forget: async () => {} },
+      previewPlacements: new Map(),
       capture: async () => null,
       captureCurrent: () => true,
     }),

@@ -10,7 +10,7 @@
  */
 import { join } from 'node:path'
 import type { AppDoor, MainPlugin } from '../../../main/plugin-api'
-import type { PreviewRect } from './capabilities'
+import { previewRect, type PreviewRect } from './capabilities'
 import { APPS_INFO } from '../info'
 import { appsCapabilities, storeCapabilities } from './capabilities'
 import { createAppCode } from './code'
@@ -75,6 +75,41 @@ export const appsMain: MainPlugin = {
     // The app door's one opener: the approvals an entry's `appGrant` asks for.
     const door: AppDoor = ctx.openAppDoor({ admit: admitApps(grants) })
     const previews = createAppPreviews(join(ctx.userData, 'app-previews'))
+    const previewPlacements = new Map<string, { generation: number; rect: PreviewRect | null }>()
+    ctx.on('preview-placement', (remote, payload) => {
+      if (remote !== ctx.remote || payload === null || typeof payload !== 'object') return
+      const value = payload as Record<string, unknown>
+      if (
+        typeof value.bundle !== 'string' ||
+        typeof value.token !== 'string' ||
+        typeof value.nonce !== 'string' ||
+        typeof value.generation !== 'number' ||
+        !Number.isSafeInteger(value.generation) ||
+        value.generation < 1
+      )
+        return
+      const window = ctx.window()
+      if (
+        window === null ||
+        ctx.validateAppFrameLease({
+          token: value.token,
+          nonce: value.nonce,
+          window,
+          bundle: value.bundle,
+        }) === null
+      )
+        return
+      let rect: PreviewRect | null
+      try {
+        rect = value.rect === null ? null : previewRect(value.rect)
+      } catch {
+        return
+      }
+      const key = `${ctx.remote}\0${value.bundle}\0${value.token}`
+      const previous = previewPlacements.get(key)
+      if (value.generation <= (previous?.generation ?? 0)) return
+      previewPlacements.set(key, { generation: value.generation, rect })
+    })
     ctx.register(
       ['apps'],
       appsCapabilities({
@@ -82,6 +117,7 @@ export const appsMain: MainPlugin = {
         appDoor: () => door,
         grants,
         previews,
+        previewPlacements,
         capture: (rect, window, current) => capture(rect, window, current),
         issueFrameLease: (bundle) => {
           const { token, nonce } = ctx.issueAppFrameLease(bundle)

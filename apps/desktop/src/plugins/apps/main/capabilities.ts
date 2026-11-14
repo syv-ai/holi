@@ -42,7 +42,7 @@ import {
 } from './grants'
 import { readAppLog, writeAppLog } from './log'
 import { initAppOp, openAppOp } from './ops'
-import type { AppPreviews } from './previews'
+import { bundleStamp, type AppPreviews } from './previews'
 import { storeCheck, storeDelete, storeGet, storeList, storePut } from './store'
 
 /**
@@ -91,6 +91,8 @@ export interface AppCapabilitiesDeps {
   grants: AppGrants
   /** This machine's pictures of its apps, for their cards. */
   previews: AppPreviews
+  /** Per-activation placement authority for in-flight app preview captures. */
+  previewPlacements: Map<string, { generation: number; rect: PreviewRect | null }>
   /** The window's pixels inside `rect` (CSS pixels from the top left of the
    *  page), as a small JPEG; null when there is nothing to take, such as a
    *  hidden window. Electron's, injected so this file loads under Node. */
@@ -116,7 +118,7 @@ export interface PreviewRect {
 
 /** The frame's rect from the renderer: whole, non-negative and of a size a
  *  window can have. */
-function rectParam(raw: unknown): PreviewRect {
+export function previewRect(raw: unknown): PreviewRect {
   const r = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const out: Record<string, number> = {}
   for (const key of ['x', 'y', 'width', 'height'] as const) {
@@ -282,22 +284,48 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
       const p = paramsObject(raw)
       return {
         bundle: bundleParam(p),
-        rect: rectParam(p.rect),
+        rect: previewRect(p.rect),
         token: stringParam(p, 'token'),
         nonce: stringParam(p, 'nonce'),
+        generation:
+          typeof p.generation === 'number' &&
+          Number.isSafeInteger(p.generation) &&
+          p.generation >= 0
+            ? p.generation
+            : 0,
       }
     },
-    run: async (ctx, { bundle, rect, token, nonce }) => {
+    run: async (ctx, { bundle, rect, token, nonce, generation }) => {
       const lease = deps.validateFrameLease?.(token, nonce, bundle) ?? null
       if (lease === null || lease.remote !== ctx.remote || lease.root !== ctx.root) {
         return { saved: false }
       }
-      const current = () => lease.valid(lease.window)
+      const placementKey = `${ctx.remote}\0${bundle}\0${token}`
+      const matches = () => {
+        const placement = deps.previewPlacements.get(placementKey)
+        return (
+          placement !== undefined &&
+          placement.generation === generation &&
+          placement.rect !== null &&
+          JSON.stringify(placement.rect) === JSON.stringify(rect)
+        )
+      }
+      const current = () => lease.valid(lease.window) && matches()
       if (!current()) return { saved: false }
       const revision = deps.previews.revision(ctx.remote, bundle)
+      const expectedStamp = await bundleStamp(ctx.root, bundle)
+      if (!current()) return { saved: false }
       const jpeg = await deps.capture(rect, lease.window, current)
       if (!current() || jpeg === null) return { saved: false }
-      const saved = await deps.previews.save(ctx.remote, ctx.root, bundle, jpeg, current, revision)
+      const saved = await deps.previews.save(
+        ctx.remote,
+        ctx.root,
+        bundle,
+        jpeg,
+        current,
+        revision,
+        expectedStamp,
+      )
       return { saved: saved && current() }
     },
   }),

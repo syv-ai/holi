@@ -39,6 +39,8 @@ export interface CapabilityHostDeps {
   /** What the scanner claims in the vault cloned at `root`: the claims of
    *  the plugins it runs. */
   claims(root: string): Promise<readonly ScanClaim[]>
+  /** Fresh scans can be delayed independently of claims (also useful for tests). */
+  scan?(root: string, claims: readonly ScanClaim[]): Promise<VaultSnapshot>
 }
 
 /** A call through the UI or the CLI door. */
@@ -120,7 +122,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
           const snapshot =
             active?.remote === remote && active.root === root
               ? active.snapshot()
-              : scanVault(root, await deps.claims(root))
+              : await (deps.scan ?? scanVault)(root, await deps.claims(root))
           if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
           return snapshot
         },

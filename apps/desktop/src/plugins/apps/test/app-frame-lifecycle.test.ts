@@ -8,6 +8,7 @@ import { cap, createCapabilityRegistry } from '../../../main/capabilities/regist
 import { noCoreServices } from '../../../main/capabilities/services'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createAppFrameLeases } from '../../../main/plugin-host/app-frame-leases'
+import { scanVault } from '../../../main/vault/vault-store'
 import { createPluginHost, type OpenVault } from '../../../main/plugin-host/host'
 import { serveScheme } from '../../../main/plugin-host/schemes'
 import type { PluginCtx } from '../../../main/plugin-api'
@@ -47,7 +48,7 @@ describe('app frame activation lifetime', () => {
       reached(): void
       waiting: Promise<void>
     } | null = null
-    let claimsGate: {
+    let scanGate: {
       release(): void
       promise: Promise<void>
       reached(): void
@@ -66,12 +67,13 @@ describe('app frame activation lifetime', () => {
       active: () => null,
       core: noCoreServices,
       pluginEnabled: async (plugin, root) => (await pluginHost.serving(root)).has(plugin),
-      claims: async () => {
-        if (claimsGate !== null) {
-          claimsGate.reached()
-          await claimsGate.promise
+      claims: async () => [],
+      scan: async (root, claims) => {
+        if (scanGate !== null) {
+          scanGate.reached()
+          await scanGate.promise
         }
-        return []
+        return scanVault(root, claims)
       },
     })
     dispatch = capabilityHost.dispatch
@@ -259,14 +261,14 @@ describe('app frame activation lifetime', () => {
     pluginHost.setDisplayed(REMOTE_A)
     const snapshotLease = await frameLease(REMOTE_A)
     const snapshotGate = makeGate()
-    claimsGate = snapshotGate
+    scanGate = snapshotGate
     const snapshotPending = call(REMOTE_A, snapshotLease, 'stale-snapshot', 'proof.snapshotWrite')
     await snapshotGate.waiting
     pluginHost.setDisplayed(REMOTE_B)
     pluginHost.setDisplayed(REMOTE_A)
     snapshotGate.release()
     await expect(snapshotPending).rejects.toThrow()
-    claimsGate = null
+    scanGate = null
     expect(entered).toBe(enteredBefore)
     await expect(
       import('node:fs/promises').then(({ access }) => access(join(rootA, 'snapshot-writes.txt'))),

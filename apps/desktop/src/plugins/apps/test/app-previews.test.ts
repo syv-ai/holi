@@ -56,7 +56,7 @@ describe('bundleStamp', () => {
 describe('createAppPreviews', () => {
   it('serves what was saved as a data URL, for that vault and app only', async () => {
     const previews = createAppPreviews(store)
-    await previews.save('ada/vault', root, 'Finance/Budget.app', JPEG)
+    expect(await previews.save('ada/vault', root, 'Finance/Budget.app', JPEG)).toBe(true)
     expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBe(
       `data:image/jpeg;base64,${JPEG.toString('base64')}`,
     )
@@ -73,6 +73,29 @@ describe('createAppPreviews', () => {
     await put('Finance/Budget.app/data/items/a.json', '{}', 5_000)
     expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).not.toBeNull()
     await put('Finance/Budget.app/index.html', '<p>budget, again</p>', 5_000)
+    expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBeNull()
+  })
+
+  it('rejects code changed while capture is blocked using the pre-capture stamp', async () => {
+    const previews = createAppPreviews(store)
+    const expectedStamp = await bundleStamp(root, 'Finance/Budget.app')
+    let resolveCapture!: (jpeg: Buffer) => void
+    const capture = new Promise<Buffer>((resolve) => {
+      resolveCapture = resolve
+    })
+    await put('Finance/Budget.app/index.html', '<p>changed during capture</p>', 5_000)
+    resolveCapture(JPEG)
+    expect(
+      await previews.save(
+        'ada/vault',
+        root,
+        'Finance/Budget.app',
+        await capture,
+        () => true,
+        previews.revision('ada/vault', 'Finance/Budget.app'),
+        expectedStamp,
+      ),
+    ).toBe(false)
     expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBeNull()
   })
 
