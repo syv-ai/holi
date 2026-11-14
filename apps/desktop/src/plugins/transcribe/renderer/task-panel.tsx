@@ -9,7 +9,7 @@
 import type { PickableHoli } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { SquareArrowOutUpRight } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { activeRemoteAtom, cn, openPathAtom, showAgentSessionAtom } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
@@ -276,15 +276,24 @@ export function TaskPanel({
   const cardId = card?.id ?? null
   const [editorState, setEditorState] = useState<{
     id: string | null
+    session: object
     draft: CardDraft | null
     context: string
     busy: boolean
     error: string | null
-  }>({ id: cardId, draft: null, context: '', busy: false, error: null })
+  }>({ id: cardId, session: {}, draft: null, context: '', busy: false, error: null })
   if (editorState.id !== cardId)
-    setEditorState({ id: cardId, draft: null, context: '', busy: false, error: null })
-  const close = () => {
-    setEditorState({ id: null, draft: null, context: '', busy: false, error: null })
+    setEditorState({ id: cardId, session: {}, draft: null, context: '', busy: false, error: null })
+  const session = editorState.session
+  const currentSession = useRef(session)
+  currentSession.current = session
+  const close = (owner: object = session) => {
+    if (currentSession.current !== owner) return
+    setEditorState((state) =>
+      state.session === owner
+        ? { id: null, session: {}, draft: null, context: '', busy: false, error: null }
+        : state,
+    )
     setOpen(null)
   }
   return (
@@ -325,17 +334,23 @@ export function TaskPanel({
               card={card}
               holis={holis}
               draft={editorState.draft}
-              setDraft={(draft) => setEditorState((state) => ({ ...state, draft }))}
+              setDraft={(draft) =>
+                setEditorState((state) => (state.session === session ? { ...state, draft } : state))
+              }
               context={editorState.context}
-              setContext={(context) => setEditorState((state) => ({ ...state, context }))}
-              onClose={close}
+              setContext={(context) =>
+                setEditorState((state) =>
+                  state.session === session ? { ...state, context } : state,
+                )
+              }
+              onClose={() => close(session)}
               busy={editorState.busy}
               setBusy={(busy) =>
-                setEditorState((state) => (state.id === card.id ? { ...state, busy } : state))
+                setEditorState((state) => (state.session === session ? { ...state, busy } : state))
               }
               error={editorState.error}
               setError={(error) =>
-                setEditorState((state) => (state.id === card.id ? { ...state, error } : state))
+                setEditorState((state) => (state.session === session ? { ...state, error } : state))
               }
             />
           </div>

@@ -359,6 +359,34 @@ test('Send stays busy while parked and retains its made task and eventual error'
   expect(calls('meeting.task.create')[1]).toMatchObject({ cardId: 'c9' })
 }, 15_000)
 
+test('a late send cannot close a reopened topic form or replace its draft', async () => {
+  const pending = deferred<{ sessionId: string; card: Card }>()
+  const base = run.getMockImplementation()!
+  run.mockImplementation((c: { name: string }) =>
+    c.name === 'meeting.build' ? pending.promise : base(c),
+  )
+  show()
+  await userEvent.click(within(topicNamed('Budget')).getByRole('button', { name: 'Send topic' }))
+  const first = await screen.findByRole('dialog', { name: 'Send: Budget' })
+  await userEvent.type(within(first).getByLabelText('What should be done?'), 'Old prompt')
+  await userEvent.click(within(first).getByRole('button', { name: SEND_TO_AGENT }))
+  await waitFor(() => expect(calls('meeting.build')).toHaveLength(1))
+  await userEvent.click(within(first).getByRole('button', { name: 'Cancel' }))
+
+  await userEvent.click(within(topicNamed('Budget')).getByRole('button', { name: 'Send topic' }))
+  const reopened = await screen.findByRole('dialog', { name: 'Send: Budget' })
+  const prompt = within(reopened).getByLabelText('What should be done?')
+  await userEvent.type(prompt, 'New prompt')
+  pending.resolve({
+    sessionId: 'job-old',
+    card: { ...meeting.cards[0]!, status: 'building', buildSessionId: 'job-old' },
+  })
+  await waitFor(() =>
+    expect(within(reopened).getByLabelText('What should be done?')).toHaveValue('New prompt'),
+  )
+  expect(screen.getByRole('dialog', { name: 'Send: Budget' })).toBeInTheDocument()
+}, 15_000)
+
 test('Send on a suggestion: prefilled, related lines unticked, ticked ones carried, then sent', async () => {
   show()
   await userEvent.click(headerOf(topicNamed('Export')))

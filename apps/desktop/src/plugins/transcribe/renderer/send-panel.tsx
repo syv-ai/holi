@@ -12,7 +12,7 @@
  */
 import type { PickableHoli } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { activeRemoteAtom, cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
@@ -51,6 +51,17 @@ import { topicName } from './topic-index'
 const RELATED_DEBOUNCE_MS = 300
 
 const keyOf = (r: Related): number => r.lines[0]!
+
+type SendDraft = {
+  prompt: string
+  kind: CardKind
+  picked: Related[]
+  made: Card | null
+  busy: boolean
+  error: string | null
+}
+
+type SendPanelState = SendDraft & { identity: string | null; session: object }
 
 type RelatedState =
   { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'done'; windows: Related[] }
@@ -119,31 +130,8 @@ function SendForm({
   topic: Topic
   suggestion: Suggestion | undefined
   holis: readonly PickableHoli[]
-  formState: {
-    prompt: string
-    kind: CardKind
-    picked: Related[]
-    made: Card | null
-    busy: boolean
-    error: string | null
-  }
-  setFormState: (
-    update: (state: {
-      prompt: string
-      kind: CardKind
-      picked: Related[]
-      made: Card | null
-      busy: boolean
-      error: string | null
-    }) => {
-      prompt: string
-      kind: CardKind
-      picked: Related[]
-      made: Card | null
-      busy: boolean
-      error: string | null
-    },
-  ) => void
+  formState: SendDraft
+  setFormState: (update: (state: SendDraft) => SendDraft) => void
   onDone: () => void
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
@@ -318,8 +306,9 @@ export function SendPanel({
   const initialPrompt =
     suggestion === undefined ? '' : `${suggestion.title}\n${suggestion.why}`.trim()
   const initialKind = suggestion?.kind ?? 'feature'
-  const [draft, setDraft] = useState({
+  const [draft, setDraft] = useState<SendPanelState>({
     identity,
+    session: {},
     prompt: initialPrompt,
     kind: initialKind as CardKind,
     picked: [] as Related[],
@@ -330,6 +319,7 @@ export function SendPanel({
   if (draft.identity !== identity) {
     setDraft({
       identity,
+      session: {},
       prompt: initialPrompt,
       kind: initialKind as CardKind,
       picked: [],
@@ -338,16 +328,25 @@ export function SendPanel({
       error: null,
     })
   }
-  const close = () => {
-    setDraft({
-      identity: null,
-      prompt: '',
-      kind: 'feature',
-      picked: [],
-      made: null,
-      busy: false,
-      error: null,
-    })
+  const session = draft.session
+  const currentSession = useRef(session)
+  currentSession.current = session
+  const close = (owner: object = session) => {
+    if (currentSession.current !== owner) return
+    setDraft((state) =>
+      state.session === owner
+        ? {
+            identity: null,
+            session: {},
+            prompt: '',
+            kind: 'feature',
+            picked: [],
+            made: null,
+            busy: false,
+            error: null,
+          }
+        : state,
+    )
     setOpen(null)
   }
   return (
@@ -396,10 +395,10 @@ export function SendPanel({
               formState={draft}
               setFormState={(update) =>
                 setDraft((state) =>
-                  state.identity === identity ? { ...state, ...update(state) } : state,
+                  state.session === session ? { ...state, ...update(state) } : state,
                 )
               }
-              onDone={close}
+              onDone={() => close(session)}
             />
           </div>
         </SheetContent>
