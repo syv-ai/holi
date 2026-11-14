@@ -116,6 +116,28 @@ export function killChildTree(
   taskkill?: Taskkill,
 ): boolean {
   if (child.pid === undefined) return false
-  if (platform === 'win32' && (child.exitCode !== null || child.signalCode !== null)) return false
+  if (platform === 'win32') {
+    if (child.exitCode !== null || child.signalCode !== null) return false
+    return killTree(child.pid, signal, platform, taskkill)
+  }
+  const leader = defaultProbePid(child.pid, platform) === 'group-leader'
+  // An exited child cannot still be a leader: this pid now belongs to a
+  // different process, even if that process also leads its own group.
+  if (leader && (child.exitCode !== null || child.signalCode !== null)) return false
+  if (!leader && child.exitCode === null && child.signalCode === null) return false
+  if (!leader) {
+    // The leader can exit before its descendants. A group id remains reserved
+    // while any member exists; only signal it when the OS still reports a
+    // member of that exact group, avoiding a bare signal to a recycled pid.
+    try {
+      const groups = execFileSync('ps', ['-o', 'pgid=', '-A'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+      if (!groups.split(/\s+/).includes(String(child.pid))) return false
+    } catch {
+      return false
+    }
+  }
   return killTree(child.pid, signal, platform, taskkill)
 }

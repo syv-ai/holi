@@ -115,7 +115,7 @@ export function TabView({
       // away: once per switch, keyed on the tab.
       return (
         <div key={tab} className="motion-in-rise flex min-h-0 flex-1 flex-col">
-          <AppView visible={visible} />
+          <AppView visible={visible} focused={focused} />
         </div>
       )
     }

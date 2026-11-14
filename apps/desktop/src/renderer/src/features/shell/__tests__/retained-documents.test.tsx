@@ -15,10 +15,11 @@ import {
   VAULT_SETTING_DEFAULTS,
   type CommentThread,
 } from '@holi/shared'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@/test/render'
+import { useDocumentAgent } from '@/features/documents/document-agent'
 import { flushAllBuffers, freezeBuffers } from '@/lib/buffer-registry'
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
-import { installedPluginsAtom } from '@/state/plugins'
+import { activeRemoteAtom, openedRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { AGENTS_HOME_KEY } from '@/state/tab-descriptor'
 import {
@@ -32,7 +33,7 @@ import {
 } from '@/state/shell-workspace'
 import { changedDocsAtom } from '@/state/doc-changes'
 import { editorSelectionAtom } from '@/state/ui-report'
-import { documentRunsAtom, type AgentRun } from '@/state/document-runs'
+import { documentRunsAtom, documentUpgradesAtom, type AgentRun } from '@/state/document-runs'
 import { vaultSettingsAtom } from '@/state/settings'
 import { sessionAtom } from '@/state/session'
 import { pendingHeadingAtom } from '@/state/open-document'
@@ -52,6 +53,16 @@ const read = vi.fn(
 const write = vi.fn(async (_input: { remote: string; path: string; text: string }) => ({
   ok: true,
 }))
+const move = vi.fn(async (input: { moves: { from: string; to: string }[] }) => {
+  for (const pair of input.moves) {
+    const text = disk.get(`${REMOTE}:${pair.from}`)
+    if (text !== undefined) disk.set(`${REMOTE}:${pair.to}`, text)
+    disk.delete(`${REMOTE}:${pair.from}`)
+  }
+  return { rewritten: [] }
+})
+const commitNow = vi.fn(async () => ({ ok: true }))
+let movedSnapshot: ReturnType<typeof emptyVaultSnapshot>
 const capability = vi.fn(async (_input: unknown) => ({ ok: true }))
 const comments = vi.fn(async (_input: unknown): Promise<CommentThread[]> => [])
 const reply = vi.fn(async (_input: unknown) => ({ ok: true }))
@@ -62,41 +73,47 @@ vi.mock('@/lib/trpc', () => {
   const answer = (name: string, input?: unknown): unknown =>
     name === 'notes.read'
       ? read(input as { remote: string; path: string })
-      : name === 'comments.list'
-        ? comments(input)
-        : name === 'settings.read'
-          ? settings
-          : name === 'settings.pluginFailures'
-            ? {}
-            : name === 'history.list'
-              ? [
-                  {
-                    sha: 'abcdef012345',
-                    subject: 'save note',
-                    date: '2026-11-01T12:00:00Z',
-                    author: 'Ada',
-                    added: 1,
-                    removed: 0,
-                  },
-                ]
-              : name === 'github.fileContributors' ||
-                  name === 'activity.entries' ||
-                  name === 'logs.entries' ||
-                  name === 'terminal.list'
-                ? []
-                : name === 'github.collaborators'
-                  ? { visibility: 'private', collaborators: [] }
-                  : null
+      : name === 'vaults.snapshot'
+        ? movedSnapshot
+        : name === 'comments.list'
+          ? comments(input)
+          : name === 'settings.read'
+            ? settings
+            : name === 'settings.pluginFailures'
+              ? {}
+              : name === 'history.list'
+                ? [
+                    {
+                      sha: 'abcdef012345',
+                      subject: 'save note',
+                      date: '2026-11-01T12:00:00Z',
+                      author: 'Ada',
+                      added: 1,
+                      removed: 0,
+                    },
+                  ]
+                : name === 'github.fileContributors' ||
+                    name === 'activity.entries' ||
+                    name === 'logs.entries' ||
+                    name === 'terminal.list'
+                  ? []
+                  : name === 'github.collaborators'
+                    ? { visibility: 'private', collaborators: [] }
+                    : null
   const procedure = (name: string) => ({
     query: (input?: unknown) => Promise.resolve(answer(name, input)),
     mutate:
       name === 'notes.write'
         ? write
-        : name === 'cap.run'
-          ? capability
-          : name === 'comments.reply'
-            ? reply
-            : async () => ({ ok: true }),
+        : name === 'notes.move'
+          ? move
+          : name === 'cap.run'
+            ? capability
+            : name === 'sync.commitNow'
+              ? commitNow
+              : name === 'comments.reply'
+                ? reply
+                : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
   })
   const router = (name: string) =>
@@ -144,6 +161,16 @@ beforeEach(() => {
     disk.set(`${remote}:${path}`, text)
     return { ok: true }
   })
+  move.mockReset().mockImplementation(async (input) => {
+    for (const pair of input.moves) {
+      const text = disk.get(`${REMOTE}:${pair.from}`)
+      if (text !== undefined) disk.set(`${REMOTE}:${pair.to}`, text)
+      disk.delete(`${REMOTE}:${pair.from}`)
+    }
+    return { rewritten: [] }
+  })
+  movedSnapshot = emptyVaultSnapshot()
+  commitNow.mockReset().mockResolvedValue({ ok: true })
   comments.mockReset().mockResolvedValue([])
   reply.mockReset().mockResolvedValue({ ok: true })
   capability.mockReset().mockResolvedValue({ ok: true })
@@ -165,6 +192,7 @@ afterEach(() => {
 function fixture(paths = [ONE, TWO], strict = false) {
   const store = createStore()
   store.set(activeRemoteAtom, REMOTE)
+  store.set(openedRemoteAtom, REMOTE)
   store.set(vaultsAtom, [{ remote: REMOTE, path: '/vault', name: 'repo', lastOpenedAt: '' }])
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
@@ -231,6 +259,94 @@ function passage(ed: Editor) {
 async function openActions() {
   await userEvent.setup().click(within(host()).getByRole('button', { name: 'Document actions' }))
 }
+
+test('upgrading a note preserves source text and transitions its retained tab to CodeMirror', async () => {
+  const source = "---\ntitle: Source\n---\n\nimport Thing from 'thing'\n\n<Thing />  \n"
+  const store = fixture([ONE])
+  act(() =>
+    store.set(coreContributionAtom, {
+      surfaces: [],
+      rail: [],
+      claims: [
+        {
+          match: (path) => path.endsWith('.md'),
+          rowMenu: [{ label: 'Convert to PDF…', run: () => {} }],
+        },
+      ],
+    }),
+  )
+  disk.set(`${REMOTE}:${ONE}`, source)
+  movedSnapshot = {
+    ...emptyVaultSnapshot(),
+    docs: [],
+    files: [{ path: 'notes/one.mdx', updatedAt: 'two' }],
+  }
+  await editor()
+  await openActions()
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Upgrade to MDX' }))
+  await waitFor(() =>
+    expect(document.querySelector('[data-file-editor="notes/one.mdx"]')).toBeInstanceOf(
+      HTMLElement,
+    ),
+  )
+  expect(disk.get(`${REMOTE}:notes/one.mdx`)).toBe(source)
+  expect(disk.has(`${REMOTE}:${ONE}`)).toBe(false)
+  expect(move).toHaveBeenCalledWith({
+    remote: REMOTE,
+    moves: [{ from: ONE, to: 'notes/one.mdx' }],
+    folders: [],
+  })
+  expect(write).not.toHaveBeenCalled()
+})
+test('an upgrade reserves the source against agent launches while its restore point is pending', async () => {
+  const pending = deferred<{ ok: boolean }>()
+  commitNow.mockImplementationOnce(() => pending.promise)
+  const store = fixture([ONE])
+  const ed = await editor()
+  const agent = renderHook(() => useDocumentAgent(ONE), {
+    wrapper: ({ children }) => <Provider store={store}>{children}</Provider>,
+  })
+  movedSnapshot = {
+    ...emptyVaultSnapshot(),
+    files: [{ path: 'notes/one.mdx', updatedAt: 'two' }],
+  }
+  await openActions()
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Upgrade to MDX' }))
+  await waitFor(() => expect(commitNow).toHaveBeenCalledTimes(1))
+  expect(store.get(documentUpgradesAtom).has(ONE)).toBe(true)
+  expect(ed.isEditable).toBe(false)
+  await act(async () => {
+    await agent.result.current.start('rewrite', 'Rewrite the passage', 'First passage')
+    await agent.result.current.start('write', 'Write a paragraph')
+  })
+  expect(store.get(documentRunsAtom)[ONE]).toBeUndefined()
+  expect(capability.mock.calls.map(([input]) => (input as { name: string }).name)).not.toEqual(
+    expect.arrayContaining(['agent.launch', 'agent.job', 'agent.scoped']),
+  )
+  await act(async () => pending.resolve({ ok: true }))
+  await waitFor(() => expect(store.get(documentUpgradesAtom).size).toBe(0))
+  expect(move).toHaveBeenCalledTimes(1)
+})
+
+test('a failed upgrade releases its reservation and restores the editable source for retry', async () => {
+  move.mockRejectedValueOnce(new Error('Destination already exists'))
+  const store = fixture([ONE])
+  const ed = await editor()
+  await openActions()
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Upgrade to MDX' }))
+  await waitFor(() => expect(move).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(store.get(documentUpgradesAtom).size).toBe(0))
+  expect(ed.isEditable).toBe(true)
+  expect(store.get(shellWorkspaceAtom).entries).toContain(ONE)
+  movedSnapshot = {
+    ...emptyVaultSnapshot(),
+    files: [{ path: 'notes/one.mdx', updatedAt: 'two' }],
+  }
+  await openActions()
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Upgrade to MDX' }))
+  await waitFor(() => expect(move).toHaveBeenCalledTimes(2))
+})
+
 function run(): AgentRun {
   return {
     kind: 'vault-app',
