@@ -306,6 +306,9 @@ export async function acquireHarnessRegistry(
   }
 }
 
+/** Standalone constructor for isolated registry tests; activations acquire an owner.
+ * @public
+ */
 export async function createHarnessRegistry(
   deps: HarnessRegistryDeps,
   owner: HarnessConfigOwner = createConfigOwner(deps),
