@@ -2113,6 +2113,7 @@ test('duplicate text blocks cannot be added to the batch selection', async () =>
   const askAi = await screen.findByRole('button', { name: 'Ask AI' })
   await user.click(askAi)
   const add = await screen.findByRole('menuitem', { name: 'Add to batch…' })
+  expect(add).toHaveAttribute('aria-disabled', 'true')
   await user.click(add)
   expect(screen.queryByRole('textbox', { name: 'Request for target 1' })).not.toBeInTheDocument()
 })

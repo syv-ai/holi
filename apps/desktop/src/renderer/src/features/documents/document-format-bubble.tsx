@@ -28,7 +28,10 @@ import {
 } from '@/features/documents/rich-text/rich-text-controls'
 import { RichTextHighlightPopover } from '@/features/documents/rich-text/rich-text-highlight'
 import { RichTextLinkPopover } from '@/features/documents/rich-text/rich-text-link'
-import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
+import {
+  useRichTextSelector,
+  useRichTextState,
+} from '@/features/documents/rich-text/rich-text-state'
 import {
   RichTextToolbarGroup,
   RichTextToolbarSeparator,
@@ -114,6 +117,11 @@ export function DocumentFormatBubble({
   const [customDraft, setCustomDraft] = useState('')
   const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const state = useRichTextState(editor)
+  const singleTextBlock = useRichTextSelector(editor, (current) => {
+    if (!current) return false
+    const { $from, $to } = current.state.selection
+    return $from.parent.isTextblock && $from.sameParent($to)
+  })
   /** The passage the person's own instruction is for, taken when its prompt
    *  opened; null while it is closed. */
   const [customPassage, setCustomPassage] = useState<string | null>(null)
@@ -243,12 +251,7 @@ export function DocumentFormatBubble({
                     </DropdownMenuItem>
                     {onAddToBatch ? (
                       <DropdownMenuItem
-                        disabled={
-                          editor.state.selection.$from.parent !==
-                            editor.state.selection.$to.parent ||
-                          editor.state.selection.$from.start() !==
-                            editor.state.selection.$to.start()
-                        }
+                        disabled={!singleTextBlock}
                         onClick={() => onAddToBatch('', selectedPassage())}
                       >
                         <PencilLineIcon aria-hidden="true" />
