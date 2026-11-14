@@ -104,9 +104,9 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
   ): Promise<CapabilityResult> {
     const root = await rootOf(remote)
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
-    if (!(await enabled(name, root, remote))) {
-      throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
-    }
+    const isEnabled = await enabled(name, root, remote)
+    if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+    if (!isEnabled) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
     const result = await deps.registry.run(
       name,
@@ -117,11 +117,18 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
         bundle,
         snapshot: async () => {
           const active = deps.active()
-          return active?.remote === remote && active.root === root
-            ? active.snapshot()
-            : scanVault(root, await deps.claims(root))
+          const snapshot =
+            active?.remote === remote && active.root === root
+              ? active.snapshot()
+              : scanVault(root, await deps.claims(root))
+          if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+          return snapshot
         },
-        claims: () => deps.claims(root),
+        claims: async () => {
+          const claims = await deps.claims(root)
+          if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
+          return claims
+        },
         core: deps.core(remote, root),
       },
       params,
