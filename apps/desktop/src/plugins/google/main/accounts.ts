@@ -77,7 +77,12 @@ export interface GoogleAccountsManager {
   removeAccount(sub: string): Promise<void>
   /** Fires for a connect, a removal, and a dead grant, naming the account that
    *  changed so a cache can be scoped to it. Null when nothing is connected. */
-  onChange(cb: (sub: string | null) => void): () => void
+  onChange(
+    cb: (
+      sub: string | null,
+      reason: 'connected' | 'expired' | 'removed' | 'unlinked',
+    ) => void | Promise<void>,
+  ): () => void
   /** The client in use and where it came from. The secret stays in main. */
   client(): { id: string; source: GoogleClientSource }
   /**
@@ -110,7 +115,12 @@ export async function createGoogleAccounts(
   /** The one copy. Sessions reach it through their `AccountRef`, never directly. */
   let accounts: GoogleAccounts = await deps.store.read()
   const sessions = new Map<string, GoogleSession>()
-  const listeners = new Set<(sub: string | null) => void>()
+  const listeners = new Set<
+    (
+      sub: string | null,
+      reason: 'connected' | 'expired' | 'removed' | 'unlinked',
+    ) => void | Promise<void>
+  >()
   let connecting: { id: symbol; flow: LoopbackFlow | null; cancel: () => void } | null = null
   const accountEpochs = new Map<string, number>()
   const accountEpoch = (sub: string) => accountEpochs.get(sub) ?? 0
@@ -129,8 +139,11 @@ export async function createGoogleAccounts(
   let own: GoogleClient | null = (await deps.clients?.read()) ?? null
   const currentClient = () => resolveClient(own, deps.env)
 
-  const emit = (sub: string | null) => {
-    for (const cb of listeners) cb(sub)
+  const emit = async (
+    sub: string | null,
+    reason: 'connected' | 'expired' | 'removed' | 'unlinked' = 'connected',
+  ) => {
+    await Promise.all([...listeners].map((cb) => cb(sub, reason)))
   }
 
   let writes: Promise<void> = Promise.resolve()
@@ -180,7 +193,7 @@ export async function createGoogleAccounts(
         if (accountEpoch(sub) !== grantEpoch) return
         await dropTokens(sub)
         await deps.vaults.unlinkAccount(sub)
-        emit(sub)
+        await emit(sub)
       },
       async expire(expectedGeneration) {
         let removed = false
@@ -196,7 +209,7 @@ export async function createGoogleAccounts(
         advanceAccountEpoch(sub)
         sessions.delete(sub)
         await deps.vaults.expireAccount(sub)
-        emit(sub)
+        await emit(sub, 'expired')
       },
     }
   }
@@ -387,7 +400,7 @@ export async function createGoogleAccounts(
             if (connecting?.id === reservation.id) connecting = null
             return { kind: 'cancelled' } as const
           }
-          emit(tokens.sub)
+          await emit(tokens.sub)
           if (connecting?.id === reservation.id) connecting = null
           return result
         },
@@ -406,12 +419,12 @@ export async function createGoogleAccounts(
         throw new Error(`that Google account is not connected on this machine (${sub})`)
       }
       await deps.vaults.link(remote, sub)
-      emit(sub)
+      await emit(sub)
     },
 
     async unlinkVault(remote) {
       await deps.vaults.unlinkVault(remote)
-      emit(null)
+      await emit(null, 'unlinked')
     },
 
     async overview(remote) {
@@ -516,6 +529,6 @@ export async function createGoogleAccounts(
   async function dropAccount(sub: string): Promise<void> {
     await dropTokens(sub)
     await deps.vaults.unlinkAccount(sub)
-    emit(sub)
+    await emit(sub, 'removed')
   }
 }

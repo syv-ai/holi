@@ -230,6 +230,41 @@ jobs:
       - name: Run clone preservation and seed-update fixtures on Windows Git
         run: pnpm --filter @holi/desktop exec vitest run test/prepare-clone.test.ts --project node
 
+  browser-display-smoke:
+    name: Native browser display isolation
+    runs-on: macos-26-intel
+    env:
+      LANG: en_US.UTF-8
+      ELECTRON_SKIP_BINARY_DOWNLOAD: ''
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install Electron
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: Run isolated native browser display smoke
+        run: pnpm --filter @holi/desktop exec node scripts/run-browser-display-smoke.mjs "$RUNNER_TEMP/holi-472-evidence"
+
+      - name: Upload native display evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-display-isolation-evidence
+          path: ${{ runner.temp }}/holi-472-evidence/
+          if-no-files-found: error
+
   test:
     name: Test
     # macOS on purpose: the tests encode the filesystem Holi ships on (macOS and

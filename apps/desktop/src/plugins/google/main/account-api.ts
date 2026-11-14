@@ -6,6 +6,12 @@ export function accountApi(sub: string, sessionForSub: (sub: string) => GoogleSe
   return () => {
     const session = sessionForSub(sub)
     if (session === null) throw new Error('that Google account is no longer connected')
-    return new GoogleApi({ accessToken: () => session.getAccessToken() })
+    return new GoogleApi({
+      accessToken: () => session.getAccessToken(),
+      beforeRequest: () => {
+        if (sessionForSub(sub) !== session)
+          throw new Error('that Google account is no longer connected')
+      },
+    })
   }
 }

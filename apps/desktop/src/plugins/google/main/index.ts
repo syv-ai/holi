@@ -18,6 +18,7 @@ import { openGoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
 import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
+import { createMailMarkerStore } from './markers'
 import { googleSeed } from './seed'
 import type { GoogleSession } from './session'
 import { startGoogleTriggers } from './triggers'
@@ -44,6 +45,7 @@ export const googleMain: MainPlugin = {
         const { createGoogleAccountsManager } = await import('./electron')
         const accounts = await createGoogleAccountsManager(ctx.userData)
         const bySub = new Map<string, { data: GoogleData; session: GoogleSession }>()
+        const markersBySub = new Map<string, ReturnType<typeof createMailMarkerStore>>()
         const dataForSession = (session: GoogleSession): GoogleData => {
           const sub = session.accountSub
           if (sub === null || accounts.sessionForSub(sub) !== session)
@@ -65,11 +67,18 @@ export const googleMain: MainPlugin = {
                 : null,
             ),
             cache,
+            markers:
+              markersBySub.get(sub) ??
+              (() => {
+                const markers = createMailMarkerStore(ctx.userData, sub)
+                markersBySub.set(sub, markers)
+                return markers
+              })(),
           })
           bySub.set(sub, { data, session })
           return data
         }
-        accounts.onChange((sub) => {
+        accounts.onChange(async (sub, reason) => {
           if (sub === null) return
           // Linking another vault does not replace the grant or its shared cache.
           if (bySub.get(sub)?.session === accounts.sessionForSub(sub)) return
@@ -78,9 +87,24 @@ export const googleMain: MainPlugin = {
           bySub.get(sub)?.data.forget()
           bySub.delete(sub)
           if (!/^[A-Za-z0-9_-]+$/.test(sub)) return
-          // Also erase accounts that never opened a data handle this process.
-          const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
-          retired.retire()
+          // An expired grant can be reconnected to the same Google identity;
+          // keep its durable annotations. Only deliberate account deletion
+          // removes them (including an explicit removal after expiry).
+          try {
+            if (reason === 'removed') {
+              const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
+              markersBySub.delete(sub)
+              await markers.purge()
+            }
+          } catch (error) {
+            throw new Error(
+              `Google account was removed, but personal mail markers could not be deleted: ${String(error)}`,
+            )
+          } finally {
+            // Also erase accounts that never opened a data handle this process.
+            const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
+            retired.retire()
+          }
         })
         return { accounts, dataForSession }
       })()

@@ -4,11 +4,17 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { isMachineStatePath, isSecretPath, wikiLinksToText } from '@holi/shared'
+import {
+  isMachineStatePath,
+  isSecretPath,
+  readMarkdownCaptionEnvelopes,
+  readMarkdownCodeCaptions,
+  wikiLinksToText,
+} from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
 import type { TemplateField } from '../shared/template-fields'
 import { inlineImages } from './images'
-import { drawMermaid, type DrawDiagrams } from './mermaid'
+import { commentSafeString, drawMermaid, type DrawDiagrams } from './mermaid'
 import { composeWrapper } from './wrapper'
 
 const exec = promisify(execFile)
@@ -79,6 +85,41 @@ async function readVaultImage(root: string, rel: string): Promise<Uint8Array> {
  * not fail the PDF: the image leaves its alt text, the diagram stays code, and
  * the result says so.
  */
+function wikiLinksOutsideRawTypst(markdown: string): string {
+  const ranges = [...markdown.matchAll(/<!--raw-typst[\s\S]*?-->/g)]
+    .map((match) => ({ from: match.index!, to: match.index! + match[0].length }))
+    .sort((a, b) => a.from - b.from)
+  if (ranges.length === 0) return wikiLinksToText(markdown)
+  let protectedMarkdown = ''
+  let at = 0
+  const saved: string[] = []
+  let prefix = 'HOLI_LITERAL_'
+  while (markdown.includes(prefix)) prefix += 'X'
+  for (const range of ranges) {
+    if (range.from < at) continue
+    protectedMarkdown += markdown.slice(at, range.from)
+    const token = `${prefix}${saved.length}_END`
+    saved.push(markdown.slice(range.from, range.to))
+    protectedMarkdown += token
+    at = range.to
+  }
+  protectedMarkdown += markdown.slice(at)
+  protectedMarkdown = wikiLinksToText(protectedMarkdown)
+  return protectedMarkdown.replace(
+    new RegExp(`${prefix}(\\d+)_END`, 'g'),
+    (token, index: string) => saved[Number(index)] ?? token,
+  )
+}
+
+function captionComment(body: string, caption: string): string {
+  const diagram = /^ {0,3}<!--raw-typst ([\s\S]*?)-->$/.exec(body)?.[1]
+  const content =
+    diagram === undefined
+      ? `#cmarker.render(${commentSafeString(`${body}\n\n${caption}`)}, raw-typst: false)`
+      : `${diagram} #cmarker.render(${commentSafeString(caption)}, raw-typst: false)`
+  return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(sticky: true)[#align(center)[${content}]]-->`
+}
+
 export async function renderPdf({
   typstBin,
   vaultRoot,
@@ -104,15 +145,65 @@ export async function renderPdf({
     const noteRel = relative(await realpath(vaultRoot), await realpath(notePath))
       .split(sep)
       .join('/')
-    const pictured = await inlineImages(await readFile(notePath, 'utf8'), noteRel, (rel) =>
+    const original = await readFile(notePath, 'utf8')
+    const frames = readMarkdownCodeCaptions(original)
+    // Carry each supported frame's identity in its caption through transforms.
+    // The nonce is absent from the literal source, and these inline comments add
+    // no lines (so source warning locations remain stable).
+    let taggedOriginal = original
+    let nonce = ''
+    do {
+      nonce = `holi-pdf-${Math.random().toString(36).slice(2)}`
+    } while (original.includes(nonce))
+    for (const [index, frame] of [...frames.entries()].reverse()) {
+      taggedOriginal =
+        taggedOriginal.slice(0, frame.caption.to) +
+        ` <!-- ${nonce}-${index} -->` +
+        taggedOriginal.slice(frame.caption.to)
+    }
+    const pictured = await inlineImages(taggedOriginal, noteRel, (rel) =>
       readVaultImage(vaultRoot, rel),
     )
     const drawn =
       diagrams === undefined
-        ? { markdown: wikiLinksToText(pictured.markdown), warnings: [] }
-        : await drawMermaid(pictured.markdown, diagrams, wikiLinksToText)
+        ? {
+            markdown: frames.length ? pictured.markdown : wikiLinksToText(pictured.markdown),
+            warnings: [],
+          }
+        : await drawMermaid(
+            pictured.markdown,
+            diagrams,
+            frames.length ? undefined : wikiLinksToText,
+          )
+    // Mermaid and image transforms run while the original envelopes still
+    // surround their body. Then each supported element and caption becomes one
+    // self-contained, non-executable-to-cmarker Typst block. The original line
+    // count is retained for warnings from everything after the envelope.
+    let markdown = drawn.markdown
+    const transformedEnvelopes = readMarkdownCaptionEnvelopes(drawn.markdown)
+    const transformations = frames.flatMap((frame, index) => {
+      const identity = `<!-- ${nonce}-${index} -->`
+      const transformed = transformedEnvelopes.find((item) =>
+        drawn.markdown.slice(item.caption.from, item.caption.to).includes(identity),
+      )
+      if (transformed === undefined) return []
+      const caption = original.slice(frame.caption.from, frame.caption.to)
+      const sourceLines = original.slice(frame.envelope.from, frame.envelope.to).split('\n').length
+      return [{ frame: transformed, caption, sourceLines }]
+    })
+    for (const item of transformations.reverse()) {
+      const body = drawn.markdown.slice(item.frame.body.from, item.frame.body.to)
+      markdown =
+        markdown.slice(0, item.frame.envelope.from) +
+        captionComment(body, item.caption) +
+        '\n'.repeat(Math.max(0, item.sourceLines - 1)) +
+        markdown.slice(item.frame.envelope.to)
+    }
+    // Keep the generated caption expression (including literal code source)
+    // and Mermaid drawings intact. The uncaptained wiki-link rewrite is unchanged.
+    if (frames.length) markdown = wikiLinksOutsideRawTypst(markdown)
     const noteForTypst = join(work, 'note.md')
-    await writeFile(noteForTypst, drawn.markdown)
+    await writeFile(noteForTypst, markdown)
 
     const wrapperPath = join(work, 'wrapper.typ')
     await writeFile(
@@ -134,7 +225,9 @@ export async function renderPdf({
       ...fontPathArgs(templateDir),
       ...(language === undefined ? [] : ['--input', `lang=${language}`]),
     ])
-    return { warnings: [...pictured.warnings, ...drawn.warnings] }
+    const warnings = [...pictured.warnings, ...drawn.warnings]
+    warnings.sort((a, b) => Number(/line (\d+)/.exec(a)?.[1]) - Number(/line (\d+)/.exec(b)?.[1]))
+    return { warnings }
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr ?? String(err)
     throw new Error(`typst compile failed: ${stderr}`)
