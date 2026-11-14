@@ -72,6 +72,9 @@ export interface AgentRun {
  *  so none carries over to the next. */
 export const documentRunsAtom = atom<Readonly<Record<string, AgentRun>>>({})
 
+/** Documents whose paths are being upgraded; new agent runs must wait. */
+export const documentUpgradesAtom = atom<ReadonlySet<string>>(new Set())
+
 export function isRunLive(run: AgentRun | undefined): boolean {
   return (
     run !== undefined &&
@@ -123,6 +126,7 @@ export const launchRunAtom = atom(
       params,
     }: { remote: string; path: string; capabilityName: string; params: unknown },
   ) => {
+    if (get(documentUpgradesAtom).has(path)) return
     const launch = ++launches
     set(patchRunAtom, { path, patch: { launch } })
     const current = (): AgentRun | undefined => {
@@ -290,7 +294,13 @@ export const vaultAppOfferAtom = atom((get) => {
 export const startVaultAppAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   const provider = get(loadedAgentProviderAtom)
-  if (remote === null || provider === null || !get(vaultAppOfferAtom)(path)) return
+  if (
+    remote === null ||
+    provider === null ||
+    get(documentUpgradesAtom).has(path) ||
+    !get(vaultAppOfferAtom)(path)
+  )
+    return
   const appPath = vaultAppPathFor(path, takenIn(get(snapshotAtom)))
   const agent = set(agentLabelAtom, { remote, id: provider, path })
   set(documentRunsAtom, (all) => ({
