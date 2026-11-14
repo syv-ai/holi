@@ -77,12 +77,13 @@ export function createMdxTrustStore(file: string): MdxTrustStore {
       const next: State = { version: VERSION, grants: [...grants].sort() }
       await mkdir(dirname(file), { recursive: true })
       const temporary = `${file}.tmp`
-      await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
-      if (!stillOwned()) {
-        await rm(temporary, { force: true })
-        throw new Error('MDX trust context changed')
+      try {
+        await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+        if (!stillOwned()) throw new Error('MDX trust context changed')
+        await rename(temporary, file)
+      } finally {
+        await rm(temporary, { force: true }).catch(() => undefined)
       }
-      await rename(temporary, file)
     }
     const pending = queue.then(run, run)
     queue = pending.catch(() => undefined)
