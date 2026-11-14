@@ -56,14 +56,10 @@ const subscriptionList = vi.hoisted(() =>
     return requested.map((path) => {
       const own = subscriptionScopes.values.find((scope) => scope.path === path)
       const parent = subscriptionScopes.values.find((scope) => scope.path === '')
-      return (
-        own ?? {
-          path,
-          explicit: false,
-          coveredBy: path === '' || !parent ? null : '',
-          baseline: null,
-        }
-      )
+      return {
+        ...(own ?? { path, explicit: false, baseline: null }),
+        coveredBy: path === '' || !parent ? null : '',
+      }
     })
   }),
 )
@@ -231,6 +227,13 @@ test('vault and folder subscription controls persist explicit scopes and explain
       enabled: true,
     }),
   )
+  expect(
+    await screen.findByRole('button', {
+      name: 'Remove explicit subscription for kunder (still covered by the vault)',
+    }),
+  ).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Unsubscribe this vault' }))
+  expect(await screen.findByRole('button', { name: 'Unsubscribe kunder' })).toBeInTheDocument()
 })
 
 test('tree rows activate by Enter and Space without consuming nested controls', async () => {

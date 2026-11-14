@@ -1096,7 +1096,7 @@ export function FilesSection({
                                     (entry) => entry.path === item.getId(),
                                   )
                                   if (scope === undefined) return null
-                                  const inherited = scope.coveredBy !== null && !scope.explicit
+                                  const inherited = scope.coveredBy !== null
                                   const label = scope.explicit
                                     ? inherited
                                       ? `Remove explicit subscription for ${item.getItemName()} (still covered by ${scope.coveredBy || 'the vault'})`
