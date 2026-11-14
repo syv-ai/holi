@@ -71,7 +71,10 @@ function rig() {
         sessionFor: async () => ({ accountSub: 'attachment-account' }),
       } as unknown as GoogleAccountsManager,
       dataFor: async () => data,
-      settings: { read: async () => ({ calendars: {}, imageSenders: [] }), write: async () => {} },
+      settings: {
+        read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
+        write: async () => {},
+      },
     }),
   )
   const send = (attach: string[]) =>

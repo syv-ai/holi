@@ -14,6 +14,7 @@
  * so the security-relevant code and its test suites stay put.
  */
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useAtomValue } from 'jotai'
 import { ImageOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -26,7 +27,7 @@ import {
 import { sanitizeMailHtml } from './mail-html'
 import { useRemoteContent, type RemoteContentIdentity } from './mail-images'
 import { registerMailFrame } from './mail-frames'
-import { matchHotkey, openExternal } from '@/plugin-api'
+import { activeRemoteAtom, matchHotkey, openExternal } from '@/plugin-api'
 
 interface SandboxedHtmlProps {
   /** Raw and untrusted. Sanitizing happens **here**; a caller must not pre-sanitize. */
@@ -60,8 +61,18 @@ export function SandboxedHtml({
   identity = NO_IDENTITY,
 }: SandboxedHtmlProps): React.JSX.Element {
   const remote = useRemoteContent(identity)
+  const activeRemote = useAtomValue(activeRemoteAtom)
   /** The unblock for a block with nothing to remember it by. */
-  const [allowedLocally, setAllowedLocally] = useState(false)
+  const [localAllowance, setLocalAllowance] = useState<{
+    remote: string | null
+    key: string | null
+    html: string
+  } | null>(null)
+  const allowedLocally =
+    identity.key === null &&
+    localAllowance?.remote === activeRemote &&
+    localAllowance.key === identity.key &&
+    localAllowance.html === html
   const allowRemoteContent = remote.allowed || allowedLocally
 
   const themed = useMailPalette()
@@ -73,9 +84,25 @@ export function SandboxedHtml({
   // message. See `bringsOwnDesign`.
   const palette = useMemo(() => canvasFor(html, themed), [html, themed])
 
+  const [imageError, setImageError] = useState(false)
+  const [savingChoice, setSavingChoice] = useState(false)
+  const [retry, setRetry] = useState<(() => Promise<void>) | null>(null)
   const loadOnce = () => {
-    setAllowedLocally(true)
+    if (identity.key === null) setLocalAllowance({ remote: activeRemote, key: identity.key, html })
     remote.allowOnce()
+  }
+  const saveChoice = async (action: () => Promise<void>) => {
+    setRetry(() => action)
+    setSavingChoice(true)
+    setImageError(false)
+    try {
+      await action()
+      setRetry(null)
+    } catch {
+      setImageError(true)
+    } finally {
+      setSavingChoice(false)
+    }
   }
 
   return (
@@ -86,20 +113,52 @@ export function SandboxedHtml({
           <span className="min-w-0 flex-1">
             Images blocked — loading them tells the sender you opened this.
           </span>
-          <Button variant="ghost" size="xs" className="shrink-0" onClick={loadOnce}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="shrink-0"
+            onClick={loadOnce}
+            disabled={savingChoice || remote.pending}
+          >
             Load images
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="shrink-0"
+            onClick={() => void saveChoice(remote.allowAllSenders)}
+            disabled={savingChoice || remote.pending}
+          >
+            Always from all senders
           </Button>
           {/* Offered only with an address to attach it to: an empty sender
               would unblock every message whose `From` could not be parsed. */}
+          {imageError && (
+            <span role="status" className="flex items-center gap-1">
+              Could not save image preference.
+              {retry !== null && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => void saveChoice(retry)}
+                  disabled={savingChoice || remote.pending}
+                >
+                  Retry
+                </Button>
+              )}
+            </span>
+          )}
           {remote.sender !== null && (
             <Button
+              type="button"
               variant="ghost"
               size="xs"
               className="shrink-0"
-              onClick={() => {
-                setAllowedLocally(true)
-                remote.allowSenderAlways()
-              }}
+              onClick={() => void saveChoice(remote.allowSenderAlways)}
+              disabled={savingChoice || remote.pending}
             >
               Always from this sender
             </Button>

@@ -84,7 +84,10 @@ function rig() {
     googleCapabilities({
       accounts,
       dataFor: async () => null,
-      settings: { read: async () => ({ calendars: {}, imageSenders: [] }), write: async () => {} },
+      settings: {
+        read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
+        write: async () => {},
+      },
     }),
   )
   const run = async (

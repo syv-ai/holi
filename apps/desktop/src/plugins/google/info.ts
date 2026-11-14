@@ -24,6 +24,16 @@ export const GOOGLE_INFO: PluginInfo = {
       target: 'local',
     },
     {
+      key: 'imagesFromAllSenders',
+      label: 'Images from all senders',
+      explanation:
+        'Load remote images automatically from every sender in this vault on this machine. This can tell senders when you open mail. Turn off to block images again, except for trusted senders.',
+      type: { kind: 'boolean' },
+      default: false,
+      target: 'local',
+      localOnly: true,
+    },
+    {
       key: 'imageSenders',
       label: 'Images from',
       explanation:
@@ -31,6 +41,7 @@ export const GOOGLE_INFO: PluginInfo = {
       type: { kind: 'list' },
       default: [],
       target: 'local',
+      localOnly: true,
     },
     // How the Calendar reads is the vault's, so a team answers it once;
     // `plugins.local.yaml` still overrides it on one machine.
