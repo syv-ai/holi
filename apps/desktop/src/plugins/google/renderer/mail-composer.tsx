@@ -883,6 +883,8 @@ function MarkdownEditor({
   const editable = useRef(new Compartment())
   const viewRef = useRef<EditorView | null>(null)
   const ignoreOpeningBlur = useRef(focusOnMount)
+  const interactiveVim = useRef(vimEnabled && !disabled)
+  interactiveVim.current = vimEnabled && !disabled
   const modeRef = useRef('')
   const [mode, setMode] = useState('')
   const [view, setView] = useState<EditorView | null>(null)
@@ -920,7 +922,7 @@ function MarkdownEditor({
             if (update.docChanged) notify.current(update.state.doc.toString())
             if (update.focusChanged) {
               setFocused(update.view.hasFocus)
-              if (update.view.hasFocus && vimEnabled && !disabled) {
+              if (update.view.hasFocus && interactiveVim.current) {
                 setMode(modeRef.current || 'normal')
               }
               if (!update.view.hasFocus) {
@@ -975,14 +977,19 @@ function MarkdownEditor({
         }
       }}
     >
-      {vimEnabled && !disabled && focused && mode !== '' && (
-        <span
-          className="px-2 py-1 text-xs text-muted-foreground"
-          aria-live="polite"
-          data-testid="vim-mode"
-        >
-          {mode.toUpperCase()}
-        </span>
+      {vimEnabled && (
+        // Keep the action row stationary when a pointer-down blurs the editor.
+        <div className="min-h-6" data-testid="vim-mode-slot">
+          {!disabled && focused && mode !== '' && (
+            <span
+              className="block px-2 py-1 text-xs text-muted-foreground"
+              aria-live="polite"
+              data-testid="vim-mode"
+            >
+              {mode.toUpperCase()}
+            </span>
+          )}
+        </div>
       )}
       <div ref={host} className="min-h-40 flex-1 overflow-auto" data-testid="mail-body" />
     </div>

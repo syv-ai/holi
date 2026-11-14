@@ -1152,6 +1152,45 @@ describe('the preview', () => {
 })
 
 describe('Vim in the message body', () => {
+  it('reserves mode-row space when focus leaves so action buttons do not move', async () => {
+    const user = setup()
+    mount({ intent: { kind: 'new' } }, true)
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    await user.click(body)
+    const slot = screen.getByTestId('vim-mode-slot')
+    expect(slot).toHaveClass('min-h-6')
+    expect(screen.getByTestId('vim-mode')).toHaveTextContent('NORMAL')
+
+    await user.click(subjectField())
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+    expect(screen.getByTestId('vim-mode-slot')).toBe(slot)
+    expect(slot).toBeEmptyDOMElement()
+  })
+
+  it('restores mode disclosure after enabling Vim live and refocusing the body', async () => {
+    const user = setup()
+    const { store } = mount({ intent: { kind: 'new' } })
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    const editor = EditorView.findFromDOM(body)!
+    await user.click(body)
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+
+    act(() => store.set(vimCodeEditingAtom, true))
+    await waitFor(() => expect(screen.getByTestId('vim-mode')).toHaveTextContent('NORMAL'))
+    await user.click(subjectField())
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+    await user.click(body)
+    expect(screen.getByTestId('vim-mode')).toHaveTextContent('NORMAL')
+    expect(EditorView.findFromDOM(body)).toBe(editor)
+
+    await user.keyboard('i')
+    await waitFor(() => expect(screen.getByTestId('vim-mode')).toHaveTextContent('INSERT'))
+    await user.click(subjectField())
+    await user.click(body)
+    expect(screen.getByTestId('vim-mode')).toHaveTextContent('INSERT')
+    expect(EditorView.findFromDOM(body)).toBe(editor)
+  })
+
   it('edits through real keys and keeps the editor and undo history across preference changes', async () => {
     const user = setup()
     const { store } = mount({ intent: { kind: 'new' } }, true)
