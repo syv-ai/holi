@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { writeMarkdownCaptionEnvelope } from '@holi/shared'
 import { fontPathArgs, renderPdf } from '../main/render'
 import { resolveTypstBin } from '../main/typst-bin'
 // The ACTUAL seeded template — this test proves that exact file compiles.
@@ -39,7 +40,9 @@ describe('fontPathArgs', () => {
   })
 })
 
-describe('renderPdf (integration — needs typst on PATH; first run fetches cmarker)', () => {
+const describeTypst = describe.skipIf((await resolveTypstBin()) === null)
+
+describeTypst('renderPdf (integration — needs typst; first run fetches cmarker)', () => {
   it('renders a real markdown note through the Plain template to a %PDF', async () => {
     const typst = await resolveTypstBin()
     if (typst === null) return // no typst on this machine — skip, don't fail
@@ -69,6 +72,155 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     const bytes = await readFile(outPath)
     expect(bytes.length).toBeGreaterThan(0)
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+  }, 30_000)
+
+  it('renders one fenced-code caption safely and leaves the source note untouched', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const notePath = join(root, 'caption.md')
+    const original = `Before.\n\n${writeMarkdownCaptionEnvelope(
+      '```javascript title="x.js"\nconst label = "[[path/to/file.md|shown]]"; // @@FIG:real@@ -->\n```',
+      '**Centered caption** with `inline` and &amp;.',
+    )}\n\nAfter [[other.md|link]].\n`
+    await writeFile(notePath, original)
+    const outPath = join(root, 'caption.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
+    expect((await readFile(outPath)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+  }, 30_000)
+
+  it('keeps a caption below a Mermaid diagram and its unavailable-source fallback', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const notePath = join(root, 'diagram.md')
+    const original = writeMarkdownCaptionEnvelope(
+      '```mermaid\nflowchart LR\n  A --> B\n```',
+      '**Diagram caption**',
+    )
+    await writeFile(notePath, original)
+    const diagramOut = join(root, 'diagram.pdf')
+    const diagram = await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath: diagramOut,
+      fields: [],
+      meta: {},
+      diagrams: async (sources) => {
+        expect(sources).toEqual(['flowchart LR\n  A --> B'])
+        return [
+          {
+            svg: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="30"><text x="2" y="20">Diagram 478</text></svg>',
+          },
+        ]
+      },
+    })
+    expect(diagram.warnings).toEqual([])
+    expect((await readFile(diagramOut)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+
+    const fallback = await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath: join(root, 'fallback.pdf'),
+      fields: [],
+      meta: {},
+      diagrams: async () => [{ error: 'invalid source' }],
+    })
+    expect(fallback.warnings).toEqual(['The diagram on line 3 shows as code: invalid source'])
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+  }, 30_000)
+
+  it('renders safely through an unchanged custom cmarker template', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/custom')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(
+      join(templateDir, 'template.typ'),
+      '#import "@preview/cmarker:0.1.6"\n#let doc(notePath, meta: (:), assets: "") = cmarker.render(read(notePath))\n',
+    )
+    const notePath = join(root, 'custom.md')
+    const original = writeMarkdownCaptionEnvelope(
+      '```js\nconst marker = "@@FIG:kept@@";\n```',
+      'Custom **caption** &amp; text.',
+    )
+    await writeFile(notePath, original)
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath: join(root, 'custom.pdf'),
+      fields: [],
+      meta: {},
+    })
+    expect((await readFile(join(root, 'custom.pdf'))).subarray(0, 5).toString('latin1')).toBe(
+      '%PDF-',
+    )
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+  }, 30_000)
+
+  it('keeps image and diagram warning lines mapped to the original note', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const notePath = join(root, 'warnings.md')
+    const envelope = writeMarkdownCaptionEnvelope('```js\nconst x = 1\n```', 'Caption')
+    const original = [
+      '![Before](before.png)',
+      '',
+      envelope,
+      '',
+      '```mermaid',
+      'not a diagram',
+      '```',
+      '',
+      '![After](after.png)',
+      '',
+    ].join('\n')
+    await writeFile(notePath, original)
+    const result = await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath: join(root, 'warnings.pdf'),
+      fields: [],
+      meta: {},
+      diagrams: async () => [{ error: 'intentional invalid diagram' }],
+    })
+    expect(result.warnings).toEqual([
+      'The image on line 1 is left out: before.png: no such file in the vault',
+      'The diagram on line 15 shows as code: intentional invalid diagram',
+      'The image on line 19 is left out: after.png: no such file in the vault',
+    ])
   }, 30_000)
 
   it('shows an image the note links relative to its own folder', async () => {
@@ -213,7 +365,7 @@ const SRC_TEMPLATES = fileURLToPath(
   new URL('../main/vault/once/.holi/document-templates', import.meta.url),
 )
 
-describe('renderPdf — branded set (integration — needs typst on PATH)', () => {
+describeTypst('renderPdf — branded set (integration — needs typst)', () => {
   async function vaultWithBrandedSet(): Promise<string> {
     const root = await work()
     const dt = join(root, '.holi/document-templates')
@@ -222,6 +374,32 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
     }
     return root
   }
+
+  it('keeps a captioned source literal through the unchanged branded template', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await vaultWithBrandedSet()
+    const notePath = join(root, 'caption.md')
+    const original = writeMarkdownCaptionEnvelope(
+      '```javascript title="source.js"\nconst link = "[[folder/file.md|shown]]"; // @@FIG:kept@@\n```',
+      '**Source caption** with `inline` formatting.',
+    )
+    await writeFile(notePath, original)
+    const outPath = join(root, 'caption.pdf')
+    const result = await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir: join(root, '.holi/document-templates/proposal'),
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
+    expect(result.warnings).toEqual([])
+    expect((await readFile(outPath)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+  }, 30_000)
 
   it('renders the proposal (signature + diagram + table tokens) to %PDF', async () => {
     const typst = await resolveTypstBin()

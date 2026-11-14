@@ -3,6 +3,7 @@
  * owns the envelope: callers decide which body Markdown is a supported element
  * and which inline Markdown is an editable caption.
  */
+import { fencedBlocks } from './fences'
 
 export interface CaptionRange {
   /** Exact JavaScript string offsets; end is exclusive. */
@@ -14,6 +15,46 @@ export interface MarkdownCaptionEnvelope {
   envelope: CaptionRange
   body: CaptionRange
   caption: CaptionRange
+}
+
+/** A caption envelope whose body is exactly one supported fenced code block. */
+export interface MarkdownCodeCaption {
+  envelope: CaptionRange
+  body: CaptionRange
+  caption: CaptionRange
+  language: string
+}
+
+/**
+ * Select only envelopes that can be rendered as one code element and one inline
+ * paragraph. Unsupported structures remain opaque source text for their caller.
+ */
+export function readMarkdownCodeCaptions(text: string): MarkdownCodeCaption[] {
+  return readMarkdownCaptionEnvelopes(text).flatMap((frame) => {
+    const body = text.slice(frame.body.from, frame.body.to)
+    const [block] = fencedBlocks(body)
+    // The element is exactly one fence, not an opening and closing fence
+    // surrounding arbitrary prose or additional blocks. `fencedBlocks` owns
+    // CommonMark's fence and indentation semantics.
+    if (!block || block.from !== 0 || block.to !== body.length) return []
+    const caption = text.slice(frame.caption.from, frame.caption.to)
+    if (!isPortableInlineCaption(caption)) return []
+    return [{ ...frame, language: block.lang }]
+  })
+}
+
+/** Only accept one paragraph of portable inline Markdown, never raw HTML. */
+function isPortableInlineCaption(caption: string): boolean {
+  if (!caption.trim() || /[\r\n\u2028\u2029]/.test(caption) || /[<>]/.test(caption)) return false
+  if (/^[ \t]/.test(caption) || /!\s*\[/.test(caption)) return false
+  // CommonMark block openers, including empty headings and thematic breaks.
+  if (
+    /^ {0,3}(?:#{1,6}(?:\s|$)|>|(?:[-*_][ \t]*){3,}[ \t]*$|(?:[-*+]|\d+[.)])(?:[ \t]+|$)|(?:`{3,}|~{3,}))/i.test(
+      caption,
+    )
+  )
+    return false
+  return true
 }
 
 const FIGURE = '<!-- holi:figure -->'
@@ -275,7 +316,10 @@ export function writeMarkdownCaptionEnvelope(body: string, caption: string): str
     /^(?: {4}| {0,3}\t)/.test(caption) ||
     /^(?: {0,3}(?:#{1,6}(?:\s|$)|>|[-+*](?:\s|$)|\d+[.)](?:\s|$)|`{3,}|~{3,}|<)| {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$)/.test(
       caption,
-    )
+    ) ||
+    /[<>]/.test(caption) ||
+    /!\s*\[/.test(caption) ||
+    /^(?:#{1,6}|\d+[.)])$/.test(caption)
   ) {
     throw new Error('caption must be one inline Markdown paragraph')
   }

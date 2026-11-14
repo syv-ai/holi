@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   readMarkdownCaptionEnvelopes,
+  readMarkdownCodeCaptions,
   writeMarkdownCaptionEnvelope,
 } from '../src/markdown-captions'
 
@@ -9,6 +10,39 @@ const body =
 const caption = '**A** &amp; _B_'
 
 describe('Markdown caption envelopes', () => {
+  it('selects one supported code fence while preserving inline caption bytes', () => {
+    const source = writeMarkdownCaptionEnvelope(
+      '```mermaid\nx --> y\n```',
+      '**Unicode** “quote” &amp; `--&gt;`',
+    )
+    const [frame] = readMarkdownCodeCaptions(source)
+    expect(frame?.language).toBe('mermaid')
+    expect(source.slice(frame!.caption.from, frame!.caption.to)).toBe(
+      '**Unicode** “quote” &amp; `--&gt;`',
+    )
+  })
+
+  it('accepts ordinary code fences of any language and no language', () => {
+    for (const code of [
+      '```\nx\n```',
+      '```brainfuck extra\n+x\n```',
+      '~~~rust\nfn main() {}\n~~~',
+      '   ```js\nthree-space indent\n   ```',
+    ]) {
+      const source = writeMarkdownCaptionEnvelope(code, 'caption')
+      expect(readMarkdownCodeCaptions(source)).toHaveLength(1)
+    }
+  })
+
+  it('leaves multiple fences, prose, and unsupported envelopes opaque', () => {
+    const source = [
+      writeMarkdownCaptionEnvelope('```js\nx\n```\n\ntext', 'caption'),
+      writeMarkdownCaptionEnvelope('```js\nx\n```\n\n```py\ny\n```', 'caption'),
+      writeMarkdownCaptionEnvelope('```js\nx\n```\nprose', 'caption'),
+    ].join('\n\n')
+    expect(readMarkdownCodeCaptions(source)).toEqual([])
+  })
+
   it('round-trips opaque body Markdown and inline caption formatting', () => {
     const serialized = writeMarkdownCaptionEnvelope(body, caption)
     const [found] = readMarkdownCaptionEnvelopes(serialized)
@@ -51,6 +85,7 @@ describe('Markdown caption envelopes', () => {
       const [found] = readMarkdownCaptionEnvelopes(serialized)
       expect(serialized.slice(found!.body.from, found!.body.to)).toBe(sourceBody)
       expect(serialized.slice(found!.caption.from, found!.caption.to)).toBe(sourceCaption)
+      expect(readMarkdownCodeCaptions(serialized)).toEqual([])
       const fenced = `\`\`\`md${separator}info\n${serialized}\n\`\`\``
       expect(readMarkdownCaptionEnvelopes(fenced)).toEqual([])
     }
@@ -214,6 +249,28 @@ describe('Markdown caption envelopes', () => {
       '1.',
     ]) {
       expect(() => writeMarkdownCaptionEnvelope('![a](a.png)', caption)).toThrow()
+    }
+  })
+
+  it('does not select unsafe or non-paragraph caption syntax', () => {
+    const valid = writeMarkdownCaptionEnvelope('```js\nx\n```', 'caption')
+    for (const value of [
+      '    indented code',
+      '___',
+      '-',
+      '1.',
+      '![image](secret.png)',
+      '<div>html</div>',
+      '<!--raw-typst #panic("executed")-->',
+      '#',
+      '## ',
+      '```typst\n#panic("executed")\n```',
+    ]) {
+      const source = valid.replace(
+        'caption\n\n<!-- /holi:figure -->',
+        `${value}\n\n<!-- /holi:figure -->`,
+      )
+      expect(readMarkdownCodeCaptions(source)).toEqual([])
     }
   })
 
