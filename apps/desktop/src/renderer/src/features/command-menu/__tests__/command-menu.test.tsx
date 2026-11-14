@@ -31,9 +31,11 @@ function Live({ split }: { split: () => void }) {
 function setup({
   start,
   plugin,
+  openScratchpad,
 }: {
   start?: (text: string) => void
   plugin?: (id: string) => void
+  openScratchpad?: () => void
 } = {}) {
   const store = createStore()
   if (plugin !== undefined) {
@@ -81,7 +83,13 @@ function setup({
   render(
     <Provider store={store}>
       <Live split={split} />
-      <CommandMenu open onOpenChange={onOpenChange} onOpen={onOpen} onAddVault={() => undefined} />
+      <CommandMenu
+        open
+        onOpenChange={onOpenChange}
+        onOpen={onOpen}
+        onAddVault={() => undefined}
+        onOpenScratchpad={openScratchpad}
+      />
     </Provider>,
   )
   return { onOpen, split, onOpenChange }
@@ -122,6 +130,14 @@ test("> lists actions only, and an action runs its shortcut's handler", async ()
   expect(options).toEqual([expect.stringContaining('Split view')])
   await userEvent.keyboard('{Enter}')
   await waitFor(() => expect(split).toHaveBeenCalled())
+})
+
+test('the scratchpad action calls the shell action', async () => {
+  const openScratchpad = vi.fn()
+  setup({ openScratchpad })
+  await userEvent.type(screen.getByRole('combobox'), '>scratchpad')
+  await userEvent.keyboard('{Enter}')
+  await waitFor(() => expect(openScratchpad).toHaveBeenCalledOnce())
 })
 
 test('notes whose text matches follow the name matches', async () => {

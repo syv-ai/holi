@@ -6,7 +6,8 @@
  * node-pty is an Electron-ABI native module, so it loads lazily inside the
  * real spawn path only; tests inject a fake PTY and never touch it.
  */
-import { defaultProbePid, type PidState } from '../process-group'
+import { commandLine, launchPlan } from '../launch'
+import { defaultProbePid, killTree, type PidState, type Taskkill } from '../process-group'
 
 /** The slice of node-pty's IPty Holi depends on (tests implement it directly). */
 export interface PtyProcess {
@@ -32,7 +33,28 @@ export type SpawnPty = (file: string, args: string[], opts: SpawnPtyOptions) => 
 /** The only place node-pty is loaded — never reached under vitest. */
 export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
   const pty = require('node-pty') as typeof import('node-pty')
-  return pty.spawn(file, args, { name: 'xterm-256color', ...opts }) as unknown as PtyProcess
+  // Canonical npm Node shims resolve to their script; opaque Windows batches
+  // use cmd.exe. Windows fallback Node is a genuine runtime with interactive stdio.
+  const launch = launchPlan(file, args, { env: opts.env })
+  const env = launch.env ? { ...opts.env, ...launch.env } : opts.env
+  return pty.spawn(launch.file, commandLine(launch), {
+    name: 'xterm-256color',
+    ...opts,
+    env,
+  }) as unknown as PtyProcess
+}
+
+/**
+ * node-pty's own `kill`. On Windows it takes no signal and throws if given
+ * one ("Signals not supported on windows"); elsewhere it passes the signal on.
+ */
+function killPty(
+  pty: PtyProcess,
+  signal: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform === 'win32') pty.kill()
+  else pty.kill(signal)
 }
 
 /**
@@ -45,23 +67,41 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
  * jobs, Claude's helpers) goes with it; a pid that is `alive` but leads no
  * group is signalled alone through node-pty; a `gone` one gets nothing.
  * The agent's runtime (`plugins/agent/main/host/pty.ts`) explains the history.
+ *
+ * On Windows there are no groups or signals: a live child is a tree root and
+ * `killTree` stops the tree by `taskkill`, then the PTY itself is closed.
  */
 export function signalPty(
   pty: PtyProcess,
   signal: 'SIGTERM' | 'SIGKILL' | 'SIGHUP',
   probePid: (pid: number) => PidState = defaultProbePid,
+  platform: NodeJS.Platform = process.platform,
+  taskkill?: Taskkill,
 ): void {
   switch (probePid(pty.pid)) {
     case 'group-leader':
-      try {
-        process.kill(-pty.pid, signal)
-      } catch {
-        // Reaped between the probe and here.
-      }
+      // Reaped between the probe and here is a no-op inside `killTree`.
+      // On Windows the PTY is closed once `taskkill` has found the tree: closing
+      // it first would end the root, and `/T` finds no root to walk down from.
+      killTree(
+        pty.pid,
+        signal,
+        platform,
+        taskkill,
+        platform === 'win32'
+          ? () => {
+              try {
+                killPty(pty, signal, platform)
+              } catch {
+                // Already closed.
+              }
+            }
+          : undefined,
+      )
       return
     case 'alive':
       try {
-        pty.kill(signal)
+        killPty(pty, signal, platform)
       } catch {
         // Raced with exit.
       }

@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { discover, normalizeReport, providers, reconcile } from './harness-monitor.mjs'
 
@@ -166,7 +170,13 @@ test('creates one explicitly unverified issue per provider on first observation'
   assert.equal(adapter.issues.size, 3)
   for (const issue of adapter.issues.values()) {
     assert.match(issue.body, /Monitoring-only/)
-    assert.match(issue.body, /compatibility: unverified/)
+    if (issue.label === 'harness-pi') {
+      assert.match(issue.body, /cli-contract: unverified/)
+      assert.match(issue.body, /rpc-consumer: unverified/)
+      assert.match(issue.body, /rpc-producer: unverified/)
+    } else {
+      assert.match(issue.body, /compatibility: unverified/)
+    }
     assert.match(issue.body, /<!-- holi-harness-monitor:/)
     assert.equal(issue.state, 'open')
   }
@@ -208,7 +218,13 @@ test('mismatches stay open and update the tracking issue', async () => {
 test('only a current all-pass report closes; later release reopens the same issue', async () => {
   const adapter = fakeAdapter()
   await reconcile(report('pi'), adapter)
-  await reconcile(report('pi', '1.0.0', 2, 'pass'), adapter)
+  const passingPi = report('pi', '1.0.0', 2, 'pass')
+  passingPi.providers[0].checks.push(
+    { name: 'cli-contract', outcome: 'pass' },
+    { name: 'rpc-consumer', outcome: 'pass' },
+    { name: 'rpc-producer', outcome: 'pass' },
+  )
+  await reconcile(passingPi, adapter)
   const issue = [...adapter.issues.values()][0]
   assert.equal(issue.state, 'closed')
   await reconcile(report('pi', '2.0.0', 3), adapter)
@@ -225,6 +241,89 @@ test('a mixed report cannot close an issue even when one check passes', async ()
   assert.equal([...adapter.issues.values()][0].state, 'open')
 })
 
+test('Claude merge preserves Codex and missing Claude coverage remains unverified', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'holi-monitor-merge-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const input = {
+    sha: 'abc',
+    runNumber: 9,
+    runUrl: 'https://example.test/run',
+    providers: [observation('claude-code', '2.1.319', 9), observation('codex', '9.8.7', 9, 'pass')],
+  }
+  const reportPath = join(dir, 'report.json')
+  const checksPath = join(dir, 'checks.json')
+  await writeFile(reportPath, JSON.stringify(input))
+  await writeFile(
+    checksPath,
+    JSON.stringify([{ name: 'CLI surface', outcome: 'pass', detail: '2.1.319' }]),
+  )
+  const merged = spawnSync(
+    process.execPath,
+    ['scripts/harness-monitor.mjs', 'merge-claude', reportPath, checksPath],
+    { encoding: 'utf8' },
+  )
+  assert.equal(merged.status, 0, merged.stderr)
+  const result = JSON.parse(merged.stdout)
+  assert.deepEqual(result.providers.find((p) => p.id === 'codex').checks, input.providers[1].checks)
+  const claude = normalizeReport(result.providers.find((p) => p.id === 'claude-code'))
+  assert.equal(claude.checks.find((check) => check.name === 'CLI surface').outcome, 'pass')
+  assert.ok(
+    claude.checks
+      .filter((check) => check.name !== 'CLI surface')
+      .every((check) => check.outcome === 'unverified'),
+  )
+  const adapter = fakeAdapter()
+  await reconcile(
+    { ...result, providers: [result.providers.find((p) => p.id === 'claude-code')] },
+    adapter,
+  )
+  assert.equal([...adapter.issues.values()][0].state, 'open')
+})
+
+test('fixture and CLI passes cannot close while Claude signals remain unverified', async () => {
+  const adapter = fakeAdapter()
+  const checks = [
+    { name: 'CLI surface', outcome: 'pass' },
+    {
+      name: 'fixture consumers',
+      outcome: 'pass',
+      detail: 'Constructed attributed fixtures replayed.',
+    },
+    { name: 'historical-session inclusion', outcome: 'unverified' },
+    { name: 'actual hook emission', outcome: 'unverified' },
+    { name: 'permissions', outcome: 'unverified' },
+    { name: 'messaging', outcome: 'unverified' },
+  ]
+  await reconcile(
+    {
+      ...report('claude-code', '2.1.319', 1),
+      providers: [{ ...observation('claude-code', '2.1.319', 1), checks }],
+    },
+    adapter,
+  )
+  const issue = [...adapter.issues.values()][0]
+  assert.equal(issue.state, 'open')
+  assert.match(issue.body, /CLI surface: pass/)
+  assert.match(issue.body, /fixture consumers: pass/)
+  assert.match(issue.body, /actual hook emission: unverified/)
+  assert.match(issue.body, /exact npm CLI surface/)
+  assert.doesNotMatch(issue.body, /No provider harness was installed or executed/)
+})
+
+test('malformed runner checks cannot become a pass', () => {
+  for (const invalid of [
+    null,
+    {},
+    { name: 7, outcome: 'pass' },
+    { name: 'CLI surface', outcome: 'pass', detail: {} },
+  ]) {
+    assert.throws(
+      () => normalizeReport(observation('claude-code'), [invalid]),
+      /Invalid normalized/,
+    )
+  }
+})
+
 test('missing required checks are unverified and cannot close an issue', async () => {
   const adapter = fakeAdapter()
   await reconcile(report('pi'), adapter)
@@ -233,7 +332,9 @@ test('missing required checks are unverified and cannot close an issue', async (
   await reconcile(omitted, adapter)
   const issue = [...adapter.issues.values()][0]
   assert.equal(issue.state, 'open')
-  assert.match(issue.body, /compatibility: unverified/)
+  assert.match(issue.body, /cli-contract: unverified/)
+  assert.match(issue.body, /rpc-consumer: unverified/)
+  assert.match(issue.body, /rpc-producer: unverified/)
 })
 
 test('failed reopening is retried even after report body succeeds', async () => {

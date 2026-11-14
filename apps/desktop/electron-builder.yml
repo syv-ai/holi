@@ -22,6 +22,8 @@ asarUnpack:
   # A native module and its spawn helper are executed, so they cannot live
   # inside the asar archive.
   - '**/node_modules/node-pty/**'
+  # The optional genuine Node runtime backs interactive Windows CLI PTYs.
+  - '**/node_modules/node-win-x64/bin/node.exe'
   # sharp's native libvips binding, for the shrink-images commit transform.
   - '**/node_modules/sharp/**'
   - '**/node_modules/@img/**'
@@ -67,6 +69,27 @@ linux:
   # A deb names a maintainer with an email; package.json's author has none.
   maintainer: syv.ai <syv-ai@users.noreply.github.com>
   artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+win:
+  target:
+    # NSIS is the installer and what the updater downloads: dev.yml beside the
+    # .exe and its .blockmap, which makes the next update a differential one.
+    - target: nsis
+      arch: [x64]
+  # electron-builder converts build/icon.png (1024x1024) to the .ico.
+  icon: build/icon.png
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+nsis:
+  # One click, no wizard, and per user: Holi updates without a UAC prompt, and
+  # the installer starts Holi when it finishes. The folder (a first install goes
+  # to %LOCALAPPDATA%\Programs\Holi, not one named after the scoped package) is
+  # set in build/installer.nsh.
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  # Uninstalling leaves %APPDATA%\Holi (the app's own data) alone; the vault
+  # clones are in %USERPROFILE%\Holi, which the uninstaller never touches.
+  deleteAppDataOnUninstall: false
 deb:
   # electron-builder's default list, which setting `depends` replaces, plus
   # ALSA: Electron links libasound and a clean Ubuntu 24.04 has none, so Holi

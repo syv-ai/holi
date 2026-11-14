@@ -10,6 +10,7 @@ import {
   SESSION_ENV,
 } from '../main/codex'
 import type { BridgeRoute } from '../../../main/plugin-api'
+import { delimiter } from 'node:path'
 
 const TARGET = { root: '/Users/ada/Holi/syv/vault', configDir: '/home/.codex', binDir: '/holi/bin' }
 const SIGNAL = new AbortController().signal
@@ -24,7 +25,7 @@ describe('the Codex provider', () => {
     expect(cmd?.args).toEqual(['-c', notifyOverride(), '-c', NOTIFICATIONS_OVERRIDE])
     expect(NOTIFICATIONS_OVERRIDE).toBe('tui.notifications=["approval-requested"]')
     expect(cmd?.env[SESSION_ENV]).toBe('p0123456789ab')
-    expect(cmd?.env.PATH?.startsWith('/holi/bin:')).toBe(true)
+    expect(cmd?.env.PATH?.startsWith(`/holi/bin${delimiter}`)).toBe(true)
   })
 
   it('puts a first ask after --, and picks up a conversation', () => {

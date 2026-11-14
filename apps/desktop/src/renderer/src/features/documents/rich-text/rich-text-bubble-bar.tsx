@@ -1,3 +1,4 @@
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import {
   useEffect,
   useLayoutEffect,
@@ -46,6 +47,7 @@ export function RichTextBubbleBar({
   holdOpen = false,
   children,
 }: RichTextBubbleBarProps) {
+  const activity = useEditorActivity(editor)
   const barRef = useRef<HTMLDivElement>(null)
   const holdRef = useRef(holdOpen)
   const pressingRef = useRef(false)
@@ -67,7 +69,9 @@ export function RichTextBubbleBar({
       const pressed = pressingRef.current
       const next = event.relatedTarget
 
+      const current = activity.capture()
       queueMicrotask(() => {
+        if (!current()) return
         const bar = barRef.current
 
         if (editor.isDestroyed || !bar) return
@@ -85,11 +89,11 @@ export function RichTextBubbleBar({
       })
     }
 
-    // The WAI-ARIA editor convention; only a bar on screen is connected.
+    // The WAI-ARIA editor convention; a connected bar may still belong to a parked editor.
     function handleShortcut(event: KeyboardEvent) {
       const bar = barRef.current
 
-      if (!event.altKey || event.key !== 'F10' || !bar?.isConnected) return
+      if (!event.altKey || event.key !== 'F10' || !activity.focused || !bar?.isConnected) return
 
       const stop =
         bar.querySelector<HTMLElement>(FIRST_STOP) ?? bar.querySelector<HTMLElement>(ANY_STOP)
@@ -109,7 +113,11 @@ export function RichTextBubbleBar({
       document.removeEventListener('pointerup', release, true)
       document.removeEventListener('pointercancel', release, true)
     }
-  }, [editor, pluginKey])
+  }, [editor, pluginKey, activity])
+
+  useEffect(() => {
+    if (!activity.focused && !editor.isDestroyed) setRichTextBubble(editor, pluginKey, 'hide')
+  }, [activity, activity.focused, editor, pluginKey])
 
   // A menu that opens on pointerdown cancels the mousedown a bubble listens
   // for to survive the focus move, so a press on the bar itself is replayed.
@@ -124,7 +132,7 @@ export function RichTextBubbleBar({
     if (event.key !== 'Escape' || !fromOwnDom(event)) return
 
     event.preventDefault()
-    editor.commands.focus()
+    if (activity.focused) editor.commands.focus()
   }
 
   return (

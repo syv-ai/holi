@@ -71,6 +71,7 @@ import { guardNavigation } from './window-guard'
 import { createRouter } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
+import { prepareManagedClone } from './vault/prepare-clone'
 import { createSelectedRuntimeGate } from './vault/selected-runtime'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
@@ -424,6 +425,11 @@ async function main(): Promise<void> {
     // PATH has settled. This promise is started at launch; the window is not
     // held behind it.
     beforeOpen: () => loginPath,
+    prepareClone: async (remote) => {
+      const entry = (await registry.list()).find((candidate) => candidate.remote === remote)
+      if (!entry) throw new Error(`no such vault: ${remote}`)
+      await prepareManagedClone(entry.path)
+    },
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },

@@ -1,0 +1,16 @@
+# Text files are LF in every checkout, whatever the platform's autocrlf says.
+# The vault seed files (vault/once/**, vault/shipped/**) are bundled with ?raw
+# and matched by content hash (main/vault/seed/update.ts, seed/state.ts); a
+# Windows checkout with CRLF would package seeds whose hashes differ from the
+# ones every vault holds, and each vault's shipped skills would look edited.
+* text=auto eol=lf
+
+# Binaries are never normalised. text=auto detects most of them; these are
+# named so a fonts or model file can never be mistaken for text.
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.png binary
+*.ico binary
+*.pdf binary
+*.onnx binary

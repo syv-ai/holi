@@ -1,3 +1,4 @@
+import { OverlayActivityContext, useActivityOpen, useOverlayAutoFocus } from "@/hooks/use-editor-activity"
 "use client"
 
 import * as React from "react"
@@ -10,7 +11,9 @@ import { XIcon } from "lucide-react"
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+  const { open, defaultOpen, onOpenChange, ...rest } = props
+  const overlay = useActivityOpen(open, defaultOpen, onOpenChange)
+  return <OverlayActivityContext value={overlay.valid}><DialogPrimitive.Root data-slot="dialog" {...rest} open={overlay.open} onOpenChange={overlay.onOpenChange} /></OverlayActivityContext>
 }
 
 function DialogTrigger({
@@ -62,6 +65,8 @@ function DialogContent({
    *  (a plugin's, by the size it asked for). */
   size?: "default" | "md" | "lg" | "3xl" | "6xl" | "media"
 }) {
+  const openAutoFocus = useOverlayAutoFocus(props.onOpenAutoFocus)
+  const closeAutoFocus = useOverlayAutoFocus(props.onCloseAutoFocus)
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -79,6 +84,8 @@ function DialogContent({
           className
         )}
         {...props}
+        onOpenAutoFocus={openAutoFocus}
+        onCloseAutoFocus={closeAutoFocus}
       >
         {children}
         {showCloseButton && (
