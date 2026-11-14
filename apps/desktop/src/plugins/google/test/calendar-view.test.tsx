@@ -2,7 +2,7 @@
  * The calendar view (ReUI's event calendar over Google): what it asks Google
  * for, what it draws, and which writes it sends through which capability.
  */
-import { fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -12,6 +12,7 @@ import { CalendarView } from '../renderer/calendar/calendar-view'
 import { clockLabel, type TimeFormat } from '../renderer/calendar/calendar-format'
 import { GOOGLE_INFO } from '../info'
 import { rangeWindow, toCalendarItem, type GoogleEvent } from '../renderer/calendar-data'
+import type { MeetingInput, MeetingOperation } from '../main/meeting-creation'
 
 /** The clock the view writes on when no settings file answers. */
 const clock = GOOGLE_INFO.settings?.find((s) => s.key === 'timeFormat')?.default as TimeFormat
@@ -104,6 +105,8 @@ const unscheduleMock = vi.fn()
 const setCalendarMock = vi.fn()
 const namesMock = vi.fn()
 const taskMock = vi.fn()
+const meetingStateMock = vi.fn()
+const checkMeetingMock = vi.fn()
 
 const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.status': () => ({ account: { email: ME }, missingScopes: [] }),
@@ -116,6 +119,10 @@ const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   ],
   'google.setCalendar': (p) => setCalendarMock(p),
   'google.schedule': (p) => scheduleMock(p),
+  'google.meetingState': () => meetingStateMock(),
+  'google.createMeeting': (p) => scheduleMock(p),
+  'google.checkMeeting': (p) => checkMeetingMock(p),
+  'google.finishMeeting': () => ({ ok: true }),
   'google.reschedule': (p) => rescheduleMock(p),
   'google.unschedule': (p) => unscheduleMock(p),
   'google.imageSenders': () => [],
@@ -138,12 +145,26 @@ vi.mock('@/lib/trpc', () => ({
 
 beforeEach(() => {
   agendaMock.mockReset().mockResolvedValue([FOCUS, SYNC])
-  scheduleMock.mockReset().mockResolvedValue({ id: 'new' })
+  scheduleMock
+    .mockReset()
+    .mockImplementation(async (input: MeetingInput): Promise<MeetingOperation> => ({
+      input,
+      eventId: input.operation.replaceAll('-', ''),
+      conferenceRequestId: '22222222-2222-4222-8222-222222222222',
+      fingerprint: 'synthetic',
+      attempts: 1,
+      accepted: true,
+      conference: 'none',
+      htmlLink: 'https://calendar.google.com/calendar/event?eid=synthetic',
+      conferenceUrl: null,
+    }))
   rescheduleMock.mockReset().mockResolvedValue({ ok: true })
   unscheduleMock.mockReset().mockResolvedValue({ ok: true })
   setCalendarMock.mockReset().mockResolvedValue({ ok: true })
   namesMock.mockReset().mockResolvedValue([])
   taskMock.mockReset().mockResolvedValue({ path: 'Tasks/focus.md' })
+  meetingStateMock.mockReset().mockResolvedValue({ meetSupported: true, operation: null })
+  checkMeetingMock.mockReset()
   getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/notes.git')
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal: vi.fn() }
@@ -520,20 +541,33 @@ describe('the calendar view', () => {
     expect(window.holi.openExternal).toHaveBeenCalledWith('https://meet.google.com/abc')
   })
 
-  test('New event schedules a solo event on your calendar', async () => {
+  test('New event creates a solo event only after explicit send', async () => {
     const user = userEvent.setup()
     render(<CalendarView />)
     await screen.findAllByText('Focus block')
     await user.click(screen.getByRole('button', { name: 'New event' }))
-    await user.type(await screen.findByRole('textbox', { name: 'Title' }), 'Lunch with Ada')
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await waitFor(() => expect(title).toBeEnabled())
+    await user.type(title, 'Lunch with Ada')
     expect(screen.getByRole('img', { name: 'About all-day events' })).toBeInTheDocument()
     await user.type(screen.getByRole('textbox', { name: 'Location' }), 'Café')
+    expect(scheduleMock).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Add event' }))
     await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
     const sent = scheduleMock.mock.calls[0]![0] as Record<string, unknown>
-    expect(sent).toMatchObject({ title: 'Lunch with Ada', location: 'Café' })
-    expect(sent['all-day']).toBeUndefined()
+    expect(sent).toMatchObject({
+      title: 'Lunch with Ada',
+      location: 'Café',
+      guests: [],
+      meet: false,
+      sub: '1',
+    })
+    expect(sent.allDay).toBe(false)
     expect(localDate(new Date(sent['start'] as string))).toBe(localDate(new Date()))
+    expect(await screen.findByText('Event created.')).toBeInTheDocument()
+    expect(screen.queryByText(/Delivery is uncertain/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
   test('an all-day event goes as days, its end the day after', async () => {
@@ -541,16 +575,46 @@ describe('the calendar view', () => {
     render(<CalendarView />)
     await screen.findAllByText('Focus block')
     await user.click(screen.getByRole('button', { name: 'New event' }))
-    await user.type(await screen.findByRole('textbox', { name: 'Title' }), 'Holiday')
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await waitFor(() => expect(title).toBeEnabled())
+    await user.type(title, 'Holiday')
     await user.click(screen.getByRole('switch', { name: /All day/ }))
     await user.click(screen.getByRole('button', { name: 'Add event' }))
     await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
     const sent = scheduleMock.mock.calls[0]![0] as Record<string, unknown>
     const today = new Date()
     expect(sent).toMatchObject({
-      'all-day': true,
+      allDay: true,
       start: localDate(today),
       end: localDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)),
+    })
+  })
+
+  test('guest meeting sends only from its explicit action with Meet enabled', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await waitFor(() => expect(title).toBeEnabled())
+    await user.type(title, 'Planning session')
+    await user.type(
+      screen.getByRole('textbox', { name: 'Guests' }),
+      'ada@example.com, grace@example.com',
+    )
+    const meetSwitch = screen.getByRole('switch', { name: 'Add Google Meet' })
+    await user.click(meetSwitch)
+    expect(meetSwitch).toBeChecked()
+    screen.getByRole('textbox', { name: 'Guests' }).focus()
+    await user.keyboard('{Enter}')
+    expect(scheduleMock).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Create and send invitations' }))
+    await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
+    expect(scheduleMock.mock.calls[0]![0]).toMatchObject({
+      title: 'Planning session',
+      guests: ['ada@example.com', 'grace@example.com'],
+      meet: true,
+      sub: '1',
     })
   })
 
@@ -589,9 +653,82 @@ describe('the calendar view', () => {
     expect(screen.getByRole('textbox', { name: 'Title' })).toBeInTheDocument()
   })
 
+  test.each(['submit', 'check'] as const)(
+    '%s completion reloads the current week after navigation',
+    async (completion) => {
+      const user = userEvent.setup()
+      const operation: MeetingOperation = {
+        input: {
+          operation: '11111111-1111-4111-8111-111111111111',
+          sub: '1',
+          title: 'Planning session',
+          start: '2027-01-12T10:00:00Z',
+          end: '2027-01-12T11:00:00Z',
+          allDay: false,
+          location: '',
+          guests: ['guest@example.com'],
+          meet: true,
+        },
+        eventId: 'new',
+        conferenceRequestId: '22222222-2222-4222-8222-222222222222',
+        fingerprint: 'synthetic',
+        attempts: 1,
+        accepted: false,
+        conference: 'pending',
+        htmlLink: null,
+        conferenceUrl: null,
+      }
+      let resolve!: (value: MeetingOperation) => void
+      if (completion === 'check') {
+        meetingStateMock.mockResolvedValue({ meetSupported: true, operation })
+        checkMeetingMock.mockReturnValueOnce(new Promise((done) => (resolve = done)))
+      } else {
+        scheduleMock.mockReturnValueOnce(new Promise((done) => (resolve = done)))
+      }
+
+      const { container } = render(<CalendarView />)
+      await screen.findAllByText('Focus block')
+      let card = screen.queryByRole('dialog')
+      if (!card) {
+        await user.click(screen.getByRole('button', { name: 'New event' }))
+        card = await screen.findByRole('dialog', { name: 'New event' })
+      }
+      if (completion === 'check') {
+        await user.click(within(card).getByRole('button', { name: 'Check status' }))
+      } else {
+        await user.type(within(card).getByRole('textbox', { name: 'Title' }), 'Planning session')
+        await user.type(within(card).getByRole('textbox', { name: 'Guests' }), 'guest@example.com')
+        await user.click(within(card).getByRole('switch', { name: 'Add Google Meet' }))
+        await user.click(within(card).getByRole('button', { name: 'Create and send invitations' }))
+      }
+
+      const root = container.querySelector<HTMLElement>('[data-slot="event-calendar"]')!
+      const requestFrom = () => (agendaMock.mock.calls.at(-1)![0] as { from: string }).from
+      const originalWeek = Date.parse(requestFrom())
+      for (let i = 0; i < 12; i++) {
+        const event = new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          deltaX: 30,
+          deltaY: 2,
+        })
+        Object.defineProperty(event, 'timeStamp', { value: i * 16 })
+        fireEvent(root, event)
+      }
+      await waitFor(() => {
+        expect(Math.round((Date.parse(requestFrom()) - originalWeek) / 86_400_000)).toBe(7)
+      })
+      const currentWeek = requestFrom()
+      await act(async () => resolve({ ...operation, accepted: true }))
+      await waitFor(() =>
+        expect(agendaMock.mock.calls.at(-1)![0]).toMatchObject({ from: currentWeek }),
+      )
+    },
+  )
+
   test('a pending write is single-flight and keeps its anchored card open', async () => {
     const user = userEvent.setup()
-    let resolve!: (value: { id: string }) => void
+    let resolve!: (value: MeetingOperation) => void
     scheduleMock.mockReturnValueOnce(
       new Promise((done) => {
         resolve = done
@@ -607,17 +744,26 @@ describe('the calendar view', () => {
     await user.type(title, 'Deferred event')
     await user.click(within(card).getByRole('button', { name: 'Add event' }))
     expect(within(card).getByRole('button', { name: 'Saving…' })).toBeDisabled()
-    expect(within(card).getByRole('button', { name: 'Close' })).toBeDisabled()
-    expect(card).toHaveAttribute('aria-busy', 'true')
-    await user.keyboard('{Escape}')
-    await user.click(trigger)
+    expect(within(card).getByRole('button', { name: 'Close' })).toBeEnabled()
     expect(scheduleMock).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('dialog', { name: 'New event' })).toBeInTheDocument()
-    resolve({ id: 'new' })
+    const input = scheduleMock.mock.calls[0]![0] as MeetingInput
+    resolve({
+      input,
+      eventId: 'new',
+      conferenceRequestId: '22222222-2222-4222-8222-222222222222',
+      fingerprint: 'synthetic',
+      attempts: 1,
+      accepted: true,
+      conference: 'none',
+      htmlLink: 'https://calendar.google.com/calendar/event?eid=new',
+      conferenceUrl: null,
+    })
+    expect(await within(card).findByText('Event created.')).toBeInTheDocument()
+    await user.click(within(card).getByRole('button', { name: 'Done' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
-  test('Enter saves a valid event and restores focus to its origin', async () => {
+  test('Enter does not send; the explicit action sends and restores focus on done', async () => {
     const user = userEvent.setup()
     render(<CalendarView />)
     await screen.findAllByText('Focus block')
@@ -626,8 +772,11 @@ describe('the calendar view', () => {
     const title = await screen.findByRole('textbox', { name: 'Title' })
     await user.type(title, 'Enter-saved event')
     await user.keyboard('{Enter}')
-
+    expect(scheduleMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'New event' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add event' }))
     await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
+    await user.click(await screen.findByRole('button', { name: 'Done' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(trigger).toHaveFocus()
   })
@@ -687,6 +836,8 @@ describe('the calendar view', () => {
     expect(scheduleMock).not.toHaveBeenCalled()
     expect(title).toHaveValue('Composed event')
     await user.keyboard('{Enter}')
+    expect(scheduleMock).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Add event' }))
     await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
   })
 
