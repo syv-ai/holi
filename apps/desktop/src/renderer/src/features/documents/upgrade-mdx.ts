@@ -26,7 +26,7 @@ export function mdxUpgradeMove(
   )
     return null
   if (!isAppWritablePath(path) || isAgentSurfacePath(path) || isVaultConfigPath(path)) return null
-  if (claims.some((claim) => claim.match(path))) return null
+  if (claims.some((claim) => ownsPath(claim, path))) return null
   if (snapshot.claimed[TASKS_CLAIM]?.items.some((item) => item.path === path)) return null
   if (snapshot.claimed[TASKS_CLAIM]?.broken.some((item) => item.path === path)) return null
   const source = snapshot.docs.find((doc) => doc.path === path)
@@ -38,8 +38,23 @@ export function mdxUpgradeMove(
     snapshot.docs.some((entry) => entry.path.toLowerCase() === destination) ||
     snapshot.files.some((entry) => entry.path.toLowerCase() === destination) ||
     snapshot.dirs.some((dir) => dir.toLowerCase() === destination) ||
-    claims.some((claim) => claim.match(to))
+    claims.some((claim) => ownsPath(claim, to))
   )
     return null
   return { from: path, to }
+}
+
+/** Row-menu items add actions to a path; they do not make it plugin-owned. */
+function ownsPath(claim: PathClaim, path: string): boolean {
+  return (
+    claim.match(path) &&
+    (claim.view !== undefined ||
+      claim.retainView === true ||
+      claim.folder !== undefined ||
+      claim.decorate !== undefined ||
+      claim.hover !== undefined ||
+      claim.banner !== undefined ||
+      claim.normalize !== undefined ||
+      claim.create !== undefined)
+  )
 }
