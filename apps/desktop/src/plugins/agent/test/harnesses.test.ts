@@ -242,6 +242,52 @@ describe('the harness registry', () => {
     await Promise.all([a.dispose(), b.dispose(), isolated.dispose()])
   })
 
+  it('keeps reacquired owners live across release and activation-failure awaits', async () => {
+    for (const failedActivation of [false, true]) {
+      for (let turns = 0; turns < 12; turns++) {
+        const key = `/release-reacquire-${failedActivation}-${turns}`
+        const deps = {
+          store: memoryStore(),
+          builtIns: {
+            claude: (current: () => Harness) => withPreset(builtIn('claude'), current),
+            codex: (current: () => Harness) => withPreset(builtIn('codex'), current),
+            pi: (current: () => Harness) => withPreset(builtIn('pi'), current),
+          },
+        }
+        const closing = failedActivation
+          ? acquireHarnessRegistry(key, {
+              ...deps,
+              builtIns: {
+                ...deps.builtIns,
+                claude: () => {
+                  throw new Error('provider adapter failed')
+                },
+              },
+            }).then(
+              () => {
+                throw new Error('expected provider adapter failure')
+              },
+              (err: unknown) => {
+                expect(err).toMatchObject({ message: 'provider adapter failed' })
+              },
+            )
+          : (await acquireHarnessRegistry(key, deps)).dispose()
+        for (let turn = 0; turn < turns; turn++) await Promise.resolve()
+        const b = await acquireHarnessRegistry(key, deps)
+        await closing
+        const c = await acquireHarnessRegistry(key, deps)
+        try {
+          await b.save(AIDER, true)
+          expect(c.get('aider'), `failed=${failedActivation}, after ${turns} microtasks`).toEqual(
+            AIDER,
+          )
+        } finally {
+          await Promise.all([b.dispose(), c.dispose()])
+        }
+      }
+    }
+  })
+
   it('notifies both handles and continues after one handle is disposed', async () => {
     const store = memoryStore()
     const a = await acquireHarnessRegistry('/shared-delayed', {
