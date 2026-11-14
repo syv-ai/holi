@@ -17,7 +17,7 @@ import {
 } from '@holi/shared'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import { flushAllBuffers, freezeBuffers } from '@/lib/buffer-registry'
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import { installedPluginsAtom } from '@/state/plugins'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { AGENTS_HOME_KEY } from '@/state/tab-descriptor'
@@ -187,6 +187,7 @@ afterEach(() => {
 function fixture(paths = [ONE, TWO], strict = false) {
   const store = createStore()
   store.set(activeRemoteAtom, REMOTE)
+  store.set(openedRemoteAtom, REMOTE)
   store.set(vaultsAtom, [{ remote: REMOTE, path: '/vault', name: 'repo', lastOpenedAt: '' }])
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
