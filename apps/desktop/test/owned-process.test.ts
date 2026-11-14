@@ -124,8 +124,10 @@ describe('spawnOwnedProgram', () => {
       await expect(completion(child)).rejects.toMatchObject({ code: 'ENOENT' })
       const code = await closed
       expect(getSystemErrorName(code!)).toBe('ENOENT')
+      const previousStdinErrors = stdinErrors
+      child.stdin!.emit('error', Object.assign(new Error('test input failure'), { code: 'EPIPE' }))
+      expect(stdinErrors).toBe(previousStdinErrors + 1)
       expect(childErrors).toBe(1)
-      expect(stdinErrors).toBeGreaterThan(0)
     } finally {
       if (previousSystemRoot === undefined) delete process.env.SystemRoot
       else process.env.SystemRoot = previousSystemRoot
@@ -161,29 +163,39 @@ describe('spawnOwnedProgram', () => {
     },
   )
 
-  it.skipIf(!windows)('stops the entire owned job and leaves no stop artifact', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-stop-'))
-    const pidFile = join(dir, 'descendant-pid')
-    let child: ReturnType<typeof spawnOwnedProgram> | undefined
-    try {
-      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
-      const root = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});setInterval(()=>0,1000)`
-      child = spawnOwnedProgram(process.execPath, ['-e', root], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, ...(windows ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
-      })
-      diagnostics(child)
-      const done = completion(child)
-      const pid = Number(await waitForFile(pidFile))
-      expect(child.kill('SIGTERM')).toBe(true)
-      expect(child.kill('SIGKILL')).toBe(true)
-      expect(await done).toBe(1)
-      expect(() => process.kill(pid, 0)).toThrow()
-    } finally {
-      if (child) await cleanup(child)
-      await rm(dir, { recursive: true, force: true })
-    }
-  })
+  it.skipIf(!windows).each([false, true])(
+    'stops the entire owned job and leaves no stop artifact (stdin failure: %s)',
+    async (stdinFailure) => {
+      const dir = await mkdtemp(join(tmpdir(), 'holi-owned-stop-'))
+      const pidFile = join(dir, 'descendant-pid')
+      let child: ReturnType<typeof spawnOwnedProgram> | undefined
+      try {
+        const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
+        const root = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});setInterval(()=>0,1000)`
+        child = spawnOwnedProgram(process.execPath, ['-e', root], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, ...(windows ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
+        })
+        diagnostics(child)
+        const done = completion(child)
+        const pid = Number(await waitForFile(pidFile))
+        if (stdinFailure) {
+          child.stdin!.emit(
+            'error',
+            Object.assign(new Error('test input failure'), { code: 'EPIPE' }),
+          )
+        } else {
+          expect(child.kill('SIGTERM')).toBe(true)
+          expect(child.kill('SIGKILL')).toBe(true)
+        }
+        expect(await done).toBe(1)
+        expect(() => process.kill(pid, 0)).toThrow()
+      } finally {
+        if (child) await cleanup(child)
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+  )
 
   it.skipIf(!windows)('fails closed when its parent is gone', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-owned-parent-'))

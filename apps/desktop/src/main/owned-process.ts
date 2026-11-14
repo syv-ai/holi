@@ -81,12 +81,17 @@ export function spawnOwnedProgram(
     stopFile,
   })
   child.stdin!.on('error', () => {
-    // This private channel can fail independently of ChildProcess's spawn error.
-    // Bypass the cooperative stop-file override so the helper cannot outlive us.
+    // Channel failure stops and drains the job before callers receive close.
+    if (child.pid === undefined) return
     try {
-      ChildProcess.prototype.kill.call(child)
+      child.kill('SIGTERM')
     } catch {
-      // The child may already have exited or failed to spawn.
+      // Closing the manager's stable handle closes its kill-on-close job.
+      try {
+        ChildProcess.prototype.kill.call(child, 'SIGKILL')
+      } catch {
+        // The ChildProcess error/close channel reports launch and exit failures.
+      }
     }
   })
   child.stdin!.write(`${spec}\n`)
