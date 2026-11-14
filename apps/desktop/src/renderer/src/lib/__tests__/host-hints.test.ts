@@ -143,7 +143,38 @@ it('revalidates removal, disabled state, geometry, coverage and new overlay befo
   expect(click).not.toHaveBeenCalled()
 })
 
-it('focuses and activates once through pointer and click handlers including checkbox defaults', () => {
+it('keeps painted-label click coordinates and folder-document activation semantics', () => {
+  const label = button('Deck')
+  const paintedText = document.createElement('span')
+  paintedText.textContent = 'Deck'
+  label.replaceChildren(paintedText)
+  place(label, 10, 10, 180, 24)
+  place(paintedText, 60, 10, 80, 24)
+  const events: string[] = []
+  let opened = false
+  let expanded = false
+  let clickPoint: [number, number] | null = null
+  label.addEventListener('pointerdown', () => events.push('pointerdown'))
+  label.addEventListener('mousedown', () => events.push('mousedown'))
+  label.addEventListener('focus', () => events.push('focus'))
+  label.addEventListener('pointerup', () => events.push('pointerup'))
+  label.addEventListener('mouseup', () => events.push('mouseup'))
+  label.addEventListener('click', (event) => {
+    events.push('click')
+    clickPoint = [event.clientX, event.clientY]
+    if (event.clientX > 40) opened = true
+    else expanded = true
+  })
+
+  expect(activateHostHint(discoverHostHintTargets(root)[0]!)).toBe(true)
+
+  expect(events).toEqual(['pointerdown', 'mousedown', 'focus', 'pointerup', 'mouseup', 'click'])
+  expect(clickPoint).toEqual([100, 22])
+  expect(opened).toBe(true)
+  expect(expanded).toBe(false)
+})
+
+it('preserves native checkbox and form activation defaults', () => {
   const run = button('Run')
   const events: string[] = []
   run.addEventListener('pointerdown', () => events.push('down'))
@@ -158,4 +189,16 @@ it('focuses and activates once through pointer and click handlers including chec
   const target = discoverHostHintTargets(root).find(({ element }) => element === checkbox)!
   expect(activateHostHint(target)).toBe(true)
   expect(checkbox.checked).toBe(true)
+
+  const form = document.createElement('form')
+  const submit = document.createElement('button')
+  submit.type = 'submit'
+  form.append(submit)
+  root.append(form)
+  const submitted = vi.fn((event: SubmitEvent) => event.preventDefault())
+  form.addEventListener('submit', submitted)
+  expect(
+    activateHostHint(discoverHostHintTargets(root).find(({ element }) => element === submit)!),
+  ).toBe(true)
+  expect(submitted).toHaveBeenCalledOnce()
 })

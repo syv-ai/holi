@@ -129,12 +129,10 @@ export function activateHostHint(target: HostHintTarget): boolean {
   }
   pressed.dispatchEvent(new PointerEvent('pointerup', { ...pointer, buttons: 0 }))
   pressed.dispatchEvent(new MouseEvent('mouseup', { ...init, buttons: 0 }))
-  // click() supplies native defaults (checkboxes, anchors, form buttons). A Radix
-  // select item selects on mouse pointerup and ignores its mouse click itself.
-  if (pressed.isConnected) {
-    if (pressed instanceof HTMLElement) pressed.click()
-    else pressed.dispatchEvent(new MouseEvent('click', { ...init, buttons: 0 }))
-  }
+  // A dispatched click still runs native defaults (checkboxes, anchors, form
+  // buttons), while retaining the painted hit point. Radix select items select
+  // on pointerup and ignore their mouse click itself.
+  if (pressed.isConnected) pressed.dispatchEvent(new MouseEvent('click', { ...init, buttons: 0 }))
   return true
 }
 
