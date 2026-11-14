@@ -104,6 +104,7 @@ export class GoogleReconnectRequiredError extends Error {
  * the owner has already loaded it; a session never touches the disk itself.
  */
 export interface AccountRef {
+  /** Bound to the creation grant: null forever once that grant is replaced. */
   read(): StoredGoogleAuth | null
   /** Identifies the currently stored grant, including reconnects that reuse a token. */
   generation(): number

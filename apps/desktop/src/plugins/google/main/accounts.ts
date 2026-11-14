@@ -134,52 +134,72 @@ export async function createGoogleAccounts(
   }
 
   let writes: Promise<void> = Promise.resolve()
-  const persist = (change: (current: GoogleAccounts) => GoogleAccounts): Promise<void> => {
-    const write = writes.then(async () => {
+  const serialize = (operation: () => Promise<void>): Promise<void> => {
+    const write = writes.then(operation)
+    writes = write.catch(() => undefined)
+    return write
+  }
+  const persist = (change: (current: GoogleAccounts) => GoogleAccounts): Promise<void> =>
+    serialize(async () => {
       const next = change(accounts)
       if (next === accounts) return
       await deps.store.write(next)
       accounts = next
     })
-    writes = write.catch(() => undefined)
-    return write
-  }
+  // A newer consent owns its token before its queued disk write has landed.
+  const pendingGrants = new Map<string, { refreshToken: string; epoch: number }>()
+  const revokeUnusedGrant = (refreshToken: string): Promise<void> =>
+    serialize(async () => {
+      if (Object.values(accounts).some((auth) => auth.refreshToken === refreshToken)) return
+      if (
+        [...pendingGrants].some(
+          ([sub, grant]) =>
+            grant.refreshToken === refreshToken && grant.epoch === accountEpoch(sub),
+        )
+      )
+        return
+      await revoke(refreshToken)
+    })
 
   /** A session's window onto its own row. Writes go through here so the map has
    *  exactly one writer even while several sessions are refreshing. */
-  const refFor = (sub: string): AccountRef => ({
-    read: () => accounts[sub] ?? null,
-    generation: () => accountEpoch(sub),
-    async write(auth, expectedGeneration) {
-      if (accounts[sub] === undefined || accountEpoch(sub) !== expectedGeneration) return
-      await persist((latest) =>
-        latest[sub] === undefined || accountEpoch(sub) !== expectedGeneration
-          ? latest
-          : { ...latest, [sub]: auth },
-      )
-    },
-    async remove() {
-      await dropTokens(sub)
-      await deps.vaults.unlinkAccount(sub)
-      emit(sub)
-    },
-    async expire(expectedGeneration) {
-      let removed = false
-      await persist((current) => {
-        const row = current[sub]
-        if (row === undefined || accountEpoch(sub) !== expectedGeneration) return current
-        const next = { ...current }
-        delete next[sub]
-        removed = true
-        return next
-      })
-      if (!removed) return
-      advanceAccountEpoch(sub)
-      sessions.delete(sub)
-      await deps.vaults.expireAccount(sub)
-      emit(sub)
-    },
-  })
+  const refFor = (sub: string): AccountRef => {
+    const grantEpoch = accountEpoch(sub)
+    return {
+      read: () => (accountEpoch(sub) === grantEpoch ? (accounts[sub] ?? null) : null),
+      generation: () => accountEpoch(sub),
+      async write(auth, expectedGeneration) {
+        if (accounts[sub] === undefined || accountEpoch(sub) !== expectedGeneration) return
+        await persist((latest) =>
+          latest[sub] === undefined || accountEpoch(sub) !== expectedGeneration
+            ? latest
+            : { ...latest, [sub]: auth },
+        )
+      },
+      async remove() {
+        if (accountEpoch(sub) !== grantEpoch) return
+        await dropTokens(sub)
+        await deps.vaults.unlinkAccount(sub)
+        emit(sub)
+      },
+      async expire(expectedGeneration) {
+        let removed = false
+        await persist((current) => {
+          const row = current[sub]
+          if (row === undefined || accountEpoch(sub) !== expectedGeneration) return current
+          const next = { ...current }
+          delete next[sub]
+          removed = true
+          return next
+        })
+        if (!removed) return
+        advanceAccountEpoch(sub)
+        sessions.delete(sub)
+        await deps.vaults.expireAccount(sub)
+        emit(sub)
+      },
+    }
+  }
 
   const dropTokens = async (sub: string): Promise<void> => {
     advanceAccountEpoch(sub)
@@ -287,36 +307,42 @@ export async function createGoogleAccounts(
             connecting?.id !== reservation.id ||
             (startingAccountEpochs.get(tokens.sub) ?? 0) !== accountEpoch(tokens.sub)
           ) {
-            await revoke(tokens.refreshToken)
+            await revokeUnusedGrant(tokens.refreshToken)
             if (connecting?.id === reservation.id) connecting = null
             return { kind: 'cancelled' } as const
           }
           // Additive: another vault may be using an account already in the store.
           const grantEpoch = advanceAccountEpoch(tokens.sub)
           let accepted = false
-          await persist((current) => {
-            if (
-              reservation.cancelled ||
-              connecting?.id !== reservation.id ||
-              epoch !== clientEpoch ||
-              grantEpoch !== accountEpoch(tokens.sub)
-            )
-              return current
-            accepted = true
-            return {
-              ...current,
-              [tokens.sub]: {
-                sub: tokens.sub,
-                email: tokens.email,
-                refreshToken: tokens.refreshToken,
-                accessToken: tokens.accessToken,
-                expiresAt: tokens.expiresAt,
-                scopes: tokens.scopes,
-              },
-            }
-          })
+          pendingGrants.set(tokens.sub, { refreshToken: tokens.refreshToken, epoch: grantEpoch })
+          try {
+            await persist((current) => {
+              if (
+                reservation.cancelled ||
+                connecting?.id !== reservation.id ||
+                epoch !== clientEpoch ||
+                grantEpoch !== accountEpoch(tokens.sub)
+              )
+                return current
+              accepted = true
+              return {
+                ...current,
+                [tokens.sub]: {
+                  sub: tokens.sub,
+                  email: tokens.email,
+                  refreshToken: tokens.refreshToken,
+                  accessToken: tokens.accessToken,
+                  expiresAt: tokens.expiresAt,
+                  scopes: tokens.scopes,
+                },
+              }
+            })
+          } finally {
+            if (pendingGrants.get(tokens.sub)?.epoch === grantEpoch)
+              pendingGrants.delete(tokens.sub)
+          }
           if (!accepted) {
-            await revoke(tokens.refreshToken)
+            await revokeUnusedGrant(tokens.refreshToken)
             if (connecting?.id === reservation.id) connecting = null
             return { kind: 'cancelled' } as const
           }
@@ -345,7 +371,7 @@ export async function createGoogleAccounts(
             accounts[tokens.sub]?.refreshToken !== tokens.refreshToken
           ) {
             await discardAcceptedGrant()
-            await revoke(tokens.refreshToken)
+            await revokeUnusedGrant(tokens.refreshToken)
             if (connecting?.id === reservation.id) connecting = null
             return { kind: 'cancelled' } as const
           }
@@ -357,7 +383,7 @@ export async function createGoogleAccounts(
             accounts[tokens.sub]?.refreshToken !== tokens.refreshToken
           ) {
             if (await discardAcceptedGrant()) await deps.vaults.unlinkVault(remote)
-            await revoke(tokens.refreshToken)
+            await revokeUnusedGrant(tokens.refreshToken)
             if (connecting?.id === reservation.id) connecting = null
             return { kind: 'cancelled' } as const
           }
@@ -476,12 +502,9 @@ export async function createGoogleAccounts(
   }
 
   async function removeAccount(sub: string): Promise<void> {
-    if (accounts[sub] === undefined) {
-      // Invalidate consent/refresh work even when removal races before storage.
-      advanceAccountEpoch(sub)
-      await deps.vaults.unlinkAccount(sub)
-      return
-    }
+    // Invalidate consent/refresh immediately, even before the first disk write.
+    // Deletion must still queue behind a write that already accepted this grant.
+    advanceAccountEpoch(sub)
     // Revoking server-side is the point: dropping only the local copy leaves a
     // live grant on someone's Google account with nothing in Holi to show for
     // it. A failed revoke still clears locally: the user asked for this, and
@@ -491,19 +514,7 @@ export async function createGoogleAccounts(
   }
 
   async function dropAccount(sub: string): Promise<void> {
-    if (accounts[sub] === undefined) {
-      // A refresh refused during the revoke already dropped it, leaving its
-      // vaults marked for a reconnect the person has just declined.
-      await deps.vaults.unlinkAccount(sub)
-      return
-    }
-    await persist((current) => {
-      const next = { ...current }
-      delete next[sub]
-      return next
-    })
-    accountEpochs.set(sub, accountEpoch(sub) + 1)
-    sessions.delete(sub)
+    await dropTokens(sub)
     await deps.vaults.unlinkAccount(sub)
     emit(sub)
   }

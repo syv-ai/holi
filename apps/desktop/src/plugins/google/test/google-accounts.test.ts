@@ -24,6 +24,7 @@ import { createVaultAccounts } from '../main/vault-accounts'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../main/token-store'
 import type { LoopbackServer } from '../main/loopback-flow'
 import { GOOGLE_SCOPES } from '../main/session'
+import { GoogleApi } from '../main/api'
 
 const storage = {
   isEncryptionAvailable: () => true,
@@ -86,6 +87,83 @@ async function manager(seed: StoredGoogleAuth[] = [], fetchImpl?: typeof globalT
     fetch: fetchImpl,
     now: () => NOW,
   })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((done) => (resolve = done))
+  return { promise, resolve }
+}
+
+/** Independently gated code exchanges and refresh, with real persistence. */
+async function controlledConsent(seed: StoredGoogleAuth[] = []) {
+  await store.write(Object.fromEntries(seed.map((row) => [row.sub, row])))
+  let now = NOW
+  const states = new Map<string, string>()
+  const exchanges: Array<{
+    started: ReturnType<typeof deferred<void>>
+    reply: ReturnType<typeof deferred<StoredGoogleAuth>>
+  }> = []
+  const revoked: string[] = []
+  const refreshes: string[] = []
+  const refreshStarted = deferred<void>()
+  const refreshReply = deferred<Response>()
+  const accounts = await createGoogleAccounts({
+    store,
+    vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+    clients: memoryClients(null),
+    env: {},
+    now: () => now,
+    listen: async () => {
+      const index = exchanges.length
+      const port = 45123 + index
+      exchanges.push({ started: deferred<void>(), reply: deferred<StoredGoogleAuth>() })
+      return {
+        port,
+        waitForRedirect: async () => ({ code: String(index), state: states.get(String(port))! }),
+        close: () => {},
+      }
+    },
+    openBrowser: async (url) => {
+      const params = new URL(url).searchParams
+      states.set(new URL(params.get('redirect_uri')!).port, params.get('state')!)
+    },
+    fetch: (async (url, init) => {
+      const params = new URLSearchParams(String(init?.body))
+      if (String(url).endsWith('/revoke')) {
+        revoked.push(params.get('token')!)
+        return new Response('{}')
+      }
+      if (params.get('grant_type') === 'refresh_token') {
+        refreshes.push(params.get('refresh_token')!)
+        refreshStarted.resolve()
+        return refreshReply.promise
+      }
+      const exchange = exchanges[Number(params.get('code'))]!
+      exchange.started.resolve()
+      const row = await exchange.reply.promise
+      return new Response(
+        JSON.stringify({
+          access_token: row.accessToken,
+          refresh_token: row.refreshToken,
+          expires_in: (row.expiresAt - now) / 1000,
+          scope: row.scopes.join(' '),
+          id_token: `header.${Buffer.from(JSON.stringify({ sub: row.sub, email: row.email })).toString('base64url')}.signature`,
+        }),
+      )
+    }) as typeof globalThis.fetch,
+  })
+  return {
+    accounts,
+    exchanges,
+    revoked,
+    refreshes,
+    refreshStarted,
+    refreshReply,
+    setNow: (value: number) => {
+      now = value
+    },
+  }
 }
 
 describe('sessionFor', () => {
@@ -638,6 +716,209 @@ describe('a grant that lands after it was let go', () => {
     expect(rig.revoked).toEqual(['rt-new'])
     expect(rig.accounts.list()).toEqual([])
     expect(await store.read()).toEqual({})
+  })
+
+  it('removes a first grant whose storage write already started, even while its row is absent', async () => {
+    const rig = await hangingExchange()
+    const vaults = createVaultAccounts(join(dir, 'google-vault-accounts.json'))
+    const originalWrite = store.write.bind(store)
+    const atWrite = deferred<void>()
+    const releaseWrite = deferred<void>()
+    let gated = false
+    vi.spyOn(store, 'write').mockImplementation(async (value) => {
+      if (!gated) {
+        gated = true
+        atWrite.resolve()
+        await releaseWrite.promise
+      }
+      await originalWrite(value)
+    })
+    const flow = await rig.accounts.connect(VAULT)
+    const outcome = flow.wait()
+    await rig.atGoogle
+    rig.release()
+    await atWrite.promise
+    expect(rig.accounts.list()).toEqual([])
+
+    const removal = rig.accounts.removeAccount('sub-9')
+    releaseWrite.resolve()
+
+    await removal
+    expect(await outcome).toEqual({ kind: 'cancelled' })
+    expect(rig.accounts.list()).toEqual([])
+    expect(await store.read()).toEqual({})
+    expect(await vaults.all()).toEqual({})
+    expect(rig.revoked).toEqual(['rt-new'])
+  })
+
+  it.each(['rt-1', 'rt-replacement'])(
+    'never lends a reconnected grant (%s) to a retained session, even for a refresh',
+    async (refreshToken) => {
+      const rig = await controlledConsent([auth()])
+      await rig.accounts.link(VAULT, 'sub-1')
+      const old = rig.accounts.sessionForSub('sub-1')!
+      const flow = await rig.accounts.connect(WORK)
+      const outcome = flow.wait()
+      await rig.exchanges[0]!.started.promise
+      rig.exchanges[0]!.reply.resolve(auth({ refreshToken, accessToken: 'at-replacement' }))
+      expect((await outcome).kind).toBe('granted')
+
+      expect(old.account).toBeNull()
+      await expect(old.getAccessToken()).rejects.toThrow(/expired or been revoked/)
+      // A stale handle must not delete the replacement, either.
+      await old.disconnect()
+      const current = rig.accounts.sessionForSub('sub-1')!
+      expect(current).not.toBe(old)
+      expect(await rig.accounts.sessionFor(VAULT)).toBe(current)
+      expect(await rig.accounts.sessionFor(WORK)).toBe(current)
+      await expect(current.getAccessToken()).resolves.toBe('at-replacement')
+      expect(rig.revoked).toEqual([])
+
+      rig.setNow(NOW + 3_600_000)
+      const first = current.getAccessToken()
+      const second = (await rig.accounts.sessionFor(WORK))!.getAccessToken()
+      await rig.refreshStarted.promise
+      await expect(old.getAccessToken()).rejects.toThrow(/expired or been revoked/)
+      expect(rig.refreshes).toHaveLength(1)
+      rig.refreshReply.resolve(
+        new Response(JSON.stringify({ access_token: 'at-refreshed', expires_in: 3600 })),
+      )
+      await expect(Promise.all([first, second])).resolves.toEqual(['at-refreshed', 'at-refreshed'])
+    },
+  )
+
+  it('stops a retained multipage request before the next page after a same-token reconnect', async () => {
+    const rig = await controlledConsent([auth()])
+    const old = rig.accounts.sessionForSub('sub-1')!
+    const atPage = deferred<void>()
+    const pageReply = deferred<Response>()
+    const request = vi.fn(async () => {
+      atPage.resolve()
+      return pageReply.promise
+    })
+    const api = new GoogleApi({ accessToken: () => old.getAccessToken(), fetch: request })
+    const pages = api.getAll<string>(
+      'https://www.googleapis.com/calendar/v3/calendars',
+      {},
+      (p) => p.items ?? [],
+    )
+    await atPage.promise
+    const flow = await rig.accounts.connect(WORK)
+    const outcome = flow.wait()
+    await rig.exchanges[0]!.started.promise
+    rig.exchanges[0]!.reply.resolve(auth({ accessToken: 'at-replacement' }))
+    await outcome
+    pageReply.resolve(new Response(JSON.stringify({ items: ['first'], nextPageToken: 'second' })))
+
+    await expect(pages).rejects.toMatchObject({ code: 'reconnect' })
+    expect(request).toHaveBeenCalledTimes(1)
+    await expect(api.get('https://www.googleapis.com/calendar/v3/calendars')).rejects.toMatchObject(
+      { code: 'reconnect' },
+    )
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the receipt of a send already accepted before its session was replaced', async () => {
+    const rig = await controlledConsent([auth()])
+    const old = rig.accounts.sessionForSub('sub-1')!
+    const atSend = deferred<void>()
+    const receipt = deferred<Response>()
+    const api = new GoogleApi({
+      accessToken: () => old.getAccessToken(),
+      fetch: async () => {
+        atSend.resolve()
+        return receipt.promise
+      },
+    })
+    const sent = api.postJson('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+      raw: 'message',
+    })
+    await atSend.promise
+    const flow = await rig.accounts.connect(WORK)
+    const outcome = flow.wait()
+    await rig.exchanges[0]!.started.promise
+    rig.exchanges[0]!.reply.resolve(auth({ accessToken: 'at-replacement' }))
+    await outcome
+    receipt.resolve(new Response(JSON.stringify({ id: 'accepted-send' })))
+
+    await expect(sent).resolves.toEqual({ id: 'accepted-send' })
+  })
+
+  it.each(['stored', 'writing', 'queued'] as const)(
+    'does not revoke a newer same-token consent while it is %s',
+    async (stage) => {
+      const rig = await controlledConsent()
+      const first = await rig.accounts.connect(VAULT)
+      const stale = first.wait()
+      await rig.exchanges[0]!.started.promise
+      const originalWrite = store.write.bind(store)
+      const atWrite = deferred<void>()
+      const releaseWrite = deferred<void>()
+      let gated = false
+      if (stage !== 'stored') {
+        vi.spyOn(store, 'write').mockImplementation(async (value) => {
+          if (!gated) {
+            gated = true
+            atWrite.resolve()
+            await releaseWrite.promise
+          }
+          await originalWrite(value)
+        })
+      }
+      // A separate account's write holds the queue so B owns a grant whose
+      // persist callback has not even run when A's stale result arrives.
+      let blocker: Promise<unknown> | undefined
+      if (stage === 'queued') {
+        const blocking = await rig.accounts.connect('another/vault')
+        blocker = blocking.wait()
+        await rig.exchanges[1]!.started.promise
+        rig.exchanges[1]!.reply.resolve(auth({ sub: 'sub-other', refreshToken: 'rt-other' }))
+        await atWrite.promise
+      }
+      const second = await rig.accounts.connect(WORK)
+      const winner = second.wait()
+      const exchange = rig.exchanges.at(-1)!
+      await exchange.started.promise
+      if (stage === 'queued') {
+        // Queue stale revocation first; B then reserves the same token before
+        // either queued operation can run. Drain microtasks, not a timed wait.
+        rig.exchanges[0]!.reply.resolve(auth({ accessToken: 'at-stale' }))
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+      exchange.reply.resolve(auth({ accessToken: 'at-winner' }))
+      if (stage === 'stored') await winner
+      else if (stage === 'writing') await atWrite.promise
+      else await new Promise<void>((resolve) => setImmediate(resolve))
+      if (stage !== 'queued') rig.exchanges[0]!.reply.resolve(auth({ accessToken: 'at-stale' }))
+      releaseWrite.resolve()
+
+      expect(await stale).toEqual({ kind: 'cancelled' })
+      expect((await winner).kind).toBe('granted')
+      await blocker
+      expect(rig.revoked).not.toContain('rt-1')
+      expect(await store.read()).toMatchObject({ 'sub-1': { accessToken: 'at-winner' } })
+      await expect((await rig.accounts.sessionFor(WORK))!.getAccessToken()).resolves.toBe(
+        'at-winner',
+      )
+      expect(await rig.accounts.sessionFor(VAULT)).toBeNull()
+    },
+  )
+
+  it('still revokes a superseded consent when its refresh token differs from the winner', async () => {
+    const rig = await controlledConsent()
+    const first = await rig.accounts.connect(VAULT)
+    const stale = first.wait()
+    await rig.exchanges[0]!.started.promise
+    const second = await rig.accounts.connect(WORK)
+    const winner = second.wait()
+    await rig.exchanges[1]!.started.promise
+    rig.exchanges[1]!.reply.resolve(auth({ refreshToken: 'rt-winner', accessToken: 'at-winner' }))
+    await winner
+    rig.exchanges[0]!.reply.resolve(auth({ refreshToken: 'rt-stale' }))
+
+    expect(await stale).toEqual({ kind: 'cancelled' })
+    expect(rig.revoked).toEqual(['rt-stale'])
+    await expect((await rig.accounts.sessionFor(WORK))!.getAccessToken()).resolves.toBe('at-winner')
   })
 
   it('does not let a stale expiry remove a same-token reconnect or its vault link', async () => {
