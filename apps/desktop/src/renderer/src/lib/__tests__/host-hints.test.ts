@@ -4,6 +4,7 @@ import {
   hintLabel,
   activateHostHint,
   hostHintsUnchanged,
+  registerHostHintSurface,
 } from '../host-hints'
 import { installHintLayout } from '@/test/host-hint-layout'
 
@@ -141,6 +142,29 @@ it('revalidates removal, disabled state, geometry, coverage and new overlay befo
   run.remove()
   expect(activateHostHint(target)).toBe(false)
   expect(click).not.toHaveBeenCalled()
+})
+
+it('discovers and activates only controls in an explicitly owned PDF shadow root', () => {
+  const owner = document.createElement('holi-pdf-container')
+  root.append(owner)
+  const shadow = owner.attachShadow({ mode: 'open' })
+  const control = document.createElement('button')
+  control.textContent = 'PDF toolbar'
+  shadow.append(control)
+  place(control, 420, 120)
+  Object.defineProperty(shadow, 'elementFromPoint', {
+    configurable: true,
+    value: (x: number, y: number) => (x >= 420 && x < 520 && y >= 120 && y < 144 ? control : null),
+  })
+  const click = vi.fn()
+  control.addEventListener('click', click)
+  const unregister = registerHostHintSurface(shadow, owner)
+  const target = discoverHostHintTargets(root).find(({ element }) => element === control)
+  expect(target).toMatchObject({ label: 'PDF toolbar', surface: shadow })
+  expect(activateHostHint(target!)).toBe(true)
+  expect(click).toHaveBeenCalledOnce()
+  unregister()
+  expect(activateHostHint(target!)).toBe(false)
 })
 
 it('keeps painted-label click coordinates and folder-document activation semantics', () => {

@@ -24,6 +24,7 @@ import { useShortcutDispatcher, useShortcutHandlers } from '@/hooks/use-shortcut
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { liveShortcutIdsAtom } from '@/state/shortcuts'
 import { HostHintLayer } from '../host-hint-layer'
+import { HOST_HINT_SURFACE } from '@/lib/host-hints'
 
 let store: ReturnType<typeof createStore>
 let layout: ReturnType<typeof installHintLayout>
@@ -85,6 +86,44 @@ test('normal host f discovers actual buttons including chrome and only the focus
   expect(click).toHaveBeenCalledTimes(1)
   expect(hints()).toHaveLength(0)
   expect(screen.getByRole('button', { name: 'Focused' })).toHaveFocus()
+})
+
+test('shares real keyboard labels and native mouse activation with the owned PDF root', async () => {
+  const clicked = vi.fn()
+  const owner = document.createElement('holi-pdf-container')
+  const shadow = owner.attachShadow({ mode: 'open' })
+  const control = document.createElement('button')
+  control.textContent = 'PDF sidebar'
+  control.addEventListener('click', clicked)
+  shadow.append(control)
+  const pane = (
+    <section data-pane="one" data-pane-focused>
+      <Button>Host action</Button>
+      <div ref={(element) => element?.append(owner)} />
+    </section>
+  )
+  setup(pane)
+  layout.place(owner, 300, 100)
+  layout.place(control, 300, 100)
+  Object.defineProperty(shadow, 'elementFromPoint', {
+    configurable: true,
+    value: (x: number, y: number) => (x >= 300 && x < 400 && y >= 100 && y < 124 ? control : null),
+  })
+  act(() =>
+    window.dispatchEvent(
+      new CustomEvent(HOST_HINT_SURFACE, { detail: { root: shadow, owner, registered: true } }),
+    ),
+  )
+  screen.getByRole('button', { name: 'Host action' }).focus()
+  await userEvent.keyboard('f')
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['Host action', 'PDF sidebar'])
+  await choose('PDF sidebar')
+  expect(clicked).toHaveBeenCalledOnce()
+  act(() =>
+    window.dispatchEvent(
+      new CustomEvent(HOST_HINT_SURFACE, { detail: { root: shadow, owner, registered: false } }),
+    ),
+  )
 })
 
 test('the preference defaults off, unregisters shortcut help and disables in-flight hints', async () => {
