@@ -78,7 +78,10 @@ export interface GoogleAccountsManager {
   /** Fires for a connect, a removal, and a dead grant, naming the account that
    *  changed so a cache can be scoped to it. Null when nothing is connected. */
   onChange(
-    cb: (sub: string | null, reason: 'connected' | 'expired' | 'removed' | 'unlinked') => void | Promise<void>,
+    cb: (
+      sub: string | null,
+      reason: 'connected' | 'expired' | 'removed' | 'unlinked',
+    ) => void | Promise<void>,
   ): () => void
   /** The client in use and where it came from. The secret stays in main. */
   client(): { id: string; source: GoogleClientSource }
@@ -113,7 +116,10 @@ export async function createGoogleAccounts(
   let accounts: GoogleAccounts = await deps.store.read()
   const sessions = new Map<string, GoogleSession>()
   const listeners = new Set<
-    (sub: string | null, reason: 'connected' | 'expired' | 'removed' | 'unlinked') => void | Promise<void>
+    (
+      sub: string | null,
+      reason: 'connected' | 'expired' | 'removed' | 'unlinked',
+    ) => void | Promise<void>
   >()
   let connecting: { id: symbol; flow: LoopbackFlow | null; cancel: () => void } | null = null
   const accountEpochs = new Map<string, number>()
