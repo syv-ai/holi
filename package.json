@@ -10,7 +10,7 @@
     "ui:add": "node scripts/ui-add.mjs",
     "test": "node --test .github/workflows/assign-pr-author.test.mjs site/handoff.test.mjs scripts/harness-monitor.test.mjs scripts/codex-compatibility-checks.test.mjs && pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm --filter @holi/desktop lint",
+    "lint": "pnpm --filter @holi/desktop lint && pnpm --filter @holi/mobile lint",
     "knip": "knip",
     "knip:production": "knip --production",
     "rulecast": "rulecast run --all-files",
@@ -21,6 +21,7 @@
   },
   "lint-staged": {
     "apps/desktop/src/{renderer/src,plugins}/**/*.{ts,tsx}": "pnpm --filter @holi/desktop exec eslint --max-warnings 0",
+    "apps/mobile/**/*.{ts,js,mjs,cjs}": "pnpm --filter @holi/mobile exec eslint --max-warnings 0",
     "*.{ts,tsx,js,mjs,cjs,json,jsonc,md,css,yml,yaml}": "prettier --check"
   },
   "pnpm": {
@@ -31,6 +32,13 @@
     ],
     "patchedDependencies": {
       "codemirror-markdown-tables@1.0.0": "patches/codemirror-markdown-tables@1.0.0.patch"
+    },
+    "packageExtensions": {
+      "@nativescript/webpack@5.0.41": {
+        "dependencies": {
+          "typescript": "5.9.3"
+        }
+      }
     }
   },
   "devDependencies": {

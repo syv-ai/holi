@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./path-safety-node": "./src/path-safety-node.ts"
+    "./path-safety-node": "./src/path-safety-node.ts",
+    "./vault-format": "./src/vault-format.ts"
   },
   "scripts": {
     "test": "vitest run",
