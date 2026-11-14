@@ -11,7 +11,7 @@
  * Dropped from the block: New, Edit and Delete calendar. Holi does not create
  * or delete Google calendars.
  */
-import type { CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -29,10 +29,16 @@ import { FALLBACK_COLOR, type CalendarChoice } from '../calendar-data'
 export function CalendarsMenu({
   calendars,
   onToggle,
+  displayed = true,
 }: {
   calendars: CalendarChoice[]
   onToggle: (id: string, enabled: boolean) => void
+  displayed?: boolean
 }) {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!displayed) setOpen(false)
+  }, [displayed])
   const visible = calendars.filter((calendar) => calendar.enabled)
   const mine = calendars.filter((calendar) => calendar.mine)
   const others = calendars.filter((calendar) => !calendar.mine)
@@ -65,7 +71,7 @@ export function CalendarsMenu({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={displayed && open} onOpenChange={(next) => displayed && setOpen(next)}>
       <DropdownMenuTrigger aria-label="Calendars" asChild>
         <Button type="button" variant="ghost" disabled={calendars.length === 0}>
           {visible.length > 0 && (

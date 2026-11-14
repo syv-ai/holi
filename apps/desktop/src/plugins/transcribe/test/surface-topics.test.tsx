@@ -151,24 +151,47 @@ beforeEach(() => {
 
 /** What main has of the meeting shown, which `meeting.get` answers. */
 let shownState: MeetingState = meeting
+let surfaceStore: ReturnType<typeof createStore>
+let surfaceRerender: (ui: React.ReactNode) => void = () => {}
 
-function show(state: MeetingState = meeting) {
+function show(state: MeetingState = meeting, visible = true) {
   shownState = state
   const store = createStore()
+  surfaceStore = store
   store.set(activeRemoteAtom, 'syv/vault')
   store.set(profilesAtom, [profile])
   store.set(meetingStatesAtom, { m1: state })
   store.set(shownMeetingIdAtom, 'm1')
   store.set(agentSessionRowsAtom as unknown as PrimitiveAtom<readonly AgentSessionRow[]>, [])
-  render(
+  const view = render(
     <Provider store={store}>
-      <MeetingsSurface />
+      <MeetingsSurface visible={visible} />
     </Provider>,
   )
+  surfaceRerender = (ui) => view.rerender(ui)
   return store
 }
 
 const topicNamed = (title: string) => screen.getByLabelText(title, { selector: '[data-topic]' })
+const cardNamed = (title: string) => screen.getByLabelText(title, { selector: '[data-card]' })
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function setVisible(visible: boolean) {
+  surfaceRerender(
+    <Provider store={surfaceStore}>
+      <MeetingsSurface visible={visible} />
+    </Provider>,
+  )
+}
 /** A topic's header, which opens and folds it. */
 const headerOf = (topic: HTMLElement) =>
   topic.querySelector('[data-slot="collapsible-trigger"]') as HTMLElement
@@ -276,6 +299,92 @@ test('on an agent that cannot write topics, Now says which agents can, with the 
   expect(why).toHaveTextContent('Topics need Claude Code or Pi')
   expect(within(why).getByRole('button', { name: 'Agent settings' })).toBeInTheDocument()
   expect(within(why).getByRole('button', { name: 'Start the assistant' })).toBeInTheDocument()
+}, 15_000)
+
+test('a task save stays busy while the panel is parked', async () => {
+  const pending = deferred<unknown>()
+  const base = run.getMockImplementation()!
+  run.mockImplementation((c: { name: string }) =>
+    c.name === 'meeting.card' ? pending.promise : base(c),
+  )
+  show()
+  await userEvent.click(within(cardNamed('Export to CSV')).getAllByRole('button')[0]!)
+  const panel = await screen.findByRole('dialog', { name: 'Export to CSV' })
+  await userEvent.type(within(panel).getByLabelText('Why'), ' More detail.')
+  await userEvent.click(within(panel).getByRole('button', { name: 'Save changes' }))
+  await waitFor(() => expect(calls('meeting.card')).toHaveLength(1))
+
+  setVisible(false)
+  setVisible(true)
+  const restored = await screen.findByRole('dialog', { name: 'Export to CSV' })
+  expect(within(restored).getByRole('button', { name: 'Save changes' })).toBeDisabled()
+  expect(calls('meeting.card')).toHaveLength(1)
+
+  pending.resolve({ ...meeting.cards[0], why: 'updated' })
+  await waitFor(() =>
+    expect(within(restored).queryByRole('button', { name: 'Save changes' })).toBeNull(),
+  )
+}, 15_000)
+
+test('Send stays busy while parked and retains its made task and eventual error', async () => {
+  const pending = deferred<unknown>()
+  const base = run.getMockImplementation()!
+  let builds = 0
+  run.mockImplementation((c: { name: string }) => {
+    if (c.name === 'meeting.build' && builds++ === 0) return pending.promise
+    return base(c)
+  })
+  show()
+  await userEvent.click(within(topicNamed('Budget')).getByRole('button', { name: 'Send topic' }))
+  const panel = await screen.findByRole('dialog', { name: 'Send: Budget' })
+  await userEvent.type(within(panel).getByLabelText('What should be done?'), 'Ask finance')
+  await userEvent.click(within(panel).getByRole('button', { name: SEND_TO_AGENT }))
+  await waitFor(() => expect(calls('meeting.build')).toHaveLength(1))
+
+  setVisible(false)
+  setVisible(true)
+  const restored = await screen.findByRole('dialog', { name: 'Send: Budget' })
+  expect(within(restored).getByRole('button', { name: SEND_TO_AGENT })).toBeDisabled()
+  expect(calls('meeting.task.create')).toHaveLength(1)
+
+  pending.reject(new Error('the vault is offline'))
+  expect(
+    await within(restored).findByText(/Sending didn’t work: the vault is offline/),
+  ).toBeInTheDocument()
+  expect(within(restored).getByRole('button', { name: SEND_TO_AGENT })).toBeEnabled()
+
+  await userEvent.click(within(restored).getByRole('button', { name: SEND_TO_AGENT }))
+  await waitFor(() => expect(calls('meeting.build')).toHaveLength(2))
+  expect(calls('meeting.task.create')).toHaveLength(2)
+  expect(calls('meeting.task.create')[1]).toMatchObject({ cardId: 'c9' })
+}, 15_000)
+
+test('a late send cannot close a reopened topic form or replace its draft', async () => {
+  const pending = deferred<{ sessionId: string; card: Card }>()
+  const base = run.getMockImplementation()!
+  run.mockImplementation((c: { name: string }) =>
+    c.name === 'meeting.build' ? pending.promise : base(c),
+  )
+  show()
+  await userEvent.click(within(topicNamed('Budget')).getByRole('button', { name: 'Send topic' }))
+  const first = await screen.findByRole('dialog', { name: 'Send: Budget' })
+  await userEvent.type(within(first).getByLabelText('What should be done?'), 'Old prompt')
+  await userEvent.click(within(first).getByRole('button', { name: SEND_TO_AGENT }))
+  await waitFor(() => expect(calls('meeting.build')).toHaveLength(1))
+  await userEvent.click(within(first).getByRole('button', { name: 'Cancel' }))
+
+  await userEvent.click(within(topicNamed('Budget')).getByRole('button', { name: 'Send topic' }))
+  const reopened = await screen.findByRole('dialog', { name: 'Send: Budget' })
+  const prompt = within(reopened).getByLabelText('What should be done?')
+  await userEvent.type(prompt, 'New prompt')
+  pending.resolve({
+    sessionId: 'job-old',
+    card: { ...meeting.cards[0]!, status: 'building', buildSessionId: 'job-old' },
+  })
+  await waitFor(() =>
+    expect(within(reopened).getByLabelText('What should be done?')).toHaveValue('New prompt'),
+  )
+  expect(screen.getByRole('dialog', { name: 'Send: Budget' })).toBeInTheDocument()
 }, 15_000)
 
 test('Send on a suggestion: prefilled, related lines unticked, ticked ones carried, then sent', async () => {
@@ -388,6 +497,36 @@ test('Send on a topic needs an ask, re-asks the related lines, and goes to a pic
   expect(calls('meeting.build')).toEqual([
     { meetingId: 'm1', cardId: 'c9', target: { kind: 'holi', id: 'proposal' } },
   ])
+}, 15_000)
+
+test('parking a send form retains its prompt and selected related lines', async () => {
+  show()
+  await userEvent.click(within(topicNamed('Budget')).getByRole('button', { name: 'Send topic' }))
+  const panel = await screen.findByRole('dialog', { name: 'Send: Budget' })
+  await userEvent.type(within(panel).getByLabelText('What should be done?'), 'Keep this prompt')
+  await userEvent.click(await within(panel).findByRole('checkbox', { name: /Line 9 of the call/ }))
+
+  surfaceRerender(
+    <Provider store={surfaceStore}>
+      <MeetingsSurface visible={false} />
+    </Provider>,
+  )
+  expect(screen.queryByRole('dialog', { name: 'Send: Budget' })).toBeNull()
+  surfaceRerender(
+    <Provider store={surfaceStore}>
+      <MeetingsSurface visible />
+    </Provider>,
+  )
+  const restored = await screen.findByRole('dialog', { name: 'Send: Budget' })
+  expect(within(restored).getByLabelText('What should be done?')).toHaveValue('Keep this prompt')
+  expect(within(restored).getByRole('checkbox', { name: /Line 9 of the call/ })).toBeChecked()
+  await userEvent.click(within(restored).getByRole('button', { name: 'Cancel' }))
+  await userEvent.click(within(topicNamed('Budget')).getByRole('button', { name: 'Send topic' }))
+  expect(
+    await within(await screen.findByRole('dialog', { name: 'Send: Budget' })).findByLabelText(
+      'What should be done?',
+    ),
+  ).toHaveValue('')
 }, 15_000)
 
 test('related lines that fail to load say so, and Retry asks again', async () => {

@@ -25,7 +25,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNow } from '@/plugin-api'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -104,9 +104,11 @@ function LevelMeter(): React.JSX.Element {
 export function MeetingHeader({
   path,
   meetingId,
+  visible = true,
 }: {
   path?: string
   meetingId?: string
+  visible?: boolean
 }): React.JSX.Element {
   const profiles = useAtomValue(profilesAtom)
   const [profileId, setProfileId] = useAtom(selectedProfileIdAtom)
@@ -127,6 +129,13 @@ export function MeetingHeader({
   const [sources, setSources] = useState<Source[]>(['microphone', 'system'])
   const [editing, setEditing] = useState<'new' | 'edit' | null>(null)
   const [keyOpen, setKeyOpen] = useState(false)
+  const [profileSelectOpen, setProfileSelectOpen] = useState(false)
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  useEffect(() => {
+    if (visible) return
+    setProfileSelectOpen(false)
+    setProfileMenuOpen(false)
+  }, [visible])
   const speech = useAtomValue(speechKeyAtom)
   const busy = rec.phase !== 'idle'
   const profile = profiles?.find((p) => p.id === profileId)
@@ -153,6 +162,8 @@ export function MeetingHeader({
         )}
         <div className="flex shrink-0 items-center gap-1">
           <Select
+            open={visible && profileSelectOpen}
+            onOpenChange={(open) => setProfileSelectOpen(visible && open)}
             value={profileId ?? ''}
             onValueChange={setProfileId}
             disabled={busy || profiles === null || profiles.length === 0}
@@ -168,7 +179,10 @@ export function MeetingHeader({
               ))}
             </SelectContent>
           </Select>
-          <DropdownMenu>
+          <DropdownMenu
+            open={visible && profileMenuOpen}
+            onOpenChange={(open) => setProfileMenuOpen(visible && open)}
+          >
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
@@ -239,7 +253,7 @@ export function MeetingHeader({
           </>
         )}
         <div className="ms-auto flex shrink-0 items-center gap-2">
-          {rec.phase === 'recording' && rec.startedAt !== null && (
+          {visible && rec.phase === 'recording' && rec.startedAt !== null && (
             <>
               <LevelMeter />
               <Timer since={rec.startedAt} />
@@ -296,10 +310,15 @@ export function MeetingHeader({
       {editing !== null && (
         <ProfileDialog
           profile={editing === 'edit' ? profile : undefined}
+          visible={visible}
           onClose={() => setEditing(null)}
         />
       )}
-      <SpeechKeyDialog open={keyOpen} onOpenChange={setKeyOpen} />
+      <SpeechKeyDialog
+        open={keyOpen}
+        visible={visible}
+        onOpenChange={(open) => visible && setKeyOpen(open)}
+      />
     </div>
   )
 }

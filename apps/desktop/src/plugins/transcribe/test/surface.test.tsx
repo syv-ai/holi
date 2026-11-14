@@ -127,6 +127,14 @@ async function expand(title: string): Promise<HTMLElement> {
 }
 const header = () => screen.getByLabelText('Meeting health').parentElement!
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((yes) => {
+    resolve = yes
+  })
+  return { promise, resolve }
+}
+
 test('a meeting shows its topics as the minutes, its last lines in a strip, and its Tasks as rows', async () => {
   show()
   // The captions fold into a strip with the last two lines.
@@ -330,6 +338,29 @@ test('a task opens in a wide panel with every field to edit and its quotes, one 
   const invite = await expand('Send the invite')
   expect(within(invite).getByLabelText('Owner')).toHaveValue('Anna')
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
+}, 15_000)
+
+test('a late task save cannot clear a reopened card’s draft', async () => {
+  const pending = deferred<unknown>()
+  const base = run.getMockImplementation()!
+  run.mockImplementation((c: { name: string }) =>
+    c.name === 'meeting.card' ? pending.promise : base(c),
+  )
+  show()
+  const first = await expand('Export to CSV')
+  await userEvent.type(within(first).getByLabelText('Why'), ' Old draft')
+  await userEvent.click(within(first).getByRole('button', { name: 'Save changes' }))
+  await waitFor(() => expect(calls('meeting.card')).toHaveLength(1))
+  await userEvent.click(within(first).getByRole('button', { name: 'Close' }))
+
+  const reopened = await expand('Export to CSV')
+  const why = within(reopened).getByLabelText('Why')
+  await userEvent.type(why, ' New draft')
+  pending.resolve({ ...meeting.cards[0], why: 'saved old draft' })
+  await waitFor(() =>
+    expect(within(reopened).getByLabelText('Why')).toHaveValue('People asked for it. New draft'),
+  )
+  expect(within(reopened).getByRole('button', { name: 'Save changes' })).toBeInTheDocument()
 }, 15_000)
 
 test('a task’s fields are edited and saved, lists gaining and losing items', async () => {

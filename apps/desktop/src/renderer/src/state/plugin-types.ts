@@ -387,7 +387,8 @@ export interface SidebarApp {
   icon: IconGlyph
   /** Its place among every plugin's apps, lowest first. */
   order: number
-  render: ComponentType<{ visible?: boolean }>
+  /** Visible means in the displayed split; a visible member need not be focused. */
+  render: ComponentType<{ visible?: boolean; focused?: boolean }>
   /** Keep this app's mounted view while its tab is hidden. */
   keepMounted?: boolean
   /** Listed only while true (an account it needs is connected). */

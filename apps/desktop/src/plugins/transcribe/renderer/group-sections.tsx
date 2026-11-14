@@ -29,7 +29,6 @@ import {
   openSettingsSectionAtom,
   prefersReducedMotion,
   showAgentSessionAtom,
-  useNow,
 } from '@/plugin-api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -39,6 +38,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { MarkdownText } from '@/composites/markdown-text'
 import { joinedSets } from '../shared/joins'
 import type { MeetingState, Topic } from '../shared/meeting'
+import { useDisplayedNow } from './displayed'
 import { AskAssistant } from './ask-assistant'
 import { clock } from '../shared/scribe-prompt'
 import { GroupSection, Keywords } from './group-section'
@@ -257,7 +257,7 @@ function ScribeNotReady({
 function NowGroup({ meeting, topic }: { meeting: MeetingState; topic: Topic }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const send = useSetAtom(sendPanelAtom)
-  const now = useNow(1000)
+  const now = useDisplayedNow(1000)
   const [asked, setAsked] = useState<{ at: number; minutesAt: number | undefined } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const readiness = useScribeReadiness(meeting)
@@ -352,7 +352,7 @@ export function GroupSections({
   /** The meeting records: the open topic is Now, and the scribe can be asked. */
   live: boolean
 }): React.JSX.Element {
-  const now = useNow(1000)
+  const now = useDisplayedNow(1000)
   const [allAsked, setAllAsked] = useAtom(minutesAskedAtom)
   const [askError, setAskError] = useState<string | null>(null)
   const asked = allAsked[meeting.id] ?? null
