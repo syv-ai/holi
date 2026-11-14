@@ -134,11 +134,7 @@ function protectedLines(lines: Line[]): boolean[] {
       const { name } = tag
       if (RAW_TAGS.has(name)) {
         ignored[i] = true
-        const closing = `</${name}`
-        const lower = html.toLowerCase()
-        const closeAt = lower.indexOf(closing)
-        if (closeAt === -1 || !/^\s*>/i.test(html.slice(closeAt + closing.length)))
-          htmlTerminator = `</${name}\\s*>`
+        if (!new RegExp(`</${name}\\s*>`, 'i').test(html)) htmlTerminator = `</${name}\\s*>`
         continue
       }
       const trailing = html.slice(html.lastIndexOf('>') + 1)
@@ -146,7 +142,9 @@ function protectedLines(lines: Line[]): boolean[] {
       if (
         BLOCK_TAGS.test(name) &&
         tag.startsTag &&
-        (completeLine || /^(?:\s|\/?>)/.test(html.slice(name.length + 1)))
+        (completeLine ||
+          tag.afterName === html.length ||
+          /^(?:\s|\/?>)/.test(html.slice(tag.afterName)))
       ) {
         ignored[i] = true
         htmlBlock = true
@@ -166,7 +164,9 @@ function standalone(line: string): string | null {
   return MARKERS.has(line) ? line : null
 }
 
-function tagLine(line: string): { name: string; startsTag: boolean; complete: boolean } | null {
+function tagLine(
+  line: string,
+): { name: string; startsTag: boolean; complete: boolean; afterName: number } | null {
   let cursor = 0
   if (line[cursor] !== '<') return null
   cursor++
@@ -177,13 +177,18 @@ function tagLine(line: string): { name: string; startsTag: boolean; complete: bo
   while (/[A-Za-z0-9:-]/.test(line[cursor] ?? '')) cursor++
   const name = line.slice(nameStart, cursor).toLowerCase()
   const startsTag =
-    line[cursor] === ' ' || line[cursor] === '\t' || line[cursor] === '/' || line[cursor] === '>'
+    cursor === line.length ||
+    line[cursor] === ' ' ||
+    line[cursor] === '\t' ||
+    line[cursor] === '/' ||
+    line[cursor] === '>'
   if (!startsTag) return null
   while (cursor < line.length && line[cursor] !== '>') {
-    if (line[cursor] === '<') return { name, startsTag, complete: false }
+    if (line[cursor] === '<')
+      return { name, startsTag, complete: false, afterName: nameStart + name.length }
     cursor++
   }
-  return { name, startsTag, complete: cursor < line.length }
+  return { name, startsTag, complete: cursor < line.length, afterName: nameStart + name.length }
 }
 
 /**
@@ -267,7 +272,7 @@ export function writeMarkdownCaptionEnvelope(body: string, caption: string): str
   if (body.includes('\r') || caption.includes('\r'))
     throw new Error('caption envelope content must use LF line endings')
   if (
-    /^(?: {4}|\t)/.test(caption) ||
+    /^(?: {4}| {0,3}\t)/.test(caption) ||
     /^(?: {0,3}(?:#{1,6}(?:\s|$)|>|[-+*](?:\s|$)|\d+[.)](?:\s|$)|`{3,}|~{3,}|<)| {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$)/.test(
       caption,
     )

@@ -104,9 +104,25 @@ describe('Markdown caption envelopes', () => {
     const contexts = [
       ['custom open tag until blank line', `<x-widget>\n${valid}\n</x-widget>\n\n${valid}`, 1],
       ['custom closing tag until blank line', `</x-widget>\n${valid}\n\n${valid}`, 1],
+      [
+        'closing tag with trailing text until blank line',
+        `</div>trailing\n${valid}\n\n${valid}`,
+        1,
+      ],
       ['type 6 block remains through inline closing tag', `<div></div>\n${valid}\n\n${valid}`, 1],
       ['type 6 block terminates at blank line', `<hr>\n\n${valid}`, 1],
       ['same-line raw closer does not extend block', `<script></script>\n${valid}`, 1],
+      [
+        'later valid raw closer follows closer-like text',
+        `<script>"</script-x>"</script>\n${valid}`,
+        1,
+      ],
+      ['div tag name followed by newline starts a block', `<div\n${valid}`, 0],
+      [
+        'script tag name followed by newline shields through closer',
+        `<script\n${valid}\n</script>\n\n${valid}`,
+        1,
+      ],
       [
         'script ignores blank lines through closer',
         `<script>\n\n${valid}\n</script>\n\n${valid}`,
@@ -168,7 +184,20 @@ describe('Markdown caption envelopes', () => {
     for (const body of ['```js\nx', '<!-- open']) {
       expect(() => writeMarkdownCaptionEnvelope(body, 'caption')).toThrow()
     }
-    for (const caption of ['    code', '\tcode', '#', '##', '_ _ _', '-', '*', '+', '1.']) {
+    for (const caption of [
+      '    code',
+      '\tcode',
+      ' \tcode',
+      '  \tcode',
+      '   \tcode',
+      '#',
+      '##',
+      '_ _ _',
+      '-',
+      '*',
+      '+',
+      '1.',
+    ]) {
       expect(() => writeMarkdownCaptionEnvelope('![a](a.png)', caption)).toThrow()
     }
   })
