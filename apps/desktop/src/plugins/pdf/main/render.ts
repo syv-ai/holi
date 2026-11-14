@@ -146,9 +146,24 @@ export async function renderPdf({
       .split(sep)
       .join('/')
     const original = await readFile(notePath, 'utf8')
-    const envelopes = readMarkdownCaptionEnvelopes(original)
     const frames = readMarkdownCodeCaptions(original)
-    const pictured = await inlineImages(original, noteRel, (rel) => readVaultImage(vaultRoot, rel))
+    // Carry each supported frame's identity in its caption through transforms.
+    // The nonce is absent from the literal source, and these inline comments add
+    // no lines (so source warning locations remain stable).
+    let taggedOriginal = original
+    let nonce = ''
+    do {
+      nonce = `holi-pdf-${Math.random().toString(36).slice(2)}`
+    } while (original.includes(nonce))
+    for (const [index, frame] of [...frames.entries()].reverse()) {
+      taggedOriginal =
+        taggedOriginal.slice(0, frame.caption.to) +
+        ` <!-- ${nonce}-${index} -->` +
+        taggedOriginal.slice(frame.caption.to)
+    }
+    const pictured = await inlineImages(taggedOriginal, noteRel, (rel) =>
+      readVaultImage(vaultRoot, rel),
+    )
     const drawn =
       diagrams === undefined
         ? {
@@ -166,10 +181,12 @@ export async function renderPdf({
     // count is retained for warnings from everything after the envelope.
     let markdown = drawn.markdown
     const transformedEnvelopes = readMarkdownCaptionEnvelopes(drawn.markdown)
-    const transformations = frames.flatMap((frame) => {
-      const index = envelopes.findIndex((item) => item.envelope.from === frame.envelope.from)
-      const transformed = transformedEnvelopes[index]
-      if (index < 0 || transformed === undefined) return []
+    const transformations = frames.flatMap((frame, index) => {
+      const identity = `<!-- ${nonce}-${index} -->`
+      const transformed = transformedEnvelopes.find((item) =>
+        drawn.markdown.slice(item.caption.from, item.caption.to).includes(identity),
+      )
+      if (transformed === undefined) return []
       const caption = original.slice(frame.caption.from, frame.caption.to)
       const sourceLines = original.slice(frame.envelope.from, frame.envelope.to).split('\n').length
       return [{ frame: transformed, caption, sourceLines }]

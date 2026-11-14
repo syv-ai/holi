@@ -42,6 +42,50 @@ describe('fontPathArgs', () => {
 })
 
 describe('renderPdf preprocessing', () => {
+  it('keeps captions attached to their source frames across removed envelopes', async () => {
+    const root = await work()
+    const templateDir = join(root, 'template')
+    await mkdir(templateDir)
+    await writeFile(join(templateDir, 'template.typ'), '')
+    const typstBin = join(root, 'capture-typst')
+    await writeFile(
+      typstBin,
+      '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
+    )
+    await chmod(typstBin, 0o755)
+    const notePath = join(root, 'note.md')
+    const missing = writeMarkdownCaptionEnvelope('![](missing.png)', 'missing caption')
+    const first = writeMarkdownCaptionEnvelope('```js\nconst a = 1\n```', 'caption A')
+    const second = writeMarkdownCaptionEnvelope('```js\nconst b = 2\n```', 'caption B')
+    const original = `${missing}\n\n${first}\n\n${second}\n\n
+tail\n\n
+after diagram`
+    await writeFile(notePath, original)
+    const outPath = join(root, 'captured.md')
+    const result = await renderPdf({
+      typstBin,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+      diagrams: async (sources) => {
+        expect(sources).toEqual([])
+        return []
+      },
+    })
+    const transformed = await readFile(outPath, 'utf8')
+    expect(transformed.match(/caption A/g)).toHaveLength(1)
+    expect(transformed.match(/caption B/g)).toHaveLength(1)
+    expect(transformed.indexOf('const a = 1')).toBeLessThan(transformed.indexOf('caption A'))
+    expect(transformed.indexOf('const b = 2')).toBeLessThan(transformed.indexOf('caption B'))
+    expect(transformed).toContain('missing caption')
+    expect(result.warnings).toEqual([
+      'The image on line 3 is left out: missing.png: no such file in the vault',
+    ])
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+  })
   it.each([false, true])(
     'preserves literal SVG wiki-link labels (caption present: %s)',
     async (captioned) => {
