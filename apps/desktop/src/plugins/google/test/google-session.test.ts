@@ -57,8 +57,10 @@ function auth(overrides: Partial<StoredGoogleAuth> = {}): StoredGoogleAuth {
  */
 function refFor(sub: string, seeded: StoredGoogleAuth | null = null): AccountRef {
   let current: StoredGoogleAuth | null = seeded
+  let generation = 0
   return {
     read: () => current,
+    generation: () => generation,
     async write(auth) {
       current = auth
       const all = await store.read()
@@ -68,6 +70,7 @@ function refFor(sub: string, seeded: StoredGoogleAuth | null = null): AccountRef
       await this.remove()
     },
     async remove() {
+      generation += 1
       current = null
       const all = await store.read()
       delete all[sub]

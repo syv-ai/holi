@@ -97,6 +97,36 @@ afterEach(async () => {
 })
 
 describe('createGoogleData', () => {
+  it('does not return or cache an agenda response after the account is retired', async () => {
+    let release!: (response: Response) => void
+    let started!: () => void
+    const waiting = new Promise<Response>((resolve) => (release = resolve))
+    const requestStarted = new Promise<void>((resolve) => (started = resolve))
+    const fetchImpl = (async (url: string) => {
+      if (url.startsWith(CAL_LIST))
+        return Response.json({ items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] })
+      started()
+      return waiting
+    }) as typeof globalThis.fetch
+    const retiredCache = openGoogleCache(join(dir, 'retired.db'))
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache: retiredCache,
+    })
+    subject.ensureShape()
+    const result = subject.agenda(WINDOW, {})
+    await requestStarted
+    subject.forget()
+    release({
+      ok: true,
+      status: 200,
+      json: async () => ({ items: [] }),
+      text: async () => '{"items":[]}',
+    } as Response)
+    await expect(result).rejects.toThrow(/no longer connected/)
+    expect(existsSync(join(dir, 'retired.db'))).toBe(false)
+  })
+
   it('disconnect deletes the cached mail', async () => {
     await data.threads({})
     await data.agenda(WINDOW, {})
@@ -302,15 +332,15 @@ describe('createGoogleData', () => {
       expect(theirs.calls()).toBe(2) // and asked for itself, not served mine
     })
 
-    it('is dropped on disconnect', async () => {
+    it('does not serve contacts from a retired account handle', async () => {
       const { data: subject, calls } = peopleApi()
       subject.ensureShape()
       await subject.contacts()
 
       subject.forget()
-      await subject.contacts()
 
-      expect(calls()).toBe(4)
+      await expect(subject.contacts()).rejects.toThrow('no longer connected')
+      expect(calls()).toBe(2)
     })
   })
 })
@@ -734,5 +764,68 @@ describe('forwarded attachments', () => {
     await subject.saveDraft({ mail: MAIL, forwardOf: { messageId: 'src-2' } })
 
     expect(urls.filter((url) => url.includes('/attachments/a0')).length).toBeGreaterThan(1)
+  })
+})
+
+describe('retired grant reads and write receipts', () => {
+  it('rejects an alias response that completes after retiring its account', async () => {
+    let release!: (response: Response) => void
+    let entered!: () => void
+    const started = new Promise<void>((done) => (entered = done))
+    const waiting = new Promise<Response>((done) => (release = done))
+    const subject = createGoogleData({
+      cache,
+      api: () =>
+        new GoogleApi({
+          accessToken: async () => 'old-grant',
+          fetch: async () => {
+            entered()
+            return waiting
+          },
+        }),
+    })
+    const pending = subject.sendAs()
+    const rejected = expect(pending).rejects.toThrow(/no longer connected/)
+    await started
+    subject.forget()
+    release(Response.json({ sendAs: [{ sendAsEmail: 'old@example.test' }] }))
+    await rejected
+    await expect(subject.sendAs()).rejects.toThrow(/no longer connected/)
+  })
+
+  it('preserves a completed send receipt when removal retires its cache during the request', async () => {
+    let release!: (response: Response) => void
+    let entered!: () => void
+    const started = new Promise<void>((done) => (entered = done))
+    const waiting = new Promise<Response>((done) => (release = done))
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      entered()
+      return waiting
+    })
+    const subject = createGoogleData({
+      cache,
+      api: () =>
+        new GoogleApi({
+          accessToken: async () => 'old-grant',
+          fetch: fetcher,
+        }),
+    })
+    const pending = subject.sendMail({
+      draftId: 'draft',
+      threadId: 'thread',
+      mail: { to: ['someone@example.test'], subject: 'hello', body: 'hello' },
+    })
+    await started
+    subject.forget()
+    release(Response.json({ id: 'sent-id' }))
+    await expect(pending).resolves.toEqual({ id: 'sent-id' })
+    expect(existsSync(path)).toBe(false)
+    await expect(
+      subject.sendMail({
+        draftId: 'draft',
+        mail: { to: ['someone@example.test'], subject: 'hello', body: 'hello' },
+      }),
+    ).rejects.toThrow(/no longer connected/)
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 })

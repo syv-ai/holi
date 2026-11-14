@@ -434,10 +434,18 @@ function accountsText(value: GoogleAccountsOverview): string {
   return lines.join('\n')
 }
 
+const capabilityDisposers = new WeakMap<object, () => void>()
+
+export function disposeGoogleCapabilities(capabilities: object): void {
+  capabilityDisposers.get(capabilities)?.()
+}
+
 export function googleCapabilities(deps: GoogleCapabilityDeps) {
   /** The connect in progress. One per process: a second supersedes the first
    *  rather than leaving a listener holding a port. */
   let connectFlow: LoopbackFlow | null = null
+  let disposed = false
+  let connectGeneration = 0
 
   /** The vault's data layer, or the refusal that says there is none. */
   const accountOf = async (remote: string, expectedAccountSub?: string) => {
@@ -475,7 +483,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
   const overrides = async (root: string) => (await deps.settings.read(root)).calendars
 
-  return {
+  const capabilities = {
     /**
      * Who is connected, and whether that grant is still wide enough. A grant
      * from before `GOOGLE_SCOPES` widened keeps working and is insufficient
@@ -502,9 +510,17 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: noParams,
       run: async (ctx) => {
+        if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+        const generation = ++connectGeneration
         connectFlow?.cancel()
-        connectFlow = await deps.accounts.connect(ctx.remote)
-        return { authUrl: connectFlow.authUrl }
+        connectFlow = null
+        const flow = await deps.accounts.connect(ctx.remote)
+        if (disposed || generation !== connectGeneration) {
+          flow.cancel()
+          throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+        }
+        connectFlow = flow
+        return { authUrl: flow.authUrl }
       },
     }),
 
@@ -1211,6 +1227,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
   } satisfies CapabilityTable
+
+  capabilityDisposers.set(capabilities, () => {
+    if (disposed) return
+    disposed = true
+    connectGeneration += 1
+    connectFlow?.cancel()
+    connectFlow = null
+  })
+  return capabilities
 }
 
 export type GoogleCapabilities = ReturnType<typeof googleCapabilities>

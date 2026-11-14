@@ -151,6 +151,10 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
    * same rule as `aliases`.
    */
   let forwarded: { messageId: string; bytes: Promise<MailPart[]> } | null = null
+  let retired = false
+  const assertActive = () => {
+    if (retired) throw new Error('that Google account is no longer connected')
+  }
 
   /**
    * The mail, with a forwarded message's attachments fetched and attached.
@@ -169,6 +173,7 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     let attachments: MailPart[]
     try {
       attachments = await pending.bytes
+      assertActive()
     } catch (error) {
       if (forwarded === pending) forwarded = null
       throw error
@@ -190,22 +195,38 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     })
   }
 
+  /** Google first, then cache only while this grant still owns it. Once a
+   * send has succeeded, retirement must not turn its receipt into a failure. */
+  async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> {
+    assertActive()
+    const result = await send()
+    if (!retired) record()
+    return result
+  }
+
   return {
     async agenda(window, overrides) {
+      assertActive()
       const events = await listAgenda(api(), window, { overrides })
+      assertActive()
       cache.writeAgenda(agendaKey(window, overrides), events)
       return events
     },
 
-    fetchAgenda(window, overrides) {
-      return listAgenda(api(), window, { overrides })
+    async fetchAgenda(window, overrides) {
+      assertActive()
+      const events = await listAgenda(api(), window, { overrides })
+      assertActive()
+      return events
     },
 
     cachedAgenda(window, overrides) {
+      assertActive()
       return cache.readAgenda(agendaKey(window, overrides))
     },
 
     async threads(options) {
+      assertActive()
       let knownAddresses: string[] | undefined
       try {
         knownAddresses = await (aliases ??= listSendAs(api()).catch((error: unknown) => {
@@ -215,11 +236,16 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       } catch {
         // Without account-authenticated addresses, classifying a message as neither would be false certainty.
       }
-      return syncThreads(api(), cache, options, knownAddresses)
+      const result = await syncThreads(api(), cache, options, knownAddresses)
+      assertActive()
+      return result
     },
 
-    contacts() {
-      return (addressBook ??= listContacts(api()))
+    async contacts() {
+      assertActive()
+      const result = await (addressBook ??= listContacts(api()))
+      assertActive()
+      return result
     },
 
     setRead(id, read) {
@@ -307,11 +333,18 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       )
     },
 
-    sendAs() {
-      return (aliases ??= listSendAs(api()).catch((error: unknown) => {
-        aliases = null
+    async sendAs() {
+      assertActive()
+      const pending = (aliases ??= listSendAs(api()))
+      let result: string[]
+      try {
+        result = await pending
+      } catch (error) {
+        if (aliases === pending) aliases = null
         throw error
-      }))
+      }
+      assertActive()
+      return result
     },
 
     ensureShape() {
@@ -319,29 +352,12 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     },
 
     forget() {
+      retired = true
       addressBook = null
       aliases = null
-      cache.destroy()
+      cache.retire()
     },
   }
-}
-
-/**
- * A write, and the ordering that keeps the cache honest.
- *
- * **Google first; the cache only once Google has agreed.** Patching
- * optimistically is wrong here: a cache that records a write Google refused is
- * the one divergence a delta sync can never repair. `history.list` reports
- * what changed *at Gmail*, and for a refused request nothing did, so the wrong
- * value would survive every refresh and every restart.
- *
- * Optimism belongs in the renderer, where a revert costs a re-render and
- * nothing is persisted. It does not belong on disk.
- */
-async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> {
-  const result = await send()
-  record()
-  return result
 }
 
 /**
