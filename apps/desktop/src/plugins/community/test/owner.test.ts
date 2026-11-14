@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { communityOwner } from '../main/owner'
 import { communityMain } from '../main/index'
 import type { PluginCtx } from '../../../main/plugin-api'
+import { createFrameOrigins } from '../../../main/frame-origins'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -64,6 +65,32 @@ describe('community installation owner', () => {
     await a.close(async () => {})
     expect(a.isLive()).toBe(false)
     expect(eventsA).toHaveLength(1)
+    await b.close(async () => {})
+    await owner.supervisor.dispose()
+  })
+
+  test('leases duplicate frame origins to the live community attachment only', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'holi-community-owner-'))
+    roots.push(userData)
+    const owner = communityOwner({ userData })
+    const frames = createFrameOrigins()
+    const origin = 'holi-plugin://community'
+    const adapter = { emit: () => {}, frameOrigin: (value: string) => frames.acquire(value) }
+    const a = owner.attach('/vault/a', 'a', adapter)
+    const b = owner.attach('/vault/b', 'b', adapter)
+    const leaseA = a.isLive() ? adapter.frameOrigin(origin) : () => {}
+    const leaseB = b.isLive() ? adapter.frameOrigin(origin) : () => {}
+    expect(frames.origins.has(origin)).toBe(true)
+    await a.close(async () => {})
+    leaseA()
+    expect(frames.origins.has(origin)).toBe(true)
+    const replacement = owner.attach('/vault/a', 'a2', adapter)
+    const leaseReplacement = replacement.isLive() ? adapter.frameOrigin(origin) : () => {}
+    leaseB()
+    expect(frames.origins.has(origin)).toBe(true)
+    await replacement.close(async () => {})
+    leaseReplacement()
+    expect(frames.origins.has(origin)).toBe(false)
     await b.close(async () => {})
     await owner.supervisor.dispose()
   })
