@@ -50,6 +50,44 @@ export interface TerminalUrlLink {
   end: number
 }
 
+/** Only an intentional primary-button modifier click activates terminal links. */
+export function isTerminalLinkActivation(event: MouseEvent): boolean {
+  return event.button === 0 && (event.metaKey || event.ctrlKey)
+}
+
+export interface TerminalBufferLine {
+  isWrapped: boolean
+  getCell(index: number): { getChars(): string; getWidth(): number } | undefined
+}
+
+/** Read a wrapped logical line and map each character back to its terminal cell. */
+export function wrappedTerminalLine(
+  row: number,
+  columns: number,
+  getLine: (row: number) => TerminalBufferLine | undefined,
+): { text: string; cellAt: (offset: number) => { x: number; y: number } | undefined } {
+  let firstRow = row
+  while (firstRow > 0 && getLine(firstRow)?.isWrapped) firstRow--
+  let text = ''
+  const cells: Array<{ x: number; y: number }> = []
+  for (let y = firstRow; y <= row; y++) {
+    const line = getLine(y)
+    if (!line) continue
+    for (let x = 0; x < columns; x++) {
+      const cell = line.getCell(x)
+      if (!cell) continue
+      const chars = cell.getChars()
+      if (!chars) continue
+      text += chars
+      for (let offset = 0; offset < chars.length; offset++)
+        cells.push({ x: x + 1, y: y - firstRow + 1 })
+      // Wide glyphs occupy two terminal cells but only one text character.
+      if (cell.getWidth() === 2) continue
+    }
+  }
+  return { text, cellAt: (offset) => cells[offset] }
+}
+
 /** Plain-text local file URLs for xterm's explicit link provider. */
 export function fileUrlLinks(line: string): TerminalUrlLink[] {
   const links: TerminalUrlLink[] = []

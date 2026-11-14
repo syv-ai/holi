@@ -21,7 +21,12 @@ import { terminalKeyAction } from './lib/terminal-keys'
 import { createPiMouseSelectionFilter } from './lib/pi-mouse-selection'
 import { createPiWheelRouter } from './lib/pi-wheel-routing'
 import { vaultLinks } from './lib/terminal-links'
-import { activateTerminalLink, fileUrlLinks } from './lib/terminal-link-activation'
+import {
+  activateTerminalLink,
+  fileUrlLinks,
+  isTerminalLinkActivation,
+  wrappedTerminalLine,
+} from './lib/terminal-link-activation'
 import {
   openExternal,
   terminalTheme,
@@ -197,6 +202,7 @@ export function SessionTerminal({
       linkHandler: {
         allowNonHttpProtocols: true,
         activate: (event, text) => {
+          if (!isTerminalLinkActivation(event)) return
           event.preventDefault()
           activateLink(text)
         },
@@ -206,6 +212,7 @@ export function SessionTerminal({
     term.loadAddon(fit)
     term.loadAddon(
       new WebLinksAddon((event, text) => {
+        if (!isTerminalLinkActivation(event)) return
         event.preventDefault()
         activateLink(text)
       }),
@@ -302,28 +309,49 @@ export function SessionTerminal({
     // A vault path in the output opens the file in a pane.
     const links = term.registerLinkProvider({
       provideLinks(y, callback) {
-        const text = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? ''
+        const buffer = term.buffer.active
+        const logical = wrappedTerminalLine(y - 1, term.cols, (row) => buffer.getLine(row))
         const { paths: known, root: clone } = linkRef.current
-        const found = [
-          ...vaultLinks(text, (path) => known.has(path), clone).map((link) => ({
-            text: link.path,
-            start: link.start,
-            end: link.end,
-            activate: () => openRef.current(link.path),
-          })),
-          ...fileUrlLinks(text).map((link) => ({
+        const vault = vaultLinks(logical.text, (path) => known.has(path), clone).map((link) => ({
+          text: link.path,
+          start: link.start,
+          end: link.end,
+          activate: (event: MouseEvent) => {
+            if (isTerminalLinkActivation(event)) openRef.current(link.path)
+          },
+        }))
+        const fileUrls = fileUrlLinks(logical.text)
+          .filter(
+            (link) =>
+              !vault.some((candidate) => link.start < candidate.end && link.end > candidate.start),
+          )
+          .map((link) => ({
             ...link,
-            activate: () => activateLink(link.text),
-          })),
-        ].sort((a, b) => a.start - b.start)
+            activate: (event: MouseEvent) => {
+              if (isTerminalLinkActivation(event)) activateLink(link.text)
+            },
+          }))
+        const found = [...vault, ...fileUrls].sort((a, b) => a.start - b.start)
         callback(
           found.length === 0
             ? undefined
-            : found.map((link) => ({
-                range: { start: { x: link.start + 1, y }, end: { x: link.end, y } },
-                text: link.text,
-                activate: link.activate,
-              })),
+            : found.flatMap((link) => {
+                const start = logical.cellAt(link.start)
+                const end = logical.cellAt(link.end - 1)
+                if (!start || !end) return []
+                const rowOffset = logical.cellAt(link.end - 1)!.y
+                const toViewport = (cell: { x: number; y: number }) => ({
+                  x: cell.x,
+                  y: y - (rowOffset - cell.y),
+                })
+                return [
+                  {
+                    range: { start: toViewport(start), end: toViewport(end) },
+                    text: link.text,
+                    activate: link.activate,
+                  },
+                ]
+              }),
         )
       },
     })
