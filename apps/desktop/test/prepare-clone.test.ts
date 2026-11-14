@@ -197,7 +197,8 @@ describe('prepareManagedClone', () => {
   })
 
   it('does not load Git blobs for binary assets or already-LF text', async () => {
-    const root = await makeClone(await makeRemote(), 'no-blob-candidates')
+    const root = join(await tmp('holi-no-blob-candidates-'), 'clone')
+    await run('git', ['-c', 'core.autocrlf=false', 'clone', await makeRemote(), root])
     const binary = Buffer.from([0, 13, 10, 42])
     await writeFile(join(root, 'asset.bin'), binary)
     await writeFile(join(root, 'note.md'), 'already LF\n')
@@ -279,7 +280,7 @@ describe('prepareManagedClone', () => {
 
       let attributeChecks = 0
       hooks.afterCheckAttr = async (args) => {
-        if (args[0] !== 'check-attr' || args.includes('--stdin')) return
+        if (args[0] !== 'check-attr' || args.includes('--stdin') || args.at(-1) !== path) return
         attributeChecks++
         // The second non-stdin check-attr is refresh()'s final validation,
         // after its temporary replacement has been written.
