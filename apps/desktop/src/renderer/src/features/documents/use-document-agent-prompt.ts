@@ -4,7 +4,7 @@
  * into the marker the agent writes at. The prompt is the editor's to track
  * (`agentPromptKey`) and renders into the view's `promptBox` on that line.
  */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { useAtomValue } from 'jotai'
 import type { Editor } from '@tiptap/react'
@@ -60,6 +60,23 @@ export function useDocumentAgentPrompt({
   const [batchSubmitting, setBatchSubmitting] = useState(false)
   const [batchError, setBatchError] = useState<string | null>(null)
   const batchInFlight = useRef(false)
+  const batchGeneration = useRef(0)
+  const batchAwaitingRun = useRef(false)
+
+  function releaseBatch(token: number) {
+    if (batchGeneration.current !== token) return
+    batchInFlight.current = false
+    freeze(false)
+    setBatchSubmitting(false)
+  }
+
+  useEffect(() => {
+    if (!batchAwaitingRun.current || !agent.run || isRunLive(agent.run)) return
+    batchAwaitingRun.current = false
+    batchInFlight.current = false
+    freeze(false)
+    setBatchSubmitting(false)
+  }, [agent.run, freeze])
 
   function updateQueue(update: (queue: RewriteQueue) => RewriteQueue) {
     const next = update(rewriteQueueRef.current)
@@ -70,7 +87,13 @@ export function useDocumentAgentPrompt({
   function addToBatch(instruction: string, passage: string) {
     if (batchInFlight.current || !editor || !activity.focused) return
     const { from, to, $from, $to } = editor.state.selection
-    if (from === to || $from.parent !== $to.parent || !$from.parent.isTextblock) return
+    if (
+      from === to ||
+      $from.parent !== $to.parent ||
+      $from.start() !== $to.start() ||
+      !$from.parent.isTextblock
+    )
+      return
     updateQueue((queue) =>
       enqueueRewrite(
         queue,
@@ -98,7 +121,13 @@ export function useDocumentAgentPrompt({
       return
     }
     const { from, to, $from, $to } = editor.state.selection
-    if (from === to || $from.parent !== $to.parent || !$from.parent.isTextblock) return
+    if (
+      from === to ||
+      $from.parent !== $to.parent ||
+      $from.start() !== $to.start() ||
+      !$from.parent.isTextblock
+    )
+      return
     updateQueue((queue) =>
       reselectRewrite(queue, id, {
         from,
@@ -119,6 +148,7 @@ export function useDocumentAgentPrompt({
     // Lock synchronously before save yields, so inputs, removals, reselections,
     // and duplicate submits cannot change the request being saved/launched.
     batchInFlight.current = true
+    const submission = ++batchGeneration.current
     setBatchError(null)
     freeze(true)
     setBatchSubmitting(true)
@@ -173,6 +203,7 @@ export function useDocumentAgentPrompt({
           setBatchError('The document changed before submission. Review the targets and try again.')
         return
       }
+      batchAwaitingRun.current = true
       const started = await agent.start(
         'rewrite',
         `In the saved document ${path}, apply each numbered request only to its corresponding target. ` +
@@ -184,16 +215,21 @@ export function useDocumentAgentPrompt({
         isCurrentVisit,
         `Rewrite batch (${batch.length})`,
       )
-      if (started && isCurrentVisit() && rewriteQueueRef.current === batch) updateQueue(() => [])
+      if (
+        started &&
+        batchGeneration.current === submission &&
+        isCurrentVisit() &&
+        rewriteQueueRef.current === batch
+      )
+        updateQueue(() => [])
     } catch (error) {
       if (isCurrentVisit())
         setBatchError(
           error instanceof Error ? error.message : 'Could not submit the batch. Try again.',
         )
     } finally {
-      batchInFlight.current = false
-      freeze(false)
-      setBatchSubmitting(false)
+      if (batchGeneration.current === submission) batchAwaitingRun.current = false
+      releaseBatch(submission)
     }
   }
 

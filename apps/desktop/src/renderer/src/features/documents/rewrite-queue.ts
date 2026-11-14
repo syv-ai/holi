@@ -77,6 +77,9 @@ export function mapRewriteTargets(
       $from.parent !== $to.parent ||
       $blockFrom.parent !== $blockTo.parent ||
       $from.parent !== $blockFrom.parent ||
+      $from.start() !== $to.start() ||
+      $from.start() !== $blockFrom.start() ||
+      $from.start() !== $blockTo.start() ||
       !$from.parent.isTextblock ||
       $from.parent.type.name !== request.blockType ||
       $blockFrom.start() - 1 !== blockFrom ||
