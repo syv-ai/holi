@@ -18,7 +18,7 @@ import {
 import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { vimCodeEditingAtom } from '@/state/preferences'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { sessionAtom } from '@/state/session'
 import { FileView, isCoreTextFilePath } from '../file-view'
 import { HostHintLayer } from '@/features/shell/host-hint-layer'
@@ -74,6 +74,7 @@ function setup(path: string, claims = false, vimEnabled = false, hints = false) 
   const store = createStore()
   lastStore = store
   store.set(activeRemoteAtom, 'syv-ai/site')
+  store.set(openedRemoteAtom, 'syv-ai/site')
   store.set(sessionAtom, { login: 'fixture-user' })
   store.set(vimCodeEditingAtom, vimEnabled)
   store.set(snapshotAtom, {
