@@ -49,6 +49,7 @@ type StatusesRead = {
   file: Loadable<StatusDef[]>
 }
 const statusesReadAtom = atom<StatusesRead | null>(null)
+/** @public exported for state and sidebar tests. */
 export const recordStatusesReadAtom = atom(null, (_get, set, read: StatusesRead) =>
   set(statusesReadAtom, read),
 )
