@@ -2,8 +2,8 @@ import { execFile, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { dirname, join } from 'node:path'
+import { afterEach, describe, expect, it, onTestFailed, vi } from 'vitest'
 import { commandLine, launchPlan, spawnProgram } from '../src/main/launch'
 import { defaultProbePid, killChildTree, killTree } from '../src/main/process-group'
 
@@ -269,16 +269,25 @@ describe('spawnProgram', () => {
   })
 
   it.runIf(process.platform === 'win32')('resolves node.exe from PATH on Windows', async () => {
-    const child = spawnProgram('node.exe', ['-e', 'process.stdout.write(process.version)'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'PATH'),
+    )
+    env.PATH = dirname(process.execPath)
+    const child = spawnProgram(
+      'node.exe',
+      [
+        '-e',
+        'process.stdout.write(JSON.stringify({version:process.version,execPath:process.execPath}))',
+      ],
+      { env, stdio: ['ignore', 'pipe', 'pipe'] },
+    )
     let output = ''
     child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
     await new Promise<void>((resolve, reject) => {
       child.once('error', reject)
       child.once('close', (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))))
     })
-    expect(output).toBe(process.version)
+    expect(JSON.parse(output)).toEqual({ version: process.version, execPath: process.execPath })
   })
 
   it('starts a program and hides its console window on Windows only', async () => {
@@ -376,7 +385,7 @@ describe('killTree', () => {
 
 describe('execProgram', () => {
   it.runIf(process.platform === 'win32')(
-    'stops an executable and its grandchild at the timeout',
+    'reports cold-start timeout phase and drains any started root tree',
     async () => {
       const { execProgram } = await import('../src/main/launch')
       const script =
@@ -385,27 +394,47 @@ describe('execProgram', () => {
         const child = execProgram(
           process.execPath,
           ['-e', script],
-          { env: process.env, timeoutMs: 3000, maxBuffer: 65536, encoding: 'utf8' },
+          {
+            env: { ...process.env, HOLI_OWNED_PROCESS_TRACE: '1' },
+            timeoutMs: 3000,
+            maxBuffer: 65536,
+            encoding: 'utf8',
+          },
           (err, out) => resolve({ err, out }),
         )
         child.stdin?.end()
       })
+      const metadata = result.err as
+        | (Error & {
+            code?: string
+            helperLastPhase?: string
+            helperStarted?: boolean
+            rootStarted?: boolean
+            helperPid?: number | null
+            rootPid?: number | null
+            rootState?: string
+          })
+        | null
+      onTestFailed(() => {
+        console.error(
+          `[launch timeout diagnostic] code=${metadata?.code ?? 'none'} helperLastPhase=${metadata?.helperLastPhase ?? 'none'} helperStarted=${metadata?.helperStarted ?? false} rootStarted=${metadata?.rootStarted ?? false} helperPid=${metadata?.helperPid ?? 'none'} rootPid=${metadata?.rootPid ?? 'none'} rootState=${metadata?.rootState ?? 'none'}`,
+        )
+      })
       expect(result.err).not.toBeNull()
+      expect(result.err?.code).toBe('ETIMEDOUT')
       const pid = Number(result.out.trim())
       expect(pid).toBeGreaterThan(1)
-      await vi.waitFor(() => expect(defaultProbePid(pid, 'win32')).toBe('gone'), {
-        timeout: 10_000,
-      })
+      expect(defaultProbePid(pid, 'win32')).toBe('gone')
     },
     30_000,
   )
 
   it.runIf(process.platform === 'win32')(
-    'drains a descendant that holds output after the root exits at timeout',
+    'completes after natural root exit and drains its output-holding descendant',
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-drain-'))
       const pidFile = join(dir, 'pid')
-      const script = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.stdout.write('ready');setInterval(()=>0,1000)`)}],{stdio:['ignore','pipe','ignore'],windowsHide:true});c.stdout.once('data',()=>process.exit(0))`
+      const script = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`process.stdout.write('ready');setInterval(()=>0,1000)`)}],{stdio:['ignore','pipe','ignore'],windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.stdout.once('data',()=>process.exit(0))`
       const { execProgram } = await import('../src/main/launch')
       let reported = false
       try {
@@ -421,7 +450,7 @@ describe('execProgram', () => {
           )
         })
         const { err } = await result
-        expect(err).not.toBeNull()
+        expect(err).toBeNull()
         const pid = Number(await readFile(pidFile, 'utf8'))
         expect(pid).toBeGreaterThan(1)
         expect(reported).toBe(true)
@@ -438,8 +467,7 @@ describe('execProgram', () => {
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-'))
       const pidFile = join(dir, 'pid')
-      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
-      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true});console.log('backgrounded · 12345678 · test')`
+      const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:'ignore',windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();console.log('backgrounded · 12345678 · test')`
       const { execProgram } = await import('../src/main/launch')
       let pid = 0
       try {
@@ -473,12 +501,11 @@ describe('execProgram', () => {
   )
 
   it.runIf(process.platform === 'win32')(
-    'drains a successful root with a pipe-holding descendant at timeout',
+    'times out and drains a root-exited descendant holding root stdout',
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-pipe-timeout-'))
       const pidFile = join(dir, 'pid')
-      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
-      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','pipe','ignore'],windowsHide:true});console.log('root done')`
+      const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:['ignore','inherit','ignore'],windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();process.exit(0)`
       const { execProgram } = await import('../src/main/launch')
       try {
         const result = await new Promise<Error | null>((resolve) => {
@@ -513,8 +540,7 @@ describe('execProgram', () => {
     async () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-detach-fail-'))
       const pidFile = join(dir, 'pid')
-      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
-      const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','pipe','ignore'],windowsHide:true});console.error('failed');process.exit(7)`
+      const script = `const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:['ignore','ignore','ignore'],windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));process.exit(7)`
       const { execProgram } = await import('../src/main/launch')
       try {
         const result = await new Promise<{ err: Error | null }>((resolve) => {
@@ -528,15 +554,16 @@ describe('execProgram', () => {
               encoding: 'utf8',
               retainDescendantsOnSuccess: true,
             },
-            (err) => resolve({ err }),
+            (err) => {
+              expect(err).not.toBeNull()
+              const pid = Number(readFileSync(pidFile, 'utf8'))
+              expect(pid).toBeGreaterThan(1)
+              expect(defaultProbePid(pid, 'win32')).toBe('gone')
+              resolve({ err })
+            },
           )
         })
         expect(result.err).not.toBeNull()
-        await vi.waitFor(async () =>
-          expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
-        )
-        const pid = Number(await readFile(pidFile, 'utf8'))
-        expect(defaultProbePid(pid, 'win32')).toBe('gone')
       } finally {
         await rm(dir, { recursive: true, force: true })
       }
