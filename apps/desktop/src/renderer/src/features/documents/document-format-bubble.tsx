@@ -28,7 +28,10 @@ import {
 } from '@/features/documents/rich-text/rich-text-controls'
 import { RichTextHighlightPopover } from '@/features/documents/rich-text/rich-text-highlight'
 import { RichTextLinkPopover } from '@/features/documents/rich-text/rich-text-link'
-import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
+import {
+  useRichTextSelector,
+  useRichTextState,
+} from '@/features/documents/rich-text/rich-text-state'
 import {
   RichTextToolbarGroup,
   RichTextToolbarSeparator,
@@ -94,6 +97,7 @@ interface DocumentFormatBubbleProps {
   onLinkOpenChange: (open: boolean) => void
   /** Null when there is no agent to ask. */
   onQuickCommand: ((instruction: string, passage: string) => void) | null
+  onAddToBatch?: ((instruction: string, passage: string) => void) | null
   /** Start a conversation about the passage; null when none can start. */
   onStartChat?: ((passage: string) => void) | null
   /** Start a comment thread on the selection; null when the note takes none. */
@@ -105,6 +109,7 @@ export function DocumentFormatBubble({
   linkOpen,
   onLinkOpenChange,
   onQuickCommand,
+  onAddToBatch = null,
   onStartChat = null,
   onComment = null,
 }: DocumentFormatBubbleProps) {
@@ -112,6 +117,11 @@ export function DocumentFormatBubble({
   const [customDraft, setCustomDraft] = useState('')
   const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const state = useRichTextState(editor)
+  const singleTextBlock = useRichTextSelector(editor, (current) => {
+    if (!current) return false
+    const { $from, $to } = current.state.selection
+    return $from.parent.isTextblock && $from.sameParent($to)
+  })
   /** The passage the person's own instruction is for, taken when its prompt
    *  opened; null while it is closed. */
   const [customPassage, setCustomPassage] = useState<string | null>(null)
@@ -239,6 +249,15 @@ export function DocumentFormatBubble({
                       <PencilLineIcon aria-hidden="true" />
                       Custom instruction…
                     </DropdownMenuItem>
+                    {onAddToBatch ? (
+                      <DropdownMenuItem
+                        disabled={!singleTextBlock}
+                        onClick={() => onAddToBatch('', selectedPassage())}
+                      >
+                        <PencilLineIcon aria-hidden="true" />
+                        Add to batch…
+                      </DropdownMenuItem>
+                    ) : null}
                   </DropdownMenuGroup>
                   {onStartChat ? (
                     <>
