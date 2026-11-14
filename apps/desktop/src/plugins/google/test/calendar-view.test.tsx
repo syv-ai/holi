@@ -118,7 +118,7 @@ const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.schedule': (p) => scheduleMock(p),
   'google.reschedule': (p) => rescheduleMock(p),
   'google.unschedule': (p) => unscheduleMock(p),
-  'google.imageSenders': () => [],
+  'google.imageSenders': () => ({ senders: [], allSenders: false }),
   'tasks.create': (p) => taskMock(p),
 }
 vi.mock('@/lib/trpc', () => ({

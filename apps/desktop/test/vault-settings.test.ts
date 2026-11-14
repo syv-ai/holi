@@ -8,17 +8,42 @@
  * its own hand-rolled `JSON.parse`.
  */
 import { parse as parseYaml } from 'yaml'
-import { SETTINGS_FILE, SETTINGS_LOCAL_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import {
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
+  SETTINGS_FILE,
+  SETTINGS_LOCAL_FILE,
+  VAULT_SETTING_DEFAULTS,
+  pluginSettingValue,
+  writePluginSettingsText,
+  type PluginInfo,
+} from '@holi/shared'
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DEFAULT_HOOKS } from '../src/main/vault/hooks/transforms'
 import { DEFAULT_MAX_COMMITTED_FILE_BYTES } from '../src/main/vault/large-files'
-import { readVaultSettings, writeVaultSettings } from '../src/main/vault/settings'
+import {
+  readVaultSettings,
+  writePluginSettings,
+  writeVaultSettings,
+} from '../src/main/vault/settings'
+import { install } from '../src/main/plugin-host/installed'
+import type { MainPlugin } from '../src/main/plugin-api'
+import { GOOGLE_INFO } from '../src/plugins/google/info'
 import { readMaxCommittedFileBytes } from '../src/main/vault/vault-settings'
 
 const dirs: string[] = []
+
+function installGoogleForSettingsTest(): void {
+  install([
+    {
+      info: { id: 'agent', label: 'Agent', default: true, builtIn: true } as PluginInfo,
+    } as MainPlugin,
+    { info: GOOGLE_INFO } as MainPlugin,
+  ])
+}
 afterEach(async () => {
   for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true })
 })
@@ -131,6 +156,43 @@ describe('a machine-local hooks override', () => {
   })
 })
 
+describe('Google remote image settings', () => {
+  it('defaults missing and malformed global consent to false', async () => {
+    installGoogleForSettingsTest()
+    for (const [committed, local] of [
+      [undefined, undefined],
+      [undefined, 'google:\n  imagesFromAllSenders: invalid\n'],
+    ]) {
+      const settings = await readVaultSettings(await vault(committed, local))
+      expect(pluginSettingValue(settings.pluginValues, GOOGLE_INFO, 'imagesFromAllSenders')).toBe(
+        false,
+      )
+      expect(pluginSettingValue(settings.pluginValues, GOOGLE_INFO, 'imageSenders')).toEqual([])
+    }
+  })
+
+  it('writes both machine-local Google image choices to plugins.local.yaml only', async () => {
+    const root = await vault()
+    const text = writePluginSettingsText(
+      { google: { imagesFromAllSenders: true, imageSenders: ['one@example.com'] } },
+      'local',
+      [GOOGLE_INFO],
+    )
+    await mkdir(join(root, '.holi/settings'), { recursive: true })
+    await writeFile(join(root, PLUGINS_LOCAL_FILE), text, 'utf8')
+    const saved = parseYaml(await readFile(join(root, PLUGINS_LOCAL_FILE), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(saved.google).toMatchObject({
+      imagesFromAllSenders: true,
+      imageSenders: ['one@example.com'],
+    })
+    await expect(readFile(join(root, PLUGINS_FILE), 'utf8')).rejects.toThrow()
+    expect(saved.google).toEqual({ imagesFromAllSenders: true, imageSenders: ['one@example.com'] })
+  })
+})
+
 describe('writeVaultSettings', () => {
   const settingsAt = async (root: string, file: string) =>
     parseYaml(await readFile(join(root, file), 'utf8'))
@@ -196,6 +258,32 @@ describe('writeVaultSettings', () => {
     expect(await settingsAt(root, SETTINGS_LOCAL_FILE)).toEqual({ colorScheme: 'light' })
   })
 
+  it('serializes concurrent plugin setting merges', async () => {
+    const root = await vault()
+    installGoogleForSettingsTest()
+    await Promise.all([
+      writePluginSettings(root, 'google', { imagesFromAllSenders: true }),
+      writePluginSettings(root, 'google', { imageSenders: ['one@example.com'] }),
+    ])
+    expect((await readVaultSettings(root)).pluginValues.google).toMatchObject({
+      imagesFromAllSenders: true,
+      imageSenders: ['one@example.com'],
+    })
+  })
+
+  it('a failed file write does not poison later settings writes', async () => {
+    const root = await vault()
+    installGoogleForSettingsTest()
+    const local = join(root, PLUGINS_LOCAL_FILE)
+    await mkdir(local, { recursive: true })
+    await expect(
+      writePluginSettings(root, 'google', { imagesFromAllSenders: true }),
+    ).rejects.toThrow()
+    await rm(local, { recursive: true })
+    await writePluginSettings(root, 'google', { imagesFromAllSenders: false })
+    expect((await readVaultSettings(root)).pluginValues.google?.imagesFromAllSenders).toBe(false)
+  })
+
   it('writes both files in one call', async () => {
     const root = await vault()
     await writeVaultSettings(root, {
@@ -238,5 +326,41 @@ describe('writeVaultSettings', () => {
     expect(s.dailyNotes).toBe(false)
     expect(s.colorScheme).toBe('dark')
     expect(s.warnings).toEqual([])
+  })
+})
+
+describe('Google image setting persistence through the installed plugin writer', () => {
+  it('writes consent only to this vault machine-local settings and reads it back', async () => {
+    installGoogleForSettingsTest()
+    const root = await vault()
+    expect(
+      pluginSettingValue(
+        (await readVaultSettings(root)).pluginValues,
+        GOOGLE_INFO,
+        'imagesFromAllSenders',
+      ),
+    ).toBe(false)
+
+    await writePluginSettings(root, 'google', {
+      imagesFromAllSenders: true,
+      imageSenders: ['trusted@example.com'],
+    })
+
+    const local = parseYaml(await readFile(join(root, PLUGINS_LOCAL_FILE), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(local.google).toMatchObject({
+      imagesFromAllSenders: true,
+      imageSenders: ['trusted@example.com'],
+    })
+    await expect(readFile(join(root, PLUGINS_FILE), 'utf8')).rejects.toThrow()
+    const resolved = await readVaultSettings(root)
+    expect(pluginSettingValue(resolved.pluginValues, GOOGLE_INFO, 'imagesFromAllSenders')).toBe(
+      true,
+    )
+    expect(pluginSettingValue(resolved.pluginValues, GOOGLE_INFO, 'imageSenders')).toEqual([
+      'trusted@example.com',
+    ])
   })
 })

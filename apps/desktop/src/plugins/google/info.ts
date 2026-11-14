@@ -24,6 +24,16 @@ export const GOOGLE_INFO: PluginInfo = {
       target: 'local',
     },
     {
+      key: 'imagesFromAllSenders',
+      label: 'Images from all senders',
+      explanation:
+        'Load remote images automatically from every sender in this vault on this machine. This can tell senders when you open mail. Turn off to block images again, except for trusted senders.',
+      type: { kind: 'boolean' },
+      default: false,
+      target: 'local',
+      localOnly: true,
+    },
+    {
       key: 'imageSenders',
       label: 'Images from',
       explanation:

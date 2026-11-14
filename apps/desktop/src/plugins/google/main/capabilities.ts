@@ -100,10 +100,18 @@ export interface GoogleCapabilityDeps {
 
 /** The Google plugin's own settings in a vault, read and written by root. */
 interface GoogleSettingsStore {
-  read(root: string): Promise<{ calendars: CalendarOverrides; imageSenders: string[] }>
+  read(root: string): Promise<{
+    calendars: CalendarOverrides
+    imageSenders: string[]
+    imagesFromAllSenders: boolean
+  }>
   write(
     root: string,
-    values: Partial<{ calendars: CalendarOverrides; imageSenders: string[] }>,
+    values: Partial<{
+      calendars: CalendarOverrides
+      imageSenders: string[]
+      imagesFromAllSenders: boolean
+    }>,
   ): Promise<void>
 }
 
@@ -1155,11 +1163,32 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.imageSenders': cap({
       doors: ['ui'],
       params: noParams,
-      run: async (ctx) => (await deps.settings.read(ctx.root)).imageSenders,
+      run: async (ctx) => {
+        const settings = await deps.settings.read(ctx.root)
+        return {
+          senders: settings.imageSenders,
+          allSenders: settings.imagesFromAllSenders === true,
+        }
+      },
     }),
 
     /** Lowercased on the way in: `Ada@Syv.ai` and `ada@syv.ai` are one person,
      *  and matching by case would re-block a sender already allowed. */
+    'google.setImagesFromAllSenders': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const value = paramsObject(raw).enabled
+        if (typeof value !== 'boolean') {
+          throw new CapabilityError('BAD_REQUEST', 'enabled must be a boolean')
+        }
+        return { enabled: value }
+      },
+      run: async (ctx, { enabled }) => {
+        await deps.settings.write(ctx.root, { imagesFromAllSenders: enabled })
+        return ok
+      },
+    }),
+
     'google.allowImagesFrom': cap({
       doors: ['ui'],
       params: (raw) => ({ sender: stringParam(paramsObject(raw), 'sender') }),

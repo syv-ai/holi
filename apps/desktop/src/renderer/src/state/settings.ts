@@ -36,6 +36,7 @@ export const vaultSettingsAtom = atom<{
   remote: string
   settings: ResolvedVaultSettings
 } | null>(null)
+const settingsReadRevisionAtom = atom(0)
 
 /**
  * The active vault's settings, from the cache or from main.
@@ -46,17 +47,26 @@ export const vaultSettingsAtom = atom<{
  */
 export const loadVaultSettingsAtom = atom(
   null,
-  async (get, set, opts?: { force?: boolean }): Promise<ResolvedVaultSettings | null> => {
+  async (
+    get,
+    set,
+    opts?: { force?: boolean; clear?: boolean },
+  ): Promise<ResolvedVaultSettings | null> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return null
 
+    if (opts?.clear === true) set(vaultSettingsAtom, null)
     const cached = get(vaultSettingsAtom)
     if (opts?.force !== true && cached !== null && cached.remote === remote) {
       return cached.settings
     }
 
+    const revision = get(settingsReadRevisionAtom) + 1
+    set(settingsReadRevisionAtom, revision)
     const settings = await trpc.settings.read.query({ remote })
-    set(vaultSettingsAtom, { remote, settings })
+    if (revision === get(settingsReadRevisionAtom) && get(activeRemoteAtom) === remote) {
+      set(vaultSettingsAtom, { remote, settings })
+    }
     return settings
   },
 )
