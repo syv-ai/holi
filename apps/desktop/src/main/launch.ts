@@ -323,6 +323,44 @@ export function execProgram(
     let committedSuccess = false
     let stdoutEnded = false
     let stderrEnded = false
+    const traceEnabled = Object.entries(options.env).some(
+      ([key, value]) => key.toUpperCase() === 'HOLI_OWNED_PROCESS_TRACE' && value === '1',
+    )
+    let traceBuffer = ''
+    let trace: { phase: string; helperPid: number | null; rootPid: number | null; state: string } =
+      {
+        phase: 'none',
+        helperPid: null,
+        rootPid: null,
+        state: '-',
+      }
+    const collectTrace = (chunk: Buffer | string) => {
+      if (!traceEnabled) return
+      traceBuffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk
+      const lines = traceBuffer.split(/\r?\n/)
+      traceBuffer = lines.pop() ?? ''
+      for (const line of lines) {
+        const match =
+          /^\[holi-owned-process\] phase=([\w-]+) helperPid=(\d+) rootPid=(-?\d+) state=([\w=.-]+)$/.exec(
+            line,
+          )
+        if (!match) continue
+        trace = {
+          phase: match[1]!,
+          helperPid: Number(match[2]),
+          rootPid: Number(match[3]) > 0 ? Number(match[3]) : null,
+          state: match[4]!,
+        }
+      }
+    }
+    const timeoutMetadata = () => ({
+      helperLastPhase: trace.phase,
+      helperStarted: trace.helperPid !== null,
+      rootStarted: trace.rootPid !== null && trace.rootPid > 0,
+      helperPid: trace.helperPid,
+      rootPid: trace.rootPid,
+      rootState: trace.state,
+    })
     const ownedControl = child as ChildProcess & {
       ownedSuccessReady?: () => boolean
       acknowledgeOwnedSuccess?: () => boolean
@@ -333,6 +371,7 @@ export function execProgram(
       failure = Object.assign(new Error(`timed out after ${options.timeoutMs} ms`), {
         killed: true,
         code: 'ETIMEDOUT',
+        ...(traceEnabled ? timeoutMetadata() : {}),
       }) as ExecFileException
       child.kill('SIGKILL')
     }, options.timeoutMs)
@@ -355,7 +394,10 @@ export function execProgram(
     child.stdout?.setEncoding(options.encoding)
     child.stderr?.setEncoding(options.encoding)
     child.stdout?.on('data', (chunk: Buffer | string) => append('stdout', chunk))
-    child.stderr?.on('data', (chunk: Buffer | string) => append('stderr', chunk))
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      collectTrace(chunk)
+      append('stderr', chunk)
+    })
     let readinessPoll: NodeJS.Timeout | undefined
     const maybeAcknowledge = () => {
       if (
