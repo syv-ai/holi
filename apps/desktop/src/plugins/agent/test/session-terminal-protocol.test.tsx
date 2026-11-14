@@ -6,7 +6,11 @@ import type { Terminal } from '@xterm/xterm'
 import { SessionTerminal } from '../renderer/session-terminal'
 import { receivePtyData } from '../renderer/lib/session-terminals'
 
-const fixture = vi.hoisted(() => ({ terminals: [] as Terminal[], send: vi.fn() }))
+const fixture = vi.hoisted(() => ({
+  terminals: [] as Terminal[],
+  send: vi.fn(),
+  openExternal: vi.fn(),
+}))
 vi.mock('../renderer/agent-cap', () => ({ agentCap: { attach: async () => '' } }))
 vi.mock('@/lib/terminal-theme', () => ({
   terminalTheme: () => ({}),
@@ -65,7 +69,39 @@ afterEach(() => {
   cleanup()
   fixture.terminals.length = 0
   fixture.send.mockClear()
+  fixture.openExternal.mockClear()
   vi.unstubAllGlobals()
+})
+
+test('native OSC 8 HTTP links activate through the external browser helper', async () => {
+  vi.stubGlobal('holi', {
+    plugin: { send: fixture.send },
+    openExternal: fixture.openExternal,
+  })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'fixture/links')
+  store.set(openTabAtom, { kind: 'surface', surface: 'agent', id: 'links-terminal' })
+  const view = (visible: boolean) => (
+    <Provider store={store}>
+      <SessionTerminal terminalId="links-terminal" provider="pi" visible={visible} />
+    </Provider>
+  )
+  const ui = render(view(true))
+  await waitFor(() => expect(fixture.terminals).toHaveLength(1))
+  const handler = fixture.terminals[0]!.options.linkHandler
+  const preventDefault = vi.fn()
+  const activate = () =>
+    handler?.activate({ preventDefault } as unknown as MouseEvent, 'https://example.com/docs', {
+      start: { x: 1, y: 1 },
+      end: { x: 28, y: 1 },
+    })
+  activate()
+  expect(preventDefault).toHaveBeenCalledOnce()
+  expect(fixture.openExternal).toHaveBeenCalledWith('https://example.com/docs')
+
+  ui.rerender(view(false))
+  activate()
+  expect(fixture.openExternal).toHaveBeenCalledTimes(1)
 })
 
 test('a hidden retained terminal answers real xterm protocol queries without enabling its textarea', async () => {
