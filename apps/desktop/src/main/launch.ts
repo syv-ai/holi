@@ -99,7 +99,8 @@ const isBare = (name: string): boolean => !/[\\/]/.test(name) && win32.extname(n
 /** Resolve the optional runtime without making it a requirement on other OSes. */
 function resolveBundledWindowsNode(): string | null {
   try {
-    const file = createRequire(import.meta.url).resolve('node-win-x64/bin/node.exe')
+    const moduleRequire = typeof require === 'function' ? require : createRequire(import.meta.url)
+    const file = moduleRequire.resolve('node-win-x64/bin/node.exe')
     return file.replace(
       /(.*[\\/])resources([\\/])app\.asar([\\/])/i,
       '$1resources$2app.asar.unpacked$3',
