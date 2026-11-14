@@ -24,21 +24,32 @@ export const browserMain: MainPlugin = {
     const { createPages } = await import('./pages')
     const pages = createPages({
       window: () => ctx.window(),
+      presentationLease: () => ctx.presentationLease(),
       onDisplayChange: (cb) => ctx.onDisplayChange(cb),
       changed: (list) => ctx.emit(ctx.remote, 'tabs', list),
-      reveal: (id) => ctx.emit(ctx.remote, 'reveal', { id }),
-      address: (id) => ctx.emit(ctx.remote, 'address', { id }),
-      key: (id, key) => ctx.emit(ctx.remote, 'key', { id, ...key }),
+      reveal: (id) => ctx.emit(ctx.remote, 'reveal', { id }, ctx.presentationLease()),
+      address: (id) => ctx.emit(ctx.remote, 'address', { id }, ctx.presentationLease()),
+      key: (id, key) => ctx.emit(ctx.remote, 'key', { id, ...key }, ctx.presentationLease()),
     })
     const undo = ctx.register(BROWSER_NAMESPACES, browserCapabilities(pages))
     // Where each tab is drawn, as the renderer lays it out: every frame it
     // moves, so a message rather than a capability call.
-    const offPlace = ctx.on('place', (_remote, payload) => {
-      if (typeof payload !== 'object' || payload === null) return
-      const { id, rect } = payload as { id?: unknown; rect?: unknown }
-      if (typeof id !== 'string') return
-      pages.place(id, isRect(rect) ? rect : null)
-    })
+    const offPlace = ctx.on(
+      'place',
+      (_remote, payload) => {
+        if (typeof payload !== 'object' || payload === null) return
+        const { id, rect } = payload as { id?: unknown; rect?: unknown }
+        if (typeof id !== 'string') return
+        pages.place(id, isRect(rect) ? rect : null)
+      },
+      (_remote, payload) => {
+        const id =
+          typeof payload === 'object' && payload !== null
+            ? (payload as { id?: unknown }).id
+            : undefined
+        return pages.placementGuard(id, ctx.presentationLease())
+      },
+    )
     return () => {
       offPlace()
       undo()

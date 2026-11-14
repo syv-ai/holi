@@ -673,6 +673,72 @@ describe('the lifecycle', () => {
     await host.stop('A')
   })
 
+  it('invalidates presentation leases across A to B to A for queued plugin events', async () => {
+    let ctx: PluginCtx | undefined
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(context) {
+        ctx = context
+        return () => {}
+      },
+    }
+    const aRoot = await tempDir()
+    const bRoot = await tempDir()
+    const { host, sent } = rig({ plugins: [plugin], roots: { A: aRoot, B: bRoot } })
+    await host.reconcile(openVault('A', aRoot), 'open')
+    host.setDisplayed('A')
+    const presentation = ctx!.presentationLease()
+    ctx!.emit('A', 'key', { key: 'w' }, presentation)
+    host.setDisplayed('B')
+    host.setDisplayed('A')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(sent).toEqual([])
+    await host.stopAll()
+  })
+
+  it('rejects queued inbound placement after returning to the same displayed vault', async () => {
+    let gate = false
+    let release: () => void = () => {}
+    let entered: () => void = () => {}
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const waiting = new Promise<void>((resolve) => (entered = resolve))
+    const handled: unknown[] = []
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        ctx.on(
+          'place',
+          (_remote, payload) => handled.push(payload),
+          () => ctx.presentationLease(),
+        )
+        return () => {}
+      },
+    }
+    const aRoot = await tempDir()
+    const { host, enter, fromRenderer } = rig({
+      plugins: [plugin],
+      roots: { A: aRoot },
+      live: 'A',
+      rootFor: async (remote) => {
+        if (gate && remote === 'A') {
+          entered()
+          await blocked
+        }
+        return remote === 'A' ? aRoot : null
+      },
+    })
+    await enter(openVault('A', aRoot))
+    gate = true
+    fromRenderer({ remote: 'A', name: 'place', payload: { id: 'same-page-id', rect: null } })
+    await waiting
+    host.setDisplayed('B')
+    host.setDisplayed('A')
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(handled).toEqual([])
+    await host.stopAll()
+  })
+
   it('releases a failed activation frame-origin lease before retry', async () => {
     const { createFrameOrigins } = await import('../src/main/frame-origins')
     const frameOrigins = createFrameOrigins()

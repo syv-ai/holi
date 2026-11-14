@@ -30,8 +30,12 @@ export interface PluginEventsDeps {
 }
 
 export interface PluginEvents {
-  emit(remote: string, name: string, payload: unknown): void
-  on(name: string, handler: (remote: string, payload: unknown) => void): () => void
+  emit(remote: string, name: string, payload: unknown, guard?: () => boolean): void
+  on(
+    name: string,
+    handler: (remote: string, payload: unknown) => void,
+    deliveryGuard?: (remote: string, payload: unknown) => () => boolean,
+  ): () => void
   /** Cancel queued delivery without letting an old gate block fresh work. */
   cancelPending(): void
   /** Finish current outbound delivery before releasing its activation. */
@@ -98,7 +102,7 @@ export function pluginEvents(
     async drain() {
       await Promise.all([...outboundByRemote.values()].map((work) => work.drain()))
     },
-    emit(remote, name, payload) {
+    emit(remote, name, payload, guard) {
       checkName(name)
       if (!allowed()) return
       const event = { remote, name, payload }
@@ -106,12 +110,15 @@ export function pluginEvents(
       const owner = epoch
       const at = generation?.()
       const current = () =>
-        epoch === owner && allowed() && (generation === undefined || generation() === at)
+        epoch === owner &&
+        allowed() &&
+        (generation === undefined || generation() === at) &&
+        (guard === undefined || guard())
       channelQueue(outboundByRemote, remote, 'event').run(async () => {
         if (current() && (await runs(remote)) && current()) deps.send(channel, event)
       })
     },
-    on(name, handler) {
+    on(name, handler, deliveryGuard) {
       checkName(name)
       let listening = true
       const undo = deps.listen(channel, (message) => {
@@ -119,12 +126,14 @@ export function pluginEvents(
         if (message.remote !== deps.liveRemote()) return
         const owner = epoch
         const at = generation?.()
+        const guard = deliveryGuard?.(message.remote, message.payload)
         const current = () =>
           listening &&
           epoch === owner &&
           allowed() &&
           message.remote === deps.liveRemote() &&
-          (generation === undefined || generation() === at)
+          (generation === undefined || generation() === at) &&
+          (guard === undefined || guard())
         channelQueue(inboundByRemote, message.remote, 'message').run(async () => {
           if (current() && (runs === undefined || (await runs(message.remote))) && current())
             handler(message.remote, message.payload)

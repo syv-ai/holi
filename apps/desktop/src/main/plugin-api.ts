@@ -69,6 +69,8 @@ export interface PluginScheme {
 export interface PluginCtx extends LiveVault, SchemeContext {
   /** The renderer's displayed vault, independent of plugin lifetimes. */
   displayed(): string | null
+  /** Capture whether this activation's vault is the current presentation. */
+  presentationLease(): () => boolean
   /** Hear when the renderer's displayed vault changes. Returns the undo. */
   onDisplayChange(cb: (remote: string | null) => void): () => void
   /** Holi's native window only while this activation's vault is displayed. */
@@ -86,13 +88,17 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * `name` is kebab-case and `payload` must survive structured clone. Nothing
    * is sent while that vault has the plugin off.
    */
-  emit(remote: string, name: string, payload: unknown): void
+  emit(remote: string, name: string, payload: unknown, guard?: () => boolean): void
   /**
    * Hear `name` from this plugin's renderer side, in the order it was sent.
    * A message about any vault but the open one, or one with the plugin off,
    * is dropped. Returns the undo.
    */
-  on(name: string, handler: (remote: string, payload: unknown) => void): () => void
+  on(
+    name: string,
+    handler: (remote: string, payload: unknown) => void,
+    deliveryGuard?: (remote: string, payload: unknown) => () => boolean,
+  ): () => void
   /**
    * Open the app door (docs/features/vault-apps.md): the way a vault app's
    * frame reaches capabilities, with the consent check for entries that ask
@@ -179,9 +185,6 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   notify(notice: Notice): boolean
   /** Whether a Holi window has focus now. */
   focused(): boolean
-  /** Holi's window, or null while none is open: for a plugin that draws
-   *  into it from main (the browser's pages). */
-  window(): BrowserWindow | null
   /** Hear each scan of this vault, the latest one first, at once. Returns
    *  the undo. */
   onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
