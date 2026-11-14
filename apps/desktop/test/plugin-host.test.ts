@@ -808,6 +808,57 @@ describe('the lifecycle', () => {
     expect(a.window()).toBeNull()
   })
 
+  it('keeps display detachment callbacks live while stop waits, without restoring authority', async () => {
+    let ctx: PluginCtx | undefined
+    const displayed: (string | null)[] = []
+    let gate: { wait: Promise<void>; entered(): void } | undefined
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(context) {
+        ctx = context
+        context.onDisplayChange((remote) => displayed.push(remote))
+        return () => {}
+      },
+    }
+    const delayed: MainPlugin = {
+      info: { id: 'delayed', label: 'Delayed', default: false },
+      async activate() {
+        const pending = gate
+        if (pending) {
+          pending.entered()
+          await pending.wait
+        }
+        return () => {}
+      },
+    }
+    const win = {} as import('electron').BrowserWindow
+    const root = await tempDir()
+    const { host } = rig({ plugins: [plugin, delayed], window: () => win })
+    await writeVaultSettings(root, { committed: { plugins: { delayed: false } } })
+    await host.reconcile(openVault('A', root), 'open')
+    host.setDisplayed('A')
+    const lease = ctx!.presentationLease()
+    expect(ctx!.window()).toBe(win)
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => (entered = resolve))
+    let release!: () => void
+    gate = {
+      wait: new Promise<void>((resolve) => (release = resolve)),
+      entered,
+    }
+    await writeVaultSettings(root, { committed: { plugins: { delayed: true } } })
+    const reconcile = host.reconcile(openVault('A', root), 'settings')
+    await waiting
+    const stopping = host.stop('A')
+    expect(lease()).toBe(false)
+    expect(ctx!.window()).toBeNull()
+    host.setDisplayed('B')
+    expect(displayed).toEqual(['A', 'B'])
+    release()
+    gate = undefined
+    await Promise.all([reconcile, stopping])
+  })
+
   it('revokes an old context on reactivation and exposes display changes through ctx', async () => {
     const contexts: PluginCtx[] = []
     const plugin: MainPlugin = {

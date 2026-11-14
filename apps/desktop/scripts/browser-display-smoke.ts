@@ -7,6 +7,7 @@ import { browserMain } from '../src/plugins/browser/main/index'
 import { createPluginHost, type OpenVault } from '../src/main/plugin-host/host'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
+import type { MainPlugin } from '../src/main/plugin-api'
 import type { PluginEvent } from '../src/main/plugin-host/events'
 import type { PageInfo, PageRead } from '../src/plugins/browser/shared/page'
 
@@ -50,26 +51,33 @@ async function run(): Promise<void> {
   const roots = { A: join(root, 'vault-a'), B: join(root, 'vault-b') }
   for (const vault of Object.values(roots)) {
     mkdirSync(join(vault, '.holi/settings'), { recursive: true })
-    writeFileSync(join(vault, '.holi/settings/plugins.yaml'), 'plugins:\n  browser: true\n')
+    writeFileSync(
+      join(vault, '.holi/settings/plugins.yaml'),
+      'plugins:\n  browser: true\n  delayed: false\n',
+    )
   }
   const registry = createCapabilityRegistry()
   const listeners = new Set<(message: unknown) => void>()
   const sent: PluginEvent[] = []
   let gate: { wait: Promise<void>; entered(): void } | undefined
-  const host = createPluginHost({
-    plugins: [browserMain],
-    registry,
-    userData: join(root, 'profile'),
-    coreSeeds: [],
-    active: () => null,
-    rootFor: async (remote) => {
+  const delayed: MainPlugin = {
+    info: { id: 'delayed', label: 'Delayed', default: false },
+    async activate() {
       const pending = gate
       if (pending) {
         pending.entered()
         await pending.wait
       }
-      return roots[remote as keyof typeof roots] ?? null
+      return () => {}
     },
+  }
+  const host = createPluginHost({
+    plugins: [browserMain, delayed],
+    registry,
+    userData: join(root, 'profile'),
+    coreSeeds: [],
+    active: () => null,
+    rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
     events: {
       send: (_channel, event) => {
         sent.push(event)
@@ -285,7 +293,39 @@ async function run(): Promise<void> {
   host.setDisplayed(null)
   assert.equal(win.contentView.children.length, 0)
   mark('departure-to-null-removes-replacement')
-  await host.stopAll()
+  // Reconcile can hold disposal behind root lookup. Display departure must
+  // detach the native child before that lookup is released, for both stop APIs.
+  for (const [index, [stop, target, check]] of [
+    [() => host.stop('A'), 'B', 'pending-reconcile-stop-detaches-to-b'],
+    [() => host.stopAll(), null, 'pending-reconcile-stop-all-detaches-to-null'],
+  ].entries()) {
+    if (index > 0) {
+      writeFileSync(
+        join(roots.A, '.holi/settings/plugins.yaml'),
+        'plugins:\n  browser: true\n  delayed: false\n',
+      )
+      await host.reconcile(vault('A'), 'settings')
+    }
+    await host.reconcile(vault('A'), 'open')
+    host.setDisplayed('A')
+    await invoke('A', 'open', { reopen: 'same', url: `${url}/a`, shown: true })
+    place('A', rect)
+    await tick()
+    assert.equal(win.contentView.children.length, 1)
+    const pending = block()
+    writeFileSync(
+      join(roots.A, '.holi/settings/plugins.yaml'),
+      'plugins:\n  browser: true\n  delayed: true\n',
+    )
+    const reconciling = host.reconcile(vault('A'), 'settings')
+    await pending.waiting
+    const stopping = stop()
+    host.setDisplayed(target)
+    assert.equal(win.contentView.children.length, 0, 'stopping owner detaches synchronously')
+    pending.release()
+    await Promise.all([reconciling, stopping])
+    mark(check)
+  }
   assert.equal(listeners.size, 0)
   win.destroy()
   server.closeAllConnections()

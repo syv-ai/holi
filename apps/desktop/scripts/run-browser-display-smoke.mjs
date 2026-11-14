@@ -104,6 +104,8 @@ try {
     'return-requires-fresh-owner-placement',
     'same-id-reincarnation-rejects-stale-placement',
     'departure-to-null-removes-replacement',
+    'pending-reconcile-stop-detaches-to-b',
+    'pending-reconcile-stop-all-detaches-to-null',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
   assert(result.checks.length >= 13, 'native smoke produced too few assertions')
