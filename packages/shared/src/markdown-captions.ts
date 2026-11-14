@@ -45,8 +45,16 @@ export function readMarkdownCodeCaptions(text: string): MarkdownCodeCaption[] {
 
 /** Only accept one paragraph of portable inline Markdown, never raw HTML. */
 function isPortableInlineCaption(caption: string): boolean {
-  if (!caption.trim() || /[\r\n\u2028\u2029]/.test(caption) || /[<>]/.test(caption)) return false
-  if (/^[ \t]/.test(caption) || /!\s*\[/.test(caption)) return false
+  if (!caption.trim() || /[\r\n\u2028\u2029]/.test(caption)) return false
+  if (/^[ \t]/.test(caption)) return false
+  // Reference definitions and reference links depend on document-wide definitions;
+  // extracting them would change their meaning in the surrounding document.
+  const plain = caption.replace(/(`+)(.*?)\1/g, '').replace(/\\([\\[\\]<>!])/g, '')
+  if (/!\s*\[/.test(plain)) return false
+  if (/^ {0,3}\[[^\]]+\]:/.test(plain)) return false
+  if (/\[[^\]]+\](?:\[[^\]]*\])?(?!\s*\()/.test(plain)) return false
+  // Reject angle brackets only when they are not protected by inline code.
+  if (/[<>]/.test(plain)) return false
   // CommonMark block openers, including empty headings and thematic breaks.
   if (
     /^ {0,3}(?:#{1,6}(?:\s|$)|>|(?:[-*_][ \t]*){3,}[ \t]*$|(?:[-*+]|\d+[.)])(?:[ \t]+|$)|(?:`{3,}|~{3,}))/i.test(
@@ -316,10 +324,7 @@ export function writeMarkdownCaptionEnvelope(body: string, caption: string): str
     /^(?: {4}| {0,3}\t)/.test(caption) ||
     /^(?: {0,3}(?:#{1,6}(?:\s|$)|>|[-+*](?:\s|$)|\d+[.)](?:\s|$)|`{3,}|~{3,}|<)| {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$)/.test(
       caption,
-    ) ||
-    /[<>]/.test(caption) ||
-    /!\s*\[/.test(caption) ||
-    /^(?:#{1,6}|\d+[.)])$/.test(caption)
+    )
   ) {
     throw new Error('caption must be one inline Markdown paragraph')
   }

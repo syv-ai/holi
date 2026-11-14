@@ -22,6 +22,28 @@ describe('Markdown caption envelopes', () => {
     )
   })
 
+  it('rejects context-dependent reference definitions and reference links', () => {
+    for (const caption of ['[reference]: https://example.com', '[manual][reference]', '[manual]']) {
+      const source = writeMarkdownCaptionEnvelope('```js\nx\n```', caption)
+      expect(readMarkdownCodeCaptions(source)).toEqual([])
+    }
+  })
+
+  it('keeps generic framing compatible with inline code containing angle and image syntax', () => {
+    expect(() => writeMarkdownCaptionEnvelope('```js\nx\n```', 'Compare `x < y`')).not.toThrow()
+    expect(() => writeMarkdownCaptionEnvelope('```js\nx\n```', 'Literal `![image]`')).not.toThrow()
+    expect(
+      readMarkdownCodeCaptions(
+        writeMarkdownCaptionEnvelope('```js\nx\n```', 'Compare `x < y` and `![image]`'),
+      ),
+    ).toHaveLength(1)
+    expect(
+      readMarkdownCodeCaptions(
+        writeMarkdownCaptionEnvelope('```js\nx\n```', 'An [inline link](https://example.com)'),
+      ),
+    ).toHaveLength(1)
+  })
+
   it('accepts ordinary code fences of any language and no language', () => {
     for (const code of [
       '```\nx\n```',
