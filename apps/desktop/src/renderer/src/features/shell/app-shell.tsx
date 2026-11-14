@@ -79,7 +79,7 @@ import { DialogHost } from './dialog-host'
 import { MobileHeader } from './mobile-header'
 import { readShares, writeShares } from './split-shares'
 import { SplitView, type MemberSlot } from './split-view'
-import { useRetainedSurfaces } from './retained-surfaces'
+import { isLauncherSurfaceKey, useRetainedSurfaces } from './retained-surfaces'
 import { isCoreTextFilePath } from '@/features/files/file-view'
 import { claimsAtom } from '@/state/plugins'
 import { TabStrip } from './tab-strip'
@@ -430,6 +430,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     memberBody,
     (key) => {
       const descriptor = parseTabKey(key)
+      if (isLauncherSurfaceKey(key)) return true
       if (descriptor?.kind === 'doc' && vaultFiles.some((file) => file.path === descriptor.path)) {
         if (isCoreTextFilePath(descriptor.path, claims)) return true
         if (claims.some((claim) => claim.retainView === true && claim.match(descriptor.path))) {

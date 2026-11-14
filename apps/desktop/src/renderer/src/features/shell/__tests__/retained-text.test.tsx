@@ -3,7 +3,7 @@ import { EditorSelection } from '@codemirror/state'
 import { undo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
 import { getCM, Vim } from '@replit/codemirror-vim'
-import { Provider, createStore } from 'jotai'
+import { atom, Provider, createStore } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
@@ -14,6 +14,7 @@ import { AGENTS_HOME_KEY } from '@/state/tab-descriptor'
 import {
   activeSplit,
   closeTab,
+  focusMember,
   focusedTab,
   openInSplit,
   openTab,
@@ -88,9 +89,12 @@ beforeEach(() => {
     )
   write.mockReset().mockResolvedValue({ ok: true, warnings: [] })
 })
+const originalWindowWidth = window.innerWidth
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  window.innerWidth = originalWindowWidth
 })
 
 function fixture(initial = ['src/one.ts', 'src/two.ts']) {
@@ -135,6 +139,107 @@ function diskChanged(store: ReturnType<typeof createStore>, path: string, update
     })),
   )
 }
+
+test('mobile split launchers are parked unless their member is focused', async () => {
+  window.innerWidth = 390
+  const launcher = 'holi:new:1'
+  const store = fixture(['src/one.ts'])
+  act(() => store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, launcher)))
+  const split = activeSplit(store.get(shellWorkspaceAtom))!
+  await waitFor(() =>
+    expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull(),
+  )
+  const content = document.querySelector<HTMLElement>('[data-slot="empty-view-content"]')!
+  expect(content.closest('[inert]')).toBeNull()
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => focusMember(ws, split.id, 'src/one.ts')))
+  expect(content.isConnected).toBe(true)
+  expect(content.closest('[inert]')).not.toBeNull()
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => focusMember(ws, split.id, launcher)))
+  expect(document.querySelector('[data-slot="empty-view-content"]')).toBe(content)
+  expect(content.closest('[inert]')).toBeNull()
+})
+
+test('visited Apps retains its archive selection across shell tabs', async () => {
+  const store = fixture(['src/one.ts', 'holi:apps'])
+  focusTab(store, 'holi:apps')
+  act(() =>
+    store.set(coreContributionAtom, {
+      surfaces: [
+        {
+          kind: 'app',
+          label: 'Apps',
+          icon: () => null,
+          render: () => null,
+          instances: atom([]),
+          archived: atom(['apps/Archived.app']),
+        },
+      ],
+      rail: [],
+      claims: [],
+    } as never),
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Show the archived apps' }))
+  expect(screen.getByRole('heading', { name: 'Archived apps' })).toBeInTheDocument()
+
+  focusTab(store, 'src/one.ts')
+  focusTab(store, 'holi:apps')
+  expect(screen.getByRole('heading', { name: 'Archived apps' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Show the apps' })).toHaveAttribute('data-state', 'on')
+})
+
+test('desktop split launchers stay displayed when their member is not focused', async () => {
+  const launcher = 'holi:new:1'
+  const store = fixture(['src/one.ts'])
+  act(() => store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, launcher)))
+  const split = activeSplit(store.get(shellWorkspaceAtom))!
+  await waitFor(() =>
+    expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull(),
+  )
+  const content = document.querySelector('[data-slot="empty-view-content"]')
+  expect(document.querySelectorAll('[data-pane]')).toHaveLength(2)
+  expect(document.querySelector('[data-pane-focused]')).toHaveAttribute('data-pane', launcher)
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => focusMember(ws, split.id, 'src/one.ts')))
+  expect(document.querySelector('[data-slot="empty-view-content"]')).toBe(content)
+  expect(document.querySelectorAll('[data-pane]')).toHaveLength(2)
+  expect(document.querySelector('[data-pane-focused]')).toHaveAttribute('data-pane', 'src/one.ts')
+})
+
+test('visited launchers retain scroll, close fresh, and dispose when the vault changes', async () => {
+  const launcher = 'holi:new:1'
+  const store = fixture(['src/one.ts', launcher])
+  focusTab(store, launcher)
+  await waitFor(() =>
+    expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull(),
+  )
+  const original = document.querySelector<HTMLElement>('[data-slot="empty-view-content"]')!
+  original.scrollTop = 48
+
+  focusTab(store, 'src/one.ts')
+  await waitFor(() => expect(original.closest('[inert]')).not.toBeNull())
+  expect(original.isConnected).toBe(true)
+  focusTab(store, launcher)
+  expect(document.querySelector('[data-slot="empty-view-content"]')).toBe(original)
+  expect(original.scrollTop).toBe(48)
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, launcher)))
+  await waitFor(() => expect(original.isConnected).toBe(false))
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, launcher)))
+  await waitFor(() =>
+    expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull(),
+  )
+  const reopened = document.querySelector<HTMLElement>('[data-slot="empty-view-content"]')!
+  expect(reopened).not.toBe(original)
+
+  act(() => store.set(activeRemoteAtom, 'owner/another-vault'))
+  await waitFor(() =>
+    expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull(),
+  )
+  const afterVaultChange = document.querySelector<HTMLElement>('[data-slot="empty-view-content"]')!
+  expect(afterVaultChange).not.toBe(reopened)
+})
 
 // Change-marker reads of unvisited files are existing shared-state work, not editor mounts.
 test('lazy editors retain selection, scroll, undo and Vim through tab and split changes', async () => {
@@ -314,7 +419,8 @@ test('a retained plugin path stays mounted while hidden, then disposes on close 
       <div data-retained-pdf={path} data-visible={visible} data-focused={focused} />
     ),
   }
-  const store = fixture(['src/one.ts', 'docs/case.pdf'])
+  const launcher = 'holi:new:1'
+  const store = fixture(['src/one.ts', 'docs/case.pdf', launcher])
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
     files: [...files(), { path: 'docs/case.pdf', updatedAt: 'pdf-1' }],
@@ -328,10 +434,15 @@ test('a retained plugin path stays mounted while hidden, then disposes on close 
     ),
   )
 
-  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'src/one.ts')))
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, launcher)))
   const hidden = document.querySelector('[data-retained-pdf="docs/case.pdf"]')
   expect(hidden).toHaveAttribute('data-visible', 'false')
   expect(hidden).toHaveAttribute('data-focused', 'false')
+  expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull()
+
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'src/one.ts')))
+  expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBe(hidden)
+  expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull()
 
   act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, 'docs/case.pdf')))
   expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBeNull()

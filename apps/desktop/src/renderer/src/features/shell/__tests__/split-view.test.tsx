@@ -168,7 +168,9 @@ function mount(initial = ['A.md', 'B.md'], files: { path: string; updatedAt: str
 
 /** The views in front. */
 function views(): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>('[data-pane]'))
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-pane]')).filter(
+    (pane) => pane.closest('[inert]') === null,
+  )
 }
 
 function stripOf(): HTMLElement {
