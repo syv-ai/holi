@@ -41,6 +41,7 @@ export const GOOGLE_INFO: PluginInfo = {
       type: { kind: 'list' },
       default: [],
       target: 'local',
+      localOnly: true,
     },
     // How the Calendar reads is the vault's, so a team answers it once;
     // `plugins.local.yaml` still overrides it on one machine.

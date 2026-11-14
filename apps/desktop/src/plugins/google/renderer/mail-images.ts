@@ -85,7 +85,13 @@ async function refreshPolicy(
     store.get(vaultSwitchEpochAtom) !== epoch.vault
   )
     return
-  await store.set(loadVaultSettingsAtom, { force: true, clear: true })
+  await store.set(loadVaultSettingsAtom, {
+    force: true,
+    invalidatePluginValues: {
+      plugin: 'google',
+      keys: ['imageSenders', 'imagesFromAllSenders'],
+    },
+  })
 }
 
 function finishPolicyWrite(

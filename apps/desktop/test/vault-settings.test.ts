@@ -157,6 +157,45 @@ describe('a machine-local hooks override', () => {
 })
 
 describe('Google remote image settings', () => {
+  it.each([
+    { committed: ['tracker@example.com'], local: undefined, expected: [] },
+    {
+      committed: ['tracker@example.com'],
+      local: ['trusted@example.com'],
+      expected: ['trusted@example.com'],
+    },
+    { committed: ['tracker@example.com'], local: [], expected: [] },
+    { committed: undefined, local: undefined, expected: [] },
+  ])(
+    'resolves sender trust only from this machine: $local',
+    async ({ committed, local, expected }) => {
+      installGoogleForSettingsTest()
+      const root = await vault()
+      await mkdir(join(root, '.holi/settings'), { recursive: true })
+      await writeFile(
+        join(root, PLUGINS_FILE),
+        JSON.stringify({
+          google: { imagesFromAllSenders: false, imageSenders: committed },
+        }),
+      )
+      if (local !== undefined) {
+        await writeFile(
+          join(root, PLUGINS_LOCAL_FILE),
+          JSON.stringify({
+            google: { imageSenders: local },
+          }),
+        )
+      }
+      const resolved = await readVaultSettings(root)
+      expect(pluginSettingValue(resolved.pluginValues, GOOGLE_INFO, 'imagesFromAllSenders')).toBe(
+        false,
+      )
+      expect(pluginSettingValue(resolved.pluginValues, GOOGLE_INFO, 'imageSenders')).toEqual(
+        expected,
+      )
+    },
+  )
+
   it('defaults missing and malformed global consent to false', async () => {
     installGoogleForSettingsTest()
     for (const [committed, local] of [
