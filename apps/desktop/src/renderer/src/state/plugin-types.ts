@@ -108,7 +108,9 @@ export interface ClaimCreate {
  */
 export interface PathClaim {
   match(path: string): boolean
-  view?: ComponentType<{ path: string }>
+  /** Keep a visited claimed view mounted while its tab remains open. */
+  retainView?: true
+  view?: ComponentType<{ path: string; visible?: boolean; focused?: boolean }>
   folder?: FolderClaim
   decorate?: ClaimDecoration
   rowMenu?: readonly ClaimMenuItem[]
