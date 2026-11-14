@@ -869,10 +869,26 @@ test('MDX trust can be revoked from a source view', async () => {
   read.mockResolvedValue('# source')
   historyList.mockResolvedValue([])
   mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
+  mdxRevoke.mockRejectedValueOnce(new Error('EISDIR: Is a directory'))
   mdxRevoke.mockResolvedValue({ trusted: false })
   setup('content/page.mdx')
   await screen.findByText('Approved')
+
+  const region = screen.getByTestId('mdx-trust-region')
+  const header = region.previousElementSibling as HTMLElement | null
+  expect(header?.tagName).toBe('HEADER')
+  expect(header).toHaveClass('h-14', 'shrink-0')
+  expect(header?.parentElement).toBe(region.parentElement)
+  expect(region).toContainElement(screen.getByText('Approved'))
+
   await userEvent.click(screen.getByRole('button', { name: 'Revoke MDX trust' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('EISDIR: Is a directory')
+  const retryButton = screen.getByRole('button', { name: 'Retry revoke' })
+  expect(region).toContainElement(retryButton)
+  expect(retryButton).not.toBeDisabled()
+  expect(document.querySelector('.cm-content')).toBeInTheDocument()
+
+  await userEvent.click(retryButton)
   await waitFor(() =>
     expect(mdxRevoke).toHaveBeenCalledWith({ remote: 'syv-ai/site', context: 'consent-1' }),
   )

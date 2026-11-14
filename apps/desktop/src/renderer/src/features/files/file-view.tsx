@@ -489,15 +489,13 @@ function TextFileView({
         path={path}
         status={ready ? SAVE_LABEL[saveState] : undefined}
         editorMode={vimMode || undefined}
-        actions={
-          <div className="flex items-center gap-2">
-            {/\.mdx$/i.test(path) && remote !== null ? (
-              <MdxTrustControl remote={remote} path={path} visible={visible} focused={focused} />
-            ) : null}
-            <FileHistoryButton path={path} visible={visible} />
-          </div>
-        }
+        actions={<FileHistoryButton path={path} visible={visible} />}
       />
+      {/\.mdx$/i.test(path) && remote !== null ? (
+        <div data-testid="mdx-trust-region" className="min-w-0 shrink-0 border-b px-4 py-2">
+          <MdxTrustControl remote={remote} path={path} visible={visible} focused={focused} />
+        </div>
+      ) : null}
       {load.kind === 'error' ? (
         <ErrorState
           title="This file could not be opened"

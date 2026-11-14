@@ -127,7 +127,7 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
 
   if (!visible || activeRemote !== remote) return null
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       {state === null ? (
         <>
           <span role="status" className="sr-only">
@@ -137,8 +137,10 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
         </>
       ) : state.kind === 'error' ? (
         <>
-          <Alert variant="destructive">
-            <AlertDescription>MDX trust unavailable. {state.message}</AlertDescription>
+          <Alert variant="destructive" className="min-w-0">
+            <AlertDescription className="break-words">
+              MDX trust unavailable. {state.message}
+            </AlertDescription>
           </Alert>
           <Button
             type="button"
@@ -187,8 +189,8 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
         </>
       )}
       {error && !dialogOpen ? (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+        <Alert variant="destructive" className="min-w-0">
+          <AlertDescription className="break-words">{error}</AlertDescription>
         </Alert>
       ) : null}
       <Dialog
