@@ -527,6 +527,36 @@ test('changing Vim preference reconfigures the same dirty editor and retains his
 })
 
 test.each([
+  ['Find', false],
+  ['Replace', true],
+])('normal Vim lets the %s field keep typed f and focus', async (_label, replace) => {
+  const user = userEvent.setup()
+  read.mockResolvedValue('alpha beta\n')
+  historyList.mockResolvedValue([])
+  setup('src/find-vim.txt', false, true, true)
+
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  content.focus()
+  await user.keyboard('{Meta>}f{/Meta}')
+  const findField = await screen.findByRole('textbox', { name: 'Find' })
+  if (replace) {
+    await user.click(screen.getByRole('button', { name: 'Show replace' }))
+  }
+  const field = replace ? screen.getByRole('textbox', { name: 'Replace' }) : findField
+
+  await user.type(field, 'f')
+  await user.type(field, 'moretext')
+
+  expect(field).toHaveValue('fmoretext')
+  expect(field).toHaveFocus()
+  expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+})
+
+test.each([
   ['Mac command', '{Meta>}f{/Meta}'],
   ['Control', '{Control>}f{/Control}'],
 ])(
