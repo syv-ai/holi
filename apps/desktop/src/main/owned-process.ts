@@ -1,10 +1,72 @@
 import { ChildProcess, spawn, type SpawnOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 import { PassThrough } from 'node:stream'
 import { rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, win32 } from 'node:path'
-import { launchPlan, spawnProgram } from './launch'
+import { launchPlan, spawnProgram, type Launch } from './launch'
+
+const PTY_TRANSPORT_PREFIX = 'HOLI_OWNED_PROCESS_PTY_'
+const PTY_TRANSPORT_MODE = `${PTY_TRANSPORT_PREFIX}MODE`
+const PTY_TRANSPORT_COUNT = `${PTY_TRANSPORT_PREFIX}COUNT`
+const PTY_TRANSPORT_CHUNK = `${PTY_TRANSPORT_PREFIX}CHUNK_`
+const PTY_TRANSPORT_CHUNK_SIZE = 29_000
+
+/** Build a Windows console-parent launch for Electron's Node-mode PTY fallback.
+ * The helper reads this compressed private environment transport; the root gets
+ * only the original CLI environment plus launch-specific overrides.
+ */
+export function windowsPtyFallbackPlan(
+  launch: Launch,
+  options: Pick<SpawnOptions, 'cwd' | 'env'>,
+): { file: string; args: string[]; env: NodeJS.ProcessEnv; cwd: string } {
+  if (launch.args.some((arg) => arg.includes('\0')) || launch.file.includes('\0')) {
+    throw new Error('Windows PTY fallback arguments cannot contain NUL characters.')
+  }
+  const helperEnv = { ...(options.env ?? process.env) }
+  for (const key of Object.keys(helperEnv))
+    if (key.toUpperCase().startsWith(PTY_TRANSPORT_PREFIX)) delete helperEnv[key]
+  const rootEnv = { ...helperEnv, ...launch.env }
+  const payload = gzipSync(
+    Buffer.from(
+      JSON.stringify({
+        bin: launch.file,
+        args: launch.args,
+        cwd: options.cwd,
+        env: rootEnv,
+        stopFile: '',
+        parentPid: process.pid,
+      }),
+      'utf8',
+    ),
+  ).toString('base64')
+  const chunks = payload.match(new RegExp(`.{1,${PTY_TRANSPORT_CHUNK_SIZE}}`, 'g')) ?? []
+  const helper = windowsAdapterLaunch(helperEnv, {
+    [PTY_TRANSPORT_MODE]: 'environment',
+    [PTY_TRANSPORT_COUNT]: String(chunks.length),
+    ...Object.fromEntries(chunks.map((chunk, index) => [`${PTY_TRANSPORT_CHUNK}${index}`, chunk])),
+  })
+  return helper
+}
+
+function windowsAdapterLaunch(
+  env: NodeJS.ProcessEnv,
+  transport: Record<string, string>,
+): { file: string; args: string[]; env: NodeJS.ProcessEnv; cwd: string } {
+  const encoded = Buffer.from(WINDOWS_ADAPTER, 'utf16le').toString('base64')
+  const systemRoot =
+    [process.env.SystemRoot, process.env.WINDIR].find(
+      (value) => value && win32.isAbsolute(value),
+    ) ?? 'C:\\Windows'
+  const cwd = win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0')
+  return {
+    file: win32.join(cwd, 'powershell.exe'),
+    args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+    env: { ...env, ...transport },
+    cwd,
+  }
+}
 
 /**
  * Start a managed program whose lifetime includes every descendant it creates.
@@ -24,6 +86,8 @@ export function spawnOwnedProgram(
   }
 
   const launchEnv = { ...(options.env ?? process.env) }
+  for (const key of Object.keys(launchEnv))
+    if (key.toUpperCase().startsWith(PTY_TRANSPORT_PREFIX)) delete launchEnv[key]
   const traceEnabled = launchEnv.HOLI_OWNED_PROCESS_TRACE === '1'
   delete launchEnv.HOLI_OWNED_PROCESS_TRACE
   let plan
@@ -40,36 +104,27 @@ export function spawnOwnedProgram(
     process.nextTick(() => failed.emit('error', error as Error))
     return failed
   }
-  const encoded = Buffer.from(WINDOWS_ADAPTER, 'utf16le').toString('base64')
-  const systemRoot =
-    [process.env.SystemRoot, process.env.WINDIR].find(
-      (value) => value && win32.isAbsolute(value),
-    ) ?? 'C:\\Windows'
-  const helperDirectory = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0')
-  const child = spawn(
-    join(helperDirectory, 'powershell.exe'),
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-    {
-      ...options,
-      cwd: helperDirectory,
-      env: { ...launchEnv, ...(traceEnabled ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
-      detached: false,
-      windowsHide: true,
-      stdio: [
-        'pipe',
-        Array.isArray(options.stdio)
-          ? (options.stdio[1] ?? 'pipe')
-          : options.stdio === 'ignore' || options.stdio === 'inherit'
-            ? options.stdio
-            : 'pipe',
-        Array.isArray(options.stdio)
-          ? (options.stdio[2] ?? 'pipe')
-          : options.stdio === 'ignore' || options.stdio === 'inherit'
-            ? options.stdio
-            : 'pipe',
-      ] as SpawnOptions['stdio'],
-    },
-  ) as ChildProcess
+  const helperLaunch = windowsAdapterLaunch(launchEnv, {})
+  const child = spawn(helperLaunch.file, helperLaunch.args, {
+    ...options,
+    cwd: helperLaunch.cwd,
+    env: { ...launchEnv, ...(traceEnabled ? { HOLI_OWNED_PROCESS_TRACE: '1' } : {}) },
+    detached: false,
+    windowsHide: true,
+    stdio: [
+      'pipe',
+      Array.isArray(options.stdio)
+        ? (options.stdio[1] ?? 'pipe')
+        : options.stdio === 'ignore' || options.stdio === 'inherit'
+          ? options.stdio
+          : 'pipe',
+      Array.isArray(options.stdio)
+        ? (options.stdio[2] ?? 'pipe')
+        : options.stdio === 'ignore' || options.stdio === 'inherit'
+          ? options.stdio
+          : 'pipe',
+    ] as SpawnOptions['stdio'],
+  }) as ChildProcess
   const stopFile = join(tmpdir(), `holi-owned-${randomUUID()}.stop`)
   const spec = JSON.stringify({
     bin: plan.file,
@@ -125,6 +180,7 @@ using System.Collections;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Threading;
+using System.IO.Compression;
 using System.Web.Script.Serialization;
 public static class HoliOwnedProcess {
   [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct STARTUPINFO {
@@ -170,6 +226,14 @@ public static class HoliOwnedProcess {
     b.Append('\\',slashes*2).Append('"'); return b.ToString();
   }
   static string ReadSpec() {
+    // PTYs reserve console stdin for the CLI; managed launches keep the stdin record.
+    if(Environment.GetEnvironmentVariable("HOLI_OWNED_PROCESS_PTY_MODE")=="environment") {
+      int count; if(!Int32.TryParse(Environment.GetEnvironmentVariable("HOLI_OWNED_PROCESS_PTY_COUNT"),out count) || count<1 || count>10000) throw new Exception("invalid private launch transport");
+      var encoded=new StringBuilder();
+      for(int i=0;i<count;i++) { string part=Environment.GetEnvironmentVariable("HOLI_OWNED_PROCESS_PTY_CHUNK_"+i); if(part==null) throw new Exception("incomplete private launch transport"); encoded.Append(part); }
+      byte[] compressed=Convert.FromBase64String(encoded.ToString());
+      using(var source=new MemoryStream(compressed)) using(var gzip=new GZipStream(source,CompressionMode.Decompress)) using(var output=new MemoryStream()) { gzip.CopyTo(output); if(output.Length>16777216) throw new Exception("launch specification too large"); return Encoding.UTF8.GetString(output.ToArray()); }
+    }
     var input=Console.OpenStandardInput(); var b=new MemoryStream(); int v;
     while((v=input.ReadByte())!=-1 && v!=10) { if(b.Length>1048576) throw new Exception("launch specification too large"); b.WriteByte((byte)v); }
     if(v==-1) throw new Exception("missing launch specification");
