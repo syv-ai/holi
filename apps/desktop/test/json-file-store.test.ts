@@ -138,7 +138,7 @@ describe('jsonFileStore', () => {
 
   it('coordinates normalized aliases and invalidates another handle cache', async () => {
     const cached = jsonFileStore(path, record, { cache: true })
-    const alias = jsonFileStore(join(dir, 'nested', '.', 'prefs.json'), record)
+    const alias = jsonFileStore(`${dir}/nested/./prefs.json`, record)
     await cached.update(() => ({ initial: 0 }))
     expect(await cached.read()).toEqual({ initial: 0 })
     await alias.update((current) => ({ ...current, remote: 1 }))
