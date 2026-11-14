@@ -65,6 +65,7 @@ interface PageKey {
 
 export interface PagesDeps {
   window(): BrowserWindow | null
+  presentationLease?(): () => boolean
   onDisplayChange?(cb: (remote: string | null) => void): () => void
   /** The tabs changed: their list, as the renderer draws them. */
   changed(list: PageInfo[]): void
@@ -86,6 +87,8 @@ interface Tab {
   favicon: string | null
   /** The window it is drawn in, or null while it is off screen. */
   shownIn: BrowserWindow | null
+  shownLease: (() => boolean) | null
+  menu: Menu | null
 }
 
 let shared: Session | null = null
@@ -184,12 +187,12 @@ const PAGE_KEYS = new Set(['a', 'c', 'v', 'x', 'z', 'y'])
 
 export function createPages(deps: PagesDeps): Pages & {
   place(id: string, rect: Rect | null): void
+  placementGuard(id: unknown, presentation: () => boolean): () => boolean
   dispose(): void
 } {
   const tabs = new Map<string, Tab>()
   let current: string | null = null
   let telling = false
-  let displayEpoch = 0
   let disposed = false
 
   const tabOf = (id: string): Tab => {
@@ -200,6 +203,18 @@ export function createPages(deps: PagesDeps): Pages & {
 
   const isLive = (tab: Tab): boolean =>
     !disposed && tabs.get(tab.id) === tab && !tab.view.webContents.isDestroyed()
+
+  const isPresented = (tab: Tab): boolean =>
+    isLive(tab) &&
+    tab.shownIn !== null &&
+    !tab.shownIn.isDestroyed() &&
+    tab.shownLease !== null &&
+    tab.shownLease()
+
+  function placementGuard(id: unknown, presentation: () => boolean): () => boolean {
+    const tab = typeof id === 'string' ? tabs.get(id) : undefined
+    return () => tab !== undefined && tabs.get(tab.id) === tab && presentation()
+  }
 
   const info = (tab: Tab): PageInfo => {
     const wc = tab.view.webContents
@@ -263,9 +278,10 @@ export function createPages(deps: PagesDeps): Pages & {
 
   function contextMenu(tab: Tab, params: Electron.ContextMenuParams): void {
     const win = deps.window()
-    if (!isLive(tab) || win === null) return
-    const epoch = displayEpoch
-    const live = (): boolean => isLive(tab) && displayEpoch === epoch && deps.window() === win
+    if (!isPresented(tab) || win === null || tab.shownIn !== win) return
+    const lease = tab.shownLease
+    const live = (): boolean =>
+      isPresented(tab) && tab.shownLease === lease && deps.window() === win
     const wc = tab.view.webContents
     const items: MenuItemConstructorOptions[] = []
     const link = params.linkURL
@@ -293,9 +309,37 @@ export function createPages(deps: PagesDeps): Pages & {
       )
     }
     if (params.isEditable) {
-      items.push({ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' })
+      items.push(
+        {
+          label: 'Cut',
+          click: () => {
+            if (live()) wc.cut()
+          },
+        },
+        {
+          label: 'Copy',
+          click: () => {
+            if (live()) wc.copy()
+          },
+        },
+        {
+          label: 'Paste',
+          click: () => {
+            if (live()) wc.paste()
+          },
+        },
+        { type: 'separator' },
+      )
     } else if (params.selectionText.trim() !== '') {
-      items.push({ role: 'copy' }, { type: 'separator' })
+      items.push(
+        {
+          label: 'Copy',
+          click: () => {
+            if (live()) wc.copy()
+          },
+        },
+        { type: 'separator' },
+      )
     }
     items.push(
       {
@@ -319,21 +363,27 @@ export function createPages(deps: PagesDeps): Pages & {
         },
       },
     )
-    Menu.buildFromTemplate(items).popup({ window: win })
+    const menu = Menu.buildFromTemplate(items)
+    tab.menu?.closePopup()
+    tab.menu = menu
+    menu.once('menu-will-close', () => {
+      if (tab.menu === menu) tab.menu = null
+    })
+    menu.popup({ window: win })
   }
 
   function watch(tab: Tab): void {
     const wc = tab.view.webContents
     wc.setWindowOpenHandler(({ url }) => {
-      if (!isLive(tab)) return { action: 'deny' }
+      if (!isPresented(tab)) return { action: 'deny' }
       if (isPageUrl(url) && url !== 'about:blank') void open({ url, reveal: true })
-      else if (/^(mailto|tel):/i.test(url)) toSystem(url)
+      else if (/^(mailto|tel):/i.test(url) && isPresented(tab)) toSystem(url)
       return { action: 'deny' }
     })
     const guard = (event: { preventDefault(): void }, url: string): void => {
       if (isPageUrl(url)) return
       event.preventDefault()
-      if (/^(mailto|tel):/i.test(url)) toSystem(url)
+      if (/^(mailto|tel):/i.test(url) && isPresented(tab)) toSystem(url)
     }
     wc.on('will-navigate', (event) => guard(event, event.url))
     wc.on('will-redirect', (event) => guard(event, event.url))
@@ -372,13 +422,14 @@ export function createPages(deps: PagesDeps): Pages & {
     // ⌘L, ⌘R, ⌘[ and ⌘] are the tab's; editing keys are the page's; any
     // other ⌘ key goes back to Holi's window as if pressed there.
     wc.on('before-input-event', (event, input) => {
-      if (!isLive(tab) || input.type !== 'keyDown') return
+      if (!isPresented(tab) || input.type !== 'keyDown') return
       const command = process.platform === 'darwin' ? input.meta : input.control
       if (!command) return
       const win = deps.window()
       if (win === null) return
-      const epoch = displayEpoch
-      const live = (): boolean => isLive(tab) && displayEpoch === epoch && deps.window() === win
+      const lease = tab.shownLease
+      const live = (): boolean =>
+        isPresented(tab) && tab.shownLease === lease && deps.window() === win
       const key = input.key.toLowerCase()
       if (PAGE_KEYS.has(key) && !input.alt) return
       event.preventDefault()
@@ -433,6 +484,8 @@ export function createPages(deps: PagesDeps): Pages & {
       error: null,
       favicon: null,
       shownIn: null,
+      shownLease: null,
+      menu: null,
     }
     tabs.set(tab.id, tab)
     current = tab.id
@@ -445,11 +498,14 @@ export function createPages(deps: PagesDeps): Pages & {
   function hide(tab: Tab): void {
     const win = tab.shownIn
     tab.shownIn = null
+    tab.shownLease = null
+    tab.menu?.closePopup()
+    tab.menu = null
     if (win !== null && !win.isDestroyed()) win.contentView.removeChildView(tab.view)
   }
 
   function onScreen(tab: Tab): boolean {
-    return tab.shownIn !== null && !tab.shownIn.isDestroyed() && tab.shownIn.isVisible()
+    return isPresented(tab) && tab.shownIn !== null && tab.shownIn.isVisible()
   }
 
   async function press(tab: Tab, spec: string): Promise<void> {
@@ -462,13 +518,9 @@ export function createPages(deps: PagesDeps): Pages & {
     wc.sendInputEvent({ type: 'keyUp', keyCode: code, modifiers })
   }
 
-  const offDisplay = deps.onDisplayChange?.((remote) => {
-    displayEpoch += 1
-    if (remote === null) for (const tab of tabs.values()) hide(tab)
-    else if (remote !== undefined) {
-      // A returning vault must receive fresh renderer placement messages.
-      for (const tab of tabs.values()) hide(tab)
-    }
+  const offDisplay = deps.onDisplayChange?.(() => {
+    // A returning vault must receive fresh renderer placement messages.
+    for (const tab of tabs.values()) hide(tab)
   })
 
   return {
@@ -622,16 +674,21 @@ export function createPages(deps: PagesDeps): Pages & {
       return `data:image/jpeg;base64,${image.toJPEG(85).toString('base64')}`
     },
 
+    placementGuard,
+
     place(id, rect) {
       const tab = tabs.get(id)
       if (tab === undefined) return
       if (disposed) return
       const win = deps.window()
       if (rect === null || win === null || rect.width < 1 || rect.height < 1) return hide(tab)
-      if (tab.shownIn !== win) {
+      const presentation = deps.presentationLease?.() ?? (() => true)
+      if (!presentation()) return hide(tab)
+      if (tab.shownIn !== win || tab.shownLease?.() !== true) {
         hide(tab)
         win.contentView.addChildView(tab.view)
         tab.shownIn = win
+        tab.shownLease = presentation
         // The tab the person brings up is the one "the page" means.
         current = id
       }
@@ -647,7 +704,6 @@ export function createPages(deps: PagesDeps): Pages & {
     dispose() {
       if (disposed) return
       disposed = true
-      displayEpoch += 1
       offDisplay?.()
       for (const id of [...tabs.keys()]) {
         const tab = tabs.get(id)!

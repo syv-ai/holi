@@ -12,6 +12,14 @@ const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? join(tmpdir(), 'holi-472-evidence'))
 const root = await mkdtemp(join(tmpdir(), 'holi-472-smoke-'))
 await mkdir(evidence, { recursive: true })
+for (const name of [
+  'result.json',
+  'electron-smoke.log',
+  'browser-before.png',
+  'shell-before.png',
+  'browser-after.png',
+])
+  await rm(join(evidence, name), { force: true })
 let child
 let closed
 let log = ''
@@ -83,22 +91,45 @@ try {
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   for (const check of [
-    'displayed-page-attached',
     'departure-detaches-synchronously',
-    'hidden-read-placement-and-reveal-do-not-act-on-display',
-    'new-owner-attaches',
+    'displayed-page-attached-with-loaded-content',
+    'hidden-authorized-page-read-type-and-press-work',
+    'duplicate-page-ids-have-distinct-native-views',
     'return-requires-fresh-owner-placement',
+    'same-id-reincarnation-rejects-stale-placement',
+    'departure-to-null-removes-replacement',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
+  assert(result.checks.length >= 7, 'native smoke produced too few assertions')
+  assert(
+    typeof result.electron === 'string' && result.electron.length > 0,
+    'missing Electron version',
+  )
+  assert(
+    result.roots && result.roots.profile && result.roots.vaultA && result.roots.vaultB,
+    'missing isolated roots',
+  )
+  assert.deepEqual(
+    result.screenshots,
+    ['browser-before.png', 'shell-before.png', 'browser-after.png'],
+    'native smoke screenshot list is incomplete',
+  )
   for (const name of result.screenshots)
     assert((await stat(join(evidence, name))).size > 0, `missing screenshot: ${name}`)
 } finally {
   if (child && child.exitCode === null) {
-    child.kill()
-    await Promise.race([
-      closed.catch(() => {}),
-      new Promise((resolve) => setTimeout(resolve, 5_000)),
+    child.kill('SIGTERM')
+    const exited = await Promise.race([
+      closed.then(
+        () => true,
+        () => true,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve(false), 5_000)),
     ])
+    if (!exited) {
+      child.kill('SIGKILL')
+      await closed.catch(() => {})
+    }
   }
   await writeFile(join(evidence, 'electron-smoke.log'), log)
   await rm(root, { recursive: true, force: true })
