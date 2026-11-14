@@ -20,9 +20,9 @@ import { findNext, findPrevious } from '@codemirror/search'
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { FileTextIcon } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { plainTextExtensions } from '@/editor/extensions'
 import { syntaxValid } from '@/editor/languages'
@@ -43,6 +43,7 @@ import type { FindCount, FindRequest } from '../../composites/find-bar'
 import { codeFind, codeFindCount } from './code-find'
 import { CodeFindBar } from './code-find-bar'
 import { codeLook } from './code-look'
+import { MdxTrustControl } from './mdx-trust-control'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
 import { basename } from '@/lib/tree-paths'
 
@@ -110,6 +111,8 @@ type Load =
 /** True only when FileView will choose the core CodeMirror editor. */
 export function isCoreTextFilePath(path: string, claims: readonly PathClaim[]): boolean {
   if (/\.md$/i.test(path)) return false
+  // MDX remains an inert source file even if a future file-kind or plugin claims it.
+  if (/\.mdx$/i.test(path)) return true
   if (claims.some((claim) => claim.view !== undefined && claim.match(path))) return false
   const kind = fileKind(path)
   return kind !== 'image' && kind !== 'doc' && kind !== 'pdf'
@@ -488,6 +491,11 @@ function TextFileView({
         editorMode={vimMode || undefined}
         actions={<FileHistoryButton path={path} visible={visible} />}
       />
+      {/\.mdx$/i.test(path) && remote !== null ? (
+        <div data-testid="mdx-trust-region" className="min-w-0 shrink-0 border-b px-4 py-2">
+          <MdxTrustControl remote={remote} path={path} visible={visible} focused={focused} />
+        </div>
+      ) : null}
       {load.kind === 'error' ? (
         <ErrorState
           title="This file could not be opened"
@@ -562,9 +570,14 @@ export function FileView({
   focused?: boolean
 }) {
   const claims = useAtomValue(claimsAtom)
-  const Claimed = claims.find((claim) => claim.view !== undefined && claim.match(path))?.view
+  const isMdxSource = /\.mdx$/i.test(path)
+  const Claimed = isMdxSource
+    ? undefined
+    : claims.find((claim) => claim.view !== undefined && claim.match(path))?.view
   if (Claimed !== undefined) return <Claimed path={path} visible={visible} focused={focused} />
 
+  if (isMdxSource)
+    return <TextFileView key={path} path={path} visible={visible} focused={focused} />
   const kind = fileKind(path)
   if (kind === 'image') return <ImageFileView key={path} path={path} />
   if (kind === 'doc' || kind === 'pdf') return <UnviewableFile path={path} />

@@ -44,6 +44,7 @@ export class GitHubSession {
   #deps: SessionDeps
   #auth: StoredAuth | null
   #listeners = new Set<(viewer: Viewer | null) => void>()
+  #generation = 0
   readonly api: GitHubApi
 
   private constructor(deps: SessionDeps, auth: StoredAuth | null) {
@@ -73,6 +74,11 @@ export class GitHubSession {
 
   token(): string | null {
     return this.#auth?.token ?? null
+  }
+
+  /** Changes on every account adoption attempt and logout, including same-account relogin. */
+  get generation(): number {
+    return this.#generation
   }
 
   /**
@@ -122,6 +128,7 @@ export class GitHubSession {
    * identity would be indistinguishable from a corrupt keychain later.
    */
   async #adopt(token: string, scopes: string[]): Promise<void> {
+    this.#generation++
     const previous = this.#auth
     // Set in memory first so `api.viewer()` can read it through the getter.
     this.#auth = { token, accountId: -1, login: '', scopes }
@@ -140,6 +147,7 @@ export class GitHubSession {
   }
 
   async #forget(): Promise<void> {
+    this.#generation++
     this.#auth = null
     await this.#deps.store.clear()
     this.#emit()
