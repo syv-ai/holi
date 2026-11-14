@@ -7,7 +7,7 @@
  * which app is speaking rather than the app's.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
-import { appHost } from '../shared/bundle'
+import { leasedAppHost } from '../shared/bundle'
 import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { act } from 'react'
@@ -42,6 +42,12 @@ const approvalStatus = vi.hoisted(() => ({
   lastChange: null as typeof approvalCommit | null,
 }))
 let fakeHoli: FakeHoli
+const { FRAME_TOKEN, FRAME_NONCE } = vi.hoisted(() => ({
+  FRAME_TOKEN: 'a'.repeat(48),
+  FRAME_NONCE: 'b'.repeat(48),
+}))
+const frameLeaseMock = vi.hoisted(() => vi.fn())
+const releaseLeaseMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
 
 /** Main's side of the app door, answering the way the registry would. */
 const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<unknown> => {
@@ -59,6 +65,8 @@ vi.mock('../renderer/apps-cap', () => ({
     grants: (...args: unknown[]) => grantsMock(...args),
     grant: (...args: unknown[]) => grantMock(...args),
     capturePreview: (...args: unknown[]) => captureMock(...args),
+    frameLease: (...args: unknown[]) => frameLeaseMock(...args),
+    releaseFrameLease: (...args: unknown[]) => releaseLeaseMock(...args),
     log: () => Promise.resolve(true),
   },
 }))
@@ -103,6 +111,8 @@ function withApps(...bundles: string[]) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  frameLeaseMock.mockReset().mockResolvedValue({ token: FRAME_TOKEN, nonce: FRAME_NONCE })
+  releaseLeaseMock.mockReset().mockResolvedValue(true)
   grantsMock.mockReset().mockImplementation(() => Promise.resolve(status()))
   grantMock.mockReset().mockResolvedValue(true)
   captureMock.mockReset().mockResolvedValue({ saved: true })
@@ -169,13 +179,29 @@ test('approval Last changed by opens its exact history target', async () => {
 
 /** A message as the frame itself would send it. */
 function fromFrame(data: unknown, source: Window | null = frameOf().contentWindow) {
-  window.dispatchEvent(new MessageEvent('message', { data, source }))
+  const envelope =
+    data !== null && typeof data === 'object' ? { nonce: FRAME_NONCE, ...data } : data
+  window.dispatchEvent(new MessageEvent('message', { data: envelope, source }))
 }
+
+test('releases a lease acquired after its frame has unmounted', async () => {
+  let acquire!: (lease: { token: string; nonce: string }) => void
+  frameLeaseMock.mockReturnValueOnce(
+    new Promise((resolve) => {
+      acquire = resolve
+    }),
+  )
+  const mounted = render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(frameLeaseMock).toHaveBeenCalled())
+  mounted.unmount()
+  await act(async () => acquire({ token: FRAME_TOKEN, nonce: FRAME_NONCE }))
+  await waitFor(() => expect(releaseLeaseMock).toHaveBeenCalledWith(REMOTE, expect.any(Object)))
+})
 
 test('serves the app from its own origin, the host encoding its bundle', async () => {
   await renderApp()
   expect(frameOf().getAttribute('src')).toBe(
-    `holi-app://${appHost('Team/Retro.app')}/index.html?mode=dark`,
+    `holi-app://${leasedAppHost('Team/Retro.app', FRAME_TOKEN)}/index.html?mode=dark`,
   )
 })
 
@@ -200,6 +226,13 @@ test('ignores a message that did not come from the frame', async () => {
   expect(bridgeMock).not.toHaveBeenCalled()
 })
 
+test('ignores an old-document envelope from the same WindowProxy', async () => {
+  await renderApp()
+  fromFrame({ nonce: 'old-document', id: 'old', method: 'docs.list' })
+  await Promise.resolve()
+  expect(bridgeMock).not.toHaveBeenCalled()
+})
+
 test('answers a docs.read with the value, addressed to the frame', async () => {
   await renderApp()
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
@@ -211,8 +244,15 @@ test('answers a docs.read with the value, addressed to the frame', async () => {
     bundle: 'Team/Retro.app',
     method: 'docs.read',
     params: { path: 'a.md' },
+    token: FRAME_TOKEN,
+    nonce: FRAME_NONCE,
   })
-  expect(post.mock.calls[0]![0]).toEqual({ id: 'r1', ok: true, value: '# A' })
+  expect(post.mock.calls[0]![0]).toEqual({
+    nonce: FRAME_NONCE,
+    id: 'r1',
+    ok: true,
+    value: '# A',
+  })
 })
 
 test('answers docs.list and tasks.list from the vault the frame is in', async () => {
@@ -371,7 +411,7 @@ test('hidden record pushes continue without resetting the frame; log edits do no
   expect(runningFrame()).toBe(before)
   expect(before).toHaveAttribute('aria-hidden', 'true')
   expect(before).toHaveAttribute('tabindex', '-1')
-  expect(post).toHaveBeenCalledWith({ push: 'store:items' }, '*')
+  expect(post).toHaveBeenCalledWith({ push: 'store:items', nonce: FRAME_NONCE }, '*')
   expect(grantsMock).toHaveBeenCalledTimes(1)
 })
 

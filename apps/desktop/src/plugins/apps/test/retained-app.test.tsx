@@ -9,6 +9,7 @@ import { APP_SURFACE } from '../renderer/surface'
 let platform: FakeHoli
 let pendingReply: Promise<unknown> | null = null
 const calls = vi.fn((name: string) => {
+  if (name === 'apps.frameLease') return { token: 'a'.repeat(48), nonce: 'b'.repeat(48) }
   if (name === 'apps.grants') return { codeHash: 'h', affordances: [], expiresAt: null }
   if (name === 'apps.archived') return { bundles: [] }
   return { ok: true }

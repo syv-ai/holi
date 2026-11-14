@@ -59,7 +59,13 @@ export interface AppDoorOpener {
 
 /** The app door, once opened: one call from the frame mounted for `bundle`. */
 export interface AppDoor {
-  call(remote: string, bundle: string, name: string, params: unknown): Promise<CapabilityResult>
+  call(
+    remote: string,
+    bundle: string,
+    name: string,
+    params: unknown,
+    isCurrent?: () => boolean,
+  ): Promise<CapabilityResult>
   /** Shut it: a call through it throws, and the door can be opened again. */
   close(): void
 }
@@ -101,6 +107,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     if (!(await enabled(name, root, remote))) {
       throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
     }
+    if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
     const result = await deps.registry.run(
       name,
       door,
@@ -122,13 +129,16 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       isCurrent,
       beforeInvoke,
     )
+    if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
     if (result.run !== undefined) {
       if (!(await enabled(name, root, remote))) {
         throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       }
+      if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
       result.validateRun?.()
     }
     if (result.writes) {
+      if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
       const active = deps.active()
       if (active?.remote === remote && active.root === root) {
         await active.refresh().catch((e) => console.error('[capabilities] post-write rescan:', e))
@@ -178,10 +188,11 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       let shut = false
       const isCurrent = () => !shut && openedDoors.get(remote) === lease
       return {
-        call: async (target, bundle, name, params) => {
+        call: async (target, bundle, name, params, authorityCurrent = () => true) => {
           if (target !== remote) throw new Error(`app door belongs to ${remote}`)
-          if (!isCurrent()) throw new Error('the app door is closed')
-          return run('app', remote, bundle, name, params, admit, isCurrent)
+          const current = () => isCurrent() && authorityCurrent()
+          if (!current()) throw new Error('the app door is closed')
+          return run('app', remote, bundle, name, params, admit, current)
         },
         close: () => {
           if (shut) return

@@ -62,7 +62,9 @@ describe('createAppPreviews', () => {
     )
     expect(await previews.read('bo/vault', root, 'Finance/Budget.app')).toBeNull()
     // Nothing under userData is named after the app.
-    for (const name of await readdir(store)) expect(name).toMatch(/^[0-9a-f]{32}\.(jpg|json)$/)
+    for (const name of await readdir(store)) {
+      expect(name).toMatch(/^[0-9a-f]{32}(\.[0-9a-f-]+)?\.(jpg|json)$/)
+    }
   })
 
   it('goes stale when the app changes, and not when its records do', async () => {
@@ -71,6 +73,25 @@ describe('createAppPreviews', () => {
     await put('Finance/Budget.app/data/items/a.json', '{}', 5_000)
     expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).not.toBeNull()
     await put('Finance/Budget.app/index.html', '<p>budget, again</p>', 5_000)
+    expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBeNull()
+  })
+
+  it('does not publish a save whose authority expires while stamping', async () => {
+    const previews = createAppPreviews(store)
+    let current = true
+    const pending = previews.save('ada/vault', root, 'Finance/Budget.app', JPEG, () => current)
+    current = false
+    expect(await pending).toBe(false)
+    expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBeNull()
+  })
+
+  it('does not let an older pending capture undo Forget', async () => {
+    const previews = createAppPreviews(store)
+    const revision = previews.revision('ada/vault', 'Finance/Budget.app')
+    await previews.forget('ada/vault', 'Finance/Budget.app')
+    expect(
+      await previews.save('ada/vault', root, 'Finance/Budget.app', JPEG, () => true, revision),
+    ).toBe(false)
     expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBeNull()
   })
 

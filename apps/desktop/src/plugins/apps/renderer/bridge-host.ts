@@ -73,10 +73,12 @@ async function answerCall(
   bundle: string,
   method: AppMethod,
   params: unknown,
+  token: string,
+  nonce: string,
 ): Promise<unknown> {
   if (remote === null) throw new Error('no vault is open')
   if (method === 'open') return openTarget(store, params)
-  return await appsCap.call(remote, { bundle, method, params })
+  return await appsCap.call(remote, { bundle, method, params, token, nonce })
 }
 
 /**
@@ -90,17 +92,22 @@ export function hostBridgeMessage(
     store: PluginStore
     remote: string | null
     bundle: string
+    token: string
+    nonce: string
+    current: () => boolean
     reply: (response: AppResponse) => void
   },
 ): boolean {
-  const { store, remote, bundle, reply } = ctx
+  const { store, remote, bundle, token, nonce, current, reply } = ctx
   if (data === null || typeof data !== 'object') return false
   const msg = data as {
     id?: unknown
     method?: unknown
     params?: unknown
     log?: { level?: unknown; text?: unknown }
+    nonce?: unknown
   }
+  if (msg.nonce !== nonce || !current()) return false
   // A line for the app's log: no answer, and a failure to write it is not
   // the app's to hear about. Main checks it again, with the bundle. Never
   // a `load` line, which is `AppFrame`'s own, so an app cannot move where
@@ -109,7 +116,7 @@ export function hostBridgeMessage(
     const { text } = msg.log
     const level = APP_LOG_LEVELS.find((l) => l !== 'load' && l === msg.log?.level)
     if (remote !== null && level !== undefined && typeof text === 'string') {
-      appsCap.log(remote, { bundle, level, text }).catch(() => {})
+      appsCap.log(remote, { bundle, level, text, token, nonce }).catch(() => {})
     }
     return true
   }
@@ -119,14 +126,17 @@ export function hostBridgeMessage(
     // Refused as a value rather than dropped: an app that asked for
     // something that does not exist should be able to say so, and a call
     // that never answers is indistinguishable from Holi having hung.
-    reply({ id, ok: false, error: `no such method: ${String(msg.method)}` })
+    reply({ nonce, id, ok: false, error: `no such method: ${String(msg.method)}` })
     return true
   }
-  answerCall(store, remote, bundle, msg.method, msg.params).then(
-    (value) => reply({ id, ok: true, value }),
+  answerCall(store, remote, bundle, msg.method, msg.params, token, nonce).then(
+    (value) => {
+      if (current()) reply({ nonce, id, ok: true, value })
+    },
     (err: unknown) => {
+      if (!current()) return
       const code = refusalCodeOf(err)
-      reply({ id, ok: false, error: (err as Error).message, ...(code ? { code } : {}) })
+      reply({ nonce, id, ok: false, error: (err as Error).message, ...(code ? { code } : {}) })
     },
   )
   return true

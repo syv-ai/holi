@@ -27,12 +27,14 @@ const INFO_PER_SECOND = 20
 const OTHER_PER_SECOND = 50
 
 export const BRIDGE_JS = `(() => {
+  const nonce = document.querySelector('meta[name="holi-app-document-nonce"]')?.content
+  if (!nonce) return
   const pending = new Map()
   const listeners = new Map()
   addEventListener('message', (e) => {
     if (e.source !== parent) return
     const msg = e.data
-    if (!msg) return
+    if (!msg || msg.nonce !== nonce) return
     // A push has a topic and no id: something the app can read has changed.
     if (typeof msg.push === 'string') {
       for (const fn of listeners.get(msg.push) || []) {
@@ -56,7 +58,7 @@ export const BRIDGE_JS = `(() => {
     new Promise((resolve, reject) => {
       const id = crypto.randomUUID()
       pending.set(id, { resolve, reject, method })
-      parent.postMessage({ id, method, params }, '*')
+      parent.postMessage({ id, method, params, nonce }, '*')
     })
   // The app's log (log.local.txt beside its code, for the vault's agent):
   // the console, uncaught errors, refused calls, and holi.log(). A burst is
@@ -84,7 +86,7 @@ export const BRIDGE_JS = `(() => {
       out.push(text)
       size += text.length + 1
     }
-    parent.postMessage({ log: { level, text: out.join(' ').slice(0, MAX) } }, '*')
+    parent.postMessage({ nonce, log: { level, text: out.join(' ').slice(0, MAX) } }, '*')
   }
   // console.log and console.info are both info: the log has no level below it.
   for (const [method, level] of [['error', 'error'], ['warn', 'warn'], ['info', 'info'], ['log', 'info']]) {
@@ -231,11 +233,13 @@ export const BRIDGE_JS = `(() => {
  * (`commandActionOf`), since it came out of the app's code.
  */
 export const COMMAND_JS = `(() => {
+  const nonce = document.querySelector('meta[name="holi-app-document-nonce"]')?.content
+  if (!nonce) return
   let run = null
   window.holi.command = (fn) => { run = fn }
-  const finish = (outcome) => parent.postMessage({ command: outcome }, '*')
+  const finish = (outcome) => parent.postMessage({ nonce, command: outcome }, '*')
   addEventListener('message', async (e) => {
-    if (e.source !== parent || !e.data || typeof e.data.run !== 'object') return
+    if (e.source !== parent || !e.data || e.data.nonce !== nonce || typeof e.data.run !== 'object') return
     if (typeof run !== 'function') {
       finish({ ok: false, error: 'the script never called holi.command(fn)' })
       return

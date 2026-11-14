@@ -69,13 +69,29 @@ async function rig(
       },
       previews: {
         read: async () => null,
-        save: async () => options.savePreview?.(),
+        save: async () => {
+          options.savePreview?.()
+          return true
+        },
         forget: async () => {},
       },
       capture: async () => (options.capture ? options.capture() : null),
-      captureCurrent: options.captureCurrent ?? (() => true),
       issueFrameLease: () => ({ token: 'a'.repeat(48), nonce: 'b'.repeat(48) }),
       releaseFrameLease: () => true,
+      validateFrameLease: (token, nonce, bundle) =>
+        token === 'a'.repeat(48) && nonce === 'b'.repeat(48)
+          ? ({
+              token,
+              nonce,
+              remote: REMOTE,
+              root,
+              bundle,
+              activation: 1,
+              window: { isDestroyed: () => false } as never,
+              valid: () => options.captureCurrent?.() ?? true,
+              claimDocument: () => true,
+            } as never)
+          : null,
     }),
   )
   registry.register(['store'], storeCapabilities())
@@ -96,16 +112,53 @@ async function rig(
         door: 'ui',
         remote: REMOTE,
         name: 'apps.call',
-        params: { bundle, method, params },
+        params: { bundle, method, params, token: 'a'.repeat(48), nonce: 'b'.repeat(48) },
       })
     ).value
   /** One of Holi's own UI calls, as the renderer's `appsCap` makes it. */
   const ui = async (name: string, params?: unknown) =>
-    (await host.dispatch({ door: 'ui', remote: REMOTE, name, params })).value
-  return { call, door, ui, root }
+    (
+      await host.dispatch({
+        door: 'ui',
+        remote: REMOTE,
+        name,
+        params:
+          params &&
+          typeof params === 'object' &&
+          ['apps.call', 'apps.log', 'apps.capturePreview'].includes(name)
+            ? { ...params, token: 'a'.repeat(48), nonce: 'b'.repeat(48) }
+            : params,
+      })
+    ).value
+  return { call, door, ui, root, host }
 }
 
 describe('apps.call', () => {
+  it('requires the current document token and nonce', async () => {
+    const { host } = await rig()
+    await expect(
+      host.dispatch({
+        door: 'ui',
+        remote: REMOTE,
+        name: 'apps.call',
+        params: { bundle: 'Tracker.app', method: 'docs.list' },
+      }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(
+      host.dispatch({
+        door: 'ui',
+        remote: REMOTE,
+        name: 'apps.call',
+        params: {
+          bundle: 'Tracker.app',
+          method: 'docs.list',
+          token: 'a'.repeat(48),
+          nonce: 'old-document',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
   it('discards a preview capture when its presentation ends during capture', async () => {
     let resolveCapture!: (value: Buffer | null) => void
     let current = true

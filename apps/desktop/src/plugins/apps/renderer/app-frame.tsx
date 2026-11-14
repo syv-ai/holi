@@ -30,7 +30,7 @@
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { type AppPush, type AppResponse } from '../shared/bridge'
-import { appHost, appName } from '../shared/bundle'
+import { appName, leasedAppHost } from '../shared/bundle'
 import { type AppAffordance } from '../shared/manifest'
 import {
   activeModeAtom,
@@ -73,6 +73,41 @@ function useTopicSignatures(bundle: string): Record<string, string> {
   )
 }
 
+interface FrameLease {
+  token: string
+  nonce: string
+}
+
+/** Each iframe document gets a fresh lease, including late acquisitions. */
+function useFrameLease(remote: string, bundle: string, enabled: boolean): FrameLease | null {
+  const [lease, setLease] = useState<FrameLease | null>(null)
+  useEffect(() => {
+    if (!enabled) {
+      setLease(null)
+      return
+    }
+    let live = true
+    let issued: FrameLease | null = null
+    appsCap.frameLease(remote, { bundle }).then(
+      (value) => {
+        issued = value
+        if (live) setLease(value)
+        else void appsCap.releaseFrameLease(remote, { bundle, token: value.token }).catch(() => {})
+      },
+      () => {
+        if (live) setLease(null)
+      },
+    )
+    return () => {
+      live = false
+      if (issued !== null) {
+        void appsCap.releaseFrameLease(remote, { bundle, token: issued.token }).catch(() => {})
+      }
+    }
+  }, [remote, bundle, enabled])
+  return enabled ? lease : null
+}
+
 /**
  * Take the app's picture for its card once its document has loaded and had
  * a moment to draw, while the browser is idle, and again whenever Refresh
@@ -84,13 +119,14 @@ function usePreviewCapture(
   path: string,
   loaded: string | null,
   visible: boolean,
+  lease: FrameLease | null,
 ): void {
   const remote = useAtomValue(activeRemoteAtom)
   const request = useAtomValue(previewRequestsAtom)[path] ?? 0
   const taken = useSetAtom(previewTakenAtom)
   const completed = useRef<string | null>(null)
   useEffect(() => {
-    if (!visible || loaded === null || remote === null) return
+    if (!visible || loaded === null || remote === null || lease === null) return
     const captureKey = JSON.stringify([remote, path, loaded, request])
     if (completed.current === captureKey) return
     let live = true
@@ -101,16 +137,18 @@ function usePreviewCapture(
       const r = frame.getBoundingClientRect()
       // 2px in from each edge, so a pane's separator beside it is not kept.
       const rect = { x: r.left + 2, y: r.top + 2, width: r.width - 4, height: r.height - 4 }
-      appsCap.capturePreview(remote, { bundle: path, rect }).then(
-        (res) => {
-          if (!live || !res.saved) return
-          completed.current = captureKey
-          taken(path)
-        },
-        (e: unknown) => {
-          if (live) console.warn('[apps] preview:', e)
-        },
-      )
+      appsCap
+        .capturePreview(remote, { bundle: path, rect, token: lease.token, nonce: lease.nonce })
+        .then(
+          (res) => {
+            if (!live || !res.saved) return
+            completed.current = captureKey
+            taken(path)
+          },
+          (e: unknown) => {
+            if (live) console.warn('[apps] preview:', e)
+          },
+        )
     }
     const timer = window.setTimeout(() => {
       idle =
@@ -124,7 +162,7 @@ function usePreviewCapture(
       window.clearTimeout(timer)
       if (idle !== null) window.cancelIdleCallback(idle)
     }
-  }, [frameRef, path, loaded, remote, request, taken, visible])
+  }, [frameRef, path, loaded, remote, request, taken, visible, lease])
 }
 
 export function AppFrame({
@@ -187,7 +225,12 @@ function AppLoad({
 }): React.JSX.Element {
   const store = useStore()
   const frameRef = useRef<HTMLIFrameElement>(null)
+  const documentLoaded = useRef(false)
   const live = useRef(false)
+  const [ask, setAsk] = useState<{ affordances: AppAffordance[]; codeHash: string } | null>(null)
+  const [gateOpen, setGateOpen] = useState(false)
+  const previewLease = useFrameLease(remote, path, ask !== null)
+  const mainLease = useFrameLease(remote, path, gateOpen)
   useLayoutEffect(() => {
     live.current = true
     return () => {
@@ -201,22 +244,34 @@ function AppLoad({
   useLayoutEffect(() => {
     const onMessage = (event: MessageEvent): void => {
       const frame = frameRef.current
-      if (!live.current || frame === null || event.source !== frame.contentWindow) return
+      if (
+        !live.current ||
+        frame === null ||
+        event.source !== frame.contentWindow ||
+        mainLease === null
+      )
+        return
       const target = frame.contentWindow
+      const current = () =>
+        live.current &&
+        store.get(activeRemoteAtom) === remote &&
+        frameRef.current === frame &&
+        frame.contentWindow === target
       hostBridgeMessage(event.data, {
         store,
         remote,
         bundle: path,
+        token: mainLease.token,
+        nonce: mainLease.nonce,
+        current,
         reply: (response: AppResponse) => {
-          if (live.current && frameRef.current === frame && frame.contentWindow === target) {
-            target?.postMessage(response, '*')
-          }
+          if (current()) target?.postMessage({ ...response, nonce: mainLease.nonce }, '*')
         },
       })
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [store, remote, path])
+  }, [store, remote, path, mainLease])
 
   // Push: post a topic whenever its signature changes, never on mount (the
   // app reads what it needs when it starts). Sent to whatever document the
@@ -231,21 +286,21 @@ function AppLoad({
     const topics = new Set([...Object.keys(previous), ...Object.keys(signatures)])
     for (const topic of topics) {
       if (previous[topic] !== signatures[topic]) {
-        const push: AppPush = { push: topic }
-        target.postMessage(push, '*')
+        if (mainLease !== null) {
+          const push: AppPush = { push: topic, nonce: mainLease.nonce }
+          target.postMessage(push, '*')
+        }
       }
     }
-  }, [signatures])
+  }, [signatures, mainLease])
 
   // The approval gate, asked again on every open and reload, since what was
   // approved lapses with time or with a change to the app's code.
-  const [ask, setAsk] = useState<{ affordances: AppAffordance[]; codeHash: string } | null>(null)
   // Who added the code being approved and who last changed it, so the person
   // can place it.
   const [authorship, setAuthorship] = useState<Authorship>({ added: null, last: null })
   // The app's own words for why it asks, from its manifest.
   const [reasons, setReasons] = useState<Partial<Record<AppAffordance, string>>>({})
-  const [gateOpen, setGateOpen] = useState(false)
   const [error, setError] = useState(false)
   const [expiresAt, setExpiresAt] = useState<number | null>(null)
   const permissionCheck = useRef<'checking' | 'ready' | 'error'>('checking')
@@ -311,7 +366,7 @@ function AppLoad({
   }, [expiresAt, recheck])
 
   const [loaded, setLoaded] = useState<string | null>(null)
-  usePreviewCapture(frameRef, path, gateOpen ? loaded : null, visible)
+  usePreviewCapture(frameRef, path, gateOpen ? loaded : null, visible, mainLease)
 
   const decide = (allow: boolean): void => {
     const shown = ask
@@ -350,12 +405,16 @@ function AppLoad({
 
   return (
     <div inert={!visible} aria-hidden={!visible} className="relative flex h-full min-h-0 flex-col">
-      {ask !== null && (
+      {ask !== null && previewLease !== null && (
         // The app as its markup and styles draw it, blurred behind the question:
         // what is being approved, seen. No scripts (`sandbox=""`), so nothing
         // of it runs before the answer, and it takes no pointer or focus.
         <iframe
-          src={`holi-app://${appHost(path)}/index.html?mode=${mode}`}
+          src={
+            previewLease === null
+              ? undefined
+              : `holi-app://${leasedAppHost(path, previewLease.token)}/index.html?mode=${mode}`
+          }
           sandbox=""
           aria-hidden="true"
           tabIndex={-1}
@@ -410,7 +469,7 @@ function AppLoad({
           </CardFooter>
         </Card>
       )}
-      {gateOpen && (
+      {gateOpen && mainLease !== null && (
         <iframe
           // Remounting is the reload: an app holds nothing across one (its origin
           // is opaque, so there is no storage to keep), so a fresh document IS the
@@ -420,7 +479,7 @@ function AppLoad({
           ref={frameRef}
           // The mode in force goes in the URL, since main themes the document and
           // cannot see the renderer. A mode change reloads the frame.
-          src={`holi-app://${appHost(path)}/index.html?mode=${mode}`}
+          src={`holi-app://${leasedAppHost(path, mainLease.token)}/index.html?mode=${mode}`}
           // The frame's accessible name. `title` is the usual attribute for an
           // iframe and is the one the gate bans (it is a browser tooltip on every
           // other element), so the label goes on aria-label.
@@ -436,7 +495,13 @@ function AppLoad({
           // whatever it has as it goes, and an app half-styled for a frame or
           // two reads as a glitch. A reload or a mode change starts it over.
           onLoad={(event) => {
-            if (live.current && event.currentTarget === frameRef.current) setLoaded(path)
+            if (!live.current || event.currentTarget !== frameRef.current) return
+            if (documentLoaded.current) {
+              recheck()
+              return
+            }
+            documentLoaded.current = true
+            setLoaded(path)
           }}
           className={cn(
             'min-h-0 flex-1 border-0',

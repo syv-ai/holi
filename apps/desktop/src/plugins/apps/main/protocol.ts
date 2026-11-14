@@ -159,7 +159,7 @@ function cssSafe(value: string): string {
  * palette without knowing there is such a thing as a theme.
  * @public exported for its test
  */
-export function appHeadHtml(block: ThemeBlock, mode: ThemeMode): string {
+export function appHeadHtml(block: ThemeBlock, mode: ThemeMode, nonce = ''): string {
   // Base first, the vault's overrides second, so the later declaration wins. A
   // vault whose file leaves a token out still gets a full palette, which is
   // what makes the authoring skill's `var(--primary)` advice true.
@@ -167,7 +167,7 @@ export function appHeadHtml(block: ThemeBlock, mode: ThemeMode): string {
   const vars = Object.entries(themeBlockToVars({ ...paletteFor(tokens), ...tokens }))
     .map(([name, value]) => `${cssSafe(name)}:${cssSafe(value)}`)
     .join(';')
-  return `<style>:root{${vars}}</style><script>${BRIDGE_JS}</script>`
+  return `<meta name="holi-app-document-nonce" content="${nonce}"><style>:root{${vars}}</style><script>${BRIDGE_JS}</script>`
 }
 
 /**
@@ -263,7 +263,7 @@ export const appScheme: PluginScheme = {
       const spec = commands[name]!
       const theme = await readVaultTheme(vault.root)
       if (!current()) return new Response(null, { status: 404 })
-      const head = `${appHeadHtml(theme[parsed.mode], parsed.mode)}<meta name="holi-app-document-nonce" content="${lease.nonce}">`
+      const head = appHeadHtml(theme[parsed.mode], parsed.mode, lease.nonce)
       if (!current()) return new Response(null, { status: 404 })
       return new Response(commandRunnerHtml(head, spec.script), {
         headers: { 'content-type': appMimeFor('runner.html') },
@@ -285,7 +285,7 @@ export const appScheme: PluginScheme = {
       // The renderer's mode rides in on the URL (`?mode=`).
       const block = theme[parsed.mode]
       if (!current()) return new Response(null, { status: 404 })
-      const head = `${appHeadHtml(block, parsed.mode)}<meta name="holi-app-document-nonce" content="${lease.nonce}">`
+      const head = appHeadHtml(block, parsed.mode, lease.nonce)
       return new Response(injectAppHead(html, head), {
         headers: { 'content-type': appMimeFor(abs) },
       })

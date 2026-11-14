@@ -60,11 +60,14 @@ test('is listed under its app, and writes its answer at the caret', async () => 
   expect(item.group).toBe('Budget')
   expect(item.title).toBe('sum')
   item.run(ed, range)
-  expect(run).toHaveBeenCalledWith({
-    text: '',
-    line: 'Total: ',
-    path: 'Notes/Plan.md',
-  })
+  expect(run).toHaveBeenCalledWith(
+    {
+      text: '',
+      line: 'Total: ',
+      path: 'Notes/Plan.md',
+    },
+    expect.any(Function),
+  )
   await vi.waitFor(() => expect(ed.getMarkdown()).toContain('Total: **42**'))
   expect(ed.getMarkdown()).not.toContain('/sum')
 })
