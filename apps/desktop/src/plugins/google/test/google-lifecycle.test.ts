@@ -17,6 +17,7 @@ import { googleMain } from '../main/index'
 import { GOOGLE_SCOPES } from '../main/session'
 import { GoogleTokenStore } from '../main/token-store'
 import { createVaultAccounts } from '../main/vault-accounts'
+import { createMailMarkerStore } from '../main/markers'
 import type { LoopbackServer } from '../main/loopback-flow'
 
 vi.mock('../main/electron', () => ({ createGoogleAccountsManager: vi.fn() }))
@@ -194,6 +195,26 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
     await r.enter(A)
     expect(createGoogleAccountsManager).toHaveBeenCalledTimes(1)
     expect(await r.call(A, 'agendaCached', WINDOW)).toEqual(agenda)
+  })
+
+  it('preserves markers when a vault unlinks and purges only the removed account', async () => {
+    const one = createMailMarkerStore(dir, 'one')
+    const two = createMailMarkerStore(dir, 'two')
+    await one.set('thread-1', 'red-star')
+    await two.set('thread-1', 'blue-question')
+    const r = await rig()
+    await Promise.all([r.enter(A), r.enter(B)])
+
+    await r.call(A, 'disconnectVault')
+    expect(await one.read(['thread-1'])).toEqual({ 'thread-1': 'red-star' })
+
+    await manager.removeAccount('one')
+    await vi.waitFor(async () => {
+      expect(await createMailMarkerStore(dir, 'one').read(['thread-1'])).toEqual({
+        'thread-1': null,
+      })
+    })
+    expect(await two.read(['thread-1'])).toEqual({ 'thread-1': 'blue-question' })
   })
 
   it('isolates accounts and vault calendar settings', async () => {

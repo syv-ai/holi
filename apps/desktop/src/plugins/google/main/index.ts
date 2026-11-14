@@ -18,6 +18,7 @@ import { openGoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
 import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
+import { createMailMarkerStore } from './markers'
 import { googleSeed } from './seed'
 import type { GoogleSession } from './session'
 import { startGoogleTriggers } from './triggers'
@@ -44,6 +45,7 @@ export const googleMain: MainPlugin = {
         const { createGoogleAccountsManager } = await import('./electron')
         const accounts = await createGoogleAccountsManager(ctx.userData)
         const bySub = new Map<string, { data: GoogleData; session: GoogleSession }>()
+        const markersBySub = new Map<string, ReturnType<typeof createMailMarkerStore>>()
         const dataForSession = (session: GoogleSession): GoogleData => {
           const sub = session.accountSub
           if (sub === null || accounts.sessionForSub(sub) !== session)
@@ -65,6 +67,13 @@ export const googleMain: MainPlugin = {
                 : null,
             ),
             cache,
+            markers:
+              markersBySub.get(sub) ??
+              (() => {
+                const markers = createMailMarkerStore(ctx.userData, sub)
+                markersBySub.set(sub, markers)
+                return markers
+              })(),
           })
           bySub.set(sub, { data, session })
           return data
@@ -78,6 +87,17 @@ export const googleMain: MainPlugin = {
           bySub.get(sub)?.data.forget()
           bySub.delete(sub)
           if (!/^[A-Za-z0-9_-]+$/.test(sub)) return
+          // A null session means removal/expiry, not an ordinary reconnect.
+          // Only account deletion purges durable personal annotations.
+          if (accounts.sessionForSub(sub) === null) {
+            const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
+            markersBySub.delete(sub)
+            void markers
+              .purge()
+              .catch((error: unknown) =>
+                console.error(`[google] could not remove personal mail markers: ${String(error)}`),
+              )
+          }
           // Also erase accounts that never opened a data handle this process.
           const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
           retired.retire()

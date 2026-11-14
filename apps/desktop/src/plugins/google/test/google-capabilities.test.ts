@@ -123,6 +123,36 @@ it('lists --full in the generated usage for google read', () => {
   expect(usage.text).toContain('[--full]')
 })
 
+describe('UI-only mail markers', () => {
+  it('validates batch ids, binds the expected account, and refuses non-UI doors', async () => {
+    const mailMarkers = vi.fn(async (ids: readonly string[]) =>
+      Object.fromEntries(ids.map((id) => [id, null])),
+    )
+    const setMailMarker = vi.fn(async () => {})
+    const { call, cli, calls } = rig({
+      data: { mailMarkers, setMailMarker },
+      accounts: { sessionFor: async () => ({ accountSub: 'sub-b' }) } as never,
+    })
+    await expect(
+      call('mailMarkers', { ids: ['../escape'], expectedAccountSub: 'sub-1' }),
+    ).rejects.toThrow(/invalid/)
+    await expect(call('setMailMarker', { id: 't1', marker: 'purple-star' })).rejects.toThrow(
+      /marker/,
+    )
+    await expect(call('mailMarkers', { ids: ['t1'], expectedAccountSub: 'sub-a' })).rejects.toThrow(
+      /account changed/,
+    )
+    expect(mailMarkers).not.toHaveBeenCalled()
+    await expect(cli('mailMarkers', { ids: ['t1'] })).rejects.toThrow()
+    expect(calls).toEqual([])
+
+    expect(
+      await call('setMailMarker', { id: 't1', marker: 'red-star', expectedAccountSub: 'sub-b' }),
+    ).toEqual({ ok: true })
+    expect(setMailMarker).toHaveBeenCalledWith('t1', 'red-star')
+  })
+})
+
 describe('remote image preferences', () => {
   it('validates all-senders as a boolean and writes the explicitly selected value for this root', async () => {
     const writes: unknown[] = []

@@ -78,6 +78,7 @@ import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
 import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
+import { isMailMarker, validateBatch, type MarkerValue } from './markers'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -799,6 +800,55 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: async (ctx, { id, unread }) => {
         const data = await dataOf(ctx.remote)
         await google(() => data.setRead(id, !unread))
+        return ok
+      },
+    }),
+
+    'google.mailMarkers': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const ids = p.ids
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'ids must be a list of Gmail thread ids')
+        try {
+          validateBatch(ids as string[])
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { ids: ids as string[], expectedAccountSub }
+      },
+      run: async (ctx, { ids, expectedAccountSub }) => {
+        const { data } = await accountOf(ctx.remote, expectedAccountSub)
+        return google(() => data.mailMarkers(ids))
+      },
+    }),
+
+    'google.setMailMarker': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const marker = p.marker
+        if (marker !== null && !isMailMarker(marker))
+          throw new CapabilityError('BAD_REQUEST', 'invalid mail marker')
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return {
+          id: stringParam(p, 'id'),
+          marker: marker as MarkerValue,
+          expectedAccountSub,
+        }
+      },
+      run: async (ctx, { id, marker, expectedAccountSub }) => {
+        const { data } = await accountOf(ctx.remote, expectedAccountSub)
+        await google(() => data.setMailMarker(id, marker))
         return ok
       },
     }),

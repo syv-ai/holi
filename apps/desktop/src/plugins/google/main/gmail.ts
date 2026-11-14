@@ -1158,6 +1158,17 @@ export async function setThreadStarred(
   await modifyThread(api, id, starred ? { add: ['STARRED'] } : { remove: ['STARRED'] })
 }
 
+/** Gmail STARRED belongs to messages, so a thread stays starred while any message has it. */
+export async function threadHasStarredMessage(api: GoogleApi, id: string): Promise<boolean> {
+  const thread = (await api.request(
+    'GET',
+    `${BASE}/threads/${encodeURIComponent(id)}?format=minimal`,
+  )) as { messages?: Array<{ labelIds?: string[] }> } | null
+  return (
+    thread?.messages?.some((message) => message.labelIds?.includes('STARRED') === true) ?? false
+  )
+}
+
 /** Archive is the *absence* of `INBOX`, not the presence of anything. The
  *  thread is untouched otherwise: still searchable, still in All Mail. */
 export async function archiveThread(api: GoogleApi, id: string): Promise<void> {
