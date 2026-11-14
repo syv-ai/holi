@@ -16,6 +16,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => ({
       return lifecycle.registry
     }
     connectedCallback() {
+      this.attachShadow({ mode: 'open' })
       lifecycle.connected(this.config)
     }
     disconnectedCallback() {
@@ -30,6 +31,25 @@ beforeEach(() => {
   lifecycle.connected.mockClear()
   lifecycle.disconnected.mockClear()
   lifecycle.registry = Promise.resolve({ getPlugin: () => null })
+})
+
+test('registers and unregisters only the viewer-owned open root', async () => {
+  const surface = vi.fn()
+  window.addEventListener('holi:vim-host-hint-surface', surface)
+  const mounted = render(<PdfViewerAdapter />)
+  await waitFor(() => expect(surface).toHaveBeenCalledTimes(1))
+  const registered = (surface.mock.calls[0]![0] as CustomEvent).detail
+  expect(registered.registered).toBe(true)
+  expect(registered.root).toBe(registered.owner.shadowRoot)
+  expect(registered.owner.tagName.toLowerCase()).toBe('holi-pdf-container')
+  mounted.unmount()
+  expect(surface).toHaveBeenCalledTimes(2)
+  expect((surface.mock.calls[1]![0] as CustomEvent).detail).toMatchObject({
+    root: registered.root,
+    owner: registered.owner,
+    registered: false,
+  })
+  window.removeEventListener('holi:vim-host-hint-surface', surface)
 })
 
 test('initializes the native viewer once, preserves moves, and disposes real removal', async () => {

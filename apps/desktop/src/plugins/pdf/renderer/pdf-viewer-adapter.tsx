@@ -207,6 +207,14 @@ export const PdfViewerAdapter = forwardRef<PDFViewerRef, PdfViewerAdapterProps>(
       element.config = config
       elementRef.current = element
       holder.append(element)
+      const ownedRoot = element.shadowRoot
+      if (ownedRoot) {
+        window.dispatchEvent(
+          new CustomEvent('holi:vim-host-hint-surface', {
+            detail: { root: ownedRoot, owner: element, registered: true },
+          }),
+        )
+      }
       onInit?.(element)
       let live = true
       let releasePosition: (() => void) | undefined
@@ -223,6 +231,13 @@ export const PdfViewerAdapter = forwardRef<PDFViewerRef, PdfViewerAdapterProps>(
       return () => {
         live = false
         releasePosition?.()
+        if (ownedRoot) {
+          window.dispatchEvent(
+            new CustomEvent('holi:vim-host-hint-surface', {
+              detail: { root: ownedRoot, owner: element, registered: false },
+            }),
+          )
+        }
         element.remove()
         elementRef.current = null
       }
