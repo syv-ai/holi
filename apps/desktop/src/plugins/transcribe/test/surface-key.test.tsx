@@ -87,13 +87,37 @@ function show(opts: { key: SpeechKeyStatus; blocked?: 'no-key' | 'bad-key' }) {
     store.set(meetingStatesAtom, { m1: { ...meeting, blocked: opts.blocked } })
     store.set(shownMeetingIdAtom, 'm1')
   }
-  render(
+  const view = render(
     <Provider store={store}>
       <MeetingsSurface />
     </Provider>,
   )
-  return store
+  return { store, view }
 }
+
+test('parking the speech-service dialog releases its lock and retains a key draft', async () => {
+  const { store, view } = show({
+    key: { set: false, source: null, service: SYV, ready: false, elsewhere: false },
+  })
+  const pointerEvents = document.body.style.pointerEvents
+  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech service' }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Speech service…' }))
+  const field = await screen.findByLabelText('syv.ai speech key')
+  await userEvent.type(field, 'unfinished-key')
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible={false} />
+    </Provider>,
+  )
+  expect(document.body.style.pointerEvents).toBe(pointerEvents)
+  expect(screen.queryByRole('dialog', { name: 'Speech service' })).toBeNull()
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible />
+    </Provider>,
+  )
+  expect(await screen.findByLabelText('syv.ai speech key')).toHaveValue('unfinished-key')
+}, 15_000)
 
 test('without a key, Record opens the speech service, where the key is saved', async () => {
   show({ key: { set: false, source: null, service: SYV, ready: false, elsewhere: false } })

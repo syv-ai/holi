@@ -25,7 +25,7 @@ import {
   SendHorizontal,
   Split,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { activeRemoteAtom, cn } from '@/plugin-api'
 import { Badge } from '@/components/ui/badge'
@@ -46,6 +46,7 @@ import { IconButton } from '@/composites/icon-button'
 import { merged } from '../shared/joins'
 import type { MeetingState, Suggestion, Topic, TopicField } from '../shared/meeting'
 import { CaptionLine } from './caption-line'
+import { useMeetingsDisplayed } from './displayed'
 import { ListField } from './card-fields'
 import { clock } from '../shared/scribe-prompt'
 import { meetingCap } from './meeting-cap'
@@ -405,6 +406,11 @@ export function GroupSection({
   const putTopics = useSetAtom(putTopicsAtom)
   const send = useSetAtom(sendPanelAtom)
   const [editing, setEditing] = useState<string | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const displayed = useMeetingsDisplayed()
+  useEffect(() => {
+    if (!displayed) setMenuOpen(false)
+  }, [displayed])
   const editingPart = parts.find((p) => p.id === editing)
   const name = topicName(topic)
   const gist =
@@ -512,7 +518,10 @@ export function GroupSection({
                 <SendHorizontal aria-hidden />
                 Send topic
               </Button>
-              <DropdownMenu>
+              <DropdownMenu
+                open={displayed && menuOpen}
+                onOpenChange={(next) => setMenuOpen(displayed && next)}
+              >
                 <DropdownMenuTrigger asChild>
                   <IconButton label="Topic actions" size="icon-xs">
                     <Ellipsis aria-hidden />

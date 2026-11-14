@@ -118,7 +118,7 @@ const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.schedule': (p) => scheduleMock(p),
   'google.reschedule': (p) => rescheduleMock(p),
   'google.unschedule': (p) => unscheduleMock(p),
-  'google.imageSenders': () => [],
+  'google.imageSenders': () => ({ senders: [], allSenders: false }),
   'tasks.create': (p) => taskMock(p),
 }
 vi.mock('@/lib/trpc', () => ({
@@ -715,6 +715,70 @@ describe('the calendar view', () => {
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(agendaMock).toHaveBeenCalled())
     expect((await screen.findAllByText('Focus block')).length).toBeGreaterThan(0)
+  })
+
+  test('parking closes calendar menus but retains the selected view and range', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const switcher = screen.getByRole('button', { name: 'Select view' })
+    await user.click(switcher)
+    expect(await screen.findByRole('menu')).toBeInTheDocument()
+    view.rerender(<CalendarView visible={false} />)
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    view.rerender(<CalendarView visible />)
+    expect(screen.getByRole('button', { name: 'Select view' })).toHaveTextContent('Week')
+  })
+
+  test('parking closes both calendar pickers without reopening either', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const triggers = screen.getAllByRole('button', { name: 'Calendars' })
+    for (const trigger of triggers) {
+      await user.click(trigger)
+      expect(await screen.findByRole('menu')).toBeInTheDocument()
+      view.rerender(<CalendarView visible={false} />)
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+      expect(document.body.style.pointerEvents).toBe('')
+      view.rerender(<CalendarView visible />)
+      expect(screen.queryByRole('menu')).toBeNull()
+    }
+  })
+
+  test('a create draft survives parking and cancel discards it', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    await user.type(await screen.findByRole('textbox', { name: 'Title' }), 'Draft event')
+    view.rerender(<CalendarView visible={false} />)
+    expect(screen.queryByRole('dialog', { name: 'New event' })).toBeNull()
+    view.rerender(<CalendarView visible />)
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Draft event')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('')
+  })
+
+  test('an edit draft survives parking and account changes clear it', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getAllByText('Focus block')[0]!)
+    const details = await screen.findByRole('dialog', { name: 'Focus block' })
+    await user.click(within(details).getByRole('button', { name: 'Edit' }))
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await user.clear(title)
+    await user.type(title, 'Edited focus')
+    view.rerender(<CalendarView visible={false} />)
+    view.rerender(<CalendarView visible />)
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Edited focus')
+
+    getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('')
   })
 
   test('without a connection it offers Connections', async () => {

@@ -79,6 +79,8 @@ export const googleMain: MainPlugin = {
       return {
         calendars: pluginSettingValue(pluginValues, GOOGLE_INFO, 'calendars') as CalendarOverrides,
         imageSenders: pluginSettingValue(pluginValues, GOOGLE_INFO, 'imageSenders') as string[],
+        imagesFromAllSenders:
+          pluginSettingValue(pluginValues, GOOGLE_INFO, 'imagesFromAllSenders') === true,
       }
     }
 

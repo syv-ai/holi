@@ -1650,6 +1650,12 @@ const DEFAULT_VIEW_CONFIG: EventCalendarViewConfig = {
   agendaSummaryMaxDots: 6,
 }
 
+const EventCalendarVisibilityContext = createContext(true)
+
+function useEventCalendarVisible(): boolean {
+  return useContext(EventCalendarVisibilityContext)
+}
+
 const EventCalendarViewConfigContext = createContext<
   EventCalendarViewConfig<any>
 >(DEFAULT_VIEW_CONFIG)
@@ -1727,6 +1733,8 @@ interface EventCalendarProps<TData = unknown>
   /** Imperative escape hatch usable from outside the tree. */
   apiRef?: RefObject<EventCalendarApi<TData> | null>
   asChild?: boolean
+  /** Close calendar-owned overlays while this retained calendar is parked. */
+  visible?: boolean
   children?: ReactNode
 }
 
@@ -1813,6 +1821,7 @@ function EventCalendar<TData = unknown>({
   apiRef,
   className,
   asChild = false,
+  visible = true,
   children,
   ...props
 }: EventCalendarProps<TData>) {
@@ -1846,35 +1855,37 @@ function EventCalendar<TData = unknown>({
   return (
     <EventCalendarContext.Provider value={instance}>
       <EventCalendarViewConfigContext.Provider value={viewConfig}>
-        <Comp
-          data-slot="event-calendar"
-          ref={registerRoot}
-          // text-xs is the calendar-wide default type size; because it sits
-          // before `className`, a consumer can override the whole scale with
-          // e.g. <EventCalendar className="text-sm"> and every inheriting
-          // element follows. Inner elements omit their own text-size so they
-          // cascade from here (the few portaled surfaces - "+N more" popover,
-          // drag carry clone - pin the size explicitly since DOM inheritance
-          // does not cross a portal).
-          // --ec-grid-line is the slot and day gridlines: the theme's
-          // --divider (the seam between panes, which a vault may retint) at
-          // the reduced strength Holi gives its other dimmed edges, so the
-          // grid recedes behind the events. Event chips keep --border.
-          className={cn(
-            "flex min-h-0 min-w-0 flex-col text-xs [--ec-grid-line:color-mix(in_oklab,var(--color-divider)_60%,transparent)]",
-            className
-          )}
-          {...rest}
-        >
-          {/* Slottable keeps the announcer sibling legal when asChild slots
-              the consumer element (Slot.Root allows one non-Slottable child). */}
-          <Slot.Slottable>{children}</Slot.Slottable>
-          <div
-            data-slot="event-calendar-announcer"
-            aria-live="polite"
-            className="sr-only"
-          />
-        </Comp>
+        <EventCalendarVisibilityContext.Provider value={visible}>
+          <Comp
+            data-slot="event-calendar"
+            ref={registerRoot}
+            // text-xs is the calendar-wide default type size; because it sits
+            // before `className`, a consumer can override the whole scale with
+            // e.g. <EventCalendar className="text-sm"> and every inheriting
+            // element follows. Inner elements omit their own text-size so they
+            // cascade from here (the few portaled surfaces - "+N more" popover,
+            // drag carry clone - pin the size explicitly since DOM inheritance
+            // does not cross a portal).
+            // --ec-grid-line is the slot and day gridlines: the theme's
+            // --divider (the seam between panes, which a vault may retint) at
+            // the reduced strength Holi gives its other dimmed edges, so the
+            // grid recedes behind the events. Event chips keep --border.
+            className={cn(
+              "flex min-h-0 min-w-0 flex-col text-xs [--ec-grid-line:color-mix(in_oklab,var(--color-divider)_60%,transparent)]",
+              className
+            )}
+            {...rest}
+          >
+            {/* Slottable keeps the announcer sibling legal when asChild slots
+                the consumer element (Slot.Root allows one non-Slottable child). */}
+            <Slot.Slottable>{children}</Slot.Slottable>
+            <div
+              data-slot="event-calendar-announcer"
+              aria-live="polite"
+              className="sr-only"
+            />
+          </Comp>
+        </EventCalendarVisibilityContext.Provider>
       </EventCalendarViewConfigContext.Provider>
     </EventCalendarContext.Provider>
   )
@@ -1887,6 +1898,7 @@ export {
   EventCalendar,
   EventCalendarContext,
   EventCalendarViewConfigContext,
+  useEventCalendarVisible,
   EventCalendarViewContext,
   useEventCalendar,
   useEventCalendarDay,

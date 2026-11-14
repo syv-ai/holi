@@ -12,9 +12,9 @@
  */
 import type { PickableHoli } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field, FieldLabel, FieldTitle } from '@/components/ui/field'
@@ -40,6 +40,7 @@ import {
   type Topic,
 } from '../shared/meeting'
 import { useAgentName } from './agent-name'
+import { useMeetingsDisplayed } from './displayed'
 import { clock } from '../shared/scribe-prompt'
 import { meetingCap } from './meeting-cap'
 import { SendButton } from './send-button'
@@ -50,6 +51,17 @@ import { topicName } from './topic-index'
 const RELATED_DEBOUNCE_MS = 300
 
 const keyOf = (r: Related): number => r.lines[0]!
+
+type SendDraft = {
+  prompt: string
+  kind: CardKind
+  picked: Related[]
+  made: Card | null
+  busy: boolean
+  error: string | null
+}
+
+type SendPanelState = SendDraft & { identity: string | null; session: object }
 
 type RelatedState =
   { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'done'; windows: Related[] }
@@ -110,29 +122,27 @@ function SendForm({
   topic,
   suggestion,
   holis,
+  formState,
+  setFormState,
   onDone,
 }: {
   meeting: MeetingState
   topic: Topic
   suggestion: Suggestion | undefined
   holis: readonly PickableHoli[]
+  formState: SendDraft
+  setFormState: (update: (state: SendDraft) => SendDraft) => void
   onDone: () => void
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const put = useSetAtom(putCardAtom)
   const agent = useAgentName()
   const promptId = useId()
-  const [prompt, setPrompt] = useState(() =>
-    suggestion === undefined ? '' : `${suggestion.title}\n${suggestion.why}`.trim(),
-  )
-  const [kind, setKind] = useState<CardKind>(suggestion?.kind ?? 'feature')
-  /** The related stretches ticked, kept while the list changes under them. */
-  const [picked, setPicked] = useState<Related[]>([])
-  /** The task made, when sending it failed after: a retry remakes it from
-   *  the form. */
-  const [made, setMade] = useState<Card | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { prompt, kind, picked, made, busy, error } = formState
+  const setPrompt = (prompt: string) => setFormState((state) => ({ ...state, prompt }))
+  const setKind = (kind: CardKind) => setFormState((state) => ({ ...state, kind }))
+  const setPicked = (update: (picked: Related[]) => Related[]) =>
+    setFormState((state) => ({ ...state, picked: update(state.picked) }))
   const query = [prompt, topic.title, ...topic.keywords].join(' ')
   const related = useRelated(meeting.id, query, topic.lines)
   const found = related.state.kind === 'done' ? related.state.windows : []
@@ -144,8 +154,7 @@ function SendForm({
 
   const send = async (target: SendTarget) => {
     if (!canSend) return
-    setBusy(true)
-    setError(null)
+    setFormState((state) => ({ ...state, busy: true, error: null }))
     try {
       const lines = [
         ...new Set([
@@ -167,7 +176,7 @@ function SendForm({
         },
         ...(made === null ? {} : { cardId: made.id }),
       })
-      setMade(card)
+      setFormState((state) => ({ ...state, made: card }))
       put(meeting.id, card)
       const sent = await meetingCap.build(remote, {
         meetingId: meeting.id,
@@ -181,9 +190,9 @@ function SendForm({
       toast(`Sent “${card.title}” to ${to}`)
       onDone()
     } catch (e) {
-      setError(`Sending didn’t work: ${message(e)}`)
+      setFormState((state) => ({ ...state, error: `Sending didn’t work: ${message(e)}` }))
     } finally {
-      setBusy(false)
+      setFormState((state) => ({ ...state, busy: false }))
     }
   }
 
@@ -278,6 +287,7 @@ export function SendPanel({
   meeting: MeetingState
   holis: readonly PickableHoli[]
 }): React.JSX.Element {
+  const displayed = useMeetingsDisplayed()
   const [open, setOpen] = useAtom(sendPanelAtom)
   const found =
     open?.meetingId === meeting.id ? meeting.topics.find((t) => t.id === open.topicId) : undefined
@@ -292,14 +302,73 @@ export function SendPanel({
   const stretches =
     topic === found ? 1 : meeting.topics.filter((t) => (t.joinedTo ?? t.id) === topic?.id).length
   const title = suggestion?.title ?? (topic === undefined ? '' : topicName(topic))
+  const identity = topic === undefined ? null : `${meeting.id}:${topic.id}:${suggestion?.id ?? ''}`
+  const initialPrompt =
+    suggestion === undefined ? '' : `${suggestion.title}\n${suggestion.why}`.trim()
+  const initialKind = suggestion?.kind ?? 'feature'
+  const [draft, setDraft] = useState<SendPanelState>({
+    identity,
+    session: {},
+    prompt: initialPrompt,
+    kind: initialKind as CardKind,
+    picked: [] as Related[],
+    made: null as Card | null,
+    busy: false,
+    error: null as string | null,
+  })
+  if (draft.identity !== identity) {
+    setDraft({
+      identity,
+      session: {},
+      prompt: initialPrompt,
+      kind: initialKind as CardKind,
+      picked: [],
+      made: null,
+      busy: false,
+      error: null,
+    })
+  }
+  const session = draft.session
+  const currentSession = useRef(session)
+  currentSession.current = session
+  const close = (owner: object = session) => {
+    if (currentSession.current !== owner) return
+    setDraft((state) =>
+      state.session === owner
+        ? {
+            identity: null,
+            session: {},
+            prompt: '',
+            kind: 'feature',
+            picked: [],
+            made: null,
+            busy: false,
+            error: null,
+          }
+        : state,
+    )
+    setOpen(null)
+  }
   return (
-    <Sheet modal={false} open={topic !== undefined} onOpenChange={(o) => !o && setOpen(null)}>
+    <Sheet
+      modal={false}
+      open={displayed && topic !== undefined}
+      onOpenChange={(o) => displayed && !o && close()}
+    >
       {topic !== undefined && (
         <SheetContent
           side="right"
           // The stock sheet's own width rule is `data-[side=right]:sm:max-w-sm`;
           // only the same variant outranks it.
-          className="data-[side=right]:sm:max-w-xl"
+          className={cn(
+            'data-[side=right]:sm:max-w-xl',
+            !displayed && 'invisible pointer-events-none',
+          )}
+          aria-hidden={!displayed}
+          inert={!displayed}
+          onCloseAutoFocus={(event) => {
+            if (!displayed) event.preventDefault()
+          }}
           // Beside the meeting, not over it.
           onInteractOutside={(e) => e.preventDefault()}
         >
@@ -323,7 +392,13 @@ export function SendPanel({
               topic={topic}
               suggestion={suggestion}
               holis={holis}
-              onDone={() => setOpen(null)}
+              formState={draft}
+              setFormState={(update) =>
+                setDraft((state) =>
+                  state.session === session ? { ...state, ...update(state) } : state,
+                )
+              }
+              onDone={() => close(session)}
             />
           </div>
         </SheetContent>

@@ -33,6 +33,7 @@ export const googleRenderer: RendererPlugin = {
       icon: CalendarDays,
       order: 20,
       render: CalendarView,
+      keepMounted: true,
       visible: googleConnectedAtom,
     },
   ],

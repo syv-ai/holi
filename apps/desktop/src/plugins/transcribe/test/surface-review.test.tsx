@@ -62,6 +62,8 @@ const done: MeetingState = {
 
 const saveDialog = vi.fn<(input: unknown) => Promise<string | null>>()
 const writeText = vi.fn(async (_text: string) => {})
+let reviewStore: ReturnType<typeof createStore>
+let reviewRerender: (ui: React.ReactNode) => void = () => {}
 
 beforeEach(() => {
   run.mockReset()
@@ -93,16 +95,18 @@ beforeEach(() => {
 
 function show(rows: readonly AgentSessionRow[] = [], state: MeetingState = done) {
   const store = createStore()
+  reviewStore = store
   store.set(activeRemoteAtom, 'syv/vault')
   store.set(profilesAtom, [profile])
   store.set(meetingStatesAtom, { m1: state })
   store.set(shownMeetingIdAtom, 'm1')
   store.set(agentSessionRowsAtom as unknown as PrimitiveAtom<readonly AgentSessionRow[]>, rows)
-  render(
+  const view = render(
     <Provider store={store}>
       <MeetingsSurface />
     </Provider>,
   )
+  reviewRerender = (ui) => view.rerender(ui)
   return store
 }
 
@@ -151,6 +155,45 @@ test('a stopped meeting opens on its review: title, length, actions, topics, tas
 
   await userEvent.click(screen.getByRole('button', { name: 'Open in vault' }))
   expect(opened).toEqual(['Meetings/2026-11-02 Planning call/minutes.local.md'])
+}, 15_000)
+
+test('parking a task editor retains title and context, while closing discards them', async () => {
+  show()
+  const card = within(screen.getByRole('region', { name: 'Tasks' })).getByLabelText(
+    'Export to CSV',
+    {
+      selector: '[data-card]',
+    },
+  )
+  await userEvent.click(within(card).getAllByRole('button')[0]!)
+  const editor = await screen.findByRole('dialog', { name: 'Export to CSV' })
+  await userEvent.clear(within(editor).getByLabelText('Title'))
+  await userEvent.type(within(editor).getByLabelText('Title'), 'Revised export')
+  await userEvent.type(
+    within(editor).getByLabelText('How should it be done?'),
+    'Use the new template',
+  )
+  reviewRerender(
+    <Provider store={reviewStore}>
+      <MeetingsSurface visible={false} />
+    </Provider>,
+  )
+  expect(screen.queryByRole('dialog', { name: 'Export to CSV' })).toBeNull()
+  reviewRerender(
+    <Provider store={reviewStore}>
+      <MeetingsSurface visible />
+    </Provider>,
+  )
+  const restored = await screen.findByRole('dialog', { name: 'Export to CSV' })
+  expect(within(restored).getByLabelText('Title')).toHaveValue('Revised export')
+  expect(within(restored).getByLabelText('How should it be done?')).toHaveValue(
+    'Use the new template',
+  )
+  await userEvent.click(within(restored).getByRole('button', { name: 'Close' }))
+  await userEvent.click(within(card).getAllByRole('button')[0]!)
+  const reopened = await screen.findByRole('dialog', { name: 'Export to CSV' })
+  expect(within(reopened).getByLabelText('Title')).toHaveValue('Export to CSV')
+  expect(within(reopened).getByLabelText('How should it be done?')).toHaveValue('')
 }, 15_000)
 
 test('Copy transcript copies every line, and the transcript searches', async () => {

@@ -9,9 +9,9 @@
 import type { PickableHoli } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { SquareArrowOutUpRight } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { activeRemoteAtom, openPathAtom, showAgentSessionAtom } from '@/plugin-api'
+import { activeRemoteAtom, cn, openPathAtom, showAgentSessionAtom } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -29,6 +29,7 @@ import {
   type SendTarget,
 } from '../shared/meeting'
 import { useAgentName } from './agent-name'
+import { useMeetingsDisplayed } from './displayed'
 import { CardFields, draftOf, type CardDraft } from './card-fields'
 import { clock } from '../shared/scribe-prompt'
 import { meetingCap, type CardPatch } from './meeting-cap'
@@ -88,12 +89,28 @@ function TaskEditor({
   meeting,
   card,
   holis,
+  draft,
+  setDraft,
+  context,
+  setContext,
   onClose,
+  busy,
+  setBusy,
+  error,
+  setError,
 }: {
   meeting: MeetingState
   card: Card
   holis: readonly PickableHoli[]
+  draft: CardDraft | null
+  setDraft: (draft: CardDraft | null) => void
+  context: string
+  setContext: (context: string) => void
   onClose: () => void
+  busy: boolean
+  setBusy: (busy: boolean) => void
+  error: string | null
+  setError: (error: string | null) => void
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const agent = useAgentName()
@@ -102,12 +119,6 @@ function TaskEditor({
   const show = useSetAtom(showAgentSessionAtom)
   const openPath = useSetAtom(openPathAtom)
   const { sent, run } = useRun(card)
-  /** The person's edits; null while there are none, so the scribe's changes
-   *  show as they come. */
-  const [draft, setDraft] = useState<CardDraft | null>(null)
-  const [context, setContext] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const live = meeting.phase === 'recording'
   const shown = draft ?? draftOf(card)
   const patch = draft === null ? {} : patchOf(card, draft)
@@ -258,17 +269,53 @@ export function TaskPanel({
   meeting: MeetingState
   holis: readonly PickableHoli[]
 }): React.JSX.Element {
+  const displayed = useMeetingsDisplayed()
   const [open, setOpen] = useAtom(openTaskAtom)
   const card =
     open?.meetingId === meeting.id ? meeting.cards.find((c) => c.id === open.cardId) : undefined
+  const cardId = card?.id ?? null
+  const [editorState, setEditorState] = useState<{
+    id: string | null
+    session: object
+    draft: CardDraft | null
+    context: string
+    busy: boolean
+    error: string | null
+  }>({ id: cardId, session: {}, draft: null, context: '', busy: false, error: null })
+  if (editorState.id !== cardId)
+    setEditorState({ id: cardId, session: {}, draft: null, context: '', busy: false, error: null })
+  const session = editorState.session
+  const currentSession = useRef(session)
+  currentSession.current = session
+  const close = (owner: object = session) => {
+    if (currentSession.current !== owner) return
+    setEditorState((state) =>
+      state.session === owner
+        ? { id: null, session: {}, draft: null, context: '', busy: false, error: null }
+        : state,
+    )
+    setOpen(null)
+  }
   return (
-    <Sheet modal={false} open={card !== undefined} onOpenChange={(o) => !o && setOpen(null)}>
+    <Sheet
+      modal={false}
+      open={displayed && card !== undefined}
+      onOpenChange={(o) => displayed && !o && close()}
+    >
       {card !== undefined && (
         <SheetContent
           side="right"
           // The stock sheet's own width rule is `data-[side=right]:sm:max-w-sm`;
           // only the same variant outranks it.
-          className="data-[side=right]:sm:max-w-xl"
+          className={cn(
+            'data-[side=right]:sm:max-w-xl',
+            !displayed && 'invisible pointer-events-none',
+          )}
+          aria-hidden={!displayed}
+          inert={!displayed}
+          onCloseAutoFocus={(event) => {
+            if (!displayed) event.preventDefault()
+          }}
           // Beside the meeting, not over it: the minutes and the transcript
           // stay usable while a task is open.
           onInteractOutside={(e) => e.preventDefault()}
@@ -286,7 +333,25 @@ export function TaskPanel({
               meeting={meeting}
               card={card}
               holis={holis}
-              onClose={() => setOpen(null)}
+              draft={editorState.draft}
+              setDraft={(draft) =>
+                setEditorState((state) => (state.session === session ? { ...state, draft } : state))
+              }
+              context={editorState.context}
+              setContext={(context) =>
+                setEditorState((state) =>
+                  state.session === session ? { ...state, context } : state,
+                )
+              }
+              onClose={() => close(session)}
+              busy={editorState.busy}
+              setBusy={(busy) =>
+                setEditorState((state) => (state.session === session ? { ...state, busy } : state))
+              }
+              error={editorState.error}
+              setError={(error) =>
+                setEditorState((state) => (state.session === session ? { ...state, error } : state))
+              }
             />
           </div>
         </SheetContent>
