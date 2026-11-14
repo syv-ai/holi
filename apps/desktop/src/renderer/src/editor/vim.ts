@@ -18,6 +18,28 @@ function modeFor(view: EditorView): VimMode {
   return 'normal'
 }
 
+function isIdleNormalMode(view: EditorView): boolean {
+  const vimState = getCM(view)?.state.vim
+  if (!vimState || vimState.insertMode || vimState.visualMode || vimState.expectLiteralNext) {
+    return false
+  }
+
+  const input = vimState.inputState
+  return (
+    input.operator == null &&
+    input.operatorArgs == null &&
+    input.motion == null &&
+    input.motionArgs == null &&
+    input.prefixRepeat.length === 0 &&
+    input.motionRepeat.length === 0 &&
+    input.keyBuffer.length === 0 &&
+    input.registerName == null &&
+    input.operatorShortcut == null &&
+    input.selectedCharacter == null &&
+    input.repeatOverride == null
+  )
+}
+
 function vimExtensions(onModeChange: ModeChange): Extension[] {
   return [
     Prec.highest(vim()),
@@ -101,7 +123,7 @@ export function useVimEditor(
       !event.shiftKey &&
       !event.repeat &&
       !event.nativeEvent.isComposing &&
-      modeFor(view) === 'normal'
+      isIdleNormalMode(view)
     ) {
       event.preventDefault()
       event.stopPropagation()

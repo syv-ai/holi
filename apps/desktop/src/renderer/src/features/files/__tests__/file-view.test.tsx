@@ -487,6 +487,36 @@ test('normal Vim f opens host hints without edits; insert and visual mode keep n
   }
 })
 
+test('pending Vim commands keep f inside the editor instead of opening host hints', async () => {
+  installHintLayout()
+  try {
+    const user = userEvent.setup()
+    read.mockResolvedValue('alpha beta\n')
+    historyList.mockResolvedValue([])
+    setup('src/pending-vim.txt', false, true, true)
+    const content = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('.cm-content')
+      if (node === null) throw new Error('no editor')
+      return node
+    })
+    const { EditorView } = await import('@codemirror/view')
+    const view = EditorView.findFromDOM(content)!
+    content.focus()
+
+    await user.keyboard('df{Escape}w')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    expect(view.state.doc.toString()).toBe('alpha beta\n')
+
+    view.dispatch({ selection: { anchor: 0 } })
+    await user.keyboard('rf')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    expect(view.state.doc.toString()).toBe('flpha beta\n')
+  } finally {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  }
+})
+
 test('changing Vim preference reconfigures the same dirty editor and retains history', async () => {
   const user = userEvent.setup()
   read.mockResolvedValue('alpha beta\n')
