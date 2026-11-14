@@ -89,12 +89,28 @@ function TaskEditor({
   meeting,
   card,
   holis,
+  draft,
+  setDraft,
+  context,
+  setContext,
   onClose,
+  busy,
+  setBusy,
+  error,
+  setError,
 }: {
   meeting: MeetingState
   card: Card
   holis: readonly PickableHoli[]
+  draft: CardDraft | null
+  setDraft: (draft: CardDraft | null) => void
+  context: string
+  setContext: (context: string) => void
   onClose: () => void
+  busy: boolean
+  setBusy: (busy: boolean) => void
+  error: string | null
+  setError: (error: string | null) => void
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const agent = useAgentName()
@@ -103,12 +119,6 @@ function TaskEditor({
   const show = useSetAtom(showAgentSessionAtom)
   const openPath = useSetAtom(openPathAtom)
   const { sent, run } = useRun(card)
-  /** The person's edits; null while there are none, so the scribe's changes
-   *  show as they come. */
-  const [draft, setDraft] = useState<CardDraft | null>(null)
-  const [context, setContext] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const live = meeting.phase === 'recording'
   const shown = draft ?? draftOf(card)
   const patch = draft === null ? {} : patchOf(card, draft)
@@ -263,11 +273,25 @@ export function TaskPanel({
   const [open, setOpen] = useAtom(openTaskAtom)
   const card =
     open?.meetingId === meeting.id ? meeting.cards.find((c) => c.id === open.cardId) : undefined
+  const cardId = card?.id ?? null
+  const [editorState, setEditorState] = useState<{
+    id: string | null
+    draft: CardDraft | null
+    context: string
+    busy: boolean
+    error: string | null
+  }>({ id: cardId, draft: null, context: '', busy: false, error: null })
+  if (editorState.id !== cardId)
+    setEditorState({ id: cardId, draft: null, context: '', busy: false, error: null })
+  const close = () => {
+    setEditorState({ id: null, draft: null, context: '', busy: false, error: null })
+    setOpen(null)
+  }
   return (
     <Sheet
       modal={false}
       open={displayed && card !== undefined}
-      onOpenChange={(o) => displayed && !o && setOpen(null)}
+      onOpenChange={(o) => displayed && !o && close()}
     >
       {card !== undefined && (
         <SheetContent
@@ -300,7 +324,19 @@ export function TaskPanel({
               meeting={meeting}
               card={card}
               holis={holis}
-              onClose={() => setOpen(null)}
+              draft={editorState.draft}
+              setDraft={(draft) => setEditorState((state) => ({ ...state, draft }))}
+              context={editorState.context}
+              setContext={(context) => setEditorState((state) => ({ ...state, context }))}
+              onClose={close}
+              busy={editorState.busy}
+              setBusy={(busy) =>
+                setEditorState((state) => (state.id === card.id ? { ...state, busy } : state))
+              }
+              error={editorState.error}
+              setError={(error) =>
+                setEditorState((state) => (state.id === card.id ? { ...state, error } : state))
+              }
             />
           </div>
         </SheetContent>

@@ -111,29 +111,50 @@ function SendForm({
   topic,
   suggestion,
   holis,
+  formState,
+  setFormState,
   onDone,
 }: {
   meeting: MeetingState
   topic: Topic
   suggestion: Suggestion | undefined
   holis: readonly PickableHoli[]
+  formState: {
+    prompt: string
+    kind: CardKind
+    picked: Related[]
+    made: Card | null
+    busy: boolean
+    error: string | null
+  }
+  setFormState: (
+    update: (state: {
+      prompt: string
+      kind: CardKind
+      picked: Related[]
+      made: Card | null
+      busy: boolean
+      error: string | null
+    }) => {
+      prompt: string
+      kind: CardKind
+      picked: Related[]
+      made: Card | null
+      busy: boolean
+      error: string | null
+    },
+  ) => void
   onDone: () => void
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const put = useSetAtom(putCardAtom)
   const agent = useAgentName()
   const promptId = useId()
-  const [prompt, setPrompt] = useState(() =>
-    suggestion === undefined ? '' : `${suggestion.title}\n${suggestion.why}`.trim(),
-  )
-  const [kind, setKind] = useState<CardKind>(suggestion?.kind ?? 'feature')
-  /** The related stretches ticked, kept while the list changes under them. */
-  const [picked, setPicked] = useState<Related[]>([])
-  /** The task made, when sending it failed after: a retry remakes it from
-   *  the form. */
-  const [made, setMade] = useState<Card | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { prompt, kind, picked, made, busy, error } = formState
+  const setPrompt = (prompt: string) => setFormState((state) => ({ ...state, prompt }))
+  const setKind = (kind: CardKind) => setFormState((state) => ({ ...state, kind }))
+  const setPicked = (update: (picked: Related[]) => Related[]) =>
+    setFormState((state) => ({ ...state, picked: update(state.picked) }))
   const query = [prompt, topic.title, ...topic.keywords].join(' ')
   const related = useRelated(meeting.id, query, topic.lines)
   const found = related.state.kind === 'done' ? related.state.windows : []
@@ -145,8 +166,7 @@ function SendForm({
 
   const send = async (target: SendTarget) => {
     if (!canSend) return
-    setBusy(true)
-    setError(null)
+    setFormState((state) => ({ ...state, busy: true, error: null }))
     try {
       const lines = [
         ...new Set([
@@ -168,7 +188,7 @@ function SendForm({
         },
         ...(made === null ? {} : { cardId: made.id }),
       })
-      setMade(card)
+      setFormState((state) => ({ ...state, made: card }))
       put(meeting.id, card)
       const sent = await meetingCap.build(remote, {
         meetingId: meeting.id,
@@ -182,9 +202,9 @@ function SendForm({
       toast(`Sent “${card.title}” to ${to}`)
       onDone()
     } catch (e) {
-      setError(`Sending didn’t work: ${message(e)}`)
+      setFormState((state) => ({ ...state, error: `Sending didn’t work: ${message(e)}` }))
     } finally {
-      setBusy(false)
+      setFormState((state) => ({ ...state, busy: false }))
     }
   }
 
@@ -294,11 +314,47 @@ export function SendPanel({
   const stretches =
     topic === found ? 1 : meeting.topics.filter((t) => (t.joinedTo ?? t.id) === topic?.id).length
   const title = suggestion?.title ?? (topic === undefined ? '' : topicName(topic))
+  const identity = topic === undefined ? null : `${meeting.id}:${topic.id}:${suggestion?.id ?? ''}`
+  const initialPrompt =
+    suggestion === undefined ? '' : `${suggestion.title}\n${suggestion.why}`.trim()
+  const initialKind = suggestion?.kind ?? 'feature'
+  const [draft, setDraft] = useState({
+    identity,
+    prompt: initialPrompt,
+    kind: initialKind as CardKind,
+    picked: [] as Related[],
+    made: null as Card | null,
+    busy: false,
+    error: null as string | null,
+  })
+  if (draft.identity !== identity) {
+    setDraft({
+      identity,
+      prompt: initialPrompt,
+      kind: initialKind as CardKind,
+      picked: [],
+      made: null,
+      busy: false,
+      error: null,
+    })
+  }
+  const close = () => {
+    setDraft({
+      identity: null,
+      prompt: '',
+      kind: 'feature',
+      picked: [],
+      made: null,
+      busy: false,
+      error: null,
+    })
+    setOpen(null)
+  }
   return (
     <Sheet
       modal={false}
       open={displayed && topic !== undefined}
-      onOpenChange={(o) => displayed && !o && setOpen(null)}
+      onOpenChange={(o) => displayed && !o && close()}
     >
       {topic !== undefined && (
         <SheetContent
@@ -337,7 +393,13 @@ export function SendPanel({
               topic={topic}
               suggestion={suggestion}
               holis={holis}
-              onDone={() => setOpen(null)}
+              formState={draft}
+              setFormState={(update) =>
+                setDraft((state) =>
+                  state.identity === identity ? { ...state, ...update(state) } : state,
+                )
+              }
+              onDone={close}
             />
           </div>
         </SheetContent>

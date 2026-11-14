@@ -159,6 +159,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
   const i18n = useMemo(() => ({ formats: CLOCK_FORMATS[clock] }), [clock])
 
   const [card, setCard] = useState<EventCardState | null>(null)
+  const cardDraft = useRef<EventDraft | null>(null)
   const [cardAnchor, setCardAnchor] = useState<EventCardAnchor | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -169,15 +170,6 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
   // The visible date, shared by the rail's mini calendar and the grid. One
   // source of truth: the mini calendar and grid nav both write it, both read it.
   const [date, setDate] = useState<Date>(() => new Date())
-
-  // A retained calendar keeps its range, but an event card belongs to the displayed
-  // view and must not remain in a portal after that view is parked.
-  useEffect(() => {
-    if (!visible) {
-      setCard(null)
-      setError(null)
-    }
-  }, [visible])
 
   // The primary calendar is the account's address: the one Holi writes to.
   const ownCalendarId = account?.email ?? null
@@ -240,21 +232,23 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
       // Slot ends are exclusive; store the inclusive last day so multi-day
       // drag-creates keep their span.
       const lastDay = end && end > start ? localDate(allDay ? subDays(end, 1) : end) : startDay
+      const draft: EventDraft = {
+        title: '',
+        location: '',
+        date: startDay,
+        dateEnd: lastDay < startDay ? startDay : lastDay,
+        start: allDay ? '09:00' : hhmm(start),
+        // A timed quick-add defaults to 30 min so Save passes on the first try.
+        end: allDay ? '10:00' : hhmm(end ?? addMinutes(start, 30)),
+        allDay,
+        calendarName: ownCalendar?.name ?? account?.email ?? 'Your calendar',
+        color: ownCalendar?.color ?? FALLBACK_COLOR,
+      }
+      cardDraft.current = draft
       setCard({
         mode: 'create',
         identity: cardIdentity.current,
-        draft: {
-          title: '',
-          location: '',
-          date: startDay,
-          dateEnd: lastDay < startDay ? startDay : lastDay,
-          start: allDay ? '09:00' : hhmm(start),
-          // A timed quick-add defaults to 30 min so Save passes on the first try.
-          end: allDay ? '10:00' : hhmm(end ?? addMinutes(start, 30)),
-          allDay,
-          calendarName: ownCalendar?.name ?? account?.email ?? 'Your calendar',
-          color: ownCalendar?.color ?? FALLBACK_COLOR,
-        },
+        draft,
       })
     },
     [ownCalendar, account],
@@ -276,14 +270,20 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
         (event ? new DOMRect(event.clientX, event.clientY, 1, 1) : new DOMRect())
       setCardAnchor({ rect, element, fallback: newEventTrigger.current })
       setError(null)
+      const draft = draftFromOccurrence(occurrence)
+      cardDraft.current = draft
       setCard({
         mode: 'view',
         identity: cardIdentity.current,
-        draft: draftFromOccurrence(occurrence),
+        draft,
       })
     },
     [],
   )
+
+  const updateDraft = useCallback((draft: EventDraft) => {
+    cardDraft.current = draft
+  }, [])
 
   const startEdit = useCallback(() => {
     if (pending.current) return
@@ -550,6 +550,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
           events={items}
           calendars={calendar.calendars}
           loading={firstLoad}
+          displayed={visible}
           onToggleCalendar={calendar.setCalendarEnabled}
           onOpenOccurrence={openView}
         />
@@ -643,6 +644,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
                 <CalendarsMenu
                   calendars={calendar.calendars}
                   onToggle={calendar.setCalendarEnabled}
+                  displayed={visible}
                 />
               </div>
               <IconButton
@@ -686,7 +688,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
         </EventCalendar>
 
         <EventCard
-          state={visible ? card : null}
+          state={card === null ? null : { ...card, draft: cardDraft.current ?? card.draft }}
           anchor={visible ? cardAnchor : null}
           error={error}
           saving={saving}
@@ -694,6 +696,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
           onOpenChange={closeCard}
           onEdit={startEdit}
           onSave={saveDraft}
+          onDraftChange={updateDraft}
           onDelete={deleteDraft}
           onCreateTask={createTask}
           onOpenExternal={(url) => openExternal(url)}

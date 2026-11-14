@@ -730,6 +730,57 @@ describe('the calendar view', () => {
     expect(screen.getByRole('button', { name: 'Select view' })).toHaveTextContent('Week')
   })
 
+  test('parking closes both calendar pickers without reopening either', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const triggers = screen.getAllByRole('button', { name: 'Calendars' })
+    for (const trigger of triggers) {
+      await user.click(trigger)
+      expect(await screen.findByRole('menu')).toBeInTheDocument()
+      view.rerender(<CalendarView visible={false} />)
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+      expect(document.body.style.pointerEvents).toBe('')
+      view.rerender(<CalendarView visible />)
+      expect(screen.queryByRole('menu')).toBeNull()
+    }
+  })
+
+  test('a create draft survives parking and cancel discards it', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    await user.type(await screen.findByRole('textbox', { name: 'Title' }), 'Draft event')
+    view.rerender(<CalendarView visible={false} />)
+    expect(screen.queryByRole('dialog', { name: 'New event' })).toBeNull()
+    view.rerender(<CalendarView visible />)
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Draft event')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('')
+  })
+
+  test('an edit draft survives parking and account changes clear it', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getAllByText('Focus block')[0]!)
+    const details = await screen.findByRole('dialog', { name: 'Focus block' })
+    await user.click(within(details).getByRole('button', { name: 'Edit' }))
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await user.clear(title)
+    await user.type(title, 'Edited focus')
+    view.rerender(<CalendarView visible={false} />)
+    view.rerender(<CalendarView visible />)
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Edited focus')
+
+    getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('')
+  })
+
   test('without a connection it offers Connections', async () => {
     const refusal = Object.assign(new Error('Google is not connected'), {
       data: { code: 'UNAUTHORIZED' },
