@@ -90,20 +90,21 @@ export const googleMain: MainPlugin = {
           // An expired grant can be reconnected to the same Google identity;
           // keep its durable annotations. Only deliberate account deletion
           // removes them (including an explicit removal after expiry).
-          if (reason === 'removed') {
-            const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
-            markersBySub.delete(sub)
-            try {
+          try {
+            if (reason === 'removed') {
+              const markers = markersBySub.get(sub) ?? createMailMarkerStore(ctx.userData, sub)
+              markersBySub.delete(sub)
               await markers.purge()
-            } catch (error) {
-              throw new Error(
-                `Google account was removed, but personal mail markers could not be deleted: ${String(error)}`,
-              )
             }
+          } catch (error) {
+            throw new Error(
+              `Google account was removed, but personal mail markers could not be deleted: ${String(error)}`,
+            )
+          } finally {
+            // Also erase accounts that never opened a data handle this process.
+            const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
+            retired.retire()
           }
-          // Also erase accounts that never opened a data handle this process.
-          const retired = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
-          retired.retire()
         })
         return { accounts, dataForSession }
       })()

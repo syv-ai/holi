@@ -223,6 +223,12 @@ export function createGoogleData({
     return result
   }
 
+  const validateRequest = async (validate?: () => Promise<void>) => {
+    assertActive()
+    await validate?.()
+    assertActive()
+  }
+
   const setStarred = (id: string, starred: boolean, validate?: () => Promise<void>) => {
     validateThreadId(id)
     return markers.runExclusive(id, async () => {
@@ -233,7 +239,7 @@ export function createGoogleData({
       await validate?.()
       assertActive()
       const next = starred ? (prior[id] ?? 'yellow-star') : null
-      await setThreadStarred(api(), id, starred)
+      await setThreadStarred(api(), id, starred, () => validateRequest(validate))
       assertActive()
       cache.patchThread(id, {
         added: starred ? ['STARRED'] : [],
@@ -337,7 +343,7 @@ export function createGoogleData({
         await validate?.()
         assertActive()
         const starred = marker !== null
-        await setThreadStarred(api(), id, starred)
+        await setThreadStarred(api(), id, starred, () => validateRequest(validate))
         assertActive()
         cache.patchThread(id, {
           added: starred ? ['STARRED'] : [],

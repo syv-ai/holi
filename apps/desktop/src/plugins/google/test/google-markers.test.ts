@@ -237,6 +237,125 @@ describe('account-bound personal mail markers', () => {
     cache.close()
   })
 
+  it('does not return a disk-read marker after its originating vault is unlinked', async () => {
+    const root = await temp()
+    const markers = createMailMarkerStore(root, 'account-a')
+    await markers.set('thread-1', 'red-star')
+    let active = true
+    const cache = openGoogleCache(join(root, 'cache.db'))
+    let calls = 0
+    let release!: () => void
+    let started!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const reading = new Promise<void>((resolve) => (started = resolve))
+    const validate = async () => {
+      calls += 1
+      if (calls === 3) {
+        started()
+        await gate
+      }
+      if (!active) throw new Error('vault is no longer linked')
+    }
+    const fetch = vi.fn(async () => Response.json({})) as typeof globalThis.fetch
+    const data = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'token', fetch }),
+      cache,
+      markers,
+    })
+    const pending = data.setMailMarker('thread-1', 'blue-question', validate)
+    await reading
+    active = false
+    release()
+    await expect(pending).rejects.toThrow(/no longer linked/)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(await markers.read(['thread-1'])).toEqual({ 'thread-1': 'red-star' })
+    cache.close()
+  })
+
+  it('revalidates the originating vault after refresh before either marker mutation POST', async () => {
+    for (const rich of [false, true]) {
+      const root = await temp()
+      const cache = openGoogleCache(join(root, `cache-${rich}.db`))
+      let originLinked = true
+      let releaseToken!: (token: string) => void
+      let started!: () => void
+      const token = new Promise<string>((resolve) => (releaseToken = resolve))
+      const refreshing = new Promise<void>((resolve) => (started = resolve))
+      const fetch = vi.fn(async () => Response.json({})) as typeof globalThis.fetch
+      const data = createGoogleData({
+        api: () =>
+          new GoogleApi({
+            accessToken: () => {
+              started()
+              return token
+            },
+            fetch,
+          }),
+        cache,
+        markers: createMailMarkerStore(root, 'account-a'),
+      })
+      const validate = async () => {
+        if (!originLinked) throw new Error('originating vault is no longer linked')
+      }
+      const pending = rich
+        ? data.setMailMarker('thread-1', 'red-star', validate)
+        : data.setStarred('thread-1', true, validate)
+      await refreshing
+      originLinked = false
+      releaseToken('fresh-token')
+      await expect(pending).rejects.toThrow(/no longer linked/)
+      expect(fetch).not.toHaveBeenCalled()
+      cache.close()
+    }
+  })
+
+  it('keeps a successful Gmail star in the shared cache but not the marker after unlink', async () => {
+    for (const rich of [false, true]) {
+      const root = await temp()
+      const cache = openGoogleCache(join(root, `cache-${rich}.db`))
+      const markers = createMailMarkerStore(root, 'account-a')
+      await markers.set('thread-1', 'blue-question')
+      const patchThread = vi.spyOn(cache, 'patchThread')
+      let originLinked = true
+      let release!: (response: Response) => void
+      let started!: () => void
+      const response = new Promise<Response>((resolve) => (release = resolve))
+      const dispatched = new Promise<void>((resolve) => (started = resolve))
+      const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          started()
+          return response
+        }
+        return Response.json({ messages: [{ labelIds: ['STARRED'] }] })
+      }) as typeof globalThis.fetch
+      const data = createGoogleData({
+        api: () => new GoogleApi({ accessToken: async () => 'token', fetch }),
+        cache,
+        markers,
+      })
+      data.ensureShape()
+      const validate = async () => {
+        if (!originLinked) throw new Error('originating vault is no longer linked')
+      }
+      const pending = rich
+        ? data.setMailMarker('thread-1', 'red-star', validate)
+        : data.setStarred('thread-1', true, validate)
+      await dispatched
+      originLinked = false
+      release(Response.json({}))
+      await expect(pending).rejects.toThrow(
+        /Gmail star changed, but the personal marker was not saved/,
+      )
+      expect(await data.mailMarkers(['thread-1'])).toEqual({ 'thread-1': 'blue-question' })
+      expect(await markers.read(['thread-1'])).toEqual({ 'thread-1': 'blue-question' })
+      expect(patchThread).toHaveBeenCalledWith('thread-1', {
+        added: ['STARRED'],
+        removed: [],
+      })
+      cache.close()
+    }
+  })
+
   it('resolves an external Gmail star as the ordinary marker without erasing stored rich data', async () => {
     const root = await temp()
     const cache = openGoogleCache(join(root, 'cache.db'))

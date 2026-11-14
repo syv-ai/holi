@@ -332,6 +332,25 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
     expect(await r.call(B, 'status')).toMatchObject({ account: null })
   })
 
+  it('awaits marker purge on removal and retires the cache even when purge fails', async () => {
+    const r = await rig()
+    await r.enter(A)
+    const markerPath = join(dir, 'google-mail-markers-one.json')
+    await mkdir(markerPath)
+    await writeFile(join(markerPath, 'blocked'), 'cannot remove the non-empty marker directory')
+    const cachePath = join(dir, 'google-cache-one.db')
+    await Promise.all(
+      ['', '-wal', '-shm', '-journal'].map((suffix) => writeFile(cachePath + suffix, 'old')),
+    )
+
+    await expect(manager.removeAccount('one')).rejects.toThrow(
+      /personal mail markers could not be deleted/,
+    )
+    for (const suffix of ['', '-wal', '-shm', '-journal'])
+      expect(existsSync(cachePath + suffix)).toBe(false)
+    expect(manager.list().some((account) => account.sub === 'one')).toBe(false)
+  })
+
   it('deletes unopened persisted caches and all SQLite sidecars on removal', async () => {
     const r = await rig()
     await r.enter(A)
