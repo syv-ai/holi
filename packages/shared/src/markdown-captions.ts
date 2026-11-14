@@ -81,6 +81,9 @@ function protectedLines(lines: Line[]): boolean[] {
     const container = list?.[1] ?? ''
     const content = list?.[2] ?? line
     const fenceMatch = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(content)
+    if (fence?.container && !list && line.trim() !== '' && !/^ {2,}/.test(line)) {
+      fence = null
+    }
     if (fence !== null) {
       ignored[i] = true
       const inContainer = fence.container ? list?.[1] === fence.container : !list
@@ -126,28 +129,30 @@ function protectedLines(lines: Line[]): boolean[] {
       continue
     }
 
-    const tag = /^<\/?([A-Za-z][A-Za-z0-9-]*)\b/i.exec(html)
+    const tag = tagLine(html)
     if (tag) {
-      const name = tag[1]!.toLowerCase()
+      const { name } = tag
       if (RAW_TAGS.has(name)) {
         ignored[i] = true
-        if (!new RegExp(`</${name}\\s*>`, 'i').test(html)) htmlTerminator = `</${name}\\s*>`
+        const closing = `</${name}`
+        const lower = html.toLowerCase()
+        const closeAt = lower.indexOf(closing)
+        if (closeAt === -1 || !/^\s*>/i.test(html.slice(closeAt + closing.length)))
+          htmlTerminator = `</${name}\\s*>`
         continue
       }
+      const trailing = html.slice(html.lastIndexOf('>') + 1)
+      const completeLine = tag.complete && !/[<>]/.test(trailing) && !trailing.trim()
       if (
         BLOCK_TAGS.test(name) &&
-        /^<\/?[A-Za-z][\w:-]*(?:\s[^<>]*?)?\s*\/?>(?:[ \t]*)$/.test(html)
+        tag.startsTag &&
+        (completeLine || /^(?:\s|\/?>)/.test(html.slice(name.length + 1)))
       ) {
         ignored[i] = true
         htmlBlock = true
         continue
       }
-      if (BLOCK_TAGS.test(name) && /^<\/?[A-Za-z][\w:-]*(?:\s|\/?\s*>)/.test(html)) {
-        ignored[i] = true
-        htmlBlock = true
-        continue
-      }
-      if (/^<\/?[A-Za-z][\w:-]*(?:\s[^<>]*?)?\s*\/?>(?:[ \t]*)$/.test(html)) {
+      if (completeLine) {
         ignored[i] = true
         htmlBlock = true
       }
@@ -161,6 +166,26 @@ function standalone(line: string): string | null {
   return MARKERS.has(line) ? line : null
 }
 
+function tagLine(line: string): { name: string; startsTag: boolean; complete: boolean } | null {
+  let cursor = 0
+  if (line[cursor] !== '<') return null
+  cursor++
+  if (line[cursor] === '/') cursor++
+  const nameStart = cursor
+  if (!/[A-Za-z]/.test(line[cursor] ?? '')) return null
+  cursor++
+  while (/[A-Za-z0-9:-]/.test(line[cursor] ?? '')) cursor++
+  const name = line.slice(nameStart, cursor).toLowerCase()
+  const startsTag =
+    line[cursor] === ' ' || line[cursor] === '\t' || line[cursor] === '/' || line[cursor] === '>'
+  if (!startsTag) return null
+  while (cursor < line.length && line[cursor] !== '>') {
+    if (line[cursor] === '<') return { name, startsTag, complete: false }
+    cursor++
+  }
+  return { name, startsTag, complete: cursor < line.length }
+}
+
 /**
  * Find unambiguous, standalone top-level envelopes. Invalid candidates are
  * skipped rather than claiming later text; scanning resumes at the next line.
@@ -172,69 +197,38 @@ function standalone(line: string): string | null {
 export function readMarkdownCaptionEnvelopes(text: string): MarkdownCaptionEnvelope[] {
   const lines = linesOf(text)
   const ignored = protectedLines(lines)
+  const marker = lines.map((line, index) => (ignored[index] ? null : standalone(line.text)))
+  const nextMarker = new Array<number>(lines.length + 1).fill(-1)
+  const nextBoundary = new Array<number>(lines.length + 1).fill(-1)
+  const nextCaption = new Array<number>(lines.length + 1).fill(-1)
+  const nextEnd = new Array<number>(lines.length + 1).fill(-1)
+  for (let index = lines.length - 1; index >= 0; index--) {
+    nextMarker[index] = marker[index] ? index : nextMarker[index + 1]!
+    nextBoundary[index] =
+      marker[index] === FIGURE || marker[index] === END ? index : nextBoundary[index + 1]!
+    nextCaption[index] = marker[index] === CAPTION ? index : nextCaption[index + 1]!
+    nextEnd[index] = marker[index] === END ? index : nextEnd[index + 1]!
+  }
   const result: MarkdownCaptionEnvelope[] = []
   for (let i = 0; i < lines.length; i++) {
-    if (ignored[i] || standalone(lines[i]!.text) !== FIGURE) continue
-    // A nested opener after a caption makes a completed outer frame ambiguous.
-    // An opener before the caption is malformed framing, so recovery continues
-    // there instead of letting it consume otherwise independent frames.
-    const nextMarker = lines.findIndex(
-      (line, index) =>
-        index > i && !ignored[index] && [FIGURE, END].includes(standalone(line.text) ?? ''),
-    )
-    const outerCaption = lines.findIndex(
-      (line, index) =>
-        index > i && index < nextMarker && !ignored[index] && standalone(line.text) === CAPTION,
-    )
-    if (
-      nextMarker !== -1 &&
-      standalone(lines[nextMarker]!.text) === FIGURE &&
-      outerCaption !== -1
-    ) {
-      const innerEnd = lines.findIndex(
-        (line, index) => index > nextMarker && !ignored[index] && standalone(line.text) === END,
-      )
-      const outerEnd =
-        innerEnd === -1
-          ? -1
-          : lines.findIndex(
-              (line, index) => index > innerEnd && !ignored[index] && standalone(line.text) === END,
-            )
-      if (outerEnd !== -1) {
+    if (marker[i] !== FIGURE) continue
+    const next = nextBoundary[i + 1]!
+    const outerCaption = nextCaption[i + 1]!
+    if (next !== -1 && marker[next] === FIGURE && outerCaption !== -1 && outerCaption < next) {
+      const innerEnd = nextEnd[next + 1]!
+      const outerEnd = innerEnd === -1 ? -1 : nextBoundary[innerEnd + 1]!
+      if (outerEnd !== -1 && marker[outerEnd] === END) {
         i = outerEnd
         continue
       }
     }
     if (lines[i + 1]?.text !== '') continue
-    let cap = i + 2
-    while (cap < lines.length && (ignored[cap] || standalone(lines[cap]!.text) !== CAPTION)) {
-      if (
-        !ignored[cap] &&
-        (standalone(lines[cap]!.text) === FIGURE || standalone(lines[cap]!.text) === END)
-      )
-        break
-      cap++
-    }
-    if (
-      standalone(lines[cap]?.text ?? '') !== CAPTION ||
-      ignored[cap] ||
-      lines[cap - 1]!.text !== ''
-    )
-      continue
+    const cap = nextMarker[i + 2]!
+    if (cap === -1 || marker[cap] !== CAPTION || lines[cap - 1]?.text !== '') continue
     const captionStart = cap + 2
     if (lines[cap + 1]?.text !== '') continue
-    let end = captionStart
-    while (end < lines.length && (standalone(lines[end]!.text) !== END || ignored[end])) {
-      if (standalone(lines[end]!.text) === FIGURE || standalone(lines[end]!.text) === CAPTION) break
-      end++
-    }
-    if (
-      end >= lines.length ||
-      end === captionStart ||
-      standalone(lines[end]!.text) !== END ||
-      ignored[end]
-    )
-      continue
+    const end = nextMarker[captionStart]!
+    if (end === -1 || marker[end] !== END || end === captionStart) continue
     if (lines[end - 1]!.text !== '' || end - captionStart < 2) continue
     const bodyStart = i + 2
     const bodyEnd = cap - 1
@@ -274,7 +268,7 @@ export function writeMarkdownCaptionEnvelope(body: string, caption: string): str
     throw new Error('caption envelope content must use LF line endings')
   if (
     /^(?: {4}|\t)/.test(caption) ||
-    /^(?: {0,3}(?:#{1,6}\s|>|[-+*]\s|\d+[.)]\s|`{3,}|~{3,}|<)| {0,3}(?:---+|\*\*\*+|___+))/.test(
+    /^(?: {0,3}(?:#{1,6}(?:\s|$)|>|[-+*](?:\s|$)|\d+[.)](?:\s|$)|`{3,}|~{3,}|<)| {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$)/.test(
       caption,
     )
   ) {

@@ -134,6 +134,29 @@ describe('Markdown caption envelopes', () => {
     expect(readMarkdownCaptionEnvelopes(source)).toHaveLength(2)
   })
 
+  it('preserves independent frames after a truncated outer frame', () => {
+    const valid = writeMarkdownCaptionEnvelope('![a](a.png)', 'caption')
+    const source = `<!-- holi:figure -->\n\nouter\n\n<!-- holi:caption -->\n\ntruncated\n\n${valid}\n\n${valid}`
+    expect(readMarkdownCaptionEnvelopes(source)).toHaveLength(2)
+  })
+
+  it('does not let a list-local fence hide a dedented frame', () => {
+    const valid = writeMarkdownCaptionEnvelope('![a](a.png)', 'caption')
+    expect(readMarkdownCaptionEnvelopes('- ```js\n  code\n\n' + valid)).toHaveLength(1)
+  })
+
+  it('recognizes long malformed HTML tags without quadratic backtracking', () => {
+    const source = `<x-widget ${' '.repeat(128_000)}x`
+    expect(readMarkdownCaptionEnvelopes(source)).toEqual([])
+  })
+
+  it('scans many adjacent envelopes without repeated whole-input searches', () => {
+    const valid = writeMarkdownCaptionEnvelope('![a](a.png)', 'caption')
+    expect(readMarkdownCaptionEnvelopes(Array(16_000).fill(valid).join('\n\n'))).toHaveLength(
+      16_000,
+    )
+  })
+
   it('preserves independent frames after a malformed nested frame', () => {
     const valid = writeMarkdownCaptionEnvelope('![a](a.png)', 'caption')
     expect(
@@ -145,12 +168,13 @@ describe('Markdown caption envelopes', () => {
     for (const body of ['```js\nx', '<!-- open']) {
       expect(() => writeMarkdownCaptionEnvelope(body, 'caption')).toThrow()
     }
-    for (const caption of ['    code', '\tcode']) {
+    for (const caption of ['    code', '\tcode', '#', '##', '_ _ _', '-', '*', '+', '1.']) {
       expect(() => writeMarkdownCaptionEnvelope('![a](a.png)', caption)).toThrow()
     }
   })
 
   it('rejects empty, block, multiline and marker-colliding content', () => {
+    expect(writeMarkdownCaptionEnvelope('x', '___emphasis___')).toContain('___emphasis___')
     const cases: [string, string][] = [
       ['', 'x'],
       ['x', ''],
