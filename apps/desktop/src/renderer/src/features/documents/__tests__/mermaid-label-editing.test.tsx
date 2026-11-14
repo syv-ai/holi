@@ -5,6 +5,7 @@ import { analyseMermaidLabels } from '@holi/shared'
 import { Provider, createStore } from 'jotai'
 import { activeRemoteAtom } from '@/state/vaults'
 import { colorSchemeAtom } from '@/state/color-scheme'
+import { vimCodeEditingAtom } from '@/state/preferences'
 
 const renderDiagram = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/mermaid-renderer', () => ({ renderMermaid: renderDiagram }))
@@ -34,10 +35,11 @@ function drawing(source: string) {
   }
 }
 
-async function open(text = markdown) {
+async function open(text = markdown, vim = false) {
   const store = createStore()
   store.set(activeRemoteAtom, 'owner/first')
   store.set(colorSchemeAtom, 'light')
+  store.set(vimCodeEditingAtom, vim)
   const updates = vi.fn()
   const e = new Editor({
     extensions: createDocumentExtensions({
@@ -108,6 +110,17 @@ describe('editing labels in the rendered Mermaid drawing', () => {
   it('activates the connected SVG label and opens its anchored field', async () => {
     const { e } = await open()
     expect(await labelField()).toHaveValue('Alpha')
+    expect(e.getMarkdown()).toContain('A[Alpha] --> B[Beta]')
+  })
+
+  it('does not apply or cancel a label edit on normal-mode Enter or Escape', async () => {
+    const { e } = await open(markdown, true)
+    const field = await labelField()
+    fireEvent.change(field, { target: { value: 'Renamed' } })
+    fireEvent.keyDown(field, { key: 'Escape' })
+    expect(screen.getByLabelText('Vim normal mode')).toBeInTheDocument()
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(field).toBeInTheDocument()
     expect(e.getMarkdown()).toContain('A[Alpha] --> B[Beta]')
   })
 

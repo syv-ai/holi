@@ -23,6 +23,8 @@ import {
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /** Mirrors `Harness` in the agent's main/harness/record.ts. */
 export interface HarnessRecord {
@@ -169,6 +171,8 @@ export function HarnessDialog({
     }
   }
 
+  const vim = useVimField('harness')
+  const argsVim = useVimField('harness-args', draft.args)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="lg">
@@ -181,9 +185,11 @@ export function HarnessDialog({
             </DialogDescription>
           </DialogHeader>
 
+          <VimFieldMode mode={vim.vimFieldMode ?? argsVim.vimFieldMode} />
           <FieldGroup>
             <Row id="harness-label" label="Name">
               <Input
+                {...vim.vimFieldProps}
                 id="harness-label"
                 value={draft.label}
                 placeholder="Aider"
@@ -202,6 +208,7 @@ export function HarnessDialog({
                 hint="How settings name it: lowercase letters, digits and dashes. It cannot change later."
               >
                 <Input
+                  {...vim.vimFieldProps}
                   id="harness-id"
                   value={draft.id}
                   aria-invalid={draft.id !== '' && !idOk}
@@ -218,6 +225,7 @@ export function HarnessDialog({
               hint="Its name on PATH, or its full path. The program alone: its arguments go below."
             >
               <Input
+                {...vim.vimFieldProps}
                 id="harness-bin"
                 value={draft.bin}
                 placeholder="aider"
@@ -240,6 +248,7 @@ export function HarnessDialog({
                 }
               >
                 <Textarea
+                  {...argsVim.vimFieldProps}
                   id="harness-args"
                   rows={2}
                   value={draft.args}
@@ -255,6 +264,7 @@ export function HarnessDialog({
                   hint="One per line, with {prompt} on a line of its own after a -- line, so a message that starts with - is not read as an option. Empty: it cannot start on a message."
                 >
                   <Textarea
+                    {...vim.vimFieldProps}
                     id="harness-prompt"
                     rows={2}
                     value={draft.prompt}
@@ -268,6 +278,7 @@ export function HarnessDialog({
                   hint="One per line. Empty: no Resume for it in the + menu."
                 >
                   <Textarea
+                    {...vim.vimFieldProps}
                     id="harness-pick"
                     rows={2}
                     value={draft.pick}
@@ -281,6 +292,7 @@ export function HarnessDialog({
                   hint="One per line, with {id} on a line of its own. Holi knows the id when holi-signal turn-end --conversation says it."
                 >
                   <Textarea
+                    {...vim.vimFieldProps}
                     id="harness-by-id"
                     rows={2}
                     value={draft.byId}
@@ -314,6 +326,7 @@ export function HarnessDialog({
               hint="What Test runs, one per line. It must finish within 5 seconds."
             >
               <Textarea
+                {...vim.vimFieldProps}
                 id="harness-test"
                 rows={1}
                 value={draft.test}

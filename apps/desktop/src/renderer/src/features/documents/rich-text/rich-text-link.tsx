@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, useState, type RefObject } from 'react'
 import { editorActivity, useEditorActivity } from '@/hooks/use-editor-activity'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 import { useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 
@@ -49,6 +51,7 @@ function LinkForm({ editor, href, inputRef, onDone, draft, setDraft }: LinkFormP
   const activity = useEditorActivity(editor)
   const [invalid, setInvalid] = useState(false)
   const errorId = useId()
+  const vim = useVimField('rich-text-link-address', draft)
 
   function apply() {
     // Enter on an empty field is a no-op, not an error.
@@ -95,11 +98,14 @@ function LinkForm({ editor, href, inputRef, onDone, draft, setDraft }: LinkFormP
             aria-label="Link address"
             aria-invalid={invalid || undefined}
             aria-describedby={invalid ? errorId : undefined}
+            {...vim.vimFieldProps}
             onChange={(event) => {
               setDraft(event.target.value)
               setInvalid(false)
             }}
             onKeyDown={(event) => {
+              vim.vimFieldProps.onKeyDown?.(event)
+              if (event.defaultPrevented || vim.vimFieldMode === 'normal') return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 apply()
@@ -131,6 +137,7 @@ function LinkForm({ editor, href, inputRef, onDone, draft, setDraft }: LinkFormP
             ) : null}
           </InputGroupAddon>
         </InputGroup>
+        <VimFieldMode mode={vim.vimFieldMode} />
         {invalid ? (
           <FieldError id={errorId}>Enter a web address, like example.com</FieldError>
         ) : null}

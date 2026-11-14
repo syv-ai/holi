@@ -13,6 +13,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/cn'
 import { memberLoginsAtom } from '@/state/members'
 import { PersonAvatar } from '@/composites/person-avatar'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /** The `@word` the caret is at the end of, or null. */
 function mentionAt(text: string, caret: number): { start: number; query: string } | null {
@@ -42,6 +44,7 @@ export function CommentField({
   const activity = useEditorActivity()
   const members = useAtomValue(memberLoginsAtom)
   const [text, setText] = useState('')
+  const vim = useVimField('comment-field', text)
   const [focused, setFocused] = useState(false)
   const [caret, setCaret] = useState(0)
   const [picked, setPicked] = useState(0)
@@ -99,8 +102,6 @@ export function CommentField({
             placeholder={placeholder}
             autoFocus={autoFocus && activity.focused}
             value={text}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
             disabled={busy}
 
             role="combobox"
@@ -108,6 +109,15 @@ export function CommentField({
             aria-expanded={open}
             aria-controls={open ? listId : undefined}
             aria-activedescendant={open ? `${listId}-${current}` : undefined}
+            {...vim.vimFieldProps}
+            onFocus={(event) => {
+              vim.vimFieldProps.onFocus?.(event)
+              setFocused(true)
+            }}
+            onBlur={(event) => {
+              vim.vimFieldProps.onBlur?.(event)
+              setFocused(false)
+            }}
             onChange={(event) => {
               setText(event.target.value)
               setCaret(event.target.selectionStart)
@@ -115,6 +125,8 @@ export function CommentField({
             }}
             onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={(event) => {
+              vim.vimFieldProps.onKeyDown?.(event)
+              if (event.defaultPrevented || event.nativeEvent.isComposing) return
               if (open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
                 event.preventDefault()
                 const step = event.key === 'ArrowDown' ? 1 : -1
@@ -137,6 +149,7 @@ export function CommentField({
             }}
           />
         </PopoverAnchor>
+        <VimFieldMode mode={vim.vimFieldMode} />
         <PopoverContent
           align="start"
           className="w-56"

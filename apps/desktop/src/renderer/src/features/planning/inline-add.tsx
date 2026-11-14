@@ -9,6 +9,8 @@ import { PlusIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { usePlanningVisible } from './planning-visibility'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 export type InlineAddState = { open: boolean; title: string; busy: boolean }
 
@@ -39,6 +41,7 @@ export function InlineAdd({
   const currentRef = useRef(current)
   currentRef.current = current
   const { open, title, busy } = current
+  const vim = useVimField('planning-inline-add', title)
   const update = (patch: Partial<InlineAddState>) => {
     const next = { ...currentRef.current, ...patch }
     currentRef.current = next
@@ -94,25 +97,32 @@ export function InlineAdd({
   }
 
   return (
-    <Input
-      autoFocus={visible && focused}
-      aria-label={label}
-      placeholder="Task title"
-      value={title}
-      readOnly={busy}
-      onChange={(event) => update({ title: event.target.value })}
-      onBlur={() => {
-        if (title.trim() === '') update({ open: false })
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault()
-          void submit()
-        } else if (event.key === 'Escape') {
-          event.preventDefault()
-          update({ title: '', open: false })
-        }
-      }}
-    />
+    <div className="flex min-w-0 items-center gap-1">
+      <Input
+        autoFocus={visible && focused}
+        aria-label={label}
+        placeholder="Task title"
+        value={title}
+        {...vim.vimFieldProps}
+        readOnly={busy}
+        onChange={(event) => update({ title: event.target.value })}
+        onBlur={(event) => {
+          vim.vimFieldProps.onBlur?.(event)
+          if (title.trim() === '') update({ open: false })
+        }}
+        onKeyDown={(event) => {
+          vim.vimFieldProps.onKeyDown?.(event)
+          if (event.defaultPrevented || event.nativeEvent.isComposing) return
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            void submit()
+          } else if (event.key === 'Escape') {
+            event.preventDefault()
+            update({ title: '', open: false })
+          }
+        }}
+      />
+      <VimFieldMode mode={vim.vimFieldMode} />
+    </div>
   )
 }

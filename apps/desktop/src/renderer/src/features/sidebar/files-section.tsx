@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/sidebar'
 import { useRequest } from '@/hooks/use-request'
 import { useShortcutHandlers } from '@/hooks/use-shortcuts'
+import { useVimField } from '@/hooks/use-vim-field'
 import { Tree, TreeDragLine, TreeItem, TreeItemLabel } from '@/components/ui/tree'
 import { folderDocumentAt } from '@/state/folder-documents'
 import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
@@ -107,6 +108,7 @@ export function FilesSection({
   onMoved: (moves: Move[]) => void
 }) {
   const files = useFiles()
+  const renameVim = useVimField('file-rename')
   const store = useStore()
   const mounted = useRef(true)
   const loaded = useAtomValue(snapshotLoadedAtom)
@@ -925,24 +927,46 @@ export function FilesSection({
                           >
                             <FileGlyph item={item} />
                             {item.isRenaming() ? (
-                              <Input
-                                {...item.getRenameInputProps()}
-                                autoFocus
-                                aria-label={`Rename ${item.getItemName()}`}
-                                // The name without its extension, ready to type over.
-                                onFocus={(event) => {
-                                  const value = event.currentTarget.value
-                                  const dot = value.lastIndexOf('.')
-                                  event.currentTarget.setSelectionRange(
-                                    0,
-                                    (item.isFolder() && !browsable.has(item.getId())) || dot <= 0
-                                      ? value.length
-                                      : dot,
-                                  )
-                                }}
-                                onClick={(event) => event.stopPropagation()}
-                                className="-my-1.5"
-                              />
+                              <>
+                                {renameVim.vimFieldMode && (
+                                  <span
+                                    className="text-xs text-muted-foreground"
+                                    aria-label={`Vim ${renameVim.vimFieldMode} mode`}
+                                  >
+                                    {renameVim.vimFieldMode.toUpperCase()}
+                                  </span>
+                                )}
+                                <Input
+                                  {...item.getRenameInputProps()}
+                                  {...renameVim.vimFieldProps}
+                                  onKeyDown={(event) => {
+                                    renameVim.vimFieldProps.onKeyDown?.(event)
+                                    if (!event.defaultPrevented)
+                                      item.getRenameInputProps().onKeyDown?.(event)
+                                  }}
+                                  onBlur={(event) => {
+                                    renameVim.vimFieldProps.onBlur?.(event)
+                                    item.getRenameInputProps().onBlur?.(event)
+                                  }}
+                                  autoFocus
+                                  aria-label={`Rename ${item.getItemName()}`}
+                                  // The name without its extension, ready to type over.
+                                  onFocus={(event) => {
+                                    renameVim.vimFieldProps.onFocus?.(event)
+                                    item.getRenameInputProps().onFocus?.(event)
+                                    const value = event.currentTarget.value
+                                    const dot = value.lastIndexOf('.')
+                                    event.currentTarget.setSelectionRange(
+                                      0,
+                                      (item.isFolder() && !browsable.has(item.getId())) || dot <= 0
+                                        ? value.length
+                                        : dot,
+                                    )
+                                  }}
+                                  onClick={(event) => event.stopPropagation()}
+                                  className="-my-1.5"
+                                />
+                              </>
                             ) : (
                               <span className="truncate">{displayName(item)}</span>
                             )}

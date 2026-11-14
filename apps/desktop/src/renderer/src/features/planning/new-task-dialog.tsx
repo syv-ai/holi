@@ -20,6 +20,8 @@ import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { TaskFields, type TaskFieldValues } from './task-fields'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 export type NewTaskInput = {
   title: string
@@ -56,6 +58,7 @@ export function NewTaskDialog({
   onCreate: (input: NewTaskInput) => Promise<void>
 }) {
   const [title, setTitle] = useState('')
+  const vim = useVimField('new-task-title', title)
   const [description, setDescription] = useState('')
   const [fields, setFields] = useState(() => emptyDraft(defaultStatus, defaultFolder))
   const [busy, setBusy] = useState(false)
@@ -141,6 +144,7 @@ export function NewTaskDialog({
         <div
           className="flex flex-col gap-6"
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return
             // Enter in a one-line field creates, as the form it replaced did.
             if (
               event.key === 'Enter' &&
@@ -159,6 +163,7 @@ export function NewTaskDialog({
           </DialogHeader>
 
           <FieldGroup>
+            <VimFieldMode mode={vim.vimFieldMode} />
             <Field>
               <FieldLabel htmlFor="new-task-title" className="sr-only">
                 Title
@@ -167,6 +172,7 @@ export function NewTaskDialog({
                 id="new-task-title"
                 autoFocus={dialogFocused}
                 value={title}
+                {...vim.vimFieldProps}
                 onChange={(event) => {
                   edited.current = true
                   setTitle(event.target.value)
@@ -181,6 +187,7 @@ export function NewTaskDialog({
               <Textarea
                 id="new-task-description"
                 value={description}
+                {...vim.vimFieldProps}
                 onChange={(event) => {
                   edited.current = true
                   setDescription(event.target.value)
