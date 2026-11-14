@@ -362,6 +362,66 @@ describe('the harness registry', () => {
     await reg.dispose()
   })
 
+  it('rejects config operations after disposal while draining admitted writes', async () => {
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const reading = new Promise<void>((resolve) => (entered = resolve))
+    const backing = memoryStore()
+    let updates = 0
+    let reads = 0
+    const store = {
+      read: async () => {
+        reads++
+        if (reads === 2) {
+          entered()
+          await gate
+        }
+        return backing.read()
+      },
+      update: async (change: (file: HarnessFile) => HarnessFile | Promise<HarnessFile>) => {
+        updates++
+        return backing.update(change)
+      },
+    }
+    const key = '/reject-after-dispose'
+    const deps = {
+      store,
+      builtIns: {
+        claude: (current: () => Harness) => withPreset(builtIn('claude'), current),
+        codex: (current: () => Harness) => withPreset(builtIn('codex'), current),
+        pi: (current: () => Harness) => withPreset(builtIn('pi'), current),
+      },
+    }
+    const a = await acquireHarnessRegistry(key, deps)
+    let notices = 0
+    a.subscribe(() => notices++)
+    const blocker = a.reload()
+    await reading
+    const admitted = a.save(AIDER, true)
+    const disposing = a.dispose()
+    const before = { updates, reads, notices }
+    await expect(a.save({ ...AIDER, label: 'Late' }, false)).rejects.toThrow(/disposed/)
+    await expect(a.remove('aider')).rejects.toThrow(/disposed/)
+    await expect(a.reset()).rejects.toThrow(/disposed/)
+    await expect(a.reload()).rejects.toThrow(/disposed/)
+    expect({ updates, reads, notices }).toEqual(before)
+
+    release()
+    await Promise.all([blocker, admitted, disposing])
+    expect(backing.now().harnesses).toEqual([AIDER])
+    const b = await acquireHarnessRegistry(key, deps)
+    try {
+      expect(b.get('aider')).toEqual(AIDER)
+      expect(notices).toBe(0)
+      await b.save({ ...AIDER, label: 'Live owner' }, false)
+      expect(backing.now().harnesses).toEqual([{ ...AIDER, label: 'Live owner' }])
+      expect(b.get('aider')?.label).toBe('Live owner')
+    } finally {
+      await b.dispose()
+    }
+  })
+
   it('drains admitted writes before releasing the final owner handle', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => (release = resolve))

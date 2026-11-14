@@ -339,6 +339,8 @@ export async function createHarnessRegistry(
   let disposed = false
   const get = (id: string): Harness | undefined =>
     isIntegration(id) ? presetNow(id) : currentFile().harnesses.find((h) => h.id === id)
+  const admitConfigOperation = (): boolean => !disposed
+  const closed = (): Promise<never> => Promise.reject(new Error('Harness registry is disposed.'))
 
   return {
     async dispose() {
@@ -373,9 +375,9 @@ export async function createHarnessRegistry(
       ignored: currentFile().ignored ?? 0,
       unreadable: currentFile().unreadable ?? null,
     }),
-    reload: () => owner.reload(),
-    save: (h, create) => owner.save(h, create),
-    remove: (id) => owner.remove(id),
-    reset: () => owner.reset(),
+    reload: () => (admitConfigOperation() ? owner.reload() : closed()),
+    save: (h, create) => (admitConfigOperation() ? owner.save(h, create) : closed()),
+    remove: (id) => (admitConfigOperation() ? owner.remove(id) : closed()),
+    reset: () => (admitConfigOperation() ? owner.reset() : closed()),
   }
 }

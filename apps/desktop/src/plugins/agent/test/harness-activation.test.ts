@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -88,7 +88,10 @@ function deferred() {
   return { promise, resolve }
 }
 
-async function rig(userData?: string) {
+async function rig(
+  userData?: string,
+  holdAgentDisposer?: { entered: () => void; wait: Promise<void> },
+) {
   userData ??= await mkdtemp(join(tmpdir(), 'holi-agent-owner-'))
   dirs.push(userData)
   const roots = { [A]: join(userData, 'vault-a'), [B]: join(userData, 'vault-b') }
@@ -98,8 +101,25 @@ async function rig(userData?: string) {
   }
   const sent: { remote: string; name: string }[] = []
   const registry = createCapabilityRegistry()
+  const activateAgent = agentMain.activate!
+  const agentPlugin =
+    holdAgentDisposer === undefined
+      ? agentMain
+      : {
+          ...agentMain,
+          async activate(ctx: Parameters<typeof activateAgent>[0]) {
+            const dispose = await activateAgent(ctx)
+            if (dispose === undefined)
+              throw new Error('Agent activation did not return a disposer.')
+            return async () => {
+              await dispose()
+              holdAgentDisposer.entered()
+              await holdAgentDisposer.wait
+            }
+          },
+        }
   const host = createPluginHost({
-    plugins: [agentMain, automationsMain],
+    plugins: [agentPlugin, automationsMain],
     registry,
     userData,
     coreSeeds: [],
@@ -272,6 +292,57 @@ it('keeps real native provider commands and vault configuration local after a sh
     ok: true,
   })
   expect(adapters.pty.at(-1)?.cwd).toBe(roots[B])
+})
+
+it('rejects late UI config dispatch after A releases ownership but before unregistering', async () => {
+  const enteredDispose = deferred()
+  const releaseDispose = deferred()
+  const { host, enter, call, sent, userData } = await rig(undefined, {
+    entered: enteredDispose.resolve,
+    wait: releaseDispose.promise,
+  })
+  let stopping: Promise<void> | undefined
+  try {
+    await enter(A)
+    stopping = host.stop(A)
+    await enteredDispose.promise
+
+    // A's real disposer has released its sole owner handle, but the host still
+    // serves its capabilities until this wrapper lets stopOne finish.
+    await enter(B)
+    const codex = {
+      ...PRESETS[1]!,
+      command: { bin: process.execPath, args: ['--live-owner'] },
+    }
+    await call(B, 'agent.harnessSave', { harness: codex })
+    const disk = await readFile(join(userData, 'agent-harnesses.json'), 'utf8')
+    const bListing = await call(B, 'agent.harnesses')
+    const bNotices = sent.filter((event) => event.name === 'providers').length
+    for (const [name, params] of [
+      ['agent.harnessSave', { harness: { ...harness, id: 'late-save' }, create: true }],
+      ['agent.harnessRemove', { id: 'codex' }],
+      ['agent.harnessReset', {}],
+      ['agent.harnesses', {}],
+    ] as const) {
+      await expect(call(A, name, params)).rejects.toThrow(/disposed/)
+    }
+    expect(await readFile(join(userData, 'agent-harnesses.json'), 'utf8')).toBe(disk)
+    expect(sent.filter((event) => event.name === 'providers')).toHaveLength(bNotices)
+    expect(await call(B, 'agent.harnesses')).toEqual(bListing)
+
+    expect(
+      await call(B, 'agent.start', { provider: 'codex', prompt: 'B remains live' }),
+    ).toMatchObject({ ok: true })
+    expect(adapters.pty.at(-1)).toMatchObject({
+      cwd: join(userData, 'vault-b'),
+      bin: process.execPath,
+      args: expect.arrayContaining(['--live-owner', 'B remains live']),
+    })
+  } finally {
+    releaseDispose.resolve()
+    await stopping
+    await host.stopAll()
+  }
 })
 
 it('releases failed activation ownership so a fresh activation reads current disk state', async () => {
