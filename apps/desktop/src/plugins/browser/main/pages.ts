@@ -378,7 +378,7 @@ export function createPages(deps: PagesDeps): Pages & {
   function watch(tab: Tab): void {
     const wc = tab.view.webContents
     wc.setWindowOpenHandler(({ url }) => {
-      if (!isPresented(tab)) return { action: 'deny' }
+      if (!isLive(tab)) return { action: 'deny' }
       if (isPageUrl(url) && url !== 'about:blank') {
         const attachment = tab.attachment
         void open({

@@ -95,6 +95,7 @@ try {
     'queued-native-action-expires-on-tab-hide',
     'queued-action-expires-across-return',
     'hidden-native-input-and-placement-are-inert',
+    'hidden-popup-keeps-data-without-presentation',
     'stopping-a-preserves-b-native-view-and-capabilities',
     'departure-detaches-synchronously',
     'displayed-page-attached-with-loaded-content',
@@ -105,7 +106,7 @@ try {
     'departure-to-null-removes-replacement',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
-  assert(result.checks.length >= 12, 'native smoke produced too few assertions')
+  assert(result.checks.length >= 13, 'native smoke produced too few assertions')
   assert(
     typeof result.electron === 'string' && result.electron.length > 0,
     'missing Electron version',

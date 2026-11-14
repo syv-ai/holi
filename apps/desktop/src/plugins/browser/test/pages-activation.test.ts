@@ -158,6 +158,26 @@ describe('browser page activation', () => {
     pages.dispose()
   })
 
+  it('keeps hidden page popups vault-bound without granting presentation authority', async () => {
+    const { createPages } = await import('../main/pages')
+    const reveal = vi.fn()
+    const pages = createPages({
+      window: () => null,
+      changed: () => {},
+      address: () => {},
+      key: () => {},
+      reveal,
+    })
+    await pages.open({ id: 'hidden', reveal: false })
+    const popup = native.views[0].webContents.setWindowOpenHandler.mock.calls[0][0]
+    expect(popup({ url: 'https://example.com/new' })).toEqual({ action: 'deny' })
+    expect(pages.list()).toHaveLength(2)
+    expect(reveal).not.toHaveBeenCalled()
+    pages.dispose()
+    popup({ url: 'https://example.com/stale' })
+    expect(pages.list()).toEqual([])
+  })
+
   it('invalidates presentation callbacks on departure and disposes only its own child view', async () => {
     const { createPages } = await import('../main/pages')
     let display: ((remote: string | null) => void) | undefined
