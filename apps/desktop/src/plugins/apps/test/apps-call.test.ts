@@ -69,6 +69,7 @@ async function rig(
       },
       previews: {
         read: async () => null,
+        revision: () => 0,
         save: async () => {
           options.savePreview?.()
           return true
