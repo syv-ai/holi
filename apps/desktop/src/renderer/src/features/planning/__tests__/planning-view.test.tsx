@@ -24,6 +24,7 @@ const activity = vi.fn()
 const update = vi.fn()
 let createRequest = () => Promise.resolve({ path: 'task.new.md' })
 let projectWrite = () => Promise.resolve(null)
+let snapshotTasks: Task[] = []
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -48,7 +49,7 @@ vi.mock('@/lib/trpc', () => ({
       },
     },
     notes: { write: { mutate: () => projectWrite() } },
-    vaults: { snapshot: { query: () => Promise.resolve(snapshotOf(TASKS)) } },
+    vaults: { snapshot: { query: () => Promise.resolve(snapshotOf(snapshotTasks)) } },
     github: {
       collaborators: { query: () => Promise.resolve({ collaborators: [] }) },
     },
@@ -89,7 +90,9 @@ function snapshotOf(tasks: Task[]): VaultSnapshot {
 function setup(
   tab: 'board' | 'list' | 'overview' = 'board',
   options: { visible?: boolean; focused?: boolean; tasks?: Task[] } = {},
+  statuses = [...DEFAULT_STATUSES],
 ) {
+  snapshotTasks = options.tasks ?? TASKS
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/site')
   store.set(vaultsAtom, [
@@ -100,11 +103,11 @@ function setup(
       lastOpenedAt: '2026-10-01',
     },
   ])
-  store.set(snapshotAtom, snapshotOf(options.tasks ?? TASKS))
+  store.set(snapshotAtom, snapshotOf(snapshotTasks))
   store.set(nowAtom, '2026-10-23T12:00')
   store.set(statusesFileAtom, {
     state: 'ready',
-    value: [...DEFAULT_STATUSES],
+    value: statuses,
     warnings: [],
   })
   store.set(projectFileAtom, {
@@ -153,6 +156,67 @@ test('the board has a column per status, and a card in each task’s column', ()
   // A status the vault does not list shows in the first unstarted column.
   const todo = screen.getByRole('region', { name: 'To do tasks' })
   expect(within(todo).getByText('Waiting on legal')).toBeInTheDocument()
+})
+
+test('due chips distinguish today, exact-minute urgency, invalid dates and completion', async () => {
+  activity.mockResolvedValue([])
+  const { store } = setup(
+    'board',
+    {
+      tasks: [
+        ...TASKS.slice(0, 3),
+        task('task.today.md', { title: 'Due today', due: '2026-10-23' }),
+        task('task.minute.md', { title: 'Due this minute', due: '2026-10-23T12:00' }),
+        task('task.minute-past.md', { title: 'Minute overdue', due: '2026-10-23T11:59' }),
+        task('task.tomorrow.md', { title: 'Check the schedule', due: '2026-10-24' }),
+        task('task.invalid-due.md', { title: 'Invalid due', due: 'not-a-date' }),
+        task('task.done-due.md', { title: 'Completed due', status: 'archived', due: '2026-10-20' }),
+      ],
+    },
+    [...DEFAULT_STATUSES, { id: 'archived', name: 'Archived', category: 'completed' }],
+  )
+
+  expect(screen.getAllByLabelText(/Due today/)).toHaveLength(2)
+  expect(screen.getByLabelText(/Due today.*12:00/)).toBeInTheDocument()
+  expect(screen.getByLabelText(/11:59, overdue/)).toBeInTheDocument()
+  expect(screen.getByLabelText('Due not-a-date')).toBeInTheDocument()
+  expect(screen.getByLabelText(/Was due/)).toBeInTheDocument()
+  const todayChip = screen.getByLabelText(/^Due today, Oct 23$/)
+  expect(within(todayChip).getByText('Due today')).toBeVisible()
+  expect(todayChip.closest('[data-task]')).toHaveClass('border-warning/40')
+  expect(within(screen.getByLabelText(/11:59, overdue/)).getByText('Overdue')).toBeVisible()
+  expect(within(screen.getByLabelText('Due not-a-date')).queryByText('Overdue')).toBeNull()
+  expect(document.querySelector('[data-task="task.ship.md"] [aria-label^="Due"]')).toBeNull()
+  expect(screen.getByLabelText(/Due Oct 24, soon/)).not.toHaveTextContent('Due today')
+
+  store.set(nowAtom, '2026-10-23T12:01')
+  await waitFor(() =>
+    expect(within(screen.getByLabelText(/12:00, overdue/)).getByText('Overdue')).toBeVisible(),
+  )
+  expect(todayChip).toHaveTextContent('Due today')
+  expect(update).not.toHaveBeenCalled()
+
+  store.set(
+    snapshotAtom,
+    snapshotOf(
+      snapshotTasks.map((item) =>
+        item.path === 'task.minute.md' ? { ...item, status: 'archived' } : item,
+      ),
+    ),
+  )
+  await waitFor(() => expect(screen.getByLabelText(/Was due.*12:00/)).toBeInTheDocument())
+  expect(screen.getByLabelText(/Was due.*12:00/)).not.toHaveTextContent('Overdue')
+
+  store.set(nowAtom, '2026-10-24T00:00')
+  await waitFor(() =>
+    expect(document.querySelector('[data-task="task.today.md"]')).toHaveTextContent('Overdue'),
+  )
+  expect(within(screen.getByLabelText(/^Due today, Oct 24$/)).getByText('Due today')).toBeVisible()
+  const completedCard = document.querySelector('[data-task="task.done-due.md"]')
+  expect(completedCard).toHaveTextContent('Completed due')
+  expect(within(completedCard as HTMLElement).getByLabelText(/Was due/)).toBeInTheDocument()
+  expect(within(completedCard as HTMLElement).queryByText('Overdue')).not.toBeInTheDocument()
+  expect(within(completedCard as HTMLElement).queryByText('Due today')).not.toBeInTheDocument()
 })
 
 test('a card’s title opens the task', async () => {
