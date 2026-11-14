@@ -44,6 +44,7 @@ export interface GoogleApiDeps {
   /** `GoogleSession.getAccessToken` — refreshes and single-flights on its own. */
   accessToken: () => Promise<string>
   fetch?: typeof globalThis.fetch
+  beforeRequest?: () => void
 }
 
 /** A hung request must not stall a panel with no error and nothing to cancel. */
@@ -115,6 +116,7 @@ export class GoogleApi {
       )
     }
 
+    this.#deps.beforeRequest?.()
     const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
       method,
       headers: {

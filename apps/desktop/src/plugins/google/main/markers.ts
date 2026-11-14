@@ -98,7 +98,9 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
       return serialize('store', async () => {
         assertActive()
         await validate?.()
-        await store.update((current) => {
+        await store.update(async (current) => {
+          assertActive()
+          await validate?.()
           assertActive()
           const threads = { ...current.threads }
           if (marker === null) delete threads[threadId]
