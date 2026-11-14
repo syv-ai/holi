@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { Mapping, StepMap } from '@tiptap/pm/transform'
 import { Schema } from '@tiptap/pm/model'
+import { EditorState, TextSelection } from '@tiptap/pm/state'
+import { duplicateBlock } from '../rich-text/rich-text-block-actions'
 
 import { enqueueRewrite, mapRewriteTargets, removeRewrite, updateRewrite } from '../rewrite-queue'
 
@@ -41,6 +43,37 @@ describe('rewrite request queue', () => {
     })
     const inside = new Mapping([new StepMap([2, 1, 2])])
     expect(mapRewriteTargets(queue, inside, doc('oXne')).at(0)).toMatchObject({ valid: true })
+  })
+
+  it('rejects a selection spanning the real duplicate action’s shared paragraph nodes', () => {
+    const paragraph = schema.node('paragraph', null, schema.text('one'))
+    const initial = schema.node('doc', null, [paragraph])
+    const state = EditorState.create({
+      schema,
+      doc: initial,
+      selection: TextSelection.create(initial, 1, 4),
+    })
+    const tr = duplicateBlock(state, {
+      pos: 0,
+      node: paragraph,
+      depth: 1,
+      index: 0,
+      parent: initial,
+    })!
+    const duplicated = tr.doc
+    expect(duplicated.child(0)).toBe(duplicated.child(1))
+    const spanning = enqueueRewrite(
+      [],
+      {
+        ...item,
+        from: 1,
+        to: 8,
+        blockTo: 10,
+        passage: 'one\none',
+      },
+      'a',
+    )
+    expect(mapRewriteTargets(spanning, new Mapping(), duplicated)[0]?.valid).toBe(false)
   })
 
   it('invalidates a target whose mapped range no longer identifies one text block', () => {
