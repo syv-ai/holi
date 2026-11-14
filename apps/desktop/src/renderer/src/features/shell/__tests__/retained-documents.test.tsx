@@ -1,5 +1,6 @@
 /** Real AppShell + Tiptap; only filesystem/agent and layout adapters are replaced. */
 import type { Editor } from '@tiptap/react'
+import { StrictMode } from 'react'
 import { toast } from 'sonner'
 import { setRichTextBubble } from '@/features/documents/rich-text/rich-text-bubble-bar'
 import { closeHistory } from '@tiptap/pm/history'
@@ -161,7 +162,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function fixture(paths = [ONE, TWO]) {
+function fixture(paths = [ONE, TWO], strict = false) {
   const store = createStore()
   store.set(activeRemoteAtom, REMOTE)
   store.set(vaultsAtom, [{ remote: REMOTE, path: '/vault', name: 'repo', lastOpenedAt: '' }])
@@ -176,11 +177,12 @@ function fixture(paths = [ONE, TWO]) {
       paths[0]!,
     ),
   )
-  render(
+  const app = (
     <Provider store={store}>
       <AppShell onAddVault={() => {}} />
-    </Provider>,
+    </Provider>
   )
+  render(strict ? <StrictMode>{app}</StrictMode> : app)
   return store
 }
 function host(path = ONE) {
@@ -283,6 +285,34 @@ test('lazy documents retain edits, undo, selection, scroll and layout through ta
   select(store, ONE)
   act(() => one.commands.undo())
   expect(one.getMarkdown()).not.toContain('appended')
+})
+
+test('StrictMode retains a document editor and Find input across delayed repeated tab switches', async () => {
+  const store = fixture([ONE, TWO], true)
+  const one = await editor()
+  fireEvent.keyDown(one.view.dom, { key: 'f', ctrlKey: true })
+  const bar = await screen.findByRole('search', { name: 'Find in document' })
+  const input = within(bar).getByRole('textbox', { name: 'Find' })
+  fireEvent.change(input, { target: { value: 'passage' } })
+  fireEvent.click(within(bar).getByRole('button', { name: 'Match case' }))
+  act(() => one.commands.insertContentAt(one.state.doc.content.size - 1, ' retained'))
+
+  for (let iteration = 0; iteration < 2; iteration += 1) {
+    select(store, TWO)
+    await editor(TWO)
+    await new Promise((resolve) => setTimeout(resolve, 180))
+    select(store, ONE)
+    expect(await editor()).toBe(one)
+    expect(within(bar).getByRole('textbox', { name: 'Find' })).toBe(input)
+    expect(input).toHaveValue('passage')
+    expect(within(bar).getByRole('button', { name: 'Match case' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  }
+
+  act(() => one.commands.undo())
+  expect(one.getMarkdown()).not.toContain('retained')
 })
 
 test('Find query, replace draft and options survive parking, with no autofocus or search movement on return', async () => {
