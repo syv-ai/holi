@@ -498,9 +498,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       onDisplayChange: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(
-          onDisplayChange((at) => {
-            if (valid()) cb(at)
-          }),
+          // Display changes must still reach presentation owners while stop is
+          // queued behind activation/reconcile work. Their callback may detach
+          // owned native UI, but all other context authority remains revoked by
+          // valid() immediately when the run generation changes.
+          onDisplayChange(cb),
         )
       },
       active: () => vault,
