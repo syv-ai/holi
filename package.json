@@ -8,7 +8,7 @@
     "dev": "pnpm --filter @holi/desktop dev",
     "dev:debug": "pnpm --filter @holi/desktop dev:debug",
     "ui:add": "node scripts/ui-add.mjs",
-    "test": "node --test .github/workflows/assign-pr-author.test.mjs site/handoff.test.mjs scripts/harness-monitor.test.mjs scripts/codex-compatibility-checks.test.mjs scripts/claude-compatibility-checks.test.mjs scripts/claude-compatibility.test.mjs && pnpm -r test",
+    "test": "node --test .github/workflows/assign-pr-author.test.mjs site/handoff.test.mjs scripts/harness-monitor.test.mjs scripts/pi-cli-contract.test.mjs scripts/workflow-shell.test.mjs scripts/codex-compatibility-checks.test.mjs scripts/claude-compatibility-checks.test.mjs scripts/claude-compatibility.test.mjs && pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm --filter @holi/desktop lint",
     "knip": "knip",

@@ -183,6 +183,52 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
+function controlledTimeout(delay: number) {
+  const handle = {} as ReturnType<typeof setTimeout>
+  let callback: (() => void) | undefined
+  const originalSetTimeout = globalThis.setTimeout
+  const originalClearTimeout = globalThis.clearTimeout
+  const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+    handler: TimerHandler,
+    timeout?: number,
+    ...args: unknown[]
+  ) => {
+    if (timeout === delay && typeof handler === 'function') {
+      callback = () => handler(...args)
+      return handle
+    }
+    return originalSetTimeout(handler, timeout, ...args)
+  }) as typeof setTimeout)
+  const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation((timer) => {
+    if (timer !== handle) originalClearTimeout(timer)
+  })
+  return {
+    expire() {
+      if (!callback) throw new Error(`no ${delay} ms timeout was scheduled`)
+      callback()
+    },
+    restore() {
+      setTimeoutSpy.mockRestore()
+      clearTimeoutSpy.mockRestore()
+    },
+  }
+}
+
+describe('controlledTimeout', () => {
+  it('holds a selected timer until the test expires it', () => {
+    const timeout = controlledTimeout(60_000)
+    const callback = vi.fn()
+    try {
+      setTimeout(callback, 60_000)
+      expect(callback).not.toHaveBeenCalled()
+      timeout.expire()
+      expect(callback).toHaveBeenCalledOnce()
+    } finally {
+      timeout.restore()
+    }
+  })
+})
+
 describe('a real .cmd on Windows', () => {
   const NASTY = [
     ['plain'],
@@ -478,7 +524,7 @@ describe('execProgram', () => {
           execProgram(
             process.execPath,
             ['-e', script],
-            { env: process.env, timeoutMs: 500, maxBuffer: 65536, encoding: 'utf8' },
+            { env: process.env, timeoutMs: 10_000, maxBuffer: 65536, encoding: 'utf8' },
             (err, out) => {
               reported = true
               resolve({ err, out })
@@ -633,14 +679,15 @@ describe('execProgram', () => {
       const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>0,1000)`
       const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore',windowsHide:true,detached:true});setInterval(()=>0,1000)`
       const { execProgram } = await import('../src/main/launch')
+      const timeout = controlledTimeout(60_000)
       try {
-        const result = await new Promise<Error | null>((resolve) => {
+        const result = new Promise<Error | null>((resolve) => {
           execProgram(
             process.execPath,
             ['-e', script],
             {
               env: process.env,
-              timeoutMs: 500,
+              timeoutMs: 60_000,
               maxBuffer: 65536,
               encoding: 'utf8',
               retainDescendantsOnSuccess: true,
@@ -648,13 +695,19 @@ describe('execProgram', () => {
             (err) => resolve(err),
           )
         })
-        expect(result).not.toBeNull()
         await vi.waitFor(async () =>
           expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
         )
+        const readyPid = Number(await readFile(pidFile, 'utf8'))
+        expect(defaultProbePid(readyPid, 'win32')).toBe('group-leader')
+        timeout.expire()
+        const err = await result
+        expect(err).not.toBeNull()
+        expect(err?.code).toBe('ETIMEDOUT')
         const pid = Number(await readFile(pidFile, 'utf8'))
         expect(defaultProbePid(pid, 'win32')).toBe('gone')
       } finally {
+        timeout.restore()
         await rm(dir, { recursive: true, force: true })
       }
     },
