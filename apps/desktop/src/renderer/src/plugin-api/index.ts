@@ -132,7 +132,8 @@ export {
   /** @public */ type PluginDialog,
 } from '@/state/dialogs'
 export { askPrompt } from '@/lib/ask-agent'
-export { useGlobalPanelLayout } from '@/state/preferences'
+export { useGlobalPanelLayout, vimCodeEditingAtom } from '@/state/preferences'
+export { useVimEditor } from '@/editor/vim'
 export { matchHotkey } from '@/lib/hotkey'
 export { DiffView } from '@/composites/diff-view'
 export { plainMarkdownExtensions } from '@/editor/extensions'
