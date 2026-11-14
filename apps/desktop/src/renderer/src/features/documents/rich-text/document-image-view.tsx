@@ -1,3 +1,4 @@
+import { EditorActivityContext, useEditorActivity } from '@/hooks/use-editor-activity'
 import { NodeViewWrapper, type ReactNodeViewProps } from '@tiptap/react'
 import { NodeSelection } from '@tiptap/pm/state'
 import { useRef, useState } from 'react'
@@ -15,6 +16,7 @@ export function DocumentImageView({
   getPos,
   folder,
 }: ReactNodeViewProps & { folder: string }) {
+  const activity = useEditorActivity(editor)
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null)
   const [retryVersion, setRetryVersion] = useState(0)
@@ -26,7 +28,7 @@ export function DocumentImageView({
   const failed = failedSrc === src
   const selectImage = () => {
     const position = typeof getPos === 'function' ? getPos() : undefined
-    if (typeof position !== 'number' || !editor.isEditable) return
+    if (!activity.displayed || typeof position !== 'number' || !editor.isEditable) return
     editor.view.dispatch(
       editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, position)),
     )
@@ -48,71 +50,73 @@ export function DocumentImageView({
     />
   )
   return (
-    <NodeViewWrapper as="span" contentEditable={false} className="group/media relative">
-      {failed ? (
-        <p role="status" className="text-sm">
-          Couldn&apos;t load image: {alt}{' '}
+    <EditorActivityContext value={activity}>
+      <NodeViewWrapper as="span" contentEditable={false} className="group/media relative">
+        {failed ? (
+          <p role="status" className="text-sm">
+            Couldn&apos;t load image: {alt}{' '}
+            <Button
+              type="button"
+              variant="link"
+              onClick={() => {
+                setFailedSrc(null)
+                setLoadedSrc(null)
+                setRetryVersion((version) => version + 1)
+              }}
+            >
+              Retry
+            </Button>
+          </p>
+        ) : (
           <Button
             type="button"
-            variant="link"
-            onClick={() => {
-              setFailedSrc(null)
-              setLoadedSrc(null)
-              setRetryVersion((version) => version + 1)
-            }}
+            variant="ghost"
+            size="media"
+            aria-label={`Select ${title}`}
+            onClick={selectImage}
           >
-            Retry
+            {image(false)}
           </Button>
-        </p>
-      ) : (
-        <Button
-          type="button"
-          variant="ghost"
-          size="media"
-          aria-label={`Select ${title}`}
-          onClick={selectImage}
+        )}
+        <RenderedMediaToolbar editor={editor}>
+          <RenderedMediaAction ref={openButton} onClick={() => setOpen(true)}>
+            Open larger
+          </RenderedMediaAction>
+        </RenderedMediaToolbar>
+        <RenderedMediaLightbox
+          title={title}
+          open={open}
+          onOpenChange={setOpen}
+          restoreFocus={() => openButton.current?.focus()}
+          preview={
+            failed ? (
+              <p role="status" className="text-sm">
+                Couldn&apos;t load image: {alt}{' '}
+                <Button
+                  type="button"
+                  variant="link"
+                  onClick={() => {
+                    setFailedSrc(null)
+                    setLoadedSrc(null)
+                    setRetryVersion((version) => version + 1)
+                  }}
+                >
+                  Retry
+                </Button>
+              </p>
+            ) : (
+              <div className="relative flex min-h-24 min-w-0 items-center justify-center">
+                {image(true)}
+                {loadedSrc !== src ? (
+                  <Skeleton aria-label="Loading image" className="absolute inset-0" />
+                ) : null}
+              </div>
+            )
+          }
         >
-          {image(false)}
-        </Button>
-      )}
-      <RenderedMediaToolbar editor={editor}>
-        <RenderedMediaAction ref={openButton} onClick={() => setOpen(true)}>
-          Open larger
-        </RenderedMediaAction>
-      </RenderedMediaToolbar>
-      <RenderedMediaLightbox
-        title={title}
-        open={open}
-        onOpenChange={setOpen}
-        restoreFocus={() => openButton.current?.focus()}
-        preview={
-          failed ? (
-            <p role="status" className="text-sm">
-              Couldn&apos;t load image: {alt}{' '}
-              <Button
-                type="button"
-                variant="link"
-                onClick={() => {
-                  setFailedSrc(null)
-                  setLoadedSrc(null)
-                  setRetryVersion((version) => version + 1)
-                }}
-              >
-                Retry
-              </Button>
-            </p>
-          ) : (
-            <div className="relative flex min-h-24 min-w-0 items-center justify-center">
-              {image(true)}
-              {loadedSrc !== src ? (
-                <Skeleton aria-label="Loading image" className="absolute inset-0" />
-              ) : null}
-            </div>
-          )
-        }
-      >
-        {null}
-      </RenderedMediaLightbox>
-    </NodeViewWrapper>
+          {null}
+        </RenderedMediaLightbox>
+      </NodeViewWrapper>
+    </EditorActivityContext>
   )
 }

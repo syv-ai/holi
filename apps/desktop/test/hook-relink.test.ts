@@ -5,13 +5,18 @@
  * That instruction is followed inconsistently and silently produces dangling
  * links. This makes the vault's own commit do it.
  */
+import { execFile as execFileCallback } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import { join } from 'node:path'
+import { SCRATCHPAD_PATH } from '@holi/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { relink } from '../src/main/vault/hooks/relink'
-import type { StagedChanges } from '../src/main/vault/hooks/staged'
+import { stagedChanges, type StagedChanges } from '../src/main/vault/hooks/staged'
+
+const execFile = promisify(execFileCallback)
 
 let root: string
 const dirs: string[] = []
@@ -61,6 +66,115 @@ describe('relink', () => {
     expect(await read('.holi/comments/sub/b.md.json')).toBe('{"threads":{}}\n')
     expect(await exists('.holi/comments/a.md.json')).toBe(false)
     expect(await exists('.holi/comments/gone.md.json')).toBe(true)
+  })
+
+  it('preserves exact scratchpad bytes for a git-detected external rename', async () => {
+    const scratchpad = Buffer.from('---\r\ntype: daily-note\r\n---\r\n[[old.md]]  \nlast line')
+    await file('old.md', '# old\n')
+    await file(SCRATCHPAD_PATH, '')
+    await writeFile(join(root, SCRATCHPAD_PATH), scratchpad)
+    await file('ordinary.md', '[[old.md]]')
+    await execFile('git', ['init', '-q'], { cwd: root })
+    await execFile('git', ['config', 'user.name', 'Holi Test'], { cwd: root })
+    await execFile('git', ['config', 'user.email', 'holi@example.test'], { cwd: root })
+    await execFile('git', ['add', '.'], { cwd: root })
+    await execFile('git', ['commit', '-qm', 'initial'], { cwd: root })
+    await execFile('git', ['mv', 'old.md', 'new.md'], { cwd: root })
+
+    const result = await relink(root, await stagedChanges(root))
+    expect(result.changed).toEqual(['ordinary.md'])
+    expect(await readFile(join(root, SCRATCHPAD_PATH))).toEqual(scratchpad)
+    expect(await read('ordinary.md')).toBe('[[new.md]]')
+  })
+
+  it('keeps a scratchpad moved out by git protected while relinking ordinary referrers', async () => {
+    const bytes = Buffer.from([0x80, 0xff, 0x5b, 0x5b, ...Buffer.from(SCRATCHPAD_PATH), 0x5d, 0x5d])
+    await file(SCRATCHPAD_PATH, '')
+    await writeFile(join(root, SCRATCHPAD_PATH), bytes)
+    await file('ordinary.md', `[[${SCRATCHPAD_PATH}]]`)
+    await execFile('git', ['init', '-q'], { cwd: root })
+    await execFile('git', ['config', 'user.name', 'Holi Test'], { cwd: root })
+    await execFile('git', ['config', 'user.email', 'holi@example.test'], { cwd: root })
+    await execFile('git', ['add', '.'], { cwd: root })
+    await execFile('git', ['commit', '-qm', 'initial'], { cwd: root })
+    await execFile('git', ['mv', SCRATCHPAD_PATH, 'personal.md'], { cwd: root })
+
+    const staged = await stagedChanges(root)
+    expect(staged.renamed).toEqual([{ from: SCRATCHPAD_PATH, to: 'personal.md' }])
+    const result = await relink(root, staged)
+
+    expect(result.changed).toEqual(['ordinary.md'])
+    expect(await readFile(join(root, 'personal.md'))).toEqual(bytes)
+    expect(await read('ordinary.md')).toBe('[[personal.md]]')
+    const after = await stagedChanges(root)
+    expect(after.renamed).toEqual(staged.renamed)
+    expect(after.modified).toEqual([])
+    const { stdout } = await execFile('git', ['diff', '--name-only'], { cwd: root })
+    expect(stdout.trim().split('\n')).toEqual(['ordinary.md'])
+  })
+
+  it('preserves a git move into the scratchpad while updating ordinary references', async () => {
+    const bytes = Buffer.from([0x80, 0xff, 0x5b, 0x5b, ...Buffer.from('incoming.md'), 0x5d, 0x5d])
+    await file('incoming.md', '')
+    await writeFile(join(root, 'incoming.md'), bytes)
+    await file('ordinary.md', '[[incoming.md]]')
+    await execFile('git', ['init', '-q'], { cwd: root })
+    await execFile('git', ['config', 'user.name', 'Holi Test'], { cwd: root })
+    await execFile('git', ['config', 'user.email', 'holi@example.test'], { cwd: root })
+    await execFile('git', ['add', '.'], { cwd: root })
+    await execFile('git', ['commit', '-qm', 'initial'], { cwd: root })
+    await execFile('git', ['mv', 'incoming.md', SCRATCHPAD_PATH], { cwd: root })
+
+    const staged = await stagedChanges(root)
+    expect(staged.renamed).toEqual([{ from: 'incoming.md', to: SCRATCHPAD_PATH }])
+    const result = await relink(root, staged)
+
+    expect(result.changed).toEqual(['ordinary.md'])
+    expect(await readFile(join(root, SCRATCHPAD_PATH))).toEqual(bytes)
+    expect(await read('ordinary.md')).toBe(`[[${SCRATCHPAD_PATH}]]`)
+    const after = await stagedChanges(root)
+    expect(after.renamed).toEqual(staged.renamed)
+    expect(after.modified).toEqual([])
+    const { stdout } = await execFile('git', ['diff', '--name-only'], { cwd: root })
+    expect(stdout.trim().split('\n')).toEqual(['ordinary.md'])
+  })
+
+  it('keeps protection on the original scratchpad in a simultaneous rename chain', async () => {
+    const scratchpad = '# scratchpad\n' + 'personal draft '.repeat(100) + `\n[[${SCRATCHPAD_PATH}]]`
+    const ordinary = '# ordinary\n' + 'ordinary retained prose '.repeat(100) + '\n[[target.md]]'
+    await file(SCRATCHPAD_PATH, scratchpad)
+    await file('personal.md', ordinary)
+    await file('target.md', '# target\n' + 'target content '.repeat(100))
+    await file('ref.md', `[[${SCRATCHPAD_PATH}]]`)
+    await execFile('git', ['init', '-q'], { cwd: root })
+    await execFile('git', ['config', 'user.name', 'Holi Test'], { cwd: root })
+    await execFile('git', ['config', 'user.email', 'holi@example.test'], { cwd: root })
+    await execFile('git', ['add', '.'], { cwd: root })
+    await execFile('git', ['commit', '-qm', 'initial'], { cwd: root })
+    await execFile('git', ['mv', 'personal.md', 'archive.md'], { cwd: root })
+    await execFile('git', ['mv', SCRATCHPAD_PATH, 'personal.md'], { cwd: root })
+    await execFile('git', ['mv', 'target.md', 'renamed.md'], { cwd: root })
+
+    // Breaking a complete rewrite exposes both original file identities.
+    const { stdout: names } = await execFile(
+      'git',
+      ['diff', '--cached', '--name-status', '-B', '-M', '-z'],
+      { cwd: root },
+    )
+    const pairs = [
+      { from: SCRATCHPAD_PATH, to: 'personal.md' },
+      { from: 'personal.md', to: 'archive.md' },
+      { from: 'target.md', to: 'renamed.md' },
+    ]
+    for (const { from, to } of pairs) expect(names).toContain(`R100\0${from}\0${to}\0`)
+    const result = await relink(root, staged(pairs))
+
+    expect(await read('personal.md')).toBe(scratchpad)
+    expect(await read('archive.md')).toBe(ordinary.replace('[[target.md]]', '[[renamed.md]]'))
+    expect(await read('ref.md')).toBe('[[personal.md]]')
+    expect(result.changed).toEqual(['archive.md', 'ref.md'])
+    const { stdout } = await execFile('git', ['diff', '--name-only'], { cwd: root })
+    expect(stdout.trim().split('\n')).toEqual(result.changed)
   })
 
   it('rewrites an inbound link to the new path', async () => {

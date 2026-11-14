@@ -11,10 +11,15 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { spawn, type ChildProcess } from 'node:child_process'
+import { type ChildProcess } from 'node:child_process'
 import net from 'node:net'
 import { pluginServerOrigin } from '@holi/shared'
-import { defaultProbePid, type PidState } from '../../../main/plugin-api'
+import {
+  defaultProbePid,
+  killTree,
+  spawnOwnedProgram,
+  type PidState,
+} from '../../../main/plugin-api'
 import { splitLines } from './setup'
 
 /** Prezzi's own launcher starts here, above the servers people keep running. */
@@ -127,15 +132,12 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
    *  not a launcher that exits (docs/features/community-plugins.md). */
   const signal = (child: ChildProcess, sig: 'SIGTERM' | 'SIGKILL') => {
     if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return
-    if (probe(child.pid) !== 'group-leader') {
+    if (process.platform === 'win32' || probe(child.pid) !== 'group-leader') {
       child.kill(sig)
       return
     }
-    try {
-      process.kill(-child.pid, sig)
-    } catch {
-      // Reaped between the probe and here.
-    }
+    // Reaped between the probe and here is a no-op.
+    killTree(child.pid, sig)
   }
 
   /** Ports held by a server from the moment one is picked until it stops,
@@ -192,7 +194,7 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
       if (server.log.length > LOG_LINES) server.log.splice(0, server.log.length - LOG_LINES)
     })
     const [command, ...args] = spec.argv(port)
-    const child = spawn(command!, args, {
+    const child = spawnOwnedProgram(command!, args, {
       cwd: spec.cwd,
       env: spec.env(port),
       detached: true,
@@ -207,11 +209,9 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         exitMessage = `could not run ${command}: ${err.message}`
         resolve()
       })
-      child.once('exit', (code, sig) => {
-        exitMessage ??= sig !== null ? `stopped by ${sig}` : `exited with ${code}`
-      })
-      child.once('close', () => {
+      child.once('close', (code, sig) => {
         remember.flush()
+        exitMessage ??= sig !== null ? `stopped by ${sig}` : `exited with ${code}`
         resolve()
       })
     })

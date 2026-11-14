@@ -2212,6 +2212,59 @@ describe('VaultHost', () => {
     return { registry, a, b }
   }
 
+  it('shares cold preparation and retries it after a failure', async () => {
+    const { registry } = await twoVaults()
+    let attempts = 0
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const preparing = new Promise<void>((resolve) => (entered = resolve))
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      prepareClone: async () => {
+        attempts++
+        entered()
+        await gate
+        if (attempts === 1) throw new Error('prepare failed')
+      },
+    })
+    hosts.push(h)
+
+    const first = h.prepare('syv-ai/a')
+    await preparing
+    const second = h.prepare('syv-ai/a')
+    release()
+    await expect(first).rejects.toThrow('prepare failed')
+    await expect(second).rejects.toThrow('prepare failed')
+    await h.prepare('syv-ai/a')
+
+    expect(attempts).toBe(2)
+  })
+
+  it('invalidates prepared cold work when closing before startup', async () => {
+    const { registry } = await twoVaults()
+    let preparations = 0
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      prepareClone: async () => {
+        preparations++
+      },
+    })
+    hosts.push(h)
+
+    await h.prepare('syv-ai/a')
+    await h.close('syv-ai/a')
+    await h.open('syv-ai/a')
+
+    expect(preparations).toBe(2)
+  })
+
   it('drains a held-back override before switching vaults', async () => {
     const { registry, a } = await twoVaults()
     const heldBackUpdates: string[][] = []
@@ -2346,11 +2399,15 @@ describe('VaultHost', () => {
     const ready = new Promise<void>((resolve) => {
       release = resolve
     })
+    const order: string[] = []
     const h = createVaultHost({
       claims: CLAIMS,
       registry,
-      beforeOpen: () => ready,
-      onSnapshot: () => {},
+      beforeOpen: async () => {
+        order.push('prepare')
+        await ready
+      },
+      onSnapshot: () => order.push('snapshot'),
       onSyncState: () => {},
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
     })
@@ -2368,6 +2425,7 @@ describe('VaultHost', () => {
     release()
     const vault = await opening
     expect(h.active()).toBe(vault)
+    expect(order.indexOf('prepare')).toBeLessThan(order.indexOf('snapshot'))
   })
 
   it('opens a vault and makes it active', async () => {
@@ -2940,6 +2998,119 @@ describe('VaultHost', () => {
     await expect(h.closeAll()).rejects.toThrow(/Could not close all/)
     expect(closedA).toBe(true)
     expect(closedB).toBe(true)
+  })
+
+  it('admits cold preparation once across visible and non-selecting starts', async () => {
+    const { registry } = await twoVaults()
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    let preparations = 0
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const previous = await h.open('syv-ai/a')
+    try {
+      const visible = h.open('syv-ai/b', async () => {
+        preparations++
+        entered()
+        await gate
+      })
+      await started
+      const background = h.getOrOpen('syv-ai/b')
+      expect(h.active()).toBe(previous)
+      release()
+      const [selected, startedRuntime] = await Promise.all([visible, background])
+      expect(selected).toBe(startedRuntime)
+      expect(preparations).toBe(1)
+      expect(h.active()).toBe(selected)
+    } finally {
+      release()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
+  it('lets independent vaults prepare without a global start lock', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    hosts.push(h)
+    await h.open('syv-ai/b')
+    let release!: () => void
+    let entered!: () => void
+    let independentEntered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const blocked = new Promise<void>((resolve) => (entered = resolve))
+    const independent = new Promise<void>((resolve) => (independentEntered = resolve))
+    try {
+      const first = h.open('syv-ai/a', async () => {
+        entered()
+        await gate
+      })
+      await blocked
+      const second = h.open('syv-ai/b', async () => independentEntered())
+      await independent
+      expect(h.active()?.remote).toBe('syv-ai/b')
+      release()
+      await Promise.all([first, second])
+    } finally {
+      release()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
+  it('keeps startup prerequisites when a router supplies cold preparation', async () => {
+    const { registry } = await twoVaults()
+    const order: string[] = []
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      beforeOpen: async () => {
+        order.push('prerequisite')
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    await h.open('syv-ai/a', async () => {
+      order.push('prepare')
+    })
+    expect(order).toEqual(['prerequisite', 'prepare'])
+  })
+
+  it('closes a selected open admitted while cold preparation is pending', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const preparing = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    try {
+      const opening = h.open('syv-ai/a', async () => {
+        entered()
+        await gate
+      })
+      await preparing
+      const closing = h.close('syv-ai/a')
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      release()
+      await Promise.all([opening, closing])
+      expect(h.get('syv-ai/a')).toBeNull()
+      expect(h.active()).toBeNull()
+    } finally {
+      release()
+      await h.closeAll()
+    }
   })
 
   it('serialises concurrent opens rather than racing two vaults into one slot', async () => {

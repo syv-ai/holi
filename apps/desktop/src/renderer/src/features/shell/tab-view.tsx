@@ -63,13 +63,20 @@ export function TabView({
   switch (descriptor?.kind) {
     case undefined:
     case 'new':
-      return <NewTabView key={tab ?? 'none'} onOpen={onOpen} onNewDocument={onNewDocument} />
+      return (
+        <NewTabView
+          key={tab ?? 'none'}
+          visible={visible}
+          onOpen={onOpen}
+          onNewDocument={onNewDocument}
+        />
+      )
     case 'board':
       return <PlanningView onOpenTask={onOpen} visible={visible} focused={focused} />
     case 'graph':
       return <GraphView onOpen={onOpenBeside} reading={reading} displayed={visible} />
     case 'apps':
-      return <AppsView onOpen={onOpen} />
+      return <AppsView visible={visible} onOpen={onOpen} />
     case 'surface': {
       // A tab onto another registered surface: the trust terminal after
       // onboarding, as the agent's surface on its terminal.
@@ -150,7 +157,16 @@ export function TabView({
       )
     case 'doc':
       if (/\.md$/i.test(descriptor.path)) {
-        return <DocumentView key={tab} path={descriptor.path} onOpen={onOpen} onMoved={onMoved} />
+        return (
+          <DocumentView
+            key={tab}
+            path={descriptor.path}
+            onOpen={onOpen}
+            onMoved={onMoved}
+            visible={visible}
+            focused={focused}
+          />
+        )
       }
       // Any other file: css, yaml, json, an image, a PDF.
       if (vaultFiles.some((file) => file.path === descriptor.path)) {

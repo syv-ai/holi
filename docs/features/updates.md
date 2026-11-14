@@ -1,7 +1,7 @@
 # Updates
 
 Holi updates itself. CI builds a signed, notarized macOS app and an x64 Linux deb and AppImage from
-`main` and publishes them as a GitHub release of `syv-ai/holi`; the installed app finds it there, downloads it in the background, and
+`main` (and an unsigned x64 Windows installer, as a dev prerelease only) and publishes them as a GitHub release of `syv-ai/holi`; the installed app finds it there, downloads it in the background, and
 installs it when Holi next quits. There is no update server: the release is the feed, and its notes
 are the release notes. A release's newer skills and hooks are offered to each vault, or brought in
 on open by a vault that asks for that.
@@ -16,9 +16,10 @@ once both have built, the dmg, zip, blockmaps and `latest-mac.yml` with the deb,
 overwrite its assets. Every push keeps its own CI run.
 
 **Every `main` commit also gets a dev prerelease**, `<next patch>-dev.<run number>`, built by the
-same workflow. The mac job creates and publishes it; the Linux job then adds its deb, AppImage and
-`dev-linux.yml` to that release, so a Linux dev client can find a new prerelease a few minutes
-before its feed is there and simply finds it on a later check. Each one contains every commit before it, so a commit whose build failed is covered
+same workflow. The mac job creates and publishes it; the Linux and Windows jobs then add their files to that
+release (the deb, AppImage and `dev-linux.yml`; the NSIS `.exe`, its blockmap and `dev.yml`), so a
+Linux or Windows dev client can find a new prerelease a few minutes before its feed is there and
+simply finds it on a later check. Nothing waits on the Windows job. Each one contains every commit before it, so a commit whose build failed is covered
 by the next one that succeeds. Publishing retries a failed GitHub API call a few times before it
 gives up. When a commit's dev prerelease fails or is cancelled and no newer one exists, the
 workflow opens a single issue labelled `dev-release-failed` (a later failure updates it), and the
@@ -41,6 +42,35 @@ again. The deb declares ALSA (`libasound2t64 | libasound2`) beside electron-buil
 dependencies, without which a clean Ubuntu 24.04 installs Holi but cannot start it. The AppImage
 runs without installing and replaces itself. Ubuntu 24.04 needs `libfuse2t64` to start an AppImage.
 **Open at login** does nothing on Linux, where Electron has no login items.
+
+**Windows is unsigned.** The installer is a one-click, per-user NSIS `Holi-<version>-win-x64.exe`
+(`win:` and `nsis:` in `electron-builder.yml`): no wizard, no administrator prompt, Holi in
+`%LOCALAPPDATA%\Programs\Holi`, Start menu and desktop shortcuts, and Holi started when it
+finishes. Uninstalling from Settings → Apps leaves `%APPDATA%\Holi` (the app's own data) and the vault
+clones in `%USERPROFILE%\Holi`. SmartScreen warns once, on the first install ("More info", then "Run anyway"); an update the
+app downloads itself does not go through the browser, so it does not warn again. SmartScreen
+checks only files marked as downloaded from the web, so an install that skips the warning is one
+without the mark: download the release asset in PowerShell with `Invoke-WebRequest` or with
+`curl.exe`, or tick **Unblock** in the file's Properties after a browser download. Windows 11
+Smart App Control, where it is turned on, blocks unsigned apps outright instead of warning. Like Linux, the
+updater checks the download against the sha512 in the feed file. Windows has only dev builds for
+now: `build-prerelease-win` adds the `.exe`, its `.blockmap` (so the next update downloads only what
+changed) and `dev.yml` to the prerelease, after the mac job created it and with nothing waiting on
+it. electron-updater names a Windows feed after the channel with no platform suffix, so `dev.yml`
+does not collide with `dev-mac.yml` and `dev-linux.yml`. There is no stable Windows feed, so an
+install that never chose a channel follows the dev channel (`defaultUpdateChannel`,
+`src/main/updates/state.ts`); macOS and Linux follow stable. Only a chosen channel is written to
+`updates.json`, so changing another setting never pins an install to the default. Because of that, **Dev prereleases**
+is already on there, and turning it off points a Windows install at a stable release that has no
+Windows file: its checks then fail until it is turned back on. Install is the same **Restart now** /
+**Later** dialog, and `quitAndInstall()` runs the installer and starts Holi again (`--force-run`,
+which electron-updater passes unless the install is silent). Holi needs Git for Windows,
+since it shells out to the system `git`. The job does not rebuild native modules: `node-pty` ships a
+prebuilt `win32-x64` binary that loads in Electron. `.gitattributes` keeps text LF on every checkout:
+the vault seed files are bundled as text and matched by content hash, so a CRLF checkout on the
+Windows runner would ship seeds no vault recognises. `build/installer.nsh` puts a first install in
+`Programs\Holi` (not the folder named after the scoped package) and removes the `holi://`
+registration, which the running app made, on uninstall.
 
 **The updater** is `electron-updater` in main (`src/main/updates/updater.ts`), for packaged apps
 only. It checks ten seconds after launch, every four hours, on focus and on wake. `shouldCheck`
@@ -120,8 +150,9 @@ A dev build reports updates as unsupported.
   overwritten. The dev prerelease uses the CI run number in its version and bundle metadata;
   rerunning the same workflow run reuses that prerelease tag and deliberately replaces its assets.
 - An update is never installed behind someone's back mid-session; it waits for a quit or the button.
-- Stable is the default channel. Dev prereleases are an explicit per-app opt-in, and switching back to
-  stable can install an older version on restart.
+- Stable is the default channel, except on Windows, which has only dev builds and starts there. Dev
+  prereleases are otherwise an explicit per-app opt-in, and switching back to stable can install an
+  older version on restart.
 - A vault's files change only when someone asks: by default the skills offer writes nothing until
   Update skills is chosen. A vault can opt in to updating on open (`autoUpdateSkills`, committed);
   it is off by default, runs exactly the asked-for update, and never starts an agent session.
@@ -153,4 +184,6 @@ A dev build reports updates as unsupported.
   `seed/update-on-open.ts`, `state/skills.ts`: the skills offer, the update on open and its notice
 - `apps/desktop/src/renderer/src/features/settings/pages/updates-page.tsx`: Settings → Updates
 - `apps/desktop/electron-builder.yml`, `.github/workflows/release.yml`: packaging and release;
+  `apps/desktop/build/installer.nsh`: the Windows installer's folder and uninstall cleanup;
+  `.gitattributes`: LF seed files on every checkout;
   `.github/actions/setup/`: the install and build every release job runs first

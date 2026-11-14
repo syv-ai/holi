@@ -5,6 +5,7 @@
  * (`agentPromptKey`) and renders into the view's `promptBox` on that line.
  */
 import { useState } from 'react'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { useAtomValue } from 'jotai'
 import type { Editor } from '@tiptap/react'
 
@@ -36,13 +37,14 @@ export function useDocumentAgentPrompt({
   handlers: React.RefObject<PromptHandlers>
   save: () => Promise<void>
 }) {
+  const activity = useEditorActivity(editor)
   /** Whether the agent prompt is open. */
   const [promptOpen, setPromptOpen] = useState(false)
   /** What the ask prompt opens with: an app command's instruction. */
   const [promptInitial, setPromptInitial] = useState('')
 
   handlers.current.trigger = (pos, instruction) => {
-    if (!editor || !agent.available || isRunLive(agent.run)) return
+    if (!activity.focused || !editor || !agent.available || isRunLive(agent.run)) return
     setPromptInitial(instruction ?? '')
     setAgentPrompt(editor, pos)
     setPromptOpen(true)
@@ -65,11 +67,12 @@ export function useDocumentAgentPrompt({
     const pos = agentPromptPos(editor.state)
     setAgentPrompt(editor, null)
     setPromptOpen(false)
-    editor.commands.focus(pos ?? 'end')
+    if (activity.focused) editor.commands.focus(pos ?? 'end')
   }
 
   async function sendPrompt(request: string) {
-    if (!editor) return
+    if (!activity.focused || !editor) return
+    const current = activity.capture()
     // The prompt's line becomes the marker the agent writes at.
     const { state } = editor
     const pos = agentPromptPos(state)
@@ -82,18 +85,20 @@ export function useDocumentAgentPrompt({
     editor.view.dispatch(tr)
     setPromptOpen(false)
     await save()
-    await agent.start('write', request)
+    await agent.start('write', request, undefined, current)
   }
 
   /** A quick command or the person's own instruction, on a selected passage. */
   async function quickCommand(instruction: string, passage: string) {
+    const current = activity.capture()
     await save()
-    await agent.start('rewrite', instruction, passage)
+    await agent.start('rewrite', instruction, passage, current)
   }
 
   async function createVaultApp() {
+    const current = activity.capture()
     await save()
-    await agent.start('vault-app', 'Creating a vault app')
+    await agent.start('vault-app', 'Creating a vault app', undefined, current)
   }
 
   return { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp }

@@ -9,7 +9,12 @@
 
 // The PTY itself is core's (`main/terminal/pty.ts`), shared with the bottom
 // panel's shells: one place loads node-pty.
-import { defaultSpawnPty, type PtyProcess, type SpawnPty } from '../../../../main/plugin-api'
+import {
+  defaultSpawnPty,
+  signalPty,
+  type PtyProcess,
+  type SpawnPty,
+} from '../../../../main/plugin-api'
 export type { PtyProcess, SpawnPty }
 
 // What a pid is right now lives in core, with the community plugins' servers
@@ -28,6 +33,10 @@ export interface AgentRuntimeDeps {
   spawnPty?: SpawnPty
   /** Liveness/ownership probe used before every signal (see `signal()`). */
   probePid?: (pid: number) => PidState
+  /** The OS to stop a child as; tests run both branches on any machine. */
+  platform?: NodeJS.Platform
+  /** Windows: how a tree is stopped, so a test never runs the real one. */
+  taskkill?: (pid: number) => void
   /** SIGTERM → grace → SIGKILL. */
   killGraceMs?: number
   /** Cap on waiting for the exit event after SIGKILL. */
@@ -56,12 +65,16 @@ export class AgentRuntime {
   private killTimer: ReturnType<typeof setTimeout> | null = null
   private readonly spawnPty: SpawnPty
   private readonly probePid: (pid: number) => PidState
+  private readonly platform: NodeJS.Platform
+  private readonly taskkill: ((pid: number) => void) | undefined
   private readonly killGraceMs: number
   private readonly killBackstopMs: number
 
   constructor(deps: AgentRuntimeDeps = {}) {
     this.spawnPty = deps.spawnPty ?? defaultSpawnPty
     this.probePid = deps.probePid ?? defaultProbePid
+    this.platform = deps.platform ?? process.platform
+    this.taskkill = deps.taskkill
     this.killGraceMs = deps.killGraceMs ?? 2_000
     this.killBackstopMs = deps.killBackstopMs ?? 5_000
   }
@@ -123,7 +136,9 @@ export class AgentRuntime {
    * SIGTERM the child's whole **process group** (node-pty children are session
    * leaders, so `claude`'s helper subprocesses — node sidecars, ripgrep — die
    * with it; a bare pty.kill leaks them), escalating to SIGKILL after the
-   * grace period. Resolves when the child is actually reaped.
+   * grace period. Resolves when the child is actually reaped. On Windows the
+   * first signal already stops the whole tree (`killTree`); there is no
+   * gentler one for a console program.
    */
   async kill(): Promise<void> {
     const pty = this.pty
@@ -164,7 +179,8 @@ export class AgentRuntime {
    *     with it instead of leaking).
    *   - `alive` → a live pid that does not lead its own group, so it cannot be
    *     our node-pty child's session. Signal only the child via node-pty; NEVER
-   *     negate a pid we have not positively identified as ours.
+   *     negate a pid we have not positively identified as ours. (The
+   *     decision itself lives in `signalPty`, `main/terminal/pty.ts`.)
    *   - `gone` → already reaped. Send nothing. There is no one left to signal
    *     and the pid may already belong to someone else.
    * └──────────────────────────────────────────────────────────────────────┘
@@ -174,25 +190,6 @@ export class AgentRuntime {
     // already know it is dead without paying for a probe.
     if (this.pty !== pty) return
 
-    switch (this.probePid(pty.pid)) {
-      case 'group-leader':
-        try {
-          process.kill(-pty.pid, signal) // negative pid = the whole group
-        } catch {
-          // Reaped between the probe and here: the residual race is now bounded
-          // by these two statements rather than by a callback round-trip. The
-          // pid cannot have been *reused* that fast, so this is a plain no-op.
-        }
-        return
-      case 'alive':
-        try {
-          pty.kill(signal)
-        } catch {
-          // raced with exit
-        }
-        return
-      case 'gone':
-        return
-    }
+    signalPty(pty, signal, this.probePid, this.platform, this.taskkill)
   }
 }
