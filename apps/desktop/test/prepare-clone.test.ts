@@ -377,7 +377,7 @@ describe('prepareManagedClone', () => {
     const root = await makeClone(await makeRemote(), 'safety')
     const regular = 'eligible.md'
     const executable = 'script.sh'
-    const unusual = 'odd name\nfile.md'
+    const unusual = process.platform === 'win32' ? 'odd naïve [name] file.md' : 'odd name\nfile.md'
     const staged = 'staged.md'
     const edited = 'edited.md'
     const binary = 'binary.dat'
@@ -387,6 +387,8 @@ describe('prepareManagedClone', () => {
     await writeFile(join(root, regular), 'clean\n')
     await writeFile(join(root, executable), '#!/bin/sh\necho ok\n')
     await chmod(join(root, executable), 0o755)
+    const executableMode = (await stat(join(root, executable))).mode & 0o777
+    if (process.platform !== 'win32') expect(executableMode).toBe(0o755)
     await writeFile(join(root, unusual), 'unusual\n')
     await writeFile(join(root, staged), 'base\n')
     await writeFile(join(root, edited), 'base\n')
@@ -416,7 +418,7 @@ describe('prepareManagedClone', () => {
 
     expect(await readFile(join(root, regular), 'utf8')).toBe('clean\n')
     expect(await readFile(join(root, executable), 'utf8')).toBe('#!/bin/sh\necho ok\n')
-    expect((await stat(join(root, executable))).mode & 0o777).toBe(0o755)
+    expect((await stat(join(root, executable))).mode & 0o777).toBe(executableMode)
     expect(await readFile(join(root, unusual), 'utf8')).toBe('unusual\n')
     expect(await readFile(join(root, staged))).toEqual(stagedBefore)
     expect(await readFile(join(root, edited), 'utf8')).toBe('user edit\r\n')

@@ -138,6 +138,27 @@ jobs:
       - name: Run Git for Windows helper fixtures
         run: pnpm --filter @holi/desktop exec vitest run test/windows-helper-portability.test.ts --project node
 
+  windows-clone-preparation:
+    name: Windows clone preparation
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run clone preservation and seed-update fixtures on Windows Git
+        run: pnpm --filter @holi/desktop exec vitest run test/prepare-clone.test.ts --project node
+
   test:
     name: Test
     # macOS on purpose: the tests encode the filesystem Holi ships on (macOS and
