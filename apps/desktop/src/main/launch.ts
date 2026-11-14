@@ -22,6 +22,7 @@ import {
 } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { readFileSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { win32 } from 'node:path'
 import { resolveBin, type Platform } from './bin'
@@ -86,10 +87,27 @@ export interface LaunchOptions {
   env?: NodeJS.ProcessEnv
   /** Tests inject the lookup of a bare name. */
   resolve?: (name: string, env: NodeJS.ProcessEnv) => string | null
+  /** Tests may supply the optional Windows runtime without installing it. */
+  bundledWindowsNode?: () => string | null
+  /** Tests exercise Electron's fallback branch without importing Electron. */
+  electronRuntime?: boolean
 }
 
 /** A bare name: no folder in it, so only the `PATH` can say where it is. */
 const isBare = (name: string): boolean => !/[\\/]/.test(name) && win32.extname(name) === ''
+
+/** Resolve the optional runtime without making it a requirement on other OSes. */
+function resolveBundledWindowsNode(): string | null {
+  try {
+    const file = createRequire(import.meta.url).resolve('node-win-x64/bin/node.exe')
+    return file.replace(
+      /(.*[\\/])resources([\\/])app\.asar([\\/])/i,
+      '$1resources$2app.asar.unpacked$3',
+    )
+  } catch {
+    return null
+  }
+}
 
 /**
  * What to run for `file` and `args`. Windows first resolves bare names and
@@ -99,8 +117,17 @@ const isBare = (name: string): boolean => !/[\\/]/.test(name) && win32.extname(n
 export function launchPlan(
   file: string,
   args: readonly string[],
-  { platform = process.platform, env = process.env, resolve }: LaunchOptions = {},
+  {
+    platform = process.platform,
+    env = process.env,
+    resolve,
+    bundledWindowsNode = resolveBundledWindowsNode,
+    electronRuntime = process.versions.electron !== undefined,
+  }: LaunchOptions = {},
 ): Launch {
+  if ([file, ...args].some((value) => value.includes('\0'))) {
+    throw new Error('Program paths and arguments cannot contain NUL characters.')
+  }
   if (platform !== 'win32') return { file, args: [...args], verbatim: false }
   const look = resolve ?? ((name, e) => resolveBin(name, e, { platform }))
   const target = isBare(file) ? (look(file, env) ?? file) : file
@@ -120,12 +147,20 @@ export function launchPlan(
         return false
       }
     }
+    const bundledNode = electronRuntime ? bundledWindowsNode() : null
     const node = isFile(colocatedNode)
       ? colocatedNode
       : callerNode && /\.(?:exe|com)$/i.test(callerNode)
         ? callerNode
-        : process.execPath
-    const useElectron = node === process.execPath && process.versions.electron !== undefined
+        : electronRuntime
+          ? bundledNode
+          : process.execPath
+    if (!node || (node === bundledNode && !isFile(node))) {
+      throw new Error(
+        'The bundled Windows Node runtime is missing. Reinstall Holi to use this interactive CLI.',
+      )
+    }
+    const useElectron = node === process.execPath && electronRuntime
     return {
       file: node,
       args: [script, ...args],

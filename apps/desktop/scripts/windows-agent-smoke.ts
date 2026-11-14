@@ -87,7 +87,6 @@ async function run() {
     cliBody,
     `
 const fs=require('node:fs'),cp=require('node:child_process');
-if(Object.keys(process.env).some(k=>k.toUpperCase().startsWith('HOLI_OWNED_PROCESS_PTY_')))throw new Error('private launch transport leaked');
 module.exports=function(){const args=process.argv.slice(2);
 if(args[0]==='--pty') {
  if(process.platform==='win32'){
@@ -125,8 +124,9 @@ if(args[0]==='--pty') {
   // Force the same fallback inside a genuine Electron GUI parent, not Node masquerading as it.
   const launch = { platform: 'win32' as const, resolve: () => null }
   const plan = launchPlan(shim, args, { ...launch, env })
-  assert.equal(plan.file, process.execPath)
-  assert.equal(plan.env?.ELECTRON_RUN_AS_NODE, '1')
+  assert.notEqual(plan.file, process.execPath)
+  assert.match(plan.file, /node-win-x64[\\/]bin[\\/]node\.exe$/i)
+  assert.equal(plan.env?.ELECTRON_RUN_AS_NODE, undefined)
   const child = spawnProgram(
     shim,
     args,
@@ -149,7 +149,9 @@ if(args[0]==='--pty') {
   assert.deepEqual(JSON.parse(stdout), args)
   assert.equal(env.ELECTRON_RUN_AS_NODE, undefined)
   assert.equal(process.env.ELECTRON_RUN_AS_NODE, undefined)
-  checks.push('GUI Electron parent launches npm JS with exact argv and child-only runtime flag')
+  checks.push(
+    'GUI Electron parent selects bundled genuine Node with exact argv and no Electron runtime flag',
+  )
   const result = await new Promise<string>((resolve, reject) =>
     execProgram(
       shim,
@@ -208,11 +210,28 @@ if(args[0]==='--pty') {
     for (const key of Object.keys(fallbackEnv))
       if (key.toUpperCase() === 'PATH') delete fallbackEnv[key]
     fallbackEnv.Path = root
-    for (const [entryShim, entryName] of [
-      [shim, 'CommonJS'],
-      [esmShim, 'ESM with top-level await'],
-    ] as const) {
-      assert.equal(launchPlan(entryShim, [], { env: fallbackEnv }).env?.ELECTRON_RUN_AS_NODE, '1')
+    const packagedNode = process.env.HOLI_QA372_PACKAGED_NODE
+    const runtimeCases = [
+      { bin: shim, args: ['--pty', ...args], name: 'bundled Node CommonJS' },
+      { bin: esmShim, args: ['--pty', ...args], name: 'bundled Node ESM with top-level await' },
+      ...(packagedNode
+        ? [
+            { bin: packagedNode, args: [script, '--pty', ...args], name: 'packaged Node CommonJS' },
+            {
+              bin: packagedNode,
+              args: [esmScript, '--pty', ...args],
+              name: 'packaged Node ESM with top-level await',
+            },
+          ]
+        : []),
+    ]
+    for (const { bin: runtimeBin, args: runtimeArgs, name: entryName } of runtimeCases) {
+      if (runtimeBin === shim || runtimeBin === esmShim) {
+        const fallbackPlan = launchPlan(runtimeBin, [], { env: fallbackEnv })
+        assert.notEqual(fallbackPlan.file, process.execPath)
+        assert.match(fallbackPlan.file, /node-win-x64[\\/]bin[\\/]node\.exe$/i)
+        assert.equal(fallbackPlan.env?.ELECTRON_RUN_AS_NODE, undefined)
+      }
       const fallbackRuntime = new AgentRuntime()
       active.push(fallbackRuntime)
       let fallbackOutput = ''
@@ -221,8 +240,8 @@ if(args[0]==='--pty') {
         output += data
       })
       fallbackRuntime.start({
-        bin: entryShim,
-        args: ['--pty', ...args],
+        bin: runtimeBin,
+        args: runtimeArgs,
         cwd: vault,
         env: fallbackEnv,
         cols: 100,
@@ -243,7 +262,7 @@ if(args[0]==='--pty') {
       await fallbackRuntime.kill()
       await until(() => fallbackPids.every((pid) => !alive(pid)))
       checks.push(
-        `Electron-as-Node ${entryName} fallback restores console stdin, preserves argv, entry semantics and inherited stdin, responds to input, resizes, hides private transport and stops its full ConPTY tree`,
+        `${entryName} preserves argv, entry semantics and inherited stdin, responds to input, resizes and stops its full ConPTY tree`,
       )
     }
   }

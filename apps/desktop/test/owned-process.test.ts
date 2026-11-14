@@ -3,10 +3,8 @@ import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getSystemErrorName } from 'node:util'
-import { gunzipSync } from 'node:zlib'
 import { describe, expect, it, onTestFailed } from 'vitest'
-import { spawnOwnedProgram, windowsPtyFallbackPlan } from '../src/main/owned-process'
-import type { Launch } from '../src/main/launch'
+import { spawnOwnedProgram } from '../src/main/owned-process'
 
 const windows = process.platform === 'win32'
 
@@ -59,74 +57,6 @@ function completion(child: ReturnType<typeof spawnOwnedProgram>): Promise<number
     child.once('close', (code) => resolve(code))
   })
 }
-
-describe('Windows PTY fallback plan', () => {
-  it('keeps the child launch in compressed private environment chunks', () => {
-    const env = {
-      PATH: 'C:\\Windows',
-      holi_owned_process_trace: '1',
-      holi_owned_process_pty_mode: 'spoofed',
-      HOLI_OWNED_PROCESS_PTY_CHUNK_0: 'spoofed',
-    }
-    const launch: Launch = {
-      file: 'C:\\Program Files\\Holi\\electron.exe',
-      args: ['C:\\cli\\entry.js', 'two words', '', '☃', 'x'.repeat(12_000)],
-      verbatim: false,
-      env: { ELECTRON_RUN_AS_NODE: '1' },
-    }
-    const plan = windowsPtyFallbackPlan(launch, { cwd: 'C:\\vault', env })
-    expect(plan.file.toLowerCase()).toMatch(
-      /\\system32\\windowspowershell\\v1\.0\\powershell\.exe$/,
-    )
-    expect(plan.cwd.toLowerCase()).toMatch(/\\system32\\windowspowershell\\v1\.0$/)
-    expect(plan.args.slice(0, 3)).toEqual(['-NoLogo', '-NoProfile', '-NonInteractive'])
-    expect(plan.args[3]).toBe('-EncodedCommand')
-    const fullCommand = [plan.file, ...plan.args]
-      .map((arg) => (/[\s"]/u.test(arg) ? `"${arg}"` : arg))
-      .join(' ')
-    expect(fullCommand.length).toBeLessThan(32_767)
-    expect(plan.env.HOLI_OWNED_PROCESS_PTY_MODE).toBe('environment')
-    expect(plan.env.HOLI_OWNED_PROCESS_PTY_COUNT).toBeDefined()
-    const count = Number(plan.env.HOLI_OWNED_PROCESS_PTY_COUNT)
-    const chunks = Array.from(
-      { length: count },
-      (_, index) => plan.env[`HOLI_OWNED_PROCESS_PTY_CHUNK_${index}`]!,
-    )
-    expect(chunks.every((chunk) => chunk.length <= 29_000)).toBe(true)
-    const childSpec = JSON.parse(
-      gunzipSync(Buffer.from(chunks.join(''), 'base64')).toString('utf8'),
-    )
-    expect(childSpec).toMatchObject({
-      bin: launch.file,
-      args: launch.args,
-      cwd: 'C:\\vault',
-      env: { PATH: 'C:\\Windows', ELECTRON_RUN_AS_NODE: '1' },
-      stopFile: '',
-    })
-    expect(
-      Object.keys(childSpec.env).some((key) =>
-        key.toUpperCase().startsWith('HOLI_OWNED_PROCESS_PTY_'),
-      ),
-    ).toBe(false)
-    expect(
-      Object.keys(childSpec.env).some((key) => key.toUpperCase() === 'HOLI_OWNED_PROCESS_TRACE'),
-    ).toBe(false)
-    expect(plan.env.holi_owned_process_trace).toBe('1')
-    expect(plan.env.holi_owned_process_pty_mode).toBeUndefined()
-    expect(plan.env.HOLI_OWNED_PROCESS_PTY_CHUNK_0).not.toBe('spoofed')
-    expect(plan.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
-    expect(env.holi_owned_process_pty_mode).toBe('spoofed')
-  })
-
-  it('rejects NUL in a native launch argument', () => {
-    expect(() =>
-      windowsPtyFallbackPlan(
-        { file: 'electron.exe', args: ['entry.js', 'bad\0arg'], verbatim: false },
-        { cwd: 'C:\\vault', env: {} },
-      ),
-    ).toThrow(/NUL/)
-  })
-})
 
 describe('spawnOwnedProgram', () => {
   it('preserves exact argv and output', async () => {

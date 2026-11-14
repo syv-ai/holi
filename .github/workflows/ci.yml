@@ -154,6 +154,27 @@ jobs:
           $env:ELECTRON_RUN_AS_NODE = '1'
           pnpm --filter @holi/desktop exec electron scripts/check-node-pty.cjs
 
+      - name: Build production desktop output
+        run: pnpm --filter @holi/desktop build
+
+      - name: Check space for unpacked Windows package
+        shell: pwsh
+        run: |
+          $drive = [System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)
+          $available = (Get-PSDrive -Name $drive.TrimEnd('\\').TrimEnd(':')).Free
+          if ($available -lt 8GB) { throw "Insufficient free space for packaged Windows runtime verification: $available bytes available; 8 GiB required" }
+          Write-Host "Available space before packaging: $available bytes"
+
+      - name: Package unpacked Windows app for runtime verification
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'holi-qa372-windows-package'
+          pnpm --filter @holi/desktop exec electron-builder --win --dir --publish never --config electron-builder.yml --config.directories.output="$output" --config.npmRebuild=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify packaged Windows Node runtime
+        run: node apps/desktop/scripts/check-packaged-windows-node.cjs "${{ runner.temp }}/holi-qa372-windows-package" "${{ runner.temp }}/windows-agent-evidence/packaged-node.json"
+
       - name: Exercise disposable Electron and real ConPTY lifecycle
         run: pnpm --filter @holi/desktop exec node scripts/run-windows-agent-smoke.mjs "${{ runner.temp }}/windows-agent-evidence"
 

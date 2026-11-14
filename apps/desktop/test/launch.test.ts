@@ -11,6 +11,14 @@ const WIN = { platform: 'win32' } as const
 const npmShim = () => readFile(join(import.meta.dirname, 'fixtures/npm-node-shim.cmd'), 'utf8')
 
 describe('launchPlan', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'rejects NUL before native launch on %s',
+    (platform) => {
+      expect(() => launchPlan('tool\0', [], { platform })).toThrow('NUL')
+      expect(() => launchPlan('tool', ['before\0after'], { platform })).toThrow('NUL')
+    },
+  )
+
   it('leaves every program alone on macOS and Linux, a .cmd by name included', () => {
     for (const platform of ['darwin', 'linux'] as const) {
       expect(launchPlan('/x/claude.cmd', ['a b', '--c'], { platform })).toEqual({
@@ -73,6 +81,49 @@ describe('launchPlan', () => {
       args: [script, 'line one\r\nline two', '%PATH%', ''],
       verbatim: false,
     })
+  })
+
+  it('uses the bundled Windows runtime after the local and PATH Node choices', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-windows-runtime-'))
+    dirs.push(dir)
+    await mkdir(join(dir, 'node_modules', 'fixture'), { recursive: true })
+    const script = join(dir, 'node_modules', 'fixture', 'cli.js')
+    await writeFile(script, '')
+    const shim = join(dir, 'fixture.cmd')
+    await writeFile(shim, await npmShim())
+    const bundled = join(
+      dir,
+      'app.asar.unpacked',
+      'node_modules',
+      'node-win-x64',
+      'bin',
+      'node.exe',
+    )
+    await mkdir(join(dir, 'app.asar.unpacked', 'node_modules', 'node-win-x64', 'bin'), {
+      recursive: true,
+    })
+    await writeFile(bundled, '')
+    const resolve = () => null
+    expect(
+      launchPlan(shim, ['x'], {
+        ...WIN,
+        resolve,
+        bundledWindowsNode: () => bundled,
+        electronRuntime: true,
+      }),
+    ).toEqual({
+      file: bundled,
+      args: [script, 'x'],
+      verbatim: false,
+    })
+    expect(() =>
+      launchPlan(shim, [], {
+        ...WIN,
+        resolve,
+        bundledWindowsNode: () => null,
+        electronRuntime: true,
+      }),
+    ).toThrow(/bundled Windows Node runtime is missing/)
   })
 
   it('does not bypass custom batch work surrounding an npm entrypoint', async () => {

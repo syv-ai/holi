@@ -7,7 +7,6 @@
  * real spawn path only; tests inject a fake PTY and never touch it.
  */
 import { commandLine, launchPlan } from '../launch'
-import { windowsPtyFallbackPlan } from '../owned-process'
 import { defaultProbePid, killTree, type PidState, type Taskkill } from '../process-group'
 
 /** The slice of node-pty's IPty Holi depends on (tests implement it directly). */
@@ -35,18 +34,9 @@ export type SpawnPty = (file: string, args: string[], opts: SpawnPtyOptions) => 
 export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
   const pty = require('node-pty') as typeof import('node-pty')
   // Canonical npm Node shims resolve to their script; opaque Windows batches
-  // use cmd.exe. The Node fallback also needs a console parent on ConPTY.
+  // use cmd.exe. Windows fallback Node is a genuine runtime with interactive stdio.
   const launch = launchPlan(file, args, { env: opts.env })
   const env = launch.env ? { ...opts.env, ...launch.env } : opts.env
-  if (process.platform === 'win32' && launch.env?.ELECTRON_RUN_AS_NODE === '1') {
-    const fallback = windowsPtyFallbackPlan(launch, opts)
-    return pty.spawn(fallback.file, fallback.args, {
-      name: 'xterm-256color',
-      ...opts,
-      cwd: fallback.cwd,
-      env: fallback.env as Record<string, string>,
-    }) as unknown as PtyProcess
-  }
   return pty.spawn(launch.file, commandLine(launch), {
     name: 'xterm-256color',
     ...opts,
