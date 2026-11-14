@@ -25,7 +25,13 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
-async function rig() {
+async function rig(
+  options: {
+    capture?: () => Promise<Buffer | null>
+    captureCurrent?: () => boolean
+    savePreview?: () => Promise<void>
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'holi-apps-call-'))
   dirs.push(root)
   // A real vault carries its seeded files: the agent surface is there to refuse.
@@ -61,8 +67,13 @@ async function rig() {
         status: async () => ({ codeHash: '', affordances: [], expiresAt: null }),
         grant: async () => true,
       },
-      previews: { read: async () => null, save: async () => {}, forget: async () => {} },
-      capture: async () => null,
+      previews: {
+        read: async () => null,
+        save: async () => options.savePreview?.(),
+        forget: async () => {},
+      },
+      capture: async () => (options.capture ? options.capture() : null),
+      captureCurrent: options.captureCurrent ?? (() => true),
     }),
   )
   registry.register(['store'], storeCapabilities())
@@ -93,6 +104,32 @@ async function rig() {
 }
 
 describe('apps.call', () => {
+  it('discards a preview capture when its presentation ends during capture', async () => {
+    let resolveCapture!: (value: Buffer | null) => void
+    let current = true
+    let saves = 0
+    const pending = new Promise<Buffer | null>((resolve) => {
+      resolveCapture = resolve
+    })
+    const { ui } = await rig({
+      capture: () => pending,
+      captureCurrent: () => current,
+      savePreview: async () => {
+        saves += 1
+      },
+    })
+
+    const result = ui('apps.capturePreview', {
+      bundle: 'Tracker.app',
+      rect: { x: 0, y: 0, width: 100, height: 100 },
+    })
+    current = false
+    resolveCapture(Buffer.from('jpeg'))
+
+    await expect(result).resolves.toEqual({ saved: false })
+    expect(saves).toBe(0)
+  })
+
   it('reads an ordinary note', async () => {
     const { call } = await rig()
     expect(await call('docs.read', { path: 'inbox.md' })).toContain('# Inbox')
