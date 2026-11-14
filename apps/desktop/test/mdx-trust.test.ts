@@ -1,8 +1,22 @@
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { canonicalGitHubRemote, createMdxTrustStore } from '../src/main/mdx-trust'
+
+// Force an asynchronous rename to yield before submitting its filesystem work.
+// The production ownership guard and synchronous atomic commit must not yield.
+vi.mock('node:fs/promises', async (original) => {
+  const actual = await original<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      await Promise.resolve()
+      return actual.rename(...args)
+    },
+  }
+})
 
 let dir: string
 let file: string
@@ -94,4 +108,22 @@ it('treats an unreadable directory as an error, not an approved or repairable tr
   const store = createMdxTrustStore(file)
   await expect(store.status(alice)).rejects.toThrow()
   await expect(store.approve(alice)).rejects.toThrow()
+})
+
+it('atomically commits before an owner change queued by the final guard can run', async () => {
+  const store = createMdxTrustStore(file)
+  let owned = true
+  let committedBeforeDeparture = false
+  await store.approve(alice, () => {
+    queueMicrotask(() => {
+      committedBeforeDeparture = existsSync(file)
+      owned = false
+    })
+    return owned
+  })
+  expect(owned).toBe(false)
+  expect(committedBeforeDeparture).toBe(true)
+  // Departure after the atomic commit cannot turn prior explicit consent into
+  // a departure-spanning write. The committed grant belonged to its live owner.
+  expect(await store.status(alice)).toBe(true)
 })

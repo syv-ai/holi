@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { renameSync } from 'node:fs'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 const VERSION = 1 as const
@@ -91,7 +92,9 @@ export function createMdxTrustStore(file: string): MdxTrustStore {
       try {
         await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
         if (!stillOwned()) throw new Error('MDX trust context changed')
-        await rename(temporary, file)
+        // Do not yield between the final ownership guard and the atomic commit.
+        // An async rename can still be waiting in libuv after ownership expires.
+        renameSync(temporary, file)
       } finally {
         await rm(temporary, { force: true }).catch(() => undefined)
       }

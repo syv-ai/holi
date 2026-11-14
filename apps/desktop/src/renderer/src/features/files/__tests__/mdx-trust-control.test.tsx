@@ -243,3 +243,56 @@ test('a stale main context requires a fresh confirmation instead of retrying its
     context: 'replacement-context',
   })
 })
+
+test('a pending revoke refreshes both split views after focus moves to its peer', async () => {
+  status.mockResolvedValue({ ...unapproved, trusted: true })
+  const action = deferred<{ trusted: boolean }>()
+  revoke.mockReturnValueOnce(action.promise)
+  const store = createStore()
+  store.set(activeRemoteAtom, 'fixture/vault')
+  store.set(sessionAtom, { login: 'fixture-person' })
+  const split = (firstFocused: boolean) => (
+    <Provider store={store}>
+      <MdxTrustControl remote="fixture/vault" path="first.mdx" visible focused={firstFocused} />
+      <MdxTrustControl remote="fixture/vault" path="second.mdx" visible focused={!firstFocused} />
+    </Provider>
+  )
+  const result = render(split(true))
+  await waitFor(() => expect(screen.getAllByText('Approved')).toHaveLength(2))
+  await userEvent.click(screen.getAllByRole('button', { name: 'Revoke MDX trust' })[0]!)
+  result.rerender(split(false))
+  await waitFor(() => expect(screen.getAllByText('Approved')).toHaveLength(2))
+  status.mockResolvedValue(unapproved)
+  await act(async () => action.resolve({ trusted: false }))
+  await waitFor(() => expect(screen.getAllByText('Not approved')).toHaveLength(2))
+})
+
+test('an approval refreshes its peer even when the originating source view unmounts', async () => {
+  const action = deferred<{ trusted: boolean }>()
+  approve.mockReturnValueOnce(action.promise)
+  const store = createStore()
+  store.set(activeRemoteAtom, 'fixture/vault')
+  store.set(sessionAtom, { login: 'fixture-person' })
+  const split = (firstVisible: boolean) => (
+    <Provider store={store}>
+      {firstVisible ? (
+        <MdxTrustControl key="first" remote="fixture/vault" path="first.mdx" visible focused />
+      ) : null}
+      <MdxTrustControl
+        key="second"
+        remote="fixture/vault"
+        path="second.mdx"
+        visible
+        focused={false}
+      />
+    </Provider>
+  )
+  const result = render(split(true))
+  await waitFor(() => expect(screen.getAllByText('Not approved')).toHaveLength(2))
+  await userEvent.click(screen.getAllByRole('button', { name: 'Review MDX trust' })[0]!)
+  await userEvent.click(screen.getByRole('button', { name: 'Approve vault' }))
+  result.rerender(split(false))
+  status.mockResolvedValue({ ...unapproved, trusted: true })
+  await act(async () => action.resolve({ trusted: true }))
+  await screen.findByText('Approved')
+})

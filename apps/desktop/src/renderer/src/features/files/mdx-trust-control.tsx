@@ -36,8 +36,14 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
     () => ({ remote, path, revision, viewer, visible, focused }),
     [remote, path, revision, viewer, visible, focused],
   )
-  const liveOwner = useRef(owner)
+  const liveOwner = useRef<typeof owner | null>(owner)
   liveOwner.current = owner
+  useEffect(() => {
+    liveOwner.current = owner
+    return () => {
+      if (liveOwner.current === owner) liveOwner.current = null
+    }
+  }, [owner])
   const [load, setLoad] = useState<Load | null>(null)
   const [confirmation, setConfirmation] = useState<{ owner: object; context: string } | null>(null)
   const [failure, setFailure] = useState<{ owner: object; message: string } | null>(null)
@@ -102,16 +108,13 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
     try {
       if (approve) await trpc.mdxTrust.approve.mutate({ remote, context })
       else await trpc.mdxTrust.revoke.mutate({ remote, context })
-      if (current()) {
-        setConfirmation(null)
-        refresh((value) => value + 1)
-      }
+      if (current()) setConfirmation(null)
     } catch (cause) {
-      if (current()) {
-        setFailure({ owner, message: errorMessage(cause) })
-        refresh((value) => value + 1)
-      }
+      if (current()) setFailure({ owner, message: errorMessage(cause) })
     } finally {
+      // A committed change is vault-wide even if its originating source view
+      // lost focus, changed paths or unmounted while the request was pending.
+      refresh((value) => value + 1)
       if (request.current === pendingRequest) {
         request.current = null
         setPendingOwner(null)
