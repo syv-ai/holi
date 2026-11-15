@@ -240,6 +240,88 @@ after diagram`
 const describeTypst = describe.skipIf((await resolveTypstBin()) === null)
 
 describeTypst('renderPdf (integration — needs typst; first run fetches cmarker)', () => {
+  it('keeps table reference URIs contextual, ordered, and identical to ordinary Markdown', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(join(templateDir, 'assets'), { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+
+    const table = (link: string) =>
+      writeMarkdownCaptionEnvelope(`| A |\n| --- |\n| ${link} |`, 'Edge caption.')
+    const scenarios = [
+      {
+        name: 'escaped-code',
+        source: `${table('[code]')}\n\n\`\`\`markdown\n[code]: <https://example.com/hidden\\>a>\n\`\`\`\n`,
+        uris: [],
+      },
+      {
+        name: 'duplicate-order',
+        source: `${String.raw`[ref]: <https://example.com/first\>a>`}\n\n${table('[ref]')}\n\n[ref]: https://example.com/second\n`,
+        uris: ['https://example.com/first>a'],
+      },
+      {
+        name: 'reverse-duplicate-order',
+        source: `[ref]: https://example.com/second\n\n${table('[ref]')}\n\n[ref]: <https://example.com/first\\>a>\n`,
+        uris: ['https://example.com/second'],
+      },
+      {
+        name: 'html-definition',
+        source: `${table('[html]')}\n\n<div>\n[html]: <https://example.com/html\\>a>\n</div>\n`,
+        uris: [],
+      },
+      {
+        name: 'html-comment-definition',
+        source: `${table('[comment]')}\n\n<!--\n[comment]: <https://example.com/comment\\>a>\n-->\n`,
+        uris: [],
+      },
+      {
+        name: 'indented-code-definition',
+        source: `${table('[code]')}\n\n    [code]: <https://example.com/code\\>a>\n`,
+        uris: [],
+      },
+      {
+        name: 'quoted-definition',
+        source: `${table('[ref]')}\n\n> [ref]: <https://example.com/quoted\\>a>\n`,
+        uris: ['https://example.com/quoted>a'],
+      },
+      {
+        name: 'list-definition',
+        source: `${table('[ref]')}\n\n- [ref]: <https://example.com/list\\>a>\n`,
+        uris: ['https://example.com/list>a'],
+      },
+      {
+        name: 'ordinary-table-parity',
+        source: `| A |\n| --- |\n| [ref] |\n\n[ref]: <https://example.com/quoted\\>a>\n`,
+        uris: ['https://example.com/quoted>a'],
+      },
+    ]
+
+    for (const scenario of scenarios) {
+      const notePath = join(root, `${scenario.name}.md`)
+      const outPath = join(root, `${scenario.name}.pdf`)
+      await writeFile(notePath, scenario.source)
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      const pdf = (await readFile(outPath)).toString('latin1')
+      const uris = [...pdf.matchAll(/\/URI\s*\((.*?)\)/g)].map((match) => match[1])
+      expect(uris, scenario.name).toEqual(scenario.uris)
+      const pages = await readPdfPages(outPath)
+      const text = pages.flatMap((page) => page.runs.map((run) => run.text)).join(' ')
+      if (scenario.name !== 'ordinary-table-parity') {
+        expect(text.replace(/\s+/g, ' ').match(/Edge caption\./g), scenario.name).toHaveLength(1)
+      }
+    }
+  })
+
   it('renders a real markdown note through the Plain template to a %PDF', async () => {
     const typst = await resolveTypstBin()
     if (typst === null) return // no typst on this machine — skip, don't fail

@@ -55,6 +55,45 @@ describe('reference definition normalization', () => {
     expect(definitions).toContain('<https://example.com/a\\>b>')
   })
 
+  it('parses escaped-angle definitions in context and preserves first-definition precedence', () => {
+    const captioned = (link: string) =>
+      writeMarkdownCaptionEnvelope(`| A |\n| --- |\n| ${link} |`, 'Edge caption.')
+    const fenced =
+      captioned('[code]') + '\n\n```markdown\n[code]: <https://example.com/hidden\\>a>\n```\n'
+    expect(readMarkdownReferenceDefinitions(fenced)).toBe('')
+
+    const first = String.raw`[ref]: <https://example.com/first\>a>`
+    const duplicate = `${first}\n\n${captioned('[ref]')}\n\n[ref]: https://example.com/second\n`
+    expect(readMarkdownReferenceDefinitions(duplicate)).toBe(
+      `\n\n${first}\n[ref]: https://example.com/second`,
+    )
+
+    const quoted = captioned('[ref]') + '\n\n> [ref]: <https://example.com/quoted\\>a>\n'
+    expect(readMarkdownReferenceDefinitions(quoted)).toContain(
+      String.raw`[ref]: <https://example.com/quoted\>a>`,
+    )
+
+    const list = captioned('[ref]') + '\n\n- [ref]: <https://example.com/list\\>a>\n'
+    expect(readMarkdownReferenceDefinitions(list)).toContain(
+      String.raw`[ref]: <https://example.com/list\>a>`,
+    )
+  })
+
+  it('does not extract escaped-angle definitions from HTML or indented code', () => {
+    const source = [
+      '<div>',
+      String.raw`[html]: <https://example.com/html\>a>`,
+      '</div>',
+      '',
+      '<!--',
+      String.raw`[comment]: <https://example.com/comment\>a>`,
+      '-->',
+      '',
+      String.raw`    [indented]: <https://example.com/code\>a>`,
+    ].join('\n')
+    expect(readMarkdownReferenceDefinitions(source)).toBe('')
+  })
+
   it('removes container markers, preserves escapes, and keeps duplicate source order', () => {
     const source = String.raw`> [target]:
 >   https://example.org/destination

@@ -27,7 +27,11 @@ export interface MarkdownTableCaption {
  * can span blockquote/list lines whose markers are not part of its value. */
 export function readMarkdownReferenceDefinitions(markdown: string): string {
   const body = splitFrontmatter(markdown).body
-  const tree = markdownParser.parse(body)
+  // Lezer does not recognize `\\>` inside an angle destination. Replace it
+  // with an equally sized escaped character while parsing so the closing `>`
+  // remains structural; source offsets still map directly to `body`.
+  const parserInput = body.replace(/\\>/g, '\\x')
+  const tree = markdownParser.parse(parserInput)
   const definitions: string[] = []
   const quoteMarks: { from: number; to: number }[] = []
   tree.iterate({
@@ -69,14 +73,6 @@ export function readMarkdownReferenceDefinitions(markdown: string): string {
       if (['FencedCode', 'CodeBlock', 'HTMLBlock', 'HTMLTag'].includes(node.name)) return false
     },
   })
-  // Lezer currently drops a definition whose angle destination escapes `>`.
-  // Preserve these valid single-line definitions directly from source so the
-  // same destination remains visible to cmarker after table isolation.
-  const escapedAngleDefinition = /^ {0,3}(\[[^\]\n]+\]:\s*<[^\n]*\\>[^\n]*>[^\n]*)$/gm
-  for (const match of body.matchAll(escapedAngleDefinition)) {
-    const definition = match[1]
-    if (definition !== undefined) definitions.push(definition)
-  }
   return definitions.length === 0 ? '' : `\n\n${definitions.join('\n')}`
 }
 
