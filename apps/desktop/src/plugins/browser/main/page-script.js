@@ -350,17 +350,98 @@
   let vimField = null
   let verticalColumn = null
   const vimTypes = new Set(['text', 'search', 'url', 'tel'])
+  const plainHost = (el) => {
+    if (
+      !(el instanceof HTMLElement) ||
+      el.getAttribute('contenteditable')?.toLowerCase() !== 'plaintext-only' ||
+      ![...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE) ||
+      /[\r\n]/u.test(el.textContent)
+    )
+      return false
+    for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+      const editable = parent.getAttribute('contenteditable')?.toLowerCase()
+      if (editable === 'true' || editable === 'plaintext-only') return false
+    }
+    return true
+  }
   const vimEligible = (el) =>
-    el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && vimTypes.has(el.type))
-  const eligibleNow = () =>
-    vimEnabled &&
-    vimField !== null &&
-    document.activeElement === vimField &&
-    vimField.isConnected &&
-    !vimField.disabled &&
-    !vimField.readOnly &&
-    vimEligible(vimField) &&
-    vimField.getRootNode() === document
+    el instanceof HTMLTextAreaElement ||
+    (el instanceof HTMLInputElement && vimTypes.has(el.type)) ||
+    plainHost(el)
+  const eligibleNow = () => {
+    const eligible =
+      vimEnabled &&
+      vimField !== null &&
+      document.activeElement === vimField &&
+      vimField.isConnected &&
+      !vimField.disabled &&
+      !vimField.readOnly &&
+      vimEligible(vimField) &&
+      vimField.getRootNode() === document &&
+      (!plainHost(vimField) || selectionFor(vimField) !== null)
+    if (!eligible) {
+      vimMode = 'insert'
+      verticalColumn = null
+    }
+    return eligible
+  }
+  const selectionFor = (host) => {
+    if (!plainHost(host)) return null
+    const selection = host.ownerDocument.getSelection()
+    if (
+      !selection ||
+      !selection.anchorNode ||
+      !selection.focusNode ||
+      (!host.contains(selection.anchorNode) && selection.anchorNode !== host) ||
+      (!host.contains(selection.focusNode) && selection.focusNode !== host)
+    )
+      return null
+    const offsetOf = (node, offset) => {
+      let total = 0
+      for (const child of host.childNodes) {
+        if (child === node) return total + (node.nodeType === Node.TEXT_NODE ? offset : 0)
+        total += child.textContent.length
+      }
+      return node === host
+        ? [...host.childNodes]
+            .slice(0, offset)
+            .reduce((n, child) => n + child.textContent.length, 0)
+        : null
+    }
+    const range = selection.getRangeAt(0)
+    const start = offsetOf(range.startContainer, range.startOffset)
+    const end = offsetOf(range.endContainer, range.endOffset)
+    return start === null || end === null ? null : { selection, start, end }
+  }
+  const placeCaret = (host, offset) => {
+    let remaining = Math.max(0, Math.min(host.textContent.length, offset))
+    const range = host.ownerDocument.createRange()
+    for (const child of host.childNodes) {
+      const length = child.textContent.length
+      if (remaining <= length) {
+        range.setStart(child, remaining)
+        range.collapse(true)
+        const selection = host.ownerDocument.getSelection()
+        selection.removeAllRanges()
+        selection.addRange(range)
+        return
+      }
+      remaining -= length
+    }
+    range.setStart(host, host.childNodes.length)
+    range.collapse(true)
+    const selection = host.ownerDocument.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+  const fieldValue = (el) => (plainHost(el) ? el.textContent : el.value)
+  const fieldSelection = (el) => {
+    if (!plainHost(el))
+      return { start: el.selectionStart ?? 0, end: el.selectionEnd ?? el.selectionStart ?? 0 }
+    const selection = selectionFor(el)
+    return selection ? { start: selection.start, end: selection.end } : null
+  }
+  const setCaret = (el, offset) => (plainHost(el) ? placeCaret(el, offset) : move(el, offset))
   const graphemes = (value) => {
     const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
     return [...segmenter.segment(value)].map(({ index, segment }) => ({
@@ -461,9 +542,15 @@
       ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
     )
       return
-    const value = target.value
-    const at = target.selectionStart ?? 0
-    const end = target.selectionEnd ?? at
+    const selection = fieldSelection(target)
+    if (selection === null) {
+      vimMode = 'insert'
+      verticalColumn = null
+      return
+    }
+    const value = fieldValue(target)
+    const at = selection.start
+    const end = selection.end
     const key = event.key
     let destination = at
     let enteringInsert = false
@@ -513,12 +600,12 @@
     }
     event.preventDefault()
     if (enteringInsert) {
-      move(target, destination)
+      setCaret(target, destination)
       vimMode = 'insert'
       verticalColumn = null
       return
     }
-    move(target, destination)
+    setCaret(target, destination)
     verticalColumn =
       key === 'j' || key === 'k'
         ? (verticalColumn ?? graphemes(value.slice(lineStart(value, at), at)).length)

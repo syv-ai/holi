@@ -180,6 +180,7 @@ try {
     'native-grapheme-safe-horizontal-motion',
     'native-j-k-vertical-column',
     'unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough',
+    'native-plaintext-only-motion-insert-and-empty-host',
     'native-ime-composition-in-insert-mode',
     'preference-disable-reenable-controls-native-vim',
     'native-normal-escape-preserves-search-value',
