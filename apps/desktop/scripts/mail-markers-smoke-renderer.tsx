@@ -22,6 +22,7 @@ store.set(vaultSettingsAtom, {
     [],
   ),
 })
+let fixtureAccount = 'smoke-account-a'
 const summaries = [
   {
     id: 'thread-yellow',
@@ -107,13 +108,23 @@ const invoke = async (op: {
       'google.imageSenders',
     ]).has(name)
   ) {
-    return (
+    const result = (await (
       window as unknown as { markerSmoke: { run: (op: unknown) => Promise<unknown> } }
-    ).markerSmoke.run(op)
+    ).markerSmoke.run(op)) as { data?: { account?: { sub?: string } } }
+    if (name === 'google.status' && result.data?.account?.sub)
+      fixtureAccount = result.data.account.sub
+    return result
   }
   const value =
     name === 'google.search'
-      ? { threads: summaries, nextPageToken: null, syncedAt: null }
+      ? {
+          threads: summaries.map((summary) => ({
+            ...summary,
+            subject: `${fixtureAccount === 'smoke-account-a' ? 'Account A' : 'Account B'} — ${summary.subject}`,
+          })),
+          nextPageToken: null,
+          syncedAt: null,
+        }
       : name === 'google.mailCounts'
         ? { unread: 0, total: summaries.length }
         : name === 'google.categoryCounts' || name === 'google.mailboxCounts'
@@ -126,9 +137,7 @@ const invoke = async (op: {
             : name === 'google.thread'
               ? {
                   id: params.id,
-                  subject:
-                    summaries.find((thread) => thread.id === params.id)?.subject ??
-                    'Fixture thread',
+                  subject: `${fixtureAccount === 'smoke-account-a' ? 'Account A' : 'Account B'} — ${summaries.find((thread) => thread.id === params.id)?.subject ?? 'Fixture thread'}`,
                   webUrl: 'https://mail.google.com/mail/u/0/#all/fixture',
                   messages: [
                     {
@@ -139,7 +148,7 @@ const invoke = async (op: {
                       bcc: [],
                       date: '2026-01-01T00:00:00.000Z',
                       subject: 'Fixture message',
-                      body: 'Synthetic message body.',
+                      body: `Synthetic message body for ${fixtureAccount}.`,
                       html: null,
                       attachments: [],
                     },

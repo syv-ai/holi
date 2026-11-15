@@ -36,10 +36,12 @@ async function waitFor(win: BrowserWindow, expression: string) {
   }
   console.error(
     await win.webContents.executeJavaScript(
-      `JSON.stringify({body:document.body.innerText, calls:window.smokeCalls, errors:window.smokeErrors})`,
+      `JSON.stringify({body:document.body.innerText, active:document.activeElement?.outerHTML, keys:window.smokeKeys, calls:window.smokeCalls, errors:window.smokeErrors})`,
     ),
   )
-  throw new Error(`Native UI did not reach: ${expression}`)
+  throw new Error(
+    `Native UI did not reach: ${expression}; state=${await win.webContents.executeJavaScript(`JSON.stringify({body:document.body.innerText, active:document.activeElement?.outerHTML, keys:window.smokeKeys, calls:window.smokeCalls, errors:window.smokeErrors})`)}`,
+  )
 }
 
 async function run() {
@@ -239,6 +241,11 @@ async function run() {
           image.toPNG(),
         ),
       )
+      .catch((cause: unknown) => {
+        // A reload can replace the capture surface between recording ticks.
+        if (!(cause instanceof Error && cause.message === 'UnknownVizError'))
+          rendererErrors.push(`Evidence capture failed: ${String(cause)}`)
+      })
       .finally(() => {
         recording = false
       })
@@ -299,7 +306,7 @@ async function run() {
       )
       await waitFor(
         win,
-        `document.querySelector('section[aria-label="${section}"]').textContent.includes('Synthetic message body.')`,
+        `document.querySelector('section[aria-label="${section}"]').textContent.includes('Synthetic message body for smoke-account-a.')`,
       )
       await waitFor(
         win,
@@ -327,21 +334,102 @@ async function run() {
     await switchAccount(subB)
     await waitFor(
       win,
-      `document.querySelectorAll('[aria-label="Red star"]').length === 0 && document.querySelectorAll('[aria-label="Blue question mark"]').length === 0`,
+      `document.querySelectorAll('[aria-label="Red star"]').length === 0 && document.querySelectorAll('[aria-label="Blue question mark"]').length === 0 && document.body.textContent.includes('Account B — Red marker fixture')`,
     )
+    for (const section of ['Production app-shell mail', 'Production legacy mail reader']) {
+      assert(
+        await js(
+          `const scope=document.querySelector('section[aria-label="${section}"]'); scope.textContent.includes('Account B — Red marker fixture') && !scope.textContent.includes('Account A —') && !scope.textContent.includes('Synthetic message body for smoke-account-a.')`,
+        ),
+        `${section} must not retain account A mail`,
+      )
+      await js(
+        `const scope=document.querySelector('section[aria-label="${section}"]'); const row=[...scope.querySelectorAll('[role="listitem"],button')].find(n=>n.textContent.includes('Account B — Red marker fixture')); if(!row)throw Error('Missing account B reader row'); row.click()`,
+      )
+      await waitFor(
+        win,
+        `document.querySelector('section[aria-label="${section}"]').textContent.includes('Synthetic message body for smoke-account-b.')`,
+      )
+    }
     assert.deepEqual(await createMailMarkerStore(storeRoot, subB).preferences(), {
       enabledOrder: ['yellow-star'],
     })
     await switchAccount(subA)
-    await waitFor(win, `document.querySelectorAll('[aria-label="Red star"]').length >= 2`)
+    await waitFor(
+      win,
+      `document.querySelectorAll('[aria-label="Red star"]').length >= 2 && document.body.textContent.includes('Account A — Red marker fixture')`,
+    )
+    await js(
+      `document.querySelector('section[aria-label="Production app-shell mail"] #thread-yellow').click(); document.querySelector('section[aria-label="Production app-shell mail"] #thread-red').click()`,
+    )
+    await waitFor(
+      win,
+      `document.querySelector('section[aria-label="Production app-shell mail"]').textContent.includes('Synthetic message body for smoke-account-a.')`,
+    )
     mark('account-a-account-b-account-a-isolation')
-    failAnnotations = 2
+    failAnnotations = 100
     await win.loadFile(join(root, 'renderer.html'))
     await waitFor(win, `document.querySelectorAll('[aria-label="Retry marker"]').length >= 2`)
     await js(`window.smokeShow('shell')`)
     await capture('marker-error.png')
+    win.focus()
+    win.webContents.focus()
+    await js(
+      `window.smokeKeys=[]; document.addEventListener('keydown', event=>window.smokeKeys.push(event.key+':'+event.target.getAttribute('aria-label')), true)`,
+    )
+    const readerCallsBeforeKeys = await js(
+      `window.smokeCalls.filter(call=>call.input?.name==='google.thread' || call.input?.name==='google.mark-read').length`,
+    )
+    const markerReadsBeforeKeys = await js(
+      `window.smokeCalls.filter(call=>call.input?.name==='google.mailMarkerAnnotations').length`,
+    )
+    await js(
+      `document.querySelector('section[aria-label="Production app-shell mail"] [aria-label="Retry marker"]').focus()`,
+    )
+    await waitFor(win, `document.activeElement?.getAttribute('aria-label') === 'Retry marker'`)
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' })
+    win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' })
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' })
+    await waitFor(win, `window.smokeKeys.length >= 1`)
+    await waitFor(
+      win,
+      `window.smokeCalls.filter(call=>call.input?.name==='google.mailMarkerAnnotations').length >= ${markerReadsBeforeKeys + 1}`,
+    )
+    await waitFor(
+      win,
+      `document.querySelector('section[aria-label="Production app-shell mail"]').querySelectorAll('[aria-label="Retry marker"]').length === 4 && document.querySelectorAll('[aria-label="Loading marker"]').length === 0`,
+    )
+    await js(
+      `document.querySelector('section[aria-label="Production app-shell mail"] [aria-label="Retry marker"]').focus()`,
+    )
+    await waitFor(win, `document.activeElement?.getAttribute('aria-label') === 'Retry marker'`)
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' })
+    win.webContents.sendInputEvent({ type: 'char', keyCode: ' ' })
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' })
+    await waitFor(
+      win,
+      `window.smokeCalls.filter(call=>call.input?.name==='google.mailMarkerAnnotations').length >= ${markerReadsBeforeKeys + 2}`,
+    )
+    await waitFor(
+      win,
+      `document.querySelector('section[aria-label="Production app-shell mail"]').querySelectorAll('[aria-label="Retry marker"]').length === 4 && document.querySelectorAll('[aria-label="Loading marker"]').length === 0`,
+    )
+    assert.equal(
+      await js(
+        `window.smokeCalls.filter(call=>call.input?.name==='google.thread' || call.input?.name==='google.mark-read').length`,
+      ),
+      readerCallsBeforeKeys,
+    )
+    assert.equal(
+      await js(
+        `document.querySelector('section[aria-label="Production app-shell mail"]').textContent.includes('Synthetic message body for smoke-account-a.')`,
+      ),
+      false,
+    )
+    failAnnotations = 0
     await js(`document.querySelectorAll('[aria-label="Retry marker"]').forEach(n=>n.click())`)
     await ready()
+    mark('native-enter-space-marker-retry-does-not-open-or-mark-read')
     mark('native-marker-failure-and-retry-recover-both-lists')
     let release!: () => void
     let started!: () => void
@@ -373,7 +461,7 @@ async function run() {
     )
     await waitFor(
       win,
-      `document.querySelector('section[aria-label="Production app-shell mail"]').textContent.includes('Synthetic message body.')`,
+      `document.querySelector('section[aria-label="Production app-shell mail"]').textContent.includes('Synthetic message body for smoke-account-a.')`,
     )
     const priorRequests = apiRequests
     await js(

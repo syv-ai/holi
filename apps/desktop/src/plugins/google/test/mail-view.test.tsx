@@ -12,6 +12,7 @@ import { MailView, matchPeople, mentionAt, replaceMention } from '../renderer/ma
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
 import { activeRemoteAtom, loadVaultSettingsAtom } from '@/plugin-api'
+import { refreshGoogleAtom } from '../renderer/account'
 import { getDefaultStore } from 'jotai'
 
 const threadMock = vi.fn()
@@ -42,11 +43,21 @@ const openedDialog = vi.fn()
 const createTaskMock = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
+let mailAccountSub = 'mail-view-account'
 const google: Record<string, (params: unknown) => unknown> = {
-  status: () => ({ account: { sub: 'mail-view-account', email: 'ada@syv.ai' }, missingScopes: [] }),
+  status: () => ({
+    account: {
+      sub: mailAccountSub,
+      email: mailAccountSub === 'mail-view-account' ? 'ada@syv.ai' : 'ada@home.test',
+    },
+    missingScopes: [],
+  }),
   allAccounts: () => ({
-    accounts: [{ sub: 'mail-view-account', email: 'ada@syv.ai' }],
-    current: 'mail-view-account',
+    accounts: [
+      { sub: 'mail-view-account', email: 'ada@syv.ai' },
+      { sub: 'account-b', email: 'ada@home.test' },
+    ],
+    current: mailAccountSub,
   }),
   search: (p) => threadMock(p),
   thread: (p) => readMock(p),
@@ -211,6 +222,7 @@ async function frameOf(article: HTMLElement): Promise<Document> {
 
 beforeEach(() => {
   threadMock.mockReset()
+  mailAccountSub = 'mail-view-account'
   // A default, because the real query ALWAYS returns a promise. A bare
   // `mockReset()` returns `undefined`, which surfaces as an unhandled error
   // beside a passing suite rather than as a failure.
@@ -2541,6 +2553,121 @@ test('renders account markers in the list and reader from one batched read', asy
     await user.click(screen.getByRole('button', { name: new RegExp(subject, 'i') }))
     await waitFor(() => expect(screen.getAllByLabelText(label).length).toBeGreaterThanOrEqual(2))
   }
+})
+
+test('keeps account rows, messages, and annotations isolated across A-B-A switches and late reads', async () => {
+  const user = userEvent.setup()
+  let finishLateSearch: ((value: ReturnType<typeof page>) => void) | undefined
+  let finishLateRead: ((value: unknown) => void) | undefined
+  let delayNextSearch = false
+  let delayFirstRead = true
+  threadMock.mockImplementation(() => {
+    const account = mailAccountSub
+    if (delayNextSearch) {
+      delayNextSearch = false
+      return new Promise((resolve) => (finishLateSearch = resolve))
+    }
+    return Promise.resolve(
+      page([
+        summary({
+          starred: true,
+          subject: account === 'mail-view-account' ? 'Account A mail' : 'Account B mail',
+        }),
+      ]),
+    )
+  })
+  readMock.mockImplementation(() => {
+    const account = mailAccountSub
+    if (account === 'mail-view-account' && delayFirstRead) {
+      delayFirstRead = false
+      return new Promise((resolve) => (finishLateRead = resolve))
+    }
+    return Promise.resolve({
+      id: 't1',
+      subject: account === 'mail-view-account' ? 'Account A mail' : 'Account B mail',
+      webUrl: 'https://mail.google.com/x',
+      messages: [
+        {
+          id: `message-${account}`,
+          from: { name: 'Jane', email: 'jane@example.com' },
+          to: [],
+          cc: [],
+          bcc: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: `Message from ${account}`,
+          html: null,
+          attachments: [],
+        },
+      ],
+    })
+  })
+  mailMarkersMock.mockImplementation(async ({ ids }: { ids: string[] }) => ({
+    [ids[0]!]: mailAccountSub === 'mail-view-account' ? 'red-star' : 'blue-question',
+  }))
+  render(<MailView />)
+  const accountARow = await screen.findByRole('button', { name: /Account A mail/ })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+  expect(within(accountARow).getByLabelText('Red star')).toBeInTheDocument()
+  await user.click(accountARow)
+  await waitFor(() => expect(readMock).toHaveBeenCalledTimes(1))
+
+  mailAccountSub = 'account-b'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  const accountBRow = await screen.findByRole('button', { name: /Account B mail/ })
+  expect(screen.queryByRole('button', { name: /Account A mail/ })).toBeNull()
+  await waitFor(() =>
+    expect(within(accountBRow).getByLabelText('Blue question mark')).toBeInTheDocument(),
+  )
+  await user.click(accountBRow)
+  expect(await screen.findByText('Message from account-b')).toBeInTheDocument()
+
+  // Returning to A remounts its reader/list state, even though Gmail reuses t1.
+  mailAccountSub = 'mail-view-account'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  const returnedARow = await screen.findByRole('button', { name: /Account A mail/ })
+  await waitFor(() => expect(within(returnedARow).getByLabelText('Red star')).toBeInTheDocument())
+  expect(screen.queryByText('Message from account-b')).toBeNull()
+
+  // An in-flight list search from A cannot overwrite B's rows.
+  delayNextSearch = true
+  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+  await waitFor(() => expect(finishLateSearch).toBeDefined())
+  mailAccountSub = 'account-b'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await screen.findByRole('button', { name: /Account B mail/ })
+  await act(async () => finishLateSearch?.(page([summary({ subject: 'Stale A search' })])))
+  expect(screen.queryByRole('button', { name: /Stale A search/ })).toBeNull()
+
+  // A deferred read from the prior A mount must not leak into B.
+  mailAccountSub = 'mail-view-account'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await user.click(await screen.findByRole('button', { name: /Account A mail/ }))
+  await waitFor(() => expect(finishLateRead).toBeDefined())
+  mailAccountSub = 'account-b'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await screen.findByRole('button', { name: /Account B mail/ })
+  await act(async () =>
+    finishLateRead?.({
+      id: 't1',
+      subject: 'Account A mail',
+      webUrl: 'https://mail.google.com/x',
+      messages: [
+        {
+          id: 'message-account-a',
+          from: { name: 'Jane', email: 'jane@example.com' },
+          to: [],
+          cc: [],
+          bcc: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: 'Stale message from mail-view-account',
+          html: null,
+          attachments: [],
+        },
+      ],
+    }),
+  )
+  expect(screen.queryByText('Stale message from mail-view-account')).toBeNull()
+  expect(screen.queryByLabelText('Red star')).toBeNull()
 })
 
 test('invalidates markers across an A-B-A vault switch before accepting the latest identical-id read', async () => {

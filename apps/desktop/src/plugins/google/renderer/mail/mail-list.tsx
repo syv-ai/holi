@@ -90,6 +90,12 @@ function MailRow({
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => {
+        if (
+          e.target !== e.currentTarget &&
+          e.target instanceof HTMLElement &&
+          e.target.closest('button, a, input, select, textarea, [role="button"], [role="checkbox"]')
+        )
+          return
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
           onClick()

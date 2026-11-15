@@ -720,6 +720,50 @@ test('thread navigation waits for the latest content save', async () => {
   expect(screen.queryByRole('textbox', { name: 'Subject' })).toBeNull()
 })
 
+test.each([
+  { key: '{Enter}', label: 'Enter' },
+  { key: ' ', label: 'Space' },
+])(
+  'Retry marker keyboard $label retries annotation without activating its mail row',
+  async ({ key }) => {
+    searchMock.mockResolvedValue(page([summary({ id: 'retry-thread', starred: true })]))
+    mailMarkersMock
+      .mockRejectedValueOnce(new Error('annotation read failed'))
+      .mockResolvedValueOnce({ 'retry-thread': 'yellow-star' })
+    const user = userEvent.setup()
+    render(<MailShell />)
+    const retry = await screen.findByRole('button', { name: 'Retry marker' })
+    await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+    retry.focus()
+    expect(retry).toHaveFocus()
+
+    await user.keyboard(key)
+
+    await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(2))
+    expect(mailMarkersMock.mock.calls[1]![0]).toMatchObject({
+      ids: ['retry-thread'],
+      expectedAccountSub: 'a',
+    })
+    expect(await screen.findByLabelText('Yellow star')).toBeInTheDocument()
+    expect(threadMock).not.toHaveBeenCalled()
+    expect(markReadMock).not.toHaveBeenCalled()
+  },
+)
+
+test('the mail row itself still opens with keyboard activation', async () => {
+  const user = userEvent.setup()
+  render(<MailShell />)
+  const row = await screen.findByRole('listitem')
+  row.focus()
+  expect(row).toHaveFocus()
+
+  await user.keyboard('{Enter}')
+
+  expect(await screen.findByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+  expect(threadMock).toHaveBeenCalledWith({ id: 't1' })
+  expect(markReadMock).toHaveBeenCalledWith({ id: 't1', unread: false })
+})
+
 test('renders all configured marker symbols in the app-shell list', async () => {
   searchMock.mockResolvedValue(
     page([

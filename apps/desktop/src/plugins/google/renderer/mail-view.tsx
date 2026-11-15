@@ -173,6 +173,11 @@ type ListState =
   | { kind: 'error'; message: string }
 
 export function MailView() {
+  const { currentSub } = useGoogleAccount()
+  return <MailViewAccount key={currentSub ?? 'disconnected'} accountSub={currentSub} />
+}
+
+function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   const [query, setQuery] = useState('')
   /** The query actually fetched, separate from the input so typing does not
    *  fire a request per keystroke against a rate-limited API. */
@@ -246,7 +251,6 @@ export function MailView() {
   /** The Gmail draft the composer is continuing, if any. */
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
-  const { currentSub } = useGoogleAccount()
   const remoteRef = useRef(remote)
   remoteRef.current = remote
   /** Offered only in a vault that runs tasks. */
@@ -259,7 +263,7 @@ export function MailView() {
   )
   const markers = useMailMarkers({
     remote,
-    accountSub: currentSub,
+    accountSub,
     ids: [
       ...(list.kind === 'ready' ? list.threads.map((thread) => thread.id) : []),
       ...(openId === null ? [] : [openId]),
