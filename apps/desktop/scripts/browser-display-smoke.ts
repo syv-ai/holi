@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, type WebContentsView } from 'electron'
+import { app, BrowserWindow, session, type WebContentsView } from 'electron'
 import { browserMain } from '../src/plugins/browser/main/index'
 import { createPluginHost, type OpenVault } from '../src/main/plugin-host/host'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
@@ -26,6 +26,17 @@ async function run(): Promise<void> {
   app.setPath('sessionData', join(root, 'session'))
   assert.equal(app.getPath('userData'), join(root, 'profile'))
   await app.whenReady()
+  const isolatedBrowserSession = session.fromPartition('persist:holi-browser')
+  isolatedBrowserSession.webRequest.onBeforeRequest((details, callback) => {
+    let allowed = false
+    try {
+      const target = new URL(details.url)
+      allowed = target.protocol === 'http:' && target.hostname === '127.0.0.1'
+    } catch {
+      allowed = false
+    }
+    callback({ cancel: !allowed })
+  })
   const checks: string[] = []
   const mark = (name: string) => {
     checks.push(name)
@@ -33,9 +44,14 @@ async function run(): Promise<void> {
   }
   const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    response.end(`<!doctype html><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
+    response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body { color: CanvasText; background: Canvas; font: 16px sans-serif; }</style><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
       <main><h1>Browser page owned by vault ${request.url === '/b' ? 'B' : 'A'}</h1>
-      <label>Search <input aria-label="Search"></label><button>Submit</button><p>Local fixture, no accounts</p></main>`)
+      <label>Search <input aria-label="Search" id="search"></label><button>Submit</button>
+      <label>Text <input aria-label="Text" id="text" value="one two three"></label>
+      <label>Lines <textarea aria-label="Lines" id="lines">first line\nsecond line</textarea></label>
+      <label>Password <input aria-label="Password" type="password" id="password"></label>
+      <label>Number <input aria-label="Number" type="number" id="number" value="12"></label>
+      <p>Local fixture, no accounts</p></main>`)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
@@ -171,10 +187,17 @@ async function run(): Promise<void> {
       alt: false,
       shift: false,
     }
-    // Exercise the actual registered Electron callback deterministically, including
-    // detached views for which Chromium does not dispatch physical keyboard input.
+    // Existing display-isolation assertion exercises the callback on detached views.
     view.webContents.emit('before-input-event', { preventDefault() {} }, input)
   }
+  const nativePress = async (view: WebContentsView, key: string, code?: string) => {
+    view.webContents.sendInputEvent({ type: 'keyDown', keyCode: code ?? key })
+    if (key.length === 1) view.webContents.sendInputEvent({ type: 'char', keyCode: key })
+    view.webContents.sendInputEvent({ type: 'keyUp', keyCode: code ?? key })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  }
+  const inPage = <T>(view: WebContentsView, expression: string) =>
+    view.webContents.executeJavaScript(expression) as Promise<T>
   host.setDisplayed('A')
   await host.reconcile(vault('A'), 'open')
   await host.reconcile(vault('B'), 'open')
@@ -190,12 +213,20 @@ async function run(): Promise<void> {
   const initial = await invoke<PageRead>('A', 'read', { tab: 'same' })
   assert.match(initial.text, /Browser page owned by vault A/)
   mark('displayed-page-attached-with-loaded-content')
-  const capture = async (view: WebContentsView['webContents'], name: string) => {
+  const capture = async (
+    view: WebContentsView['webContents'],
+    name: string,
+    colorScheme?: 'light' | 'dark',
+  ) => {
     // CDP requests a rendered frame even when the native test window is occluded.
     // No debugger port, visibility override or substitute renderer is involved.
     view.debugger.attach('1.3')
     try {
       await view.debugger.sendCommand('Page.enable')
+      if (colorScheme !== undefined)
+        await view.debugger.sendCommand('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-color-scheme', value: colorScheme }],
+        })
       const image = (await view.debugger.sendCommand('Page.captureScreenshot', {
         captureBeyondViewport: true,
         fromSurface: true,
@@ -207,10 +238,74 @@ async function run(): Promise<void> {
     }
   }
   await capture(win.webContents, 'shell-before.png')
-  await capture(a.webContents, 'browser-before.png')
+  await capture(a.webContents, 'browser-before.png', 'light')
+  await capture(a.webContents, 'browser-dark.png', 'dark')
   const match = initial.text.match(/\[(\d+)\] textbox "Search"/)
   assert(match, initial.text)
   const ref = Number(match[1])
+  const waitFor = async <T>(read: () => T | undefined, label: string): Promise<T> => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const value = read()
+      if (value !== undefined) return value
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error(`timed out waiting for ${label}`)
+  }
+  const vimSnapshot = await waitFor(
+    () =>
+      sent.find((event) => event.remote === 'A' && event.name === 'vim-mode')?.payload as
+        | { id: string; nonce: string; attachment: string; revision: number; mode: string }
+        | undefined,
+    'production browser vim mode snapshot',
+  )
+  for (const listener of [...listeners])
+    listener({
+      remote: 'A',
+      name: 'vim-config',
+      payload: {
+        id: 'same',
+        enabled: true,
+        revision: 1,
+        nonce: vimSnapshot.nonce,
+        attachment: vimSnapshot.attachment,
+      },
+    })
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await waitFor(
+    () => sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode'),
+    'configured browser vim mode',
+  )
+  await nativePress(a, 'Escape')
+  const normalMode = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    return (event?.payload as { mode?: string } | undefined)?.mode === 'normal' ? event : undefined
+  }, 'normal mode after native Escape')
+  assert.equal((normalMode.payload as { mode: string }).mode, 'normal')
+  await inPage(a, `document.querySelector('#text').setSelectionRange(0, 0)`)
+  const beforeNormalText = await inPage<string>(a, `document.querySelector('#text').value`)
+  await nativePress(a, 'w')
+  assert.equal(await inPage<number>(a, `document.querySelector('#text').selectionStart`), 4)
+  await nativePress(a, 'x')
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), beforeNormalText)
+  await nativePress(a, 'i')
+  await inPage(
+    a,
+    `window.nativeInputEvents = 0; document.querySelector('#text').addEventListener('input', () => window.nativeInputEvents++)`,
+  )
+  await nativePress(a, 'X')
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one Xtwo three')
+  assert.equal(
+    await inPage<number>(a, `window.nativeInputEvents`),
+    1,
+    'native insert emits one input event',
+  )
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), beforeNormalText)
+  a.webContents.redo()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one Xtwo three')
+  mark('native-browser-vim-mode-navigation-insertion-undo-redo')
   nativeKey(a, 'l')
   await tick()
   assert(
@@ -375,7 +470,12 @@ async function run(): Promise<void> {
           vaultA: roots.A,
           vaultB: roots.B,
         },
-        screenshots: ['browser-before.png', 'shell-before.png', 'browser-after.png'],
+        screenshots: [
+          'browser-before.png',
+          'browser-dark.png',
+          'shell-before.png',
+          'browser-after.png',
+        ],
       },
       null,
       2,
