@@ -31,6 +31,7 @@ import {
   gitignoreWith,
   noParams,
   paramsObject,
+  flagParam,
   readVaultSettings,
   stringParam,
   toolPath,
@@ -49,7 +50,7 @@ import {
   type GitAccess,
 } from './fetch'
 import { searchPlugins } from './search'
-import { seedApps, writeSkills } from './skills'
+import { refreshSkills, seedApps, writeSkills } from './skills'
 import { COMMUNITY_INFO } from '../info'
 import { linkCommands, linkedIn, unlinkCommands, type LinkedCommands } from './commands'
 import { expandCommand, pluginEnv, runSetup } from './setup'
@@ -607,6 +608,73 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           return deps.store.codeDir(entry.install)
         }),
       text: (dir) => dir,
+    }),
+
+    'community.refresh-skills': cap({
+      doors: ['cli'],
+      cli: {
+        args: ['id'],
+        flags: ['force'],
+        values: [],
+        summary:
+          'refresh skills from this vault’s pinned community-plugin release; --force replaces complete skill folders, including local edits',
+      },
+      params: (raw) => ({
+        id: stringParam(paramsObject(raw), 'id'),
+        force: flagParam(paramsObject(raw), 'force'),
+      }),
+      run: async (ctx, { id, force }) =>
+        admit(async () => {
+          ensureLive()
+          const pinPath = join(ctx.root, PLUGIN_PINS_DIR, id, 'manifest.json')
+          const rawPin = await readFile(pinPath, 'utf8').catch(() => null)
+          if (rawPin === null)
+            throw new CapabilityError('FORBIDDEN', `${id} has no valid release pin in this vault`)
+          let pin: PluginPin
+          try {
+            const parsed = parsePluginPin(JSON.parse(rawPin))
+            if (!parsed.ok) throw new Error('invalid pin')
+            pin = parsed.value
+          } catch {
+            throw new CapabilityError('FORBIDDEN', `${id} has no valid release pin in this vault`)
+          }
+          if (pin.id !== id)
+            throw new CapabilityError('FORBIDDEN', `${id} pin identity does not match`)
+          const install = await deps.store.get(id)
+          if (install === null || install.source.kind !== 'release')
+            throw new CapabilityError('FORBIDDEN', `${id} is not an installed release`)
+          const source = install.source
+          if (
+            pin.repo !== source.repo ||
+            pin.path !== source.path ||
+            pin.commit !== source.commit ||
+            install.id !== pin.id
+          )
+            throw new CapabilityError(
+              'FORBIDDEN',
+              `${id} installed release does not match this vault's complete pin`,
+            )
+          if (!(await deps.consent.has(id, source.commit)) || install.setup !== 'ok')
+            throw new CapabilityError('FORBIDDEN', `${id} is not consented and setup-ready`)
+          const entries = await pluginEntries(ctx.root, deps)
+          const entry = entries.find(({ row }) => row.id === id)
+          if (entry === undefined || !entry.row.on || entry.row.status !== 'ready')
+            throw new CapabilityError('FORBIDDEN', `${id} is disabled or not ready in this vault`)
+          const codeDir = deps.store.codeDir(install)
+          if (codeDir !== deps.store.codeDir(entry.install!))
+            throw new CapabilityError('FORBIDDEN', `${id} source changed`)
+          // A release directory is accepted only at its canonical store-owned location;
+          // refreshSkills independently snapshots and validates all declared bytes.
+          const expected = deps.store.releaseDir(id, source.commit)
+          if (codeDir !== expected && codeDir !== join(expected, source.path))
+            throw new CapabilityError(
+              'FORBIDDEN',
+              `${id} source provenance does not match its pinned release`,
+            )
+          ensureLive()
+          return refreshSkills(install.manifest, codeDir, ctx.root, { force, guard: ensureLive })
+        }),
+      text: (paths) => paths.join('\\n'),
     }),
 
     // A running plugin's verbs, `holi plugin <id> <verb> …`: read here and
