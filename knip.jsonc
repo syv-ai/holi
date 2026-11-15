@@ -44,6 +44,8 @@
         // Native Electron smoke: the TS entry and isolated renderer are built by its MJS runner.
         "scripts/terminal-hints-native-smoke-main.ts",
         "scripts/terminal-hints-native-smoke.tsx",
+        "scripts/pdf-vim-native-smoke-main.ts",
+        "scripts/pdf-vim-native-smoke.tsx",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",

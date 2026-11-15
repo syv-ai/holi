@@ -16,6 +16,8 @@
     "shipped-history": "node scripts/shipped-history.mjs",
     "smoke:terminal-hints:native": "node scripts/run-terminal-hints-native-smoke.mjs",
     "smoke:terminal-hints:typecheck": "tsc --noEmit --project tsconfig.native-smoke.json",
+    "smoke:pdf-vim:native": "node scripts/run-pdf-vim-native-smoke.mjs",
+    "smoke:pdf-vim:typecheck": "tsc --noEmit --project tsconfig.pdf-vim-native-smoke.json",
     "package:mac": "electron-vite build && electron-builder --mac --publish never",
     "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\""
   },
