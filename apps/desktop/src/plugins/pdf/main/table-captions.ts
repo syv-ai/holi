@@ -1,5 +1,10 @@
 import { GFM, parser } from '@lezer/markdown'
-import { isPortableInlineCaption, parseWikiLinks, readMarkdownCaptionEnvelopes } from '@holi/shared'
+import {
+  isPortableInlineCaption,
+  parseWikiLinks,
+  readMarkdownCaptionEnvelopes,
+  splitFrontmatter,
+} from '@holi/shared'
 
 const markdownParser = parser.configure(GFM)
 const UNSUPPORTED = new Set([
@@ -21,7 +26,8 @@ export interface MarkdownTableCaption {
  * Rebuild from syntax fields rather than copying container source: a definition
  * can span blockquote/list lines whose markers are not part of its value. */
 export function readMarkdownReferenceDefinitions(markdown: string): string {
-  const tree = markdownParser.parse(markdown)
+  const body = splitFrontmatter(markdown).body
+  const tree = markdownParser.parse(body)
   const definitions: string[] = []
   const quoteMarks: { from: number; to: number }[] = []
   tree.iterate({
@@ -34,11 +40,13 @@ export function readMarkdownReferenceDefinitions(markdown: string): string {
     let at = field.from
     for (const mark of quoteMarks) {
       if (mark.from < at || mark.to > field.to) continue
-      text += markdown.slice(at, mark.from)
+      text += body.slice(at, mark.from)
       at = mark.to
     }
-    text += markdown.slice(at, field.to)
-    return collapseSpace ? text.replace(/\s+/g, ' ') : text
+    text += body.slice(at, field.to)
+    // CommonMark folds ASCII whitespace in labels. Unicode separators such as
+    // NBSP are label content and must remain unchanged.
+    return collapseSpace ? text.replace(/[ \t\n\r\f]+/g, ' ') : text
   }
   tree.iterate({
     enter(node) {
@@ -50,12 +58,25 @@ export function readMarkdownReferenceDefinitions(markdown: string): string {
           definitions.push(
             `${fieldText(label)}: ${fieldText(url, false)}${title === null ? '' : ` ${fieldText(title)}`}`,
           )
+        } else if (label !== null) {
+          // Lezer omits URL for valid angle destinations containing an escaped
+          // closing angle bracket. Keep its parsed source intact rather than
+          // silently dropping a definition that the Markdown renderer resolves.
+          definitions.push(body.slice(node.from, node.to))
         }
         return false
       }
       if (['FencedCode', 'CodeBlock', 'HTMLBlock', 'HTMLTag'].includes(node.name)) return false
     },
   })
+  // Lezer currently drops a definition whose angle destination escapes `>`.
+  // Preserve these valid single-line definitions directly from source so the
+  // same destination remains visible to cmarker after table isolation.
+  const escapedAngleDefinition = /^ {0,3}(\[[^\]\n]+\]:\s*<[^\n]*\\>[^\n]*>[^\n]*)$/gm
+  for (const match of body.matchAll(escapedAngleDefinition)) {
+    const definition = match[1]
+    if (definition !== undefined) definitions.push(definition)
+  }
   return definitions.length === 0 ? '' : `\n\n${definitions.join('\n')}`
 }
 
