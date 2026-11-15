@@ -11,6 +11,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   CopyIcon,
   EraserIcon,
+  ScanSearchIcon,
   Maximize2Icon,
   Minimize2Icon,
   PlusIcon,
@@ -27,6 +28,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
+import { vimCodeEditingAtom } from '@/state/preferences'
 import { IconButton } from '@/composites/icon-button'
 import { PanelHeader } from '@/composites/panel-header'
 import { cn } from '@/lib/cn'
@@ -284,8 +287,25 @@ function TerminalControls() {
   const create = useSetAtom(createPanelTerminalAtom)
   const kill = useSetAtom(killPanelTerminalAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
   return (
     <>
+      {vimEnabled && active !== null ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="quiet"
+          aria-label="Show terminal hints"
+          onClick={() =>
+            window.dispatchEvent(
+              new CustomEvent('holi:show-panel-terminal-hints', { detail: { id: active } }),
+            )
+          }
+        >
+          <ScanSearchIcon aria-hidden className="size-3.5" />
+          Hints
+        </Button>
+      ) : null}
       {terminals.length > 0 ? (
         <Select value={active ?? undefined} onValueChange={setActive}>
           <SelectTrigger size="sm" aria-label="Terminal" className="text-xs">

@@ -3,12 +3,14 @@ import { useAtomValue } from 'jotai'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type ILinkProvider } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
 import { cn } from '@/lib/cn'
 import { matchShortcutKey } from '@/lib/hotkey'
 import { terminalFont, terminalTheme, watchTerminalTheme } from '@/lib/terminal-theme'
+import { requestAdaptedHostHints, type HostHintAdapter } from '@/lib/host-hints'
+import { vimCodeEditingAtom } from '@/state/preferences'
 import { trpc } from '@/lib/trpc'
 import { registerTerminalSink, type TerminalContext } from '@/state/panel-terminals'
 import { isMac } from '@/lib/platform'
@@ -16,6 +18,7 @@ import { activeRemoteAtom } from '@/state/vaults'
 
 import { TerminalContextChips } from './terminal-context-chips'
 import { openExternal } from '@/lib/open-external'
+import { createTerminalHintAdapter } from './terminal-hints'
 
 /**
  * One of the bottom panel's shells in an xterm (docs/features/status-bar.md).
@@ -53,9 +56,19 @@ export function PanelTerminal({
   const fitRef = useRef<FitAddon | null>(null)
   const disposeRef = useRef<(() => void) | null>(null)
   const lastSize = useRef({ cols: 0, rows: 0 })
+  const hintAdapterRef = useRef<HostHintAdapter | null>(null)
+  const invalidateHintsRef = useRef<(() => void) | null>(null)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const previousRemote = useRef(remote)
   const remoteRef = useRef(remote)
   remoteRef.current = remote
+  const remoteGeneration = useRef({ remote, generation: 0 })
+  if (remoteGeneration.current.remote !== remote) {
+    remoteGeneration.current = { remote, generation: remoteGeneration.current.generation + 1 }
+  }
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
 
   const syncSize = useCallback(() => {
     const term = termRef.current
@@ -98,12 +111,41 @@ export function PanelTerminal({
     const fit = new FitAddon()
     term.loadAddon(fit)
     // A URL in the output opens in the browser, through main.
+    // Capture the addon's public provider registration. Hints and mouse use
+    // this same recognizer and activation callback; no second URL parser.
+    const registerLinkProvider = term.registerLinkProvider.bind(term)
+    const linkProviders: ILinkProvider[] = []
+    term.registerLinkProvider = ((provider: ILinkProvider) => {
+      linkProviders.push(provider)
+      return registerLinkProvider(provider)
+    }) as Terminal['registerLinkProvider']
     term.loadAddon(
       new WebLinksAddon((event, uri) => {
         event.preventDefault()
         openExternal(uri)
       }),
     )
+    term.registerLinkProvider = registerLinkProvider
+    let disposed = false
+    let replayPending = true
+    const boundRemote = remoteGeneration.current
+    const terminalHints = createTerminalHintAdapter({
+      term,
+      mount,
+      providers: linkProviders,
+      isVisible: () => visibleRef.current,
+      isCurrent: () =>
+        !disposed &&
+        !replayPending &&
+        remoteRef.current === boundRemote.remote &&
+        remoteGeneration.current.generation === boundRemote.generation,
+    })
+    const adapter: HostHintAdapter = terminalHints.adapter
+    hintAdapterRef.current = adapter
+    invalidateHintsRef.current = terminalHints.invalidate
+    const scroll = term.onScroll(terminalHints.invalidate)
+    const resize = term.onResize(terminalHints.invalidate)
+    const bufferChange = term.buffer.onBufferChange(terminalHints.invalidate)
     term.open(mount)
     // WebGL draws on the cell grid (see SessionTerminal); a lost context
     // falls back to the DOM renderer.
@@ -131,7 +173,7 @@ export function PanelTerminal({
     // that land before the replay answers are in it (see panel-terminals).
     let live = false
     const unregister = registerTerminalSink(id, (data) => {
-      if (live) term.write(data)
+      if (live && !disposed) void terminalHints.write(data)
     })
     const at = remoteRef.current
     void (
@@ -139,8 +181,14 @@ export function PanelTerminal({
         ? Promise.resolve('')
         : trpc.terminal.replay.query({ remote: at, id }).catch(() => '')
     ).then((text) => {
-      if (text) term.write(text)
+      if (disposed) return
       live = true
+      const replay = text ? terminalHints.write(text) : Promise.resolve()
+      void replay.then(() => {
+        if (disposed) return
+        replayPending = false
+        terminalHints.invalidate()
+      })
     })
 
     const stopWatchingTheme = watchTerminalTheme(mount, (theme) => {
@@ -153,6 +201,13 @@ export function PanelTerminal({
     disposeRef.current = () => {
       unregister()
       typed.dispose()
+      disposed = true
+      terminalHints.dispose()
+      invalidateHintsRef.current = null
+      scroll.dispose()
+      resize.dispose()
+      bufferChange.dispose()
+      hintAdapterRef.current = null
       observer.disconnect()
       stopWatchingTheme()
       term.dispose()
@@ -161,6 +216,24 @@ export function PanelTerminal({
       disposeRef.current = null
     }
   }, [id, syncSize])
+
+  useEffect(() => {
+    if (!visible || previousRemote.current !== remote) invalidateHintsRef.current?.()
+    previousRemote.current = remote
+  }, [visible, remote])
+
+  useEffect(() => {
+    const onHintRequest = (event: Event) => {
+      const detail = (event as CustomEvent<{ id: string }>).detail
+      if (detail?.id !== id || !visibleRef.current || !vimEnabled || !termRef.current) return
+      const terminal = mountRef.current?.querySelector<HTMLElement>('.xterm-helper-textarea')
+      terminal?.focus()
+      const root = mountRef.current?.closest<HTMLElement>('[data-panel-terminal]')
+      if (root && hintAdapterRef.current) requestAdaptedHostHints(root, hintAdapterRef.current)
+    }
+    window.addEventListener('holi:show-panel-terminal-hints', onHintRequest)
+    return () => window.removeEventListener('holi:show-panel-terminal-hints', onHintRequest)
+  }, [id, visible, vimEnabled])
 
   useEffect(() => () => disposeRef.current?.(), [])
 
