@@ -10,9 +10,11 @@ import { readFileSync } from 'node:fs'
 import { externalizeDepsPlugin } from 'electron-vite'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const evidence = resolve(process.argv[2] ?? '/tmp/holi-523-ui-evidence')
+const evidence = resolve(
+  process.argv[2] ?? join(tmpdir(), `holi-553-evidence-${Date.now()}-${process.pid}`),
+)
 const fixture = join(desktop, 'scripts/browser-display-fixture')
-const toolbarAcceptance = process.env.HOLI_523_UI === '1'
+const toolbarAcceptance = process.env.HOLI_553_UI === '1'
 const recordingPath = join(evidence, 'interaction.mp4')
 const root = await mkdtemp(join(tmpdir(), 'holi-523-smoke-'))
 await mkdir(evidence, { recursive: true })
@@ -69,7 +71,7 @@ try {
           )
           const mutableWindow = imports.replace(
             'webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }',
-            'webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, preload: process.env.HOLI_523_PRELOAD }',
+            'webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, preload: process.env.HOLI_553_PRELOAD }',
           )
           const forwarding = mutableWindow.replace(
             'sent.push(event)\n      },',
@@ -110,9 +112,9 @@ try {
       .join(delimiter),
     HOLI_472_ROOT: root,
     HOLI_472_EVIDENCE: evidence,
-    HOLI_523_RENDERER: join(root, 'renderer'),
-    HOLI_523_PRELOAD: join(fixture, 'preload.cjs'),
-    HOLI_523_SHA: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    HOLI_553_RENDERER: join(root, 'renderer'),
+    HOLI_553_PRELOAD: join(fixture, 'preload.cjs'),
+    HOLI_553_SHA: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   }
   delete env.ELECTRON_RUN_AS_NODE
   const launch = spawn(electron, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -163,14 +165,19 @@ try {
           'native-same-vault-two-pane-tabs-own-input-and-mode-independently',
           'production-preference-disables-and-reenables-native-page',
           'production-overlay-restores-vim-with-fresh-attachment',
+          'plaintext-host-rearms-after-overlay',
           'production-visible-hide-return-rearms-field',
+          'plaintext-host-rearms-after-hide-return',
           'native-shell-zoom-keeps-mode-and-field-input',
           'native-reload-rejects-old-document-arm-and-reconfigures',
+          'plaintext-host-rearms-after-reload',
           'native-navigation-reinitializes-current-document',
+          'plaintext-host-rearms-after-navigation',
           'native-A-B-A-identical-tab-ids-retain-own-vim-context',
           'native-same-id-replacement-gets-fresh-vim-owner',
           'native-composition-preserves-unmodified-insert-path',
           'production-toolbar-native-interaction-light-dark-and-trusted-recording',
+          'plaintext-host-replacement-releases-old-owner',
         ]
       : []),
     'native-h-l-w-b-e-0-caret-dollar-and-i-a',
@@ -180,7 +187,12 @@ try {
     'native-grapheme-safe-horizontal-motion',
     'native-j-k-vertical-column',
     'unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough',
-    'native-plaintext-only-motion-insert-and-empty-host',
+    'native-plaintext-only-motion-insert-and-native-undo-redo',
+    'native-plaintext-ime-composition-remains-native',
+    'plaintext-live-preference-off-passes-native-typing',
+    'plaintext-shape-loss-and-restoration-invalidates-normal-ownership',
+    'plaintext-outside-selection-escape-passthrough-and-reset',
+    'native-empty-host-and-contenteditable-disable-passthrough',
     'native-ime-composition-in-insert-mode',
     'preference-disable-reenable-controls-native-vim',
     'native-normal-escape-preserves-search-value',
@@ -199,7 +211,7 @@ try {
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
   assert(
-    result.checks.length >= (toolbarAcceptance ? 39 : 28),
+    result.checks.length >= (toolbarAcceptance ? 47 : 30),
     'native smoke produced too few assertions',
   )
   let recording
@@ -207,11 +219,12 @@ try {
     recording = JSON.parse(await readFile(join(evidence, 'recording.json'), 'utf8'))
     assert(
       recording.frames > 0 &&
+        recording.finalValue === 'one native two three!' &&
         recording.trusted.length > 10 &&
         recording.trusted.every((event) => event.trusted),
       'recording lacks trusted native input',
     )
-    assert.equal(recording.source, env.HOLI_523_SHA, 'recording source HEAD mismatch')
+    assert.equal(recording.source, env.HOLI_553_SHA, 'recording source HEAD mismatch')
   }
   assert(
     typeof result.electron === 'string' && result.electron.length > 0,

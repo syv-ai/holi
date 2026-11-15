@@ -33,7 +33,7 @@
       return { ok: false, message: String(error) }
     }
   })
-  await win.loadFile(join(process.env.HOLI_523_RENDERER!, 'index.html'))
+  await win.loadFile(join(process.env.HOLI_553_RENDERER!, 'index.html'))
   const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
   const until = async (read: () => unknown, label: string) => {
     for (let attempt = 0; attempt < 200; attempt++) {
@@ -234,6 +234,18 @@
   await trustedPress(view, 'q')
   assert(((await text()) as string).includes('q'))
   mark('native-element-replacement-releases-old-field')
+  await field(
+    `(() => { const old=document.querySelector('#plaintext'); const clone=old.cloneNode(true); old.replaceWith(clone); clone.focus() })()`,
+  )
+  await trustedPress(view, 'Escape')
+  await badge('normal')
+  await trustedPress(view, 'i')
+  await badge('insert')
+  await trustedPress(view, 'q')
+  assert(
+    ((await field(`document.querySelector('#plaintext').textContent`)) as string).includes('q'),
+  )
+  mark('plaintext-host-replacement-releases-old-owner')
   await pref(false)
   await until(
     async () => await ui(`document.querySelector('[aria-label^="Vim "]')===null`),
@@ -253,19 +265,21 @@
   await ui('qa.setOverlay(false)')
   await until(async () => win.contentView.children.length === 1, 'overlay reattach')
   await pause(350)
-  await focus()
+  await focus('plaintext')
   await trustedPress(view, 'Escape')
   await badge('normal')
   mark('production-overlay-restores-vim-with-fresh-attachment')
+  mark('plaintext-host-rearms-after-overlay')
   await ui('qa.setVisible(false)')
   await until(async () => win.contentView.children.length === 0, 'hide detach')
   await ui('qa.setVisible(true)')
   await until(async () => win.contentView.children.length === 1, 'show attach')
   await pause(350)
-  await focus()
+  await focus('plaintext')
   await trustedPress(view, 'Escape')
   await badge('normal')
   mark('production-visible-hide-return-rearms-field')
+  mark('plaintext-host-rearms-after-hide-return')
   win.webContents.setZoomFactor(1.25)
   await pause(400)
   assert.equal(await ui(`document.querySelector('[aria-label="Vim normal mode"]')!==null`), true)
@@ -296,16 +310,18 @@
     { code: `__holiPage.vim.configure(true,90001,${JSON.stringify(before.nonce)})` },
   ])
   assert.equal(staleArm, false)
-  await focus()
+  await focus('plaintext')
   await trustedPress(view, 'Escape')
   await badge('normal')
   mark('native-reload-rejects-old-document-arm-and-reconfigures')
+  mark('plaintext-host-rearms-after-reload')
   await invoke('A', 'open', { tab: 'same', url: `${url}/a?new-document` })
   await pause(400)
-  await focus()
+  await focus('plaintext')
   await trustedPress(view, 'Escape')
   await badge('normal')
   mark('native-navigation-reinitializes-current-document')
+  mark('plaintext-host-rearms-after-navigation')
   const oldA = view
   host.setDisplayed('B')
   await ui('qa.setRemote("B")')
@@ -370,9 +386,8 @@
   await badge('insert')
   mark('native-composition-preserves-unmodified-insert-path')
   await field(
-    `document.querySelector('#text').value='one two three';window.qaTrusted=[];window.addEventListener('keydown',e=>qaTrusted.push({key:e.key,trusted:e.isTrusted}),true)`,
+    `(() => { const host=document.querySelector('#plaintext'); host.textContent='one two three'; host.focus(); const range=document.createRange(); range.setStart(host.firstChild,0); range.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(range); window.qaTrusted=[]; window.addEventListener('keydown',e=>qaTrusted.push({key:e.key,trusted:e.isTrusted}),true) })()`,
   )
-  await focus()
   await trustedPress(view, 'Escape')
   await badge('normal')
   const png = async (wc: any) => {
@@ -434,9 +449,7 @@
   await pause(600)
   await trustedPress(view, 'i')
   await badge('insert')
-  for (const key of 'native ') {
-    await trustedPress(view, key === ' ' ? ' ' : key)
-  }
+  for (const key of 'native ') await trustedPress(view, key)
   await pause(700)
   await trustedPress(view, 'Escape')
   await badge('normal')
@@ -447,10 +460,26 @@
   await pause(800)
   await trustedPress(view, 'Escape')
   await badge('normal')
+  await pause(500)
+  view.webContents.undo()
+  await pause(700)
+  assert.equal(
+    await field(`document.querySelector('#plaintext').textContent`),
+    'one native two three',
+  )
+  view.webContents.redo()
+  await pause(700)
+  assert.equal(
+    await field(`document.querySelector('#plaintext').textContent`),
+    'one native two three!',
+  )
   await pause(800)
   recording = false
   await recordingLoop
-  assert.equal(await text(), 'one native two three!')
+  assert.equal(
+    await field(`document.querySelector('#plaintext').textContent`),
+    'one native two three!',
+  )
   const trusted = await field('qaTrusted')
   assert(trusted.length > 10 && trusted.every((event: any) => event.trusted))
   writeFileSync(
@@ -459,8 +488,8 @@
       frames: frame,
       elapsedMs: Date.now() - started,
       trusted,
-      finalValue: await text(),
-      source: process.env.HOLI_523_SHA,
+      finalValue: await field(`document.querySelector('#plaintext').textContent`),
+      source: process.env.HOLI_553_SHA,
       capture: 'actual host and native page frames composed at native view bounds',
     }),
   )

@@ -463,10 +463,12 @@ async function run(): Promise<void> {
     'aframe',
   )
   mark('unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough')
-  await inPage(
-    a,
-    `(() => { const host = document.querySelector('#plaintext'); host.focus(); const range = document.createRange(); range.setStart(host.firstChild, 0); range.collapse(true); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range) })()`,
-  )
+  const setPlainSelection = (selector: string, offset = 0) =>
+    inPage(
+      a,
+      `(() => { const host = document.querySelector('${selector}'); host.focus(); const range = document.createRange(); const node = host.firstChild; if (node) range.setStart(node, Math.min(${offset}, node.length)); else range.setStart(host, 0); range.collapse(true); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range) })()`,
+    )
+  await setPlainSelection('#plaintext')
   await nativePress(a, 'Escape')
   await nativePress(a, 'w')
   assert.equal(
@@ -479,22 +481,112 @@ async function run(): Promise<void> {
   )
   await nativePress(a, 'i')
   await nativePress(a, 'Z')
+  const plainAfterInsert = await inPage<string>(
+    a,
+    `document.querySelector('#plaintext').textContent`,
+  )
+  assert.equal(plainAfterInsert, 'café🙂 Ztwo')
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
   assert.equal(
     await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
-    'café🙂 Ztwo',
+    'café🙂 two',
   )
-  await inPage(a, `document.querySelector('#plaintext-empty').focus()`)
+  a.webContents.redo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    plainAfterInsert,
+  )
+  mark('native-plaintext-only-motion-insert-and-native-undo-redo')
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  if (!a.webContents.debugger.isAttached()) a.webContents.debugger.attach('1.3')
+  await a.webContents.debugger.sendCommand('Input.imeSetComposition', {
+    text: '日本語',
+    selectionStart: 3,
+    selectionEnd: 3,
+  })
+  await a.webContents.debugger.sendCommand('Input.insertText', { text: '日本語' })
+  assert(
+    (await inPage<string>(a, `document.querySelector('#plaintext').textContent`)).includes(
+      '日本語',
+    ),
+  )
+  mark('native-plaintext-ime-composition-remains-native')
+  await inPage(a, `document.querySelector('#plaintext').textContent='café🙂 two'`)
+
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  await setPlainSelection('#plaintext')
+  await inPage(
+    a,
+    `(() => { const host = document.querySelector('#plaintext'); host.setAttribute('contenteditable','true'); host.setAttribute('contenteditable','plaintext-only') })()`,
+  )
+  const shapeBefore = await inPage<string>(a, `document.querySelector('#plaintext').textContent`)
+  await nativePress(a, 'h')
+  assert.notEqual(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    shapeBefore,
+  )
+  mark('plaintext-shape-loss-and-restoration-invalidates-normal-ownership')
+
+  configureVim(vimSnapshot, false, 5)
+  await setPlainSelection('#plaintext')
+  const disabledPlain = await inPage<string>(a, `document.querySelector('#plaintext').textContent`)
+  await nativePress(a, 'q')
+  assert.notEqual(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    disabledPlain,
+  )
+  configureVim(vimSnapshot, true, 6)
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  mark('plaintext-live-preference-off-passes-native-typing')
+
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  await setPlainSelection('#plaintext')
+  const outsideRange = await inPage(
+    a,
+    `(() => { const host = document.querySelector('#search'); host.focus(); host.setSelectionRange(0,0); const range = document.createRange(); range.selectNodeContents(host); range.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(range) })()`,
+  )
+  void outsideRange
+  const outsideBefore = await inPage<string>(a, `document.querySelector('#plaintext').textContent`)
+  await nativePress(a, 'Escape')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    outsideBefore,
+  )
+  await setPlainSelection('#plaintext')
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const plainMode = await a.webContents.executeJavaScriptInIsolatedWorld(1017, [
+    { code: `__holiPage.vim.mode().mode` },
+  ])
+  assert.equal(plainMode, 'insert')
+  mark('plaintext-outside-selection-escape-passthrough-and-reset')
+
+  await setPlainSelection('#plaintext-empty')
   await nativePress(a, 'Escape')
   assert.equal(
     await inPage<string>(a, `document.querySelector('#plaintext-empty').textContent`),
     '',
   )
-  mark('native-plaintext-only-motion-insert-and-empty-host')
+  await inPage(
+    a,
+    `document.querySelector('#plaintext-empty').setAttribute('contenteditable','true')`,
+  )
+  await nativePress(a, 'a')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext-empty').textContent`),
+    'a',
+  )
+  mark('native-empty-host-and-contenteditable-disable-passthrough')
   await inPage(a, `document.querySelector('#text').focus()`)
   await nativePress(a, 'Escape')
   await nativePress(a, 'Escape')
   assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one two three')
-  a.webContents.debugger.attach('1.3')
+  if (!a.webContents.debugger.isAttached()) a.webContents.debugger.attach('1.3')
   try {
     await a.webContents.debugger.sendCommand('Input.imeSetComposition', {
       text: '日本語',
@@ -508,7 +600,7 @@ async function run(): Promise<void> {
   assert((await inPage<string>(a, `document.querySelector('#text').value`)).includes('日本語'))
   mark('native-ime-composition-in-insert-mode')
   await inPage(a, `document.querySelector('#text').value = 'one two three'`)
-  configureVim(vimSnapshot, false, 5)
+  configureVim(vimSnapshot, false, 7)
   await inPage(
     a,
     `document.querySelector('#text').focus(); document.querySelector('#text').setSelectionRange(0, 0)`,
@@ -519,7 +611,7 @@ async function run(): Promise<void> {
     'zone two three',
     'disabled preference passes input through',
   )
-  configureVim(vimSnapshot, true, 6)
+  configureVim(vimSnapshot, true, 8)
   await inPage(a, `document.querySelector('#text').focus()`)
   await nativePress(a, 'Escape')
   const reenabledMode = await waitFor(() => {
