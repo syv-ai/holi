@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo } from "react"
 import {
   useEventCalendar,
   useEventCalendarViewConfig,
+  useEventCalendarVisible,
   type EventCalendarInstance,
 } from "@/components/ui/event-calendar/event-calendar"
 import {
@@ -106,11 +107,29 @@ function wasRecentChipPress(): boolean {
  * Cancel fully reverts: listeners, overlays and the body drag state all clear,
  * and no update is committed.
  */
-const activeGestureCancels = new Set<() => void>()
+const activeGestureCancels = new Map<object, Set<() => void>>()
 
-/** Cancel (and fully revert) every in-flight event calendar pointer gesture. */
-function cancelActiveEventCalendarGestures(): void {
-  for (const cancel of [...activeGestureCancels]) cancel()
+/** Cancel (and fully revert) in-flight gestures, globally or for one calendar. */
+function cancelActiveEventCalendarGestures(owner?: object): void {
+  const owners = owner === undefined ? [...activeGestureCancels.keys()] : [owner]
+  for (const calendar of owners) {
+    for (const cancel of [...(activeGestureCancels.get(calendar) ?? [])]) cancel()
+  }
+}
+
+function registerGestureCancel(owner: object, cancel: () => void): void {
+  let cancels = activeGestureCancels.get(owner)
+  if (!cancels) {
+    cancels = new Set()
+    activeGestureCancels.set(owner, cancels)
+  }
+  cancels.add(cancel)
+}
+
+function unregisterGestureCancel(owner: object, cancel: () => void): void {
+  const cancels = activeGestureCancels.get(owner)
+  cancels?.delete(cancel)
+  if (cancels?.size === 0) activeGestureCancels.delete(owner)
 }
 
 /**
@@ -118,7 +137,7 @@ function cancelActiveEventCalendarGestures(): void {
  * the LAST consumer leaving means the calendar itself is gone; aborting when
  * any single chip unmounts would kill a drag the user is still holding.
  */
-let gestureConsumers = 0
+const gestureConsumers = new Map<object, number>()
 
 /**
  * Snap a translate offset to the device pixel grid. The cursor-following
@@ -262,6 +281,7 @@ function beginBlockedGesture<TData>(
   segment: EventCalendarSegment<TData>,
   gesture: "move" | "resize"
 ) {
+  const owner = instance
   const startX = startEvent.clientX
   const startY = startEvent.clientY
   const activation = {
@@ -295,9 +315,11 @@ function beginBlockedGesture<TData>(
     window.addEventListener("blur", cleanup)
     instance.settings.onDragBlocked?.(segment.occurrence, { gesture, reason })
   }
+  const cancel = () => cleanup()
   const cleanup = () => {
     if (finished) return
     finished = true
+    unregisterGestureCancel(owner, cancel)
     window.removeEventListener("pointermove", onMove)
     window.removeEventListener("pointerup", onRelease)
     window.removeEventListener("pointercancel", onRelease)
@@ -316,6 +338,7 @@ function beginBlockedGesture<TData>(
     if (e.pointerId !== pointerId) return
     cleanup()
   }
+  registerGestureCancel(owner, cancel)
   window.addEventListener("pointermove", onMove)
   window.addEventListener("pointerup", onRelease)
   window.addEventListener("pointercancel", onRelease)
@@ -323,6 +346,7 @@ function beginBlockedGesture<TData>(
 
 function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   const { instance, kind, origin, startEvent, segment, ui } = config
+  const owner = instance
   const { settings, internals, api } = instance
   const timeZone = settings.timeZone
   const snap = settings.snapDuration
@@ -811,7 +835,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   const cleanup = () => {
     if (finished) return
     finished = true
-    activeGestureCancels.delete(cancel)
+    unregisterGestureCancel(owner, cancel)
     window.removeEventListener("pointermove", onPointerMove)
     window.removeEventListener("pointerup", onPointerUp)
     window.removeEventListener("pointercancel", onCancel)
@@ -931,7 +955,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   // reaches activate() to arm its own blur cancel
   if (active) window.addEventListener("blur", onWindowBlur)
   window.addEventListener("keydown", onKeyDown, true)
-  activeGestureCancels.add(cancel)
+  registerGestureCancel(owner, cancel)
 
   // Touch: long-press activation (movement past tolerance cancels above)
   if (isTouch && !active) {
@@ -945,6 +969,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
 /** Per-chip / per-surface pointer gesture wiring. */
 function useEventCalendarGestures<TData = unknown>() {
   const instance = useEventCalendar<TData>()
+  const visible = useEventCalendarVisible()
   // Overlay classNames bridged from React config into the vanilla-DOM engine
   // (which must never import from the chip module - circular).
   const { classNames } = useEventCalendarViewConfig<TData>()
@@ -957,17 +982,27 @@ function useEventCalendarGestures<TData = unknown>() {
     [classNames]
   )
 
-  // An in-flight gesture lives on window listeners and body-appended overlays,
-  // so it must never outlive the calendar. Chips hold this hook too and they
-  // legitimately unmount mid-gesture, so only the LAST consumer leaving - the
-  // calendar itself going away - aborts.
+  // Chips hold this hook too and can unmount mid-gesture, so cancel only when
+  // the last consumer for this calendar leaves. Other displayed calendars are
+  // independent gesture owners.
   useEffect(() => {
-    gestureConsumers += 1
+    gestureConsumers.set(instance, (gestureConsumers.get(instance) ?? 0) + 1)
     return () => {
-      gestureConsumers -= 1
-      if (gestureConsumers === 0) cancelActiveEventCalendarGestures()
+      const remaining = (gestureConsumers.get(instance) ?? 1) - 1
+      if (remaining === 0) {
+        gestureConsumers.delete(instance)
+        cancelActiveEventCalendarGestures(instance)
+      } else {
+        gestureConsumers.set(instance, remaining)
+      }
     }
-  }, [])
+  }, [instance])
+
+  // A hidden calendar remains mounted (e.g. an inactive pane), but its pointer
+  // gesture must not outlive the surface that owns it.
+  useEffect(() => {
+    if (!visible) cancelActiveEventCalendarGestures(instance)
+  }, [instance, visible])
 
   const canDrag = useCallback(
     (segment: EventCalendarSegment<TData>) => {
