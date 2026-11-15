@@ -55,7 +55,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     )
     writeFileSync(
       join(vaultRoot, bundle, 'command.js'),
-      `const commandScriptGate=Date.now()+350;while(Date.now()<commandScriptGate){};document.documentElement.dataset.commandRegistered='true';window.holi.command(input=>({owner:'${owner}',text:input.text,registered:document.documentElement.dataset.commandRegistered==='true'}))`,
+      `document.documentElement.dataset.commandRegistered='true';window.holi.command(input=>({owner:'${owner}',text:input.text,registered:document.documentElement.dataset.commandRegistered==='true'}))`,
     )
     writeFileSync(
       join(vaultRoot, bundle, 'style.css'),
@@ -201,7 +201,13 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       frameForRequest: windowForRequest.frameForRequest,
     },
   )
-  protocol.handle('holi-app', serve)
+  protocol.handle('holi-app', async (request) => {
+    // Keep the classic script pending while the command document can send messages.
+    if (new URL(request.url).pathname.endsWith('/command.js')) {
+      await new Promise((resolve) => setTimeout(resolve, 350))
+    }
+    return serve(request)
+  })
 
   const checks: string[] = []
   let frameWindow: BrowserWindow | null = null
@@ -316,7 +322,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
         })
       ).value as { token: string; nonce: string }
       const commandResult = await win.webContents.executeJavaScript(
-        `new Promise((resolve,reject)=>{const frame=document.querySelector('#app');const onMessage=e=>{if(e.data?.command){removeEventListener('message',onMessage);resolve(e.data)}};window.addEventListener('message',onMessage);frame.onload=()=>frame.contentWindow.postMessage({nonce:'${commandLease.nonce}',run:{text:'command-${remote}'}},'*');frame.src='holi-app://${leasedAppHost(bundle, commandLease.token)}/?command=smoke&mode=dark';setTimeout(()=>reject(new Error('command runner timeout')),10000)})`,
+        `new Promise((resolve,reject)=>{const frame=document.querySelector('#app');let handedInput=false;const onMessage=e=>{if(e.source!==frame.contentWindow||e.data?.nonce!=='${commandLease.nonce}')return;if(e.data.ready===true&&!handedInput){handedInput=true;frame.contentWindow.postMessage({nonce:'${commandLease.nonce}',run:{text:'command-${remote}'}},'*')}if(e.data.command){removeEventListener('message',onMessage);resolve(e.data)}};window.addEventListener('message',onMessage);frame.onload=null;frame.src='holi-app://${leasedAppHost(bundle, commandLease.token)}/?command=smoke&mode=dark';setTimeout(()=>reject(new Error('command runner timeout')),10000)})`,
       )
       assert.deepEqual(commandResult, {
         nonce: commandLease.nonce,
