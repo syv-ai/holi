@@ -263,14 +263,36 @@ describe('holi agent notify', () => {
           }).view()
         ).entries.map(({ session }) => session),
       ).toEqual([...targets].reverse())
-      // Same content aimed at another session is not a duplicate.
-      await expect(notify({ title: 'T', line: 'L', session: '--help' }, true)).rejects.toThrow()
-      await expect(
-        notify({ title: 'T', line: 'L', session: '01234567-89ab-cdef-0123-456789abcdef' }, true),
-      ).rejects.toThrow()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  it.each([
+    '--help',
+    '01234567-89ab-cdef-0123-456789abcdef',
+    'p0a1b2c3d4e5',
+    'p0a1b2c3d4e5ff',
+    'q0a1b2c3d4e5f',
+    'P0a1b2c3d4e5f',
+    '0A1B2C3D',
+    '0a1b2c3d\n',
+    'p0a1b2c3d4e5f\n',
+    'j0a1b2c3d4e5f\r\n',
+    ' 0a1b2c3d',
+    '0a1b2c3d --help',
+    'p'.repeat(1_000),
+    12345678,
+    {},
+  ])('rejects a malformed session target %j', async (session) => {
+    await expect(notify({ title: 'T', line: 'L', session }, true)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+  })
+
+  it.each([undefined, null, ''])('keeps an omitted optional session target %j', async (session) => {
+    const ok = await notify({ title: 'T', line: 'L', session }, true)
+    expect(ok.raised).toEqual([{ title: 'T', line: 'L' }])
   })
 
   it('opens only a path a person may be shown: no machine state, no secret file', async () => {
