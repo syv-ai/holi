@@ -45,6 +45,11 @@ import {
   type MailPage,
 } from './gmail'
 import type { MailPart, OutgoingMail } from './mime'
+import {
+  DEFAULT_MAIL_MARKER_PREFERENCES,
+  normalizeMailMarkerPreferences,
+  type MailMarkerPreferences,
+} from '../shared/mail-markers'
 import { cacheKey, syncThreads } from './mail-sync'
 import { listContacts } from './people'
 import { threadHasStarredMessage } from './gmail'
@@ -80,12 +85,22 @@ export interface GoogleData {
    */
   setRead(id: string, read: boolean): Promise<void>
   setStarred(id: string, starred: boolean, validate?: () => Promise<void>): Promise<void>
-  /** Batch marker reads are UI-only at the capability door, per account. */
+  /** Local-only marker snapshot for UI display; never reads Gmail. */
+  mailMarkerAnnotations(
+    ids: readonly string[],
+    validate?: () => Promise<void>,
+  ): Promise<Record<string, MarkerValue>>
+  /** Legacy verified marker reads, retained for compatibility. */
   mailMarkers(
     ids: readonly string[],
     validate?: () => Promise<void>,
   ): Promise<Record<string, MarkerValue>>
   setMailMarker(id: string, marker: MarkerValue, validate?: () => Promise<void>): Promise<void>
+  mailMarkerPreferences(validate?: () => Promise<void>): Promise<MailMarkerPreferences>
+  setMailMarkerPreferences(
+    preferences: MailMarkerPreferences,
+    validate?: () => Promise<void>,
+  ): Promise<void>
   archive(id: string): Promise<void>
   trash(id: string): Promise<void>
   /**
@@ -313,6 +328,16 @@ export function createGoogleData({
 
     setStarred,
 
+    async mailMarkerAnnotations(ids, validate) {
+      validateBatch(ids)
+      await validate?.()
+      assertActive()
+      const stored = await markers.read(ids, validate)
+      assertActive()
+      await validate?.()
+      return stored
+    },
+
     mailMarkers(ids, validate) {
       validateBatch(ids)
       assertActive()
@@ -330,6 +355,16 @@ export function createGoogleData({
         }
         return result
       })()
+    },
+
+    mailMarkerPreferences(validate) {
+      assertActive()
+      return markers.preferences(validate)
+    },
+
+    setMailMarkerPreferences(preferences, validate) {
+      assertActive()
+      return markers.setPreferences(preferences, validate)
     },
 
     setMailMarker(id, marker, validate) {
@@ -470,10 +505,19 @@ function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
 
 function memoryMarkers(): MailMarkerStore {
   const values = new Map<string, Exclude<MarkerValue, null>>()
+  let preferences: MailMarkerPreferences = {
+    enabledOrder: [...DEFAULT_MAIL_MARKER_PREFERENCES.enabledOrder],
+  }
   const queues = new Map<string, Promise<unknown>>()
   return {
     async read(ids) {
       return Object.fromEntries(ids.map((id) => [id, values.get(id) ?? null]))
+    },
+    async preferences() {
+      return { enabledOrder: [...preferences.enabledOrder] }
+    },
+    async setPreferences(next) {
+      preferences = normalizeMailMarkerPreferences(next)
     },
     async set(id, marker) {
       if (marker === null) values.delete(id)

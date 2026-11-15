@@ -79,6 +79,7 @@ import { GoogleReconnectRequiredError } from './session'
 import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 import { isMailMarker, validateBatch, validateThreadId, type MarkerValue } from './markers'
+import { normalizeMailMarkerPreferences, type MailMarkerPreferences } from '../shared/mail-markers'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -812,6 +813,32 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
+    'google.mailMarkerAnnotations': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const ids = p.ids
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'ids must be a list of Gmail thread ids')
+        try {
+          validateBatch(ids as string[])
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { ids: ids as string[], expectedAccountSub }
+      },
+      run: async (ctx, { ids, expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        return google(() => data.mailMarkerAnnotations(ids, validateSession(ctx.remote, session)))
+      },
+    }),
+
     'google.mailMarkers': cap({
       doors: ['ui'],
       params: (raw) => {
@@ -836,6 +863,47 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
         const validate = validateSession(ctx.remote, session)
         return google(() => data.mailMarkers(ids, validate))
+      },
+    }),
+
+    'google.mailMarkerPreferences': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const expectedAccountSub = expectedAccountParam(paramsObject(raw))
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { expectedAccountSub }
+      },
+      run: async (ctx, { expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        return google(() => data.mailMarkerPreferences(validateSession(ctx.remote, session)))
+      },
+    }),
+
+    'google.setMailMarkerPreferences': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        let preferences: MailMarkerPreferences
+        try {
+          preferences = normalizeMailMarkerPreferences(p.preferences)
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return { expectedAccountSub, preferences }
+      },
+      run: async (ctx, { expectedAccountSub, preferences }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        await google(() =>
+          data.setMailMarkerPreferences(preferences, validateSession(ctx.remote, session)),
+        )
+        return ok
       },
     }),
 
