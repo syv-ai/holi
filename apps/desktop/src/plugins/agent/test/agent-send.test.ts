@@ -32,6 +32,8 @@ import {
   appModeAtom,
   closeSurfaceTabAtom,
   openSurfaceAtom,
+  openDocumentAtom,
+  openDocumentRequestAtom,
   surfaceTabIdsAtom,
 } from '@/plugin-api'
 
@@ -229,6 +231,44 @@ test('only the newest attach lands when same-vault opens resolve out of order', 
 
   expect(store.get(viewTerminalsAtom)).toEqual({ bbbbbbbb: 'newer' })
   expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'bbbbbbbb' })
+})
+
+test('a document open invalidates a pending session attach and keeps its navigation', async () => {
+  const attach = deferred<{ ok: true; terminalId: string }>()
+  open.mockReturnValueOnce(attach.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const focused = vi.fn()
+  const unregister = registerSessionTerminal('stale-session', { focus: focused, write: () => {} })
+  const opening = store.set(openSessionAtom, 'aaaaaaaa')
+
+  store.set(openDocumentAtom, 'notes/newer.md')
+  const navigation = store.get(openDocumentRequestAtom)
+  expect(navigation).toMatchObject({ path: 'notes/newer.md' })
+
+  attach.resolve({ ok: true, terminalId: 'stale-session' })
+  await expect(opening).resolves.toEqual({ ok: true })
+
+  expect(store.get(openDocumentRequestAtom)).toBe(navigation)
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'home' })
+  expect(store.get(appModeAtom)).toBe('documents')
+  expect(focused).not.toHaveBeenCalled()
+  unregister()
+})
+
+test('a document open makes an older attach failure stale', async () => {
+  const rejected = deferred<{ ok: true; terminalId: string }>()
+  open.mockReturnValueOnce(rejected.promise)
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const opening = store.set(openSessionAtom, 'aaaaaaaa')
+
+  store.set(openDocumentAtom, 'notes/newer.md')
+  rejected.reject(new Error('stale attach rejection'))
+
+  await expect(opening).resolves.toEqual({ ok: true })
+  expect(store.get(openDocumentRequestAtom)).toMatchObject({ path: 'notes/newer.md' })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(appModeAtom)).toBe('documents')
 })
 
 test('a newer click reusing a terminal invalidates an older pending attach', async () => {

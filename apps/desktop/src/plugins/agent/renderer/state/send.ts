@@ -25,6 +25,7 @@ import {
   activeRemoteRevisionValueAtom,
   appModeAtom,
   openSurfaceAtom,
+  openDocumentRequestAtom,
 } from '@/plugin-api'
 import { newSessionProviderAtom } from './providers'
 import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
@@ -123,8 +124,10 @@ export const openSessionAtom = atom(null, async (get, set, id: string): Promise<
   set(openSessionRequestAtom, request)
   const remote = get(activeRemoteAtom)
   const vaultRevision = get(activeRemoteRevisionValueAtom)
+  const documentRequest = get(openDocumentRequestAtom)?.seq ?? 0
   const isCurrent = () =>
     get(openSessionRequestAtom) === request &&
+    (get(openDocumentRequestAtom)?.seq ?? 0) === documentRequest &&
     get(activeRemoteAtom) === remote &&
     get(activeRemoteRevisionValueAtom) === vaultRevision
 
