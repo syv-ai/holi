@@ -358,7 +358,7 @@ async function run() {
   for (const [view, section, id] of [
     ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
     ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
-  ]) {
+  ] as const) {
     await js(`window.smokeShow('${view}')`)
     await pause(150)
     const selector = `section[aria-label="${section}"] #${id} [aria-label="Star thread"]`
@@ -448,7 +448,7 @@ async function run() {
     for (const [view, section, id] of [
       ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
       ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
-    ]) {
+    ] as const) {
       await js(`window.smokeShow('${view}')`)
       const selector = `section[aria-label="${section}"] #${id} [aria-label="Star thread"]`
       await nativeClick(selector)
@@ -485,7 +485,7 @@ async function run() {
     for (const [view, section] of [
       ['shell', 'Production app-shell mail'],
       ['surface', 'Production legacy mail reader'],
-    ]) {
+    ] as const) {
       await js(
         `window.smokeShow('${view}'); const scope=document.querySelector('section[aria-label="${section}"]'); const row=[...scope.querySelectorAll('[role="listitem"],button')].find(n=>n.textContent.includes('Red marker fixture')); if(!row)throw Error('Missing reader row'); row.click()`,
       )
@@ -520,13 +520,15 @@ async function run() {
     mark('both-production-readers-render-and-natively-unstar-stored-marker')
     await registry.run('google.useAccount', 'ui', context, { sub: subB })
     const accountB = await registry.run('google.status', 'ui', context, {})
-    assert.equal(accountB.value.account?.sub, subB)
+    assert(accountB.value && typeof accountB.value === 'object' && 'account' in accountB.value)
+    assert.deepEqual(accountB.value.account, sessions.get(subB)!.account)
     assert.deepEqual(await createMailMarkerStore(storeRoot, subB).preferences(), {
       enabledOrder: ['yellow-star'],
     })
     await registry.run('google.useAccount', 'ui', context, { sub: subA })
     const accountA = await registry.run('google.status', 'ui', context, {})
-    assert.equal(accountA.value.account?.sub, subA)
+    assert(accountA.value && typeof accountA.value === 'object' && 'account' in accountA.value)
+    assert.deepEqual(accountA.value.account, sessions.get(subA)!.account)
     assert.deepEqual(await markersA.preferences(), {
       enabledOrder: ['blue-question', 'yellow-star', 'red-star'],
     })
@@ -534,7 +536,7 @@ async function run() {
     for (const [view, section, id] of [
       ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
       ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
-    ]) {
+    ] as const) {
       await js(`window.smokeShow('${view}')`)
       const cycleSelector = `section[aria-label="${section}"] #${id} [aria-label="Star thread"]`
       const cycleStart = await js('window.smokeTrustedClicks.length')
@@ -596,7 +598,7 @@ async function run() {
     for (const [view, section, id] of [
       ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
       ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
-    ]) {
+    ] as const) {
       await markersA.set(id, null)
       fakeStarred.delete(id)
       await win.loadFile(join(root, 'renderer.html'))
@@ -672,7 +674,7 @@ async function run() {
     for (const [view, section, unstarLabel] of [
       ['shell', 'Production app-shell mail', 'Unstar thread'],
       ['surface', 'Production legacy mail reader', 'Unstar this thread'],
-    ]) {
+    ] as const) {
       const id = 'thread-red'
       await markersA.set(id, null)
       fakeStarred.add(id)
