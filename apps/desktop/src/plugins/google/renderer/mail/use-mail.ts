@@ -12,6 +12,7 @@ import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import { activeRemoteAtom } from '@/plugin-api'
 import { googleCap } from '../google-cap'
+import { useMailMarkers } from '../use-mail-markers'
 import { explainWriteFailure, isDisconnected, messageOf } from '../google-errors'
 import type { MailAddress, ThreadMessage } from '../mail-types'
 import type { MailFolder } from './data'
@@ -356,6 +357,11 @@ export function useMail(account: string | null) {
   /** The open thread's row as the list has it now (flags move there), else
    *  as it was when opened. */
   const openRow = threads.find((thread) => thread.id === openId) ?? openSummary
+  const markers = useMailMarkers({
+    remote,
+    accountSub: account,
+    ids: [...threads.map((thread) => thread.id), ...(openId === null ? [] : [openId])],
+  })
 
   const setFolder = (next: MailFolder) => {
     setFolderState(next)
@@ -397,9 +403,17 @@ export function useMail(account: string | null) {
     closeThread,
     reloadThread,
     load,
-    refresh,
+    refresh: () => {
+      refresh()
+      markers.invalidate()
+    },
     setRead,
-    setStarred,
+    setStarred: async (id: string, starred: boolean) => {
+      const result = await setStarred(id, starred)
+      markers.invalidate([id])
+      return result
+    },
+    markers,
     removeThreads,
     call,
   }
