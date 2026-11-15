@@ -31,6 +31,30 @@ describe('readMarkdownReferenceDefinitions', () => {
 })
 
 describe('reference definition normalization', () => {
+  it('excludes frontmatter and keeps Markdown reference destinations', () => {
+    const source = [
+      '---',
+      'description: |',
+      '',
+      '  [ref]: https://wrong.example/',
+      '---',
+      '',
+      writeMarkdownCaptionEnvelope('| A |\n| --- |\n| [ref] |', 'Caption.'),
+      '',
+      '[ref]: https://right.example/',
+    ].join('\n')
+    expect(readMarkdownReferenceDefinitions(source)).toContain('[ref]: https://right.example/')
+    expect(readMarkdownReferenceDefinitions(source)).not.toContain('wrong.example')
+  })
+
+  it('preserves non-ASCII separators in labels and escaped angle destinations', () => {
+    const source = String.raw`[a b]: https://example.com/
+[ref]: <https://example.com/a\>b>`
+    const definitions = readMarkdownReferenceDefinitions(source)
+    expect(definitions).toContain('[a b]: https://example.com/')
+    expect(definitions).toContain('<https://example.com/a\\>b>')
+  })
+
   it('removes container markers, preserves escapes, and keeps duplicate source order', () => {
     const source = String.raw`> [target]:
 >   https://example.org/destination
