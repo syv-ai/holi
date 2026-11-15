@@ -667,6 +667,7 @@ async function run(): Promise<void> {
     await Promise.all([reconciling, stopping])
     mark(check)
   }
+  // The toolbar acceptance runner inserts its isolated renderer phase before teardown.
   assert.equal(listeners.size, 0)
   win.destroy()
   server.closeAllConnections()
