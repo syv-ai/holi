@@ -89,6 +89,7 @@ export const agentMain: MainPlugin = {
           withPreset(piProvider({ resolveBin: bin, env: () => current().env ?? {} }), current),
       },
     })
+    let started: ReturnType<typeof createAgentSessions> | undefined
     try {
       const providers = (): ReturnType<typeof harnesses.providers> => harnesses.providers()
       const claude = providers().find(hasBackground)!
@@ -122,7 +123,7 @@ export const agentMain: MainPlugin = {
         sessionLog.sessions(all)
       }
 
-      const started = createAgentSessions({
+      const sessions = createAgentSessions({
         emit: (remote, name, payload) => {
           if (name === 'history' && remote === ctx.remote) {
             backgroundPast = payload as SessionSummary[]
@@ -147,9 +148,10 @@ export const agentMain: MainPlugin = {
         turnLogFor: openTurnLog,
         snapshot: worktreeEnd,
       })
+      started = sessions
       // Fix the session host to this activation's vault before exposing any
       // provider hook routes; early hook reports queue against this owner.
-      void started.ensure(ctx)
+      await sessions.ensure(ctx)
       // Pi's RPC runs find `pi` and its environment as its terminals do: the
       // preset's program and variables, its arguments being a terminal's alone.
       const piRuns = piCommand({
@@ -160,7 +162,7 @@ export const agentMain: MainPlugin = {
         bin: piRuns.bin,
         env: piRuns.env,
         binDir: ctx.binDir,
-        bracket: (id, edge) => started.bracket(id, edge),
+        bracket: (id, edge) => sessions.bracket(id, edge),
         changed: () => {
           piSessions = piBackground.sessions()
           pushSessions()
@@ -180,7 +182,7 @@ export const agentMain: MainPlugin = {
         providers,
         terminals,
         // Its turns pause sync and are recorded like a background session's.
-        bracket: (id, edge) => started.bracket(id, edge),
+        bracket: (id, edge) => sessions.bracket(id, edge),
         binDir: ctx.binDir,
         onChange: (list) => {
           own = list
@@ -204,7 +206,7 @@ export const agentMain: MainPlugin = {
       const jobs = createJobs({
         vault: { remote: ctx.remote, root: ctx.root },
         scratchRoot: join(ctx.userData, 'agent-jobs'),
-        bracket: (id, edge) => started.bracket(id, edge),
+        bracket: (id, edge) => sessions.bracket(id, edge),
         onChange: (list) => {
           jobRows = list
           pushSessions()
@@ -289,18 +291,18 @@ export const agentMain: MainPlugin = {
             }
             // The settle commit's tree, for the Stop hook to save as where the
             // turn left the vault.
-            const commit = await started.noteTurn(remote, id, active, pending, pid)
+            const commit = await sessions.noteTurn(remote, id, active, pending, pid)
             if (commit === null) return null
             return runGit(ctx.root, ['rev-parse', '--verify', `${commit}^{tree}`]).catch(() => null)
           },
           // A session's status line: how much of its context is used.
-          onStatus: (remote, id, status) => started.noteStatus(remote, id, status),
+          onStatus: (remote, id, status) => sessions.noteStatus(remote, id, status),
           onConversation: (remote, id, about) => {
             if (remote === ctx.remote) ptySessions.noteConversation(id, about)
           },
           // Where a background session takes messages: its inbox socket, kept
           // in memory.
-          onChannel: (remote, id, channel) => started.noteChannel(remote, id, channel),
+          onChannel: (remote, id, channel) => sessions.noteChannel(remote, id, channel),
         })
       }
       // `holi-signal`, from a session of a harness a person added: whichever
@@ -323,7 +325,7 @@ export const agentMain: MainPlugin = {
       // stop without a question; their conversations stay in the agents list.
       ctx.guardQuit(() => {
         const busy = [
-          ...started.sessions(),
+          ...sessions.sessions(),
           ...piBackground.sessions(),
           ...ptySessions.sessions(),
           ...jobs.sessions(),
@@ -353,7 +355,7 @@ export const agentMain: MainPlugin = {
       // The per-turn hook reads the focused note, and its selected lines, from a
       // file in this clone.
       const unreport = ctx.onReport((report) =>
-        started.setFocus({
+        sessions.setFocus({
           focusedPath: report.focusedPath,
           selection: report.selection,
           openPaths: report.openPaths,
@@ -377,11 +379,19 @@ export const agentMain: MainPlugin = {
         await piBackground.leave().catch((err) => console.error('[agent] Pi sessions:', err))
         await fenced.leave().catch((err) => console.error('[agent] fenced sessions:', err))
         await jobs.leave().catch((err) => console.error('[agent] jobs:', err))
-        await started.leave().catch((err) => console.error('[agent] leave failed:', err))
+        await sessions.leave().catch((err) => console.error('[agent] leave failed:', err))
         await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
         await harnesses.dispose()
       }
     } catch (err) {
+      // `ensure` may have attached the vault's config watcher before a later
+      // activation step fails. Join any pending attach and release it before
+      // allowing a retry to create another session host.
+      await started
+        ?.leave({ stopSessions: false })
+        .catch((cleanupError: unknown) =>
+          console.error('[agent] failed activation cleanup:', cleanupError),
+        )
       await harnesses.dispose()
       throw err
     }
