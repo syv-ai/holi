@@ -44,8 +44,10 @@ export interface SchemeContext {
   active(): LiveVault | null
   /** Main-owned authority for vault-app frame and resource leases. */
   appFrames?: AppFrameLeases
-  /** Resolve the native top-level window that initiated a protocol request. */
+  /** Resolve the native window that initiated a protocol request. */
   windowForRequest?(request: Request): BrowserWindow | null
+  /** Native WebFrameMain identity correlated from Electron's WebRequest event. */
+  frameForRequest?(request: Request): string | null
   appFrameLease?: AppFrameLease | null
 }
 
@@ -61,6 +63,10 @@ export interface AppFrameLease {
   valid(window: BrowserWindow): boolean
   /** Consume the single top-level document load; a reload needs a fresh lease. */
   claimDocument(): boolean
+  /** Bind this lease to the native main-frame document generation. */
+  bindDocument(frame: string): boolean
+  /** Whether this lease belongs to the native requester of a protocol resource. */
+  isDocumentFrame(frame: string): boolean
 }
 
 export interface AppFrameLeases {
@@ -72,7 +78,11 @@ export interface AppFrameLeases {
     window: BrowserWindow
     current(): boolean
   }): AppFrameLease
-  resolve(token: string, window: BrowserWindow): AppFrameLease | null
+  resolve(token: string, window: BrowserWindow, frame?: string | null): AppFrameLease | null
+  /** Find a live lease by its unguessable token for native navigation tracking. */
+  resolveToken(token: string): AppFrameLease | null
+  /** Observe synchronous revocation so native frame indexes discard dead entries. */
+  onRevoke(listener: (token: string) => void): () => void
   validate(input: {
     token: string
     nonce: string

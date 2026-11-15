@@ -42,6 +42,7 @@ export interface ServeDeps {
   runs(owner: string, root: string): Promise<boolean>
   appFrames?: AppFrameLeases
   windowForRequest?(request: Request): BrowserWindow | null
+  frameForRequest?(request: Request): string | null
 }
 
 /** A request handler for one entry: a plugin's answers 404 while the open
@@ -55,6 +56,7 @@ export function serveScheme(
       active: deps.active,
       appFrames: deps.appFrames,
       windowForRequest: deps.windowForRequest,
+      frameForRequest: deps.frameForRequest,
       appFrameLease: null as import('../plugin-api').AppFrameLease | null,
     }
     const owner = entry.scheme.ownerForRequest

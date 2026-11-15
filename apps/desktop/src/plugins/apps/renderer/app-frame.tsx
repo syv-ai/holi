@@ -349,6 +349,13 @@ function AppLoad({
         token: mainLease.token,
         nonce: mainLease.nonce,
         current,
+        authorize: async () =>
+          current() &&
+          (await appsCap.frameLeaseValid(remote, {
+            bundle: path,
+            token: mainLease.token,
+            nonce: mainLease.nonce,
+          })),
         reply: (response: AppResponse) => {
           if (current()) target?.postMessage({ ...response, nonce: mainLease.nonce }, '*')
         },

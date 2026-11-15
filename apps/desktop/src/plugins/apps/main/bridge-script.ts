@@ -29,6 +29,7 @@ const OTHER_PER_SECOND = 50
 export const BRIDGE_JS = `(() => {
   const nonce = document.querySelector('meta[name="holi-app-document-nonce"]')?.content
   if (!nonce) return
+  parent.postMessage({ nonce, ready: true }, '*')
   const pending = new Map()
   const listeners = new Map()
   addEventListener('message', (e) => {
@@ -235,6 +236,7 @@ export const BRIDGE_JS = `(() => {
 export const COMMAND_JS = `(() => {
   const nonce = document.querySelector('meta[name="holi-app-document-nonce"]')?.content
   if (!nonce) return
+  parent.postMessage({ nonce, ready: true }, '*')
   let run = null
   window.holi.command = (fn) => { run = fn }
   const finish = (outcome) => parent.postMessage({ nonce, command: outcome }, '*')

@@ -77,6 +77,7 @@ function runInFrame(
     let frame: HTMLIFrameElement | null = null
     let lease: { token: string; nonce: string } | null = null
     let settled = false
+    let handedInput = false
     const done = (): void => {
       clearTimeout(timer)
       inFlight.delete(cancel)
@@ -115,63 +116,87 @@ function runInFrame(
     const onMessage = (event: MessageEvent): void => {
       if (frame === null || lease === null || event.source !== frame.contentWindow || !isCurrent())
         return
-      const data = event.data as { nonce?: unknown; command?: CommandOutcome } | null
+      const data = event.data as {
+        nonce?: unknown
+        ready?: unknown
+        command?: CommandOutcome
+      } | null
       if (data?.nonce !== lease.nonce) return
-      if (typeof data.command === 'object') {
-        const outcome = data.command
-        if (outcome?.ok !== true) {
-          const error = new Error(String(outcome?.error ?? 'the command failed'))
-          if (!isCurrent()) {
-            finish(undefined, error)
+      void appsCap
+        .frameLeaseValid(remote, { bundle, token: lease.token, nonce: lease.nonce })
+        .then((valid) => {
+          if (!valid || settled || !isCurrent() || frame === null || lease === null) return
+          if (data.ready === true && !handedInput) {
+            handedInput = true
+            frame.contentWindow?.postMessage({ run: input, nonce: lease.nonce }, '*')
             return
           }
-          void appsCap
-            .log(remote, {
-              bundle,
-              level: 'error',
-              text: `/${command}: ${error.message}`,
-              token: lease.token,
-              nonce: lease.nonce,
-            })
-            .catch(() => {})
-            .finally(() => finish(undefined, error))
-          return
-        }
-        const action = commandActionOf(outcome.value)
-        if (action !== null && 'error' in action) {
-          const error = new Error(action.error)
-          if (!isCurrent()) {
-            finish(undefined, error)
+          if (typeof data.command === 'object') {
+            const outcome = data.command
+            if (outcome?.ok !== true) {
+              const error = new Error(String(outcome?.error ?? 'the command failed'))
+              if (!isCurrent()) {
+                finish(undefined, error)
+                return
+              }
+              void appsCap
+                .log(remote, {
+                  bundle,
+                  level: 'error',
+                  text: `/${command}: ${error.message}`,
+                  token: lease.token,
+                  nonce: lease.nonce,
+                })
+                .catch(() => {})
+                .finally(() => finish(undefined, error))
+              return
+            }
+            const action = commandActionOf(outcome.value)
+            if (action !== null && 'error' in action) {
+              const error = new Error(action.error)
+              if (!isCurrent()) {
+                finish(undefined, error)
+                return
+              }
+              void appsCap
+                .log(remote, {
+                  bundle,
+                  level: 'error',
+                  text: `/${command}: ${error.message}`,
+                  token: lease.token,
+                  nonce: lease.nonce,
+                })
+                .catch(() => {})
+                .finally(() => finish(undefined, error))
+              return
+            }
+            finish(action)
             return
           }
-          void appsCap
-            .log(remote, {
-              bundle,
-              level: 'error',
-              text: `/${command}: ${error.message}`,
-              token: lease.token,
-              nonce: lease.nonce,
-            })
-            .catch(() => {})
-            .finally(() => finish(undefined, error))
-          return
-        }
-        finish(action)
-        return
-      }
-      hostBridgeMessage(event.data, {
-        store,
-        remote,
-        bundle,
-        token: lease.token,
-        nonce: lease.nonce,
-        current: () => !settled && isCurrent() && store.get(activeRemoteAtom) === remote,
-        reply: (response) => {
-          if (!settled && isCurrent() && store.get(activeRemoteAtom) === remote) {
-            frame?.contentWindow?.postMessage(response, '*')
-          }
-        },
-      })
+          hostBridgeMessage(event.data, {
+            store,
+            remote,
+            bundle,
+            token: lease.token,
+            nonce: lease.nonce,
+            current: () => !settled && isCurrent() && store.get(activeRemoteAtom) === remote,
+            authorize: async () =>
+              !settled &&
+              isCurrent() &&
+              store.get(activeRemoteAtom) === remote &&
+              (await appsCap.frameLeaseValid(remote, {
+                bundle,
+                token: lease!.token,
+                nonce: lease!.nonce,
+              })),
+            reply: (response) => {
+              if (!settled && isCurrent() && store.get(activeRemoteAtom) === remote) {
+                frame?.contentWindow?.postMessage(response, '*')
+              }
+            },
+          })
+        })
+        .catch(() => {})
     }
     inFlight.add(cancel)
     window.addEventListener('message', onMessage)
@@ -190,11 +215,6 @@ function runInFrame(
         frame.style.display = 'none'
         const mode = store.get(activeModeAtom)
         frame.src = `holi-app://${leasedAppHost(bundle, lease.token)}/?${COMMAND_PARAM}=${encodeURIComponent(command)}&mode=${mode}`
-        frame.addEventListener('load', () => {
-          if (!settled && isCurrent() && store.get(activeRemoteAtom) === remote) {
-            frame?.contentWindow?.postMessage({ run: input, nonce: lease?.nonce }, '*')
-          }
-        })
         document.body.append(frame)
       },
       (error: unknown) =>
