@@ -862,8 +862,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
    */
   const openRow = threads.find((thread) => thread.id === openId) ?? openSummary
   const openIntent = openId === null ? undefined : markerActions.get(openId)
-  const openStarred =
-    openIntent === undefined ? openRow?.starred === true : openIntent.marker !== null
+  const openStarred = openIntent === undefined ? openRow?.starred === true : openIntent.starred
   const openMarker =
     openIntent === undefined
       ? openId === null
@@ -1141,7 +1140,10 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                   <MailMarkerStatus
                     state={openMarker}
                     starred={openStarred}
-                    onRetry={() => markers.invalidate([openId])}
+                    onRetry={() => {
+                      markers.invalidate([openId])
+                      void markerActions.retry(openId)
+                    }}
                   />
                 )}
               </div>

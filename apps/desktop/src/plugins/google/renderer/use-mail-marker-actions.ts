@@ -137,9 +137,14 @@ export function useMailMarkerActions({
   const activate = useCallback(
     (id: string, starred: boolean, marker: MailMarker | null) => {
       if (remote === null || accountSub === null) return
-      actions.activate(id, starred, marker)
+      const current = overlay[id]
+      actions.activate(
+        id,
+        current?.starred ?? starred,
+        current === undefined ? marker : current.marker,
+      )
     },
-    [actions, remote, accountSub],
+    [actions, remote, accountSub, overlay],
   )
   const get = useCallback((id: string) => overlay[id], [overlay])
   const retry = useCallback(

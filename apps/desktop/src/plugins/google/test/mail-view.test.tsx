@@ -2787,6 +2787,36 @@ test('refresh and Gmail star writes invalidate the visible thread marker', async
   expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3)
 })
 
+test('reader Retry settles a failed marker reconciliation', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await openThread()
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+  mailMarkersMock
+    .mockRejectedValueOnce(new Error('temporary annotation failure'))
+    .mockResolvedValueOnce({ t1: 'yellow-star' })
+  await user.click(screen.getAllByRole('button', { name: 'Star this thread' }).at(-1)!)
+
+  const readerHeader = screen.getByRole('heading', { name: 'Q2 budget' }).parentElement!
+  await user.click(within(readerHeader).getByRole('button', { name: 'Retry marker' }))
+
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+  await waitFor(() => expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3))
+})
+
+test('reader preserves a Gmail star when its personal marker is absent', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+  setMailMarkerMock.mockRejectedValue(new Error('removal refused'))
+  render(<MailView />)
+  await openThread()
+  await user.click(screen.getAllByRole('button', { name: 'Unstar this thread' }).at(-1)!)
+
+  expect(screen.getAllByRole('button', { name: 'Unstar this thread' }).at(-1)).toBeInTheDocument()
+  expect(setMailMarkerMock).toHaveBeenCalled()
+})
+
 test('shows ordinary Gmail stars only after the annotation read and retries marker errors', async () => {
   threadMock.mockResolvedValue(page([summary({ starred: true })]))
   mailMarkersMock.mockRejectedValueOnce(new Error('offline'))

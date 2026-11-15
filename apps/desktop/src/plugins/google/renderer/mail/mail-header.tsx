@@ -61,7 +61,7 @@ export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visibl
   const subject = thread?.subject ?? row?.subject ?? ''
   const openId = mail.openId
   const intent = openId === null ? undefined : mail.markerActions.get(openId)
-  const starred = intent === undefined ? row?.starred === true : intent.marker !== null
+  const starred = intent === undefined ? row?.starred === true : intent.starred
   const marker =
     openId === null
       ? null
@@ -115,7 +115,10 @@ export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visibl
         <MailMarkerStatus
           state={marker}
           starred={row?.starred === true}
-          onRetry={() => mail.markers.invalidate([openId])}
+          onRetry={() => {
+            mail.markers.invalidate([openId])
+            void mail.retryMarker(openId)
+          }}
         />
       )}
 

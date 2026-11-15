@@ -427,7 +427,46 @@ test('a refused primary marker reconciles the star and says why', async () => {
   await user.click(primary)
 
   expect(await screen.findByRole('alert')).toHaveTextContent(/Reconnect Google/)
-  expect(primary).toHaveAttribute('aria-pressed', 'false')
+  await waitFor(() => expect(primary).toHaveAttribute('aria-pressed', 'true'))
+})
+
+test('reader Retry settles a failed marker reconciliation', async () => {
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+  mailMarkersMock
+    .mockRejectedValueOnce(new Error('temporary annotation failure'))
+    .mockResolvedValueOnce({ t1: 'yellow-star' })
+  await user.click(
+    within(await screen.findByRole('toolbar', { name: 'Thread actions' })).getByRole('button', {
+      name: 'Star thread',
+    }),
+  )
+
+  const readerHeader = screen.getByRole('heading', { name: 'Q2 budget' }).closest('header')!
+  await user.click(within(readerHeader).getByRole('button', { name: 'Retry marker' }))
+
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+  await waitFor(() => expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3))
+})
+
+test('reader preserves a Gmail star when its personal marker is absent', async () => {
+  const user = userEvent.setup()
+  searchMock.mockImplementation(async ({ query }: { query?: string } = {}) =>
+    page([summary({ starred: query === 'is:starred' || query === undefined })]),
+  )
+  setMailMarkerMock.mockRejectedValue(new Error('removal refused'))
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  const toolbar = await screen.findByRole('toolbar', { name: 'Thread actions' })
+  await user.click(within(toolbar).getByRole('button', { name: 'Unstar thread' }))
+
+  expect(within(toolbar).getByRole('button', { name: 'Unstar thread' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(mailMarkersMock).toHaveBeenCalled()
 })
 
 test('drafts come from Gmail and say so when there are none', async () => {

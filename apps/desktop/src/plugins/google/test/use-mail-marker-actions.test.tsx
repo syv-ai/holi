@@ -58,6 +58,43 @@ describe('useMailMarkerActions production hook', () => {
     )
   })
 
+  it('cycles from the owned overlay while the annotation reload is pending', async () => {
+    run.mockImplementation(async ({ name }: { name: string }) => {
+      if (name === 'google.mailMarkerPreferences')
+        return { enabledOrder: ['yellow-star', 'red-star'] }
+      if (name === 'google.setMailMarker') return { ok: true }
+      if (name === 'google.mailMarkerAnnotations') return annotations('yellow-star')
+      return { ok: true }
+    })
+    const { result } = renderHook(() =>
+      useMailMarkerActions({ ...props, reconcile: vi.fn(), onFailure: vi.fn(), onChange: vi.fn() }),
+    )
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'google.mailMarkerPreferences' }),
+      ),
+    )
+
+    act(() => result.current.activate('thread', false, null))
+    await waitFor(() => expect(result.current.get('thread')?.marker).toBe('yellow-star'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    act(() => result.current.activate('thread', true, null))
+
+    await waitFor(() =>
+      expect(
+        run.mock.calls.filter(
+          ([input]) => (input as { name: string }).name === 'google.setMailMarker',
+        ),
+      ).toHaveLength(2),
+    )
+    const writes = run.mock.calls.filter(
+      ([input]) => (input as { name: string }).name === 'google.setMailMarker',
+    )
+    expect(
+      writes.map(([input]) => JSON.parse((input as { paramsJson: string }).paramsJson).marker),
+    ).toEqual(['yellow-star', 'red-star'])
+  })
+
   it('retries after reconciliation failure and uses actual starred state for a refused external-star unstar', async () => {
     let reads = 0
     const changed = vi.fn()
