@@ -44,6 +44,8 @@ async function run() {
   window.show()
 }
 
+app.on('window-all-closed', () => app.quit())
+
 app.on('before-quit', () => {
   for (const window of windows) window.destroy()
 })

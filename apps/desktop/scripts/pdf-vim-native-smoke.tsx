@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createStore, Provider, useSetAtom } from 'jotai'
+import { createStore, Provider, useAtomValue, useSetAtom } from 'jotai'
 import { PdfViewer } from '../src/plugins/pdf/renderer/pdf-viewer'
 import { HostHintLayer } from '../src/renderer/src/features/shell/host-hint-layer'
 import { useShortcutDispatcher } from '../src/renderer/src/hooks/use-shortcuts'
 import { vimCodeEditingAtom } from '../src/renderer/src/state/preferences'
-import { activeRemoteAtom, snapshotAtom } from '../src/renderer/src/plugin-api'
+import { activeModeAtom, activeRemoteAtom, snapshotAtom } from '../src/renderer/src/plugin-api'
 import { emptyVaultSnapshot } from '@holi/shared'
 import '../src/renderer/src/index.css'
 
@@ -24,6 +24,7 @@ const fixtureWindow = window as unknown as Window & {
     remote(remote: string): void
     viewer(path: string, visible: boolean, focused: boolean): void
     mode(mode: 'dark' | 'light'): void
+    focusPane(focused: 'a' | 'b'): void
     mutateShadow(): void
     setOverlay(visible: boolean): void
     state(): unknown
@@ -35,6 +36,7 @@ let controls: {
   remote(remote: string): void
   viewer(path: string, visible: boolean, focused: boolean): void
   mode(mode: 'dark' | 'light'): void
+  focusPane(focused: 'a' | 'b'): void
   mutateShadow(): void
   setOverlay(visible: boolean): void
   state(): unknown
@@ -45,6 +47,7 @@ fixtureWindow.__holiPdfSmoke = {
   remote: (remote) => controls?.remote(remote),
   viewer: (path, visible, focused) => controls?.viewer(path, visible, focused),
   mode: (mode) => controls?.mode(mode),
+  focusPane: (focused) => controls?.focusPane(focused),
   mutateShadow: () => controls?.mutateShadow(),
   setOverlay: (visible) => controls?.setOverlay(visible),
   state: () => controls?.state(),
@@ -58,6 +61,8 @@ function Fixture() {
   const [overlay, setOverlay] = useState(false)
   const setVim = useSetAtom(vimCodeEditingAtom)
   const setRemote = useSetAtom(activeRemoteAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const setMode = useSetAtom(activeModeAtom)
   useShortcutDispatcher()
   useEffect(() => {
     setVim(true)
@@ -82,7 +87,8 @@ function Fixture() {
         setVisible(nextVisible)
         setFocused(nextFocused)
       },
-      mode: () => {},
+      mode: setMode,
+      focusPane: (pane) => setFocused(pane === 'a'),
       mutateShadow: () => {
         const root = document.querySelector('holi-pdf-container')?.shadowRoot
         const text = root?.querySelector('.epdf-page') ?? root?.querySelector('[class*="page"]')
@@ -96,17 +102,31 @@ function Fixture() {
     return () => {
       controls = null
     }
-  }, [setVim, setRemote, path, visible, focused])
+  }, [setVim, setRemote, setMode, path, visible, focused])
   return (
-    <div className="flex h-screen flex-col" data-pane data-pane-focused="true">
-      <button type="button" data-smoke-host-action="" className="absolute left-2 top-2 z-10">
-        Synthetic host action
-      </button>
-      <div className="min-h-0 flex-1" data-pdf-fixture>
-        <PdfViewer path={path} visible={visible} focused={focused} />
-      </div>
+    <div className="flex h-screen" data-smoke-split>
+      <section
+        className="relative flex min-w-0 flex-1 flex-col"
+        data-pane
+        data-pane-focused={focused}
+        data-pane-id="a"
+      >
+        <div className="flex h-10 items-center px-2">
+          <button type="button" data-smoke-host-action="">
+            Synthetic host action
+          </button>
+        </div>
+        <div className="min-h-0 flex-1" data-pdf-fixture="a">
+          <PdfViewer path={path} visible={visible} focused={focused} />
+        </div>
+      </section>
+      <section className="min-w-0 flex-1" data-pane data-pane-focused={!focused} data-pane-id="b">
+        <div className="min-h-0 h-full" data-pdf-fixture="b">
+          <PdfViewer path="docs/fixture.pdf" visible focused={!focused} />
+        </div>
+      </section>
       {overlay && <div data-smoke-occluder className="fixed inset-0 z-50" />}
-      <HostHintLayer scopeKey={`${path}:${visible}:${focused}`} />
+      <HostHintLayer scopeKey={`${remote}:${path}:${visible}:${focused}`} />
     </div>
   )
 }
