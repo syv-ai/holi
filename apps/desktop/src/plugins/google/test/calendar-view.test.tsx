@@ -368,6 +368,82 @@ describe('the calendar view', () => {
     expect(new Date(window.from).getDay()).toBe(1)
   })
 
+  test('hiding the calendar cancels its in-flight and blocked gestures', async () => {
+    const { container, rerender } = render(<CalendarView visible />)
+    await screen.findAllByText('Focus block')
+    const focus = container.querySelector<HTMLElement>(
+      '[data-slot="event-calendar-event"][aria-label^="Focus block"]',
+    )!
+    const sync = container.querySelector<HTMLElement>(
+      '[data-slot="event-calendar-event"][aria-label^="Team sync"]',
+    )!
+    const columns = container.querySelectorAll<HTMLElement>('[data-ec-day][data-ec-bounds-start]')
+    for (const column of columns) {
+      vi.spyOn(column, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 0, 100, 1440))
+    }
+    vi.spyOn(focus, 'getBoundingClientRect').mockReturnValue(new DOMRect(120, 540, 80, 60))
+    const dispatchPointer = (
+      target: Element | Window,
+      type: 'pointerdown' | 'pointermove' | 'pointerup',
+      pointerId: number,
+      clientX: number,
+      clientY: number,
+    ) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX,
+        clientY,
+      })
+      Object.defineProperty(event, 'pointerId', { value: pointerId })
+      fireEvent(target, event)
+    }
+
+    // A pending press is owner-scoped too: hiding before activation removes
+    // its global listeners, so moving/releasing it while hidden cannot start it.
+    dispatchPointer(focus, 'pointerdown', 31, 130, 540)
+    rerender(<CalendarView visible={false} />)
+    dispatchPointer(window, 'pointermove', 31, 130, 600)
+    dispatchPointer(window, 'pointerup', 31, 130, 600)
+    expect(document.querySelector('[data-slot="event-calendar-drag-carry"]')).toBeNull()
+    expect(rescheduleMock).not.toHaveBeenCalled()
+
+    // A real drag creates the body-level carry and proposal. Hiding cleans both;
+    // a release after the calendar becomes visible again is stale and inert.
+    rerender(<CalendarView visible />)
+    dispatchPointer(focus, 'pointerdown', 32, 130, 540)
+    dispatchPointer(window, 'pointermove', 32, 130, 600)
+    expect(document.querySelector('[data-slot="event-calendar-drag-carry"]')).not.toBeNull()
+    rerender(<CalendarView visible={false} />)
+    expect(document.querySelector('[data-slot="event-calendar-drag-carry"]')).toBeNull()
+    expect(document.body).not.toHaveClass('ec-dragging')
+    dispatchPointer(window, 'pointermove', 32, 130, 900)
+    expect(focus).not.toHaveAttribute('data-dragging', 'true')
+    rerender(<CalendarView visible />)
+    dispatchPointer(window, 'pointerup', 32, 130, 600)
+    expect(rescheduleMock).not.toHaveBeenCalled()
+
+    // Blocked gestures (e.g. an event with guests) own cleanup even though no
+    // normal drag proposal is created.
+    dispatchPointer(sync, 'pointerdown', 33, 130, 540)
+    dispatchPointer(window, 'pointermove', 33, 130, 550)
+    expect(document.body).toHaveClass('ec-drag-blocked')
+    rerender(<CalendarView visible={false} />)
+    expect(document.body).not.toHaveClass('ec-drag-blocked')
+    dispatchPointer(window, 'pointerup', 33, 130, 550)
+
+    // A fresh gesture on the redisplayed calendar still works.
+    rerender(<CalendarView visible />)
+    dispatchPointer(focus, 'pointerdown', 34, 130, 540)
+    dispatchPointer(window, 'pointermove', 34, 130, 900)
+    expect(document.querySelector('[data-slot="event-calendar-drag-carry"]')).not.toBeNull()
+    expect(focus).toHaveAttribute('data-dragging', 'true')
+    dispatchPointer(window, 'pointerup', 34, 130, 900)
+    expect(document.querySelector('[data-slot="event-calendar-drag-carry"]')).toBeNull()
+    expect(rescheduleMock).not.toHaveBeenCalled()
+  })
+
   test('month overflow event pointer-down does not start slot creation', async () => {
     agendaMock.mockResolvedValue(
       Array.from({ length: 12 }, (_, index) =>
