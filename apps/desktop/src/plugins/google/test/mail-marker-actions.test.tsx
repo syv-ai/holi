@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MailMarkerActions } from '../renderer/mail-marker-actions'
+import { MailMarkerStatus } from '../renderer/mail-marker-icon'
+import { render, screen } from '@testing-library/react'
 
 const state = (
   marker: 'yellow-star' | 'red-star' | 'blue-question' | null,
@@ -10,6 +12,13 @@ const state = (
 })
 
 describe('MailMarkerActions', () => {
+  it('shows a Retry for reconciliation errors even when the actual mail is unstarred', () => {
+    const retry = vi.fn()
+    render(<MailMarkerStatus state={{ kind: 'error' }} starred={false} onRetry={retry} />)
+    expect(screen.getByText('Marker unavailable')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry marker' })).toBeVisible()
+    expect(screen.queryByLabelText('Starred')).not.toBeInTheDocument()
+  })
   it('cycles inclusively through a burst, wraps, then unstars outside the burst', async () => {
     vi.useFakeTimers()
     const writes: unknown[][] = []
@@ -33,6 +42,19 @@ describe('MailMarkerActions', () => {
     await vi.runAllTimersAsync()
     expect(writes.at(-1)).toEqual(['thread', null])
     vi.useRealTimers()
+  })
+
+  it('stars with the first configured marker when Gmail is unstarred but the annotation is stale', async () => {
+    const writes: unknown[][] = []
+    const action = new MailMarkerActions({
+      write: async (_owner, ...args) => void writes.push(args),
+      reconcile: async () => state(null, false),
+      changed: () => {},
+      now: () => 0,
+    })
+    action.setOwner('owner', ['red-star', 'blue-question'])
+    action.activate('thread', false, 'blue-question')
+    await vi.waitFor(() => expect(writes).toEqual([['thread', 'red-star']]))
   })
 
   it('keeps one marker as an ordinary star/unstar toggle', async () => {

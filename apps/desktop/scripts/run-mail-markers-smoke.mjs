@@ -167,6 +167,15 @@ try {
     keyframes.split(/\r?\n/).some((frame) => frame.trim().startsWith('1')),
     'recorded video must contain an inspected key frame',
   )
+  assert(
+    result.checks.includes(
+      'native-stale-annotation-does-not-prevent-first-star-in-both-mail-lists',
+    ),
+  )
+  assert(
+    result.checks.includes('native-refused-unstar-error-retries-reconciliation-without-replay'),
+  )
+  assert(result.checks.includes('native-shell-list-retry-recovers-refused-unstar-without-replay'))
   assert(result.checks.includes('both-production-mail-lists-star-without-opening-or-marking-read'))
   assert(
     result.checks.includes('native-four-click-production-cycle-wraps-through-configured-markers'),

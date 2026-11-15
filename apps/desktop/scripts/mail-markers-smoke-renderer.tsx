@@ -128,6 +128,10 @@ const invoke = async (op: {
       fixtureAccount = result.data.account.sub
     return result
   }
+  if (name === 'google.search' && params.query === 'is:starred')
+    return (
+      window as unknown as { markerSmoke: { run: (op: unknown) => Promise<unknown> } }
+    ).markerSmoke.run(op)
   const value =
     name === 'google.search'
       ? {

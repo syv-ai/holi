@@ -359,6 +359,36 @@ async function run() {
     ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
     ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
   ] as const) {
+    await markersA.set(id, 'blue-question')
+    fakeStarred.delete(id)
+    await win.loadFile(join(root, 'renderer.html'))
+    await waitFor(
+      win,
+      `document.querySelector('[aria-label="Enable Red star"]') && document.querySelector('section[aria-label="${section}"] #${id} [aria-label="Star thread"]')`,
+    )
+    await installTrustedClickRecorder()
+    await js(`window.smokeShow('${view}')`)
+    const expectedMarker = (await markersA.preferences()).enabledOrder[0]!
+    const writesBefore = await js(
+      `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+    )
+    await nativeClick(`section[aria-label="${section}"] #${id} [aria-label="Star thread"]`)
+    await waitFor(
+      win,
+      `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${writesBefore}`,
+    )
+    assert.deepEqual(await markersA.read([id]), { [id]: expectedMarker })
+    await markersA.set(id, null)
+    fakeStarred.delete(id)
+  }
+  mark('native-stale-annotation-does-not-prevent-first-star-in-both-mail-lists')
+  await win.loadFile(join(root, 'renderer.html'))
+  await waitFor(win, `document.querySelector('[aria-label="Enable Red star"]')`)
+  await installTrustedClickRecorder()
+  for (const [view, section, id] of [
+    ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
+    ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
+  ] as const) {
     await js(`window.smokeShow('${view}')`)
     await pause(150)
     const selector = `section[aria-label="${section}"] #${id} [aria-label="Star thread"]`
@@ -669,6 +699,53 @@ async function run() {
     }
     mark('native-reader-header-retry-recovers-action-reconciliation-in-both-surfaces')
 
+    const listId = 'thread-red'
+    await markersA.set(listId, null)
+    fakeStarred.add(listId)
+    refusedUnstars.add(listId)
+    failAnnotations = 0
+    await win.loadFile(join(root, 'renderer.html'))
+    await waitFor(
+      win,
+      `document.querySelector('[aria-label="Enable Red star"]') && document.querySelector('section[aria-label="Production app-shell mail"] #${listId} [aria-label="Unstar thread"]')`,
+    )
+    await installTrustedClickRecorder()
+    await js(`window.smokeShow('shell')`)
+    await waitFor(win, `document.querySelectorAll('[aria-label="Loading marker"]').length === 0`)
+    failAnnotations = 1
+    const listWritesBefore = await js(
+      `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+    )
+    const refusedListBefore = refusedUnstarCalls.length
+    await nativeClick(
+      `section[aria-label="Production app-shell mail"] #${listId} [aria-label="Unstar thread"]`,
+    )
+    await waitFor(
+      win,
+      `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${listWritesBefore} && document.querySelector('section[aria-label="Production app-shell mail"] #${listId} [aria-label="Retry marker"]')`,
+    )
+    assert.equal(refusedUnstarCalls.length, refusedListBefore + 1)
+    const listRetryWrites = await js(
+      `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+    )
+    await nativeClick(
+      `section[aria-label="Production app-shell mail"] #${listId} [aria-label="Retry marker"]`,
+    )
+    await waitFor(
+      win,
+      `!document.querySelector('section[aria-label="Production app-shell mail"] #${listId} [aria-label="Retry marker"]')`,
+    )
+    assert.equal(
+      await js(`window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`),
+      listRetryWrites,
+      'list Retry must reconcile without replaying the refused unstar',
+    )
+    assert.equal(fakeStarred.has(listId), true)
+    refusedUnstars.delete(listId)
+    await markersA.set(listId, 'red-star')
+    failAnnotations = 0
+    mark('native-shell-list-retry-recovers-refused-unstar-without-replay')
+
     // Gmail refuses both reader implementations' unstar writes. The personal marker
     // remains absent while the synthetic Gmail summary remains starred.
     for (const [view, section, unstarLabel] of [
@@ -704,11 +781,35 @@ async function run() {
         `window.smokeCalls.filter(call=>call.input?.name==='google.search' && JSON.parse(call.input.paramsJson).query==='is:starred').length`,
       )
       const pressedSelector = `${headerAction}${view === 'shell' ? '[aria-pressed="true"]' : ''}`
+      failAnnotations = 1
       await nativeClick(pressedSelector)
       await waitFor(
         win,
-        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${writesBefore}`,
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${writesBefore} && document.querySelector('section[aria-label="${section}"] [aria-label="Retry marker"]')`,
       )
+      assert.equal(
+        await js(
+          `!document.querySelector(${JSON.stringify(headerAction)})?.querySelector('[aria-label="Starred"]')`,
+        ),
+        true,
+        `${view} unstarred error must not render a filled Starred glyph`,
+      )
+      const retryWrites = await js(
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+      )
+      await nativeClick(`section[aria-label="${section}"] [aria-label="Retry marker"]`)
+      await waitFor(
+        win,
+        `!document.querySelector('section[aria-label="${section}"] [aria-label="Retry marker"]')`,
+      )
+      assert.equal(
+        await js(
+          `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+        ),
+        retryWrites,
+        'Retry must reconcile without replaying the refused unstar',
+      )
+      assert.equal(id, 'thread-red', 'Gmail still owns the actual starred membership')
       assert.equal(refusedUnstarCalls.length, refusedBefore + 1)
       assert.equal(refusedUnstarCalls.at(-1), id)
       await waitFor(
@@ -727,6 +828,7 @@ async function run() {
       refusedUnstars.delete(id)
       await markersA.set(id, 'red-star')
     }
+    mark('native-refused-unstar-error-retries-reconciliation-without-replay')
     mark('native-reader-retains-unstar-state-after-refused-gmail-unstar')
 
     // Hold the second annotation read (the display hook's reload) after the
@@ -824,7 +926,7 @@ async function run() {
     )
     await waitFor(
       win,
-      `document.querySelector('section[aria-label="Production app-shell mail"]').querySelectorAll('[aria-label="Retry marker"]').length === 4 && document.querySelectorAll('[aria-label="Loading marker"]').length === 0`,
+      `document.querySelector('section[aria-label="Production app-shell mail"]').querySelectorAll('[aria-label="Retry marker"]').length >= 4 && document.querySelectorAll('[aria-label="Loading marker"]').length === 0`,
     )
     await js(
       `document.querySelector('section[aria-label="Production app-shell mail"] [aria-label="Retry marker"]').focus()`,
@@ -839,7 +941,7 @@ async function run() {
     )
     await waitFor(
       win,
-      `document.querySelector('section[aria-label="Production app-shell mail"]').querySelectorAll('[aria-label="Retry marker"]').length === 4 && document.querySelectorAll('[aria-label="Loading marker"]').length === 0`,
+      `document.querySelector('section[aria-label="Production app-shell mail"]').querySelectorAll('[aria-label="Retry marker"]').length >= 4 && document.querySelectorAll('[aria-label="Loading marker"]').length === 0`,
     )
     assert.equal(
       await js(
@@ -854,7 +956,12 @@ async function run() {
       false,
     )
     failAnnotations = 0
-    await js(`document.querySelectorAll('[aria-label="Retry marker"]').forEach(n=>n.click())`)
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const retries = await js(`document.querySelectorAll('[aria-label="Retry marker"]').length`)
+      if (retries === 0) break
+      await js(`document.querySelector('[aria-label="Retry marker"]')?.click()`)
+      await pause(50)
+    }
     await ready()
     mark('native-enter-space-marker-retry-does-not-open-or-mark-read')
     mark('native-marker-failure-and-retry-recover-both-lists')

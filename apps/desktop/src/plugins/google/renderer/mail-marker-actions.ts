@@ -56,10 +56,12 @@ export class MailMarkerActions {
   activate(id: string, starred: boolean, current: MailMarker | null): void {
     if (!this.owner) return
     const at = this.now()
-    const base = this.intended.has(id) ? this.intended.get(id)! : current
+    const hasIntended = this.intended.has(id)
+    const base = hasIntended ? this.intended.get(id)! : current
+    const effectiveStarred = hasIntended ? base !== null : starred
     const burst = this.lastActivation?.id === id && at - this.lastActivation.at <= 500
     let marker: MailMarker | null
-    if (!starred && base === null) marker = this.enabledOrder[0] ?? 'yellow-star'
+    if (!effectiveStarred) marker = this.enabledOrder[0] ?? 'yellow-star'
     else if (burst && this.enabledOrder.length > 1) {
       const index = base === null ? -1 : this.enabledOrder.indexOf(base)
       marker = this.enabledOrder[(index + 1) % this.enabledOrder.length] ?? 'yellow-star'
