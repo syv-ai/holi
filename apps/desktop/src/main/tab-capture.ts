@@ -30,7 +30,12 @@ const isRect = (r: unknown): r is Rect =>
   ['x', 'y', 'width', 'height'].every((k) => Number.isFinite((r as Record<string, unknown>)[k]))
 
 /** Where `path`'s tab is drawn in `win`, in CSS pixels. */
-function locate(win: BrowserWindow, path: string): Promise<Rect> {
+function locate(
+  win: BrowserWindow,
+  path: string,
+  authorizeSender: (event: IpcMainEvent) => boolean,
+): Promise<Rect> {
+  const contents = win.webContents
   const id = randomUUID()
   return new Promise((resolve, reject) => {
     const done = (): void => {
@@ -38,7 +43,7 @@ function locate(win: BrowserWindow, path: string): Promise<Rect> {
       ipcMain.removeListener('vault:located', onAnswer)
     }
     const onAnswer = (event: IpcMainEvent, answer: unknown): void => {
-      if (event.sender !== win.webContents) return
+      if (!authorizeSender(event) || event.sender !== contents) return
       const a = answer as { id?: unknown; rect?: unknown; error?: unknown } | null
       if (a === null || typeof a !== 'object' || a.id !== id) return
       done()
@@ -63,12 +68,13 @@ export async function captureTab(
   win: BrowserWindow,
   path: string,
   ready: Promise<void>,
+  authorizeSender: (event: IpcMainEvent) => boolean,
 ): Promise<Uint8Array> {
   const contents = win.webContents
   let timer: NodeJS.Timeout | undefined
   await Promise.race([ready, new Promise<void>((r) => (timer = setTimeout(r, LOCATE_TIMEOUT_MS)))])
   clearTimeout(timer)
-  const rect = await locate(win, path)
+  const rect = await locate(win, path, authorizeSender)
   // CSS pixels to the window's own: the same unless the page is zoomed.
   const zoom = contents.getZoomFactor()
   const image = await contents.capturePage({
