@@ -29,6 +29,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, openExternal } from '@/plugin-api'
+import { MailMarkerStatus } from '../mail-marker-icon'
 import type { MailState } from './use-mail'
 
 // ── App Header ──
@@ -60,6 +61,7 @@ export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visibl
   const subject = thread?.subject ?? row?.subject ?? ''
   const starred = row?.starred === true
   const openId = mail.openId
+  const marker = openId === null ? null : mail.markers.get(openId)
 
   const index = mail.threads.findIndex((t) => t.id === openId)
   const previous = index > 0 ? mail.threads[index - 1] : undefined
@@ -101,6 +103,13 @@ export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visibl
       <h3 className="text-foreground w-0 flex-1 truncate text-sm leading-snug font-semibold">
         {subject}
       </h3>
+      {openId !== null && marker !== null && marker.kind !== 'ready' && (
+        <MailMarkerStatus
+          state={marker}
+          starred={row?.starred === true}
+          onRetry={() => mail.markers.invalidate([openId])}
+        />
+      )}
 
       {/* Actions, once a thread is open */}
       {openId !== null && (
@@ -156,15 +165,11 @@ export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visibl
                 aria-pressed={starred}
                 onClick={() => void mail.setStarred(openId, !starred)}
               >
-                <StarIcon
-                  aria-hidden="true"
-                  className={cn(
-                    'shrink-0',
-                    starred
-                      ? 'fill-amber-500 text-amber-500 dark:fill-amber-400 dark:text-amber-400'
-                      : 'text-muted-foreground',
-                  )}
-                />
+                {starred && marker?.kind === 'ready' ? (
+                  <MailMarkerStatus state={marker} starred />
+                ) : (
+                  <StarIcon aria-hidden="true" className="shrink-0 text-muted-foreground" />
+                )}
               </Button>
             </TooltipTrigger>
             {visible && <TooltipContent>{starred ? 'Unstar' : 'Star'}</TooltipContent>}

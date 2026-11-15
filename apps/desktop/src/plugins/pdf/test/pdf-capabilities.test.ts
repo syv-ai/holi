@@ -6,7 +6,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { emptyVaultSnapshot } from '@holi/shared'
+import { emptyVaultSnapshot, writeMarkdownCaptionEnvelope } from '@holi/shared'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
 import { PDF_NAMESPACES, pdfCapabilities } from '../main/capabilities'
@@ -135,8 +135,20 @@ describe('pdf capabilities', () => {
       }),
       '.holi/document-templates/plain/template.typ': plainTemplateTyp,
       'note.md':
-        '---\nrecipient: ACME\n---\n\n## Heading\n\n<!-- holi:figure -->\n\n```js\nconst path = "[[path/to/file.md|shown]]"; // @@FIG:literal@@\n```\n\n<!-- holi:caption -->\n\n**Caption**\n\n<!-- /holi:figure -->\n',
+        '---\nrecipient: ACME\n---\n\n## Heading\n\n<!-- holi:figure -->\n\n```js\nconst path = "[[path/to/file.md|shown]]"; // @@FIG:literal@@\n```\n\n<!-- holi:caption -->\n\n**Caption**\n\n<!-- /holi:figure -->\n\n' +
+        writeMarkdownCaptionEnvelope(
+          '![Photo][photo]',
+          '**Centered image caption** with `#raw-typst malicious`',
+        ) +
+        '\n\n[photo]: image.png\n',
     })
+    await writeFile(
+      join(root, 'image.png'),
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    )
     const out = join(base, 'chosen.pdf')
     const result = await run('pdf.render', { path: 'note.md', out, meta: { date: '2026-07-26' } })
     expect(result).toEqual({
