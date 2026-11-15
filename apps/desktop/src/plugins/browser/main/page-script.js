@@ -348,6 +348,7 @@
   let vimMode = 'insert'
   let vimRevision = 0
   let vimField = null
+  let vimPlainHost = false
   let verticalColumn = null
   const vimTypes = new Set(['text', 'search', 'url', 'tel'])
   const nativeTextTags = new Set(['DIV', 'SPAN', 'P', 'LABEL'])
@@ -393,7 +394,7 @@
     )
   }
   const flushPlainHostMutations = () => {
-    if (!vimField || vimField.nodeType !== 1 || !plainHost(vimField)) return false
+    if (!vimPlainHost || !vimField || vimField.nodeType !== 1) return false
     const records = plainHostObserver.takeRecords()
     if (records.some((record) => invalidatesPlainHost(record, vimField))) {
       resetOwnership()
@@ -403,6 +404,7 @@
   }
   const plainHostObserver = new MutationObserver((records) => {
     if (
+      vimPlainHost &&
       vimField &&
       vimField.nodeType === 1 &&
       records.some((record) => invalidatesPlainHost(record, vimField))
@@ -586,6 +588,7 @@
     }
     if (vimField !== target) {
       vimField = target
+      vimPlainHost = plainHost(target)
       vimMode = 'insert'
       verticalColumn = null
     }
@@ -690,6 +693,7 @@
       ) {
         plainHostObserver.takeRecords()
         vimField = event.target
+        vimPlainHost = plainHost(event.target)
         vimMode = 'insert'
         verticalColumn = null
       }
@@ -701,6 +705,7 @@
     (event) => {
       if (vimField === event.target) {
         vimField = null
+        vimPlainHost = false
         vimMode = 'insert'
         verticalColumn = null
       }
@@ -725,6 +730,7 @@
       vimEnabled = false
       vimMode = 'insert'
       vimField = null
+      vimPlainHost = false
       verticalColumn = null
       return vimNonce
     },
@@ -740,6 +746,7 @@
       vimEnabled = enabled
       vimMode = 'insert'
       vimField = null
+      vimPlainHost = false
       verticalColumn = null
       return true
     },
