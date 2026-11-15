@@ -6,9 +6,11 @@
 import { DEFAULT_STATUSES, emptyVaultSnapshot, type Task, type VaultSnapshot } from '@holi/shared'
 import userEvent from '@testing-library/user-event'
 import { createStore, Provider } from 'jotai'
+import type { ReactNode } from 'react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { render, screen, waitFor } from '@/test/render'
+import { act, render, screen, waitFor } from '@/test/render'
 import { nowAtom } from '@/state/clock'
+import { EditorActivityContext, useDocumentActivity } from '@/hooks/use-editor-activity'
 import { statusesFileAtom } from '@/state/planning'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { TaskProperties } from '../task-properties'
@@ -68,7 +70,22 @@ afterEach(() => {
   rename.mockReset()
 })
 
-function setup(task: Task = TASK) {
+function ActivityHarness({
+  children,
+  displayed,
+  focused,
+}: {
+  children: ReactNode
+  displayed: boolean
+  focused: boolean
+}) {
+  const activity = useDocumentActivity(displayed, focused)
+  return (
+    <EditorActivityContext.Provider value={activity}>{children}</EditorActivityContext.Provider>
+  )
+}
+
+function setup(task: Task = TASK, activityState = { displayed: true, focused: true }) {
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/site')
   store.set(snapshotAtom, snapshotOf([task]))
@@ -80,17 +97,20 @@ function setup(task: Task = TASK) {
   })
   const beforeWrite = vi.fn(() => Promise.resolve())
   const onMoved = vi.fn()
-  render(
+  const tree = (state = activityState) => (
     <Provider store={store}>
-      <TaskProperties
-        path={task.path}
-        layout="inline"
-        beforeWrite={beforeWrite}
-        onMoved={onMoved}
-      />
-    </Provider>,
+      <ActivityHarness {...state}>
+        <TaskProperties
+          path={task.path}
+          layout="inline"
+          beforeWrite={beforeWrite}
+          onMoved={onMoved}
+        />
+      </ActivityHarness>
+    </Provider>
   )
-  return { beforeWrite, onMoved }
+  const view = render(tree())
+  return { beforeWrite, onMoved, store, view, tree }
 }
 
 test("a priority picked is written, after the editor's pending save", async () => {
@@ -119,6 +139,45 @@ test('a project moves the file into its folder and reports the new path', async 
     expect(move).toHaveBeenCalledWith(expect.objectContaining({ path: TASK.path, folder: 'web' })),
   )
   await waitFor(() => expect(onMoved).toHaveBeenCalledWith(TASK.path, 'web/task.write-brief.md'))
+})
+
+test('a project move still retargets after leaving and returning to the task', async () => {
+  let resolveMove!: (task: Task) => void
+  move.mockImplementation(
+    () =>
+      new Promise<Task>((resolve) => {
+        resolveMove = resolve
+      }),
+  )
+  const { onMoved, view, tree } = setup()
+  await userEvent.click(screen.getByRole('button', { name: 'Project' }))
+  await userEvent.click(await screen.findByRole('option', { name: 'web' }))
+  await waitFor(() => expect(move).toHaveBeenCalled())
+
+  view.rerender(tree({ displayed: false, focused: false }))
+  view.rerender(tree({ displayed: true, focused: true }))
+  await act(async () => resolveMove({ ...TASK, path: 'web/task.write-brief.md' }))
+
+  expect(onMoved).toHaveBeenCalledWith(TASK.path, 'web/task.write-brief.md')
+})
+
+test('a completed project move does not retarget tabs after its vault closes', async () => {
+  let resolveMove!: (task: Task) => void
+  move.mockImplementation(
+    () =>
+      new Promise<Task>((resolve) => {
+        resolveMove = resolve
+      }),
+  )
+  const { onMoved, store } = setup()
+  await userEvent.click(screen.getByRole('button', { name: 'Project' }))
+  await userEvent.click(await screen.findByRole('option', { name: 'web' }))
+  await waitFor(() => expect(move).toHaveBeenCalled())
+
+  store.set(activeRemoteAtom, 'syv-ai/another-vault')
+  await act(async () => resolveMove({ ...TASK, path: 'web/task.write-brief.md' }))
+
+  expect(onMoved).not.toHaveBeenCalled()
 })
 
 test('a document that is not a task draws no fields', () => {

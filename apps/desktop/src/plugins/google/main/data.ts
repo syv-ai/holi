@@ -45,8 +45,21 @@ import {
   type MailPage,
 } from './gmail'
 import type { MailPart, OutgoingMail } from './mime'
+import {
+  DEFAULT_MAIL_MARKER_PREFERENCES,
+  normalizeMailMarkerPreferences,
+  type MailMarkerPreferences,
+} from '../shared/mail-markers'
 import { cacheKey, syncThreads } from './mail-sync'
 import { listContacts } from './people'
+import { threadHasStarredMessage } from './gmail'
+import {
+  isMailMarker,
+  validateBatch,
+  validateThreadId,
+  type MailMarkerStore,
+  type MarkerValue,
+} from './markers'
 
 export interface GoogleData {
   /** The agenda, fetched and then cached for the next launch's first paint. */
@@ -71,7 +84,23 @@ export interface GoogleData {
    * only once Google has agreed: see the note above `write`.
    */
   setRead(id: string, read: boolean): Promise<void>
-  setStarred(id: string, starred: boolean): Promise<void>
+  setStarred(id: string, starred: boolean, validate?: () => Promise<void>): Promise<void>
+  /** Local-only marker snapshot for UI display; never reads Gmail. */
+  mailMarkerAnnotations(
+    ids: readonly string[],
+    validate?: () => Promise<void>,
+  ): Promise<Record<string, MarkerValue>>
+  /** Legacy verified marker reads, retained for compatibility. */
+  mailMarkers(
+    ids: readonly string[],
+    validate?: () => Promise<void>,
+  ): Promise<Record<string, MarkerValue>>
+  setMailMarker(id: string, marker: MarkerValue, validate?: () => Promise<void>): Promise<void>
+  mailMarkerPreferences(validate?: () => Promise<void>): Promise<MailMarkerPreferences>
+  setMailMarkerPreferences(
+    preferences: MailMarkerPreferences,
+    validate?: () => Promise<void>,
+  ): Promise<void>
   archive(id: string): Promise<void>
   trash(id: string): Promise<void>
   /**
@@ -127,9 +156,14 @@ export interface GoogleDataDeps {
   /** Built per call: a held client outlives a disconnect. */
   api: () => GoogleApi
   cache: GoogleCache
+  markers?: MailMarkerStore
 }
 
-export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
+export function createGoogleData({
+  api,
+  cache,
+  markers = memoryMarkers(),
+}: GoogleDataDeps): GoogleData {
   /** The in-flight or settled address book. A promise rather than a value, so
    *  two mounts racing produce one request. `listContacts` never rejects, so
    *  this can never latch a failure. */
@@ -151,6 +185,10 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
    * same rule as `aliases`.
    */
   let forwarded: { messageId: string; bytes: Promise<MailPart[]> } | null = null
+  let retired = false
+  const assertActive = () => {
+    if (retired) throw new Error('that Google account is no longer connected')
+  }
 
   /**
    * The mail, with a forwarded message's attachments fetched and attached.
@@ -169,6 +207,7 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     let attachments: MailPart[]
     try {
       attachments = await pending.bytes
+      assertActive()
     } catch (error) {
       if (forwarded === pending) forwarded = null
       throw error
@@ -190,22 +229,71 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     })
   }
 
+  /** Google first, then cache only while this grant still owns it. Once a
+   * send has succeeded, retirement must not turn its receipt into a failure. */
+  async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> {
+    assertActive()
+    const result = await send()
+    if (!retired) record()
+    return result
+  }
+
+  const validateRequest = async (validate?: () => Promise<void>) => {
+    assertActive()
+    await validate?.()
+    assertActive()
+  }
+
+  const setStarred = (id: string, starred: boolean, validate?: () => Promise<void>) => {
+    validateThreadId(id)
+    return markers.runExclusive(id, async () => {
+      assertActive()
+      await validate?.()
+      const prior = await markers.read([id], validate)
+      assertActive()
+      await validate?.()
+      assertActive()
+      const next = starred ? (prior[id] ?? 'yellow-star') : null
+      await setThreadStarred(api(), id, starred, () => validateRequest(validate))
+      assertActive()
+      cache.patchThread(id, {
+        added: starred ? ['STARRED'] : [],
+        removed: starred ? [] : ['STARRED'],
+      })
+      try {
+        await validate?.()
+        await markers.set(id, next, validate)
+      } catch (error) {
+        throw new Error(
+          `Gmail star changed, but the personal marker was not saved: ${errorMessage(error)}`,
+        )
+      }
+    })
+  }
+
   return {
     async agenda(window, overrides) {
+      assertActive()
       const events = await listAgenda(api(), window, { overrides })
+      assertActive()
       cache.writeAgenda(agendaKey(window, overrides), events)
       return events
     },
 
-    fetchAgenda(window, overrides) {
-      return listAgenda(api(), window, { overrides })
+    async fetchAgenda(window, overrides) {
+      assertActive()
+      const events = await listAgenda(api(), window, { overrides })
+      assertActive()
+      return events
     },
 
     cachedAgenda(window, overrides) {
+      assertActive()
       return cache.readAgenda(agendaKey(window, overrides))
     },
 
     async threads(options) {
+      assertActive()
       let knownAddresses: string[] | undefined
       try {
         knownAddresses = await (aliases ??= listSendAs(api()).catch((error: unknown) => {
@@ -215,11 +303,16 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       } catch {
         // Without account-authenticated addresses, classifying a message as neither would be false certainty.
       }
-      return syncThreads(api(), cache, options, knownAddresses)
+      const result = await syncThreads(api(), cache, options, knownAddresses)
+      assertActive()
+      return result
     },
 
-    contacts() {
-      return (addressBook ??= listContacts(api()))
+    async contacts() {
+      assertActive()
+      const result = await (addressBook ??= listContacts(api()))
+      assertActive()
+      return result
     },
 
     setRead(id, read) {
@@ -233,15 +326,73 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       )
     },
 
-    setStarred(id, starred) {
-      return write(
-        () => setThreadStarred(api(), id, starred),
-        () =>
-          cache.patchThread(id, {
-            added: starred ? ['STARRED'] : [],
-            removed: starred ? [] : ['STARRED'],
-          }),
-      )
+    setStarred,
+
+    async mailMarkerAnnotations(ids, validate) {
+      validateBatch(ids)
+      await validate?.()
+      assertActive()
+      const stored = await markers.read(ids, validate)
+      assertActive()
+      await validate?.()
+      return stored
+    },
+
+    mailMarkers(ids, validate) {
+      validateBatch(ids)
+      assertActive()
+      return (async () => {
+        await validate?.()
+        const stored = await markers.read(ids, validate)
+        assertActive()
+        const result: Record<string, MarkerValue> = {}
+        for (const id of ids) {
+          await validate?.()
+          const starred = await threadHasStarredMessage(api(), id)
+          assertActive()
+          await validate?.()
+          result[id] = starred ? (stored[id] ?? 'yellow-star') : null
+        }
+        return result
+      })()
+    },
+
+    mailMarkerPreferences(validate) {
+      assertActive()
+      return markers.preferences(validate)
+    },
+
+    setMailMarkerPreferences(preferences, validate) {
+      assertActive()
+      return markers.setPreferences(preferences, validate)
+    },
+
+    setMailMarker(id, marker, validate) {
+      validateThreadId(id)
+      if (marker !== null && !isMailMarker(marker)) throw new Error('invalid mail marker')
+      return markers.runExclusive(id, async () => {
+        assertActive()
+        await validate?.()
+        await markers.read([id], validate)
+        assertActive()
+        await validate?.()
+        assertActive()
+        const starred = marker !== null
+        await setThreadStarred(api(), id, starred, () => validateRequest(validate))
+        assertActive()
+        cache.patchThread(id, {
+          added: starred ? ['STARRED'] : [],
+          removed: starred ? [] : ['STARRED'],
+        })
+        try {
+          await validate?.()
+          await markers.set(id, marker, validate)
+        } catch (error) {
+          throw new Error(
+            `Gmail star changed, but the personal marker was not saved: ${errorMessage(error)}`,
+          )
+        }
+      })
     },
 
     archive(id) {
@@ -307,11 +458,18 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       )
     },
 
-    sendAs() {
-      return (aliases ??= listSendAs(api()).catch((error: unknown) => {
-        aliases = null
+    async sendAs() {
+      assertActive()
+      const pending = (aliases ??= listSendAs(api()))
+      let result: string[]
+      try {
+        result = await pending
+      } catch (error) {
+        if (aliases === pending) aliases = null
         throw error
-      }))
+      }
+      assertActive()
+      return result
     },
 
     ensureShape() {
@@ -319,29 +477,12 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     },
 
     forget() {
+      retired = true
       addressBook = null
       aliases = null
-      cache.destroy()
+      cache.retire()
     },
   }
-}
-
-/**
- * A write, and the ordering that keeps the cache honest.
- *
- * **Google first; the cache only once Google has agreed.** Patching
- * optimistically is wrong here: a cache that records a write Google refused is
- * the one divergence a delta sync can never repair. `history.list` reports
- * what changed *at Gmail*, and for a refused request nothing did, so the wrong
- * value would survive every refresh and every restart.
- *
- * Optimism belongs in the renderer, where a revert costs a re-render and
- * nothing is persisted. It does not belong on disk.
- */
-async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> {
-  const result = await send()
-  record()
-  return result
 }
 
 /**
@@ -360,6 +501,44 @@ function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
     .map((id) => `${id}=${overrides[id]! ? '1' : '0'}`)
     .join(',')
   return `${window.timeMin}|${window.timeMax}|${choices}`
+}
+
+function memoryMarkers(): MailMarkerStore {
+  const values = new Map<string, Exclude<MarkerValue, null>>()
+  let preferences: MailMarkerPreferences = {
+    enabledOrder: [...DEFAULT_MAIL_MARKER_PREFERENCES.enabledOrder],
+  }
+  const queues = new Map<string, Promise<unknown>>()
+  return {
+    async read(ids) {
+      return Object.fromEntries(ids.map((id) => [id, values.get(id) ?? null]))
+    },
+    async preferences() {
+      return { enabledOrder: [...preferences.enabledOrder] }
+    },
+    async setPreferences(next) {
+      preferences = normalizeMailMarkerPreferences(next)
+    },
+    async set(id, marker) {
+      if (marker === null) values.delete(id)
+      else values.set(id, marker)
+    },
+    runExclusive(id, work) {
+      const result = (queues.get(id) ?? Promise.resolve()).then(work, work)
+      queues.set(
+        id,
+        result.catch(() => undefined),
+      )
+      return result
+    },
+    async purge() {
+      values.clear()
+    },
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 /** @public exported for its test */

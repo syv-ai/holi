@@ -20,16 +20,19 @@ import {
   nativeImage,
   net,
   protocol,
+  webContents,
   session as electronSession,
   shell,
   type Tray,
 } from 'electron'
 import { HOLI_LINK_SCHEME, holiLinkInArgv } from '@holi/shared'
 import { openHoliLink as openCheckedHoliLink } from './holi-link-opener'
-import { requestFlush, type FlushChannel } from './flush'
+import { requestFlush } from './flush'
 import { captureTab } from './tab-capture'
+import { isApplicationSender, unauthorizedApplicationSender } from './application-sender'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
+import { createMdxTrustStore } from './mdx-trust'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
 import { installNodeFallback } from './bridge/node-fallback'
@@ -45,6 +48,10 @@ import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
+import { createAppFrameLeases } from './plugin-host/app-frame-leases'
+import { trackAppFrameDocuments } from './plugin-host/app-frame-navigation'
+import { appLeaseFromHost } from '../plugins/apps/shared/bundle'
+import { createNativeRequestWindows } from './plugin-host/native-request-windows'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
@@ -61,7 +68,7 @@ import { readVaultSettings } from './vault/settings'
 import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
-import { registerIpc } from './ipc'
+import { registerIpc, listenForPluginMessages, createRendererFlushChannel } from './ipc'
 import { createActivityLog, scrubSecrets } from './activity/log'
 import { logsCapabilities } from './capabilities/logs-caps'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
@@ -81,6 +88,7 @@ import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
+import { createFrameOrigins } from './frame-origins'
 import { publishCliEndpoint, type CliEndpoint } from './bridge/cli-endpoint'
 import { createCliTargetResolver } from './bridge/cli-target'
 
@@ -89,7 +97,7 @@ install(MAIN_PLUGINS)
 
 /** The origins plugins frame right now (`PluginCtx.frameOrigin`), which the
  *  window guard confines; live, as their servers start and stop. */
-const FRAME_ORIGINS = new Set<string>()
+const { origins: FRAME_ORIGINS, acquire: acquireFrameOrigin } = createFrameOrigins()
 
 /** What seeds every vault, core first: its `.gitignore` is written before
  *  any file that could be committed. Enabled plugins' seeds follow. */
@@ -98,6 +106,17 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
 let mainWindow: BrowserWindow | null = null
+let appFrameLeases: ReturnType<typeof createAppFrameLeases> | null = null
+let mainEntryDocument: string | null = null
+
+const authorizeApplicationSender = (
+  event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
+): boolean =>
+  isApplicationSender(
+    event,
+    mainWindow?.isDestroyed() ? null : (mainWindow?.webContents ?? null),
+    mainEntryDocument,
+  )
 
 // Held at module scope, not inside `main()`: a `Tray` that gets garbage-collected
 // vanishes from the menu bar, so it must outlive the setup closure. It exists
@@ -219,6 +238,28 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  // Pin authorization to the intended application document, never to a URL
+  // supplied by an IPC sender.
+  mainEntryDocument = devUrl || pathToFileURL(join(__dirname, '../renderer/index.html')).href
+  if (appFrameLeases !== null) {
+    const stopTracking = trackAppFrameDocuments({
+      contents: win.webContents,
+      window: win,
+      leases: appFrameLeases,
+      tokenFromUrl: (url) => {
+        try {
+          const parsed = new URL(url)
+          return parsed.protocol === 'holi-app:'
+            ? (appLeaseFromHost(parsed.hostname)?.token ?? null)
+            : null
+        } catch {
+          return null
+        }
+      },
+    })
+    win.webContents.once('destroyed', stopTracking)
+  }
   if (liquid) applyLiquidGlass(win)
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
@@ -242,7 +283,6 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   win.on('show', sendVisibility)
   win.on('hide', sendVisibility)
 
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
     void win.loadURL(devUrl)
   } else {
@@ -292,6 +332,8 @@ async function main(): Promise<void> {
 
   // After whenReady: the keychain is not available before it.
   const session = await createSession()
+  // One app-owned handle; never construct a separate trust store per renderer request.
+  const mdxTrust = createMdxTrustStore(join(app.getPath('userData'), 'mdx-trust.json'))
   const userDataDir = app.getPath('userData')
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
@@ -355,11 +397,8 @@ async function main(): Promise<void> {
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
     send,
-    listen: (channel, handler) => {
-      const listener = (_e: unknown, message: unknown) => handler(message)
-      ipcMain.on(channel, listener)
-      return () => void ipcMain.removeListener(channel, listener)
-    },
+    listen: (channel, handler) =>
+      listenForPluginMessages(channel, handler, authorizeApplicationSender),
     liveRemote: () => plugins.displayed(),
   }
 
@@ -367,6 +406,8 @@ async function main(): Promise<void> {
   // the plugin host can register into it; `host` and `rootFor` are read
   // lazily.
   const capabilities = createCapabilityRegistry()
+  const appFrames = createAppFrameLeases()
+  appFrameLeases = appFrames
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
     registry: capabilities,
@@ -378,14 +419,12 @@ async function main(): Promise<void> {
     events: eventsDeps,
     // `capabilityHost` is built below, long before any vault opens.
     openAppDoor: (opener, remote) => capabilityHost.openAppDoor(opener, remote),
+    appFrames,
     // The bridge and the `holi` command exist before any vault can open.
     route: (path, route, remote) => bridge.route(path, route, remote),
     binDir: () => binDir,
     githubToken: () => session.token(),
-    frameOrigin: (origin) => {
-      FRAME_ORIGINS.add(origin)
-      return () => void FRAME_ORIGINS.delete(origin)
-    },
+    frameOrigin: acquireFrameOrigin,
     // One plugin's main side calling another's, at the UI door its renderer
     // would use. `capabilityHost` is built below, before any vault opens.
     call: async (remote, name, params, beforeInvoke) =>
@@ -530,6 +569,16 @@ async function main(): Promise<void> {
     get: (remote) => host.get(remote),
   })
 
+  // Electron 43's protocol Request has no `webContentsId`. Capture the native
+  // requester in webRequest before Chromium hands the URL to protocol.handle.
+  // Ambiguous concurrent identical URLs fail closed instead of selecting a
+  // window by guesswork.
+  const windowForAppRequest = createNativeRequestWindows({
+    webRequest: electronSession.defaultSession.webRequest,
+    contentsForId: (id) => webContents.fromId(id),
+    windowForContents: (contents) => BrowserWindow.fromWebContents(contents),
+  })
+
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
   for (const entry of SCHEMES) {
     protocol.handle(
@@ -537,6 +586,9 @@ async function main(): Promise<void> {
       serveScheme(entry, {
         active: () => host.active(),
         runs: async (owner, root) => (await plugins.enabled(root)).has(owner),
+        appFrames,
+        windowForRequest: windowForAppRequest,
+        frameForRequest: windowForAppRequest.frameForRequest,
       }),
     )
   }
@@ -637,6 +689,7 @@ async function main(): Promise<void> {
   /** Who waits for a window's renderer to take opens (`openReadyIn`). */
   const readyWaiters: { contents: Electron.WebContents; resolve: () => void }[] = []
   ipcMain.on('vault:open-ready', (event) => {
+    if (!authorizeApplicationSender(event)) return
     openTarget = event.sender
     for (const request of heldOpens.splice(0)) event.sender.send('vault:open', request)
     for (const w of readyWaiters.filter((w) => w.contents === event.sender)) {
@@ -758,7 +811,7 @@ async function main(): Promise<void> {
     screenshot: (remote, path) => {
       const run = () => {
         const win = showInActive(remote, path, false)
-        return captureTab(win, path, openReadyIn(win))
+        return captureTab(win, path, openReadyIn(win), authorizeApplicationSender)
       }
       const shot = screenshots.then(run, run)
       screenshots = shot.catch(() => {})
@@ -880,6 +933,7 @@ async function main(): Promise<void> {
   })
 
   const router = createRouter({
+    userData: app.getPath('userData'),
     openPastedHoliLink,
     updates: updater,
     activity,
@@ -902,6 +956,7 @@ async function main(): Promise<void> {
     },
     registry,
     session,
+    mdxTrust,
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {
@@ -917,10 +972,15 @@ async function main(): Promise<void> {
     },
   })
 
-  registerIpc({ router, rootFor: (remote) => rootFor(remote) })
-  ipcMain.handle('window:is-visible', (event) =>
-    mainWindow !== null && event.sender === mainWindow.webContents ? mainWindow.isVisible() : false,
-  )
+  registerIpc({
+    router,
+    rootFor: (remote) => rootFor(remote),
+    authorizeSender: authorizeApplicationSender,
+  })
+  ipcMain.handle('window:is-visible', (event) => {
+    if (!authorizeApplicationSender(event)) throw unauthorizedApplicationSender()
+    return mainWindow!.isVisible()
+  })
 
   const holiCliPath = await installHoliCli(app.getPath('userData'))
   await installNodeFallback(app.getPath('userData'), process.execPath)
@@ -1085,7 +1145,7 @@ async function main(): Promise<void> {
   /** Everything a quit does before the process goes: by ⌘Q, the tray, or an
    *  update's restart. Never throws. */
   async function teardown(): Promise<boolean> {
-    const channel = flushChannel(mainWindow)
+    const channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
     try {
       // Ask before tearing down anything: a failed flush must leave the app
       // usable so the person can correct the problem and retry quit.
@@ -1126,49 +1186,6 @@ async function main(): Promise<void> {
       return false
     }
     return true
-  }
-}
-
-/**
- * `requestFlush`'s channel, over the one window.
- *
- * A window that is gone or destroyed has no buffer left to lose, so it answers
- * at once rather than making the quit sit out the full timeout for a renderer
- * that cannot possibly reply.
- */
-function flushChannel(win: BrowserWindow | null): FlushChannel {
-  const target = win !== null && !win.isDestroyed() ? win : null
-  let requestId: string | undefined
-  let done: ((id: string, error?: string) => void) | undefined
-  return {
-    onDone(cb) {
-      done = cb
-      if (target === null)
-        return () => {
-          done = undefined
-        }
-      const listener = (event: Electron.IpcMainEvent, id: string, error?: string) => {
-        if (
-          event.sender !== target.webContents ||
-          event.senderFrame !== target.webContents.mainFrame
-        )
-          return
-        if (typeof id !== 'string' || (error !== undefined && typeof error !== 'string')) return
-        cb(id, error)
-      }
-      ipcMain.on('vault:flush-done', listener)
-      return () => ipcMain.removeListener('vault:flush-done', listener)
-    },
-    send(id) {
-      requestId = id
-      if (target === null) queueMicrotask(() => done?.(id))
-      else target.webContents.send('vault:flush', { id })
-    },
-    cancel(id = requestId) {
-      if (target !== null && !target.isDestroyed() && id !== undefined) {
-        target.webContents.send('vault:flush-cancel', { id })
-      }
-    },
   }
 }
 

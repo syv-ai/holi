@@ -79,6 +79,8 @@ import { GoogleReconnectRequiredError } from './session'
 import { meetingParams, type MeetingCreation } from './meeting-creation'
 import { cleanSearchSnippet } from './mail-text'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
+import { isMailMarker, validateBatch, validateThreadId, type MarkerValue } from './markers'
+import { normalizeMailMarkerPreferences, type MailMarkerPreferences } from '../shared/mail-markers'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -102,10 +104,18 @@ export interface GoogleCapabilityDeps {
 
 /** The Google plugin's own settings in a vault, read and written by root. */
 interface GoogleSettingsStore {
-  read(root: string): Promise<{ calendars: CalendarOverrides; imageSenders: string[] }>
+  read(root: string): Promise<{
+    calendars: CalendarOverrides
+    imageSenders: string[]
+    imagesFromAllSenders: boolean
+  }>
   write(
     root: string,
-    values: Partial<{ calendars: CalendarOverrides; imageSenders: string[] }>,
+    values: Partial<{
+      calendars: CalendarOverrides
+      imageSenders: string[]
+      imagesFromAllSenders: boolean
+    }>,
   ): Promise<void>
 }
 
@@ -429,10 +439,18 @@ function accountsText(value: GoogleAccountsOverview): string {
   return lines.join('\n')
 }
 
+const capabilityDisposers = new WeakMap<object, () => void>()
+
+export function disposeGoogleCapabilities(capabilities: object): void {
+  capabilityDisposers.get(capabilities)?.()
+}
+
 export function googleCapabilities(deps: GoogleCapabilityDeps) {
   /** The connect in progress. One per process: a second supersedes the first
    *  rather than leaving a listener holding a port. */
   let connectFlow: LoopbackFlow | null = null
+  let disposed = false
+  let connectGeneration = 0
 
   /** The vault's data layer, or the refusal that says there is none. */
   const accountOf = async (remote: string, expectedAccountSub?: string) => {
@@ -447,6 +465,14 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     const data = deps.dataForSession?.(session) ?? (await deps.dataFor(remote))
     if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
     return { session, data }
+  }
+
+  const validateSession = (remote: string, session: GoogleSession) => async () => {
+    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+    const current = await deps.accounts.sessionFor(remote)
+    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+    if (current !== session)
+      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
   }
 
   const dataOf = async (remote: string): Promise<GoogleData> => {
@@ -470,7 +496,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
   const overrides = async (root: string) => (await deps.settings.read(root)).calendars
 
-  return {
+  const capabilities = {
     /**
      * Who is connected, and whether that grant is still wide enough. A grant
      * from before `GOOGLE_SCOPES` widened keeps working and is insufficient
@@ -497,9 +523,17 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: noParams,
       run: async (ctx) => {
+        if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+        const generation = ++connectGeneration
         connectFlow?.cancel()
-        connectFlow = await deps.accounts.connect(ctx.remote)
-        return { authUrl: connectFlow.authUrl }
+        connectFlow = null
+        const flow = await deps.accounts.connect(ctx.remote)
+        if (disposed || generation !== connectGeneration) {
+          flow.cancel()
+          throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+        }
+        connectFlow = flow
+        return { authUrl: flow.authUrl }
       },
     }),
 
@@ -782,16 +816,144 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
+    'google.mailMarkerAnnotations': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const ids = p.ids
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'ids must be a list of Gmail thread ids')
+        try {
+          validateBatch(ids as string[])
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { ids: ids as string[], expectedAccountSub }
+      },
+      run: async (ctx, { ids, expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        return google(() => data.mailMarkerAnnotations(ids, validateSession(ctx.remote, session)))
+      },
+    }),
+
+    'google.mailMarkers': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const ids = p.ids
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'ids must be a list of Gmail thread ids')
+        try {
+          validateBatch(ids as string[])
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { ids: ids as string[], expectedAccountSub }
+      },
+      run: async (ctx, { ids, expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        const validate = validateSession(ctx.remote, session)
+        return google(() => data.mailMarkers(ids, validate))
+      },
+    }),
+
+    'google.mailMarkerPreferences': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const expectedAccountSub = expectedAccountParam(paramsObject(raw))
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return { expectedAccountSub }
+      },
+      run: async (ctx, { expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        return google(() => data.mailMarkerPreferences(validateSession(ctx.remote, session)))
+      },
+    }),
+
+    'google.setMailMarkerPreferences': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        let preferences: MailMarkerPreferences
+        try {
+          preferences = normalizeMailMarkerPreferences(p.preferences)
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return { expectedAccountSub, preferences }
+      },
+      run: async (ctx, { expectedAccountSub, preferences }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        await google(() =>
+          data.setMailMarkerPreferences(preferences, validateSession(ctx.remote, session)),
+        )
+        return ok
+      },
+    }),
+
+    'google.setMailMarker': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const marker = p.marker
+        if (marker !== null && !isMailMarker(marker))
+          throw new CapabilityError('BAD_REQUEST', 'invalid mail marker')
+        const expectedAccountSub = expectedAccountParam(p)
+        if (expectedAccountSub === undefined)
+          throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+        return {
+          id: stringParam(p, 'id'),
+          marker: marker as MarkerValue,
+          expectedAccountSub,
+        }
+      },
+      run: async (ctx, { id, marker, expectedAccountSub }) => {
+        const { data, session } = await accountOf(ctx.remote, expectedAccountSub)
+        const validate = validateSession(ctx.remote, session)
+        await google(() => data.setMailMarker(id, marker, validate))
+        return ok
+      },
+    }),
+
     'google.star': cap({
       doors: ['ui', 'cli'],
       cli: { args: ['id'], flags: ['off'], summary: 'star a thread (--off: unstar)' },
       params: (raw) => {
         const p = paramsObject(raw)
-        return { id: stringParam(p, 'id'), off: flagParam(p, 'off') }
+        const id = stringParam(p, 'id')
+        try {
+          validateThreadId(id)
+        } catch (error) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return { id, off: flagParam(p, 'off') }
       },
       run: async (ctx, { id, off }) => {
-        const data = await dataOf(ctx.remote)
-        await google(() => data.setStarred(id, !off))
+        const { data, session } = await accountOf(ctx.remote)
+        const validate = validateSession(ctx.remote, session)
+        await google(() => data.setStarred(id, !off, validate))
         return ok
       },
     }),
@@ -1199,11 +1361,32 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.imageSenders': cap({
       doors: ['ui'],
       params: noParams,
-      run: async (ctx) => (await deps.settings.read(ctx.root)).imageSenders,
+      run: async (ctx) => {
+        const settings = await deps.settings.read(ctx.root)
+        return {
+          senders: settings.imageSenders,
+          allSenders: settings.imagesFromAllSenders === true,
+        }
+      },
     }),
 
     /** Lowercased on the way in: `Ada@Syv.ai` and `ada@syv.ai` are one person,
      *  and matching by case would re-block a sender already allowed. */
+    'google.setImagesFromAllSenders': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const value = paramsObject(raw).enabled
+        if (typeof value !== 'boolean') {
+          throw new CapabilityError('BAD_REQUEST', 'enabled must be a boolean')
+        }
+        return { enabled: value }
+      },
+      run: async (ctx, { enabled }) => {
+        await deps.settings.write(ctx.root, { imagesFromAllSenders: enabled })
+        return ok
+      },
+    }),
+
     'google.allowImagesFrom': cap({
       doors: ['ui'],
       params: (raw) => ({ sender: stringParam(paramsObject(raw), 'sender') }),
@@ -1226,6 +1409,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
   } satisfies CapabilityTable
+
+  capabilityDisposers.set(capabilities, () => {
+    if (disposed) return
+    disposed = true
+    connectGeneration += 1
+    connectFlow?.cancel()
+    connectFlow = null
+  })
+  return capabilities
 }
 
 export type GoogleCapabilities = ReturnType<typeof googleCapabilities>

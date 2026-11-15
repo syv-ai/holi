@@ -22,6 +22,8 @@ asarUnpack:
   # A native module and its spawn helper are executed, so they cannot live
   # inside the asar archive.
   - '**/node_modules/node-pty/**'
+  # The optional genuine Node runtime backs interactive Windows CLI PTYs.
+  - '**/node_modules/node-win-x64/bin/node.exe'
   # sharp's native libvips binding, for the shrink-images commit transform.
   - '**/node_modules/sharp/**'
   - '**/node_modules/@img/**'

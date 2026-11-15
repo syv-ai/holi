@@ -81,7 +81,12 @@ export {
 } from '@/composites/arcade/holi-arcade'
 export { sessionAtom } from '@/state/session'
 export { forgetAgentLabelsAtom, useAgentLabel } from '@/state/document-runs'
-export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
+export {
+  activeVaultSettingsAtom,
+  agentProviderSettingAtom,
+  loadVaultSettingsAtom,
+  usePluginSetting,
+} from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
 export {
   terminalTheme,
@@ -127,7 +132,12 @@ export {
   /** @public */ type PluginDialog,
 } from '@/state/dialogs'
 export { askPrompt } from '@/lib/ask-agent'
-export { useGlobalPanelLayout } from '@/state/preferences'
+export { useGlobalPanelLayout, vimCodeEditingAtom } from '@/state/preferences'
+export { useVimEditor } from '@/editor/vim'
+/** @public Shared native field editing seam for core and plugin fields. */
+export { useVimField } from '@/hooks/use-vim-field'
+/** @public Mode presentation for native fields attached through the plugin seam. */
+export { VimFieldMode } from '@/composites/vim-field-mode'
 export { matchHotkey } from '@/lib/hotkey'
 export { DiffView } from '@/composites/diff-view'
 export { plainMarkdownExtensions } from '@/editor/extensions'

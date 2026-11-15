@@ -62,6 +62,8 @@ import { addMinutes, setHours, startOfDay, subDays } from 'date-fns'
 import {
   CalendarDaysIcon,
   MapPinIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   PlusIcon,
   RefreshCwIcon,
   RepeatIcon,
@@ -131,7 +133,7 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
   }
 }
 
-export function CalendarView(): React.JSX.Element {
+export function CalendarView({ visible = true }: { visible?: boolean }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const { account, currentSub } = useGoogleAccount()
   const accountIdentity = account ? `${account.email}:${currentSub ?? ''}` : null
@@ -159,6 +161,7 @@ export function CalendarView(): React.JSX.Element {
   const i18n = useMemo(() => ({ formats: CLOCK_FORMATS[clock] }), [clock])
 
   const [card, setCard] = useState<EventCardState | null>(null)
+  const cardDraft = useRef<EventDraft | null>(null)
   const [cardAnchor, setCardAnchor] = useState<EventCardAnchor | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -169,6 +172,7 @@ export function CalendarView(): React.JSX.Element {
   // The visible date, shared by the rail's mini calendar and the grid. One
   // source of truth: the mini calendar and grid nav both write it, both read it.
   const [date, setDate] = useState<Date>(() => new Date())
+  const [railCollapsed, setRailCollapsed] = useState(false)
 
   // The primary calendar is the account's address: the one Holi writes to.
   const ownCalendarId = account?.email ?? null
@@ -231,21 +235,23 @@ export function CalendarView(): React.JSX.Element {
       // Slot ends are exclusive; store the inclusive last day so multi-day
       // drag-creates keep their span.
       const lastDay = end && end > start ? localDate(allDay ? subDays(end, 1) : end) : startDay
+      const draft: EventDraft = {
+        title: '',
+        location: '',
+        date: startDay,
+        dateEnd: lastDay < startDay ? startDay : lastDay,
+        start: allDay ? '09:00' : hhmm(start),
+        // A timed quick-add defaults to 30 min so Save passes on the first try.
+        end: allDay ? '10:00' : hhmm(end ?? addMinutes(start, 30)),
+        allDay,
+        calendarName: ownCalendar?.name ?? account?.email ?? 'Your calendar',
+        color: ownCalendar?.color ?? FALLBACK_COLOR,
+      }
+      cardDraft.current = draft
       setCard({
         mode: 'create',
         identity: cardIdentity.current,
-        draft: {
-          title: '',
-          location: '',
-          date: startDay,
-          dateEnd: lastDay < startDay ? startDay : lastDay,
-          start: allDay ? '09:00' : hhmm(start),
-          // A timed quick-add defaults to 30 min so Save passes on the first try.
-          end: allDay ? '10:00' : hhmm(end ?? addMinutes(start, 30)),
-          allDay,
-          calendarName: ownCalendar?.name ?? account?.email ?? 'Your calendar',
-          color: ownCalendar?.color ?? FALLBACK_COLOR,
-        },
+        draft,
       })
     },
     [ownCalendar, account],
@@ -267,14 +273,20 @@ export function CalendarView(): React.JSX.Element {
         (event ? new DOMRect(event.clientX, event.clientY, 1, 1) : new DOMRect())
       setCardAnchor({ rect, element, fallback: newEventTrigger.current })
       setError(null)
+      const draft = draftFromOccurrence(occurrence)
+      cardDraft.current = draft
       setCard({
         mode: 'view',
         identity: cardIdentity.current,
-        draft: draftFromOccurrence(occurrence),
+        draft,
       })
     },
     [],
   )
+
+  const updateDraft = useCallback((draft: EventDraft) => {
+    cardDraft.current = draft
+  }, [])
 
   const startEdit = useCallback(() => {
     if (pending.current) return
@@ -532,16 +544,21 @@ export function CalendarView(): React.JSX.Element {
           divider. */}
       <div className="@container/calendar-host flex h-full w-full min-w-0 flex-row overflow-hidden">
         <CalendarRail
-          className="hidden w-72 shrink-0 flex-col border-e @min-[64rem]/calendar-host:flex"
+          className={cn(
+            'w-72 shrink-0 flex-col border-e',
+            railCollapsed ? 'hidden' : 'hidden @min-[64rem]/calendar-host:flex',
+          )}
           date={date}
           onDateChange={setDate}
           events={items}
           calendars={calendar.calendars}
           loading={firstLoad}
+          displayed={visible}
           onToggleCalendar={calendar.setCalendarEnabled}
           onOpenOccurrence={openView}
         />
         <EventCalendar
+          visible={visible}
           events={items}
           date={date}
           onDateChange={setDate}
@@ -553,7 +570,7 @@ export function CalendarView(): React.JSX.Element {
           showWeekNumbers={weekNumbers}
           loading={calendar.loading}
           navButtonSize="default"
-          nowIndicator
+          nowIndicator={visible}
           scrollToHour={8}
           snapDuration={15}
           scrollMode="contained"
@@ -624,14 +641,27 @@ export function CalendarView(): React.JSX.Element {
           <div className="flex flex-wrap items-center gap-x-2 pe-2">
             <EventCalendarNav className="w-full min-w-0 flex-nowrap @min-[48rem]/calendar:w-auto @min-[48rem]/calendar:flex-1" />
             <EventCalendarToolbar className="w-full @min-[48rem]/calendar:w-auto">
-              {/* The rail owns the calendars list when the calendar pane is
-                    at least 64rem wide, so keep the menu in narrower panes. */}
-              <div className="@min-[64rem]/calendar-host:hidden">
+              {/* The rail owns the calendars list while open in a wide pane. */}
+              <div className={railCollapsed ? undefined : '@min-[64rem]/calendar-host:hidden'}>
                 <CalendarsMenu
                   calendars={calendar.calendars}
                   onToggle={calendar.setCalendarEnabled}
+                  displayed={visible}
                 />
               </div>
+              <IconButton
+                className="hidden @min-[64rem]/calendar-host:inline-flex"
+                label={railCollapsed ? 'Show calendar rail' : 'Hide calendar rail'}
+                aria-pressed={!railCollapsed}
+                onClick={() => setRailCollapsed((collapsed) => !collapsed)}
+                size="icon"
+              >
+                {railCollapsed ? (
+                  <PanelLeftOpenIcon className="size-4" aria-hidden="true" />
+                ) : (
+                  <PanelLeftCloseIcon className="size-4" aria-hidden="true" />
+                )}
+              </IconButton>
               <IconButton
                 label="Refresh"
                 size="icon"
@@ -675,14 +705,15 @@ export function CalendarView(): React.JSX.Element {
         <EventCard
           meetingIdentity={remote && currentSub ? { remote, sub: currentSub } : null}
           onCreated={calendar.reload}
-          state={card}
-          anchor={cardAnchor}
+          state={card === null ? null : { ...card, draft: cardDraft.current ?? card.draft }}
+          anchor={visible ? cardAnchor : null}
           error={error}
           saving={saving}
           canCreateTask={canCreateTask}
           onOpenChange={closeCard}
           onEdit={startEdit}
           onSave={saveDraft}
+          onDraftChange={updateDraft}
           onDelete={deleteDraft}
           onCreateTask={createTask}
           onOpenExternal={(url) => openExternal(url)}

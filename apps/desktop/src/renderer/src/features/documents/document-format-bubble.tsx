@@ -28,7 +28,10 @@ import {
 } from '@/features/documents/rich-text/rich-text-controls'
 import { RichTextHighlightPopover } from '@/features/documents/rich-text/rich-text-highlight'
 import { RichTextLinkPopover } from '@/features/documents/rich-text/rich-text-link'
-import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
+import {
+  useRichTextSelector,
+  useRichTextState,
+} from '@/features/documents/rich-text/rich-text-state'
 import {
   RichTextToolbarGroup,
   RichTextToolbarSeparator,
@@ -50,6 +53,7 @@ import { useAgentLabel } from '@/state/document-runs'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { useAtomValue } from 'jotai'
 import { extraSelections } from './multi-cursor'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 
 const FORMAT_BUBBLE_KEY = 'documentFormatBubble'
 
@@ -93,6 +97,7 @@ interface DocumentFormatBubbleProps {
   onLinkOpenChange: (open: boolean) => void
   /** Null when there is no agent to ask. */
   onQuickCommand: ((instruction: string, passage: string) => void) | null
+  onAddToBatch?: ((instruction: string, passage: string) => void) | null
   /** Start a conversation about the passage; null when none can start. */
   onStartChat?: ((passage: string) => void) | null
   /** Start a comment thread on the selection; null when the note takes none. */
@@ -104,11 +109,19 @@ export function DocumentFormatBubble({
   linkOpen,
   onLinkOpenChange,
   onQuickCommand,
+  onAddToBatch = null,
   onStartChat = null,
   onComment = null,
 }: DocumentFormatBubbleProps) {
+  const activity = useEditorActivity(editor)
+  const [customDraft, setCustomDraft] = useState('')
   const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const state = useRichTextState(editor)
+  const singleTextBlock = useRichTextSelector(editor, (current) => {
+    if (!current) return false
+    const { $from, $to } = current.state.selection
+    return $from.parent.isTextblock && $from.sameParent($to)
+  })
   /** The passage the person's own instruction is for, taken when its prompt
    *  opened; null while it is closed. */
   const [customPassage, setCustomPassage] = useState<string | null>(null)
@@ -131,7 +144,7 @@ export function DocumentFormatBubble({
   const shouldShow = useCallback(
     ({ editor: current, element, state: doc, from, to }: ShouldShowProps) => {
       // The bubble's debounced check can outlive the editor (a closed tab).
-      if (current.isDestroyed || !current.isEditable) return false
+      if (!activity.focused || current.isDestroyed || !current.isEditable) return false
       if (holdOpenRef.current) return true
       if (!isTextSelection(doc.selection) || doc.selection.empty) return false
       // Marks would reach only the newest of several ⌘D selections.
@@ -142,7 +155,7 @@ export function DocumentFormatBubble({
       }
       return current.view.hasFocus() || element.contains(document.activeElement)
     },
-    [],
+    [activity],
   )
 
   const selectedPassage = () => {
@@ -170,6 +183,7 @@ export function DocumentFormatBubble({
   const submitCustom = (instruction: string) => {
     const passage = customPassage
     setCustomPassage(null)
+    setCustomDraft('')
     if (passage !== null) onQuickCommand?.(instruction, passage)
   }
 
@@ -235,6 +249,15 @@ export function DocumentFormatBubble({
                       <PencilLineIcon aria-hidden="true" />
                       Custom instruction…
                     </DropdownMenuItem>
+                    {onAddToBatch ? (
+                      <DropdownMenuItem
+                        disabled={!singleTextBlock}
+                        onClick={() => onAddToBatch('', selectedPassage())}
+                      >
+                        <PencilLineIcon aria-hidden="true" />
+                        Add to batch…
+                      </DropdownMenuItem>
+                    ) : null}
                   </DropdownMenuGroup>
                   {onStartChat ? (
                     <>
@@ -262,17 +285,15 @@ export function DocumentFormatBubble({
                   event.preventDefault()
                   // Back to the text, the passage still selected, unless the
                   // person clicked somewhere else.
-                  if (
-                    !dismissedOutsideRef.current &&
-                    !editor.isDestroyed &&
-                    editor.view.dom.isConnected
-                  ) {
+                  if (!dismissedOutsideRef.current && !editor.isDestroyed && activity.focused) {
                     editor.view.focus()
                   }
                 }}
               >
                 {/* Mounts per open, so the field always starts empty. */}
                 <AgentPrompt
+                  value={customDraft}
+                  onValueChange={setCustomDraft}
                   task="change the selection"
                   placeholder="Make it more formal, turn it into a list…"
                   onSubmit={submitCustom}

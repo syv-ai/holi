@@ -104,6 +104,7 @@ interface EventCardProps {
   onEdit: () => void
   /** Save what the form holds: the draft it was opened with, as edited. */
   onSave: (draft: EventDraft) => Promise<boolean>
+  onDraftChange: (draft: EventDraft) => void
   onDelete: () => Promise<void>
   onCreateTask: () => Promise<void>
   onOpenExternal: (url: string) => void
@@ -216,6 +217,7 @@ export function EventCard({
   onOpenChange,
   onEdit,
   onSave,
+  onDraftChange,
   onDelete,
   onCreateTask,
   onOpenExternal,
@@ -297,6 +299,7 @@ export function EventCard({
               onCreated={onCreated}
               onOpenExternal={onOpenExternal}
               draft={state.draft}
+              onDraftChange={onDraftChange}
               mode={state.mode as 'edit' | 'create'}
               error={error}
               saving={saving}
@@ -562,6 +565,7 @@ function EventForm({
   onCreated,
   onOpenExternal,
   draft: initial,
+  onDraftChange,
   mode,
   error,
   saving,
@@ -570,6 +574,7 @@ function EventForm({
   onClose,
 }: {
   draft: EventDraft
+  onDraftChange: (draft: EventDraft) => void
   mode: 'edit' | 'create'
   identity: MeetingIdentity | null
   onCreated: () => void
@@ -616,9 +621,17 @@ function EventForm({
   useEffect(() => {
     if (mode === 'create' && !meeting.loading) titleInput.current?.focus()
   }, [mode, meeting.loading])
-  const patch = useCallback((partial: Partial<EventDraft>) => {
-    if (!lockedRef.current) setDraft((prev) => ({ ...prev, ...partial }))
-  }, [])
+  const patch = useCallback(
+    (partial: Partial<EventDraft>) => {
+      if (lockedRef.current) return
+      setDraft((previous) => {
+        const next = { ...previous, ...partial }
+        onDraftChange(next)
+        return next
+      })
+    },
+    [onDraftChange],
+  )
   // Stable, so the memoised time selects skip a keystroke in the title.
   const setStart = useCallback((start: string) => patch({ start }), [patch])
   const setEnd = useCallback((end: string) => patch({ end }), [patch])

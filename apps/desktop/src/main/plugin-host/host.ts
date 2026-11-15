@@ -27,6 +27,7 @@ import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
   AppCtx,
+  AppFrameLeases,
   BridgeRoute,
   Disposer,
   LiveVault,
@@ -41,6 +42,7 @@ import type { ActiveVault } from '../vault/active-vault'
 import type { ScanClaim } from '../vault/vault-store'
 import type { Transform } from '../vault/hooks/runner'
 import { pluginEvents, type PluginEventsDeps } from './events'
+import { createAppFrameLeases } from './app-frame-leases'
 import { ensureSeeded, withoutOwned } from '../vault/seed/seed'
 import type { SeedContribution, SeedResult } from '../vault/seed/types'
 import { readVaultSettings } from '../vault/settings'
@@ -72,6 +74,7 @@ export interface PluginHostDeps {
   /** The capability host's app door, which one plugin opens and the host
    *  closes when that plugin stops. */
   openAppDoor(opener: AppDoorOpener, remote: string): AppDoor
+  appFrames?: AppFrameLeases
   /** Serve a path on the bridge. Returns the undo. */
   route(path: string, route: BridgeRoute, remote: string): () => void
   /** Where the `holi` command lives. */
@@ -189,6 +192,7 @@ interface Started {
 }
 
 export function createPluginHost(deps: PluginHostDeps): PluginHost {
+  const appFrames = deps.appFrames ?? createAppFrameLeases()
   const infos = deps.plugins.map((p) => p.info)
   const readSettings = deps.readSettings ?? readVaultSettings
   const quitGuards = new Set<() => QuitQuestion | null>()
@@ -219,6 +223,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     leases: new Set(),
   })
   let displayed: string | null = null
+  let displayEpoch = 0
   const displayListeners = new Set<(remote: string | null) => void>()
   const onDisplayChange = (cb: (remote: string | null) => void): (() => void) => {
     displayListeners.add(cb)
@@ -490,12 +495,18 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       root,
       userData: deps.userData,
       displayed: () => displayed,
+      presentationLease: () => {
+        const epoch = displayEpoch
+        return () => valid() && displayed === remote && displayEpoch === epoch
+      },
       onDisplayChange: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(
-          onDisplayChange((at) => {
-            if (valid()) cb(at)
-          }),
+          // Display changes must still reach presentation owners while stop is
+          // queued behind activation/reconcile work. Their callback may detach
+          // owned native UI; window access and presentation leases stay revoked
+          // by valid() immediately when the run generation changes.
+          onDisplayChange(cb),
         )
       },
       active: () => vault,
@@ -503,15 +514,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(deps.registry.register(namespaces, table, id, remote))
       },
-      emit: (at, name, payload) => {
-        if (valid() || draining()) eventBus.emit(at, name, payload)
+      emit: (at, name, payload, guard) => {
+        if (valid() || draining()) eventBus.emit(at, name, payload, guard)
       },
-      on: (name, handler) => {
+      on: (name, handler, deliveryGuard) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         return keep(
-          eventBus.on(name, (at, payload) => {
-            if (valid() && eventsLive) handler(at, payload)
-          }),
+          eventBus.on(
+            name,
+            (at, payload) => {
+              if (valid() && eventsLive) handler(at, payload)
+            },
+            deliveryGuard,
+          ),
         )
       },
       openAppDoor: (opener) => {
@@ -520,6 +535,28 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         keep(() => door.close())
         return door
       },
+      issueAppFrameLease: (bundle) => {
+        if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+        const win = ctx.window()
+        if (win === null) throw new Error('no Holi window for the displayed vault')
+        const presentation = ctx.presentationLease()
+        const lease = appFrames.issue({
+          remote,
+          root,
+          bundle,
+          activation,
+          window: win,
+          current: () => valid() && presentation() && ctx.window() === win,
+        })
+        keep(() => appFrames.revoke(lease))
+        return lease
+      },
+      releaseAppFrameLease: (token, bundle) => {
+        if (!valid()) return false
+        return appFrames.release(token, remote, bundle)
+      },
+      validateAppFrameLease: ({ token, nonce, window: frameWindow, bundle }) =>
+        appFrames.validate({ token, nonce, window: frameWindow, remote, bundle }),
       guardQuit: (check) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const guarded = (): QuitQuestion | null => (valid() ? check() : null)
@@ -658,7 +695,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       notify: (notice) => (valid() || draining() ? deps.notify(notice) : false),
       focused: deps.focused,
-      window: () => deps.window?.() ?? null,
+      // Display authority is separate from vault lifetime: a retained vault's
+      // activation may work on its data but cannot touch Holi's native window.
+      window: () => (valid() && displayed === remote ? deps.window?.() : null) ?? null,
       onSnapshot: (cb) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
         const entry = {
@@ -920,6 +959,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     async stop(remote) {
       const state = runsByRemote.get(remote)
       if (state === undefined) return
+      appFrames.revokeActivation(remote, state.generation)
       state.generation += 1
       state.parked = true
       for (const lease of state.leases) lease.events.cancelPending()
@@ -931,7 +971,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
 
     async stopAll() {
       const entries = [...runsByRemote.entries()]
-      for (const [, state] of entries) {
+      for (const [remote, state] of entries) {
+        appFrames.revokeActivation(remote, state.generation)
         state.generation += 1
         state.parked = true
         for (const lease of state.leases) lease.events.cancelPending()
@@ -947,7 +988,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     displayed: () => displayed,
     setDisplayed(remote) {
       if (displayed === remote) return
+      if (displayed !== null) appFrames.revokeRemote(displayed)
       displayed = remote
+      displayEpoch += 1
       for (const cb of [...displayListeners]) tell(cb, remote, 'display')
     },
     onDisplayChange,

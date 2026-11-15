@@ -72,6 +72,7 @@ function card(options: { connected?: boolean; initial?: EventDraft; strict?: boo
       canCreateTask={false}
       onOpenChange={close}
       onEdit={vi.fn()}
+      onDraftChange={vi.fn()}
       onSave={save}
       onDelete={vi.fn()}
       onCreateTask={vi.fn()}
@@ -282,6 +283,7 @@ it('account and vault changes discard late form results without sending again', 
       canCreateTask={false}
       onOpenChange={r.close}
       onEdit={vi.fn()}
+      onDraftChange={vi.fn()}
       onSave={r.save}
       onDelete={vi.fn()}
       onCreateTask={vi.fn()}

@@ -6,7 +6,7 @@ import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import type { RendererPlugin } from '@/plugin-api'
-import { fireEvent, render, screen } from '@/test/render'
+import { act, fireEvent, render, screen } from '@/test/render'
 import { nowAtom } from '@/state/clock'
 import { installedPluginsAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
@@ -34,7 +34,7 @@ function mount(prepare?: (store: ReturnType<typeof createStore>) => void) {
       <NewTabView onOpen={onOpen} onNewDocument={onNewDocument} />
     </Provider>,
   )
-  return { onOpen, onNewDocument }
+  return { onOpen, onNewDocument, store }
 }
 
 test('names the vault and the day, and its tasks open the board', () => {
@@ -110,6 +110,26 @@ test('Release ends the game too', () => {
   fireEvent.click(screen.getByRole('button', { name: /release/i }))
   expect(screen.queryByRole('application')).toBeNull()
   expect(document.activeElement).toBe(screen.getByRole('button', { name: /take control/i }))
+})
+
+test('disabling the arcade while playing restores the launcher without focusing its hidden pill', () => {
+  const { store } = mount()
+  const pill = screen.getByRole('button', { name: /take control/i })
+  fireEvent.click(pill)
+  expect(content()).toHaveAttribute('inert')
+
+  act(() => {
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: { ...VAULT_SETTING_DEFAULTS, gridArcade: false, warnings: [] },
+    })
+  })
+
+  expect(document.querySelector('[data-slot=arcade]')).toBeNull()
+  expect(screen.queryByRole('button', { name: /take control/i })).toBeNull()
+  expect(content()).not.toHaveAttribute('inert')
+  expect(content()).not.toHaveAttribute('aria-hidden')
+  expect(document.activeElement).not.toBe(pill)
 })
 
 test('with the arcade off on this machine, there is no board and no pill', () => {

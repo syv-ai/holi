@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { ConfirmDialog } from '@/composites/confirm-dialog'
+import { useMeetingsDisplayed } from './displayed'
 import { IconButton } from '@/composites/icon-button'
 import type { MeetingPhase } from '../shared/meeting'
 import { meetingCap } from './meeting-cap'
@@ -111,7 +112,9 @@ export function MeetingMenu({
   const setList = useSetAtom(meetingsAtom)
   const setStates = useSetAtom(meetingStatesAtom)
   const setShown = useSetAtom(shownMeetingIdAtom)
+  const displayed = useMeetingsDisplayed()
   const [deleting, setDeleting] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   /** Rename was picked: the title field opens once the menu has closed and
    *  would no longer take focus back from it. */
   const renaming = useRef(false)
@@ -131,7 +134,10 @@ export function MeetingMenu({
 
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu
+        open={displayed && menuOpen}
+        onOpenChange={(open) => setMenuOpen(displayed && open)}
+      >
         <DropdownMenuTrigger asChild>
           <IconButton label="Meeting actions" size="icon-xs">
             <Ellipsis aria-hidden />
@@ -165,7 +171,7 @@ export function MeetingMenu({
         </DropdownMenuContent>
       </DropdownMenu>
       <ConfirmDialog
-        open={deleting}
+        open={displayed && deleting}
         onOpenChange={setDeleting}
         title={`Delete “${meeting.title}”?`}
         description={`Its transcript, minutes and topics are removed from this machine and the vault. ${TASKS_NAME} made from it stay.`}

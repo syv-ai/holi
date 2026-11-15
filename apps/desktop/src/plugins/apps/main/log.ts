@@ -24,7 +24,11 @@ const queues = new Map<string, Promise<unknown>>()
 /** The reports gathering for one file, and how to write them now. */
 const batches = new Map<
   string,
-  { entries: AppLogEntry[]; flush: () => void; written: Promise<void> }
+  {
+    entries: { entry: AppLogEntry; current: () => boolean }[]
+    flush: () => void
+    written: Promise<void>
+  }
 >()
 
 /** Add a report to the app's log; resolves once it is written. */
@@ -33,13 +37,14 @@ export function writeAppLog(
   bundle: string,
   entry: { level: AppLogLevel; text: string },
   now: () => Date = () => new Date(),
+  current: () => boolean = () => true,
 ): Promise<void> {
   if (!isAppBundlePath(bundle)) return Promise.resolve()
   const rel = vaultRelPath(`${bundle}/${APP_LOG_FILE}`)
   const key = join(root, rel)
   let batch = batches.get(key)
   if (batch === undefined) {
-    const entries: AppLogEntry[] = []
+    const entries: { entry: AppLogEntry; current: () => boolean }[] = []
     let release = (): void => {}
     const due = new Promise<void>((resolve) => (release = resolve))
     const timer = setTimeout(() => flush(), BATCH_MS)
@@ -49,16 +54,28 @@ export function writeAppLog(
       release()
     }
     const run = async (): Promise<void> => {
+      const liveEntries = entries.filter(({ current: valid }) => valid())
+      if (liveEntries.length === 0) return
       if ((await stat(join(root, bundle)).catch(() => null))?.isDirectory() !== true) return
       const abs = await exactPath(root, rel)
       if (abs === null) return
       const existing = await readFile(abs, 'utf8').catch(() => null)
-      await writeAtomic(root, rel, appendAppLog(existing, entries, now()))
+      const stillLive = liveEntries.filter(({ current: valid }) => valid())
+      if (stillLive.length === 0) return
+      await writeAtomic(
+        root,
+        rel,
+        appendAppLog(
+          existing,
+          stillLive.map(({ entry }) => entry),
+          now(),
+        ),
+      )
     }
     batch = { entries, flush, written: due.then(() => queued(key, run)) }
     batches.set(key, batch)
   }
-  batch.entries.push({ ...entry, at: now() })
+  if (current()) batch.entries.push({ entry: { ...entry, at: now() }, current })
   return batch.written
 }
 

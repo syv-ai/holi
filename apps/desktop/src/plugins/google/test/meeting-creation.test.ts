@@ -146,7 +146,7 @@ async function rig() {
         meetings,
         dataFor: async () => null,
         settings: {
-          read: async () => ({ calendars: {}, imageSenders: [] }),
+          read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
           write: async () => {},
         },
       }),

@@ -10,6 +10,7 @@
  */
 import { isLocalOnlyPath, rewriteWikiLinks, vaultRelPath } from '@holi/shared'
 import { scanBackrefs } from './backrefs'
+import { isScratchpadPath } from './scratchpad'
 import { oneMoveAtATime, relinkNote } from './move'
 import { moveNoteComments } from './note-comments'
 import { moveDocFile, withFileLocks } from './vault-files'
@@ -39,7 +40,7 @@ async function renameNow(
   localLinksOnly: boolean,
 ): Promise<{ rewritten: { path: string; count: number }[] }> {
   const referrers = (await scanBackrefs(root, from)).filter(
-    (ref) => !localLinksOnly || isLocalOnlyPath(ref.path),
+    (ref) => !isScratchpadPath(ref.path) && (!localLinksOnly || isLocalOnlyPath(ref.path)),
   )
   for (const ref of referrers) {
     await relinkNote(root, ref.path, (text) => rewriteWikiLinks(text, from, to))

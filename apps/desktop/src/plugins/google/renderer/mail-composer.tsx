@@ -32,7 +32,14 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ChipInput } from './chip-input'
 import { SandboxedHtml } from './sandboxed-html'
-import { activeRemoteAtom, cn, plainMarkdownExtensions, registerBuffer } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  cn,
+  plainMarkdownExtensions,
+  registerBuffer,
+  useVimEditor,
+  vimCodeEditingAtom,
+} from '@/plugin-api'
 import { composeFrom, type ComposeIntent } from './compose-intent'
 import { renderMailMarkdown } from './mail-markdown'
 import { mailHtmlToMarkdown } from './mail-unmarkdown'
@@ -121,6 +128,7 @@ export function MailComposer({
    * the time Send is pressed.
    */
   const [remote] = useState(useAtomValue(activeRemoteAtom))
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const { currentSub } = useGoogleAccount()
   const accountSubRef = useRef<string | null>(accountSubProp ?? currentSub)
   if (accountSubRef.current === null && currentSub !== null) accountSubRef.current = currentSub
@@ -718,6 +726,7 @@ export function MailComposer({
           key={loads}
           focusOnMount={draftId === undefined && intent.kind !== 'new'}
           disabled={loadingRef.current || sending || departing || discarding}
+          vimEnabled={vimEnabled}
           value={markdown}
           onChange={(next) => {
             if (markDirty({ markdown: next })) setMarkdown(next)
@@ -854,10 +863,12 @@ function MarkdownEditor({
   onChange,
   onBlur,
   disabled,
+  vimEnabled,
   focusOnMount = false,
 }: {
   disabled: boolean
   focusOnMount?: boolean
+  vimEnabled: boolean
   value: string
   onChange: (next: string) => void
   onBlur: () => void
@@ -872,9 +883,25 @@ function MarkdownEditor({
   const editable = useRef(new Compartment())
   const viewRef = useRef<EditorView | null>(null)
   const ignoreOpeningBlur = useRef(focusOnMount)
+  const interactiveVim = useRef(vimEnabled && !disabled)
+  interactiveVim.current = vimEnabled && !disabled
+  const modeRef = useRef('')
+  const [mode, setMode] = useState('')
+  const [view, setView] = useState<EditorView | null>(null)
+  const [focused, setFocused] = useState(false)
+  const vim = useVimEditor(
+    view,
+    vimEnabled && !disabled,
+    focused && !disabled,
+    (nextMode) => {
+      modeRef.current = nextMode
+      setMode(nextMode)
+    },
+    () => {},
+  )
 
-  // The view is created once so readonly changes cannot discard its document
-  // or undo history; the following effect reconfigures the compartment.
+  // The view is created once so preference and readonly changes cannot discard
+  // its document or undo history; compartments reconfigure the live view.
   useEffect(() => {
     const parent = host.current
     if (parent === null) return
@@ -883,6 +910,7 @@ function MarkdownEditor({
         doc: initial.current,
         extensions: [
           ...plainMarkdownExtensions(),
+          vim.extension,
           editable.current.of([
             EditorState.readOnly.of(disabled),
             EditorView.editable.of(!disabled),
@@ -892,9 +920,16 @@ function MarkdownEditor({
           EditorView.contentAttributes.of({ 'aria-label': 'Message', 'aria-multiline': 'true' }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) notify.current(update.state.doc.toString())
-            if (update.focusChanged && !update.view.hasFocus) {
-              if (ignoreOpeningBlur.current) ignoreOpeningBlur.current = false
-              else blurred.current()
+            if (update.focusChanged) {
+              setFocused(update.view.hasFocus)
+              if (update.view.hasFocus && interactiveVim.current) {
+                setMode(modeRef.current || 'normal')
+              }
+              if (!update.view.hasFocus) {
+                setMode('')
+                if (ignoreOpeningBlur.current) ignoreOpeningBlur.current = false
+                else blurred.current()
+              }
             }
           }),
         ],
@@ -902,6 +937,7 @@ function MarkdownEditor({
       parent,
     })
     viewRef.current = view
+    setView(view)
     if (focusOnMount) view.focus()
     return () => {
       viewRef.current = null
@@ -922,5 +958,40 @@ function MarkdownEditor({
     })
   }, [disabled])
 
-  return <div ref={host} className="min-h-40 flex-1 overflow-auto" data-testid="mail-body" />
+  return (
+    <div
+      className="flex min-h-40 flex-1 flex-col"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setFocused(false)
+          setMode('')
+        }
+      }}
+      onKeyDownCapture={vim.onKeyDownCapture}
+      onKeyDown={(event) => {
+        vim.onKeyDown?.(event)
+        // The first Escape in Vim mode belongs to the editor, not the compose
+        // dialog. CodeMirror has already given the key to Vim at this point.
+        if (vimEnabled && focused && event.key === 'Escape' && modeRef.current !== 'normal') {
+          event.stopPropagation()
+        }
+      }}
+    >
+      {vimEnabled && (
+        // Keep the action row stationary when a pointer-down blurs the editor.
+        <div className="min-h-6" data-testid="vim-mode-slot">
+          {!disabled && focused && mode !== '' && (
+            <span
+              className="block px-2 py-1 text-xs text-muted-foreground"
+              aria-live="polite"
+              data-testid="vim-mode"
+            >
+              {mode.toUpperCase()}
+            </span>
+          )}
+        </div>
+      )}
+      <div ref={host} className="min-h-40 flex-1 overflow-auto" data-testid="mail-body" />
+    </div>
+  )
 }

@@ -5,7 +5,8 @@
  * Sent, not Done.
  */
 import { useAtomValue } from 'jotai'
-import { agentSessionRowsAtom, useNow, type AgentSessionRow } from '@/plugin-api'
+import { agentSessionRowsAtom, type AgentSessionRow } from '@/plugin-api'
+import { useDisplayedNow } from './displayed'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import type { Card } from '../shared/meeting'
@@ -28,7 +29,7 @@ export function RunState({
   /** When the card was last changed, epoch ms: its send, or later. */
   sentAt: number
 }): React.JSX.Element {
-  const now = useNow(5000)
+  const now = useDisplayedNow(5000)
   if (row === undefined) {
     return now - sentAt < JUST_SENT_MS ? (
       <Badge variant="secondary">Sent</Badge>

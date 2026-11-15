@@ -65,14 +65,21 @@ interface PageKey {
 
 export interface PagesDeps {
   window(): BrowserWindow | null
+  presentationLease?(): () => boolean
+  onDisplayChange?(cb: (remote: string | null) => void): () => void
   /** The tabs changed: their list, as the renderer draws them. */
   changed(list: PageInfo[]): void
   /** Show tab `id` in Holi: one the agent or a page opened. */
-  reveal(id: string): void
+  reveal(id: string, attachment?: () => boolean): void
   /** The person asked the tab for its address bar (⌘L). */
-  address(id: string): void
+  address(id: string, attachment?: () => boolean): void
   /** A shortcut of Holi's, pressed while a page had the keyboard. */
-  key(id: string, key: PageKey): void
+  key(id: string, key: PageKey, attachment?: () => boolean): void
+  vimMode?(
+    id: string,
+    snapshot: { nonce: string; attachment: string; revision: number; mode: 'insert' | 'normal' },
+    attachment?: () => boolean,
+  ): void
 }
 
 /** A `mailto:` or `tel:` link, to the system. */
@@ -85,6 +92,19 @@ interface Tab {
   favicon: string | null
   /** The window it is drawn in, or null while it is off screen. */
   shownIn: BrowserWindow | null
+  shownLease: (() => boolean) | null
+  attachment: symbol | null
+  attachmentId: string | null
+  menu: Menu | null
+  vimNonce: string | null
+  vimGeneration: number
+  vimRevision: number
+  vimRequestOwner: string | null
+  vimRequestRevision: number
+  vimModeSequence: number
+  vimPoll: ReturnType<typeof setInterval> | null
+  vimLastSnapshot: string | null
+  vimNavigationPending: boolean
 }
 
 let shared: Session | null = null
@@ -183,16 +203,41 @@ const PAGE_KEYS = new Set(['a', 'c', 'v', 'x', 'z', 'y'])
 
 export function createPages(deps: PagesDeps): Pages & {
   place(id: string, rect: Rect | null): void
+  placementGuard(id: unknown, presentation: () => boolean): () => boolean
   dispose(): void
+} & {
+  configureVim(
+    id: string,
+    enabled: boolean,
+    revision: number,
+    nonce: string,
+    attachment: string,
+  ): Promise<void>
 } {
   const tabs = new Map<string, Tab>()
   let current: string | null = null
   let telling = false
+  let disposed = false
 
   const tabOf = (id: string): Tab => {
     const tab = tabs.get(id)
     if (tab === undefined) throw new CapabilityError('NOT_FOUND', `no browser tab ${id}`)
     return tab
+  }
+
+  const isLive = (tab: Tab): boolean =>
+    !disposed && tabs.get(tab.id) === tab && !tab.view.webContents.isDestroyed()
+
+  const isPresented = (tab: Tab): boolean =>
+    isLive(tab) &&
+    tab.shownIn !== null &&
+    !tab.shownIn.isDestroyed() &&
+    tab.shownLease !== null &&
+    tab.shownLease()
+
+  function placementGuard(id: unknown, presentation: () => boolean): () => boolean {
+    const tab = typeof id === 'string' ? tabs.get(id) : undefined
+    return () => tab !== undefined && isLive(tab) && presentation()
   }
 
   const info = (tab: Tab): PageInfo => {
@@ -217,11 +262,11 @@ export function createPages(deps: PagesDeps): Pages & {
   /** Tell the renderer once per turn of the event loop, however many of a
    *  page's events fired in it. */
   const changed = (): void => {
-    if (telling) return
+    if (disposed || telling) return
     telling = true
     queueMicrotask(() => {
       telling = false
-      deps.changed(list())
+      if (!disposed) deps.changed(list())
     })
   }
 
@@ -237,6 +282,104 @@ export function createPages(deps: PagesDeps): Pages & {
         `the page could not be read: ${(err as Error).message}`,
         'wait for it to load, or reload it, then try again',
       )
+    }
+  }
+
+  function reportVim(tab: Tab): void {
+    if (tab.vimNonce === null || !isPresented(tab)) return
+    const nonce = tab.vimNonce
+    const attachment = tab.attachmentId
+    if (attachment === null) return
+    const generation = tab.vimGeneration
+    const sequence = ++tab.vimModeSequence
+    void inPage<{ revision: number; mode: 'insert' | 'normal' }>(tab, '__holiPage.vim.mode()')
+      .then((mode) => {
+        if (
+          !isPresented(tab) ||
+          tab.vimNonce !== nonce ||
+          tab.vimGeneration !== generation ||
+          sequence !== tab.vimModeSequence
+        )
+          return
+        const snapshot = JSON.stringify({ nonce, attachment, ...mode })
+        if (tab.vimLastSnapshot === snapshot) return
+        tab.vimLastSnapshot = snapshot
+        deps.vimMode?.(
+          tab.id,
+          { nonce, attachment, ...mode },
+          () => isPresented(tab) && tab.attachmentId === attachment,
+        )
+      })
+      .catch(() => {})
+  }
+
+  function resetVimOwnership(tab: Tab): void {
+    tab.vimGeneration++
+    tab.vimNonce = null
+    tab.vimModeSequence++
+    tab.vimLastSnapshot = null
+  }
+
+  async function initializeVim(tab: Tab): Promise<void> {
+    const generation = ++tab.vimGeneration
+    tab.vimNonce = null
+    try {
+      const nonce = await inPage<string>(tab, '__holiPage.vim.rearm()')
+      if (!isLive(tab) || generation !== tab.vimGeneration) return
+      tab.vimNonce = nonce
+      tab.vimRevision++
+      reportVim(tab)
+    } catch {
+      // A document can be replaced while the isolated world is starting.
+    }
+  }
+
+  async function configureVim(
+    id: string,
+    enabled: boolean,
+    requestRevision: number,
+    nonce: string,
+    attachment: string,
+  ): Promise<void> {
+    const tab = tabs.get(id)
+    if (
+      tab === undefined ||
+      !isPresented(tab) ||
+      nonce !== tab.vimNonce ||
+      attachment !== tab.attachmentId ||
+      !Number.isSafeInteger(requestRevision) ||
+      requestRevision < 1
+    )
+      return
+    const owner = `${nonce}:${attachment}`
+    if (tab.vimRequestOwner !== owner) {
+      tab.vimRequestOwner = owner
+      tab.vimRequestRevision = 0
+    }
+    if (requestRevision <= tab.vimRequestRevision) return
+    tab.vimRequestRevision = requestRevision
+    const generation = tab.vimGeneration
+    const attachmentId = tab.attachmentId
+    const ownerRevision = tab.vimRequestRevision
+    const revision = ++tab.vimRevision
+    try {
+      const applied = await inPage<boolean>(
+        tab,
+        `__holiPage.vim.configure(${enabled}, ${revision}, ${JSON.stringify(nonce)})`,
+      )
+      if (
+        !applied ||
+        !isPresented(tab) ||
+        generation !== tab.vimGeneration ||
+        nonce !== tab.vimNonce ||
+        attachmentId !== tab.attachmentId ||
+        owner !== tab.vimRequestOwner ||
+        ownerRevision !== tab.vimRequestRevision
+      )
+        return
+      reportVim(tab)
+    } catch {
+      // Navigation owns the next initialization and mode snapshot.
     }
   }
 
@@ -256,61 +399,144 @@ export function createPages(deps: PagesDeps): Pages & {
   }
 
   function contextMenu(tab: Tab, params: Electron.ContextMenuParams): void {
+    const win = deps.window()
+    if (!isPresented(tab) || win === null || tab.shownIn !== win) return
+    const lease = tab.shownLease
+    const attachment = tab.attachment
+    const attached = (): boolean => attachment !== null && tab.attachment === attachment
+    const live = (): boolean =>
+      isPresented(tab) && tab.shownLease === lease && attached() && deps.window() === win
     const wc = tab.view.webContents
     const items: MenuItemConstructorOptions[] = []
     const link = params.linkURL
     if (link !== '' && isPageUrl(link)) {
       items.push(
-        { label: 'Open Link in New Tab', click: () => void open({ url: link, reveal: true }) },
-        { label: 'Open Link in Your Browser', click: () => void shell.openExternal(link) },
-        { label: 'Copy Link Address', click: () => clipboard.writeText(link) },
+        {
+          label: 'Open Link in New Tab',
+          click: () => {
+            if (live()) void open({ url: link, reveal: true, attachment: live })
+          },
+        },
+        {
+          label: 'Open Link in Your Browser',
+          click: () => {
+            if (live()) void shell.openExternal(link)
+          },
+        },
+        {
+          label: 'Copy Link Address',
+          click: () => {
+            if (live()) clipboard.writeText(link)
+          },
+        },
         { type: 'separator' },
       )
     }
     if (params.isEditable) {
-      items.push({ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' })
+      items.push(
+        {
+          label: 'Cut',
+          click: () => {
+            if (live()) wc.cut()
+          },
+        },
+        {
+          label: 'Copy',
+          click: () => {
+            if (live()) wc.copy()
+          },
+        },
+        {
+          label: 'Paste',
+          click: () => {
+            if (live()) wc.paste()
+          },
+        },
+        { type: 'separator' },
+      )
     } else if (params.selectionText.trim() !== '') {
-      items.push({ role: 'copy' }, { type: 'separator' })
+      items.push(
+        {
+          label: 'Copy',
+          click: () => {
+            if (live()) wc.copy()
+          },
+        },
+        { type: 'separator' },
+      )
     }
     items.push(
       {
         label: 'Back',
         enabled: wc.navigationHistory.canGoBack(),
-        click: () => wc.navigationHistory.goBack(),
+        click: () => {
+          if (live()) wc.navigationHistory.goBack()
+        },
       },
       {
         label: 'Forward',
         enabled: wc.navigationHistory.canGoForward(),
-        click: () => wc.navigationHistory.goForward(),
+        click: () => {
+          if (live()) wc.navigationHistory.goForward()
+        },
       },
-      { label: 'Reload', click: () => wc.reload() },
+      {
+        label: 'Reload',
+        click: () => {
+          if (live()) wc.reload()
+        },
+      },
     )
-    const win = deps.window()
-    Menu.buildFromTemplate(items).popup(win === null ? {} : { window: win })
+    const menu = Menu.buildFromTemplate(items)
+    tab.menu?.closePopup()
+    tab.menu = menu
+    menu.once('menu-will-close', () => {
+      if (tab.menu === menu) tab.menu = null
+    })
+    menu.popup({ window: win })
   }
 
   function watch(tab: Tab): void {
     const wc = tab.view.webContents
     wc.setWindowOpenHandler(({ url }) => {
-      if (isPageUrl(url) && url !== 'about:blank') void open({ url, reveal: true })
-      else if (/^(mailto|tel):/i.test(url)) toSystem(url)
+      if (!isLive(tab)) return { action: 'deny' }
+      if (isPageUrl(url) && url !== 'about:blank') {
+        const attachment = tab.attachment
+        void open({
+          url,
+          reveal: true,
+          attachment: () => isPresented(tab) && tab.attachment === attachment,
+        })
+      } else if (/^(mailto|tel):/i.test(url) && isPresented(tab)) toSystem(url)
       return { action: 'deny' }
     })
     const guard = (event: { preventDefault(): void }, url: string): void => {
       if (isPageUrl(url)) return
       event.preventDefault()
-      if (/^(mailto|tel):/i.test(url)) toSystem(url)
+      if (/^(mailto|tel):/i.test(url) && isPresented(tab)) toSystem(url)
     }
     wc.on('will-navigate', (event) => guard(event, event.url))
     wc.on('will-redirect', (event) => guard(event, event.url))
     wc.on('did-start-navigation', (event) => {
-      if (event.isMainFrame && !event.isSameDocument) tab.error = null
+      if (event.isMainFrame) {
+        if (!event.isSameDocument) {
+          tab.error = null
+          tab.vimNavigationPending = true
+        }
+        resetVimOwnership(tab)
+      }
       changed()
     })
     wc.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
-      if (!isMainFrame || code === ERR_ABORTED) return
-      tab.error = { code, description, url }
-      changed()
+      if (!isMainFrame) return
+      tab.vimNavigationPending = false
+      if (code !== ERR_ABORTED) {
+        tab.error = { code, description, url }
+        changed()
+      }
+      // A stopped or failed navigation can leave the outgoing document alive.
+      // It needs a fresh nonce, even though no did-finish-load will follow.
+      void initializeVim(tab)
     })
     wc.on('render-process-gone', (_event, details) => {
       tab.error = {
@@ -324,39 +550,70 @@ export function createPages(deps: PagesDeps): Pages & {
       tab.favicon = icons.find(isPageUrl) ?? null
       changed()
     })
-    for (const name of [
-      'did-start-loading',
-      'did-stop-loading',
-      'did-navigate',
-      'did-navigate-in-page',
-      'page-title-updated',
-    ] as const) {
+    for (const name of ['did-start-loading', 'did-navigate', 'page-title-updated'] as const) {
       wc.on(name as 'did-start-loading', changed)
     }
+    wc.on('did-stop-loading', () => {
+      if (tab.vimNavigationPending) {
+        tab.vimNavigationPending = false
+        void initializeVim(tab)
+      }
+      changed()
+    })
+    wc.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+      if (!isMainFrame) return
+      // History API and fragment changes retain the document, but relinquish
+      // its prior Vim owner and arm it again as insert mode.
+      resetVimOwnership(tab)
+      void initializeVim(tab)
+      changed()
+    })
+    wc.on('did-finish-load', () => {
+      tab.vimNavigationPending = false
+      void initializeVim(tab)
+    })
     wc.on('context-menu', (_event, params) => contextMenu(tab, params))
     // While a page has the keyboard, Holi's own shortcuts would go to it.
     // ⌘L, ⌘R, ⌘[ and ⌘] are the tab's; editing keys are the page's; any
     // other ⌘ key goes back to Holi's window as if pressed there.
     wc.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown') return
+      if (!isPresented(tab) || input.type !== 'keyDown') return
+      setTimeout(() => reportVim(tab), 0)
       const command = process.platform === 'darwin' ? input.meta : input.control
       if (!command) return
+      const win = deps.window()
+      if (win === null) return
+      const lease = tab.shownLease
+      const attachment = tab.attachment
+      const live = (): boolean =>
+        isPresented(tab) &&
+        tab.shownLease === lease &&
+        tab.attachment === attachment &&
+        deps.window() === win
       const key = input.key.toLowerCase()
       if (PAGE_KEYS.has(key) && !input.alt) return
       event.preventDefault()
-      if (key === 'l') return deps.address(tab.id)
+      if (key === 'l') {
+        if (live()) deps.address(tab.id, live)
+        return
+      }
       if (key === 'r') return void wc.reload()
       if (key === '[') return void wc.navigationHistory.goBack()
       if (key === ']') return void wc.navigationHistory.goForward()
-      deps.window()?.webContents.focus()
-      deps.key(tab.id, {
-        key: input.key,
-        code: input.code,
-        meta: input.meta,
-        ctrl: input.control,
-        shift: input.shift,
-        alt: input.alt,
-      })
+      if (!live()) return
+      win.webContents.focus()
+      deps.key(
+        tab.id,
+        {
+          key: input.key,
+          code: input.code,
+          meta: input.meta,
+          ctrl: input.control,
+          shift: input.shift,
+          alt: input.alt,
+        },
+        live,
+      )
     })
   }
 
@@ -364,10 +621,12 @@ export function createPages(deps: PagesDeps): Pages & {
     url,
     id,
     reveal,
+    attachment,
   }: {
     url?: string
     id?: string
     reveal: boolean
+    attachment?: () => boolean
   }): Promise<PageInfo> {
     const known = id === undefined ? undefined : tabs.get(id)
     if (known !== undefined) return url === undefined ? info(known) : load(known, url)
@@ -391,23 +650,52 @@ export function createPages(deps: PagesDeps): Pages & {
       error: null,
       favicon: null,
       shownIn: null,
+      shownLease: null,
+      attachment: null,
+      attachmentId: null,
+      menu: null,
+      vimNonce: null,
+      vimGeneration: 0,
+      vimRevision: 0,
+      vimRequestOwner: null,
+      vimRequestRevision: 0,
+      vimModeSequence: 0,
+      vimPoll: null,
+      vimLastSnapshot: null,
+      vimNavigationPending: false,
     }
     tabs.set(tab.id, tab)
     current = tab.id
     watch(tab)
     changed()
-    if (reveal) deps.reveal(tab.id)
+    if (reveal && deps.window() !== null)
+      deps.reveal(tab.id, () => isLive(tab) && (attachment === undefined || attachment()))
     return url === undefined ? info(tab) : load(tab, url)
   }
 
   function hide(tab: Tab): void {
     const win = tab.shownIn
     tab.shownIn = null
+    tab.shownLease = null
+    tab.attachment = null
+    tab.attachmentId = null
+    tab.vimLastSnapshot = null
+    if (tab.vimPoll !== null) clearInterval(tab.vimPoll)
+    tab.vimPoll = null
+    tab.vimRevision++
+    if (tab.vimNonce !== null && !tab.view.webContents.isDestroyed()) {
+      void inPage<boolean>(
+        tab,
+        `__holiPage.vim.configure(false, ${tab.vimRevision}, ${JSON.stringify(tab.vimNonce)})`,
+      ).catch(() => {})
+    }
+    tab.menu?.closePopup()
+    tab.menu = null
     if (win !== null && !win.isDestroyed()) win.contentView.removeChildView(tab.view)
   }
 
   function onScreen(tab: Tab): boolean {
-    return tab.shownIn !== null && !tab.shownIn.isDestroyed() && tab.shownIn.isVisible()
+    return isPresented(tab) && tab.shownIn !== null && tab.shownIn.isVisible()
   }
 
   async function press(tab: Tab, spec: string): Promise<void> {
@@ -419,6 +707,11 @@ export function createPages(deps: PagesDeps): Pages & {
     if (char !== null) wc.sendInputEvent({ type: 'char', keyCode: char, modifiers })
     wc.sendInputEvent({ type: 'keyUp', keyCode: code, modifiers })
   }
+
+  const offDisplay = deps.onDisplayChange?.(() => {
+    // A returning vault must receive fresh renderer placement messages.
+    for (const tab of tabs.values()) hide(tab)
+  })
 
   return {
     list,
@@ -571,15 +864,27 @@ export function createPages(deps: PagesDeps): Pages & {
       return `data:image/jpeg;base64,${image.toJPEG(85).toString('base64')}`
     },
 
+    placementGuard,
+
+    configureVim,
+
     place(id, rect) {
       const tab = tabs.get(id)
       if (tab === undefined) return
+      if (disposed) return
       const win = deps.window()
       if (rect === null || win === null || rect.width < 1 || rect.height < 1) return hide(tab)
-      if (tab.shownIn !== win) {
+      const presentation = deps.presentationLease?.() ?? (() => true)
+      if (!presentation()) return hide(tab)
+      if (tab.shownIn !== win || tab.shownLease?.() !== true) {
         hide(tab)
         win.contentView.addChildView(tab.view)
         tab.shownIn = win
+        tab.shownLease = presentation
+        tab.attachment = Symbol(id)
+        tab.attachmentId = randomUUID()
+        tab.vimLastSnapshot = null
+        tab.vimPoll = setInterval(() => reportVim(tab), 250)
         // The tab the person brings up is the one "the page" means.
         current = id
       }
@@ -590,9 +895,13 @@ export function createPages(deps: PagesDeps): Pages & {
         width: Math.round(rect.width * zoom),
         height: Math.round(rect.height * zoom),
       })
+      reportVim(tab)
     },
 
     dispose() {
+      if (disposed) return
+      disposed = true
+      offDisplay?.()
       for (const id of [...tabs.keys()]) {
         const tab = tabs.get(id)!
         hide(tab)

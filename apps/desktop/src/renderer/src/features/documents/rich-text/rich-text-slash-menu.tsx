@@ -1,3 +1,4 @@
+import { editorActivity } from '@/hooks/use-editor-activity'
 import { useSyncExternalStore, type ReactNode, type Ref } from 'react'
 import { IconTile } from '@/components/ui/icon-tile'
 import { PluginKey } from '@tiptap/pm/state'
@@ -258,9 +259,12 @@ export const RichTextSlashCommand = Extension.create<RichTextSlashOptions>({
         pluginKey: RICH_TEXT_SLASH_KEY,
         // The placeholder already paints .is-empty lines.
         decorationEmptyClass: 'is-query-empty',
-        allow: ({ state, range }) => !state.doc.resolve(range.from).parent.type.spec.code,
+        allow: ({ editor, state, range }) =>
+          editorActivity(editor).focused && !state.doc.resolve(range.from).parent.type.spec.code,
         items: ({ editor }) => [...items, ...(more?.() ?? [])].filter((item) => item.can(editor)),
-        command: ({ editor, range, props }) => props.run(editor, range),
+        command: ({ editor, range, props }) => {
+          if (editorActivity(editor).focused) props.run(editor, range)
+        },
         render: createRichTextSuggestionRender((props) => (
           <SlashMenu {...props} labelSource={labelSource} />
         )),

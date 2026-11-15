@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { vaultRelPath } from '@holi/shared'
+import { SCRATCHPAD_PATH, vaultRelPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { moveNotes } from '../src/main/vault/move'
 import { withFileLock, withFileLocks } from '../src/main/vault/vault-files'
@@ -106,6 +106,58 @@ describe('moveNotes', () => {
     await expect(read(root, 'old.md')).rejects.toThrow()
     expect(await read(root, 'sub/new.md')).toBe('body')
     expect(await read(root, 'ref.md')).toBe('see [[sub/new.md]] and [[sub/new.md|Alias]]')
+  })
+
+  it('preserves scratchpad bytes when another file moves or it moves itself', async () => {
+    const bytes = Buffer.from([
+      0x80, 0xff, 0x5b, 0x5b, 0x6f, 0x6c, 0x64, 0x2e, 0x6d, 0x64, 0x5d, 0x5d,
+    ])
+    const root = await vault({
+      [SCRATCHPAD_PATH]: '',
+      'old.md': '[[scratchpad.local.md]] and [[old.md]]',
+      'ref.md': '[[old.md]]',
+    })
+    await writeFile(join(root, SCRATCHPAD_PATH), bytes)
+
+    const result = await moveNotes(root, [{ from: 'old.md', to: 'new.md' }])
+    expect(result.rewritten).toEqual([
+      { path: 'new.md', count: 1 },
+      { path: 'ref.md', count: 1 },
+    ])
+    expect(await readFile(join(root, SCRATCHPAD_PATH))).toEqual(bytes)
+    expect(await read(root, 'new.md')).toBe('[[scratchpad.local.md]] and [[new.md]]')
+
+    const intoScratchpad = Buffer.from([
+      0x80, 0xff, 0x5b, 0x5b, 0x6e, 0x65, 0x77, 0x2e, 0x6d, 0x64, 0x5d, 0x5d,
+    ])
+    await writeFile(join(root, 'incoming.md'), intoScratchpad)
+    const into = await moveNotes(root, [{ from: 'incoming.md', to: SCRATCHPAD_PATH }])
+    expect(into.rewritten).toEqual([])
+    expect(await readFile(join(root, SCRATCHPAD_PATH))).toEqual(intoScratchpad)
+
+    const outBytes = await readFile(join(root, SCRATCHPAD_PATH))
+    const out = await moveNotes(root, [{ from: SCRATCHPAD_PATH, to: 'personal.md' }])
+    expect(out.rewritten).toEqual([{ path: 'new.md', count: 1 }])
+    expect(await readFile(join(root, 'personal.md'))).toEqual(outBytes)
+  })
+
+  it('preserves scratchpad bytes across batch and chained moves', async () => {
+    const bytes = Buffer.from('[[a.md]] and [[b.md]]  \nno final newline')
+    const root = await vault({
+      [SCRATCHPAD_PATH]: '',
+      'a.md': 'A',
+      'b.md': 'B',
+      'ordinary.md': '[[a.md]] and [[b.md]]',
+    })
+    await writeFile(join(root, SCRATCHPAD_PATH), bytes)
+
+    const result = await moveNotes(root, [
+      { from: 'a.md', to: 'b.md' },
+      { from: 'b.md', to: 'c.md' },
+    ])
+    expect(result.rewritten).toEqual([{ path: 'ordinary.md', count: 2 }])
+    expect(await readFile(join(root, SCRATCHPAD_PATH))).toEqual(bytes)
+    expect(await read(root, 'ordinary.md')).toBe('[[b.md]] and [[c.md]]')
   })
 
   it('moves a whole folder, remapping inbound links to every file in it', async () => {

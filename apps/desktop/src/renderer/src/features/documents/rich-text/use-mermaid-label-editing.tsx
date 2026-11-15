@@ -1,3 +1,4 @@
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { minimalTextChange, patchMermaidLabel } from '@holi/shared'
 import { closeHistory } from '@tiptap/pm/history'
 import { NodeSelection, type Transaction } from '@tiptap/pm/state'
@@ -16,6 +17,8 @@ export function useMermaidLabelEditing({
   getPos,
   theme,
 }: Pick<ReactNodeViewProps, 'node' | 'editor' | 'getPos'> & { theme: 'dark' | 'default' }) {
+  const activity = useEditorActivity(editor)
+  const draftMemory = useRef<{ source: string; id: string; draft: string } | null>(null)
   const [editable, setEditable] = useState(() => editor.isEditable)
   const [targets, setTargets] = useState<MermaidTarget[]>([])
   const [editing, setEditing] = useState(false)
@@ -65,6 +68,7 @@ export function useMermaidLabelEditing({
     const current = context.current
     if (
       !current ||
+      !activity.focused ||
       editor.isDestroyed ||
       !editor.isEditable ||
       store.get(activeRemoteAtom) !== current.remote ||
@@ -80,7 +84,7 @@ export function useMermaidLabelEditing({
     } catch {
       return undefined
     }
-  }, [currentPosition, editor, store])
+  }, [currentPosition, editor, store, activity])
   const finish = useCallback(() => {
     const currentPos = position()
     const target = context.current?.anchor
@@ -105,11 +109,11 @@ export function useMermaidLabelEditing({
   }, [editor, close])
 
   useEffect(() => {
-    if (!editable || active) {
+    if ((!editable && activity.displayed) || active) {
       setEditing(false)
       close()
     }
-  }, [active, editable, close])
+  }, [active, editable, close, activity, activity.focused])
 
   useEffect(() => {
     const changed = ({ transaction }: { transaction?: Transaction }) => {
@@ -117,6 +121,7 @@ export function useMermaidLabelEditing({
       setEditable(editor.isEditable)
       if (
         context.current &&
+        activity.focused &&
         (position() === undefined || (transaction?.selectionSet && !transaction.docChanged))
       )
         close()
@@ -137,7 +142,7 @@ export function useMermaidLabelEditing({
       stopVault()
       stopTheme()
     }
-  }, [editor, position, close, store])
+  }, [editor, position, close, store, activity, activity.focused])
 
   useEffect(
     () => () => {
@@ -145,6 +150,19 @@ export function useMermaidLabelEditing({
       context.current = null
     },
     [],
+  )
+
+  useEffect(
+    () =>
+      activity.subscribe(() => {
+        if (!activity.focused) {
+          session.current++
+          setValidating(false)
+          setSelected(null)
+          setAnchor(null)
+        }
+      }),
+    [activity],
   )
 
   const onRendered = useCallback(
@@ -161,6 +179,7 @@ export function useMermaidLabelEditing({
         element.setAttribute('aria-label', target.label)
         element.setAttribute('data-label-target', '')
         element.addEventListener('click', () => {
+          if (!activity.focused || !editor.isEditable) return
           session.current++
           context.current = {
             node,
@@ -172,7 +191,8 @@ export function useMermaidLabelEditing({
           }
           setSelected(target)
           setValidating(false)
-          setDraft(target.label)
+          const saved = draftMemory.current
+          setDraft(saved?.source === source && saved.id === target.id ? saved.draft : target.label)
           setAnchor(element)
           setEditError('')
         })
@@ -185,7 +205,7 @@ export function useMermaidLabelEditing({
         })
       })
     },
-    [editing, node, source, store, theme],
+    [editing, node, source, store, theme, activity, editor],
   )
 
   async function apply() {
@@ -195,6 +215,7 @@ export function useMermaidLabelEditing({
       close()
       return
     }
+    const currentVisit = activity.capture()
     const sessionId = session.current
     const capturedSource = current.source
     const capturedId = selected.id
@@ -209,7 +230,10 @@ export function useMermaidLabelEditing({
       return
     }
     const isCurrent = () =>
-      session.current === sessionId && context.current === current && position() !== undefined
+      currentVisit() &&
+      session.current === sessionId &&
+      context.current === current &&
+      position() !== undefined
     if (!isCurrent()) {
       close()
       return
@@ -245,6 +269,7 @@ export function useMermaidLabelEditing({
       ) {
         transaction.setSelection(NodeSelection.create(transaction.doc, livePosition))
       }
+      draftMemory.current = null
       close()
       setEditing(false)
       editor.view.dispatch(transaction)
@@ -277,6 +302,7 @@ export function useMermaidLabelEditing({
           session.current++
           setValidating(false)
           setEditError('')
+          if (selected) draftMemory.current = { source, id: selected.id, draft: value }
           setDraft(value)
         }}
         onApply={() => void apply()}

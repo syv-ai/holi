@@ -15,7 +15,7 @@ import { trpc } from '@/lib/trpc'
 // reads the other's atoms until a store does.
 import { openDocumentAtom } from './open-document'
 // A cycle too (`document-runs` reads `activeRemoteAtom`), safe the same way.
-import { documentRunsAtom } from './document-runs'
+import { documentRunsAtom, documentUpgradesAtom, isRunLive } from './document-runs'
 import { settledRect } from '@/lib/settled-rect'
 import { folderSurfacesAtom } from './plugins'
 
@@ -543,19 +543,56 @@ export const moveNotesAtom = atom(
     {
       moves,
       folders = [],
-    }: { moves: { from: string; to: string }[]; folders?: { from: string; to: string }[] },
+      expectedRemote,
+      upgradePath,
+    }: {
+      moves: { from: string; to: string }[]
+      folders?: { from: string; to: string }[]
+      /** Refuse an action whose initiating editor no longer owns the active vault. */
+      expectedRemote?: string
+      /** Upgrade moves must still own the path and have no live agent at commit time. */
+      upgradePath?: string
+    },
   ) => {
     const remote = get(activeRemoteAtom)
-    if (!remote || (moves.length === 0 && folders.length === 0)) return
-    await restorePoint()
+    const revision = get(activeRemoteRevisionAtom)
+    const openRequest = get(openRequestAtom)
+    const stillOwned = () =>
+      get(activeRemoteAtom) === remote &&
+      get(activeRemoteRevisionAtom) === revision &&
+      get(openRequestAtom) === openRequest &&
+      get(openedRemoteAtom) === remote &&
+      (expectedRemote === undefined || remote === expectedRemote)
+    const upgradeStillAllowed = () => {
+      if (upgradePath === undefined) return true
+      const run = get(documentRunsAtom)[upgradePath]
+      return get(documentUpgradesAtom).has(upgradePath) && !isRunLive(run)
+    }
+    if (
+      !remote ||
+      !stillOwned() ||
+      !upgradeStillAllowed() ||
+      (moves.length === 0 && folders.length === 0)
+    )
+      return
+    // Keep every awaited stage on the initiating vault. In particular, a
+    // vault switch while buffers flush must not make the restore-point commit
+    // land in the replacement vault.
+    await flushAllBuffers()
+    if (!stillOwned()) return
+    await trpc.sync.commitNow.mutate()
+    if (!stillOwned()) return
     const release = freezeBuffers()
     try {
       await flushAllBuffers()
+      if (!stillOwned() || !upgradeStillAllowed()) return
       await trpc.notes.move.mutate({ remote, moves, folders })
+      if (!stillOwned()) return
       flushSync(() => {
         set(shellWorkspaceAtom, (ws) => retargetShellTabs(ws, moves, get(folderSurfacesAtom)))
       })
       await set(loadSnapshotAtom)
+      if (!stillOwned()) return
       await trpc.sync.commitNow.mutate()
     } finally {
       release()

@@ -42,6 +42,61 @@ export interface LiveVault {
 export interface SchemeContext {
   /** The open vault, or null with none open. */
   active(): LiveVault | null
+  /** Main-owned authority for vault-app frame and resource leases. */
+  appFrames?: AppFrameLeases
+  /** Resolve the native window that initiated a protocol request. */
+  windowForRequest?(request: Request): BrowserWindow | null
+  /** Native WebFrameMain identity correlated from Electron's WebRequest event. */
+  frameForRequest?(request: Request): string | null
+  appFrameLease?: AppFrameLease | null
+}
+
+export interface AppFrameLease {
+  token: string
+  nonce: string
+  remote: string
+  root: string
+  bundle: string
+  activation: number
+  window: BrowserWindow
+  /** Revalidate against this exact native window and current presentation. */
+  valid(window: BrowserWindow): boolean
+  /** Consume the single top-level document load; a reload needs a fresh lease. */
+  claimDocument(): boolean
+  /** Bind this lease to the native main-frame document generation. */
+  bindDocument(frame: string, isAlive: () => boolean): boolean
+  /** Whether this lease belongs to the live native requester of a protocol resource. */
+  isDocumentFrame(frame: string): boolean
+}
+
+export interface AppFrameLeases {
+  issue(input: {
+    remote: string
+    root: string
+    bundle: string
+    activation: number
+    window: BrowserWindow
+    current(): boolean
+  }): AppFrameLease
+  resolve(token: string, window: BrowserWindow, frame?: string | null): AppFrameLease | null
+  /** Find a live lease by its unguessable token for native navigation tracking. */
+  resolveToken(token: string): AppFrameLease | null
+  /** Observe synchronous revocation so native frame indexes discard dead entries. */
+  onRevoke(listener: (token: string) => void): () => void
+  validate(input: {
+    token: string
+    nonce: string
+    window: BrowserWindow
+    remote: string
+    bundle: string
+  }): AppFrameLease | null
+  revoke(lease: AppFrameLease): void
+  release(token: string, remote: string, bundle: string): boolean
+  revokeActivation(remote: string, activation: number): void
+  revokeRemote(remote: string): void
+  /** Revoke every lease issued to one native window, including unbound leases. */
+  revokeWindow(window: BrowserWindow): void
+  revokeAll(): void
 }
 
 /**
@@ -57,6 +112,8 @@ export interface PluginScheme {
   /** It serves pages in frames: a frame on it may move within the scheme,
    *  and a link out of it opens in the browser (`window-guard.ts`). */
   frame?: true
+  /** Resolve the app-origin owner before plugin enablement is consulted. */
+  ownerForRequest?(request: Request, ctx: SchemeContext): Promise<LiveVault | null>
   handle(request: Request, ctx: SchemeContext): Response | Promise<Response>
 }
 
@@ -69,8 +126,12 @@ export interface PluginScheme {
 export interface PluginCtx extends LiveVault, SchemeContext {
   /** The renderer's displayed vault, independent of plugin lifetimes. */
   displayed(): string | null
+  /** Capture whether this activation's vault is the current presentation. */
+  presentationLease(): () => boolean
   /** Hear when the renderer's displayed vault changes. Returns the undo. */
   onDisplayChange(cb: (remote: string | null) => void): () => void
+  /** Holi's native window only while this activation's vault is displayed. */
+  window(): BrowserWindow | null
   /** Holi's own data directory on this machine, for state a plugin keeps
    *  outside any vault. */
   userData: string
@@ -84,13 +145,17 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * `name` is kebab-case and `payload` must survive structured clone. Nothing
    * is sent while that vault has the plugin off.
    */
-  emit(remote: string, name: string, payload: unknown): void
+  emit(remote: string, name: string, payload: unknown, guard?: () => boolean): void
   /**
    * Hear `name` from this plugin's renderer side, in the order it was sent.
    * A message about any vault but the open one, or one with the plugin off,
    * is dropped. Returns the undo.
    */
-  on(name: string, handler: (remote: string, payload: unknown) => void): () => void
+  on(
+    name: string,
+    handler: (remote: string, payload: unknown) => void,
+    deliveryGuard?: (remote: string, payload: unknown) => () => boolean,
+  ): () => void
   /**
    * Open the app door (docs/features/vault-apps.md): the way a vault app's
    * frame reaches capabilities, with the consent check for entries that ask
@@ -98,6 +163,17 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * it is open throws. Closed when the plugin stops.
    */
   openAppDoor(opener: AppDoorOpener): AppDoor
+  /** Issue a document/resource lease for an app in this activation. The returned token is
+   *  bound to this vault presentation and the exact Holi window. */
+  issueAppFrameLease(bundle: string): AppFrameLease
+  releaseAppFrameLease(token: string, bundle: string): boolean
+  /** Validate a capability/log/capture caller against its document generation. */
+  validateAppFrameLease(input: {
+    token: string
+    nonce: string
+    window: BrowserWindow
+    bundle: string
+  }): AppFrameLease | null
   /**
    * Ask before Holi quits. `check` runs when someone quits: null lets the
    * quit go on, a question puts it to them, and Cancel keeps Holi open. A
@@ -177,9 +253,6 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   notify(notice: Notice): boolean
   /** Whether a Holi window has focus now. */
   focused(): boolean
-  /** Holi's window, or null while none is open: for a plugin that draws
-   *  into it from main (the browser's pages). */
-  window(): BrowserWindow | null
   /** Hear each scan of this vault, the latest one first, at once. Returns
    *  the undo. */
   onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
@@ -322,11 +395,14 @@ export {
 } from './capabilities/params'
 export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
-export { nodeFallbackDir, resolveBin, toolPath } from './bin'
-export { defaultProbePid, type PidState } from './process-group'
+export { delimiterFor, isRunnable, nodeFallbackDir, resolveBin, toolPath, withPath } from './bin'
+export { execProgram, spawnProgram } from './launch'
+export { spawnOwnedProgram } from './owned-process'
+export { defaultProbePid, killChildTree, killTree, type PidState } from './process-group'
 export { writeScreenshot } from './screenshot-files'
 export {
   defaultSpawnPty,
+  signalPty,
   type PtyProcess,
   type SpawnPty,
   type SpawnPtyOptions,

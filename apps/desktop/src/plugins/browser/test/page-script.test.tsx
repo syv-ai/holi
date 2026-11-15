@@ -13,6 +13,12 @@ interface HoliPage {
   focus(ref: number): boolean
   valueOf(ref: number): string | null
   fill(ref: number, text: string): boolean
+  vim: {
+    documentNonce(): string
+    rearm(): string
+    configure(enabled: boolean, revision: number, nonce: string): boolean
+    mode(): { revision: number; mode: 'insert' | 'normal' }
+  }
 }
 
 const holi = (): HoliPage => (globalThis as unknown as { __holiPage: HoliPage }).__holiPage
@@ -84,6 +90,473 @@ test('a number finds its control until it leaves the page', () => {
   expect(holi().click(7)).toBe(false)
   expect(holi().point(7)).toBeNull()
 })
+
+test('vim mode uses native selections and blocks unsupported edits synchronously', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = 'one two\n  three'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 1, nonce)).toBe(true)
+  expect(holi().vim.mode()).toEqual({ revision: 1, mode: 'insert' })
+  const key = (value: string, options: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent('keydown', {
+      key: value,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    })
+    textarea.dispatchEvent(event)
+    return event
+  }
+  expect(key('Escape').defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('normal')
+  textarea.setSelectionRange(0, 0)
+  key('w')
+  expect(textarea.selectionStart).toBe(4)
+  const before = textarea.value
+  expect(key('Backspace').defaultPrevented).toBe(true)
+  expect(textarea.value).toBe(before)
+  expect(key('Tab').defaultPrevented).toBe(false)
+  for (const selectionKey of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']) {
+    expect(key(selectionKey, { shiftKey: true }).defaultPrevented).toBe(false)
+  }
+  key('a')
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(key('x').defaultPrevented).toBe(false)
+  expect(holi().vim.configure(false, 2, nonce)).toBe(true)
+  expect(holi().vim.configure(true, 1, nonce)).toBe(false)
+  expect(holi().vim.mode()).toEqual({ revision: 2, mode: 'insert' })
+})
+
+test('moves by grapheme, Unicode word, and logical textarea line without editing', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = '  café🙂 x\nlonger'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 10, nonce)).toBe(true)
+  const key = (value: string) => {
+    const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })
+    textarea.dispatchEvent(event)
+    return event
+  }
+  key('Escape')
+  textarea.setSelectionRange(6, 6)
+  key('l')
+  expect(textarea.selectionStart).toBe(8)
+  key('h')
+  expect(textarea.selectionStart).toBe(6)
+  key('^')
+  expect(textarea.selectionStart).toBe(2)
+  key('w')
+  expect(textarea.selectionStart).toBe(9)
+  key('b')
+  expect(textarea.selectionStart).toBe(2)
+  key('w')
+  expect(textarea.selectionStart).toBe(9)
+  key('e')
+  expect(textarea.selectionStart).toBe(16)
+  textarea.setSelectionRange(9, 9)
+  key('j')
+  expect(textarea.selectionStart).toBe(17)
+  key('k')
+  expect(textarea.selectionStart).toBe(9)
+  key('I')
+  expect(textarea.selectionStart).toBe(2)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(textarea.value).toBe('  café🙂 x\nlonger')
+})
+
+test('e advances strictly beyond the caret across Unicode word ends', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = 'cafe\u0301🙂, déjà vu!'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 11, nonce)).toBe(true)
+  const key = () =>
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    )
+  key()
+  textarea.setSelectionRange(0, 0)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(3)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(12)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(15)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(15)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(15)
+})
+
+test('line motions include the empty first line before a leading newline', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = '\n  café\n🙂'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 12, nonce)).toBe(true)
+  const key = (value: string) =>
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+    )
+  key('Escape')
+  textarea.setSelectionRange(1, 1)
+  key('k')
+  expect(textarea.selectionStart).toBe(0)
+  key('0')
+  expect(textarea.selectionStart).toBe(0)
+  key('^')
+  expect(textarea.selectionStart).toBe(0)
+  key('I')
+  expect(textarea.selectionStart).toBe(0)
+  expect(textarea.value).toBe('\n  café\n🙂')
+})
+
+test('normal Escape is consumed so native search inputs do not clear', () => {
+  const search = document.createElement('input')
+  search.type = 'search'
+  search.value = 'query'
+  document.body.append(search)
+  search.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 13, nonce)).toBe(true)
+  const press = () => {
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    search.dispatchEvent(event)
+    return event
+  }
+  expect(press().defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('normal')
+  expect(press().defaultPrevented).toBe(true)
+  expect(search.value).toBe('query')
+})
+
+test('blur, replacement focus, IME and modified shortcuts keep native ownership', () => {
+  const first = document.createElement('textarea')
+  const second = document.createElement('textarea')
+  first.value = 'first'
+  second.value = 'second'
+  document.body.append(first, second)
+  first.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 20, nonce)).toBe(true)
+  const key = (field: HTMLTextAreaElement, value: string, options: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent('keydown', {
+      key: value,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    })
+    field.dispatchEvent(event)
+    return event
+  }
+  key(first, 'Escape')
+  expect(holi().vim.mode().mode).toBe('normal')
+  first.blur()
+  expect(holi().vim.mode().mode).toBe('insert')
+  second.focus()
+  expect(key(second, 'Escape', { isComposing: true }).defaultPrevented).toBe(false)
+  expect(key(second, 'z', { ctrlKey: true }).defaultPrevented).toBe(false)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(holi().vim.configure(false, 21, nonce)).toBe(true)
+  expect(key(second, 'Escape').defaultPrevented).toBe(false)
+})
+
+test('rejects stale document configuration and leaves unsupported fields native', () => {
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 11, 'stale-document')).toBe(false)
+  const password = document.createElement('input')
+  password.type = 'password'
+  document.body.append(password)
+  password.focus()
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  password.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(false)
+  expect(holi().vim.configure(true, 22, nonce)).toBe(true)
+})
+
+test('rearming a surviving document rotates ownership and returns Vim to insert mode', () => {
+  const textarea = document.createElement('textarea')
+  document.body.append(textarea)
+  textarea.focus()
+  const previousNonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 30, previousNonce)).toBe(true)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  )
+  expect(holi().vim.mode().mode).toBe('normal')
+  const nonce = holi().vim.rearm()
+  expect(nonce).not.toBe(previousNonce)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(holi().vim.configure(false, 31, previousNonce)).toBe(false)
+  expect(holi().vim.configure(true, 31, nonce)).toBe(true)
+})
+
+test('plaintext-only single-line hosts use native selection for Vim motions', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  host.setAttribute('tabindex', '0')
+  host.setAttribute('aria-label', 'plain')
+  host.append(document.createTextNode('café'), document.createTextNode('🙂 two'))
+  document.body.append(host)
+  host.focus()
+  const initialRange = document.createRange()
+  initialRange.setStart(host.firstChild!, 0)
+  initialRange.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(initialRange)
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 40, nonce)
+  const key = (value: string) => {
+    const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  expect(key('Escape').defaultPrevented).toBe(true)
+  const range = document.createRange()
+  range.setStart(host.firstChild!, 0)
+  range.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(range)
+  key('w')
+  expect(getSelection()!.anchorNode).toBe(host.lastChild)
+  expect(getSelection()!.anchorOffset).toBe(3)
+  expect(host.textContent).toBe('café🙂 two')
+})
+
+test('plaintext-only ownership is invalidated by every observed DOM eligibility transition', async () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  host.setAttribute('tabindex', '0')
+  host.append(document.createTextNode('alpha'), document.createTextNode(' beta'))
+  document.body.append(host)
+  host.focus()
+  const initialRange = document.createRange()
+  initialRange.setStart(host.firstChild!, 0)
+  initialRange.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(initialRange)
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 42, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  const escape = press('Escape')
+  expect(escape.defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('normal')
+
+  host.append(document.createElement('span'))
+  host.lastChild?.remove()
+  expect(press('x').defaultPrevented).toBe(false)
+  expect(holi().vim.mode().mode).toBe('insert')
+
+  press('Escape')
+  host.setAttribute('contenteditable', 'true')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  expect(press('x').defaultPrevented).toBe(false)
+  expect(holi().vim.mode().mode).toBe('insert')
+
+  press('Escape')
+  host.setAttribute('contenteditable', 'false')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  expect(press('x').defaultPrevented).toBe(false)
+  expect(holi().vim.mode().mode).toBe('insert')
+  await Promise.resolve()
+})
+
+test('plaintext-only host bounds and inherited editing are conservative', () => {
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 43, nonce)
+  const cases = [
+    '<my-editor contenteditable="plaintext-only">plain</my-editor>',
+    '<div contenteditable="plaintext-only" role="textbox">plain</div>',
+    '<div contenteditable="plaintext-only"><span>nested</span></div>',
+    '<div contenteditable="plaintext-only">line\nbreak</div>',
+  ]
+  for (const html of cases) {
+    const wrapper = document.createElement('section')
+    wrapper.innerHTML = html
+    const host = wrapper.firstElementChild as HTMLElement
+    document.body.append(wrapper)
+    host.focus()
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    expect(event.defaultPrevented, html).toBe(false)
+    wrapper.remove()
+  }
+  const empty = document.createElement('div')
+  empty.setAttribute('contenteditable', 'plaintext-only')
+  empty.setAttribute('tabindex', '0')
+  document.body.append(empty)
+  empty.focus()
+  const emptyRange = document.createRange()
+  emptyRange.setStart(empty, 0)
+  emptyRange.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(emptyRange)
+  const emptyEscape = new KeyboardEvent('keydown', {
+    key: 'Escape',
+    bubbles: true,
+    cancelable: true,
+  })
+  empty.dispatchEvent(emptyEscape)
+  expect(emptyEscape.defaultPrevented).toBe(true)
+  empty.remove()
+
+  const parent = document.createElement('div')
+  parent.setAttribute('contenteditable', '')
+  const child = document.createElement('span')
+  child.setAttribute('contenteditable', 'plaintext-only')
+  child.setAttribute('tabindex', '0')
+  child.textContent = 'plain'
+  parent.append(child)
+  document.body.append(parent)
+  child.focus()
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  child.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(false)
+  parent.remove()
+})
+
+test('plaintext-only selection loss resets ownership before Escape and other keys', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  host.setAttribute('tabindex', '0')
+  host.append(document.createTextNode('plain'))
+  document.body.append(host)
+  host.focus()
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 44, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  press('Escape')
+  const outside = document.createElement('textarea')
+  document.body.append(outside)
+  outside.focus()
+  outside.setSelectionRange(0, 0)
+  host.focus()
+  const range = document.createRange()
+  range.selectNodeContents(outside)
+  range.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(range)
+  expect(press('Escape').defaultPrevented).toBe(false)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(press('h').defaultPrevented).toBe(false)
+})
+
+test('plaintext-only selectionchange outside the host retires normal ownership', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  host.setAttribute('tabindex', '0')
+  host.append(document.createTextNode('plain'))
+  const outside = document.createElement('textarea')
+  document.body.append(host, outside)
+  host.focus()
+  const range = document.createRange()
+  range.setStart(host.firstChild!, 0)
+  range.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(range)
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 45, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  press('Escape')
+  outside.focus()
+  outside.setSelectionRange(0, 0)
+  const outsideRange = document.createRange()
+  outsideRange.selectNodeContents(outside)
+  outsideRange.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(outsideRange)
+  document.dispatchEvent(new Event('selectionchange'))
+  const restored = document.createRange()
+  restored.setStart(host.firstChild!, 0)
+  restored.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(restored)
+  host.focus()
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(press('h').defaultPrevented).toBe(false)
+})
+
+test('plaintext-only shape loss resets normal mode and does not resurrect it', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  host.setAttribute('tabindex', '0')
+  host.append(document.createTextNode('alpha beta'))
+  document.body.append(host)
+  host.focus()
+  const initialRange = document.createRange()
+  initialRange.setStart(host.firstChild!, 0)
+  initialRange.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(initialRange)
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 46, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  press('Escape')
+  expect(holi().vim.mode().mode).toBe('normal')
+  host.append(document.createElement('span'))
+  expect(holi().vim.mode().mode).toBe('insert')
+  host.lastChild?.remove()
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(press('x').defaultPrevented).toBe(false)
+})
+
+test.each(['input', 'textarea'] as const)(
+  'class mutations on an owned %s do not reset Vim normal mode',
+  async (tag) => {
+    const field = document.createElement(tag)
+    field.value = 'alpha'
+    document.body.append(field)
+    field.focus()
+    const nonce = holi().vim.documentNonce()
+    holi().vim.configure(true, 47, nonce)
+    const press = (key: string) => {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      field.dispatchEvent(event)
+      return event
+    }
+    press('Escape')
+    expect(holi().vim.mode().mode).toBe('normal')
+    field.classList.add('active')
+    await Promise.resolve()
+    field.setSelectionRange(2, 2)
+    expect(press('h').defaultPrevented).toBe(true)
+    expect(field.selectionStart).toBe(1)
+    expect(field.value).toBe('alpha')
+    expect(holi().vim.mode().mode).toBe('normal')
+  },
+)
 
 test('fills a field and picks an option, as typing would', () => {
   holi().read(12_000)
