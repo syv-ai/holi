@@ -174,6 +174,7 @@ async function run() {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   })
   ipcMain.handle(
@@ -317,6 +318,7 @@ async function run() {
     )
   const capture = async (name: string) => {
     await pause(250)
+    await js(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
     writeFileSync(join(evidence, name), (await win.capturePage()).toPNG())
     captures.push(name)
   }
