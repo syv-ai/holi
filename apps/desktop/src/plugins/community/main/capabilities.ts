@@ -8,8 +8,8 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { realpath, readdir, readFile, rm } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   isCommunityPluginId,
   isPluginPath,
@@ -36,6 +36,7 @@ import {
   stringParam,
   toolPath,
   writeAtomic,
+  runGit,
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { Checks, CheckResult } from './checks'
@@ -276,6 +277,16 @@ const pathParam = (raw: unknown): { path: string } => ({
 })
 
 /** The server key: one per vault, plugin and file. */
+function insidePath(root: string, path: string): boolean {
+  const rel = relative(root, path)
+  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+}
+
+function manifestFromPin(pin: PluginPin): PluginManifest {
+  const { repo: _repo, path: _path, commit: _commit, ...manifest } = pin
+  return manifest
+}
+
 const serverKey = (root: string, id: string, path: string) => `${root}\0${id}\0${path}`
 
 const repoParam = (p: Record<string, unknown>): string => {
@@ -626,7 +637,9 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       run: async (ctx, { id, force }) =>
         admit(async () => {
           ensureLive()
-          const pinPath = join(ctx.root, PLUGIN_PINS_DIR, id, 'manifest.json')
+          if (!isCommunityPluginId(id, deps.firstPartyIds()))
+            throw new CapabilityError('BAD_REQUEST', `${id} is not a valid community plugin id`)
+          const pinPath = join(ctx.root, pluginPinPath(id))
           const rawPin = await readFile(pinPath, 'utf8').catch(() => null)
           if (rawPin === null)
             throw new CapabilityError('FORBIDDEN', `${id} has no valid release pin in this vault`)
@@ -660,21 +673,110 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           const entry = entries.find(({ row }) => row.id === id)
           if (entry === undefined || !entry.row.on || entry.row.status !== 'ready')
             throw new CapabilityError('FORBIDDEN', `${id} is disabled or not ready in this vault`)
-          const codeDir = deps.store.codeDir(install)
-          if (codeDir !== deps.store.codeDir(entry.install!))
+          const codeDir = resolve(deps.store.codeDir(install))
+          if (codeDir !== resolve(deps.store.codeDir(entry.install!)))
             throw new CapabilityError('FORBIDDEN', `${id} source changed`)
-          // A release directory is accepted only at its canonical store-owned location;
-          // refreshSkills independently snapshots and validates all declared bytes.
-          const expected = deps.store.releaseDir(id, source.commit)
-          if (codeDir !== expected && codeDir !== join(expected, source.path))
+          const expectedRoot = resolve(deps.store.releaseDir(id, source.commit))
+          const expectedDir = resolve(expectedRoot, source.path)
+          if (codeDir !== expectedDir || !insidePath(expectedRoot, codeDir))
             throw new CapabilityError(
               'FORBIDDEN',
               `${id} source provenance does not match its pinned release`,
             )
+          const rootReal = await realpath(expectedRoot).catch(() => null)
+          const codeReal = await realpath(codeDir).catch(() => null)
+          if (rootReal !== expectedRoot || codeReal !== codeDir)
+            throw new CapabilityError('FORBIDDEN', `${id} release paths are not canonical`)
+          const head = await runGit(codeDir, ['rev-parse', 'HEAD']).catch(() => '')
+          const origin = await runGit(codeDir, ['remote', 'get-url', 'origin']).catch(() => '')
+          const manifest = await readManifest(codeDir, source.path).catch(() => null)
+          if (
+            head !== source.commit ||
+            origin !== deps.git.url(source.repo) ||
+            manifest === null ||
+            JSON.stringify(manifest) !== JSON.stringify(install.manifest) ||
+            JSON.stringify(manifest) !== JSON.stringify(manifestFromPin(pin))
+          )
+            throw new CapabilityError('FORBIDDEN', `${id} release checkout does not match its pin`)
+          const guard = async () => {
+            ensureLive()
+            const [currentPin, currentInstall, currentConsent, currentSettings] = await Promise.all(
+              [
+                readFile(pinPath, 'utf8').catch(() => null),
+                deps.store.get(id),
+                deps.consent.has(id, source.commit),
+                readVaultSettings(ctx.root),
+              ],
+            )
+            const checked =
+              currentPin === null
+                ? null
+                : (() => {
+                    try {
+                      const p = parsePluginPin(JSON.parse(currentPin))
+                      return p.ok ? p.value : null
+                    } catch {
+                      return null
+                    }
+                  })()
+            const currentEntry = (await pluginEntries(ctx.root, deps)).find(
+              ({ row }) => row.id === id,
+            )
+            if (
+              checked === null ||
+              JSON.stringify(checked) !== JSON.stringify(pin) ||
+              currentInstall === null ||
+              currentInstall.source.kind !== 'release' ||
+              JSON.stringify(currentInstall.source) !== JSON.stringify(source) ||
+              !currentConsent ||
+              currentInstall.setup !== 'ok' ||
+              currentSettings.plugins.vault[id] !== true ||
+              currentEntry?.row.status !== 'ready'
+            )
+              throw new CapabilityError('FORBIDDEN', `${id} authorization changed during refresh`)
+          }
           ensureLive()
-          return refreshSkills(install.manifest, codeDir, ctx.root, { force, guard: ensureLive })
+          return refreshSkills(install.manifest, codeDir, ctx.root, {
+            force,
+            guard,
+            validateSnapshot: async (snapshots) => {
+              await guard()
+              const status = await runGit(codeDir, [
+                'status',
+                '--porcelain',
+                '--untracked-files=all',
+              ]).catch(() => 'dirty')
+              if (status !== '')
+                throw new CapabilityError('FORBIDDEN', `${id} release checkout has local changes`)
+              const pinHead = await runGit(codeDir, [
+                'rev-parse',
+                `${source.commit}^{commit}`,
+              ]).catch(() => '')
+              if (pinHead !== source.commit)
+                throw new CapabilityError('FORBIDDEN', `${id} pinned commit is unavailable`)
+              for (const snapshot of snapshots) {
+                const skillPath = install.manifest.skills?.find(
+                  (s) => s.split('/').at(-1) === snapshot.name,
+                )
+                if (skillPath === undefined)
+                  throw new CapabilityError('FORBIDDEN', `${id} skill is not declared`)
+                for (const file of snapshot.files) {
+                  const gitPath = `${source.path}/${skillPath}/${file.path}`.replace(/\/+/g, '/')
+                  const treeEntry = await runGit(codeDir, [
+                    'ls-tree',
+                    source.commit,
+                    '--',
+                    gitPath,
+                  ]).catch(() => '')
+                  if (!treeEntry.includes(gitPath))
+                    throw new CapabilityError('FORBIDDEN', `${id} skill is not in pinned Git tree`)
+                }
+              }
+              await guard()
+            },
+          })
         }),
-      text: (paths) => paths.join('\\n'),
+      text: (paths) => paths.join('\n'),
     }),
 
     // A running plugin's verbs, `holi plugin <id> <verb> …`: read here and
