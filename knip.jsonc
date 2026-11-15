@@ -50,6 +50,8 @@
         "scripts/terminal-hints-native-smoke.tsx",
         "scripts/pdf-vim-native-smoke-main.ts",
         "scripts/pdf-vim-native-smoke.tsx",
+        "scripts/mail-vim-native-smoke-main.ts",
+        "scripts/mail-vim-native-smoke.tsx",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",
