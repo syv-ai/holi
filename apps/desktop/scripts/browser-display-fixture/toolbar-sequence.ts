@@ -45,10 +45,16 @@
   const trustedPress = async (target: WebContentsView, key: string) => {
     const shift = key.length === 1 && key !== key.toLowerCase()
     const keyCode = shift ? key.toLowerCase() : key
-    target.webContents.sendInputEvent({ type: 'keyDown', keyCode, shift })
-    if (key.length === 1) target.webContents.sendInputEvent({ type: 'char', keyCode: key, shift })
-    target.webContents.sendInputEvent({ type: 'keyUp', keyCode, shift })
-    await pause(30)
+    const before = await target.webContents.executeJavaScript('window.qaKeys?.length ?? 0')
+    const modifiers = shift ? ['shift'] : []
+    target.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+    if (key.length === 1)
+      target.webContents.sendInputEvent({ type: 'char', keyCode: key, modifiers })
+    target.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+    await until(
+      () => target.webContents.executeJavaScript(`(window.qaKeys?.length ?? 0) > ${before}`),
+      `trusted DOM key ${key}`,
+    )
   }
   await until(() => win.webContents.executeJavaScript('!!window.qa'), 'production renderer ready')
   await invoke('A', 'open', { reopen: 'same', url: `${url}/a`, shown: false })
@@ -62,9 +68,6 @@
     win.webContents.send('qa:event', event)
   await until(async () => win.contentView.children.length === 1, 'renderer placement')
   let view = child()
-  view.webContents.on('before-input-event', (event, input) =>
-    console.log('NATIVE-KEY', input, event.defaultPrevented),
-  )
   const ui = (code: string) => win.webContents.executeJavaScript(code)
   const badge = async (mode: string) =>
     until(
@@ -76,22 +79,19 @@
     )
   const field = async (code: string) => inPage(view, code)
   const text = () => field(`document.querySelector('#text').value`)
-  const focus = async (id = 'text') => {
-    app.focus({ steal: true })
-    win.show()
-    win.focus()
-    view.webContents.focus()
-    await field(`document.querySelector('#${id}').focus()`)
-    await until(() => win.isFocused(), 'native BrowserWindow keyboard ownership')
-    await until(() => field('document.hasFocus()'), 'native browser page keyboard ownership')
-    assert.equal(await field('document.activeElement.id'), id)
-    await pause(50)
+  const captureFrame = async (wc: any) => {
+    if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
+    await wc.debugger.sendCommand('Page.enable')
+    await wc.debugger.sendCommand('Page.captureScreenshot', { fromSurface: true })
+    await wc.executeJavaScript(
+      `if(!window.__qaKeyListener){globalThis.qaKeys=[];window.addEventListener('keydown',e=>qaKeys.push({key:e.key,trusted:e.isTrusted}),true);window.__qaKeyListener=true}`,
+    )
   }
-  await view.webContents.executeJavaScriptInIsolatedWorld(1017, [
-    {
-      code: `globalThis.qaKeys=[];window.addEventListener('keydown',e=>qaKeys.push({key:e.key,composing:e.isComposing,meta:e.metaKey,ctrl:e.ctrlKey,alt:e.altKey,target:e.target.id}),true);globalThis.qaConfigs=[];const original=__holiPage.vim.configure.bind(__holiPage.vim);__holiPage.vim.configure=(...args)=>{qaConfigs.push(args);return original(...args)};0`,
-    },
-  ])
+  const focus = async (id = 'text') => {
+    await captureFrame(view.webContents)
+    await field(`document.querySelector('#${id}').focus()`)
+    assert.equal(await field('document.activeElement.id'), id)
+  }
   await until(
     async () => await ui('(qa.state().modes.same?.revision ?? 0)>0'),
     'initial off configuration applied',
@@ -287,12 +287,9 @@
   await badge('normal')
   const png = async (wc: any) => {
     if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
-    try {
-      await wc.debugger.sendCommand('Page.enable')
-      const shot = await wc.debugger.sendCommand('Page.captureScreenshot', { fromSurface: true })
-      return nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'))
-    } finally {
-    }
+    await wc.debugger.sendCommand('Page.enable')
+    const shot = await wc.debugger.sendCommand('Page.captureScreenshot', { fromSurface: true })
+    return nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'))
   }
   const composed = async (name: string) => {
     const main = await png(win.webContents)

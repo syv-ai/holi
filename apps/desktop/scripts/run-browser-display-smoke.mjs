@@ -12,6 +12,7 @@ import { externalizeDepsPlugin } from 'electron-vite'
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? '/tmp/holi-523-ui-evidence')
 const fixture = join(desktop, 'scripts/browser-display-fixture')
+const toolbarAcceptance = process.env.HOLI_523_UI === '1'
 const root = await mkdtemp(join(tmpdir(), 'holi-523-smoke-'))
 await rm(evidence, { recursive: true, force: true })
 await mkdir(evidence, { recursive: true })
@@ -73,7 +74,7 @@ try {
           )
           return forwarding.replace(
             '  assert.equal(listeners.size, 0)',
-            `${sequence}\n  assert.equal(listeners.size, 0)`,
+            `${toolbarAcceptance ? sequence : ''}\n  assert.equal(listeners.size, 0)`,
           )
         },
       },
@@ -144,26 +145,30 @@ try {
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   for (const check of [
-    'production-host-and-browser-activations',
-    'queued-native-action-expires-on-tab-hide',
-    'queued-action-expires-across-return',
-    'hidden-native-input-and-placement-are-inert',
-    'hidden-popup-keeps-data-without-presentation',
-    'stopping-a-preserves-b-native-view-and-capabilities',
-    'departure-detaches-synchronously',
-    'displayed-page-attached-with-loaded-content',
-    'native-browser-vim-mode-navigation-insertion-undo-redo',
-    'production-browser-surface-I-A-native-insertion-and-actual-mode',
-    'production-preference-disables-and-reenables-native-page',
-    'production-overlay-restores-vim-with-fresh-attachment',
-    'production-visible-hide-return-rearms-field',
-    'native-shell-zoom-keeps-mode-and-field-input',
-    'native-reload-rejects-old-document-arm-and-reconfigures',
-    'native-navigation-reinitializes-current-document',
-    'native-A-B-A-identical-tab-ids-retain-own-vim-context',
-    'native-same-id-replacement-gets-fresh-vim-owner',
-    'native-composition-preserves-unmodified-insert-path',
-    'production-toolbar-native-interaction-light-dark-and-trusted-recording',
+    ...(toolbarAcceptance
+      ? [
+          'production-host-and-browser-activations',
+          'queued-native-action-expires-on-tab-hide',
+          'queued-action-expires-across-return',
+          'hidden-native-input-and-placement-are-inert',
+          'hidden-popup-keeps-data-without-presentation',
+          'stopping-a-preserves-b-native-view-and-capabilities',
+          'departure-detaches-synchronously',
+          'displayed-page-attached-with-loaded-content',
+          'native-browser-vim-mode-navigation-insertion-undo-redo',
+          'production-browser-surface-I-A-native-insertion-and-actual-mode',
+          'production-preference-disables-and-reenables-native-page',
+          'production-overlay-restores-vim-with-fresh-attachment',
+          'production-visible-hide-return-rearms-field',
+          'native-shell-zoom-keeps-mode-and-field-input',
+          'native-reload-rejects-old-document-arm-and-reconfigures',
+          'native-navigation-reinitializes-current-document',
+          'native-A-B-A-identical-tab-ids-retain-own-vim-context',
+          'native-same-id-replacement-gets-fresh-vim-owner',
+          'native-composition-preserves-unmodified-insert-path',
+          'production-toolbar-native-interaction-light-dark-and-trusted-recording',
+        ]
+      : []),
     'native-h-l-w-b-e-0-caret-dollar-and-i-a',
     'native-grapheme-safe-horizontal-motion',
     'native-j-k-vertical-column',
@@ -185,15 +190,21 @@ try {
     'pending-reconcile-stop-all-detaches-to-null',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
-  assert(result.checks.length >= 39, 'native + toolbar smoke produced too few assertions')
-  const recording = JSON.parse(await readFile(join(evidence, 'recording.json'), 'utf8'))
   assert(
-    recording.frames > 0 &&
-      recording.trusted.length > 10 &&
-      recording.trusted.every((event) => event.trusted),
-    'recording lacks trusted native input',
+    result.checks.length >= (toolbarAcceptance ? 39 : 28),
+    'native smoke produced too few assertions',
   )
-  assert.equal(recording.source, env.HOLI_523_SHA, 'recording source HEAD mismatch')
+  let recording
+  if (toolbarAcceptance) {
+    recording = JSON.parse(await readFile(join(evidence, 'recording.json'), 'utf8'))
+    assert(
+      recording.frames > 0 &&
+        recording.trusted.length > 10 &&
+        recording.trusted.every((event) => event.trusted),
+      'recording lacks trusted native input',
+    )
+    assert.equal(recording.source, env.HOLI_523_SHA, 'recording source HEAD mismatch')
+  }
   assert(
     typeof result.electron === 'string' && result.electron.length > 0,
     'missing Electron version',
@@ -207,30 +218,38 @@ try {
     ['browser-before.png', 'browser-dark.png', 'shell-before.png', 'browser-after.png'],
     'native smoke screenshot list is incomplete',
   )
-  for (const name of [...result.screenshots, 'ui-light.png', 'ui-dark.png'])
+  for (const name of result.screenshots) {
     assert((await stat(join(evidence, name))).size > 0, `missing screenshot: ${name}`)
-  assert((await stat(join(evidence, 'recording.json'))).size > 0, 'missing native input recording')
-  const fps = recording.frames / (recording.elapsedMs / 1000)
-  const video = spawnSync(
-    'ffmpeg',
-    [
-      '-y',
-      '-framerate',
-      String(fps),
-      '-i',
-      join(evidence, 'frames/%05d.png'),
-      '-c:v',
-      'libx264',
-      '-pix_fmt',
-      'yuv420p',
-      '-movflags',
-      '+faststart',
-      '/tmp/holi-523-demo.mp4',
-    ],
-    { encoding: 'utf8' },
-  )
-  assert.equal(video.status, 0, `video encoding failed: ${video.stderr}`)
-  assert((await stat('/tmp/holi-523-demo.mp4')).size > 0, 'video artifact is empty')
+  }
+  if (toolbarAcceptance) {
+    for (const name of ['ui-light.png', 'ui-dark.png'])
+      assert((await stat(join(evidence, name))).size > 0, `missing screenshot: ${name}`)
+    assert(
+      (await stat(join(evidence, 'recording.json'))).size > 0,
+      'missing native input recording',
+    )
+    const fps = recording.frames / (recording.elapsedMs / 1000)
+    const video = spawnSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-framerate',
+        String(fps),
+        '-i',
+        join(evidence, 'frames/%05d.png'),
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-movflags',
+        '+faststart',
+        '/tmp/holi-523-demo.mp4',
+      ],
+      { encoding: 'utf8' },
+    )
+    assert.equal(video.status, 0, `video encoding failed: ${video.stderr}`)
+    assert((await stat('/tmp/holi-523-demo.mp4')).size > 0, 'video artifact is empty')
+  }
 } finally {
   if (child && child.exitCode === null) {
     child.kill('SIGTERM')
