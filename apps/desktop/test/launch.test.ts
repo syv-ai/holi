@@ -774,10 +774,15 @@ describe('execProgram', () => {
       const pidFile = join(dir, 'pid')
       const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.send('ready');setInterval(()=>0,1000)`
       // Trigger overflow only after the descendant exists and has recorded its pid.
-      const script = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','ignore','ignore','ipc'],windowsHide:true,detached:true});c.once('message',()=>{${failureKind === 'maxBuffer' ? "process.stdout.write('x'.repeat(100000));" : ''}});setInterval(()=>0,1000)`
+      const script = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','ignore','ignore','ipc'],windowsHide:true,detached:true});c.once('message',()=>{${failureKind === 'maxBuffer' ? "process.stdout.write('x'.repeat(100000));" : "process.stdout.write('descendant-ready');"}});setInterval(()=>0,1000)`
       const { execProgram } = await import('../src/main/launch')
       let child: ReturnType<typeof execProgram> | undefined
       try {
+        let markDescendantReady!: () => void
+        const descendantReady = new Promise<void>((resolve) => {
+          markDescendantReady = resolve
+        })
+        let output = ''
         const result = new Promise<Error | null>((resolve) => {
           child = execProgram(
             process.execPath,
@@ -791,11 +796,15 @@ describe('execProgram', () => {
             },
             (err) => resolve(err),
           )
+          if (failureKind === 'stdin error') {
+            child.stdout!.on('data', (chunk: Buffer | string) => {
+              output += chunk.toString()
+              if (output.includes('descendant-ready')) markDescendantReady()
+            })
+          }
         })
         if (failureKind === 'stdin error') {
-          await vi.waitFor(async () =>
-            expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1),
-          )
+          await descendantReady
           child!.stdin!.emit(
             'error',
             Object.assign(new Error('test input failure'), { code: 'EPIPE' }),
