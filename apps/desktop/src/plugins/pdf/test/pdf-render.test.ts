@@ -1,4 +1,6 @@
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFile as execFileCallback } from 'node:child_process'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +16,7 @@ import plainTemplateTyp from '../main/vault/once/.holi/document-templates/plain/
 const DOT_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
+const execFile = promisify(execFileCallback)
 const dirs: string[] = []
 async function work(): Promise<string> {
   const d = await mkdtemp(join(tmpdir(), 'holi-render-'))
@@ -86,6 +89,67 @@ after diagram`
     ])
     expect(await readFile(notePath, 'utf8')).toBe(original)
   })
+  it.each([
+    ['code', 'image', 'mermaid'],
+    ['code', 'mermaid', 'image'],
+    ['image', 'code', 'mermaid'],
+    ['image', 'mermaid', 'code'],
+    ['mermaid', 'code', 'image'],
+    ['mermaid', 'image', 'code'],
+  ])('preserves image, code, and Mermaid captions in %j order', async (...order) => {
+    const root = await work()
+    const templateDir = join(root, 'template')
+    await mkdir(templateDir)
+    await writeFile(join(templateDir, 'template.typ'), '')
+    const typstBin = join(root, 'capture-typst')
+    await writeFile(
+      typstBin,
+      '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
+    )
+    await chmod(typstBin, 0o755)
+    const envelopes = {
+      code: writeMarkdownCaptionEnvelope('```js\nconst codeValue = 1\n```', 'Code caption'),
+      image: writeMarkdownCaptionEnvelope('![](missing.png)', 'Image caption'),
+      mermaid: writeMarkdownCaptionEnvelope(
+        '```mermaid\nflowchart LR\n A --> B\n```',
+        'Mermaid caption',
+      ),
+    }
+    const original = (order as string[])
+      .map((kind) => envelopes[kind as keyof typeof envelopes])
+      .join('\n\n')
+    const notePath = join(root, 'ordered.md')
+    await writeFile(notePath, original)
+    const outPath = join(root, 'captured.md')
+    const result = await renderPdf({
+      typstBin,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+      diagrams: async () => [
+        {
+          svg: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="30"><text x="2" y="20">Mermaid figure</text></svg>',
+        },
+      ],
+    })
+    const transformed = await readFile(outPath, 'utf8')
+    for (const caption of ['Code caption', 'Image caption', 'Mermaid caption']) {
+      expect(transformed.match(new RegExp(caption, 'g'))).toHaveLength(1)
+    }
+    expect(transformed).toContain('Mermaid figure')
+    expect(transformed).not.toContain('holi-pdf-')
+    expect(transformed).not.toContain('<!-- holi-pdf')
+    const imageStart = original.indexOf(envelopes.image)
+    const imageLine = original.slice(0, imageStart).split('\n').length + 2
+    expect(result.warnings).toEqual([
+      `The image on line ${imageLine} is left out: missing.png: no such file in the vault`,
+    ])
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+  })
+
   it('centers image captions through success, empty-alt fallback, and full-note references', async () => {
     const root = await work()
     const templateDir = join(root, 'template')
@@ -202,6 +266,75 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     expect(bytes.length).toBeGreaterThan(0)
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
+
+  it.skipIf(!process.env.PDF_PYTHON)(
+    'centers valid-image and empty-alt fallback captions in native PDF coordinates',
+    async () => {
+      const typst = await resolveTypstBin()
+      if (typst === null) return
+
+      const root = await work()
+      const templateDir = join(root, '.holi/document-templates/plain')
+      await mkdir(templateDir, { recursive: true })
+      await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+      await writeFile(join(root, 'dot.png'), Buffer.from(DOT_PNG, 'base64'))
+      const original = [
+        writeMarkdownCaptionEnvelope('![Dot](dot.png)', 'Valid image caption'),
+        writeMarkdownCaptionEnvelope('![](missing.png)', 'Empty alt fallback caption'),
+      ].join('\n\n')
+      const notePath = join(root, 'coordinates.md')
+      const outPath = join(root, 'coordinates.pdf')
+      await writeFile(notePath, original)
+      const result = await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      expect(result.warnings).toHaveLength(1)
+      expect(result.warnings[0]).toMatch(
+        /^The image on line \d+ is left out: missing\.png: no such file in the vault$/,
+      )
+      expect(await readFile(notePath, 'utf8')).toBe(original)
+      if (process.env.PDF_COORDINATE_ARTIFACT_DIR) {
+        await mkdir(process.env.PDF_COORDINATE_ARTIFACT_DIR, { recursive: true })
+        await cp(outPath, join(process.env.PDF_COORDINATE_ARTIFACT_DIR, 'image-caption-layout.pdf'))
+      }
+
+      const { stdout } = await execFile(
+        process.env.PDF_PYTHON!,
+        [
+          '-c',
+          'import fitz, json, sys; d=fitz.open(sys.argv[1]); p=d[0]; spans=[{"text":s["text"],"bbox":s["bbox"]} for b in p.get_text("dict")["blocks"] if "lines" in b for l in b["lines"] for s in l["spans"]]; print(json.dumps({"page": [p.rect.width,p.rect.height], "spans": spans, "images": [i["bbox"] for i in p.get_image_info()]}))',
+          outPath,
+        ],
+        { encoding: 'utf8' },
+      )
+      const pdf = JSON.parse(stdout) as {
+        page: [number, number]
+        spans: { text: string; bbox: [number, number, number, number] }[]
+        images: [number, number, number, number][]
+      }
+      const captionBox = (label: string) => {
+        const spans = pdf.spans.filter((span) => span.text.includes(label))
+        expect(spans).toHaveLength(1)
+        return spans[0]!.bbox
+      }
+      expect(pdf.images).toHaveLength(1)
+      const valid = captionBox('Valid image caption')
+      const fallback = captionBox('Empty alt fallback caption')
+      const center = (box: [number, number, number, number]) => (box[0] + box[2]) / 2
+      expect(Math.abs(center(valid) - pdf.page[0] / 2)).toBeLessThan(8)
+      expect(Math.abs(center(fallback) - pdf.page[0] / 2)).toBeLessThan(8)
+      expect(valid[1]).toBeGreaterThan(pdf.images[0]![3])
+      expect(fallback[1]).toBeGreaterThan(valid[3])
+      expect(fallback[3]).toBeLessThan(pdf.page[1])
+    },
+    30_000,
+  )
 
   it('renders one fenced-code caption safely and leaves the source note untouched', async () => {
     const typst = await resolveTypstBin()

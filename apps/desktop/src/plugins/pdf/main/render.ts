@@ -118,7 +118,7 @@ function captionComment(body: string, caption: string): string {
     diagram === undefined
       ? `#cmarker.render(${commentSafeString(`${body}\n\n${caption}`)}, raw-typst: false)`
       : `${diagram} #cmarker.render(${commentSafeString(caption)}, raw-typst: false)`
-  return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(sticky: true)[#align(center)[${content}]]-->`
+  return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(width: 100%, sticky: true)[#align(center)[${content}]]-->`
 }
 
 export async function renderPdf({
@@ -161,17 +161,23 @@ export async function renderPdf({
     do {
       nonce = `holi-pdf-${Math.random().toString(36).slice(2)}`
     } while (original.includes(nonce))
-    for (const [index, frame] of [...frames.entries()].reverse()) {
+    const identityInsertions = [
+      ...frames.map((frame, index) => ({
+        at: frame.caption.to,
+        marker: ` <!-- ${nonce}-${index} -->`,
+      })),
+      ...imageFrames.map((frame, index) => ({
+        at: frame.body.to,
+        marker: `<!-- ${nonce}-image-${index} -->`,
+      })),
+    ]
+      .map((insertion, order) => ({ ...insertion, order }))
+      .sort((a, b) => b.at - a.at || a.order - b.order)
+    for (const insertion of identityInsertions) {
       taggedOriginal =
-        taggedOriginal.slice(0, frame.caption.to) +
-        ` <!-- ${nonce}-${index} -->` +
-        taggedOriginal.slice(frame.caption.to)
-    }
-    for (const [index, frame] of [...imageFrames.entries()].reverse()) {
-      taggedOriginal =
-        taggedOriginal.slice(0, frame.body.to) +
-        `<!-- ${nonce}-image-${index} -->` +
-        taggedOriginal.slice(frame.body.to)
+        taggedOriginal.slice(0, insertion.at) +
+        insertion.marker +
+        taggedOriginal.slice(insertion.at)
     }
     const pictured = await inlineImages(taggedOriginal, noteRel, (rel) =>
       readVaultImage(vaultRoot, rel),
