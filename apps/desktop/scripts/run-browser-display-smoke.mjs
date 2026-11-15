@@ -181,6 +181,8 @@ try {
     'production-app-frame-fresh-visible-capture-saved-native-preview',
     'production-app-frame-a-to-b-to-a-invalidates-delayed-real-capture',
     'production-app-frame-navigation-replacement-cannot-reach-hostbridge',
+    'native-child-dom-removal-revokes-lease-and-suppresses-queued-bridge-reply',
+    'root-renderer-reload-revokes-old-lease-and-fresh-frame-reads-own-note',
     'native-svg-replacement-revokes-before-subsequent-capability-use-b',
     'revoked-app-lease-denied-b',
     'production-command-runner-result-a',
