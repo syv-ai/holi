@@ -26,6 +26,21 @@ const PRESSABLE = [
 const OVERLAY =
   '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"], [data-slot="hover-card-content"]'
 export const HOST_HINT_REQUEST = 'holi:vim-host-hints'
+export const HOST_HINT_SURFACE = 'holi:vim-host-hint-surface'
+
+interface OwnedHintSurface {
+  root: ShadowRoot
+  owner: HTMLElement
+}
+
+const ownedSurfaces = new Set<OwnedHintSurface>()
+
+/** Register one explicitly owned open shadow root; its returned disposer is idempotent. */
+export function registerHostHintSurface(root: ShadowRoot, owner: HTMLElement): () => void {
+  const surface = { root, owner }
+  ownedSurfaces.add(surface)
+  return () => ownedSurfaces.delete(surface)
+}
 
 /** A request-scoped target source. It exists only for the active hint session. */
 export interface HostHintAdapter {
@@ -73,6 +88,7 @@ export interface HostHintTarget {
   /** Request lifetime applies to native controls as well as adapted links. */
   scopeAdapter?: HostHintAdapter
   token?: unknown
+  surface: ShadowRoot | null
 }
 
 /** Shell chrome and the focused pane, or only the foremost interactive overlay. */
@@ -80,37 +96,55 @@ export function discoverHostHintTargets(
   root: HTMLElement,
   adapter?: HostHintAdapter,
 ): HostHintTarget[] {
-  const overlay = topOverlay()
-  const scope = overlay ?? document.body
+  const hostOverlay = topOverlay()
+  const ownedOverlay = hostOverlay ? null : topOwnedOverlay(root)
+  const overlay = hostOverlay ?? ownedOverlay?.element ?? null
   const targets: HostHintTarget[] = []
-  for (const element of scope.querySelectorAll<Element>(PRESSABLE)) {
-    const pane = element.closest('[data-pane]')
-    if (!overlay && pane !== null && pane !== root) continue
-    if (!eligible(element)) continue
-    const point = hitPoint(element)
-    if (point === null) continue
-    targets.push({
-      element,
-      label: accessibleLabel(element),
-      ...point,
-      key: '',
-      root,
-      overlay,
-      scopeAdapter: adapter,
-    })
-  }
-  if (adapter && !overlay) {
-    for (const target of adapter.discover()) {
-      if (!target.element.isConnected || target.element.closest('[hidden],[inert]')) continue
+  const collect = (candidate: ParentNode, surface: ShadowRoot | null) => {
+    for (const element of candidate.querySelectorAll<Element>(PRESSABLE)) {
+      const owner = surface ? [...ownedSurfaces].find((item) => item.root === surface)?.owner : null
+      const pane = owner
+        ? owner.closest<HTMLElement>('[data-pane]')
+        : element.closest<HTMLElement>('[data-pane]')
+      if (!overlay && pane !== null && pane !== root) continue
+      if (surface && (!owner?.isConnected || !root.contains(owner))) continue
+      if (!eligible(element)) continue
+      const point = hitPoint(element, true, surface)
+      if (point === null) continue
       targets.push({
-        ...target,
+        element,
+        label: accessibleLabel(element),
+        ...point,
+        key: '',
         root,
         overlay,
-        adapter,
+        surface,
         scopeAdapter: adapter,
-        token: target.token,
-        key: '',
       })
+    }
+  }
+  if (hostOverlay) collect(hostOverlay, null)
+  else if (ownedOverlay) collect(ownedOverlay.element, ownedOverlay.surface)
+  else {
+    collect(document.body, null)
+    for (const surface of ownedSurfaces) {
+      if (surface.owner.closest('[data-pane]') !== root) continue
+      collect(surface.root, surface.root)
+    }
+    if (adapter) {
+      for (const target of adapter.discover()) {
+        if (!target.element.isConnected || target.element.closest('[hidden],[inert]')) continue
+        targets.push({
+          ...target,
+          root,
+          overlay,
+          adapter,
+          scopeAdapter: adapter,
+          token: target.token,
+          key: '',
+          surface: null,
+        })
+      }
     }
   }
   targets.sort((a, b) => a.y - b.y || a.x - b.x)
@@ -156,6 +190,7 @@ function sameTarget(target: HostHintTarget, previous: HostHintTarget): boolean {
   return (
     target.element === previous.element &&
     target.overlay === previous.overlay &&
+    target.surface === previous.surface &&
     target.label === previous.label &&
     target.x === previous.x &&
     target.y === previous.y &&
@@ -184,7 +219,7 @@ export function activateHostHint(target: HostHintTarget): boolean {
   )
     return false
   const element = target.element
-  const hit = document.elementFromPoint(target.x, target.y)
+  const hit = deepHitTest(target.x, target.y, target.surface)
   const pressed = hit ?? element
   const init = {
     bubbles: true,
@@ -220,7 +255,10 @@ function accessibleLabel(element: Element): string {
     element
       .getAttribute('aria-labelledby')
       ?.split(/\s+/)
-      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .map((id) => {
+        const tree = element.getRootNode() as Document | ShadowRoot
+        return tree.getElementById(id)?.textContent ?? ''
+      })
       .join(' ')
       .trim() ||
     element.textContent?.trim() ||
@@ -231,23 +269,68 @@ function accessibleLabel(element: Element): string {
 }
 
 function eligible(element: Element): boolean {
-  return (
-    !element.matches(':disabled,[disabled],[data-disabled]') &&
-    element.closest(
-      '[inert],[hidden],[aria-hidden="true"],[aria-disabled="true"],.xterm,iframe,webview',
-    ) === null
-  )
+  if (element.matches(':disabled,[disabled],[data-disabled]')) return false
+  for (let current: Element | null = element; current; current = composedParent(current)) {
+    if (
+      current.matches(
+        '[inert],[hidden],[aria-hidden="true"],[aria-disabled="true"],.xterm,iframe,webview',
+      )
+    )
+      return false
+  }
+  return true
+}
+
+function composedParent(element: Element): Element | null {
+  return element.parentElement ?? (element.getRootNode() as ShadowRoot).host ?? null
+}
+
+function composedContains(parent: Element, child: Element): boolean {
+  for (let current: Element | null = child; current; current = composedParent(current))
+    if (current === parent) return true
+  return false
+}
+
+function deepHitTest(x: number, y: number, surface: ShadowRoot | null): Element | null {
+  const documentHit = document.elementFromPoint(x, y)
+  // The document hit test sees host overlays and other light-DOM occluders,
+  // while a shadow-root hit test alone would incorrectly see through them.
+  if (surface) {
+    const owned = [...ownedSurfaces].find((item) => item.root === surface)
+    if (!owned?.owner.isConnected || !documentHit || !composedContains(owned.owner, documentHit))
+      return documentHit
+    return (
+      (
+        surface as ShadowRoot & { elementFromPoint?: (x: number, y: number) => Element | null }
+      ).elementFromPoint?.(x, y) ?? null
+    )
+  }
+  // Descend only through an explicitly registered PDF root, never arbitrary
+  // open roots. The document hit test above remains authoritative for occlusion.
+  for (const owned of ownedSurfaces) {
+    if (owned.owner !== documentHit && !composedContains(owned.owner, documentHit ?? owned.owner))
+      continue
+    const inner = (
+      owned.root as ShadowRoot & { elementFromPoint?: (x: number, y: number) => Element | null }
+    ).elementFromPoint?.(x, y)
+    if (inner) return inner
+  }
+  return documentHit
 }
 
 /** Clip before hit-testing: a visible edge still counts when a centre is covered. */
-function hitPoint(element: Element, pressable = true): { x: number; y: number } | null {
+function hitPoint(
+  element: Element,
+  pressable = true,
+  surface: ShadowRoot | null = null,
+): { x: number; y: number } | null {
   if (!element.isConnected) return null
   const rect = element.getBoundingClientRect()
   let left = Math.max(0, rect.left),
     right = Math.min(innerWidth, rect.right)
   let top = Math.max(0, rect.top),
     bottom = Math.min(innerHeight, rect.bottom)
-  for (let parent: Element | null = element; parent; parent = parent.parentElement) {
+  for (let parent: Element | null = element; parent; parent = composedParent(parent)) {
     const style = getComputedStyle(parent)
     if (
       style.display === 'none' ||
@@ -276,12 +359,35 @@ function hitPoint(element: Element, pressable = true): { x: number; y: number } 
     [right - 0.5, bottom - 0.5],
   ]
   for (const [x, y] of points) {
-    const hit = document.elementFromPoint(x!, y!)
+    const hit = deepHitTest(x!, y!, surface)
     // An interactive child owns its own target, not its parent's activation.
-    if (hit && element.contains(hit) && (!pressable || hit.closest(PRESSABLE) === element))
+    if (hit && composedContains(element, hit) && (!pressable || hit.closest(PRESSABLE) === element))
       return { x: x!, y: y! }
   }
   return null
+}
+
+function topOwnedOverlay(root: HTMLElement): { element: HTMLElement; surface: ShadowRoot } | null {
+  const candidates: { element: HTMLElement; surface: ShadowRoot }[] = []
+  for (const owned of ownedSurfaces) {
+    if (owned.owner.closest('[data-pane]') !== root) continue
+    for (const element of owned.root.querySelectorAll<HTMLElement>(OVERLAY)) {
+      if (
+        eligible(element) &&
+        hitPoint(element, false, owned.root) !== null &&
+        element.getAttribute('data-state') !== 'closed'
+      )
+        candidates.push({ element, surface: owned.root })
+    }
+  }
+  const focused = candidates.find(
+    ({ element, surface }) => surface.activeElement?.closest(OVERLAY) === element,
+  )
+  return (
+    focused ??
+    candidates.sort((a, b) => stackingOrder(a.element) - stackingOrder(b.element)).at(-1) ??
+    null
+  )
 }
 
 function topOverlay(): HTMLElement | null {

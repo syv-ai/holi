@@ -11,6 +11,8 @@ import type { Priority } from '@holi/shared'
 import { ArrowUpDownIcon, FilterIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
+import { VimFieldMode } from '@/composites/vim-field-mode'
+import { useVimField } from '@/hooks/use-vim-field'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenuCheckboxItem,
@@ -64,6 +66,7 @@ export function PlanningToolbar({
   extra?: ReactNode
 }) {
   const active = filter.people.length + filter.tags.length + filter.priorities.length
+  const searchVim = useVimField('planning-search', filter.search)
   const priorities: { id: Priority | 'none'; name: string }[] = [
     ...PRIORITIES,
     { id: 'none', name: 'No priority' },
@@ -71,28 +74,32 @@ export function PlanningToolbar({
 
   return (
     <div className="border-border flex shrink-0 flex-col gap-3 border-b px-4 py-2 lg:flex-row lg:items-center lg:justify-between lg:px-6">
-      <InputGroup className="w-full min-w-0 lg:max-w-xs">
-        <InputGroupAddon align="inline-start">
-          <SearchIcon className="text-muted-foreground size-4" aria-hidden="true" />
-        </InputGroupAddon>
-        <InputGroupInput
-          value={filter.search}
-          onChange={(event) => onFilterChange({ ...filter, search: event.target.value })}
-          placeholder="Search tasks…"
-          aria-label="Search tasks"
-        />
-        {filter.search.length > 0 ? (
-          <InputGroupAddon align="inline-end">
-            <InputGroupButton
-              size="icon-xs"
-              aria-label="Clear search"
-              onClick={() => onFilterChange({ ...filter, search: '' })}
-            >
-              <XIcon className="size-4" aria-hidden="true" />
-            </InputGroupButton>
+      <div className="flex min-w-0 items-center gap-2">
+        <VimFieldMode mode={searchVim.vimFieldMode} />
+        <InputGroup className="w-full min-w-0 lg:max-w-xs">
+          <InputGroupAddon align="inline-start">
+            <SearchIcon className="text-muted-foreground size-4" aria-hidden="true" />
           </InputGroupAddon>
-        ) : null}
-      </InputGroup>
+          <InputGroupInput
+            {...searchVim.vimFieldProps}
+            value={filter.search}
+            onChange={(event) => onFilterChange({ ...filter, search: event.target.value })}
+            placeholder="Search tasks…"
+            aria-label="Search tasks"
+          />
+          {filter.search.length > 0 ? (
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton
+                size="icon-xs"
+                aria-label="Clear search"
+                onClick={() => onFilterChange({ ...filter, search: '' })}
+              >
+                <XIcon className="size-4" aria-hidden="true" />
+              </InputGroupButton>
+            </InputGroupAddon>
+          ) : null}
+        </InputGroup>
+      </div>
 
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 lg:justify-end">
         <PlanningDropdownMenu modal={false}>

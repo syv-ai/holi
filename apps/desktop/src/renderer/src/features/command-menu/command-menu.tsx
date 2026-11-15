@@ -103,6 +103,9 @@ import { COLOR_SCHEMES, writeColorSchemeAtom } from '@/state/color-scheme'
 import { signOutAtom } from '@/state/session'
 import { openSettingsSectionAtom } from '@/state/settings-section'
 import { openExternal } from '@/lib/open-external'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
+import { vimCodeEditingAtom } from '@/state/preferences'
 
 /** How long typing must pause before the note bodies are searched. */
 const TEXT_SEARCH_MS = 150
@@ -190,6 +193,8 @@ export function CommandMenu({
   onOpenScratchpad?: () => void
 }) {
   const [query, setQuery] = useState('')
+  const { vimFieldProps, vimFieldMode } = useVimField('command-menu', query)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
@@ -556,7 +561,11 @@ export function CommandMenu({
           onValueChange={setQuery}
           placeholder="Search documents, or type > for actions…"
           aria-label="Search documents and actions"
+          {...vimFieldProps}
         />
+        <div className="px-2">
+          <VimFieldMode mode={vimFieldMode} />
+        </div>
         <CommandList>
           <CommandEmpty>
             <div className="flex flex-col items-center gap-3">
@@ -633,11 +642,27 @@ export function CommandMenu({
 
         {/* What the keys do here, as the menu's foot. */}
         <div className="text-muted-foreground flex items-center gap-4 border-t px-3 py-2 text-xs">
-          <Hint keys={['↵']}>Open</Hint>
+          {/* Removing hint nodes during field blur makes the dialog focus trap take focus. */}
+          <Hint keys={['↵']}>{vimEnabled ? 'Open (insert mode)' : 'Open'}</Hint>
           <Hint keys={hotkeyLabels('⌘↵', isMac())}>Open beside</Hint>
           <Hint keys={['>']}>Actions only</Hint>
           <span className="ms-auto">
-            <Hint keys={['esc']}>Close</Hint>
+            {vimEnabled ? (
+              <Button
+                type="button"
+                variant="quiet"
+                size="inline"
+                aria-label="Close command menu"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+                }}
+                onClick={() => handleOpenChange(false)}
+              >
+                Close
+              </Button>
+            ) : (
+              <Hint keys={['esc']}>Close</Hint>
+            )}
           </span>
         </div>
       </Command>

@@ -8,13 +8,109 @@
  * normalised the first time it is edited here, never on open alone.
  */
 import { Markdown } from '@tiptap/markdown'
+import { readMarkdownCodeCaptions } from '@holi/shared'
 
 /** The line that marks where an agent run was asked to write: an HTML
  *  comment, so it is invisible anywhere else the file is read. */
 export const AGENT_MARKER = '<!-- holi:agent -->'
 
 /** The extension the editor needs to read and write markdown. */
-export const DocumentMarkdown = Markdown.configure({
+function withDocumentFigures(manager: { parse: (source: string) => any }, source: string) {
+  const frames = readMarkdownCodeCaptions(source).filter(
+    (frame) => frame.language.toLowerCase() !== 'mermaid',
+  )
+  if (!frames.length) return manager.parse(source)
+
+  const placeholders = frames.map((_, index) => {
+    let token = `<!-- holi-private-caption-${index} -->`
+    let suffix = 0
+    while (source.includes(token)) token = `<!-- holi-private-caption-${index}-${++suffix} -->`
+    return token
+  })
+  let substituted = source
+  for (let index = frames.length - 1; index >= 0; index--) {
+    const frame = frames[index]!
+    substituted =
+      substituted.slice(0, frame.envelope.from) +
+      placeholders[index] +
+      substituted.slice(frame.envelope.to)
+  }
+  const parsed = manager.parse(substituted)
+  const figures = frames.map((frame) => {
+    try {
+      const fence = source.slice(frame.body.from, frame.body.to)
+      const openingIndent = /^( {0,3})(?:`{3,}|~{3,})/.exec(fence)?.[1]?.length ?? 0
+      const parserFence =
+        openingIndent === 0
+          ? fence
+          : fence
+              .split('\n')
+              .map((line) => line.replace(new RegExp(`^ {0,${openingIndent}}`), ''))
+              .join('\n')
+      const codeDocument = manager.parse(parserFence)
+      const code = codeDocument.content?.find((node: any) => node.type === 'codeBlock')
+      const captionMarkdown = source.slice(frame.caption.from, frame.caption.to)
+      const captionDocument = manager.parse(captionMarkdown)
+      const caption = captionDocument.content?.find((node: any) => node.type === 'paragraph')
+      if (!code || !caption) return null
+      const text = code.content?.map((part: any) => part.text ?? '').join('') ?? ''
+      code.attrs = {
+        ...code.attrs,
+        sourceFence: fence,
+        sourceFenceText: text,
+        sourceFenceLanguage: String(code.attrs?.language ?? ''),
+      }
+      return {
+        type: 'documentFigure',
+        content: [code, { type: 'documentCaption', content: caption.content }],
+      }
+    } catch {
+      return null
+    }
+  })
+  let index = 0
+  parsed.content = (parsed.content ?? []).flatMap((node: any) => {
+    const placeholder = placeholders[index]
+    if (
+      placeholder &&
+      node.type === 'htmlBlock' &&
+      String(node.attrs?.html).trim() === placeholder
+    ) {
+      const figure = figures[index]
+      index++
+      if (figure) return [figure]
+      return [
+        {
+          ...node,
+          attrs: {
+            ...node.attrs,
+            html: source.slice(frames[index - 1]!.envelope.from, frames[index - 1]!.envelope.to),
+          },
+        },
+      ]
+    }
+    return [node]
+  })
+  return parsed
+}
+
+export const DocumentMarkdown = Markdown.extend({
+  onBeforeCreate(event) {
+    const initial = this.editor.options.content
+    this.parent?.(event)
+    const manager = this.editor.markdown
+    if (!manager || typeof initial !== 'string') return
+    const parse = manager.parse.bind(manager)
+    manager.parse = (source: string) => withDocumentFigures({ parse }, source)
+    if (
+      this.editor.options.contentType === 'markdown' &&
+      readMarkdownCodeCaptions(initial).length
+    ) {
+      this.editor.options.content = withDocumentFigures({ parse }, initial)
+      this.editor.options.contentType = 'json'
+    }
+  },
+}).configure({
   indentation: { style: 'space', size: 2 },
   markedOptions: { gfm: true },
 })

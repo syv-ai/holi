@@ -85,7 +85,7 @@ function validEvidence(evidence, expectedVersion) {
   )
 }
 
-function runBounded(command, args, options, timeout, killProcess) {
+function runBounded(command, args, options, timeout) {
   return new Promise((resolveRun, reject) => {
     let child
     try {
@@ -107,7 +107,7 @@ function runBounded(command, args, options, timeout, killProcess) {
     const terminationCallbacks = []
     const signalOwned = (signal) => {
       try {
-        if (process.platform !== 'win32' && child.pid) killProcess(-child.pid, signal)
+        if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, signal)
         else child.kill(signal)
       } catch (error) {
         if (error?.code !== 'ESRCH') terminationError = error
@@ -116,10 +116,11 @@ function runBounded(command, args, options, timeout, killProcess) {
     const groupExists = () => {
       if (process.platform === 'win32' || !child.pid) return false
       try {
-        killProcess(-child.pid, 0)
+        process.kill(-child.pid, 0)
         return true
       } catch (error) {
         if (error?.code === 'ESRCH') return false
+        if (error?.code !== 'EPERM') terminationError = error
         return true
       }
     }
@@ -201,7 +202,6 @@ export async function checkPiRpcProducer({
   expectedVersion,
   cwd = process.cwd(),
   timeout = timeoutMs,
-  killProcess = process.kill,
 }) {
   if (!bin || !expectedVersion) throw new Error('Pi binary and exact expected version are required')
   let root
@@ -245,7 +245,6 @@ export async function checkPiRpcProducer({
         windowsHide: true,
       },
       timeout,
-      killProcess,
     )
     stage = 'evidence'
     let bytes

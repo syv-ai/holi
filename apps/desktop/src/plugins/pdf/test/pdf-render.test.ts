@@ -240,6 +240,113 @@ after diagram`
 const describeTypst = describe.skipIf((await resolveTypstBin()) === null)
 
 describeTypst('renderPdf (integration — needs typst; first run fetches cmarker)', () => {
+  it('keeps table reference URIs contextual, ordered, and identical to ordinary Markdown', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(join(templateDir, 'assets'), { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+
+    const table = (link: string) =>
+      writeMarkdownCaptionEnvelope(`| A |\n| --- |\n| ${link} |`, 'Edge caption.')
+    const scenarios = [
+      {
+        name: 'escaped-code',
+        source: `${table('[code]')}\n\n\`\`\`markdown\n[code]: <https://example.com/hidden\\>a>\n\`\`\`\n`,
+        uris: [],
+      },
+      {
+        name: 'duplicate-order',
+        source: `${String.raw`[ref]: <https://example.com/first\>a>`}\n\n${table('[ref]')}\n\n[ref]: https://example.com/second\n`,
+        uris: ['https://example.com/first>a'],
+      },
+      {
+        name: 'reverse-duplicate-order',
+        source: `[ref]: https://example.com/second\n\n${table('[ref]')}\n\n[ref]: <https://example.com/first\\>a>\n`,
+        uris: ['https://example.com/second'],
+      },
+      {
+        name: 'html-definition',
+        source: `${table('[html]')}\n\n<div>\n[html]: <https://example.com/html\\>a>\n</div>\n`,
+        uris: [],
+      },
+      {
+        name: 'html-comment-definition',
+        source: `${table('[comment]')}\n\n<!--\n[comment]: <https://example.com/comment\\>a>\n-->\n`,
+        uris: [],
+      },
+      {
+        name: 'indented-code-definition',
+        source: `${table('[code]')}\n\n    [code]: <https://example.com/code\\>a>\n`,
+        uris: [],
+      },
+      {
+        name: 'quoted-definition',
+        source: `${table('[ref]')}\n\n> [ref]: <https://example.com/quoted\\>a>\n`,
+        uris: ['https://example.com/quoted>a'],
+      },
+      {
+        name: 'list-definition',
+        source: `${table('[ref]')}\n\n- [ref]: <https://example.com/list\\>a>\n`,
+        uris: ['https://example.com/list>a'],
+      },
+      {
+        name: 'paired-backslashes',
+        source: `${table('[ref]')}\n\n${String.raw`[ref]: <https://example.com/a\\>b>`}\n`,
+      },
+      {
+        name: 'ordinary-paired-backslashes',
+        source: `| A |\n| --- |\n| [ref] |\n\n${String.raw`[ref]: <https://example.com/a\\>b>`}\n`,
+      },
+      {
+        name: 'ordinary-table-parity',
+        source: `| A |\n| --- |\n| [ref] |\n\n[ref]: <https://example.com/quoted\\>a>\n`,
+        uris: ['https://example.com/quoted>a'],
+      },
+    ]
+
+    const pairedResults: string[] = []
+    for (const scenario of scenarios) {
+      const notePath = join(root, `${scenario.name}.md`)
+      const outPath = join(root, `${scenario.name}.pdf`)
+      await writeFile(notePath, scenario.source)
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      expect(await readFile(notePath, 'utf8'), scenario.name).toBe(scenario.source)
+      const pdf = (await readFile(outPath)).toString('latin1')
+      const uris = [...pdf.matchAll(/\/URI\s*\((.*?)\)/g)].map((match) => match[1])
+      if (!scenario.name.includes('paired-backslashes')) {
+        expect(uris, scenario.name).toEqual(scenario.uris)
+      }
+      const pages = await readPdfPages(outPath)
+      const text = pages.flatMap((page) => page.runs.map((run) => run.text)).join(' ')
+      if (scenario.name.includes('paired-backslashes')) {
+        pairedResults.push(
+          JSON.stringify({
+            uris,
+            text: text
+              .replace(/Edge\s+caption\./g, '')
+              .replace(/\s+/g, ' ')
+              .trim(),
+          }),
+        )
+      }
+      if (!scenario.name.startsWith('ordinary-')) {
+        expect(text.replace(/\s+/g, ' ').match(/Edge caption\./g), scenario.name).toHaveLength(1)
+      }
+    }
+    expect(pairedResults).toHaveLength(2)
+    expect(pairedResults[0]).toBe(pairedResults[1])
+  })
+
   it('renders a real markdown note through the Plain template to a %PDF', async () => {
     const typst = await resolveTypstBin()
     if (typst === null) return // no typst on this machine — skip, don't fail
@@ -356,6 +463,427 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
       })
       await cp(previewPdf, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'table-caption.pdf'))
     }
+  }, 30_000)
+
+  it.each([
+    {
+      name: 'frontmatter does not shadow a body definition',
+      prefix: '---\ndescription: |\n  [ref]: https://wrong.example/\n---\n\n',
+      cell: '[ref]',
+      definition: '[ref]: https://right.example/',
+      destination: 'https://right.example/',
+      visible: 'ref',
+    },
+    {
+      name: 'non-breaking space in a reference label is preserved',
+      prefix: '',
+      cell: '[a\u00a0b]',
+      definition: '[a\u00a0b]: https://example.com/unicode',
+      destination: 'https://example.com/unicode',
+      visible: 'a\u00a0b',
+    },
+    {
+      name: 'escaped angle bracket in a destination resolves',
+      prefix: '',
+      cell: '[ref]',
+      definition: String.raw`[ref]: <https://example.com/a\>b>`,
+      destination: 'https://example.com/a>b',
+      visible: 'ref',
+    },
+    {
+      name: 'escaped angle definitions in fenced code stay inactive',
+      prefix: '',
+      cell: '[hidden]',
+      definition: '```markdown\n' + String.raw`[hidden]: <https://example.org/a\>b>` + '\n```',
+      destination: null,
+      visible: '[hidden]',
+    },
+    {
+      name: 'escaped angle definitions in HTML stay inactive',
+      prefix: '',
+      cell: '[hidden]',
+      definition: '<div>\n' + String.raw`[hidden]: <https://example.org/a\>b>` + '\n</div>',
+      destination: null,
+      visible: '[hidden]',
+    },
+    {
+      name: 'first escaped angle definition keeps duplicate precedence',
+      prefix: '',
+      cell: '[ref]',
+      definition:
+        String.raw`[ref]: <https://example.org/first\>path>` +
+        '\n[ref]: https://example.org/second',
+      destination: 'https://example.org/first>path',
+      visible: 'ref',
+    },
+  ])(
+    'keeps native captioned-table reference behavior: $name',
+    async (fixture) => {
+      const typst = await resolveTypstBin()
+      if (typst === null) throw new Error('Typst is required for real PDF compilation')
+
+      const root = await work()
+      const templateDir = join(root, '.holi/document-templates/plain')
+      await mkdir(templateDir, { recursive: true })
+      await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+      const table = `| Link | Row marker |\n| --- | --- |\n| ${fixture.cell} | Differential table row |`
+      const references = `${fixture.definition}\n`
+      const ordinaryOriginal = `${fixture.prefix}${table}\n\n${references}`
+      const captionedOriginal =
+        `${fixture.prefix}` +
+        `${writeMarkdownCaptionEnvelope(table, 'Differential table caption.')}\n\n${references}`
+      const ordinaryNote = join(root, 'ordinary.md')
+      const captionedNote = join(root, 'captioned.md')
+      await writeFile(ordinaryNote, ordinaryOriginal)
+      await writeFile(captionedNote, captionedOriginal)
+      const ordinaryPdf = join(root, 'ordinary.pdf')
+      const captionedPdf = join(root, 'captioned.pdf')
+      for (const [notePath, outPath] of [
+        [ordinaryNote, ordinaryPdf],
+        [captionedNote, captionedPdf],
+      ] as const) {
+        await renderPdf({
+          typstBin: typst,
+          vaultRoot: root,
+          templateDir,
+          notePath,
+          outPath,
+          fields: [],
+          meta: {},
+        })
+        expect((await readFile(outPath)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+      }
+
+      const destinations = async (path: string) =>
+        (await readFile(path))
+          .toString('latin1')
+          .split('/URI (')
+          .slice(1)
+          .map((entry) => entry.split(')')[0]!)
+      const ordinaryDestinations = await destinations(ordinaryPdf)
+      const captionedDestinations = await destinations(captionedPdf)
+      if (fixture.destination !== null) expect(ordinaryDestinations).toContain(fixture.destination)
+      expect(captionedDestinations).toEqual(ordinaryDestinations)
+
+      const pages = await readPdfPages(captionedPdf)
+      const runs = pages.flatMap((page, pageIndex) =>
+        page.runs.map((run) => ({ ...run, pageIndex })),
+      )
+      const text = runs.map((run) => run.text).join(' ')
+      expect(text).toContain(fixture.visible)
+      expect(text.split('Differential table caption.')).toHaveLength(2)
+      const row = runs.find((run) => run.text.includes('Differential table row'))
+      const caption = runs.find((run) => run.text.includes('Differential table caption.'))
+      expect(row).toBeDefined()
+      expect(caption).toBeDefined()
+      expect(
+        caption!.pageIndex > row!.pageIndex || caption!.rect.origin.y > row!.rect.origin.y,
+      ).toBe(true)
+      expect(await readFile(ordinaryNote, 'utf8')).toBe(ordinaryOriginal)
+      expect(await readFile(captionedNote, 'utf8')).toBe(captionedOriginal)
+    },
+    30_000,
+  )
+
+  it('resolves document-wide link and image definitions in a captioned table', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) throw new Error('Typst is required for real PDF compilation')
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    await writeFile(join(root, 'photo.png'), Buffer.from(DOT_PNG, 'base64'))
+    const notePath = join(root, 'references.md')
+    const original = [
+      writeMarkdownCaptionEnvelope(
+        '| Link | Image | Literal |\n| --- | --- | --- |\n| [full][dest] [collapsed][] [shortcut] | ![Photo][photo] proof | #panic("literal") `<!--raw-typst #panic("inline")-->` |',
+        'Reference caption.',
+      ),
+      '',
+      '[dest]: https://example.com/\n  "A destination title"',
+      '[collapsed]: https://example.org/',
+      '[shortcut]: https://example.net/',
+      '[photo]: photo.png "A real image"',
+      '',
+      '```markdown',
+      '[code-only]: https://ignored.invalid/',
+      '```',
+      '',
+      '    [indented-only]: https://ignored.invalid/',
+      '',
+      '<div>',
+      '[html-only]: https://ignored.invalid/',
+      '</div>',
+    ].join('\n')
+    await writeFile(notePath, original)
+    const outPath = join(root, 'references.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
+
+    const pdf = await readFile(outPath)
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    const pdfText = pdf.toString('latin1')
+    const imageCount = (bytes: Buffer) =>
+      (bytes.toString('latin1').match(/\/Subtype\s*\/Image\b/g) ?? []).length
+    const baselineNote = join(root, 'baseline.md')
+    await writeFile(
+      baselineNote,
+      '| Link | Image | Literal |\n| --- | --- | --- |\n| text | no image | text |',
+    )
+    const baselinePdf = join(root, 'baseline.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath: baselineNote,
+      outPath: baselinePdf,
+      fields: [],
+      meta: {},
+    })
+    expect(imageCount(pdf)).toBeGreaterThan(imageCount(await readFile(baselinePdf)))
+    for (const destination of [
+      'https://example.com/',
+      'https://example.org/',
+      'https://example.net/',
+    ]) {
+      expect(pdfText).toContain(`/URI (${destination})`)
+    }
+    const pages = await readPdfPages(outPath)
+    const text = pages
+      .flatMap((page) => page.runs)
+      .map((run) => run.text)
+      .join(' ')
+    expect(text).toContain('full')
+    expect(text).toContain('collapsed')
+    expect(text).toContain('shortcut')
+    expect(text).toContain('Reference caption.')
+    const runs = pages.flatMap((page) => page.runs)
+    const photo = runs.find((run) => run.text.includes('proof'))
+    const caption = runs.find((run) => run.text.includes('Reference caption.'))
+    expect(photo).toBeDefined()
+    expect(caption).toBeDefined()
+    expect(caption!.rect.origin.y).toBeGreaterThan(photo!.rect.origin.y)
+    // Typst compiled the literal attack-shaped cell as text, not code.
+    expect(text).toContain('#panic')
+    expect(text).toContain('literal')
+    expect(text).toContain('inline')
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+    if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+      await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+      await cp(outPath, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'reference-table.pdf'))
+    }
+
+    // Explicit user HTML forces the ordinary Markdown fallback. Preserve that
+    // existing rendering contract rather than globally removing raw comments.
+    const unsafeNote = join(root, 'unsafe.md')
+    const unsafeSource = writeMarkdownCaptionEnvelope(
+      '| Value |\n| --- |\n| <!--raw-typst [User raw fallback]--> |',
+      'Unsafe comment fallback.',
+    )
+    await writeFile(unsafeNote, unsafeSource)
+    const unsafePdf = join(root, 'unsafe.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath: unsafeNote,
+      outPath: unsafePdf,
+      fields: [],
+      meta: {},
+    })
+    expect((await readFile(unsafePdf)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(await readFile(unsafeNote, 'utf8')).toBe(unsafeSource)
+    expect(
+      (await readPdfPages(unsafePdf))
+        .flatMap((page) => page.runs)
+        .map((run) => run.text)
+        .join(' '),
+    ).toContain('User raw fallback')
+
+    for (const [name, cell] of [['footnote', '[^note]']] as const) {
+      const fallbackNote = join(root, `${name}.md`)
+      const fallbackSource = writeMarkdownCaptionEnvelope(
+        `| Value |\n| --- |\n| ${cell} |`,
+        `${name} fallback caption.`,
+      )
+      await writeFile(fallbackNote, fallbackSource)
+      const fallbackPdf = join(root, `${name}.pdf`)
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath: fallbackNote,
+        outPath: fallbackPdf,
+        fields: [],
+        meta: {},
+      })
+      expect((await readFile(fallbackPdf)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+      expect(await readFile(fallbackNote, 'utf8')).toBe(fallbackSource)
+    }
+
+    // cmarker treats [@key] as a Typst citation, not a CommonMark link. Without
+    // its required bibliography label it fails normally; it is never reinterpreted
+    // as a portable table-cell reference by the caption adapter.
+    const citationNote = join(root, 'citation.md')
+    const citationSource = writeMarkdownCaptionEnvelope(
+      '| Value |\n| --- |\n| [@citation] |',
+      'Citation fallback.',
+    )
+    await writeFile(citationNote, citationSource)
+    await expect(
+      renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath: citationNote,
+        outPath: join(root, 'citation.pdf'),
+        fields: [],
+        meta: {},
+      }),
+    ).rejects.toThrow('label `<citation>` does not exist')
+    expect(await readFile(citationNote, 'utf8')).toBe(citationSource)
+  }, 30_000)
+
+  it.each([
+    ['wiki-alias', '[[note.md|<]]!--raw-typst #panic("review")-->'],
+    ['missing-image-alias', '![[missing.png|<]]!--raw-typst #panic("review")-->'],
+    ['wiki-image-syntax', '[[note.md|![]]untrusted](must-not-be-read.png)'],
+  ])(
+    'never executes raw Typst assembled by %s in a captioned table',
+    async (name, attack) => {
+      const typst = await resolveTypstBin()
+      if (typst === null) throw new Error('Typst is required for real PDF compilation')
+      const root = await work()
+      const templateDir = join(root, '.holi/document-templates/plain')
+      await mkdir(templateDir, { recursive: true })
+      await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+      await writeFile(join(root, 'photo.png'), Buffer.from(DOT_PNG, 'base64'))
+      const notePath = join(root, `${name}.md`)
+      const original = [
+        '<!--raw-typst [User raw outside table]-->',
+        '',
+        writeMarkdownCaptionEnvelope(
+          `| Text | Image |\n| --- | --- |\n| Visible cell ${attack} | ![Legitimate photo](photo.png) proof |\n| \`#panic("literal")\` | trailing cell |`,
+          'Safe attached caption.',
+        ),
+      ].join('\n')
+      await writeFile(notePath, original)
+      const outPath = join(root, `${name}.pdf`)
+      const result = await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      const pdf = await readFile(outPath)
+      expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+      expect(pdf.toString('latin1')).toMatch(/\/Subtype\s*\/Image\b/)
+      const pages = await readPdfPages(outPath)
+      const runs = pages.flatMap((page) => page.runs)
+      const text = runs.map((run) => run.text).join(' ')
+      expect(text).toContain('Visible cell')
+      expect(text).toContain('User raw outside table')
+      expect(text).toContain('#panic')
+      expect(text).toContain('literal')
+      expect(text).toContain('trailing cell')
+      expect(text).toContain('Safe attached caption.')
+      const caption = runs.find((run) => run.text.includes('Safe attached caption.'))
+      const lastCell = runs.find((run) => run.text.includes('trailing cell'))
+      expect(caption!.rect.origin.y).toBeGreaterThan(lastCell!.rect.origin.y)
+      expect(result.warnings.length).toBe(name === 'missing-image-alias' ? 1 : 0)
+      expect(await readFile(notePath, 'utf8')).toBe(original)
+      if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+        await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+        await cp(outPath, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, `safe-${name}.pdf`))
+      }
+    },
+    30_000,
+  )
+
+  it('matches ordinary table URIs for container, multiline, and escaped definitions', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) throw new Error('Typst is required for real PDF compilation')
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const table = String.raw`| Reference | Value |
+| --- | --- |
+| [target] | blockquote continuation |
+| [multi line] | nested multiline label and title |
+| [escaped\]label] | escaped label and destination |
+| [list] | list continuation |
+| [spaced] | destination spaces |
+| [hidden] [code-only] | hidden definitions stay hidden |`
+    const definitions =
+      String.raw`> [target]:
+>   https://example.org/destination
+>
+> > [multi
+> > line]: <https://example.org/multi> "title
+> > with \"quotes\""
+
+- [escaped\]label]: https://example.org/escaped\(path\) 'escaped title'
+- [list]:
+    https://example.org/list
+    "continued title"
+
+[spaced]: <https://example.org/a  b>
+[target]: https://ignored.invalid/duplicate
+
+<div>
+[hidden]: https://ignored.invalid/html
+</div>
+
+` + '\n```markdown\n[code-only]: https://ignored.invalid/code\n```\n'
+    const sources = [table, writeMarkdownCaptionEnvelope(table, 'Contextual reference caption.')]
+    const uris: string[][] = []
+    for (const [index, source] of sources.entries()) {
+      const name = index === 0 ? 'contextual-reference-control' : 'contextual-reference-captioned'
+      const notePath = join(root, `${name}.md`)
+      const original = `${source}\n\n${definitions}`
+      await writeFile(notePath, original)
+      const outPath = join(root, `${name}.pdf`)
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      const pdf = (await readFile(outPath)).toString('latin1')
+      uris.push([...pdf.matchAll(/\/URI \(([^\n]*)\)/g)].map((match) => match[1]!).sort())
+      const text = (await readPdfPages(outPath))
+        .flatMap((page) => page.runs)
+        .map((run) => run.text)
+        .join(' ')
+      expect(text).toContain('target')
+      expect(text).toContain('escaped')
+      expect(await readFile(notePath, 'utf8')).toBe(original)
+      if (index === 1) expect(text).toContain('Contextual reference caption.')
+      if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+        await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+        await cp(outPath, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, `${name}.pdf`))
+      }
+    }
+    expect(uris[1]).toEqual(uris[0])
+    expect(uris[1]).toHaveLength(5)
+    expect(uris[1]!.join(' ')).toContain('https://example.org/destination')
+    expect(uris[1]!.join(' ')).toContain('https://example.org/escaped')
+    expect(uris[1]!.join(' ')).not.toContain('ignored.invalid')
   }, 30_000)
 
   it('shows a table caption on its own final page before later prose', async () => {
@@ -788,7 +1316,7 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     )
   }, 30_000)
 
-  it('renders one fenced-code caption safely and leaves the source note untouched', async () => {
+  it('centers a caption below its unaltered code and leaves the source note untouched', async () => {
     const typst = await resolveTypstBin()
     if (typst === null) return
 
@@ -798,8 +1326,8 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
     const notePath = join(root, 'caption.md')
     const original = `Before.\n\n${writeMarkdownCaptionEnvelope(
-      '```javascript title="x.js"\nconst label = "[[path/to/file.md|shown]]"; // @@FIG:real@@ -->\n```',
-      '**Centered caption** with `inline` and &amp;.',
+      '~~~typescript extra-info\nconst value = 1\n~~~',
+      'A **portable** caption. Pending reload',
     )}\n\nAfter [[other.md|link]].\n`
     await writeFile(notePath, original)
     const outPath = join(root, 'caption.pdf')

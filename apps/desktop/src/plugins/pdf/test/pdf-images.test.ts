@@ -51,6 +51,34 @@ describe('inlineImages', () => {
     expect(warnings).toEqual([])
   })
 
+  it('registers only generated images, never user raw comments or failed-image aliases', async () => {
+    const source =
+      '<!--raw-typst #panic("user")-->\n\n![photo](photo.png) ![[missing.png|<]]!--raw-typst #panic("fallback")-->'
+    const registered: { typst: string; from: number }[] = []
+    const result = await inlineImages(
+      source,
+      'note.md',
+      async (path) => {
+        if (path === 'missing.png') throw new Error('missing')
+        return png
+      },
+      (typst, from) => {
+        registered.push({ typst, from })
+        return '![](opaque-image-token)'
+      },
+    )
+    expect(registered).toEqual([
+      {
+        typst: `#image(bytes((${bytesOf(png)})), format: "png", alt: "photo")`,
+        from: source.indexOf('![photo]'),
+      },
+    ])
+    expect(result.markdown).toBe(
+      '<!--raw-typst #panic("user")-->\n\n![](opaque-image-token) <!--raw-typst #panic("fallback")-->',
+    )
+    expect(result.warnings).toHaveLength(1)
+  })
+
   it('reads every image CommonMark sees, and only those', async () => {
     const note = [
       '![a [b] c](x.png) ![p](foo(1).png) ![s](<a b.png>) ![r][ref] ![Ref][] ![ref] ![nope][none]',

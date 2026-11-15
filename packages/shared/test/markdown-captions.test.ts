@@ -22,11 +22,27 @@ describe('Markdown caption envelopes', () => {
     )
   })
 
+  it('encodes leading whitespace while preserving its portable caption range', () => {
+    const serialized = writeMarkdownCaptionEnvelope('```js\nx\n```', '  name')
+    expect(serialized).toContain('&#32;&#32;name')
+    const [frame] = readMarkdownCodeCaptions(serialized)
+    expect(frame).toBeDefined()
+    expect(serialized.slice(frame!.caption.from, frame!.caption.to)).toBe('&#32;&#32;name')
+  })
+
   it('rejects context-dependent reference definitions and reference links', () => {
     for (const caption of ['[reference]: https://example.com', '[manual][reference]', '[manual]']) {
       const source = writeMarkdownCaptionEnvelope('```js\nx\n```', caption)
       expect(readMarkdownCodeCaptions(source)).toEqual([])
     }
+  })
+
+  it('accepts inline code spans with three or more backtick delimiters', () => {
+    for (const value of ['```single ` and double `` ticks```', '````two ``` and one ` ticks````']) {
+      const source = writeMarkdownCaptionEnvelope('```js\nx\n```', value)
+      expect(readMarkdownCodeCaptions(source)).toHaveLength(1)
+    }
+    expect(() => writeMarkdownCaptionEnvelope('```js\nx\n```', '```unclosed')).toThrow()
   })
 
   it('keeps generic framing compatible with inline code containing angle and image syntax', () => {
@@ -42,6 +58,17 @@ describe('Markdown caption envelopes', () => {
         writeMarkdownCaptionEnvelope('```js\nx\n```', 'An [inline link](https://example.com)'),
       ),
     ).toHaveLength(1)
+  })
+
+  it('does not promote text after inline code into a block opener', () => {
+    for (const caption of [
+      '`code` # suffix',
+      '`code` - suffix',
+      '```single ` double `` inside``` # suffix',
+    ]) {
+      const source = writeMarkdownCaptionEnvelope('```js\nx\n```', caption)
+      expect(readMarkdownCodeCaptions(source), caption).toHaveLength(1)
+    }
   })
 
   it('accepts ordinary code fences of any language and no language', () => {

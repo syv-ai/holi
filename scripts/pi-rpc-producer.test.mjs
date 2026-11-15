@@ -296,22 +296,7 @@ test('drains descendants after normal runner exits before resolving', async () =
     assert.equal(existsSync(readFileSync(evidenceFile, 'utf8')), false)
 
     process.env.PATH = `${passingFixture.directory}:${previousPath ?? ''}`
-    let injectedGroupProbeError = false
-    const killProcess = (pid, signal) => {
-      if (signal === 0 && !injectedGroupProbeError) {
-        injectedGroupProbeError = true
-        const error = new Error('injected transient process-group probe failure')
-        error.code = 'EPERM'
-        throw error
-      }
-      return process.kill(pid, signal)
-    }
-    const success = await checkPiRpcProducer({
-      bin: '/synthetic/pi',
-      expectedVersion: '1.0.0',
-      killProcess,
-    })
-    assert.equal(injectedGroupProbeError, true)
+    const success = await checkPiRpcProducer({ bin: '/synthetic/pi', expectedVersion: '1.0.0' })
     assert.equal(success.outcome, 'pass', success.detail)
     assert.equal(await descendantGone(), true)
     assert.equal(existsSync(readFileSync(evidenceFile, 'utf8')), false)
@@ -334,6 +319,7 @@ test('reports child failure and timeout as bounded results', async () => {
     `process.on('SIGTERM',()=>{}); setInterval(()=>process.stdout.write('x'.repeat(65536)),1)`,
   )
   const previousPath = process.env.PATH
+  const originalKill = process.kill
   try {
     process.env.PATH = `${failing.directory}:${previousPath ?? ''}`
     const failure = await checkPiRpcProducer({ bin: '/synthetic/pi', expectedVersion: '1.0.0' })
@@ -350,6 +336,14 @@ test('reports child failure and timeout as bounded results', async () => {
     assert.match(timeout.detail, /timed out/)
     assert.ok(timeout.detail.length <= 1100)
     process.env.PATH = `${flooding.directory}:${previousPath ?? ''}`
+    let groupProbeDenied = false
+    process.kill = function (pid, signal) {
+      if (!groupProbeDenied && typeof pid === 'number' && pid < 0 && signal === 0) {
+        groupProbeDenied = true
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      }
+      return Reflect.apply(originalKill, process, [pid, signal])
+    }
     const flood = await checkPiRpcProducer({
       bin: '/synthetic/pi',
       expectedVersion: '1.0.0',
@@ -358,7 +352,9 @@ test('reports child failure and timeout as bounded results', async () => {
     assert.equal(flood.outcome, 'unverified')
     assert.match(flood.detail, /output exceeded bound/)
     assert.ok(flood.detail.length <= 1100)
+    assert.equal(groupProbeDenied, true)
   } finally {
+    process.kill = originalKill
     process.env.PATH = previousPath
     rmSync(failing.directory, { recursive: true, force: true })
     rmSync(hanging.directory, { recursive: true, force: true })

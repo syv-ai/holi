@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { fireEvent, render, screen, waitFor } from '@/test/render'
 import { activeRemoteAtom } from '@/state/vaults'
+import { vimCodeEditingAtom } from '@/state/preferences'
 
 import { StatusBar } from '../status-bar'
 
@@ -69,9 +70,10 @@ beforeEach(() => {
   switchAnswer = async () => ({ ok: true })
 })
 
-async function openPicker() {
+async function openPicker(vim = false) {
   const store = createStore()
   store.set(activeRemoteAtom, 'o/r')
+  store.set(vimCodeEditingAtom, vim)
   render(
     <Provider store={store}>
       <StatusBar />
@@ -143,6 +145,27 @@ describe('branch picker', () => {
         create: true,
       }),
     )
+  })
+
+  test('Vim normal-mode Enter does not select a branch from the search field', async () => {
+    await openPicker(true)
+    const input = await screen.findByPlaceholderText('Switch to a branch')
+    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(called('sync.switchBranch')).toHaveLength(0)
+    expect(input).toBeInTheDocument()
+  })
+
+  test('Vim normal-mode Escape and Enter do not cancel or create a branch', async () => {
+    await openPicker(true)
+    fireEvent.click(await screen.findByRole('option', { name: 'Create branch…' }))
+    const input = await screen.findByLabelText('New branch from main')
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(input).toBeInTheDocument()
+    expect(screen.getByLabelText('Vim normal mode')).toBeInTheDocument()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(called('sync.switchBranch')).toHaveLength(0)
+    expect(input).toBeInTheDocument()
   })
 
   test('loads with a skeleton, and a failed list offers Retry', async () => {

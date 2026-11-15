@@ -17,6 +17,7 @@ export const RICH_TEXT_PROSE = cn(
   '[&_.tiptap_li[data-checked=true]>div>[data-node-view-content]]:text-muted-foreground [&_.tiptap_li[data-checked=true]>div>[data-node-view-content]]:line-through',
   '[&_.tiptap_blockquote]:text-muted-foreground [&_.tiptap_blockquote]:border-s-2 [&_.tiptap_blockquote]:ps-4',
   '[&_.tiptap_pre]:bg-muted [&_.tiptap_pre]:rounded-md [&_.tiptap_pre]:px-4 [&_.tiptap_pre]:py-3 [&_.tiptap_pre]:font-mono [&_.tiptap_pre]:text-sm',
+  '[&_.tiptap_figure[data-holi-code-figure]]:my-4 [&_.tiptap_figure[data-holi-code-figure]>figcaption]:mt-2 [&_.tiptap_figure[data-holi-code-figure]>figcaption]:text-center [&_.tiptap_figure[data-holi-code-figure]>figcaption]:text-sm [&_.tiptap_figure[data-holi-code-figure]>figcaption]:text-muted-foreground',
   '[&_.tiptap_:not(pre)>code]:bg-muted [&_.tiptap_:not(pre)>code]:rounded-sm [&_.tiptap_:not(pre)>code]:px-1 [&_.tiptap_:not(pre)>code]:py-0.5 [&_.tiptap_:not(pre)>code]:font-mono [&_.tiptap_:not(pre)>code]:text-sm',
   '[&_.tiptap_a]:text-primary [&_.tiptap_a]:underline [&_.tiptap_a]:underline-offset-4',
   '[&_.tiptap_hr]:border-border [&_.tiptap_hr]:my-6',
