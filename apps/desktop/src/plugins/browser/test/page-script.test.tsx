@@ -15,6 +15,7 @@ interface HoliPage {
   fill(ref: number, text: string): boolean
   vim: {
     documentNonce(): string
+    rearm(): string
     configure(enabled: boolean, revision: number, nonce: string): boolean
     mode(): { revision: number; mode: 'insert' | 'normal' }
   }
@@ -98,8 +99,13 @@ test('vim mode uses native selections and blocks unsupported edits synchronously
   const nonce = holi().vim.documentNonce()
   expect(holi().vim.configure(true, 1, nonce)).toBe(true)
   expect(holi().vim.mode()).toEqual({ revision: 1, mode: 'insert' })
-  const key = (value: string) => {
-    const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })
+  const key = (value: string, options: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent('keydown', {
+      key: value,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    })
     textarea.dispatchEvent(event)
     return event
   }
@@ -112,6 +118,9 @@ test('vim mode uses native selections and blocks unsupported edits synchronously
   expect(key('Backspace').defaultPrevented).toBe(true)
   expect(textarea.value).toBe(before)
   expect(key('Tab').defaultPrevented).toBe(false)
+  for (const selectionKey of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']) {
+    expect(key(selectionKey, { shiftKey: true }).defaultPrevented).toBe(false)
+  }
   key('a')
   expect(holi().vim.mode().mode).toBe('insert')
   expect(key('x').defaultPrevented).toBe(false)
@@ -279,6 +288,23 @@ test('rejects stale document configuration and leaves unsupported fields native'
   password.dispatchEvent(event)
   expect(event.defaultPrevented).toBe(false)
   expect(holi().vim.configure(true, 22, nonce)).toBe(true)
+})
+
+test('rearming a surviving document rotates ownership and returns Vim to insert mode', () => {
+  const textarea = document.createElement('textarea')
+  document.body.append(textarea)
+  textarea.focus()
+  const previousNonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 30, previousNonce)).toBe(true)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  )
+  expect(holi().vim.mode().mode).toBe('normal')
+  const nonce = holi().vim.rearm()
+  expect(nonce).not.toBe(previousNonce)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(holi().vim.configure(false, 31, previousNonce)).toBe(false)
+  expect(holi().vim.configure(true, 31, nonce)).toBe(true)
 })
 
 test('fills a field and picks an option, as typing would', () => {

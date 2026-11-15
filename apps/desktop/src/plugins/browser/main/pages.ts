@@ -104,6 +104,7 @@ interface Tab {
   vimModeSequence: number
   vimPoll: ReturnType<typeof setInterval> | null
   vimLastSnapshot: string | null
+  vimNavigationPending: boolean
 }
 
 let shared: Session | null = null
@@ -312,11 +313,19 @@ export function createPages(deps: PagesDeps): Pages & {
       .catch(() => {})
   }
 
+  function resetVimOwnership(tab: Tab): void {
+    tab.vimGeneration++
+    tab.vimNonce = null
+    tab.vimModeSequence++
+    tab.vimLastSnapshot = null
+  }
+
   async function initializeVim(tab: Tab): Promise<void> {
     const generation = ++tab.vimGeneration
     tab.vimNonce = null
     try {
       await inPage(tab, '0')
+      await inPage<string>(tab, '__holiPage.vim.rearm()')
       const nonce = await inPage<string>(tab, '__holiPage.vim.documentNonce()')
       if (!isLive(tab) || generation !== tab.vimGeneration) return
       tab.vimNonce = nonce
@@ -352,6 +361,8 @@ export function createPages(deps: PagesDeps): Pages & {
     if (requestRevision <= tab.vimRequestRevision) return
     tab.vimRequestRevision = requestRevision
     const generation = tab.vimGeneration
+    const attachmentId = tab.attachmentId
+    const ownerRevision = tab.vimRequestRevision
     const revision = ++tab.vimRevision
     try {
       const applied = await inPage<boolean>(
@@ -362,7 +373,10 @@ export function createPages(deps: PagesDeps): Pages & {
         !applied ||
         !isPresented(tab) ||
         generation !== tab.vimGeneration ||
-        nonce !== tab.vimNonce
+        nonce !== tab.vimNonce ||
+        attachmentId !== tab.attachmentId ||
+        owner !== tab.vimRequestOwner ||
+        ownerRevision !== tab.vimRequestRevision
       )
         return
       reportVim(tab)
@@ -506,17 +520,25 @@ export function createPages(deps: PagesDeps): Pages & {
     wc.on('will-navigate', (event) => guard(event, event.url))
     wc.on('will-redirect', (event) => guard(event, event.url))
     wc.on('did-start-navigation', (event) => {
-      if (event.isMainFrame && !event.isSameDocument) {
-        tab.error = null
-        tab.vimGeneration++
-        tab.vimNonce = null
+      if (event.isMainFrame) {
+        if (!event.isSameDocument) {
+          tab.error = null
+          tab.vimNavigationPending = true
+        }
+        resetVimOwnership(tab)
       }
       changed()
     })
     wc.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
-      if (!isMainFrame || code === ERR_ABORTED) return
-      tab.error = { code, description, url }
-      changed()
+      if (!isMainFrame) return
+      tab.vimNavigationPending = false
+      if (code !== ERR_ABORTED) {
+        tab.error = { code, description, url }
+        changed()
+      }
+      // A stopped or failed navigation can leave the outgoing document alive.
+      // It needs a fresh nonce, even though no did-finish-load will follow.
+      void initializeVim(tab)
     })
     wc.on('render-process-gone', (_event, details) => {
       tab.error = {
@@ -530,16 +552,25 @@ export function createPages(deps: PagesDeps): Pages & {
       tab.favicon = icons.find(isPageUrl) ?? null
       changed()
     })
-    for (const name of [
-      'did-start-loading',
-      'did-stop-loading',
-      'did-navigate',
-      'did-navigate-in-page',
-      'page-title-updated',
-    ] as const) {
+    for (const name of ['did-start-loading', 'did-navigate', 'page-title-updated'] as const) {
       wc.on(name as 'did-start-loading', changed)
     }
+    wc.on('did-stop-loading', () => {
+      if (tab.vimNavigationPending) {
+        tab.vimNavigationPending = false
+        void initializeVim(tab)
+      }
+      changed()
+    })
+    wc.on('did-navigate-in-page', () => {
+      // History API and fragment changes retain the document, but relinquish
+      // its prior Vim owner and arm it again as insert mode.
+      resetVimOwnership(tab)
+      void initializeVim(tab)
+      changed()
+    })
     wc.on('did-finish-load', () => {
+      tab.vimNavigationPending = false
       void initializeVim(tab)
     })
     wc.on('context-menu', (_event, params) => contextMenu(tab, params))
@@ -632,6 +663,7 @@ export function createPages(deps: PagesDeps): Pages & {
       vimModeSequence: 0,
       vimPoll: null,
       vimLastSnapshot: null,
+      vimNavigationPending: false,
     }
     tabs.set(tab.id, tab)
     current = tab.id

@@ -42,7 +42,15 @@ async function run(): Promise<void> {
     checks.push(name)
     console.log(`PASS ${name}`)
   }
+  let stallRequested!: () => void
+  const stalled = new Promise<void>((resolve) => {
+    stallRequested = resolve
+  })
   const server = createServer((request, response) => {
+    if (request.url === '/stall') {
+      stallRequested()
+      return
+    }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body { color: CanvasText; background: Canvas; font: 16px sans-serif; }</style><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
       <main><h1>Browser page owned by vault ${request.url === '/b' ? 'B' : 'A'}</h1>
@@ -207,9 +215,10 @@ async function run(): Promise<void> {
   ) => {
     const shift = shiftOverride ?? (key.length === 1 && key !== key.toLowerCase())
     const keyCode = code ?? (shift ? key.toLowerCase() : key)
-    view.webContents.sendInputEvent({ type: 'keyDown', keyCode, shift })
-    if (key.length === 1) view.webContents.sendInputEvent({ type: 'char', keyCode: key, shift })
-    view.webContents.sendInputEvent({ type: 'keyUp', keyCode, shift })
+    const modifiers = shift ? ['shift'] : []
+    view.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+    if (key.length === 1) view.webContents.sendInputEvent({ type: 'char', keyCode: key, modifiers })
+    view.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
     await new Promise((resolve) => setTimeout(resolve, 30))
   }
   const inPage = <T>(view: WebContentsView, expression: string) =>
@@ -267,6 +276,8 @@ async function run(): Promise<void> {
     }
     throw new Error(`timed out waiting for ${label}`)
   }
+  const selection = async (selector: string, start: number, end = start) =>
+    inPage(a, `document.querySelector('${selector}').setSelectionRange(${start}, ${end})`)
   const vimSnapshot = await waitFor(
     () =>
       sent.find((event) => event.remote === 'A' && event.name === 'vim-mode')?.payload as
@@ -311,8 +322,41 @@ async function run(): Promise<void> {
     return (event?.payload as { mode?: string } | undefined)?.mode === 'normal' ? event : undefined
   }, 'normal mode after native Escape')
   assert.equal((normalMode.payload as { mode: string }).mode, 'normal')
-  const selection = async (selector: string, start: number, end = start) =>
-    inPage(a, `document.querySelector('${selector}').setSelectionRange(${start}, ${end})`)
+  await selection('#text', 4)
+  await nativePress(a, 'Right', 'Right', true)
+  assert.deepEqual(
+    await inPage<[number, number]>(
+      a,
+      `(() => { const e = document.querySelector('#text'); return [e.selectionStart, e.selectionEnd] })()`,
+    ),
+    [4, 5],
+    'Shift+Right keeps native selection in Vim normal mode',
+  )
+  await selection('#text', 5)
+  await nativePress(a, 'Home', undefined, true)
+  assert.deepEqual(
+    await inPage<[number, number]>(
+      a,
+      `(() => { const e = document.querySelector('#text'); return [e.selectionStart, e.selectionEnd] })()`,
+    ),
+    [0, 5],
+    'Shift+Home keeps native selection in Vim normal mode',
+  )
+  await inPage(a, `document.querySelector('#rows').focus()`)
+  await nativePress(a, 'Escape')
+  await selection('#rows', 3)
+  await nativePress(a, 'ArrowDown', 'Down', true)
+  assert.deepEqual(
+    await inPage<[number, number]>(
+      a,
+      `(() => { const e = document.querySelector('#rows'); return [e.selectionStart, e.selectionEnd] })()`,
+    ),
+    [3, 16],
+    'Shift+Down keeps native multiline selection in Vim normal mode',
+  )
+  mark('native-shift-selection-preserved-in-vim-normal-mode')
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await nativePress(a, 'Escape')
   const caret = async (selector: string) =>
     inPage<number>(a, `document.querySelector('${selector}').selectionStart`)
   await inPage(a, `document.querySelector('#text').focus()`)
@@ -510,6 +554,56 @@ async function run(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 30))
   assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one Xtwo three')
   mark('native-browser-vim-mode-navigation-insertion-undo-redo')
+  await inPage(
+    a,
+    `document.querySelector('#text').value = 'one two three'; document.querySelector('#text').focus()`,
+  )
+  const beforeSameDocument = sent.findLast(
+    (event) => event.remote === 'A' && event.name === 'vim-mode',
+  )!.payload as typeof vimSnapshot
+  await nativePress(a, 'Escape')
+  await inPage(a, `history.pushState({ smoke: true }, '', '#same-document')`)
+  const afterSameDocument = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    const snapshot = event?.payload as typeof vimSnapshot | undefined
+    return snapshot && snapshot.nonce !== beforeSameDocument.nonce ? snapshot : undefined
+  }, 'Vim ownership reset after same-document navigation')
+  assert.equal(afterSameDocument.mode, 'insert')
+  configureVim(afterSameDocument, true, 1)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await selection('#text', 0)
+  await nativePress(a, 'z')
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'zone two three')
+  mark('native-same-document-navigation-rearms-insert-mode')
+
+  await inPage(
+    a,
+    `document.querySelector('#text').value = 'one two three'; document.querySelector('#text').focus()`,
+  )
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'w')
+  const beforeAbortedNavigation = sent.findLast(
+    (event) => event.remote === 'A' && event.name === 'vim-mode',
+  )!.payload as typeof vimSnapshot
+  const stalledNavigation = invoke<PageInfo>('A', 'open', { tab: 'same', url: `${url}/stall` })
+  await stalled
+  a.webContents.stop()
+  await stalledNavigation
+  const recoveredDocument = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    const snapshot = event?.payload as typeof vimSnapshot | undefined
+    return snapshot && snapshot.nonce !== beforeAbortedNavigation.nonce ? snapshot : undefined
+  }, 'Vim ownership recovery after aborted navigation')
+  configureVim(recoveredDocument, false, 1)
+  await selection('#text', 0)
+  await nativePress(a, 'z')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#text').value`),
+    'zone two three',
+    'aborted navigation recovery lets the surviving document accept disabled Vim input',
+  )
+  mark('native-aborted-navigation-recovers-surviving-document-configuration')
+
   place('A', null)
   place('A', rect)
   const reattachedVim = await waitFor(() => {
