@@ -124,7 +124,7 @@ export function validateSkillSnapshot(
     const prefix = [sourcePath, skill].filter(Boolean).join('/')
     const expectedFiles = new Map<string, { bytes: Buffer; mode: number }>()
     const expectedDirs = new Set<string>()
-    for (const [path, entry] of entries) {
+    for (const path of entries.keys()) {
       if (!path.startsWith(`${prefix}/`)) continue
       const rel = path.slice(prefix.length + 1)
       const resolved = resolveTreeFile(root, entries, path, sourcePath)

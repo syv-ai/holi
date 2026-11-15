@@ -257,6 +257,7 @@ export async function transactSkillRefresh(
   } catch (error) {
     let rollbackFailure: unknown
     for (const record of [...records].reverse()) {
+      if (!record.published && !record.backedUp) continue
       try {
         // Rollback deliberately ignores cancellation, but never follows a replaced parent.
         const targetRel = relative(vault, record.target).split(sep).join('/')

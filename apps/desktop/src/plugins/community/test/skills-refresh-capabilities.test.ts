@@ -1,4 +1,15 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,12 +29,12 @@ const sh = (cwd: string, ...args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 
 async function fixture(path = '') {
-  const root = await mkdtemp(join(tmpdir(), 'holi-522-provenance-'))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-522-provenance-')))
   roots.push(root)
   const vault = join(root, 'vault')
   const userData = join(root, 'user')
-  const releaseDir = join(userData, 'plugins', 'demo', 'release')
-  const pluginDir = path ? join(releaseDir, path) : releaseDir
+  let releaseDir = join(userData, 'plugins', 'demo', 'release')
+  let pluginDir = path ? join(releaseDir, path) : releaseDir
   await mkdir(pluginDir, { recursive: true })
   await mkdir(join(vault, '.holi/plugins/demo'), { recursive: true })
   await mkdir(join(vault, '.holi/settings'), { recursive: true })
@@ -55,6 +66,10 @@ async function fixture(path = '') {
     'release',
   )
   const commit = sh(releaseDir, 'rev-parse', 'HEAD')
+  const installedRelease = join(userData, 'plugins', 'demo', commit)
+  await rename(releaseDir, installedRelease)
+  releaseDir = installedRelease
+  pluginDir = path ? join(releaseDir, path) : releaseDir
   const origin = join(root, 'origin.git')
   sh(releaseDir, 'remote', 'add', 'origin', origin)
   const store = createInstallStore(userData)
@@ -112,17 +127,14 @@ afterEach(async () =>
 )
 
 describe('pinned refresh authorization', () => {
-  it.each(['', 'nested/plugin'])(
-    'refreshes source path %s from full-tree Git objects',
-    async (path) => {
-      const f = await fixture(path)
-      await expect(f.call()).resolves.toEqual(['.claude/skills/demo'])
-      expect(await readFile(join(f.vault, '.claude/skills/demo/tool.bin'))).toEqual(
-        Buffer.from([0, 1, 255, 10]),
-      )
-      expect((await stat(join(f.vault, '.claude/skills/demo/run.sh'))).mode & 0o777).toBe(0o755)
-    },
-  )
+  it.each(['', 'demo'])('refreshes source path %s from full-tree Git objects', async (path) => {
+    const f = await fixture(path)
+    await expect(f.call()).resolves.toEqual(['.claude/skills/demo'])
+    expect(await readFile(join(f.vault, '.claude/skills/demo/tool.bin'))).toEqual(
+      Buffer.from([0, 1, 255, 10]),
+    )
+    expect((await stat(join(f.vault, '.claude/skills/demo/run.sh'))).mode & 0o777).toBe(0o755)
+  })
 
   it('rejects altered detached snapshot bytes before publication even if checkout bytes are restored', async () => {
     const f = await fixture()

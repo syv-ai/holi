@@ -642,7 +642,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       run: async (ctx, { id, force }) =>
         admit(async () => {
           ensureLive()
-          const deny = (message: string): never => {
+          const deny: (message: string) => never = (message) => {
             throw new CapabilityError('FORBIDDEN', message)
           }
           if (!isCommunityPluginId(id, deps.firstPartyIds()))
