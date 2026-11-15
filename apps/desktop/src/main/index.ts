@@ -144,6 +144,7 @@ interface OpenRequest {
  */
 let openTarget: Electron.WebContents | null = null
 const heldOpens: OpenRequest[] = []
+const heldNavigations: { remote: string; plugin: string; name: string; payload: unknown }[] = []
 
 /**
  * Holi links (docs/features/holi-links.md), clicked anywhere on this machine.
@@ -397,6 +398,15 @@ async function main(): Promise<void> {
     focused: () => BrowserWindow.getFocusedWindow() !== null,
     window: () => (mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow),
     notify: notifyUnfocused,
+    navigate: (plugin, remote, name, payload) => {
+      const request = { remote, plugin, name, payload }
+      const win = openWindow()
+      if (win !== null && openTarget === win.webContents && !win.isDestroyed()) {
+        win.webContents.send('vault:navigate', request)
+      } else {
+        heldNavigations.push(request)
+      }
+    },
     background: {
       registered: async () =>
         (await registry.list()).map((e) => ({ remote: e.remote, root: e.path })),
@@ -640,6 +650,7 @@ async function main(): Promise<void> {
   ipcMain.on('vault:open-ready', (event) => {
     openTarget = event.sender
     for (const request of heldOpens.splice(0)) event.sender.send('vault:open', request)
+    for (const request of heldNavigations.splice(0)) event.sender.send('vault:navigate', request)
     for (const w of readyWaiters.filter((w) => w.contents === event.sender)) {
       readyWaiters.splice(readyWaiters.indexOf(w), 1)
       w.resolve()

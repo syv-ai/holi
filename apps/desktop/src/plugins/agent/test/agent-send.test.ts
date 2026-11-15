@@ -116,6 +116,22 @@ test('opening a stopped Pi conversation uses its own terminal rather than Claude
   expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id })
 })
 
+test.each([
+  ['claude', 'aaaaaaaa'],
+  ['codex', 'j0123456789ab'],
+  ['pi', 'p0123456789ab'],
+] as const)('reopening a closed %s tab selects the retained terminal', async (provider, id) => {
+  const terminalId = `retained-${provider}-terminal`
+  const store = storeWith([session({ id, provider })], [terminal(terminalId, id)])
+
+  const result = await store.set(openSessionAtom, id)
+
+  expect(result).toEqual({ ok: true })
+  expect(open).not.toHaveBeenCalled()
+  expect(store.get(viewTerminalsAtom)).toEqual({ [id]: terminalId })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id })
+})
+
 test('opening a session with no window attaches a new one', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
   await store.set(openSessionAtom, 'aaaaaaaa')
