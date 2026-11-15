@@ -48,7 +48,7 @@
  * digits): working while a turn runs, then idle with its `outcome` (and why,
  * when it failed) for a while, so whoever started it reads the result off the
  * row: `completed` or `failed`, as a Pi run's, why it failed as its `error`.
- * What its turns used is its `usage.total`, when the agent says.
+ * Codex's `usage.total` is the latest reported cumulative thread total.
  *
  * **A follow-up** (`message`) to a vault job is a new turn on the agent's
  * thread (`resume`): queued while a turn runs, sent when it ends. The agent
@@ -829,10 +829,12 @@ export function createJobs(deps: JobsDeps): Jobs {
         if (event.kind === 'thread') {
           job.thread ??= event.id
           log(`${id}: thread ${event.id}`)
+        } else if (event.kind === 'turn-started') {
+          // usage.total is cumulative: keep it until Codex reports a newer total.
         } else if (event.kind === 'turn-completed') {
           completed = true
           if (event.tokens !== undefined) {
-            job.tokens += event.tokens
+            job.tokens = event.tokens
             push()
           }
         } else if (event.kind === 'turn-failed') failure = event.message

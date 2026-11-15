@@ -1,0 +1,763 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { spawn } from 'node:child_process'
+import { appendFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs'
+import { spawnOwnedProgram } from '../../../main/plugin-api'
+import { createServer, type Server } from 'node:http'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
+import { codexProvider } from '../main/codex/index'
+import { createJobs } from '../main/host/jobs'
+
+const version = '0.169.0'
+const bin = process.env.HOLI_CODEX_BIN
+const roots: string[] = []
+const servers: Server[] = []
+const jobsList: ReturnType<typeof createJobs>[] = []
+const nativePids: number[] = []
+function persistProof() {
+  const output = process.env.HOLI_CODEX_PROOF_OUTPUT
+  if (!output) return
+  mkdirSync(dirname(output), { recursive: true })
+  const temporary = `${output}.${process.pid}.tmp`
+  try {
+    writeFileSync(temporary, `${JSON.stringify(proof, null, 2)}\n`)
+    renameSync(temporary, output)
+  } catch {
+    try {
+      rmSync(temporary, { force: true })
+    } catch {}
+  }
+}
+function beginScenario(name: string): ScenarioEvidence {
+  const scenario: ScenarioEvidence = { name, stage: 'setup', status: 'pending' }
+  proof.scenarios.push(scenario)
+  persistProof()
+  return scenario
+}
+function progress(scenario: ScenarioEvidence, stage: Stage) {
+  scenario.stage = stage
+  persistProof()
+}
+function finishScenario(scenario: ScenarioEvidence, status: Status, error?: unknown) {
+  scenario.status = status
+  if (error instanceof Error) {
+    scenario.failure = error.message
+    scenario.failureKind = /timeout|did not settle|not observed/i.test(error.message)
+      ? 'timeout'
+      : scenario.stage === 'setup'
+        ? 'setup'
+        : 'contract'
+  }
+  persistProof()
+}
+type Stage = 'setup' | 'native-launch' | 'native-contract' | 'host-lifecycle' | 'cleanup'
+type Status = 'pending' | 'pass' | 'unverified' | 'mismatch'
+type ScenarioEvidence = {
+  name: string
+  stage: Stage
+  status: Status
+  failureKind?: 'setup' | 'timeout' | 'contract'
+  failure?: string
+  [key: string]: unknown
+}
+const proof = {
+  schema: 'holi.codex-exec-producer.v1',
+  package: '@openai/codex',
+  expectedVersion: version,
+  version: null as string | null,
+  bin: bin ?? null,
+  scenarios: [] as ScenarioEvidence[],
+  cleanup: { nativeGroupsDrained: false, rootsRemoved: false },
+}
+async function fixture(mode: 'success' | 'failure' | 'stall' = 'success') {
+  if (!bin) throw new Error('HOLI_CODEX_BIN is required for native producer verification')
+  const root = await mkdtemp(join(tmpdir(), 'holi-native-codex-'))
+  roots.push(root)
+  const home = join(root, 'home')
+  const person = join(root, 'person')
+  const xdg = join(root, 'xdg')
+  const work = join(root, 'vault')
+  const state = join(root, 'state')
+  for (const path of [home, person, xdg, work, state]) await mkdir(path, { recursive: true })
+  const requests: Array<{ url: string; model: string; body: string }> = []
+  const processes: Array<{
+    pid: number
+    bin: string
+    args: string[]
+    cwd: string
+    codeHome?: string
+  }> = []
+  const jsonl: Array<{ line: string; event: unknown }> = []
+  const rawProcesses: Array<Record<string, unknown>> = []
+  const host: Array<{
+    id: string
+    outcome?: string
+    message?: string
+    error?: string
+    tokens?: number
+  }> = []
+  const brackets: Array<{ id: string; edge: string }> = []
+  let requestSeen: (() => void) | undefined
+  const requestReceived = new Promise<void>((resolve) => {
+    requestSeen = resolve
+  })
+  let releaseStall: (() => void) | undefined
+  const stalled = new Promise<void>((resolve) => (releaseStall = resolve))
+  const server = createServer(async (req, res) => {
+    if (req.method !== 'POST' || req.url !== '/v1/responses') {
+      res.writeHead(400)
+      res.end('{"error":"unexpected method or path"}')
+      return
+    }
+    const chunks: Buffer[] = []
+    let size = 0
+    for await (const chunk of req) {
+      size += chunk.length
+      if (size > 1024 * 1024) {
+        res.destroy()
+        return
+      }
+      chunks.push(Buffer.from(chunk))
+    }
+    let bodyText: string
+    let body: { model: string }
+    try {
+      let bytes = Buffer.concat(chunks)
+      if (req.headers['content-encoding'] === 'gzip')
+        bytes = gunzipSync(bytes, { maxOutputLength: 1024 * 1024 })
+      else if (req.headers['content-encoding'] && req.headers['content-encoding'] !== 'identity')
+        throw new Error('unsupported content encoding')
+      if (bytes.length > 1024 * 1024) throw new Error('oversized request')
+      bodyText = bytes.toString()
+      body = JSON.parse(bodyText) as { model: string }
+    } catch {
+      res.writeHead(400)
+      res.end('{"error":"invalid or oversized JSON body"}')
+      return
+    }
+    requests.push({ url: req.url ?? '', model: body.model, body: bodyText })
+    requestSeen?.()
+    if (mode === 'stall') {
+      await stalled
+      return
+    }
+    if (mode === 'failure') {
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { message: 'fixture rejected request' } }))
+      return
+    }
+    const model = body.model
+    const msg = {
+      id: 'msg_fixture',
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'native fixture answer', annotations: [] }],
+    }
+    const response = {
+      id: 'resp_fixture',
+      object: 'response',
+      created_at: 1,
+      status: 'completed',
+      model,
+      output: [msg],
+      usage: {
+        input_tokens: 9,
+        input_tokens_details: { cached_tokens: 0 },
+        output_tokens: 4,
+        output_tokens_details: { reasoning_tokens: 0 },
+        total_tokens: 13,
+      },
+    }
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+    for (const event of [
+      { type: 'response.created', response: { ...response, status: 'in_progress', output: [] } },
+      {
+        type: 'response.output_item.added',
+        output_index: 0,
+        item: { ...msg, status: 'in_progress', content: [] },
+      },
+      {
+        type: 'response.content_part.added',
+        item_id: msg.id,
+        output_index: 0,
+        content_index: 0,
+        part: { type: 'output_text', text: '', annotations: [] },
+      },
+      {
+        type: 'response.output_text.delta',
+        item_id: msg.id,
+        output_index: 0,
+        content_index: 0,
+        delta: 'native fixture answer',
+      },
+      {
+        type: 'response.output_text.done',
+        item_id: msg.id,
+        output_index: 0,
+        content_index: 0,
+        text: 'native fixture answer',
+      },
+      { type: 'response.output_item.done', output_index: 0, item: msg },
+      { type: 'response.completed', response },
+    ])
+      res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+    res.end()
+  })
+  server.requestTimeout = 15_000
+  servers.push(server)
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('fixture server did not bind')
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    HOME: home,
+    CODEX_HOME: person,
+    XDG_CONFIG_HOME: xdg,
+    TMPDIR: join(root, 'tmp'),
+    OPENAI_API_KEY: 'synthetic-fixture-key',
+    LANG: 'en_US.UTF-8',
+    LC_ALL: 'en_US.UTF-8',
+    TERM: 'dumb',
+    NO_COLOR: '1',
+  }
+  await mkdir(env.TMPDIR!, { recursive: true })
+  await writeFile(
+    join(person, 'config.toml'),
+    `model = "gpt-5.1-codex-mini"\nmodel_provider = "holi-fixture"\n[model_providers.holi-fixture]\nname = "Holi fixture"\nbase_url = "http://127.0.0.1:${address.port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n`,
+  )
+  const provider = codexProvider({ resolveBin: () => bin!, base: env })
+  const actualEvent = provider.capabilities.jobs.event
+  provider.capabilities.jobs.event = (line) => {
+    const event = actualEvent(line)
+    if (event) jsonl.push({ line: line.slice(0, 16_384), event })
+    return event
+  }
+  const jobs = createJobs({
+    vault: { remote: 'fixture/vault', root: work },
+    scratchRoot: state,
+    onChange: (rows) => {
+      for (const row of rows)
+        host.push({
+          id: row.id,
+          outcome: row.outcome,
+          message: row.message,
+          error: row.error,
+          tokens: row.usage?.total,
+        })
+    },
+    bracket: (id, edge) => brackets.push({ id, edge }),
+    spawn: (command, args, opts) => {
+      const child = spawnOwnedProgram(command, args, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] })
+      if (child.pid) {
+        const processRecord: Record<string, unknown> = {
+          pid: child.pid,
+          bin: command,
+          args: [...args],
+          cwd: opts.cwd,
+          codeHome: opts.env.CODEX_HOME,
+          stdout: '',
+          stderr: '',
+          stdoutBytes: 0,
+          stderrBytes: 0,
+          outputLimited: false,
+          lineLimit: 2000,
+          byteLimit: 262144,
+          exitCode: null,
+          signal: null,
+        }
+        processes.push({
+          pid: child.pid,
+          bin: command,
+          args: [...args],
+          cwd: opts.cwd,
+          codeHome: opts.env.CODEX_HOME,
+        })
+        rawProcesses.push(processRecord)
+        nativePids.push(child.pid)
+        const ledger = process.env.HOLI_CODEX_PROCESS_LEDGER
+        if (ledger) {
+          mkdirSync(dirname(ledger), { recursive: true })
+          appendFileSync(
+            ledger,
+            `${JSON.stringify({ pid: child.pid, group: process.platform === 'win32' ? child.pid : -child.pid, bin: command, cwd: opts.cwd, ownedRoot: root })}\n`,
+          )
+        }
+        let rawBytes = 0
+        let rawLines = 0
+        let lineCarry = ''
+        const capture = (chunk: Buffer, target: 'stdout' | 'stderr') => {
+          const current = Number(processRecord[`${target}Bytes`])
+          const allowed = Math.max(0, Math.min(chunk.length, 262144 - rawBytes))
+          const text = chunk.subarray(0, allowed).toString('utf8')
+          processRecord[target] = `${String(processRecord[target])}${text}`
+          processRecord[`${target}Bytes`] = current + chunk.length
+          rawBytes += chunk.length
+          const all = lineCarry + text
+          const lines = all.split('\n')
+          lineCarry = lines.pop() ?? ''
+          rawLines += lines.length
+          if (rawLines > 2000 || allowed < chunk.length) {
+            processRecord.outputLimited = true
+            try {
+              child.kill('SIGTERM')
+            } catch {}
+          }
+        }
+        child.stdout?.on('data', (chunk: Buffer) => capture(chunk, 'stdout'))
+        child.stderr?.on('data', (chunk: Buffer) => capture(chunk, 'stderr'))
+        persistProof()
+        child.once('close', (code, signal) => {
+          processRecord.exitCode = code
+          processRecord.signal = signal
+          processRecord.outputLines = rawLines
+          processRecord.finalLine = lineCarry.slice(0, 4096)
+          persistProof()
+        })
+      }
+      return child
+    },
+    maxMs: 30_000,
+    killGraceMs: 100,
+    log: () => {},
+  })
+  jobsList.push(jobs)
+  return {
+    root,
+    work,
+    state,
+    env,
+    provider,
+    jobs,
+    requests,
+    processes,
+    jsonl,
+    rawProcesses,
+    host,
+    brackets,
+    requestReceived,
+    stopServer: () => releaseStall?.(),
+  }
+}
+
+async function nativeVersion(
+  env: NodeJS.ProcessEnv,
+  scenario: ScenarioEvidence,
+  ownedRoot: string,
+) {
+  const cwd = process.cwd()
+  const child = spawn(bin!, ['--version'], {
+    env,
+    detached: process.platform !== 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const record: Record<string, unknown> = {
+    pid: child.pid ?? null,
+    bin,
+    args: ['--version'],
+    cwd,
+    codeHome: env.CODEX_HOME,
+    stdout: '',
+    stderr: '',
+    exitCode: null,
+    signal: null,
+    outputLimited: false,
+  }
+  scenario.versionProcess = record
+  if (child.pid) {
+    nativePids.push(child.pid)
+    const ledger = process.env.HOLI_CODEX_PROCESS_LEDGER
+    if (ledger) {
+      mkdirSync(dirname(ledger), { recursive: true })
+      appendFileSync(
+        ledger,
+        `${JSON.stringify({ pid: child.pid, group: process.platform === 'win32' ? child.pid : -child.pid, bin, cwd, ownedRoot })}\n`,
+      )
+    }
+  }
+  let stdout = '',
+    stderr = '',
+    timedOut = false,
+    limited = false
+  let escalation: ReturnType<typeof setTimeout> | undefined
+  const killGroup = (signal: NodeJS.Signals) => {
+    if (child.pid) {
+      try {
+        process.kill(process.platform === 'win32' ? child.pid : -child.pid, signal)
+      } catch {}
+    }
+  }
+  let versionBytes = 0
+  const collect = (chunk: Buffer, target: 'out' | 'err') => {
+    const text = chunk.toString()
+    if (target === 'out') stdout = `${stdout}${text}`.slice(0, 8192)
+    else stderr = `${stderr}${text}`.slice(0, 8192)
+    versionBytes += chunk.length
+    record[target === 'out' ? 'stdout' : 'stderr'] = target === 'out' ? stdout : stderr
+    if (versionBytes > 8192) {
+      record.outputLimited = true
+      limited = true
+      killGroup('SIGTERM')
+    }
+  }
+  child.stdout.on('data', (chunk) => collect(chunk, 'out'))
+  child.stderr.on('data', (chunk) => collect(chunk, 'err'))
+  const timeout = setTimeout(() => {
+    timedOut = true
+    killGroup('SIGTERM')
+    escalation = setTimeout(() => killGroup('SIGKILL'), 250)
+  }, 10_000)
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', (exitCode, signal) => {
+      record.exitCode = exitCode
+      record.signal = signal
+      persistProof()
+      resolve(exitCode)
+    })
+  }).finally(() => {
+    clearTimeout(timeout)
+    if (escalation) clearTimeout(escalation)
+  })
+  let groupDrained = true
+  if (child.pid && process.platform !== 'win32') {
+    try {
+      process.kill(-child.pid, 'SIGTERM')
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    try {
+      process.kill(-child.pid, 'SIGKILL')
+    } catch {}
+    const deadline = Date.now() + 2_000
+    while (Date.now() < deadline) {
+      try {
+        process.kill(-child.pid, 0)
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      } catch {
+        break
+      }
+    }
+    try {
+      process.kill(-child.pid, 0)
+      groupDrained = false
+    } catch {}
+  }
+  return { code, stdout, timedOut, limited, groupDrained }
+}
+
+async function ended(jobs: ReturnType<typeof createJobs>, id: string) {
+  const deadline = Date.now() + 25_000
+  while (Date.now() < deadline) {
+    const row = jobs.sessions().find((session) => session.id === id)
+    if (row?.outcome) return row
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  throw new Error('native job did not settle')
+}
+
+afterEach(async () => {
+  for (const jobs of jobsList.splice(0)) await jobs.leave()
+  for (const server of servers.splice(0)) {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+  let rootsRemoved = true
+  for (const root of roots.splice(0)) {
+    try {
+      await rm(root, { recursive: true, force: true })
+    } catch {
+      rootsRemoved = false
+    }
+  }
+  proof.cleanup.rootsRemoved = rootsRemoved
+  for (const scenario of proof.scenarios) {
+    if (scenario.status === 'pending') {
+      scenario.status =
+        scenario.stage === 'setup' || scenario.stage === 'native-launch' ? 'unverified' : 'mismatch'
+      scenario.failureKind = scenario.status === 'unverified' ? 'setup' : 'contract'
+      scenario.failure ??=
+        scenario.status === 'unverified'
+          ? 'native evidence was not fully captured'
+          : 'scenario assertion failed before completion'
+    }
+  }
+  proof.cleanup.nativeGroupsDrained = nativePids.every((pid) => {
+    try {
+      process.kill(-pid, 0)
+      return false
+    } catch {
+      return true
+    }
+  })
+  persistProof()
+})
+
+if (bin) {
+  describe('native Codex exec producer → real jobs host', () => {
+    it('consumes the pinned CLI version and native initial-turn events', async () => {
+      const scenario = beginScenario('initial-turn')
+      const f = await fixture()
+      scenario.processes = f.processes
+      scenario.rawProcesses = f.rawProcesses
+      scenario.jsonl = f.jsonl
+      scenario.requests = f.requests
+      scenario.host = f.host
+      scenario.brackets = f.brackets
+      progress(scenario, 'native-launch')
+      const versionResult = await nativeVersion(f.env, scenario, f.root)
+      progress(scenario, 'native-contract')
+      expect(versionResult.timedOut).toBe(false)
+      expect(versionResult.limited).toBe(false)
+      expect(versionResult.groupDrained).toBe(true)
+      expect(versionResult.code).toBe(0)
+      expect(versionResult.stdout.trim()).toBe(`codex-cli ${version}`)
+      proof.version = versionResult.stdout.trim()
+      progress(scenario, 'host-lifecycle')
+      const result = await f.jobs.start({
+        provider: f.provider,
+        name: 'native proof',
+        prompt: 'Return a short response',
+        allow: [],
+      })
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      const row = await ended(f.jobs, result.sessionId)
+      expect(row.outcome).toBe('completed')
+      expect(row.usage?.total).toBe(13)
+      expect(f.requests).toHaveLength(1)
+      expect(f.requests[0]?.url).toBe('/v1/responses')
+      expect(f.requests[0]?.body).toContain('Return a short response')
+      expect(
+        f.jsonl.some(
+          ({ event }) =>
+            (event as { kind?: string; tokens?: number }).kind === 'turn-completed' &&
+            (event as { tokens?: number }).tokens === 13,
+        ),
+      ).toBe(true)
+      expect(
+        f.host.some(
+          (event) =>
+            event.id === result.sessionId && event.outcome === 'completed' && event.tokens === 13,
+        ),
+      ).toBe(true)
+      expect(f.brackets.map((entry) => entry.edge)).toEqual(['begin', 'end'])
+      Object.assign(scenario, {
+        sessionId: result.sessionId,
+        outcome: row.outcome,
+        tokens: row.usage?.total,
+        requests: f.requests.map(({ url, model, body }) => ({
+          url,
+          model,
+          promptSeen: body.includes('Return a short response'),
+        })),
+        processes: f.processes,
+        jsonl: f.jsonl,
+        host: f.host,
+        brackets: f.brackets,
+      })
+      finishScenario(scenario, 'pass')
+    }, 35_000)
+
+    it('resumes the native thread and reports the cumulative usage total', async () => {
+      const scenario = beginScenario('follow-up')
+      const f = await fixture()
+      scenario.processes = f.processes
+      scenario.rawProcesses = f.rawProcesses
+      scenario.jsonl = f.jsonl
+      scenario.requests = f.requests
+      scenario.host = f.host
+      scenario.brackets = f.brackets
+      progress(scenario, 'native-launch')
+      const result = await f.jobs.start({
+        provider: f.provider,
+        name: 'resume proof',
+        prompt: 'First',
+        allow: [],
+      })
+      progress(scenario, 'native-contract')
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      progress(scenario, 'host-lifecycle')
+      const first = await ended(f.jobs, result.sessionId)
+      expect(first.outcome).toBe('completed')
+      const firstThread = f.jsonl
+        .map(({ event }) => event as { kind?: string; id?: string })
+        .find((event) => event.kind === 'thread')?.id
+      expect(firstThread).toBeTruthy()
+      f.jobs.message(result.sessionId, 'Follow up')
+      const row = await ended(f.jobs, result.sessionId)
+      expect(row.outcome).toBe('completed')
+      expect(row.usage?.total).toBe(26)
+      expect(f.requests).toHaveLength(2)
+      expect(f.requests[1]?.body).toContain('Follow up')
+      expect(f.processes[1]?.args.join(' ')).toContain(firstThread!)
+      expect(
+        f.jsonl
+          .filter(({ event }) => (event as { kind?: string }).kind === 'thread')
+          .every(({ event }) => (event as { id?: string }).id === firstThread),
+      ).toBe(true)
+      expect(
+        f.host.some(
+          (event) =>
+            event.id === result.sessionId && event.outcome === 'completed' && event.tokens === 26,
+        ),
+      ).toBe(true)
+      expect(f.brackets.map((entry) => entry.edge)).toEqual(['begin', 'end', 'begin', 'end'])
+      Object.assign(scenario, {
+        sessionId: result.sessionId,
+        thread: firstThread,
+        outcome: row.outcome,
+        tokens: row.usage?.total,
+        requests: f.requests.map(({ url, model, body }) => ({
+          url,
+          model,
+          promptSeen: body.includes('Follow up'),
+        })),
+        processes: f.processes,
+        jsonl: f.jsonl,
+        host: f.host,
+        brackets: f.brackets,
+      })
+      finishScenario(scenario, 'pass')
+    }, 55_000)
+
+    it('marks a genuine model error failed, never completed', async () => {
+      const scenario = beginScenario('http-400')
+      const f = await fixture('failure')
+      scenario.processes = f.processes
+      scenario.rawProcesses = f.rawProcesses
+      scenario.jsonl = f.jsonl
+      scenario.requests = f.requests
+      scenario.host = f.host
+      scenario.brackets = f.brackets
+      progress(scenario, 'native-launch')
+      const result = await f.jobs.start({
+        provider: f.provider,
+        name: 'failure proof',
+        prompt: 'Fail',
+        allow: [],
+      })
+      progress(scenario, 'native-contract')
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      progress(scenario, 'host-lifecycle')
+      const row = await ended(f.jobs, result.sessionId)
+      expect(row.outcome).toBe('failed')
+      expect(row.outcome).not.toBe('completed')
+      expect(row.error).toContain('fixture rejected request')
+      expect(
+        f.host.some((event) => event.id === result.sessionId && event.outcome === 'failed'),
+      ).toBe(true)
+      expect(f.requests).toHaveLength(1)
+      Object.assign(scenario, {
+        sessionId: result.sessionId,
+        outcome: row.outcome,
+        error: row.error,
+        requests: f.requests.map(({ url, model }) => ({ url, model })),
+        processes: f.processes,
+        jsonl: f.jsonl,
+        host: f.host,
+        brackets: f.brackets,
+      })
+      finishScenario(scenario, 'pass')
+    }, 35_000)
+
+    it('stops a stalled native run and drains its state and process', async () => {
+      const scenario = beginScenario('stall-stop')
+      const f = await fixture('stall')
+      scenario.processes = f.processes
+      scenario.rawProcesses = f.rawProcesses
+      scenario.jsonl = f.jsonl
+      scenario.requests = f.requests
+      scenario.host = f.host
+      scenario.brackets = f.brackets
+      progress(scenario, 'native-launch')
+      const result = await f.jobs.start({
+        provider: f.provider,
+        name: 'stop proof',
+        prompt: 'Wait',
+        allow: [],
+      })
+      progress(scenario, 'native-contract')
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      progress(scenario, 'host-lifecycle')
+      await Promise.race([
+        f.requestReceived,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('native request was not observed')), 15_000),
+        ),
+      ])
+      expect(await f.jobs.stop(result.sessionId)).toEqual({ ok: true })
+      const stopped = await ended(f.jobs, result.sessionId)
+      expect(stopped.outcome).toBe('failed')
+      expect(stopped.error).toContain('Stopped')
+      expect(
+        f.host.some((event) => event.id === result.sessionId && event.outcome === 'failed'),
+      ).toBe(true)
+      f.stopServer()
+      expect(f.jobs.sessions()).toHaveLength(1)
+      expect(await f.jobs.stop(result.sessionId)).toEqual({ ok: true })
+      expect(f.jobs.sessions()).toHaveLength(0)
+      Object.assign(scenario, {
+        sessionId: result.sessionId,
+        outcome: stopped.outcome,
+        error: stopped.error,
+        requests: f.requests.map(({ url, model }) => ({ url, model })),
+        processes: f.processes,
+        host: f.host,
+        brackets: f.brackets,
+      })
+      finishScenario(scenario, 'pass')
+    }, 35_000)
+
+    it('leave drains a stalled native run and clears all job sessions', async () => {
+      const scenario = beginScenario('stall-leave')
+      const f = await fixture('stall')
+      scenario.processes = f.processes
+      scenario.rawProcesses = f.rawProcesses
+      scenario.jsonl = f.jsonl
+      scenario.requests = f.requests
+      scenario.host = f.host
+      scenario.brackets = f.brackets
+      progress(scenario, 'native-launch')
+      const result = await f.jobs.start({
+        provider: f.provider,
+        name: 'leave proof',
+        prompt: 'Wait',
+        allow: [],
+      })
+      progress(scenario, 'native-contract')
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      progress(scenario, 'host-lifecycle')
+      await Promise.race([
+        f.requestReceived,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('native request was not observed')), 15_000),
+        ),
+      ])
+      await f.jobs.leave()
+      f.stopServer()
+      expect(f.jobs.sessions()).toHaveLength(0)
+      expect(f.jobs.has(result.sessionId)).toBe(false)
+      Object.assign(scenario, {
+        sessionId: result.sessionId,
+        outcome: 'left',
+        sessionsAfterLeave: f.jobs.sessions().length,
+        hasAfterLeave: f.jobs.has(result.sessionId),
+        requests: f.requests.map(({ url, model }) => ({ url, model })),
+        processes: f.processes,
+        host: f.host,
+        brackets: f.brackets,
+      })
+      finishScenario(scenario, 'pass')
+    }, 35_000)
+  })
+} else {
+  describe.skip('native Codex exec producer → real jobs host (HOLI_CODEX_BIN unset)', () => {
+    it('requires the native CLI', () => {})
+  })
+}
