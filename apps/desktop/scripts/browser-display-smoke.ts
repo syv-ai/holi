@@ -51,7 +51,16 @@ async function run(): Promise<void> {
       <label>Lines <textarea aria-label="Lines" id="lines">first line\nsecond line</textarea></label>
       <label>Password <input aria-label="Password" type="password" id="password"></label>
       <label>Number <input aria-label="Number" type="number" id="number" value="12"></label>
-      <p>Local fixture, no accounts</p></main>`)
+      <label>Readonly <input aria-label="Readonly" id="readonly" value="locked" readonly></label>
+      <label>Editable <div aria-label="Editable" id="editable" contenteditable="true">edit me</div></label>
+      <label>Not editable <div aria-label="Not editable" id="inert" contenteditable="false">inert</div></label>
+      <label>Graphemes <textarea aria-label="Graphemes" id="graphemes">a café🙂 z</textarea></label>
+      <label>Rows <textarea aria-label="Rows" id="rows">  alpha beta\n  gamma delta\n  omega</textarea></label>
+      <div id="shadow-host"></div><iframe title="frame" srcdoc="<input id='frame-input' value='frame'>"></iframe>
+      <p>Local fixture, no accounts</p></main><script>
+      const shadow = document.querySelector('#shadow-host').attachShadow({mode:'open'});
+      shadow.innerHTML = '<input id="shadow-input" value="shadow">';
+      </script>`)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
@@ -190,10 +199,17 @@ async function run(): Promise<void> {
     // Existing display-isolation assertion exercises the callback on detached views.
     view.webContents.emit('before-input-event', { preventDefault() {} }, input)
   }
-  const nativePress = async (view: WebContentsView, key: string, code?: string) => {
-    view.webContents.sendInputEvent({ type: 'keyDown', keyCode: code ?? key })
-    if (key.length === 1) view.webContents.sendInputEvent({ type: 'char', keyCode: key })
-    view.webContents.sendInputEvent({ type: 'keyUp', keyCode: code ?? key })
+  const nativePress = async (
+    view: WebContentsView,
+    key: string,
+    code?: string,
+    shiftOverride?: boolean,
+  ) => {
+    const shift = shiftOverride ?? (key.length === 1 && key !== key.toLowerCase())
+    const keyCode = code ?? (shift ? key.toLowerCase() : key)
+    view.webContents.sendInputEvent({ type: 'keyDown', keyCode, shift })
+    if (key.length === 1) view.webContents.sendInputEvent({ type: 'char', keyCode: key, shift })
+    view.webContents.sendInputEvent({ type: 'keyUp', keyCode, shift })
     await new Promise((resolve) => setTimeout(resolve, 30))
   }
   const inPage = <T>(view: WebContentsView, expression: string) =>
@@ -295,6 +311,151 @@ async function run(): Promise<void> {
     return (event?.payload as { mode?: string } | undefined)?.mode === 'normal' ? event : undefined
   }, 'normal mode after native Escape')
   assert.equal((normalMode.payload as { mode: string }).mode, 'normal')
+  const selection = async (selector: string, start: number, end = start) =>
+    inPage(a, `document.querySelector('${selector}').setSelectionRange(${start}, ${end})`)
+  const caret = async (selector: string) =>
+    inPage<number>(a, `document.querySelector('${selector}').selectionStart`)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await selection('#text', 0)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#text'), 1, 'l advances one grapheme')
+  await nativePress(a, 'h')
+  assert.equal(await caret('#text'), 0, 'h retreats one grapheme')
+  await nativePress(a, 'w')
+  assert.equal(await caret('#text'), 4, 'w advances to next word')
+  await nativePress(a, 'b')
+  assert.equal(await caret('#text'), 0, 'b retreats to prior word')
+  await nativePress(a, 'e')
+  assert.equal(await caret('#text'), 2, 'e advances to word end')
+  await selection('#text', 4)
+  await nativePress(a, 'a')
+  assert.equal(await inPage<number>(a, `document.querySelector('#text').selectionStart`), 5)
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one two three')
+  await nativePress(a, 'Escape')
+  await selection('#text', 7)
+  await nativePress(a, '0')
+  assert.equal(await caret('#text'), 0, '0 moves to line start')
+  await nativePress(a, '^')
+  assert.equal(await caret('#text'), 0, '^ moves to first nonblank')
+  await nativePress(a, '$')
+  assert.equal(await caret('#text'), 13, '$ moves to line end')
+  await selection('#text', 0)
+  await nativePress(a, 'i')
+  assert.equal(await caret('#text'), 0, 'i enters insert at cursor')
+  await nativePress(a, 'Escape')
+  await selection('#text', 0)
+  await nativePress(a, 'a')
+  assert.equal(await caret('#text'), 1, 'a enters insert after cursor')
+  await nativePress(a, 'Escape')
+  mark('native-h-l-w-b-e-0-caret-dollar-and-i-a')
+  await inPage(a, `document.querySelector('#graphemes').focus()`)
+  await nativePress(a, 'Escape')
+  await selection('#graphemes', 0)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 1)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 2)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 3, 'combining grapheme is one step')
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 4)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 5)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 7, 'combining mark is part of one grapheme')
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 9, 'emoji grapheme is one step')
+  await nativePress(a, 'h')
+  assert.equal(await caret('#graphemes'), 7)
+  mark('native-grapheme-safe-horizontal-motion')
+  await inPage(a, `document.querySelector('#rows').focus()`)
+  await nativePress(a, 'Escape')
+  await selection('#rows', 3)
+  await nativePress(a, 'j')
+  assert.equal(await caret('#rows'), 16, 'j preserves grapheme column')
+  await nativePress(a, 'j')
+  assert.equal(await caret('#rows'), 30, 'j preserves the preferred column')
+  await nativePress(a, 'k')
+  assert.equal(await caret('#rows'), 16, 'k restores preferred column')
+  mark('native-j-k-vertical-column')
+  // The page's unsupported fields and foreign roots must receive native text
+  // unchanged; only eligible top-document text fields enter insert/normal.
+  for (const [selector, key, expected] of [
+    ['#password', 'a', 'a'],
+    ['#number', '1', '1'],
+    ['#readonly', 'a', 'locked'],
+    ['#inert', 'a', 'inert'],
+    ['#editable', 'a', 'a'],
+  ] as const) {
+    await inPage(a, `document.querySelector('${selector}').focus()`)
+    await nativePress(a, key)
+    const value = await inPage<string>(
+      a,
+      `document.querySelector('${selector}').${selector === '#editable' || selector === '#inert' ? 'innerText' : 'value'}`,
+    )
+    assert(value.includes(expected), `${selector} passthrough: ${value}`)
+  }
+  await inPage(
+    a,
+    `document.querySelector('#shadow-host').shadowRoot.querySelector('input').focus()`,
+  )
+  await nativePress(a, 'a')
+  assert.equal(
+    await inPage<string>(
+      a,
+      `document.querySelector('#shadow-host').shadowRoot.querySelector('input').value`,
+    ),
+    'ashadow',
+  )
+  await inPage(a, `document.querySelector('iframe').contentDocument.querySelector('input').focus()`)
+  await nativePress(a, 'a')
+  assert.equal(
+    await inPage<string>(
+      a,
+      `document.querySelector('iframe').contentDocument.querySelector('input').value`,
+    ),
+    'aframe',
+  )
+  mark('unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough')
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'Escape')
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one two three')
+  a.webContents.debugger.attach('1.3')
+  try {
+    await a.webContents.debugger.sendCommand('Input.imeSetComposition', {
+      text: '日本語',
+      selectionStart: 3,
+      selectionEnd: 3,
+    })
+    await a.webContents.debugger.sendCommand('Input.insertText', { text: '日本語' })
+  } finally {
+    a.webContents.debugger.detach()
+  }
+  assert((await inPage<string>(a, `document.querySelector('#text').value`)).includes('日本語'))
+  mark('native-ime-composition-in-insert-mode')
+  await inPage(a, `document.querySelector('#text').value = 'one two three'`)
+  configureVim(vimSnapshot, false, 5)
+  await inPage(
+    a,
+    `document.querySelector('#text').focus(); document.querySelector('#text').setSelectionRange(0, 0)`,
+  )
+  await nativePress(a, 'z')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#text').value`),
+    'zone two three',
+    'disabled preference passes input through',
+  )
+  configureVim(vimSnapshot, true, 6)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await nativePress(a, 'Escape')
+  const reenabledMode = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    return (event?.payload as { mode?: string } | undefined)?.mode === 'normal' ? event : undefined
+  }, 'Vim mode after preference re-enable')
+  assert.equal((reenabledMode.payload as { mode: string }).mode, 'normal')
+  mark('preference-disable-reenable-controls-native-vim')
+  await inPage(a, `document.querySelector('#text').value = 'one two three'`)
   await inPage(
     a,
     `document.querySelector('#search').value = 'kept'; document.querySelector('#search').focus()`,
