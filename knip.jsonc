@@ -41,6 +41,8 @@
         "scripts/browser-display-fixture/toolbar-sequence.ts",
         "scripts/mail-markers-smoke-main.ts",
         "scripts/mail-markers-smoke-renderer.tsx",
+        // Native IPC smoke is selected by the Node runner's filesystem path.
+        "scripts/ipc-sender-native-smoke.ts",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",
