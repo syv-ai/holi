@@ -150,6 +150,13 @@ async function run() {
   const fakeStarred = new Set(['thread-yellow', 'thread-red', 'thread-blue'])
   const refusedUnstars = new Set<string>()
   let delayNext: null | { started: () => void; released: Promise<void> } = null
+  let holdSecondMarkerRead: {
+    id: string
+    reads: number
+    started: () => void
+    released: Promise<void>
+  } | null = null
+  const refusedUnstarCalls: string[] = []
   const nativeCalls: string[] = []
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     if (/^(file|data|devtools):/.test(details.url)) return callback({})
@@ -188,8 +195,12 @@ async function run() {
         const params = JSON.parse(op.input.paramsJson ?? '{}') as Record<string, unknown>
         if (op.input.name === 'google.setMailMarker') {
           const id = String(params.id)
-          if (params.marker === null && !refusedUnstars.has(id)) fakeStarred.delete(id)
-          else if (params.marker !== null) fakeStarred.add(id)
+          if (params.marker === null && refusedUnstars.has(id)) {
+            refusedUnstarCalls.push(id)
+            return { ok: false, message: 'Synthetic Gmail unstar refusal' }
+          }
+          if (params.marker === null) fakeStarred.delete(id)
+          else fakeStarred.add(id)
         }
         if (op.input.name === 'google.star') {
           const id = String(params.id)
@@ -205,11 +216,26 @@ async function run() {
           }
         }
         const value = (await registry.run(op.input.name, 'ui', context, params)).value
-        if (op.input.name === 'google.mailMarkerAnnotations' && delayNext !== null) {
-          const delayed = delayNext
-          delayNext = null
-          delayed.started()
-          await delayed.released
+        if (op.input.name === 'google.mailMarkerAnnotations') {
+          if (
+            holdSecondMarkerRead !== null &&
+            Array.isArray(params.ids) &&
+            params.ids.includes(holdSecondMarkerRead.id)
+          ) {
+            const delayed = holdSecondMarkerRead
+            delayed.reads++
+            if (delayed.reads === 2) {
+              holdSecondMarkerRead = null
+              delayed.started()
+              await delayed.released
+            }
+          }
+          if (delayNext !== null) {
+            const delayed = delayNext
+            delayNext = null
+            delayed.started()
+            await delayed.released
+          }
         }
         return { ok: true, data: value }
       } catch (cause) {
@@ -568,40 +594,72 @@ async function run() {
     // Exercise reader-header annotation recovery after a marker write while
     // the thread remains open. The write succeeds; only its reconciliation read fails.
     for (const [view, section, id] of [
-      ['shell', 'Production app-shell mail', 'thread-red'],
-      ['surface', 'Production legacy mail reader', 'thread-red'],
+      ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
+      ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
     ]) {
-      await markersA.set(id, 'red-star')
-      fakeStarred.add(id)
-      failAnnotations = 100
+      await markersA.set(id, null)
+      fakeStarred.delete(id)
       await win.loadFile(join(root, 'renderer.html'))
       await waitFor(
         win,
-        `document.querySelector('[aria-label="Enable Red star"]') && document.querySelector('section[aria-label="${section}"] #${id} [aria-label="Retry marker"]')`,
+        `document.querySelector('[aria-label="Enable Red star"]') && document.querySelector('section[aria-label="${section}"] #${id}')`,
+      )
+      await waitFor(
+        win,
+        `document.querySelector('[aria-label="Enable Blue question mark"][aria-checked="true"]') && document.querySelectorAll('[aria-label="Blue question mark"]').length === 2 && !document.querySelector('[aria-label="Loading marker"]')`,
       )
       await installTrustedClickRecorder()
-      await js(
-        `window.smokeShow('${view}'); const scope=document.querySelector('section[aria-label="${section}"]'); const row=[...scope.querySelectorAll('[role="listitem"],button')].find(n=>n.textContent.includes('Red marker fixture')); if(!row)throw Error('Missing reader row'); row.click()`,
+      await js(`window.smokeShow('${view}')`)
+      const row = `section[aria-label="${section}"] #${id}`
+      await nativeClick(row)
+      const readerAction =
+        view === 'shell'
+          ? `section[aria-label="${section}"] [role="toolbar"][aria-label="Thread actions"] button[aria-label="Star thread"]`
+          : `section[aria-label="${section}"] button[aria-label="Star this thread"]`
+      await waitFor(
+        win,
+        `document.querySelector('section[aria-label="${section}"]').textContent.includes('Synthetic message body for smoke-account-a.') && document.querySelector(${JSON.stringify(readerAction)})`,
       )
       await waitFor(
         win,
-        `document.querySelector('section[aria-label="${section}"]').textContent.includes('Synthetic message body for smoke-account-a.')`,
+        `document.querySelector(${JSON.stringify(readerAction)}) && !document.querySelector('section[aria-label="${section}"] [aria-label="Loading marker"]')`,
       )
+      const expectedMarker = (await markersA.preferences()).enabledOrder[0]!
+      const headerAction = readerAction
+      const writesBefore = await js(
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+      )
+      failAnnotations = 1
+      await nativeClick(headerAction)
       await waitFor(
         win,
-        `document.querySelector('section[aria-label="${section}"] [aria-label="Retry marker"]')`,
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${writesBefore} && (()=>{const scope=document.querySelector('section[aria-label="${section}"]'); const heading=[...scope.querySelectorAll('h3')].find(node=>node.textContent.includes('Unstarred')); if(!heading)return false; let parent=heading.parentElement; while(parent&&parent!==scope){const retry=parent.querySelector('[aria-label="Retry marker"]'); if(retry){retry.setAttribute('data-smoke-target','reader-retry');return true} parent=parent.parentElement} return false})()`,
       )
-      const expectedMarker = (await markersA.read([id]))[id]
-      assert.equal(expectedMarker, 'red-star')
-      const retriesBefore = await js(
-        `document.querySelectorAll('section[aria-label="${section}"] [aria-label="Retry marker"]').length`,
+      const actionCall = await js(
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').at(-1)?.input`,
       )
+      assert.deepEqual(JSON.parse(actionCall.paramsJson), {
+        id,
+        marker: expectedMarker,
+        expectedAccountSub: subA,
+      })
+      assert.deepEqual(await markersA.read([id]), { [id]: expectedMarker })
       failAnnotations = 0
-      const retry = `section[aria-label="${section}"] [aria-label="Retry marker"]`
-      await nativeClickLast(retry)
+      const headerRetry = `section[aria-label="${section}"] [data-smoke-target="reader-retry"]`
+      await nativeClick(headerRetry)
+      const markerLabel =
+        expectedMarker === 'blue-question'
+          ? 'Blue question mark'
+          : expectedMarker === 'red-star'
+            ? 'Red star'
+            : 'Yellow star'
+      const starredHeader =
+        view === 'shell'
+          ? `section[aria-label="${section}"] [role="toolbar"][aria-label="Thread actions"] button[aria-label="Unstar thread"][aria-pressed="true"] [aria-label="${markerLabel}"]`
+          : `section[aria-label="${section}"] button[aria-label="Unstar this thread"] [aria-label="${markerLabel}"]`
       await waitFor(
         win,
-        `document.querySelectorAll('section[aria-label="${section}"] [aria-label="Retry marker"]').length < ${retriesBefore} && document.querySelector('section[aria-label="${section}"] [aria-label="Red star"]')`,
+        `!document.querySelector('section[aria-label="${section}"] [data-smoke-target="reader-retry"]') && document.querySelector(${JSON.stringify(starredHeader)})`,
       )
       assert.deepEqual(await markersA.read([id]), { [id]: expectedMarker })
       await markersA.set(id, null)
@@ -609,46 +667,71 @@ async function run() {
     }
     mark('native-reader-header-retry-recovers-action-reconciliation-in-both-surfaces')
 
-    // A refused Gmail unstar must leave the reader's button pressed and labelled
-    // Unstar even though the personal marker is absent.
-    await markersA.set('thread-red', null)
-    fakeStarred.add('thread-red')
-    refusedUnstars.add('thread-red')
-    await win.loadFile(join(root, 'renderer.html'))
-    await waitFor(
-      win,
-      `document.querySelector('[aria-label="Enable Red star"]') && document.querySelector('section[aria-label="Production app-shell mail"] #thread-red')`,
-    )
-    await installTrustedClickRecorder()
-    await js(
-      `window.smokeShow('shell'); document.querySelector('section[aria-label="Production app-shell mail"] #thread-red').click()`,
-    )
-    const shellReader = 'section[aria-label="Production app-shell mail"]'
-    await waitFor(
-      win,
-      `document.querySelector('${shellReader}').textContent.includes('Synthetic message body for smoke-account-a.')`,
-    )
-    await waitFor(
-      win,
-      `document.querySelector('${shellReader}').querySelector('button[aria-label="Unstar thread"][aria-pressed="true"]')`,
-    )
-    await nativeClickLast(`${shellReader} button[aria-label="Unstar thread"][aria-pressed="true"]`)
-    await pause(300)
-    assert(
-      await js(
-        `(()=>{const action=[...document.querySelector('${shellReader}').querySelectorAll('button[aria-label="Star thread"],button[aria-label="Unstar thread"]')].find(button=>button.querySelector('[aria-label="Starred"]')); return action?.getAttribute('aria-label')==='Unstar thread'&&action.getAttribute('aria-pressed')==='true'})()`,
-      ),
-      `reader action must remain Unstar and pressed after Gmail refuses the unstar: ${JSON.stringify(await js(`([...document.querySelector('${shellReader}').querySelectorAll('button[aria-label="Star thread"],button[aria-label="Unstar thread"]')].map(button=>({label:button.getAttribute('aria-label'),pressed:button.getAttribute('aria-pressed'),glyph:button.querySelector('[aria-label]')?.getAttribute('aria-label')})))`))}`,
-    )
-    assert.deepEqual(await markersA.read(['thread-red']), { 'thread-red': null })
-    refusedUnstars.delete('thread-red')
-    await markersA.set('thread-red', 'red-star')
+    // Gmail refuses both reader implementations' unstar writes. The personal marker
+    // remains absent while the synthetic Gmail summary remains starred.
+    for (const [view, section, unstarLabel] of [
+      ['shell', 'Production app-shell mail', 'Unstar thread'],
+      ['surface', 'Production legacy mail reader', 'Unstar this thread'],
+    ]) {
+      const id = 'thread-red'
+      await markersA.set(id, null)
+      fakeStarred.add(id)
+      refusedUnstars.add(id)
+      const refusedBefore = refusedUnstarCalls.length
+      await win.loadFile(join(root, 'renderer.html'))
+      await waitFor(
+        win,
+        `document.querySelector('[aria-label="Enable Red star"]') && document.querySelector('section[aria-label="${section}"] #${id}')`,
+      )
+      await installTrustedClickRecorder()
+      await js(`window.smokeShow('${view}')`)
+      await nativeClick(`section[aria-label="${section}"] #${id}`)
+      await waitFor(
+        win,
+        `document.querySelector('section[aria-label="${section}"]').textContent.includes('Synthetic message body for smoke-account-a.')`,
+      )
+      const headerAction =
+        view === 'shell'
+          ? `section[aria-label="${section}"] [role="toolbar"][aria-label="Thread actions"] button[aria-label="Unstar thread"]`
+          : `section[aria-label="${section}"] button[aria-label="Unstar this thread"]`
+      await waitFor(win, `document.querySelectorAll(${JSON.stringify(headerAction)}).length === 1`)
+      const writesBefore = await js(
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+      )
+      const searchesBefore = await js(
+        `window.smokeCalls.filter(call=>call.input?.name==='google.search' && JSON.parse(call.input.paramsJson).query==='is:starred').length`,
+      )
+      const pressedSelector = `${headerAction}${view === 'shell' ? '[aria-pressed="true"]' : ''}`
+      await nativeClick(pressedSelector)
+      await waitFor(
+        win,
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${writesBefore}`,
+      )
+      assert.equal(refusedUnstarCalls.length, refusedBefore + 1)
+      assert.equal(refusedUnstarCalls.at(-1), id)
+      await waitFor(
+        win,
+        `window.smokeCalls.filter(call=>call.input?.name==='google.search' && JSON.parse(call.input.paramsJson).query==='is:starred').length > ${searchesBefore}`,
+      )
+      assert.equal(id, 'thread-red', 'the synthetic Gmail summary is already starred')
+      assert.deepEqual(await markersA.read([id]), { [id]: null })
+      assert.equal(
+        await js(
+          `(()=>{const action=document.querySelector(${JSON.stringify(headerAction)}); const glyph=action?.querySelector('[aria-label="Starred"]'); return action?.getAttribute('aria-label')===${JSON.stringify(unstarLabel)} && ${view === 'shell' ? `action.getAttribute('aria-pressed')==='true'` : '!!glyph'}})()`,
+        ),
+        true,
+        `${view} reader must preserve its actual starred state after refusal`,
+      )
+      refusedUnstars.delete(id)
+      await markersA.set(id, 'red-star')
+    }
     mark('native-reader-retains-unstar-state-after-refused-gmail-unstar')
 
-    // Hold the secondary annotation refetch after the first write. A second
-    // trusted click within the burst window must advance from that settled marker.
-    await markersA.set('thread-unstarred-shell', null)
-    fakeStarred.delete('thread-unstarred-shell')
+    // Hold the second annotation read (the display hook's reload) after the
+    // controller's reconciliation read has completed.
+    const burstId = 'thread-unstarred-shell'
+    await markersA.set(burstId, null)
+    fakeStarred.delete(burstId)
     let releaseMarkerRead!: () => void
     let markerReadStarted!: () => void
     const heldMarkerRead = new Promise<void>((resolve) => {
@@ -657,40 +740,56 @@ async function run() {
     const markerReadEntered = new Promise<void>((resolve) => {
       markerReadStarted = resolve
     })
-    await win.loadFile(join(root, 'renderer.html'))
-    await waitFor(
-      win,
-      `document.querySelector('[aria-label="Enable Red star"]') && document.querySelector('section[aria-label="Production app-shell mail"] #thread-unstarred-shell')`,
-    )
-    await installTrustedClickRecorder()
-    await js(`window.smokeShow('shell')`)
-    await pause(150)
-    delayNext = { started: markerReadStarted, released: heldMarkerRead }
-    const cycle =
-      'section[aria-label="Production app-shell mail"] #thread-unstarred-shell button[aria-label="Star thread"], section[aria-label="Production app-shell mail"] #thread-unstarred-shell button[aria-label="Unstar thread"]'
-    const burstStart = await js('window.smokeTrustedClicks.length')
-    await nativeClick(cycle)
-    await markerReadEntered
-    const firstSettledMarker = (await markersA.read(['thread-unstarred-shell']))[
-      'thread-unstarred-shell'
-    ]
-    assert(firstSettledMarker, 'the first click must settle a marker write')
-    releaseMarkerRead()
-    await pause(25)
-    await nativeClick(cycle)
-    const burstEvents = await js(`window.smokeTrustedClicks.slice(${burstStart})`)
-    assert.equal(burstEvents.length, 2)
-    assert(burstEvents.every((event: { trusted: boolean }) => event.trusted))
-    assert(burstEvents[1]!.at - burstEvents[0]!.at <= 500)
-    const secondSettledMarker = (await markersA.read(['thread-unstarred-shell']))[
-      'thread-unstarred-shell'
-    ]
-    assert(secondSettledMarker && secondSettledMarker !== firstSettledMarker)
-    await pause(600)
-    assert.deepEqual(await markersA.read(['thread-unstarred-shell']), {
-      'thread-unstarred-shell': secondSettledMarker,
-    })
-    await markersA.set('thread-unstarred-shell', null)
+    let markerReadReleased = false
+    const waitForStoredMarker = async (expected: string) => {
+      const deadline = Date.now() + 5000
+      while (Date.now() < deadline) {
+        if ((await markersA.read([burstId]))[burstId] === expected) return
+        await pause(20)
+      }
+      assert.equal((await markersA.read([burstId]))[burstId], expected)
+    }
+    try {
+      await win.loadFile(join(root, 'renderer.html'))
+      await waitFor(
+        win,
+        `document.querySelector('[aria-label="Enable Red star"]') && document.querySelector('section[aria-label="Production app-shell mail"] #${burstId}')`,
+      )
+      await installTrustedClickRecorder()
+      await js(`window.smokeShow('shell')`)
+      await pause(150)
+      holdSecondMarkerRead = {
+        id: burstId,
+        reads: 0,
+        started: markerReadStarted,
+        released: heldMarkerRead,
+      }
+      const cycle = `section[aria-label="Production app-shell mail"] #${burstId} button[aria-label="Star thread"], section[aria-label="Production app-shell mail"] #${burstId} button[aria-label="Unstar thread"]`
+      const burstStart = await js('window.smokeTrustedClicks.length')
+      await nativeClick(cycle)
+      await markerReadEntered
+      assert.equal(holdSecondMarkerRead, null, 'the second annotation read is held')
+      const configured = (await markersA.preferences()).enabledOrder
+      const firstExpected = configured[0]!
+      const secondExpected = configured[1]!
+      await waitForStoredMarker(firstExpected)
+      assert.equal((await markersA.read([burstId]))[burstId], firstExpected)
+      await nativeClick(cycle)
+      const burstEvents = await js(`window.smokeTrustedClicks.slice(${burstStart})`)
+      assert.equal(burstEvents.length, 2)
+      assert(burstEvents.every((event: { trusted: boolean }) => event.trusted))
+      assert(burstEvents[1]!.at - burstEvents[0]!.at <= 500)
+      await waitForStoredMarker(secondExpected)
+      assert.equal((await markersA.read([burstId]))[burstId], secondExpected)
+    } finally {
+      if (!markerReadReleased) {
+        releaseMarkerRead()
+        markerReadReleased = true
+      }
+      holdSecondMarkerRead = null
+      await markersA.set(burstId, null)
+      fakeStarred.delete(burstId)
+    }
     mark('native-shell-click-during-secondary-refetch-advances-marker-sequence')
     failAnnotations = 100
     await win.loadFile(join(root, 'renderer.html'))
