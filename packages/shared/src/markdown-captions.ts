@@ -44,7 +44,7 @@ export function readMarkdownCodeCaptions(text: string): MarkdownCodeCaption[] {
 }
 
 /** Only accept one paragraph of portable inline Markdown, never raw HTML. */
-function isPortableInlineCaption(caption: string): boolean {
+export function isPortableInlineCaption(caption: string): boolean {
   if (!caption.trim() || /[\r\n\u2028\u2029]/.test(caption)) return false
   if (/^[ \t]/.test(caption) && !/^(?:&#32;|&#9;)+/.test(caption)) return false
   // Reference definitions and reference links depend on document-wide definitions;
@@ -263,19 +263,38 @@ export function readMarkdownCaptionEnvelopes(text: string): MarkdownCaptionEnvel
     nextCaption[index] = marker[index] === CAPTION ? index : nextCaption[index + 1]!
     nextEnd[index] = marker[index] === END ? index : nextEnd[index + 1]!
   }
-  const result: MarkdownCaptionEnvelope[] = []
-  for (let i = 0; i < lines.length; i++) {
-    if (marker[i] !== FIGURE) continue
-    const next = nextBoundary[i + 1]!
-    const outerCaption = nextCaption[i + 1]!
-    if (next !== -1 && marker[next] === FIGURE && outerCaption !== -1 && outerCaption < next) {
-      const innerEnd = nextEnd[next + 1]!
-      const outerEnd = innerEnd === -1 ? -1 : nextBoundary[innerEnd + 1]!
-      if (outerEnd !== -1 && marker[outerEnd] === END) {
-        i = outerEnd
-        continue
-      }
+  const nestedRanges: Array<{ from: number; to: number }> = []
+  const openFigures: Array<{ index: number; nested: boolean }> = []
+  for (let index = 0; index < marker.length; index++) {
+    if (marker[index] === FIGURE) {
+      if (openFigures.length > 0) openFigures[openFigures.length - 1]!.nested = true
+      openFigures.push({ index, nested: false })
+    } else if (marker[index] === END && openFigures.length > 0) {
+      const opened = openFigures.pop()!
+      if (opened.nested) nestedRanges.push({ from: opened.index, to: index })
     }
+  }
+  nestedRanges.sort((left, right) => left.from - right.from)
+  const mergedNestedRanges: Array<{ from: number; to: number }> = []
+  for (const range of nestedRanges) {
+    const previous = mergedNestedRanges.at(-1)
+    if (previous && range.from <= previous.to + 1) previous.to = Math.max(previous.to, range.to)
+    else mergedNestedRanges.push({ ...range })
+  }
+  const result: MarkdownCaptionEnvelope[] = []
+  let nestedRangeIndex = 0
+  for (let i = 0; i < lines.length; i++) {
+    while (
+      nestedRangeIndex < mergedNestedRanges.length &&
+      mergedNestedRanges[nestedRangeIndex]!.to < i
+    )
+      nestedRangeIndex++
+    const nestedRange = mergedNestedRanges[nestedRangeIndex]
+    if (nestedRange && nestedRange.from <= i) {
+      i = nestedRange.to
+      continue
+    }
+    if (marker[i] !== FIGURE) continue
     if (lines[i + 1]?.text !== '') continue
     const cap = nextMarker[i + 2]!
     if (cap === -1 || marker[cap] !== CAPTION || lines[cap - 1]?.text !== '') continue

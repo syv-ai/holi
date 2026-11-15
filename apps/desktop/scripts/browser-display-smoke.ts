@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, type WebContentsView } from 'electron'
+import { app, BrowserWindow, session, type WebContentsView } from 'electron'
 import { browserMain } from '../src/plugins/browser/main/index'
 import { createPluginHost, type OpenVault } from '../src/main/plugin-host/host'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
@@ -10,9 +10,10 @@ import { noCoreServices } from '../src/main/capabilities/services'
 import type { MainPlugin } from '../src/main/plugin-api'
 import type { PluginEvent } from '../src/main/plugin-host/events'
 import type { PageInfo, PageRead } from '../src/plugins/browser/shared/page'
+import { runAppFrameSmoke } from './app-frame-smoke'
 
-const root = process.env.HOLI_472_ROOT!
-const evidence = process.env.HOLI_472_EVIDENCE!
+const root = process.env.HOLI_473_ROOT!
+const evidence = process.env.HOLI_473_EVIDENCE!
 assert(root && evidence)
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 const rect = { x: 0, y: 0, width: 700, height: 450 }
@@ -26,18 +27,65 @@ async function run(): Promise<void> {
   app.setPath('sessionData', join(root, 'session'))
   assert.equal(app.getPath('userData'), join(root, 'profile'))
   await app.whenReady()
+  const isolatedBrowserSession = session.fromPartition('persist:holi-browser')
+  isolatedBrowserSession.webRequest.onBeforeRequest((details, callback) => {
+    let allowed = false
+    try {
+      const target = new URL(details.url)
+      allowed = target.protocol === 'http:' && target.hostname === '127.0.0.1'
+    } catch {
+      allowed = false
+    }
+    callback({ cancel: !allowed })
+  })
   const checks: string[] = []
   const mark = (name: string) => {
     checks.push(name)
     console.log(`PASS ${name}`)
   }
+  let stallRequested!: () => void
+  const stalled = new Promise<void>((resolve) => {
+    stallRequested = resolve
+  })
   const server = createServer((request, response) => {
+    if (request.url === '/stall') {
+      stallRequested()
+      return
+    }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    response.end(`<!doctype html><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
+    response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body { color: CanvasText; background: Canvas; font: 16px sans-serif; }</style><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
       <main><h1>Browser page owned by vault ${request.url === '/b' ? 'B' : 'A'}</h1>
-      <label>Search <input aria-label="Search"></label><button>Submit</button><p>Local fixture, no accounts</p></main>`)
+      <label>Search <input aria-label="Search" id="search"></label><button>Submit</button>
+      <label>Text <input aria-label="Text" id="text" value="one two three"></label>
+      <label>Lines <textarea aria-label="Lines" id="lines">first line\nsecond line</textarea></label>
+      <label>Password <input aria-label="Password" type="password" id="password"></label>
+      <label>Number <input aria-label="Number" type="number" id="number" value="12"></label>
+      <label>Readonly <input aria-label="Readonly" id="readonly" value="locked" readonly></label>
+      <label>Editable <div aria-label="Editable" id="editable" contenteditable="true">edit me</div></label>
+      <label>Not editable <div aria-label="Not editable" id="inert" contenteditable="false">inert</div></label>
+      <label>Graphemes <textarea aria-label="Graphemes" id="graphemes">a café🙂 z</textarea></label>
+      <label>Rows <textarea aria-label="Rows" id="rows">  alpha beta\n  gamma delta\n  omega</textarea></label>
+      <div id="shadow-host"></div><iframe title="frame" srcdoc="<input id='frame-input' value='frame'>"></iframe>
+      <p>Local fixture, no accounts</p></main><script>
+      const shadow = document.querySelector('#shadow-host').attachShadow({mode:'open'});
+      shadow.innerHTML = '<input id="shadow-input" value="shadow">';
+      </script>`)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const nativeRequests: { webContentsId: number; processId: number; routingId: number }[] = []
+  // This is Electron 43's native provenance seam: protocol Request itself
+  // does not expose a webContentsId, while webRequest details do.
+  const defaultSession = (await import('electron')).session.defaultSession
+  defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    if (details.url.startsWith('http://127.0.0.1:')) {
+      nativeRequests.push({
+        webContentsId: details.webContentsId,
+        processId: details.frame.processId,
+        routingId: details.frame.routingId,
+      })
+    }
+    callback({})
+  })
   const address = server.address()
   assert(address && typeof address === 'object')
   const url = `http://127.0.0.1:${address.port}`
@@ -47,6 +95,18 @@ async function run(): Promise<void> {
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   })
+  await win.loadURL('data:text/html,<h1>Holi shell: no browser page attached</h1>')
+  await win.loadURL(`${url}/a`)
+  assert(
+    nativeRequests.some(
+      (request) =>
+        request.webContentsId === win.webContents.id &&
+        Number.isInteger(request.processId) &&
+        Number.isInteger(request.routingId),
+    ),
+    'Electron webRequest did not expose exact native requester and frame provenance',
+  )
+  mark('electron43-webrequest-native-window-and-frame-provenance')
   await win.loadURL('data:text/html,<h1>Holi shell: no browser page attached</h1>')
   const roots = { A: join(root, 'vault-a'), B: join(root, 'vault-b') }
   for (const vault of Object.values(roots)) {
@@ -171,10 +231,25 @@ async function run(): Promise<void> {
       alt: false,
       shift: false,
     }
-    // Exercise the actual registered Electron callback deterministically, including
-    // detached views for which Chromium does not dispatch physical keyboard input.
+    // Existing display-isolation assertion exercises the callback on detached views.
     view.webContents.emit('before-input-event', { preventDefault() {} }, input)
   }
+  const nativePress = async (
+    view: WebContentsView,
+    key: string,
+    code?: string,
+    shiftOverride?: boolean,
+  ) => {
+    const shift = shiftOverride ?? (key.length === 1 && key !== key.toLowerCase())
+    const keyCode = code ?? (shift ? key.toLowerCase() : key)
+    const modifiers = shift ? ['shift'] : []
+    view.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+    if (key.length === 1) view.webContents.sendInputEvent({ type: 'char', keyCode: key, modifiers })
+    view.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  }
+  const inPage = <T>(view: WebContentsView, expression: string) =>
+    view.webContents.executeJavaScript(expression) as Promise<T>
   host.setDisplayed('A')
   await host.reconcile(vault('A'), 'open')
   await host.reconcile(vault('B'), 'open')
@@ -190,12 +265,20 @@ async function run(): Promise<void> {
   const initial = await invoke<PageRead>('A', 'read', { tab: 'same' })
   assert.match(initial.text, /Browser page owned by vault A/)
   mark('displayed-page-attached-with-loaded-content')
-  const capture = async (view: WebContentsView['webContents'], name: string) => {
+  const capture = async (
+    view: WebContentsView['webContents'],
+    name: string,
+    colorScheme?: 'light' | 'dark',
+  ) => {
     // CDP requests a rendered frame even when the native test window is occluded.
     // No debugger port, visibility override or substitute renderer is involved.
     view.debugger.attach('1.3')
     try {
       await view.debugger.sendCommand('Page.enable')
+      if (colorScheme !== undefined)
+        await view.debugger.sendCommand('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-color-scheme', value: colorScheme }],
+        })
       const image = (await view.debugger.sendCommand('Page.captureScreenshot', {
         captureBeyondViewport: true,
         fromSurface: true,
@@ -207,10 +290,363 @@ async function run(): Promise<void> {
     }
   }
   await capture(win.webContents, 'shell-before.png')
-  await capture(a.webContents, 'browser-before.png')
+  await capture(a.webContents, 'browser-before.png', 'light')
+  await capture(a.webContents, 'browser-dark.png', 'dark')
   const match = initial.text.match(/\[(\d+)\] textbox "Search"/)
   assert(match, initial.text)
   const ref = Number(match[1])
+  const waitFor = async <T>(read: () => T | undefined, label: string): Promise<T> => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const value = read()
+      if (value !== undefined) return value
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error(`timed out waiting for ${label}`)
+  }
+  const selection = async (selector: string, start: number, end = start) =>
+    inPage(a, `document.querySelector('${selector}').setSelectionRange(${start}, ${end})`)
+  const vimSnapshot = await waitFor(
+    () =>
+      sent.find((event) => event.remote === 'A' && event.name === 'vim-mode')?.payload as
+        | { id: string; nonce: string; attachment: string; revision: number; mode: string }
+        | undefined,
+    'production browser vim mode snapshot',
+  )
+  const configureVim = (snapshot: typeof vimSnapshot, enabled: boolean, revision: number) => {
+    for (const listener of [...listeners])
+      listener({
+        remote: 'A',
+        name: 'vim-config',
+        payload: {
+          id: 'same',
+          enabled,
+          revision,
+          nonce: snapshot.nonce,
+          attachment: snapshot.attachment,
+        },
+      })
+  }
+  configureVim(vimSnapshot, true, 1)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  configureVim(vimSnapshot, false, 3)
+  configureVim(vimSnapshot, true, 2)
+  await nativePress(a, 'Escape')
+  const staleConfigMode = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    return (event?.payload as { mode?: string } | undefined)?.mode === 'insert' ? event : undefined
+  }, 'stale config leaves browser Vim disabled')
+  assert.equal((staleConfigMode.payload as { mode: string }).mode, 'insert')
+  mark('stale-vim-disable-request-rejected')
+  configureVim(vimSnapshot, true, 4)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await waitFor(
+    () => sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode'),
+    'configured browser vim mode',
+  )
+  await nativePress(a, 'Escape')
+  const normalMode = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    return (event?.payload as { mode?: string } | undefined)?.mode === 'normal' ? event : undefined
+  }, 'normal mode after native Escape')
+  assert.equal((normalMode.payload as { mode: string }).mode, 'normal')
+  await selection('#text', 4)
+  await nativePress(a, 'Right', 'Right', true)
+  assert.deepEqual(
+    await inPage<[number, number]>(
+      a,
+      `(() => { const e = document.querySelector('#text'); return [e.selectionStart, e.selectionEnd] })()`,
+    ),
+    [4, 5],
+    'Shift+Right keeps native selection in Vim normal mode',
+  )
+  await selection('#text', 5)
+  await nativePress(a, 'Home', undefined, true)
+  assert.deepEqual(
+    await inPage<[number, number]>(
+      a,
+      `(() => { const e = document.querySelector('#text'); return [e.selectionStart, e.selectionEnd] })()`,
+    ),
+    [0, 5],
+    'Shift+Home keeps native selection in Vim normal mode',
+  )
+  await inPage(a, `document.querySelector('#rows').focus()`)
+  await nativePress(a, 'Escape')
+  await selection('#rows', 3)
+  await nativePress(a, 'ArrowDown', 'Down', true)
+  assert.deepEqual(
+    await inPage<[number, number]>(
+      a,
+      `(() => { const e = document.querySelector('#rows'); return [e.selectionStart, e.selectionEnd] })()`,
+    ),
+    [3, 16],
+    'Shift+Down keeps native multiline selection in Vim normal mode',
+  )
+  mark('native-shift-selection-preserved-in-vim-normal-mode')
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await nativePress(a, 'Escape')
+  const caret = async (selector: string) =>
+    inPage<number>(a, `document.querySelector('${selector}').selectionStart`)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await selection('#text', 0)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#text'), 1, 'l advances one grapheme')
+  await nativePress(a, 'h')
+  assert.equal(await caret('#text'), 0, 'h retreats one grapheme')
+  await nativePress(a, 'w')
+  assert.equal(await caret('#text'), 4, 'w advances to next word')
+  await nativePress(a, 'b')
+  assert.equal(await caret('#text'), 0, 'b retreats to prior word')
+  await nativePress(a, 'e')
+  assert.equal(await caret('#text'), 2, 'e advances to word end')
+  await selection('#text', 4)
+  await nativePress(a, 'a')
+  assert.equal(await inPage<number>(a, `document.querySelector('#text').selectionStart`), 5)
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one two three')
+  await nativePress(a, 'Escape')
+  await selection('#text', 7)
+  await nativePress(a, '0')
+  assert.equal(await caret('#text'), 0, '0 moves to line start')
+  await nativePress(a, '^')
+  assert.equal(await caret('#text'), 0, '^ moves to first nonblank')
+  await nativePress(a, '$')
+  assert.equal(await caret('#text'), 13, '$ moves to line end')
+  await selection('#text', 0)
+  await nativePress(a, 'i')
+  assert.equal(await caret('#text'), 0, 'i enters insert at cursor')
+  await nativePress(a, 'Escape')
+  await selection('#text', 0)
+  await nativePress(a, 'a')
+  assert.equal(await caret('#text'), 1, 'a enters insert after cursor')
+  await nativePress(a, 'Escape')
+  mark('native-h-l-w-b-e-0-caret-dollar-and-i-a')
+  await inPage(a, `document.querySelector('#graphemes').focus()`)
+  await nativePress(a, 'Escape')
+  await selection('#graphemes', 0)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 1)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 2)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 3, 'combining grapheme is one step')
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 4)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 5)
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 7, 'combining mark is part of one grapheme')
+  await nativePress(a, 'l')
+  assert.equal(await caret('#graphemes'), 9, 'emoji grapheme is one step')
+  await nativePress(a, 'h')
+  assert.equal(await caret('#graphemes'), 7)
+  mark('native-grapheme-safe-horizontal-motion')
+  await inPage(a, `document.querySelector('#rows').focus()`)
+  await nativePress(a, 'Escape')
+  await selection('#rows', 3)
+  await nativePress(a, 'j')
+  assert.equal(await caret('#rows'), 16, 'j preserves grapheme column')
+  await nativePress(a, 'j')
+  assert.equal(await caret('#rows'), 30, 'j preserves the preferred column')
+  await nativePress(a, 'k')
+  assert.equal(await caret('#rows'), 16, 'k restores preferred column')
+  mark('native-j-k-vertical-column')
+  // The page's unsupported fields and foreign roots must receive native text
+  // unchanged; only eligible top-document text fields enter insert/normal.
+  for (const [selector, key, expected] of [
+    ['#password', 'a', 'a'],
+    ['#number', '1', '1'],
+    ['#readonly', 'a', 'locked'],
+    ['#inert', 'a', 'inert'],
+    ['#editable', 'a', 'a'],
+  ] as const) {
+    await inPage(a, `document.querySelector('${selector}').focus()`)
+    await nativePress(a, key)
+    const value = await inPage<string>(
+      a,
+      `document.querySelector('${selector}').${selector === '#editable' || selector === '#inert' ? 'innerText' : 'value'}`,
+    )
+    assert(value.includes(expected), `${selector} passthrough: ${value}`)
+  }
+  await inPage(
+    a,
+    `document.querySelector('#shadow-host').shadowRoot.querySelector('input').focus()`,
+  )
+  await nativePress(a, 'a')
+  assert.equal(
+    await inPage<string>(
+      a,
+      `document.querySelector('#shadow-host').shadowRoot.querySelector('input').value`,
+    ),
+    'ashadow',
+  )
+  await inPage(a, `document.querySelector('iframe').contentDocument.querySelector('input').focus()`)
+  await nativePress(a, 'a')
+  assert.equal(
+    await inPage<string>(
+      a,
+      `document.querySelector('iframe').contentDocument.querySelector('input').value`,
+    ),
+    'aframe',
+  )
+  mark('unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough')
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'Escape')
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one two three')
+  a.webContents.debugger.attach('1.3')
+  try {
+    await a.webContents.debugger.sendCommand('Input.imeSetComposition', {
+      text: '日本語',
+      selectionStart: 3,
+      selectionEnd: 3,
+    })
+    await a.webContents.debugger.sendCommand('Input.insertText', { text: '日本語' })
+  } finally {
+    a.webContents.debugger.detach()
+  }
+  assert((await inPage<string>(a, `document.querySelector('#text').value`)).includes('日本語'))
+  mark('native-ime-composition-in-insert-mode')
+  await inPage(a, `document.querySelector('#text').value = 'one two three'`)
+  configureVim(vimSnapshot, false, 5)
+  await inPage(
+    a,
+    `document.querySelector('#text').focus(); document.querySelector('#text').setSelectionRange(0, 0)`,
+  )
+  await nativePress(a, 'z')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#text').value`),
+    'zone two three',
+    'disabled preference passes input through',
+  )
+  configureVim(vimSnapshot, true, 6)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await nativePress(a, 'Escape')
+  const reenabledMode = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    return (event?.payload as { mode?: string } | undefined)?.mode === 'normal' ? event : undefined
+  }, 'Vim mode after preference re-enable')
+  assert.equal((reenabledMode.payload as { mode: string }).mode, 'normal')
+  mark('preference-disable-reenable-controls-native-vim')
+  await inPage(a, `document.querySelector('#text').value = 'one two three'`)
+  await inPage(
+    a,
+    `document.querySelector('#search').value = 'kept'; document.querySelector('#search').focus()`,
+  )
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'Escape')
+  assert.equal(await inPage<string>(a, `document.querySelector('#search').value`), 'kept')
+  mark('native-normal-escape-preserves-search-value')
+  await inPage(
+    a,
+    `document.querySelector('#lines').value = '\\n  café🙂'; document.querySelector('#lines').focus()`,
+  )
+  await nativePress(a, 'Escape')
+  await inPage(a, `document.querySelector('#lines').setSelectionRange(1, 1)`)
+  await nativePress(a, 'k')
+  assert.equal(await inPage<number>(a, `document.querySelector('#lines').selectionStart`), 0)
+  await nativePress(a, '0')
+  assert.equal(await inPage<number>(a, `document.querySelector('#lines').selectionStart`), 0)
+  mark('native-leading-newline-line-start')
+  await inPage(
+    a,
+    `document.querySelector('#text').setSelectionRange(0, 0); document.querySelector('#text').focus()`,
+  )
+  await nativePress(a, 'Escape')
+  await inPage(a, `document.querySelector('#text').setSelectionRange(0, 0)`)
+  const beforeNormalText = await inPage<string>(a, `document.querySelector('#text').value`)
+  await nativePress(a, 'w')
+  assert.equal(await inPage<number>(a, `document.querySelector('#text').selectionStart`), 4)
+  await nativePress(a, 'e')
+  assert.equal(await inPage<number>(a, `document.querySelector('#text').selectionStart`), 6)
+  await nativePress(a, 'e')
+  assert.equal(await inPage<number>(a, `document.querySelector('#text').selectionStart`), 12)
+  await inPage(a, `document.querySelector('#text').setSelectionRange(4, 4)`)
+  await nativePress(a, 'x')
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), beforeNormalText)
+  await nativePress(a, 'i')
+  await inPage(
+    a,
+    `window.nativeInputEvents = 0; document.querySelector('#text').addEventListener('input', () => window.nativeInputEvents++)`,
+  )
+  await nativePress(a, 'X')
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one Xtwo three')
+  assert.equal(
+    await inPage<number>(a, `window.nativeInputEvents`),
+    1,
+    'native insert emits one input event',
+  )
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), beforeNormalText)
+  a.webContents.redo()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one Xtwo three')
+  mark('native-browser-vim-mode-navigation-insertion-undo-redo')
+  await inPage(
+    a,
+    `document.querySelector('#text').value = 'one two three'; document.querySelector('#text').focus()`,
+  )
+  const beforeSameDocument = sent.findLast(
+    (event) => event.remote === 'A' && event.name === 'vim-mode',
+  )!.payload as typeof vimSnapshot
+  await nativePress(a, 'Escape')
+  await inPage(a, `history.pushState({ smoke: true }, '', '#same-document')`)
+  const afterSameDocument = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    const snapshot = event?.payload as typeof vimSnapshot | undefined
+    return snapshot && snapshot.nonce !== beforeSameDocument.nonce ? snapshot : undefined
+  }, 'Vim ownership reset after same-document navigation')
+  assert.equal(afterSameDocument.mode, 'insert')
+  configureVim(afterSameDocument, true, 1)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await selection('#text', 0)
+  await nativePress(a, 'z')
+  assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'zone two three')
+  mark('native-same-document-navigation-rearms-insert-mode')
+
+  await inPage(
+    a,
+    `document.querySelector('#text').value = 'one two three'; document.querySelector('#text').focus()`,
+  )
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'w')
+  const beforeAbortedNavigation = sent.findLast(
+    (event) => event.remote === 'A' && event.name === 'vim-mode',
+  )!.payload as typeof vimSnapshot
+  const stalledNavigation = invoke<PageInfo>('A', 'open', { tab: 'same', url: `${url}/stall` })
+  await stalled
+  a.webContents.stop()
+  await stalledNavigation
+  const recoveredDocument = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    const snapshot = event?.payload as typeof vimSnapshot | undefined
+    return snapshot && snapshot.nonce !== beforeAbortedNavigation.nonce ? snapshot : undefined
+  }, 'Vim ownership recovery after aborted navigation')
+  configureVim(recoveredDocument, false, 1)
+  await selection('#text', 0)
+  await nativePress(a, 'z')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#text').value`),
+    'zone two three',
+    'aborted navigation recovery lets the surviving document accept disabled Vim input',
+  )
+  mark('native-aborted-navigation-recovers-surviving-document-configuration')
+
+  place('A', null)
+  place('A', rect)
+  const reattachedVim = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    const snapshot = event?.payload as typeof vimSnapshot | undefined
+    return snapshot && snapshot.attachment !== vimSnapshot.attachment ? snapshot : undefined
+  }, 'fresh attachment Vim snapshot')
+  configureVim(reattachedVim, true, 1)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await nativePress(a, 'Escape')
+  const reattachedMode = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    return (event?.payload as { mode?: string } | undefined)?.mode === 'normal' ? event : undefined
+  }, 'Vim rearmed after fresh attachment')
+  assert.equal((reattachedMode.payload as { mode: string }).mode, 'normal')
+  mark('vim-rearms-after-native-reattachment')
   nativeKey(a, 'l')
   await tick()
   assert(
@@ -352,7 +788,9 @@ async function run(): Promise<void> {
     await Promise.all([reconciling, stopping])
     mark(check)
   }
+  // The toolbar acceptance runner inserts its isolated renderer phase before teardown.
   assert.equal(listeners.size, 0)
+  checks.push(...(await runAppFrameSmoke(root, evidence)))
   win.destroy()
   server.closeAllConnections()
   await new Promise<void>((resolve, reject) =>
@@ -375,7 +813,16 @@ async function run(): Promise<void> {
           vaultA: roots.A,
           vaultB: roots.B,
         },
-        screenshots: ['browser-before.png', 'shell-before.png', 'browser-after.png'],
+        screenshots: [
+          'browser-before.png',
+          'browser-dark.png',
+          'shell-before.png',
+          'browser-after.png',
+          'vault-app-a.png',
+          'vault-app-b.png',
+          'app-frame-read-a.png',
+          'app-frame-read-b.png',
+        ],
       },
       null,
       2,

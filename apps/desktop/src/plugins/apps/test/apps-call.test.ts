@@ -7,11 +7,12 @@
  * hosts untrusted app code, and the process rendering untrusted code must not
  * also be the process deciding what it may read.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { appsCapabilities, storeCapabilities } from '../main/capabilities'
+import { createAppPreviews, type AppPreviews } from '../main/previews'
 import { createCapabilityHost, type AppDoor } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
@@ -25,7 +26,15 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
-async function rig() {
+async function rig(
+  options: {
+    capture?: () => Promise<Buffer | null>
+    captureCurrent?: () => boolean
+    savePreview?: () => Promise<void>
+    previews?: (root: string) => AppPreviews
+    captureStarted?: () => void
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'holi-apps-call-'))
   dirs.push(root)
   // A real vault carries its seeded files: the agent surface is there to refuse.
@@ -52,6 +61,10 @@ async function rig() {
     }),
   )
   let door: AppDoor | null = null
+  const previewPlacements = new Map<
+    string,
+    { generation: number; rect: { x: number; y: number; width: number; height: number } | null }
+  >()
   registry.register(
     ['apps'],
     appsCapabilities({
@@ -61,8 +74,36 @@ async function rig() {
         status: async () => ({ codeHash: '', affordances: [], expiresAt: null }),
         grant: async () => true,
       },
-      previews: { read: async () => null, save: async () => {}, forget: async () => {} },
-      capture: async () => null,
+      previewPlacements,
+      previews: options.previews?.(root) ?? {
+        read: async () => null,
+        revision: () => 0,
+        save: async () => {
+          options.savePreview?.()
+          return true
+        },
+        forget: async () => {},
+      },
+      capture: async () => {
+        options.captureStarted?.()
+        return options.capture ? options.capture() : null
+      },
+      issueFrameLease: () => ({ token: 'a'.repeat(48), nonce: 'b'.repeat(48) }),
+      releaseFrameLease: () => true,
+      validateFrameLease: (token, nonce, bundle) =>
+        token === 'a'.repeat(48) && nonce === 'b'.repeat(48)
+          ? ({
+              token,
+              nonce,
+              remote: REMOTE,
+              root,
+              bundle,
+              activation: 1,
+              window: { isDestroyed: () => false } as never,
+              valid: () => options.captureCurrent?.() ?? true,
+              claimDocument: () => true,
+            } as never)
+          : null,
     }),
   )
   registry.register(['store'], storeCapabilities())
@@ -83,16 +124,116 @@ async function rig() {
         door: 'ui',
         remote: REMOTE,
         name: 'apps.call',
-        params: { bundle, method, params },
+        params: { bundle, method, params, token: 'a'.repeat(48), nonce: 'b'.repeat(48) },
       })
     ).value
   /** One of Holi's own UI calls, as the renderer's `appsCap` makes it. */
   const ui = async (name: string, params?: unknown) =>
-    (await host.dispatch({ door: 'ui', remote: REMOTE, name, params })).value
-  return { call, door, ui, root }
+    (
+      await host.dispatch({
+        door: 'ui',
+        remote: REMOTE,
+        name,
+        params:
+          params &&
+          typeof params === 'object' &&
+          ['apps.call', 'apps.log', 'apps.capturePreview'].includes(name)
+            ? { ...params, token: 'a'.repeat(48), nonce: 'b'.repeat(48) }
+            : params,
+      })
+    ).value
+  return { call, door, ui, root, host, previewPlacements }
 }
 
 describe('apps.call', () => {
+  it('requires the current document token and nonce', async () => {
+    const { host } = await rig()
+    await expect(
+      host.dispatch({
+        door: 'ui',
+        remote: REMOTE,
+        name: 'apps.call',
+        params: { bundle: 'Tracker.app', method: 'docs.list' },
+      }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(
+      host.dispatch({
+        door: 'ui',
+        remote: REMOTE,
+        name: 'apps.call',
+        params: {
+          bundle: 'Tracker.app',
+          method: 'docs.list',
+          token: 'a'.repeat(48),
+          nonce: 'old-document',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('discards a capture when its same-vault placement is revoked during capture', async () => {
+    let resolveCapture!: (value: Buffer | null) => void
+    let current = true
+    let saves = 0
+    const pending = new Promise<Buffer | null>((resolve) => {
+      resolveCapture = resolve
+    })
+    const { ui, previewPlacements } = await rig({
+      capture: () => pending,
+      captureCurrent: () => current,
+      savePreview: async () => {
+        saves += 1
+      },
+    })
+
+    const rect = { x: 0, y: 0, width: 100, height: 100 }
+    const placementKey = `${REMOTE}\0Tracker.app\0${'a'.repeat(48)}`
+    previewPlacements.set(placementKey, { generation: 1, rect })
+    const result = ui('apps.capturePreview', { bundle: 'Tracker.app', rect, generation: 1 })
+    previewPlacements.set(placementKey, { generation: 2, rect: null })
+    resolveCapture(Buffer.from('jpeg'))
+
+    await expect(result).resolves.toEqual({ saved: false })
+    expect(saves).toBe(0)
+  })
+
+  it('rejects app code changed while the window capture is blocked', async () => {
+    let resolveCapture!: (value: Buffer | null) => void
+    let captureStarted!: () => void
+    const started = new Promise<void>((resolve) => (captureStarted = resolve))
+    const pending = new Promise<Buffer | null>((resolve) => (resolveCapture = resolve))
+    const { root, ui, previewPlacements } = await rig({
+      capture: () => pending,
+      captureStarted: () => captureStarted(),
+      previews: (root) => createAppPreviews(join(root, '.preview-store')),
+    })
+    const appFile = join(root, 'Tracker.app', 'index.html')
+    await writeFile(appFile, '<p>old capture source</p>')
+    await utimes(appFile, 100, 100)
+    const rect = { x: 0, y: 0, width: 100, height: 100 }
+    const placementKey = `${REMOTE}\0Tracker.app\0${'a'.repeat(48)}`
+    previewPlacements.set(placementKey, { generation: 1, rect })
+    const result = ui('apps.capturePreview', { bundle: 'Tracker.app', rect, generation: 1 })
+    await started
+    await writeFile(appFile, '<p>new app code</p>')
+    await utimes(appFile, 200, 200)
+    resolveCapture(Buffer.from('jpeg'))
+    await expect(result).resolves.toEqual({ saved: false })
+    await expect(
+      createAppPreviews(join(root, '.preview-store')).read(REMOTE, root, 'Tracker.app'),
+    ).resolves.toBeNull()
+  })
+
+  it('allows capture from the exact currently authorized placement', async () => {
+    const { ui, previewPlacements } = await rig({ capture: async () => Buffer.from('jpeg') })
+    const rect = { x: 0, y: 0, width: 100, height: 100 }
+    const placementKey = `${REMOTE}\0Tracker.app\0${'a'.repeat(48)}`
+    previewPlacements.set(placementKey, { generation: 1, rect })
+    await expect(
+      ui('apps.capturePreview', { bundle: 'Tracker.app', rect, generation: 1 }),
+    ).resolves.toEqual({ saved: true })
+  })
+
   it('reads an ordinary note', async () => {
     const { call } = await rig()
     expect(await call('docs.read', { path: 'inbox.md' })).toContain('# Inbox')

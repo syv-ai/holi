@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { emptyVaultSnapshot } from '@holi/shared'
+import type { MailMarkerPreferences } from '../shared/mail-markers'
 import { resolveArgv } from '../../../main/bridge/cli'
 import type { CapabilityError } from '../../../main/capabilities/error'
 import { createCapabilityRegistry, type Door } from '../../../main/capabilities/registry'
@@ -140,6 +141,19 @@ it('lists --full in the generated usage for google read', () => {
 })
 
 describe('UI-only mail markers', () => {
+  it('exposes local annotations only through the expected-account UI capability', async () => {
+    const annotations = vi.fn(async () => ({ t1: 'red-star' as const }))
+    const { call, cli } = rig({ data: { mailMarkerAnnotations: annotations } })
+    await expect(
+      call('mailMarkerAnnotations', { ids: ['t1'], expectedAccountSub: 'sub-2' }),
+    ).rejects.toThrow(/account changed/)
+    expect(annotations).not.toHaveBeenCalled()
+    expect(
+      await call('mailMarkerAnnotations', { ids: ['t1'], expectedAccountSub: 'sub-1' }),
+    ).toEqual({ t1: 'red-star' })
+    expect(annotations).toHaveBeenCalledWith(['t1'], expect.any(Function))
+    await expect(cli('mailMarkerAnnotations', { ids: ['t1'] })).rejects.toThrow()
+  })
   it('validates batch ids, binds the expected account, and refuses non-UI doors', async () => {
     const mailMarkers = vi.fn(async (ids: readonly string[]) =>
       Object.fromEntries(ids.map((id) => [id, null])),
@@ -166,6 +180,40 @@ describe('UI-only mail markers', () => {
       await call('setMailMarker', { id: 't1', marker: 'red-star', expectedAccountSub: 'sub-b' }),
     ).toEqual({ ok: true })
     expect(setMailMarker).toHaveBeenCalledWith('t1', 'red-star', expect.any(Function))
+  })
+})
+
+describe('UI-only mail marker preferences', () => {
+  it('requires the expected account and exposes ordered preferences only at the UI door', async () => {
+    const mailMarkerPreferences = vi.fn(async (): Promise<MailMarkerPreferences> => ({
+      enabledOrder: ['yellow-star'],
+    }))
+    const setMailMarkerPreferences = vi.fn(async () => {})
+    const { call, cli } = rig({ data: { mailMarkerPreferences, setMailMarkerPreferences } })
+    await expect(call('mailMarkerPreferences')).rejects.toThrow(/expectedAccountSub is required/)
+    await expect(
+      call('mailMarkerPreferences', { expectedAccountSub: 'another-account' }),
+    ).rejects.toThrow(/account changed/)
+    await expect(
+      call('setMailMarkerPreferences', {
+        expectedAccountSub: 'sub-1',
+        preferences: { enabledOrder: ['red-star', 'red-star'] },
+      }),
+    ).rejects.toThrow(/duplicate/)
+    await expect(cli('mailMarkerPreferences', { expectedAccountSub: 'sub-1' })).rejects.toThrow()
+    expect(await call('mailMarkerPreferences', { expectedAccountSub: 'sub-1' })).toEqual({
+      enabledOrder: ['yellow-star'],
+    })
+    expect(
+      await call('setMailMarkerPreferences', {
+        expectedAccountSub: 'sub-1',
+        preferences: { enabledOrder: ['blue-question', 'red-star'] },
+      }),
+    ).toEqual({ ok: true })
+    expect(setMailMarkerPreferences).toHaveBeenCalledWith(
+      { enabledOrder: ['blue-question', 'red-star'] },
+      expect.any(Function),
+    )
   })
 })
 

@@ -19,6 +19,52 @@ afterEach(async () => {
 })
 
 describe('account-bound personal mail markers', () => {
+  it('reads display annotations locally without requesting Gmail for known threads', async () => {
+    const root = await temp()
+    const cache = openGoogleCache(join(root, 'cache.db'))
+    const markers = createMailMarkerStore(root, 'account-a')
+    const ids = Array.from({ length: 100 }, (_, index) => `thread-${index}`)
+    await Promise.all(ids.map((id) => markers.set(id, 'red-star')))
+    const fetch = vi.fn(async () => Response.json({})) as typeof globalThis.fetch
+    const data = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'token', fetch }),
+      cache,
+      markers,
+    })
+
+    expect(await data.mailMarkerAnnotations(ids)).toEqual(
+      Object.fromEntries(ids.map((id) => [id, 'red-star'])),
+    )
+    expect(fetch).not.toHaveBeenCalled()
+    cache.close()
+  })
+
+  it('rejects a local annotation read retired while the store read is pending', async () => {
+    const root = await temp()
+    const cache = openGoogleCache(join(root, 'cache.db'))
+    let release!: (value: Record<string, 'red-star' | null>) => void
+    let started!: () => void
+    const entered = new Promise<void>((resolve) => (started = resolve))
+    const pending = new Promise<Record<string, 'red-star' | null>>((resolve) => (release = resolve))
+    const markers = createMailMarkerStore(root, 'account-a')
+    const data = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'token', fetch: vi.fn() as never }),
+      cache,
+      markers: {
+        ...markers,
+        read: async () => {
+          started()
+          return pending
+        },
+      },
+    })
+    const request = data.mailMarkerAnnotations(['thread-1'])
+    await entered
+    data.forget()
+    release({ 'thread-1': 'red-star' })
+    await expect(request).rejects.toThrow(/no longer connected/)
+    cache.close()
+  })
   it('survives store recreation and isolates identical thread ids between accounts', async () => {
     const root = await temp()
     await createMailMarkerStore(root, 'account-a').set('thread-1', 'red-star')
@@ -30,6 +76,44 @@ describe('account-bound personal mail markers', () => {
     expect(await createMailMarkerStore(root, 'account-b').read(['thread-1'])).toEqual({
       'thread-1': 'blue-question',
     })
+  })
+
+  it('persists preferences with annotations, reads legacy files, and serializes both writes', async () => {
+    const root = await temp()
+    const file = join(root, 'google-mail-markers-account-a.json')
+    await writeFile(
+      file,
+      JSON.stringify({ version: 1, accountSub: 'account-a', threads: { legacy: 'red-star' } }),
+    )
+    const markers = createMailMarkerStore(root, 'account-a')
+    expect(await markers.preferences()).toEqual({ enabledOrder: ['yellow-star'] })
+    await Promise.all([
+      markers.set('thread-2', 'blue-question'),
+      markers.setPreferences({ enabledOrder: ['blue-question', 'red-star'] }),
+    ])
+    const recreated = createMailMarkerStore(root, 'account-a')
+    expect(await recreated.read(['legacy', 'thread-2'])).toEqual({
+      legacy: 'red-star',
+      'thread-2': 'blue-question',
+    })
+    expect(await recreated.preferences()).toEqual({ enabledOrder: ['blue-question', 'red-star'] })
+    await recreated.setPreferences({ enabledOrder: [] })
+    expect(await markers.preferences()).toEqual({ enabledOrder: ['yellow-star'] })
+  })
+
+  it('rejects unknown and duplicate preference values without changing stored data', async () => {
+    const root = await temp()
+    const markers = createMailMarkerStore(root, 'account-a')
+    await expect(
+      markers.setPreferences({ enabledOrder: ['purple-star'] } as never),
+    ).rejects.toThrow(/invalid/)
+    await expect(
+      markers.setPreferences({ enabledOrder: ['red-star', 'red-star'] }),
+    ).rejects.toThrow(/duplicate/)
+    await markers.set('thread-1', 'blue-question')
+    const file = join(root, 'google-mail-markers-account-a.json')
+    const saved = JSON.parse(await readFile(file, 'utf8')) as { threads: Record<string, string> }
+    expect(saved.threads).toEqual({ 'thread-1': 'blue-question' })
   })
 
   it('keeps thread queue keys separate from the store queue', async () => {
@@ -213,6 +297,8 @@ describe('account-bound personal mail markers', () => {
           if (failDisk) throw new Error('disk unavailable')
           await marked.set(id, marker)
         },
+        preferences: () => marked.preferences(),
+        setPreferences: (preferences) => marked.setPreferences(preferences),
         runExclusive: (id, work) => marked.runExclusive(id, work),
         purge: () => marked.purge(),
       },

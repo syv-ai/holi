@@ -56,13 +56,15 @@ describe('bundleStamp', () => {
 describe('createAppPreviews', () => {
   it('serves what was saved as a data URL, for that vault and app only', async () => {
     const previews = createAppPreviews(store)
-    await previews.save('ada/vault', root, 'Finance/Budget.app', JPEG)
+    expect(await previews.save('ada/vault', root, 'Finance/Budget.app', JPEG)).toBe(true)
     expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBe(
       `data:image/jpeg;base64,${JPEG.toString('base64')}`,
     )
     expect(await previews.read('bo/vault', root, 'Finance/Budget.app')).toBeNull()
     // Nothing under userData is named after the app.
-    for (const name of await readdir(store)) expect(name).toMatch(/^[0-9a-f]{32}\.(jpg|json)$/)
+    for (const name of await readdir(store)) {
+      expect(name).toMatch(/^[0-9a-f]{32}(\.[0-9a-f-]+)?\.(jpg|json)$/)
+    }
   })
 
   it('goes stale when the app changes, and not when its records do', async () => {
@@ -72,6 +74,68 @@ describe('createAppPreviews', () => {
     expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).not.toBeNull()
     await put('Finance/Budget.app/index.html', '<p>budget, again</p>', 5_000)
     expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBeNull()
+  })
+
+  it('rejects code changed while capture is blocked using the pre-capture stamp', async () => {
+    const previews = createAppPreviews(store)
+    const expectedStamp = await bundleStamp(root, 'Finance/Budget.app')
+    let resolveCapture!: (jpeg: Buffer) => void
+    const capture = new Promise<Buffer>((resolve) => {
+      resolveCapture = resolve
+    })
+    await put('Finance/Budget.app/index.html', '<p>changed during capture</p>', 5_000)
+    resolveCapture(JPEG)
+    expect(
+      await previews.save(
+        'ada/vault',
+        root,
+        'Finance/Budget.app',
+        await capture,
+        () => true,
+        previews.revision('ada/vault', 'Finance/Budget.app'),
+        expectedStamp,
+      ),
+    ).toBe(false)
+    expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBeNull()
+  })
+
+  it('does not publish a save whose authority expires while staging', async () => {
+    const previews = createAppPreviews(store)
+    let checks = 0
+    const pending = previews.save('ada/vault', root, 'Finance/Budget.app', JPEG, () => ++checks < 2)
+    expect(await pending).toBe(false)
+    expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBeNull()
+  })
+
+  it('does not let a capture already queued undo Forget', async () => {
+    const previews = createAppPreviews(store)
+    const pending = previews.save('ada/vault', root, 'Finance/Budget.app', JPEG)
+    const forgotten = previews.forget('ada/vault', 'Finance/Budget.app')
+    expect(await pending).toBe(false)
+    await forgotten
+    expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBeNull()
+  })
+
+  it('saves with the current revision after Forget when no revision was pre-captured', async () => {
+    const previews = createAppPreviews(store)
+    await previews.forget('ada/vault', 'Finance/Budget.app')
+    expect(await previews.save('ada/vault', root, 'Finance/Budget.app', JPEG)).toBe(true)
+    expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBe(
+      `data:image/jpeg;base64,${JPEG.toString('base64')}`,
+    )
+  })
+
+  it('serializes concurrent captures so the later valid image remains published', async () => {
+    const previews = createAppPreviews(store)
+    const first = Buffer.from([0xff, 0xd8, 0xff, 0xd9, 1])
+    const second = Buffer.from([0xff, 0xd8, 0xff, 0xd9, 2])
+    const firstSave = previews.save('ada/vault', root, 'Finance/Budget.app', first)
+    const secondSave = previews.save('ada/vault', root, 'Finance/Budget.app', second)
+    await expect(firstSave).resolves.toBe(true)
+    await expect(secondSave).resolves.toBe(true)
+    expect(await previews.read('ada/vault', root, 'Finance/Budget.app')).toBe(
+      `data:image/jpeg;base64,${second.toString('base64')}`,
+    )
   })
 
   it('has none before one is taken, and none once it is forgotten', async () => {

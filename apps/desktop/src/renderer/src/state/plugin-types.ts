@@ -44,7 +44,7 @@ export interface SlashCommand {
    *  The command's plugin decides. */
   offeredIn?(path: string): boolean
   /** Rejects when it failed; the plugin says where (an app's log). */
-  run(input: SlashInput): Promise<SlashResult>
+  run(input: SlashInput, isCurrent?: () => boolean): Promise<SlashResult>
 }
 
 /** One item a claim adds to a file's row menu. @public */
