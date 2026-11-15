@@ -21,7 +21,8 @@ export function createNativeFieldVimState(): NativeFieldVimState {
 }
 
 function lineStart(value: string, at: number): number {
-  return value.lastIndexOf('\n', Math.max(0, at - 1)) + 1
+  if (at <= 0) return 0
+  return value.lastIndexOf('\n', at - 1) + 1
 }
 function lineEnd(value: string, at: number): number {
   const end = value.indexOf('\n', at)
@@ -146,6 +147,20 @@ export function handleNativeFieldKey(
     event.stopPropagation()
     return true
   }
+  if (
+    state.operator !== null &&
+    !'hl0$wbjk'.includes(key) &&
+    key !== 'Home' &&
+    key !== 'End' &&
+    key !== (state.operator === 'delete' ? 'd' : state.operator === 'change' ? 'c' : 'y')
+  ) {
+    event.preventDefault()
+    event.stopPropagation()
+    state.operator = null
+    state.operatorCount = 1
+    state.count = ''
+    return true
+  }
   if (key === 'f') {
     event.preventDefault()
     event.stopPropagation()
@@ -213,17 +228,11 @@ export function handleNativeFieldKey(
       while (target > 0 && isSpace(grapheme(value, target)))
         target = previousGrapheme(value, target)
       const word = isWord(grapheme(value, target))
-      while (
-        target > 0 &&
-        isWord(grapheme(value, target)) === word &&
-        !isSpace(grapheme(value, target))
-      )
-        target = previousGrapheme(value, target)
-      if (
-        target < value.length &&
-        (!isWord(grapheme(value, target)) || isSpace(grapheme(value, target)))
-      )
-        target = nextGrapheme(value, target)
+      while (target > 0) {
+        const previous = previousGrapheme(value, target)
+        if (isSpace(grapheme(value, previous)) || isWord(grapheme(value, previous)) !== word) break
+        target = previous
+      }
     }
   } else if (key === 'j' || key === 'k') {
     const start = lineStart(value, at)
