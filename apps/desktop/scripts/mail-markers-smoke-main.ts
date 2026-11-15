@@ -280,30 +280,6 @@ async function run() {
       clickCount: 1,
     })
   }
-  const nativeClickLast = async (selector: string) => {
-    await waitFor(
-      win,
-      `(()=>{const target=[...document.querySelectorAll(${JSON.stringify(selector)})].at(-1); const r=target?.getBoundingClientRect(); return !!target&&!!r&&r.width>0&&r.height>0})()`,
-    )
-    const point = await js(
-      `const target=[...document.querySelectorAll(${JSON.stringify(selector)})].at(-1); target.scrollIntoView({block:'center',inline:'center'}); const r=target.getBoundingClientRect(); ({x:r.x+r.width/2,y:r.y+r.height/2})`,
-    )
-    win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
-    win.webContents.sendInputEvent({
-      type: 'mouseDown',
-      x: point.x,
-      y: point.y,
-      button: 'left',
-      clickCount: 1,
-    })
-    win.webContents.sendInputEvent({
-      type: 'mouseUp',
-      x: point.x,
-      y: point.y,
-      button: 'left',
-      clickCount: 1,
-    })
-  }
   const nativeClickSequence = async (selector: string, count: number) => {
     await waitFor(
       win,
@@ -535,15 +511,26 @@ async function run() {
         'reader action must show the actual marker',
       )
       await capture(`${view}-reader-dark.png`)
-      const readerAction = `section[aria-label="${section}"] button[aria-label="${action}"]`
+      const readerAction =
+        view === 'shell'
+          ? `section[aria-label="${section}"] [role="toolbar"][aria-label="Thread actions"] button[aria-label="${action}"]`
+          : `section[aria-label="${section}"] button[aria-label="${action}"]`
       const markerWrites = await js(
         `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
       )
-      await nativeClickLast(readerAction)
+      await nativeClick(readerAction)
       await waitFor(
         win,
         `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${markerWrites}`,
       )
+      const readerWrite = await js(
+        `JSON.parse(window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').at(-1).input.paramsJson)`,
+      )
+      assert.deepEqual(readerWrite, { id: 'thread-red', marker: null, expectedAccountSub: subA })
+      for (let attempt = 0; attempt < 200; attempt++) {
+        if ((await markersA.read(['thread-red']))['thread-red'] === null) break
+        await pause(20)
+      }
       assert.deepEqual(await markersA.read(['thread-red']), { 'thread-red': null })
       await markersA.set('thread-red', 'red-star')
     }
