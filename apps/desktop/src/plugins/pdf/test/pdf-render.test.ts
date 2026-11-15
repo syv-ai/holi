@@ -358,6 +358,167 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     }
   }, 30_000)
 
+  it('resolves document-wide link and image definitions in a captioned table', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) throw new Error('Typst is required for real PDF compilation')
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    await writeFile(join(root, 'photo.png'), Buffer.from(DOT_PNG, 'base64'))
+    const notePath = join(root, 'references.md')
+    const original = [
+      writeMarkdownCaptionEnvelope(
+        '| Link | Image | Literal |\n| --- | --- | --- |\n| [full][dest] [collapsed][] [shortcut] | ![Photo][photo] proof | #panic("literal") `<!--raw-typst #panic("inline")-->` |',
+        'Reference caption.',
+      ),
+      '',
+      '[dest]: https://example.com/\n  "A destination title"',
+      '[collapsed]: https://example.org/',
+      '[shortcut]: https://example.net/',
+      '[photo]: photo.png "A real image"',
+      '',
+      '```markdown',
+      '[code-only]: https://ignored.invalid/',
+      '```',
+      '',
+      '    [indented-only]: https://ignored.invalid/',
+      '',
+      '<div>',
+      '[html-only]: https://ignored.invalid/',
+      '</div>',
+    ].join('\n')
+    await writeFile(notePath, original)
+    const outPath = join(root, 'references.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
+
+    const pdf = await readFile(outPath)
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    const pdfText = pdf.toString('latin1')
+    const imageCount = (bytes: Buffer) =>
+      (bytes.toString('latin1').match(/\/Subtype\s*\/Image\b/g) ?? []).length
+    const baselineNote = join(root, 'baseline.md')
+    await writeFile(
+      baselineNote,
+      '| Link | Image | Literal |\n| --- | --- | --- |\n| text | no image | text |',
+    )
+    const baselinePdf = join(root, 'baseline.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath: baselineNote,
+      outPath: baselinePdf,
+      fields: [],
+      meta: {},
+    })
+    expect(imageCount(pdf)).toBeGreaterThan(imageCount(await readFile(baselinePdf)))
+    for (const destination of [
+      'https://example.com/',
+      'https://example.org/',
+      'https://example.net/',
+    ]) {
+      expect(pdfText).toContain(`/URI (${destination})`)
+    }
+    const pages = await readPdfPages(outPath)
+    const text = pages
+      .flatMap((page) => page.runs)
+      .map((run) => run.text)
+      .join(' ')
+    expect(text).toContain('full')
+    expect(text).toContain('collapsed')
+    expect(text).toContain('shortcut')
+    expect(text).toContain('Reference caption.')
+    const runs = pages.flatMap((page) => page.runs)
+    const photo = runs.find((run) => run.text.includes('proof'))
+    const caption = runs.find((run) => run.text.includes('Reference caption.'))
+    expect(photo).toBeDefined()
+    expect(caption).toBeDefined()
+    expect(caption!.rect.origin.y).toBeGreaterThan(photo!.rect.origin.y)
+    // Typst compiled the literal attack-shaped cell as text, not code.
+    expect(text).toContain('#panic')
+    expect(text).toContain('literal')
+    expect(text).toContain('inline')
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+    if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+      await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+      await cp(outPath, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'reference-table.pdf'))
+    }
+
+    // User-authored raw-typst HTML comments force the lossless Markdown fallback,
+    // so even an apparent panic cannot become executable inside a native table.
+    const unsafeNote = join(root, 'unsafe.md')
+    const unsafeSource = writeMarkdownCaptionEnvelope(
+      '| Value |\n| --- |\n| <!--raw-typst #panic("user comment")--> |',
+      'Unsafe comment fallback.',
+    )
+    await writeFile(unsafeNote, unsafeSource)
+    const unsafePdf = join(root, 'unsafe.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath: unsafeNote,
+      outPath: unsafePdf,
+      fields: [],
+      meta: {},
+    })
+    expect((await readFile(unsafePdf)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(await readFile(unsafeNote, 'utf8')).toBe(unsafeSource)
+
+    for (const [name, cell] of [['footnote', '[^note]']] as const) {
+      const fallbackNote = join(root, `${name}.md`)
+      const fallbackSource = writeMarkdownCaptionEnvelope(
+        `| Value |\n| --- |\n| ${cell} |`,
+        `${name} fallback caption.`,
+      )
+      await writeFile(fallbackNote, fallbackSource)
+      const fallbackPdf = join(root, `${name}.pdf`)
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath: fallbackNote,
+        outPath: fallbackPdf,
+        fields: [],
+        meta: {},
+      })
+      expect((await readFile(fallbackPdf)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+      expect(await readFile(fallbackNote, 'utf8')).toBe(fallbackSource)
+    }
+
+    // cmarker treats [@key] as a Typst citation, not a CommonMark link. Without
+    // its required bibliography label it fails normally; it is never reinterpreted
+    // as a portable table-cell reference by the caption adapter.
+    const citationNote = join(root, 'citation.md')
+    const citationSource = writeMarkdownCaptionEnvelope(
+      '| Value |\n| --- |\n| [@citation] |',
+      'Citation fallback.',
+    )
+    await writeFile(citationNote, citationSource)
+    await expect(
+      renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath: citationNote,
+        outPath: join(root, 'citation.pdf'),
+        fields: [],
+        meta: {},
+      }),
+    ).rejects.toThrow('label `<citation>` does not exist')
+    expect(await readFile(citationNote, 'utf8')).toBe(citationSource)
+  }, 30_000)
+
   it('shows a table caption on its own final page before later prose', async () => {
     const typst = await resolveTypstBin()
     if (typst === null) return

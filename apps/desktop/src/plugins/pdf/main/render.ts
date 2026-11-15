@@ -17,7 +17,11 @@ import type { TemplateField } from '../shared/template-fields'
 import { hasSingleMarkdownImage, inlineImages } from './images'
 import { commentSafeString, drawMermaid, type DrawDiagrams } from './mermaid'
 import { composeWrapper } from './wrapper'
-import { readMarkdownTableCaptions } from './table-captions'
+import {
+  readMarkdownReferenceDefinitions,
+  readMarkdownTableCaptions,
+  removeRawTypstComments,
+} from './table-captions'
 
 const exec = promisify(execFile)
 
@@ -113,24 +117,6 @@ function wikiLinksOutsideRawTypst(markdown: string): string {
   )
 }
 
-function readReferenceDefinitions(markdown: string): string {
-  const definitions: string[] = []
-  let fence: { marker: string; length: number } | undefined
-  for (const line of markdown.split('\n')) {
-    const opening = /^ {0,3}(`{3,}|~{3,})/.exec(line)
-    if (fence !== undefined) {
-      if (opening?.[1]?.[0] === fence.marker && opening[1].length >= fence.length) fence = undefined
-      continue
-    }
-    if (opening !== null) {
-      fence = { marker: opening[1]![0]!, length: opening[1]!.length }
-      continue
-    }
-    if (/^ {0,3}\[[^\]]+\]:\s*\S/.test(line)) definitions.push(line)
-  }
-  return definitions.length === 0 ? '' : `\n\n${definitions.join('\n')}`
-}
-
 function captionComment(
   body: string,
   caption: string,
@@ -140,12 +126,15 @@ function captionComment(
 ): string {
   const diagram = /^ {0,3}<!--raw-typst ([\s\S]*?)-->$/.exec(body)?.[1]
   if (table) {
+    // Table selection rejects source HTML/comments before image preprocessing. Thus
+    // raw-typst:true can consume only raw image comments synthesized by inlineImages;
+    // user raw comments were neutralized before preprocessing, with their line positions intact.
     const source = commentSafeString(wikiLinksToText(`${body}${definitions}`))
     const label = commentSafeString(caption)
     // Every last-row cell gets a marker: a different cell can wrap farther than
     // the last short cell, so the repeat footer uses their maximum physical page.
     const marker = commentSafeString(tableId)
-    return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(breakable: true)[#show std.table: it => { let fields = it.fields(); let cells = fields.remove("children"); if cells.any(c => c.func() == std.table.footer) { it } else { let row-cells = cells.filter(c => c.func() == std.table.cell); if row-cells.len() > 0 { let final-start = cells.len() - it.columns.len(); cells = cells.enumerate().map(((index, c)) => { if c.func() == std.table.cell and index >= final-start { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) } else { c } }) } else { let header-index = cells.position(c => c.func() == std.table.header); if header-index != none { let header-fields = cells.at(header-index).fields(); let header-cells = header-fields.remove("children"); let marked-header = header-cells.map(c => { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) }); cells = cells.enumerate().map(((index, cell)) => if index == header-index { table.header(..header-fields, ..marked-header) } else { cell }) } }; let table-width = measure(it).width; std.table(..fields, ..cells, std.table.footer(repeat: true, std.table.cell(colspan: it.columns.len(), stroke: none, fill: none, context { let marker-locations = query(metadata.where(value: ${marker})); let final-page = if marker-locations.len() > 0 { calc.max(..marker-locations.map(location => counter(page).at(location.location()).first())) } else { counter(page).get().first() }; let on-final-page = counter(page).get().first() == final-page; let caption = block(width: table-width)[#align(center)[#cmarker.render(${label}, raw-typst: false, scope: (table: table))]]; if on-final-page { caption } else { block(height: measure(caption, width: table-width).height)[] } }))) } }; #cmarker.render(${source}, raw-typst: false, scope: (table: table))]-->`
+    return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(breakable: true)[#show std.table: it => { let fields = it.fields(); let cells = fields.remove("children"); if cells.any(c => c.func() == std.table.footer) { it } else { let row-cells = cells.filter(c => c.func() == std.table.cell); if row-cells.len() > 0 { let final-start = cells.len() - it.columns.len(); cells = cells.enumerate().map(((index, c)) => { if c.func() == std.table.cell and index >= final-start { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) } else { c } }) } else { let header-index = cells.position(c => c.func() == std.table.header); if header-index != none { let header-fields = cells.at(header-index).fields(); let header-cells = header-fields.remove("children"); let marked-header = header-cells.map(c => { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) }); cells = cells.enumerate().map(((index, cell)) => if index == header-index { table.header(..header-fields, ..marked-header) } else { cell }) } }; let table-width = measure(it).width; std.table(..fields, ..cells, std.table.footer(repeat: true, std.table.cell(colspan: it.columns.len(), stroke: none, fill: none, context { let marker-locations = query(metadata.where(value: ${marker})); let final-page = if marker-locations.len() > 0 { calc.max(..marker-locations.map(location => counter(page).at(location.location()).first())) } else { counter(page).get().first() }; let on-final-page = counter(page).get().first() == final-page; let caption = block(width: table-width)[#align(center)[#cmarker.render(${label}, raw-typst: false, scope: (table: table))]]; if on-final-page { caption } else { block(height: measure(caption, width: table-width).height)[] } }))) } }; #cmarker.render(${source}, raw-typst: true, scope: (table: table))]-->`
   }
   const content =
     diagram === undefined
@@ -193,7 +182,7 @@ export async function renderPdf({
     // Carry each supported frame's identity in its caption through transforms.
     // The nonce is absent from the literal source, and these inline comments add
     // no lines (so source warning locations remain stable).
-    let taggedOriginal = original
+    let taggedOriginal = removeRawTypstComments(original)
     let nonce = ''
     do {
       nonce = `holi-pdf-${Math.random().toString(36).slice(2)}`
@@ -239,7 +228,7 @@ export async function renderPdf({
     // count is retained for warnings from everything after the envelope.
     let markdown = drawn.markdown
     const transformedEnvelopes = readMarkdownCaptionEnvelopes(drawn.markdown)
-    const referenceDefinitions = readReferenceDefinitions(original)
+    const referenceDefinitions = readMarkdownReferenceDefinitions(original)
     const transformations = frames.flatMap((frame, index) => {
       const identity = `<!-- ${nonce}-${index} -->`
       const transformed = transformedEnvelopes.find((item) =>
@@ -285,7 +274,7 @@ export async function renderPdf({
           item.caption,
           item.table,
           item.tableId,
-          item.definitions,
+          'definitions' in item ? item.definitions : '',
         ) +
         '\n'.repeat(Math.max(0, item.sourceLines - 1)) +
         markdown.slice(item.frame.envelope.to)
