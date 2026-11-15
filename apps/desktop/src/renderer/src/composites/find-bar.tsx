@@ -31,6 +31,8 @@ import {
 } from '@/components/ui/input-group'
 import { Toggle } from '@/components/ui/toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 export interface FindOptions {
   search: string
@@ -95,7 +97,10 @@ export function FindBar({
   onReplaceAll: () => void
   onClose: () => void
 }) {
+  const findVim = useVimField('find', options.search)
+  const replaceVim = useVimField('replace', options.replace)
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.nativeEvent.isComposing) return
     const mod = event.metaKey || event.ctrlKey
     const key = event.key.toLowerCase()
     if (event.key === 'Escape') {
@@ -161,8 +166,13 @@ export function FindBar({
                 value={options.search}
                 aria-invalid={invalid || undefined}
                 onChange={(event) => onOptionsChange({ search: event.target.value })}
-                onKeyDown={handleFieldKeyDown}
+                {...findVim.vimFieldProps}
+                onKeyDown={(event) => {
+                  findVim.vimFieldProps.onKeyDown?.(event)
+                  if (!event.defaultPrevented) handleFieldKeyDown(event)
+                }}
               />
+              <VimFieldMode mode={findVim.vimFieldMode} />
               <InputGroupAddon align="inline-end">
                 <InputGroupText role="status" aria-live="polite" className="text-xs tabular-nums">
                   {status}
@@ -213,8 +223,13 @@ export function FindBar({
                   placeholder="Replace"
                   value={options.replace}
                   onChange={(event) => onOptionsChange({ replace: event.target.value })}
-                  onKeyDown={handleReplaceKeyDown}
+                  {...replaceVim.vimFieldProps}
+                  onKeyDown={(event) => {
+                    replaceVim.vimFieldProps.onKeyDown?.(event)
+                    if (!event.defaultPrevented) handleReplaceKeyDown(event)
+                  }}
                 />
+                <VimFieldMode mode={replaceVim.vimFieldMode} />
               </InputGroup>
               <IconButton label="Replace" shortcut={['⏎']} disabled={none} onClick={onReplace}>
                 <ReplaceIcon />

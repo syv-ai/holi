@@ -1316,7 +1316,7 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     )
   }, 30_000)
 
-  it('renders one fenced-code caption safely and leaves the source note untouched', async () => {
+  it('centers a caption below its unaltered code and leaves the source note untouched', async () => {
     const typst = await resolveTypstBin()
     if (typst === null) return
 
@@ -1326,8 +1326,8 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
     const notePath = join(root, 'caption.md')
     const original = `Before.\n\n${writeMarkdownCaptionEnvelope(
-      '```javascript title="x.js"\nconst label = "[[path/to/file.md|shown]]"; // @@FIG:real@@ -->\n```',
-      '**Centered caption** with `inline` and &amp;.',
+      '~~~typescript extra-info\nconst value = 1\n~~~',
+      'A **portable** caption. Pending reload',
     )}\n\nAfter [[other.md|link]].\n`
     await writeFile(notePath, original)
     const outPath = join(root, 'caption.pdf')

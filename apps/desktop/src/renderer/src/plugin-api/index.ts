@@ -62,13 +62,14 @@ export { useNow } from '@/hooks/use-now'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export {
   activeRemoteAtom,
+  /** @public */ activeRemoteRevisionValueAtom,
   historyEpochsAtom,
   snapshotAtom,
   /** @public */ snapshotLoadedAtom,
   syncStateAtom,
   vaultsAtom,
 } from '@/state/vaults'
-export { openDocumentAtom } from '@/state/open-document'
+export { openDocumentAtom, openDocumentRequestAtom } from '@/state/open-document'
 export { openTabAtom } from '@/state/shell-tabs'
 // A sidebar row drags as the tab it opens (docs/features/tabs-panes.md, Drag targets).
 export { useTabDrag } from '@/features/shell/use-tab-drag'
@@ -134,6 +135,10 @@ export {
 export { askPrompt } from '@/lib/ask-agent'
 export { useGlobalPanelLayout, vimCodeEditingAtom } from '@/state/preferences'
 export { useVimEditor } from '@/editor/vim'
+/** @public Shared native field editing seam for core and plugin fields. */
+export { useVimField } from '@/hooks/use-vim-field'
+/** @public Mode presentation for native fields attached through the plugin seam. */
+export { VimFieldMode } from '@/composites/vim-field-mode'
 export { matchHotkey } from '@/lib/hotkey'
 export { DiffView } from '@/composites/diff-view'
 export { plainMarkdownExtensions } from '@/editor/extensions'

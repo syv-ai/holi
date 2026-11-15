@@ -82,6 +82,7 @@ describe('createInbox', () => {
   function harness(focused: boolean) {
     let stored = parseInbox(null)
     const banners: string[] = []
+    let target: { name: string; payload: unknown } | undefined
     let clock = T0
     const inbox = createInbox({
       store: {
@@ -91,13 +92,19 @@ describe('createInbox', () => {
       notify: (n) => {
         if (focused) return false
         banners.push(n.title)
+        target = n.navigate
         return true
       },
       changed: () => {},
-      open: () => {},
       now: () => new Date(clock),
     })
-    return { inbox, banners, tick: (ms: number) => (clock += ms), stored: () => stored }
+    return {
+      inbox,
+      banners,
+      tick: (ms: number) => (clock += ms),
+      stored: () => stored,
+      target: () => target,
+    }
   }
 
   it('raises a banner, then only inbox entries until the gap has passed', async () => {
@@ -110,6 +117,17 @@ describe('createInbox', () => {
     expect(await h.inbox.raise({ title: 'C', line: '' })).toBe('banner')
     expect(h.banners).toEqual(['A', 'C'])
     expect(h.stored().entries.map((e) => e.title)).toEqual(['C', 'B', 'A'])
+  })
+
+  it('captures the exact inbox event target in its native banner', async () => {
+    const h = harness(false)
+    const notice = { title: 'Pi needs attention', line: 'Review it.', session: '0123abcd' }
+    expect(await h.inbox.raise(notice)).toBe('banner')
+    expect(h.target()).toEqual({
+      name: 'inbox-open',
+      payload: expect.objectContaining(notice),
+    })
+    expect((h.target()?.payload as InboxEntry).id).toBe(h.stored().entries[0]?.id)
   })
 
   it('keeps everything in the inbox while Holi has focus', async () => {
@@ -223,11 +241,14 @@ describe('holi agent notify', () => {
     const inbox = createInbox({
       store,
       notify: (n) => {
-        callbacks.push(n.onClick)
+        callbacks.push(
+          n.navigate === undefined
+            ? undefined
+            : () => clicked.push(n.navigate!.payload as InboxEntry),
+        )
         return true
       },
       changed: () => {},
-      open: (entry) => clicked.push(entry),
       now: () => new Date(clock),
     })
     const caps = inboxCapabilities({
@@ -259,7 +280,6 @@ describe('holi agent notify', () => {
             store: jsonFileStore(join(root, INBOX_FILE), parseInbox),
             notify: () => false,
             changed: () => {},
-            open: () => {},
           }).view()
         ).entries.map(({ session }) => session),
       ).toEqual([...targets].reverse())

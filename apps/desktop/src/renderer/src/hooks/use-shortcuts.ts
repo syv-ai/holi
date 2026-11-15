@@ -80,7 +80,7 @@ export function useShortcutDispatcher(): void {
         }
         const match = resolveShortcut(e, {
           mac: isMac(),
-          target: keyTargetOf(e.target),
+          target: keyTargetOf(e.composedPath()[0] ?? e.target),
           dialogOpen: dialogOpen(),
           live: store.get(liveShortcutIdsAtom),
           capture,

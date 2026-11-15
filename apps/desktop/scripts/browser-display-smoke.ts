@@ -62,6 +62,8 @@ async function run(): Promise<void> {
       <label>Number <input aria-label="Number" type="number" id="number" value="12"></label>
       <label>Readonly <input aria-label="Readonly" id="readonly" value="locked" readonly></label>
       <label>Editable <div aria-label="Editable" id="editable" contenteditable="true">edit me</div></label>
+      <label>Plain text <div aria-label="Plain text" id="plaintext" contenteditable="plaintext-only">café🙂 two</div></label>
+      <label>Empty plain text <div aria-label="Empty plain text" id="plaintext-empty" contenteditable="plaintext-only"></div></label>
       <label>Not editable <div aria-label="Not editable" id="inert" contenteditable="false">inert</div></label>
       <label>Graphemes <textarea aria-label="Graphemes" id="graphemes">a café🙂 z</textarea></label>
       <label>Rows <textarea aria-label="Rows" id="rows">  alpha beta\n  gamma delta\n  omega</textarea></label>
@@ -326,7 +328,27 @@ async function run(): Promise<void> {
         },
       })
   }
-  configureVim(vimSnapshot, true, 1)
+  const applyVimConfig = async (
+    snapshot: typeof vimSnapshot,
+    enabled: boolean,
+    revision: number,
+  ) => {
+    const previous = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+      ?.payload as typeof vimSnapshot | undefined
+    assert(previous, 'missing browser Vim configuration state')
+    configureVim(snapshot, enabled, revision)
+    await waitFor(() => {
+      const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+      const current = event?.payload as typeof vimSnapshot | undefined
+      // Main maps request revisions to its own monotonic document revision.
+      return current?.nonce === snapshot.nonce &&
+        current.attachment === snapshot.attachment &&
+        current.revision > previous.revision
+        ? current
+        : undefined
+    }, `browser Vim configuration revision ${revision}`)
+  }
+  await applyVimConfig(vimSnapshot, true, 1)
   await inPage(a, `document.querySelector('#text').focus()`)
   configureVim(vimSnapshot, false, 3)
   configureVim(vimSnapshot, true, 2)
@@ -337,7 +359,7 @@ async function run(): Promise<void> {
   }, 'stale config leaves browser Vim disabled')
   assert.equal((staleConfigMode.payload as { mode: string }).mode, 'insert')
   mark('stale-vim-disable-request-rejected')
-  configureVim(vimSnapshot, true, 4)
+  await applyVimConfig(vimSnapshot, true, 4)
   await inPage(a, `document.querySelector('#text').focus()`)
   await waitFor(
     () => sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode'),
@@ -488,11 +510,130 @@ async function run(): Promise<void> {
     'aframe',
   )
   mark('unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough')
+  const setPlainSelection = (selector: string, offset = 0) =>
+    inPage(
+      a,
+      `(() => { const host = document.querySelector('${selector}'); host.focus(); const range = document.createRange(); const node = host.firstChild; if (node) range.setStart(node, Math.min(${offset}, node.length)); else range.setStart(host, 0); range.collapse(true); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range) })()`,
+    )
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'w')
+  assert.equal(
+    await inPage<number>(
+      a,
+      `(() => { const s = getSelection(); return s.anchorNode === document.querySelector('#plaintext').firstChild ? s.anchorOffset : s.anchorNode.textContent.length + s.anchorOffset })()`,
+    ),
+    8,
+    'plaintext-only w uses the native caret across plain text',
+  )
+  await nativePress(a, 'i')
+  await nativePress(a, 'Z')
+  const plainAfterInsert = await inPage<string>(
+    a,
+    `document.querySelector('#plaintext').textContent`,
+  )
+  assert.equal(plainAfterInsert, 'café🙂 Ztwo')
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    'café🙂 two',
+  )
+  a.webContents.redo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    plainAfterInsert,
+  )
+  mark('native-plaintext-only-motion-insert-and-native-undo-redo')
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  if (!a.webContents.debugger.isAttached()) a.webContents.debugger.attach('1.3')
+  await a.webContents.debugger.sendCommand('Input.imeSetComposition', {
+    text: '日本語',
+    selectionStart: 3,
+    selectionEnd: 3,
+  })
+  await a.webContents.debugger.sendCommand('Input.insertText', { text: '日本語' })
+  assert(
+    (await inPage<string>(a, `document.querySelector('#plaintext').textContent`)).includes(
+      '日本語',
+    ),
+  )
+  mark('native-plaintext-ime-composition-remains-native')
+  await inPage(a, `document.querySelector('#plaintext').textContent='café🙂 two'`)
+
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  await setPlainSelection('#plaintext')
+  await inPage(
+    a,
+    `(() => { const host = document.querySelector('#plaintext'); host.setAttribute('contenteditable','true'); host.setAttribute('contenteditable','plaintext-only') })()`,
+  )
+  const shapeBefore = await inPage<string>(a, `document.querySelector('#plaintext').textContent`)
+  await nativePress(a, 'h')
+  assert.notEqual(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    shapeBefore,
+  )
+  mark('plaintext-shape-loss-and-restoration-invalidates-normal-ownership')
+
+  await applyVimConfig(vimSnapshot, false, 5)
+  await setPlainSelection('#plaintext')
+  const disabledPlain = await inPage<string>(a, `document.querySelector('#plaintext').textContent`)
+  await nativePress(a, 'q')
+  assert.notEqual(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    disabledPlain,
+  )
+  await applyVimConfig(vimSnapshot, true, 6)
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  mark('plaintext-live-preference-off-passes-native-typing')
+
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  await setPlainSelection('#plaintext')
+  const outsideRange = await inPage(
+    a,
+    `(() => { const host = document.querySelector('#search'); host.focus(); host.setSelectionRange(0,0); const range = document.createRange(); range.selectNodeContents(host); range.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(range) })()`,
+  )
+  void outsideRange
+  const outsideBefore = await inPage<string>(a, `document.querySelector('#plaintext').textContent`)
+  await nativePress(a, 'Escape')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    outsideBefore,
+  )
+  await setPlainSelection('#plaintext')
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const plainMode = await a.webContents.executeJavaScriptInIsolatedWorld(1017, [
+    { code: `__holiPage.vim.mode().mode` },
+  ])
+  assert.equal(plainMode, 'insert')
+  mark('plaintext-outside-selection-escape-passthrough-and-reset')
+
+  await setPlainSelection('#plaintext-empty')
+  await nativePress(a, 'Escape')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext-empty').textContent`),
+    '',
+  )
+  await inPage(
+    a,
+    `document.querySelector('#plaintext-empty').setAttribute('contenteditable','true')`,
+  )
+  await nativePress(a, 'a')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext-empty').textContent`),
+    'a',
+  )
+  mark('native-empty-host-and-contenteditable-disable-passthrough')
   await inPage(a, `document.querySelector('#text').focus()`)
   await nativePress(a, 'Escape')
   await nativePress(a, 'Escape')
   assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one two three')
-  a.webContents.debugger.attach('1.3')
+  if (!a.webContents.debugger.isAttached()) a.webContents.debugger.attach('1.3')
   try {
     await a.webContents.debugger.sendCommand('Input.imeSetComposition', {
       text: '日本語',
@@ -506,7 +647,7 @@ async function run(): Promise<void> {
   assert((await inPage<string>(a, `document.querySelector('#text').value`)).includes('日本語'))
   mark('native-ime-composition-in-insert-mode')
   await inPage(a, `document.querySelector('#text').value = 'one two three'`)
-  configureVim(vimSnapshot, false, 5)
+  await applyVimConfig(vimSnapshot, false, 7)
   await inPage(
     a,
     `document.querySelector('#text').focus(); document.querySelector('#text').setSelectionRange(0, 0)`,
@@ -517,7 +658,7 @@ async function run(): Promise<void> {
     'zone two three',
     'disabled preference passes input through',
   )
-  configureVim(vimSnapshot, true, 6)
+  await applyVimConfig(vimSnapshot, true, 8)
   await inPage(a, `document.querySelector('#text').focus()`)
   await nativePress(a, 'Escape')
   const reenabledMode = await waitFor(() => {
@@ -596,7 +737,7 @@ async function run(): Promise<void> {
     return snapshot && snapshot.nonce !== beforeSameDocument.nonce ? snapshot : undefined
   }, 'Vim ownership reset after same-document navigation')
   assert.equal(afterSameDocument.mode, 'insert')
-  configureVim(afterSameDocument, true, 1)
+  await applyVimConfig(afterSameDocument, true, 1)
   await inPage(a, `document.querySelector('#text').focus()`)
   await selection('#text', 0)
   await nativePress(a, 'z')
@@ -621,7 +762,7 @@ async function run(): Promise<void> {
     const snapshot = event?.payload as typeof vimSnapshot | undefined
     return snapshot && snapshot.nonce !== beforeAbortedNavigation.nonce ? snapshot : undefined
   }, 'Vim ownership recovery after aborted navigation')
-  configureVim(recoveredDocument, false, 1)
+  await applyVimConfig(recoveredDocument, false, 1)
   await selection('#text', 0)
   await nativePress(a, 'z')
   assert.equal(
@@ -638,7 +779,7 @@ async function run(): Promise<void> {
     const snapshot = event?.payload as typeof vimSnapshot | undefined
     return snapshot && snapshot.attachment !== vimSnapshot.attachment ? snapshot : undefined
   }, 'fresh attachment Vim snapshot')
-  configureVim(reattachedVim, true, 1)
+  await applyVimConfig(reattachedVim, true, 1)
   await inPage(a, `document.querySelector('#text').focus()`)
   await nativePress(a, 'Escape')
   const reattachedMode = await waitFor(() => {

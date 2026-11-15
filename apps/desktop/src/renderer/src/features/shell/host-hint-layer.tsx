@@ -6,7 +6,9 @@ import {
   activateHostHint,
   discoverHostHintTargets,
   HOST_HINT_REQUEST,
+  HOST_HINT_SURFACE,
   hostHintsUnchanged,
+  registerHostHintSurface,
   type HostHintAdapter,
   type HostHintTarget,
 } from '@/lib/host-hints'
@@ -65,6 +67,57 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         }
       : undefined,
   })
+
+  useLayoutEffect(() => {
+    const registered = new Map<
+      ShadowRoot,
+      { unregister: () => void; observer: MutationObserver; onScroll: () => void }
+    >()
+    const invalidate = () => {
+      const active = current.current
+      if (active && !hostHintsUnchanged(active.targets, active.adapter, active.root)) change(null)
+    }
+    const onSurface = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ root: ShadowRoot; owner: HTMLElement; registered: boolean }>
+      ).detail
+      if (!detail?.root || !detail.owner) return
+      const previous = registered.get(detail.root)
+      previous?.observer.disconnect()
+      if (previous) detail.root.removeEventListener('scroll', previous.onScroll, true)
+      previous?.unregister()
+      if (detail.registered) {
+        const observer = new MutationObserver(() => {
+          if (current.current) change(null)
+        })
+        observer.observe(detail.root, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          characterData: true,
+        })
+        const onScroll = invalidate
+        detail.root.addEventListener('scroll', onScroll, true)
+        registered.set(detail.root, {
+          unregister: registerHostHintSurface(detail.root, detail.owner),
+          observer,
+          onScroll,
+        })
+      } else registered.delete(detail.root)
+      invalidate()
+    }
+    window.addEventListener(HOST_HINT_SURFACE, onSurface)
+    window.dispatchEvent(new Event('holi:vim-host-hint-surface-request'))
+    return () => {
+      window.removeEventListener(HOST_HINT_SURFACE, onSurface)
+      for (const [root, surface] of registered) {
+        surface.observer.disconnect()
+        root.removeEventListener('scroll', surface.onScroll, true)
+        surface.unregister()
+      }
+      registered.clear()
+    }
+  }, [change])
 
   useLayoutEffect(() => {
     change(null)

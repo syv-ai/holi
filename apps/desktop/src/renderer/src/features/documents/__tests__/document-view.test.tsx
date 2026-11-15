@@ -30,6 +30,7 @@ import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { forgetAgentLabelsAtom } from '@/state/document-runs'
 import { duplicateBlock, selectionBlockTarget } from '../rich-text/rich-text-block-actions'
+import { addCodeCaption, focusCodeCaption } from '../rich-text/document-figure'
 import { vimCodeEditingAtom } from '@/state/preferences'
 
 import { DocumentView } from '../document-view'
@@ -244,13 +245,83 @@ test('ordinary notes do not show Done', async () => {
   expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument()
 })
 
+test('ordinary code captions autosave, flush, and reopen without changing frontmatter or fences', async () => {
+  const original =
+    '---\ntitle: Byte-sensitive title\ntags: [kept]\n---\n\nBefore the block.\n\n~~~typescript extra-info\nconst value = 1\n~~~\n\nAfter the block.\n'
+  const view = open(original)
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  let codePos = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (codePos < 0 && node.type.name === 'codeBlock') codePos = pos
+  })
+
+  act(() => {
+    expect(codePos).toBeGreaterThanOrEqual(0)
+    expect(addCodeCaption(editor, codePos)).toBe(true)
+    expect(focusCodeCaption(editor, codePos)).toBe(true)
+    editor.commands.insertContent('A portable caption')
+  })
+  await waitFor(() => expect(write).toHaveBeenCalledOnce(), { timeout: 2000 })
+  const autosaved = files.get(PATH)!
+  expect(autosaved).toContain('A portable caption')
+  expect(autosaved).toContain('---\ntitle: Byte-sensitive title\ntags: [kept]\n---')
+  expect(autosaved).toContain('~~~typescript extra-info\nconst value = 1\n~~~')
+  expect(autosaved).toContain('Before the block.')
+  expect(autosaved).toContain('After the block.')
+
+  act(() => editor.commands.insertContent(' pending'))
+  await act(() => flushAllBuffers())
+  const flushed = files.get(PATH)!
+  expect(flushed).toContain('A portable caption pending')
+  expect(flushed).toContain('~~~typescript extra-info\nconst value = 1\n~~~')
+
+  view.unmount()
+  open(flushed)
+  const reopened = ((await editorBox()) as WithEditor).editor
+  expect(reopened.getMarkdown()).toContain('A portable caption pending')
+  expect(reopened.getMarkdown()).toContain('~~~typescript extra-info\nconst value = 1\n~~~')
+})
+
+test('a clean captioned note adopts external reloads while dirty caption edits win', async () => {
+  const initial = '---\ntitle: External reload\n---\n\n~~~typescript custom\nconst value = 1\n~~~\n'
+  const view = open(initial)
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  let codePos = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (codePos < 0 && node.type.name === 'codeBlock') codePos = pos
+  })
+  act(() => {
+    expect(codePos).toBeGreaterThanOrEqual(0)
+    expect(addCodeCaption(editor, codePos)).toBe(true)
+    expect(focusCodeCaption(editor, codePos)).toBe(true)
+    editor.commands.insertContent('Initial caption')
+  })
+  await waitFor(() => expect(write).toHaveBeenCalledOnce(), { timeout: 2000 })
+  const cleanExternal = files.get(PATH)!.replace('Initial caption', 'Reloaded caption')
+  changeOnDisk(cleanExternal, '2026-10-23T10:00:01Z')
+  await waitFor(() => expect(editor.getMarkdown()).toContain('Reloaded caption'))
+
+  act(() => editor.commands.insertContent(' local edit'))
+  const dirtyExternal = files.get(PATH)!.replace('const value = 1', 'const value = 2')
+  changeOnDisk(dirtyExternal, '2026-10-23T10:00:02Z')
+  await act(() => flushAllBuffers())
+  const merged = files.get(PATH)!
+  expect(merged).toContain('Reloaded caption local edit')
+  expect(merged).toContain('const value = 1')
+  expect(merged).not.toContain('const value = 2')
+  expect(merged).toContain('---\ntitle: External reload\n---')
+  view.unmount()
+})
+
 test('rich-text Vim preference updates the installed editor without saving navigation or mode changes', async () => {
   store.set(vimCodeEditingAtom, true)
   open('alpha\n')
   const box = await editorBox()
   const editor = (box as WithEditor).editor
   expect(box).toHaveAttribute('data-vim-mode', 'normal')
-  expect(screen.getByText('Vim normal')).toBeInTheDocument()
+  expect(await screen.findByText('Vim normal')).toBeInTheDocument()
   act(() => fireEvent.keyDown(box, { key: 'l' }))
   act(() => fireEvent.keyDown(box, { key: 'i' }))
   expect(box).toHaveAttribute('data-vim-mode', 'insert')
