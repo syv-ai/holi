@@ -148,6 +148,56 @@ describe('rich-text Vim extension', () => {
     expect(text(editor)).toBe('ab')
   })
 
+  it('keeps repeated x on a valid normal-mode grapheme and atom position at line end', () => {
+    const ed = open('<p>alpha beta gamma</p>')
+    ed.commands.setTextSelection(16)
+    key(ed, '$')
+    expect(ed.state.selection.head).toBe(16)
+    key(ed, 'x')
+    expect(text(ed)).toBe('alpha beta gamm')
+    expect(ed.state.selection.head).toBe(15)
+    key(ed, 'x')
+    expect(text(ed)).toBe('alpha beta gam')
+  })
+
+  it('moves across graphemes spanning marks and classifies unicode word characters', () => {
+    const ed = open('<p><strong>e</strong><em>́clair</em> next, stop!</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'w')
+    expect(ed.state.selection.head).toBe(9)
+    key(ed, 'b')
+    expect(ed.state.selection.head).toBe(1)
+    key(ed, 'e')
+    expect(ed.state.selection.head).toBe(7)
+    key(ed, 'w')
+    expect(ed.state.selection.head).toBe(9)
+    key(ed, 'w')
+    expect(ed.state.selection.head).toBe(15)
+    key(ed, 'b')
+    expect(ed.state.selection.head).toBe(9)
+
+    const atom = Node.create({
+      name: 'wordAtom',
+      inline: true,
+      group: 'inline',
+      atom: true,
+      selectable: true,
+      parseHTML: () => [{ tag: 'word-atom' }],
+      renderHTML: () => ['word-atom'],
+    })
+    ed.destroy()
+    editor = new Editor({
+      extensions: [StarterKit, atom, RichTextVim.configure({ enabled: false })],
+      content: '<p>one<word-atom></word-atom>two, three</p>',
+    })
+    configureRichTextVim(editor.view, true, true, () => true)
+    editor.commands.setTextSelection(1)
+    key(editor, 'w')
+    expect(editor.state.selection.head).toBe(5)
+    key(editor, 'w')
+    expect(editor.state.selection.head).toBe(10)
+  })
+
   it('advances word motions, targets the last grapheme with $, and navigates code-block lines', () => {
     const ed = open('<p>alpha beta</p><pre><code>one\ntwo\nthree</code></pre>')
     ed.commands.setTextSelection(1)
