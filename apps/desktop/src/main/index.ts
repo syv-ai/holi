@@ -9,6 +9,7 @@
  * import anywhere on this path stops the window opening at all.
  */
 import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
+import { createOpenIntentQueue, type OpenIntent } from './open-intents'
 import { realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
@@ -157,10 +158,15 @@ interface OpenRequest {
  * The renderer that said it can take an open (`vault:open-ready`, sent once its
  * vault has landed), or null while none has: a fresh window's page has not
  * loaded, or is still opening its vault, whose landing would bury the tab.
- * Opens asked for meanwhile wait in `heldOpens`.
+ * Opens asked for meanwhile wait in the shared open-intent queue.
  */
 let openTarget: Electron.WebContents | null = null
-const heldOpens: OpenRequest[] = []
+const heldOpenIntents = createOpenIntentQueue()
+
+function sendOpenIntent(contents: Electron.WebContents, intent: OpenIntent): void {
+  const { channel, ...request } = intent
+  contents.send(channel, request)
+}
 
 /**
  * Holi links (docs/features/holi-links.md), clicked anywhere on this machine.
@@ -435,6 +441,17 @@ async function main(): Promise<void> {
     focused: () => BrowserWindow.getFocusedWindow() !== null,
     window: () => (mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow),
     notify: notifyUnfocused,
+    navigate: (plugin, remote, name, payload) => {
+      const request = { remote, plugin, name, payload }
+      const win = openWindow()
+      heldOpenIntents.send(
+        { channel: 'vault:navigate', ...request },
+        win !== null && openTarget === win.webContents && !win.isDestroyed(),
+        (intent) => {
+          if (win !== null) sendOpenIntent(win.webContents, intent)
+        },
+      )
+    },
     background: {
       registered: async () =>
         (await registry.list()).map((e) => ({ remote: e.remote, root: e.path })),
@@ -682,8 +699,13 @@ async function main(): Promise<void> {
       if (win.isMinimized()) win.restore()
       win.showInactive()
     }
-    if (openTarget !== null && !openTarget.isDestroyed()) openTarget.send('vault:open', request)
-    else heldOpens.push(request)
+    heldOpenIntents.send(
+      { channel: 'vault:open', ...request },
+      openTarget !== null && !openTarget.isDestroyed(),
+      (intent) => {
+        if (openTarget !== null) sendOpenIntent(openTarget, intent)
+      },
+    )
     return win
   }
   /** Who waits for a window's renderer to take opens (`openReadyIn`). */
@@ -691,7 +713,7 @@ async function main(): Promise<void> {
   ipcMain.on('vault:open-ready', (event) => {
     if (!authorizeApplicationSender(event)) return
     openTarget = event.sender
-    for (const request of heldOpens.splice(0)) event.sender.send('vault:open', request)
+    heldOpenIntents.drain((intent) => sendOpenIntent(event.sender, intent))
     for (const w of readyWaiters.filter((w) => w.contents === event.sender)) {
       readyWaiters.splice(readyWaiters.indexOf(w), 1)
       w.resolve()

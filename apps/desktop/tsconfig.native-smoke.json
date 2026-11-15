@@ -3,6 +3,8 @@
   "include": [
     "src",
     "scripts/terminal-hints-native-smoke.tsx",
-    "scripts/terminal-hints-native-smoke-main.ts"
+    "scripts/terminal-hints-native-smoke-main.ts",
+    "scripts/agent-inbox-542-smoke-main.ts",
+    "scripts/agent-inbox-542-smoke-renderer.tsx"
   ]
 }

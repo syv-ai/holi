@@ -30,8 +30,6 @@ export interface InboxDeps {
   notify(notice: Notice): boolean
   /** Tell the renderer the inbox. */
   changed(view: InboxView): void
-  /** Open what an entry points at: its banner was clicked. */
-  open(entry: InboxEntry): void
   now?: () => Date
 }
 
@@ -77,7 +75,7 @@ export function createInbox(deps: InboxDeps): Inbox {
       const shown = deps.notify({
         title: entry.title,
         body: entry.line,
-        onClick: () => deps.open(entry),
+        navigate: { name: 'inbox-open', payload: entry },
       })
       if (!shown) return 'inbox'
       lastBanner = at.getTime()
