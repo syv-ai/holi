@@ -76,6 +76,8 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
   })
   let appCallCount = 0
   let docsReadCount = 0
+  let fixtureLease: { token: string; nonce: string } | null = null
+  let docsReadGate: { entered(): void; wait: Promise<void>; release(): void } | undefined
   let captureGate:
     { entered(): void; wait: Promise<void>; release(): void; used: boolean } | undefined
   const captureResults: boolean[] = []
@@ -93,6 +95,12 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       params: (raw) => ({ path: (raw as { path: string }).path }),
       run: async (ctx, { path }) => {
         docsReadCount += 1
+        const gate = docsReadGate
+        if (gate) {
+          docsReadGate = undefined
+          gate.entered()
+          await gate.wait
+        }
         return readFileSync(join(ctx.root, vaultRelPath(path)), 'utf8')
       },
     }),
@@ -208,6 +216,9 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       host.setDisplayed(active.remote)
       await host.reconcile(active, 'open')
       assert.deepEqual(host.failures(active.remote), {})
+      await win.loadURL(
+        `data:text/html,<!doctype html><div id="result"></div><iframe id="app" sandbox="allow-scripts" style="width:700px;height:450px;border:0"></iframe>`,
+      )
       const lease = (
         await capabilityHost.dispatch({
           door: 'ui',
@@ -218,9 +229,6 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       ).value as { token: string; nonce: string }
       observedToken = lease.token
       revokedBeforeSvgScript = false
-      await win.loadURL(
-        `data:text/html,<!doctype html><div id="result"></div><iframe id="app" sandbox="allow-scripts" style="width:700px;height:450px;border:0"></iframe>`,
-      )
       const observedPromise = win.webContents.executeJavaScript(
         `new Promise((resolve,reject)=>{const onMessage=e=>{if(e.data?.kind==='app-smoke'){removeEventListener('message',onMessage);resolve(e.data.value)}};window.addEventListener('message',onMessage);document.querySelector('#app').src='holi-app://${leasedAppHost(bundle, lease.token)}/index.html';setTimeout(()=>reject(new Error('app frame timeout')),10000)})`,
       )
@@ -385,6 +393,9 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
           name: input.name,
           params,
         })
+        if (input.name === 'apps.frameLease') {
+          fixtureLease = result.value as { token: string; nonce: string }
+        }
         if (input.name === 'apps.call') {
           appCallCount += 1
         }
@@ -536,6 +547,52 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       '',
     )
     mark('production-app-frame-navigation-replacement-cannot-reach-hostbridge')
+
+    assert(fixtureLease, 'fixture controller did not observe the issued app lease')
+    const detachedLease = fixtureLease
+    const detachedNativeLease = appFrames.resolveToken(detachedLease.token)
+    assert(detachedNativeLease, 'native app lease was not registered')
+    assert.equal(detachedNativeLease.valid(frameWindow), true)
+    let readEntered!: () => void
+    let releaseRead!: () => void
+    const readStarted = new Promise<void>((resolve) => {
+      readEntered = resolve
+    })
+    const readWait = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    docsReadGate = { entered: readEntered, wait: readWait, release: releaseRead }
+    await frameWindow.webContents.executeJavaScript(
+      `document.querySelector('iframe').contentWindow.postMessage({kind:'fixture-stale',nonce:window.fixtureNonces?.a},'*')`,
+    )
+    await readStarted
+    const detachedResponse = await frameWindow.webContents.executeJavaScript(
+      `(()=>{const frame=document.querySelector('iframe');frame.remove();return true})()`,
+    )
+    assert.equal(detachedResponse, true)
+    assert.equal(detachedNativeLease.valid(frameWindow), false)
+    assert.equal(appFrames.resolveToken(detachedLease.token), null)
+    releaseRead()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    assert.equal(
+      await frameWindow.webContents.executeJavaScript(
+        `document.querySelector('#stale-result')?.textContent ?? ''`,
+      ),
+      '',
+      'detached child received a queued bridge reply',
+    )
+    mark('native-child-dom-removal-revokes-lease-and-suppresses-queued-bridge-reply')
+
+    await frameWindow.webContents.reload()
+    const reloadedRead = await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+15000;const poll=()=>{const value=document.querySelector('#bridge-read-result')?.textContent??'';if(value.includes('owned-a'))resolve(value);else if(Date.now()>end)reject(new Error('fresh root reload AppFrame read timed out: '+value));else setTimeout(poll,50)};poll()})`,
+    )
+    assert.match(reloadedRead, /owned-a/)
+    assert(fixtureLease, 'fresh root reload did not acquire a new app lease')
+    assert.notEqual(fixtureLease.token, detachedLease.token)
+    const reloadedLease = appFrames.resolveToken(fixtureLease.token)
+    assert(reloadedLease?.valid(frameWindow), 'fresh root reload lease is not valid')
+    mark('root-renderer-reload-revokes-old-lease-and-fresh-frame-reads-own-note')
     ipcMain.removeHandler('holi:trpc')
     await host.stopAll()
     return checks

@@ -22,6 +22,7 @@ export function createAppFrameLeases(): AppFrameLeases {
       const token = randomBytes(24).toString('hex')
       let documentClaimed = false
       let nativeFrame: string | null = null
+      let nativeFrameAlive: (() => boolean) | null = null
       const lease: AppFrameLease = {
         ...input,
         token,
@@ -31,22 +32,34 @@ export function createAppFrameLeases(): AppFrameLeases {
           documentClaimed = true
           return true
         },
-        bindDocument(frame) {
+        bindDocument(frame, isAlive) {
           if (nativeFrame !== null || entries.get(token) !== lease) return false
           nativeFrame = frame
+          nativeFrameAlive = isAlive
           return true
         },
         isDocumentFrame(frame) {
-          return nativeFrame !== null && nativeFrame === frame
+          return nativeFrame !== null && nativeFrame === frame && isNativeFrameAlive()
         },
         valid(window) {
           return (
             entries.get(token) === lease &&
             window === input.window &&
             !window.isDestroyed() &&
-            input.current()
+            input.current() &&
+            isNativeFrameAlive()
           )
         },
+      }
+      const isNativeFrameAlive = (): boolean => {
+        if (nativeFrame === null || nativeFrameAlive === null) return true
+        try {
+          if (nativeFrameAlive()) return true
+        } catch {
+          // A disposed native handle is no longer authority.
+        }
+        revoke(lease)
+        return false
       }
       entries.set(token, lease)
       return lease
@@ -90,6 +103,9 @@ export function createAppFrameLeases(): AppFrameLeases {
     },
     revokeRemote(remote) {
       for (const lease of entries.values()) if (lease.remote === remote) revoke(lease)
+    },
+    revokeWindow(window) {
+      for (const lease of entries.values()) if (lease.window === window) revoke(lease)
     },
     revokeAll() {
       for (const lease of entries.values()) revoke(lease)

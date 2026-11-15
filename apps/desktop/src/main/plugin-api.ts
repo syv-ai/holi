@@ -64,8 +64,8 @@ export interface AppFrameLease {
   /** Consume the single top-level document load; a reload needs a fresh lease. */
   claimDocument(): boolean
   /** Bind this lease to the native main-frame document generation. */
-  bindDocument(frame: string): boolean
-  /** Whether this lease belongs to the native requester of a protocol resource. */
+  bindDocument(frame: string, isAlive: () => boolean): boolean
+  /** Whether this lease belongs to the live native requester of a protocol resource. */
   isDocumentFrame(frame: string): boolean
 }
 
@@ -94,6 +94,8 @@ export interface AppFrameLeases {
   release(token: string, remote: string, bundle: string): boolean
   revokeActivation(remote: string, activation: number): void
   revokeRemote(remote: string): void
+  /** Revoke every lease issued to one native window, including unbound leases. */
+  revokeWindow(window: BrowserWindow): void
   revokeAll(): void
 }
 
