@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,6 +26,8 @@ const adapters = vi.hoisted(() => ({
   historyRename: null as null | { source: string; entered: () => void; wait: Promise<void> },
   exitObserved: null as null | { cwd: string; entered: () => void },
   routes: new Map<string, Map<string, BridgeRoute>>(),
+  watchStarts: 0,
+  watchCloses: 0,
 }))
 
 vi.mock('node:fs/promises', async (original) => {
@@ -47,6 +50,23 @@ vi.mock('node:fs/promises', async (original) => {
         await pause.wait
       }
       return fs.copyFile(...args)
+    },
+  }
+})
+
+vi.mock('node:fs', async (original) => {
+  const fs = await original<typeof import('node:fs')>()
+  return {
+    ...fs,
+    watch: (...args: Parameters<typeof fs.watch>) => {
+      adapters.watchStarts++
+      const watcher = fs.watch(...args)
+      const close = watcher.close.bind(watcher)
+      watcher.close = () => {
+        adapters.watchCloses++
+        close()
+      }
+      return watcher
     },
   }
 })
@@ -112,6 +132,8 @@ beforeEach(() => {
   adapters.historyRename = null
   adapters.exitObserved = null
   adapters.routes.clear()
+  adapters.watchStarts = 0
+  adapters.watchCloses = 0
 })
 afterEach(async () => {
   await Promise.all(stops.splice(0).map((stop) => stop()))
@@ -258,7 +280,7 @@ async function rig(
     await host.stopAll()
     await bridge.stop()
   })
-  return { host, enter, call, capabilities, roots, userData, sent, setActive, bridge }
+  return { host, enter, call, capabilities, roots, userData, sent, setActive, bridge, registry }
 }
 
 const harness = {
@@ -377,84 +399,84 @@ it('serializes overlapping PTY history updates across activations and drains sto
   )
 })
 
-it('binds real capability dispatch and HTTP hook reports to activation vaults', async () => {
-  const { host, enter, call, roots, bridge } = await rig()
-  await enter(A)
-  await enter(B)
+it('binds real hook reports, inbox delivery, and native commands to activation vaults', async () => {
+  const { host, enter, call, roots, bridge, userData } = await rig(undefined, undefined, true)
+  const received: Record<'A' | 'B' | 'A2', string[]> = { A: [], B: [], A2: [] }
+  const inboxServers: ReturnType<typeof createServer>[] = []
+  const inboxSockets: string[] = []
+  const inbox = async (owner: 'A' | 'B' | 'A2') => {
+    const socket = join(tmpdir(), `holi-agent-inbox-${process.pid}-${owner}-${Date.now()}.sock`)
+    inboxSockets.push(socket)
+    const server = createServer((connection) => {
+      let bytes = ''
+      connection.on('data', (chunk) => (bytes += chunk.toString()))
+      connection.on('end', () => received[owner]!.push(bytes))
+    })
+    inboxServers.push(server)
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(socket, resolve)
+    })
+    return { socket, token: `token_${owner}_123` }
+  }
   const post = async (remote: string, path: string, query = '', body = '') => {
     const token = bridge.tokenForVault(remote)
-    const response = await fetch(`http://127.0.0.1:${bridge.port()}${path}?t=${token}${query}`, {
-      method: 'POST',
-      body,
-    })
-    return response
+    return fetch(
+      `http://127.0.0.1:${bridge.port()}${path}?t=${encodeURIComponent(token)}${query}`,
+      {
+        method: 'POST',
+        body,
+      },
+    )
   }
   try {
+    // The same real Claude job id and conversation id deliberately exist in
+    // both listings. Only cwd distinguishes the owners.
+    const listingEntered = deferred()
+    const releaseListing = deferred()
+    let gated = false
+    adapters.run.mockImplementation(async (_bin, args, opts) => {
+      if (args.includes('--bg')) return 'backgrounded · abc12345 · Bound run'
+      if (args[0] === 'agents') {
+        if (opts.cwd === roots[A] && !gated) {
+          gated = true
+          listingEntered.resolve()
+          await releaseListing.promise
+        }
+        return JSON.stringify([
+          {
+            kind: 'background',
+            id: 'abc12345',
+            name: 'Owner session',
+            sessionId: '123e4567-e89b-42d3-a456-426614174000',
+            cwd: opts.cwd,
+            pid: process.pid,
+            status: 'idle',
+          },
+        ])
+      }
+      return '[]'
+    })
+    const enteringA = enter(A)
+    await listingEntered.promise
+    expect(adapters.routes.has(A)).toBe(false)
+    releaseListing.resolve()
+    await enteringA
+    expect(adapters.routes.has(A)).toBe(true)
+    await enter(B)
+    expect(await readFile(join(roots[A], '.fixture-owner'), 'utf8')).toBe(A)
+    expect(await readFile(join(roots[B], '.fixture-owner'), 'utf8')).toBe(B)
     host.setDisplayed(B)
-    // Reports can beat the provider's first listing/config read. The host keeps
-    // them for the owner even before its session rows have been seeded.
-    for (const remote of [A, B] as const) {
-      expect(
-        (
-          await post(
-            remote,
-            '/session',
-            '&job=abc12345',
-            JSON.stringify({ socket: '/tmp/holi-test.sock', token: `${remote}-token` }),
-          )
-        ).status,
-      ).toBe(204)
-      expect(
-        (
-          await post(
-            remote,
-            '/statusline',
-            '&job=abc12345',
-            JSON.stringify({ context_window: { used_percentage: remote === A ? 17 : 83 } }),
-          )
-        ).status,
-      ).toBe(204)
-      expect(
-        await call(remote, 'agent.launch', {
-          name: `${remote} owned`,
-          prompt: `${remote} prompt`,
-          model: 'owner-model',
-          allow: ['Read'],
-          deny: ['Bash'],
-          system: `${remote} system`,
-          mcpConfig: join(roots[remote], 'agent-mcp.json'),
-        }),
-      ).toMatchObject({ ok: true, sessionId: 'abc12345' })
-    }
-    const launchCalls = adapters.run.mock.calls.filter(([, args]) => args.includes('--bg'))
-    expect(launchCalls.map(([, , opts]) => opts.cwd)).toEqual([roots[A], roots[B]])
-    expect(launchCalls[0]![1]).toEqual(
-      expect.arrayContaining([
-        '--model',
-        'owner-model',
-        '--allowedTools=Read',
-        '--disallowedTools=Bash',
-        '--append-system-prompt',
-        `${A} system`,
-        `--mcp-config=${join(roots[A], 'agent-mcp.json')}`,
-      ]),
-    )
-    expect(launchCalls[1]![1]).toContain(`${B} system`)
+    const channelA = await inbox('A')
+    const channelB = await inbox('B')
 
-    for (const remote of [A, B] as const) {
-      host.setDisplayed(remote === A ? B : A)
+    // Genuine HTTP hook routes populate the two activation-local channels.
+    for (const [remote, channel] of [
+      [A, channelA],
+      [B, channelB],
+    ] as const) {
       expect(
-        (
-          await post(
-            remote,
-            '/session',
-            '&job=abc12345',
-            JSON.stringify({
-              session_id: `${remote}-conversation`,
-              cwd: roots[remote],
-            }),
-          )
-        ).status,
+        (await post(remote, '/session', '&job=abc12345', JSON.stringify(channel))).status,
       ).toBe(204)
       expect(
         (
@@ -464,36 +486,198 @@ it('binds real capability dispatch and HTTP hook reports to activation vaults', 
             '&job=abc12345',
             JSON.stringify({
               context_window: { used_percentage: remote === A ? 17 : 83 },
-              model: { display_name: remote },
+              model: { display_name: remote === A ? 'Model A' : 'Model B' },
             }),
           )
         ).status,
       ).toBe(204)
-      expect((await post(remote, '/turn/start', '&job=abc12345&pid=' + process.pid)).status).toBe(
-        204,
-      )
-      expect((await post(remote, '/turn/end', '&job=abc12345&pending=2')).status).toBe(200)
+      expect(
+        (
+          await post(
+            remote,
+            '/turn/start',
+            `&job=abc12345&pid=${process.pid}`,
+            JSON.stringify(channel),
+          )
+        ).status,
+      ).toBe(204)
     }
+    const aSessions = (await call(A, 'agent.sessions')) as {
+      id: string
+      state: string
+      contextPercent?: number
+      model?: string
+    }[]
+    const bSessions = (await call(B, 'agent.sessions')) as {
+      id: string
+      state: string
+      contextPercent?: number
+      model?: string
+    }[]
+    expect(aSessions).toEqual([
+      expect.objectContaining({
+        id: 'abc12345',
+        state: 'working',
+        contextPercent: 17,
+        model: 'Model A',
+      }),
+    ])
+    expect(bSessions).toEqual([
+      expect.objectContaining({
+        id: 'abc12345',
+        state: 'working',
+        contextPercent: 83,
+        model: 'Model B',
+      }),
+    ])
+    const settledA = await post(A, '/turn/end', '&job=abc12345&pending=2')
+    expect(settledA.status).toBe(200)
+
+    host.setDisplayed(A)
+    await expect(
+      call(A, 'agent.message', { session: 'abc12345', text: 'message A' }),
+    ).resolves.toEqual({ ok: true })
+    host.setDisplayed(B)
+    await expect(
+      call(B, 'agent.message', { session: 'abc12345', text: 'message B' }),
+    ).resolves.toEqual({ ok: true })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(received.A.join('')).toContain('message A')
+    expect(received.A.join('')).toContain(channelA.token)
+    expect(received.B.join('')).toContain('message B')
+    expect(received.B.join('')).toContain(channelB.token)
+    expect(received.A.join('')).not.toContain('message B')
+    expect(received.B.join('')).not.toContain('message A')
+
+    // A tiny real Pi RPC child gives the actual capability dispatch distinct
+    // owner replies without substituting the session host or dispatch table.
+    const rpc = join(userData, 'pi-rpc-fixture')
+    await writeFile(
+      rpc,
+      `#!/usr/bin/env node\nconst readline=require('node:readline');\nprocess.on('SIGTERM',()=>process.exit(0));\nconst rl=readline.createInterface({input:process.stdin});\nrl.on('line',line=>{const c=JSON.parse(line); if(c.type==='prompt'){const text=process.cwd().endsWith('vault-a')?'reply-A':'reply-B'; const emit=x=>process.stdout.write(JSON.stringify(x)+'\\n'); emit({type:'agent_start'}); emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:text}}); emit({type:'message_end',message:{role:'assistant',stopReason:'stop'}}); emit({type:'agent_settled'});} else if(c.type==='get_session_stats'){process.stdout.write(JSON.stringify({type:'response',id:c.id,success:true,data:{}})+'\\n');}});\n`,
+    )
+    await chmod(rpc, 0o755)
+    const pi = { ...PRESETS.find((preset) => preset.id === 'pi')!, command: { bin: rpc, args: [] } }
+    await call(A, 'agent.harnessSave', { harness: pi })
+    await call(B, 'agent.harnessSave', { harness: pi })
+    const launchPi = async (remote: typeof A | typeof B) =>
+      call(remote, 'agent.launch', {
+        provider: 'pi',
+        name: `${remote} reply`,
+        prompt: 'answer',
+        tools: 'none',
+        keep: true,
+      }) as Promise<{ ok: boolean; sessionId: string }>
+    const piA = await launchPi(A)
+    const piB = await launchPi(B)
+    expect(piA.ok).toBe(true)
+    expect(piB.ok).toBe(true)
+    const settledReply = async (remote: typeof A | typeof B, session: string) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const result = (await call(remote, 'agent.reply', { session })) as {
+          output: string | null
+        }
+        if (result.output !== null) return result
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      throw new Error(`Pi reply did not settle for ${remote}`)
+    }
+    const replyA = await settledReply(A, piA.sessionId)
+    const replyB = await settledReply(B, piB.sessionId)
+    expect(replyA.output).toBe('reply-A')
+    expect(replyB.output).toBe('reply-B')
+    await expect(call(A, 'agent.reply', { session: piB.sessionId })).rejects.toThrow(/Pi run/)
+    await expect(call(B, 'agent.reply', { session: piA.sessionId })).rejects.toThrow(/Pi run/)
+    expect(
+      adapters.run.mock.calls.some(([, args]) => args.includes('--dangerously-skip-permissions')),
+    ).toBe(false)
+
     const turnsA = (await call(A, 'agent.turns')) as { sessionId: string }[]
     const turnsB = (await call(B, 'agent.turns')) as { sessionId: string }[]
     expect(turnsA.map((turn) => turn.sessionId)).toContain('abc12345')
-    expect(turnsB.map((turn) => turn.sessionId)).toContain('abc12345')
+    expect(turnsB.map((turn) => turn.sessionId)).not.toContain('abc12345')
+    await expect(call(A, 'agent.reply', { session: 'abc12345' })).rejects.toThrow(/Pi run/)
+    await expect(
+      call(B, 'agent.message', { session: 'deadbeef', text: 'wrong owner' }),
+    ).rejects.toThrow()
+
+    // Stop is dispatched to each activation's real Claude CLI adapter, not to
+    // the displayed vault. Its command cwd and private config target are asserted.
+    host.setDisplayed(B)
     expect(await call(A, 'agent.stop', { id: 'abc12345' })).toMatchObject({ ok: true })
-    host.setDisplayed(B)
+    host.setDisplayed(A)
     expect(await call(B, 'agent.stop', { id: 'abc12345' })).toMatchObject({ ok: true })
+    const stopCommands = adapters.run.mock.calls.filter(
+      ([, args]) => args[0] === 'stop' && args[1] === 'abc12345',
+    )
+    expect(stopCommands.map(([, , opts]) => opts.cwd)).toEqual([roots[A], roots[B]])
+    const stopConfigDirs = stopCommands.map(([, , opts]) => opts.env.CLAUDE_CONFIG_DIR)
+    expect(stopConfigDirs[0]).toContain('fixture-a-')
+    expect(stopConfigDirs[1]).toContain('fixture-b-')
+    expect(stopConfigDirs[0]).not.toBe(stopConfigDirs[1])
+
+    // Leaving A unregisters its HTTP routes and releases its channel. Restart
+    // A creates fresh routes; B's activation and channel remain live.
     await host.stop(A)
-    expect((await post(A, '/turn/start', '&job=abc12345&pid=' + process.pid)).status).toBe(404)
+    expect((await post(A, '/turn/start', '&job=abc12345', JSON.stringify(channelA))).status).toBe(
+      404,
+    )
+    await expect(
+      call(B, 'agent.message', { session: 'abc12345', text: 'B still live' }),
+    ).resolves.toEqual({ ok: true })
+    const channelA2 = await inbox('A2')
     await enter(A)
+    expect((await post(A, '/session', '&job=abc12345', JSON.stringify(channelA2))).status).toBe(204)
+    expect(
+      (
+        await post(
+          A,
+          '/statusline',
+          '&job=abc12345',
+          JSON.stringify({
+            context_window: { used_percentage: 29 },
+            model: { display_name: 'Model A2' },
+          }),
+        )
+      ).status,
+    ).toBe(204)
     host.setDisplayed(B)
+    await expect(
+      call(A, 'agent.message', { session: 'abc12345', text: 'message A2' }),
+    ).resolves.toEqual({ ok: true })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(received.A2.join('')).toContain('message A2')
+    expect(received.A.join('')).not.toContain('message A2')
+    const aLive = (await call(A, 'agent.sessions')) as {
+      provider: string
+      contextPercent?: number
+      model?: string
+    }[]
+    const bLive = (await call(B, 'agent.sessions')) as {
+      provider: string
+      contextPercent?: number
+      model?: string
+    }[]
+    expect(aLive.filter((session) => session.provider === 'claude')).toEqual([
+      expect.objectContaining({ contextPercent: 29, model: 'Model A2' }),
+    ])
+    expect(bLive.filter((session) => session.provider === 'claude')).toEqual([
+      expect.objectContaining({ contextPercent: 83, model: 'Model B' }),
+    ])
+    expect(bLive.find((session) => session.provider === 'pi')).toMatchObject({ provider: 'pi' })
     expect(
-      await call(A, 'agent.launch', { name: 'A reactivated', prompt: 'A again' }),
-    ).toMatchObject({ ok: true })
-    expect(
-      adapters.run.mock.calls.filter(([, args]) => args.includes('--bg')).at(-1)?.[2].cwd,
-    ).toBe(roots[A])
-    expect((await post(A, '/turn/start', '&job=abc12345&pid=' + process.pid)).status).toBe(204)
+      adapters.run.mock.calls
+        .filter(([, args]) => args[0] === 'agents')
+        .map(([, , opts]) => opts.cwd),
+    ).toContain(roots[A])
   } finally {
     await host.stopAll()
+    await Promise.all(
+      inboxServers.map(async (server) => {
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      }),
+    )
+    await Promise.all(inboxSockets.map((socket) => rm(socket, { force: true })))
   }
 })
 
@@ -745,6 +929,25 @@ it('releases failed activation ownership so a fresh activation reads current dis
   expect(await call(A, 'agent.providers')).not.toContainEqual(
     expect.objectContaining({ id: harness.id }),
   )
+})
+
+it('closes the session watcher after activation failure and retries with one watcher', async () => {
+  const { host, enter, registry } = await rig()
+  vi.spyOn(registry, 'register').mockImplementationOnce(() => {
+    throw new Error('registration adapter failed')
+  })
+
+  await enter(A)
+  expect(host.failures(A).agent).toContain('registration adapter failed')
+  expect(adapters.watchStarts).toBe(1)
+  expect(adapters.watchCloses).toBe(1)
+
+  await enter(A)
+  expect(host.failures(A)).toEqual({})
+  expect(adapters.watchStarts).toBe(2)
+  expect(adapters.watchCloses).toBe(1)
+  await host.stop(A)
+  expect(adapters.watchCloses).toBe(2)
 })
 
 it('drains an admitted real activation write while the other activation stays usable', async () => {
