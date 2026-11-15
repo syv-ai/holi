@@ -866,6 +866,7 @@ async function run() {
       await waitForStoredMarker(firstExpected)
       assert.equal((await markersA.read([burstId]))[burstId], firstExpected)
       await nativeClick(cycle)
+      await waitFor(win, `window.smokeTrustedClicks.length === ${burstStart + 2}`)
       const burstEvents = await js(`window.smokeTrustedClicks.slice(${burstStart})`)
       assert.equal(burstEvents.length, 2)
       assert(burstEvents.every((event: { trusted: boolean }) => event.trusted))

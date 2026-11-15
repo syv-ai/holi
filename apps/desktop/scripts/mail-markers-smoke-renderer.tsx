@@ -12,6 +12,7 @@ import { ConnectionsSection } from '../src/plugins/google/renderer/connections-s
 import { MailView } from '../src/plugins/google/renderer/mail-view'
 import { MailShell } from '../src/plugins/google/renderer/mail/mail-shell'
 import '../src/renderer/src/index.css'
+import '../src/main/vault/seed/vault/once/.holi/settings/theme.css'
 
 const store = createStore()
 store.set(activeRemoteAtom, 'smoke/vault')
