@@ -292,12 +292,21 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
         uris: ['https://example.com/list>a'],
       },
       {
+        name: 'paired-backslashes',
+        source: `${table('[ref]')}\n\n${String.raw`[ref]: <https://example.com/a\\>b>`}\n`,
+      },
+      {
+        name: 'ordinary-paired-backslashes',
+        source: `| A |\n| --- |\n| [ref] |\n\n${String.raw`[ref]: <https://example.com/a\\>b>`}\n`,
+      },
+      {
         name: 'ordinary-table-parity',
         source: `| A |\n| --- |\n| [ref] |\n\n[ref]: <https://example.com/quoted\\>a>\n`,
         uris: ['https://example.com/quoted>a'],
       },
     ]
 
+    const pairedResults: string[] = []
     for (const scenario of scenarios) {
       const notePath = join(root, `${scenario.name}.md`)
       const outPath = join(root, `${scenario.name}.pdf`)
@@ -311,15 +320,31 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
         fields: [],
         meta: {},
       })
+      expect(await readFile(notePath, 'utf8'), scenario.name).toBe(scenario.source)
       const pdf = (await readFile(outPath)).toString('latin1')
       const uris = [...pdf.matchAll(/\/URI\s*\((.*?)\)/g)].map((match) => match[1])
-      expect(uris, scenario.name).toEqual(scenario.uris)
+      if (!scenario.name.includes('paired-backslashes')) {
+        expect(uris, scenario.name).toEqual(scenario.uris)
+      }
       const pages = await readPdfPages(outPath)
       const text = pages.flatMap((page) => page.runs.map((run) => run.text)).join(' ')
-      if (scenario.name !== 'ordinary-table-parity') {
+      if (scenario.name.includes('paired-backslashes')) {
+        pairedResults.push(
+          JSON.stringify({
+            uris,
+            text: text
+              .replace(/Edge\s+caption\./g, '')
+              .replace(/\s+/g, ' ')
+              .trim(),
+          }),
+        )
+      }
+      if (!scenario.name.startsWith('ordinary-')) {
         expect(text.replace(/\s+/g, ' ').match(/Edge caption\./g), scenario.name).toHaveLength(1)
       }
     }
+    expect(pairedResults).toHaveLength(2)
+    expect(pairedResults[0]).toBe(pairedResults[1])
   })
 
   it('renders a real markdown note through the Plain template to a %PDF', async () => {

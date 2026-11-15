@@ -79,6 +79,12 @@ describe('reference definition normalization', () => {
     )
   })
 
+  it('does not reinterpret an unescaped closing angle after paired backslashes', () => {
+    expect(readMarkdownReferenceDefinitions(String.raw`[ref]: <https://example.com/a\\>b>`)).toBe(
+      '',
+    )
+  })
+
   it('does not extract escaped-angle definitions from HTML or indented code', () => {
     const source = [
       '<div>',

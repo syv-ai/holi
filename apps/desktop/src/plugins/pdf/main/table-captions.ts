@@ -29,8 +29,11 @@ export function readMarkdownReferenceDefinitions(markdown: string): string {
   const body = splitFrontmatter(markdown).body
   // Lezer does not recognize `\\>` inside an angle destination. Replace it
   // with an equally sized escaped character while parsing so the closing `>`
-  // remains structural; source offsets still map directly to `body`.
-  const parserInput = body.replace(/\\>/g, '\\x')
+  // remains structural; source offsets still map directly to `body`. Paired
+  // backslashes leave the angle unescaped and must retain their closing role.
+  const parserInput = body.replace(/(\\+)>/g, (match, escapes: string) =>
+    escapes.length % 2 === 0 ? match : `${escapes}x`,
+  )
   const tree = markdownParser.parse(parserInput)
   const definitions: string[] = []
   const quoteMarks: { from: number; to: number }[] = []
