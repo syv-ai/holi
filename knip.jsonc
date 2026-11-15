@@ -34,6 +34,11 @@
         // Vite's disposable Electron smoke entry is selected by a filesystem path.
         "scripts/windows-agent-smoke.ts",
         "scripts/browser-display-smoke.ts",
+        // The optional toolbar smoke bundles its HTML and loads these by filesystem path.
+        "scripts/browser-display-fixture/index.html",
+        "scripts/browser-display-fixture/entry.tsx",
+        "scripts/browser-display-fixture/preload.cjs",
+        "scripts/browser-display-fixture/toolbar-sequence.ts",
         "scripts/mail-markers-smoke-main.ts",
         "scripts/mail-markers-smoke-renderer.tsx",
       ],
@@ -60,8 +65,8 @@
         // they export a component's whole API whether or not Holi uses it yet.
         "src/renderer/src/components/ui/**": ["exports", "types"],
       },
-      // A system binary one community-plugin test shells out to.
-      "ignoreBinaries": ["pgrep"],
+      // System binaries used by a community-plugin test and optional native video capture.
+      "ignoreBinaries": ["pgrep", "ffmpeg"],
     },
     "packages/shared": {
       "project": ["src/**/*.ts!", "test/**/*.ts"],
