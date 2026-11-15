@@ -81,6 +81,8 @@ describe('createInbox', () => {
   function harness(focused: boolean) {
     let stored = parseInbox(null)
     const banners: string[] = []
+    let clicked: (() => void) | undefined
+    let opened: InboxEntry | undefined
     let clock = T0
     const inbox = createInbox({
       store: {
@@ -90,13 +92,23 @@ describe('createInbox', () => {
       notify: (n) => {
         if (focused) return false
         banners.push(n.title)
+        clicked = n.onClick
         return true
       },
       changed: () => {},
-      open: () => {},
+      open: (entry) => {
+        opened = entry
+      },
       now: () => new Date(clock),
     })
-    return { inbox, banners, tick: (ms: number) => (clock += ms), stored: () => stored }
+    return {
+      inbox,
+      banners,
+      tick: (ms: number) => (clock += ms),
+      stored: () => stored,
+      click: () => clicked?.(),
+      opened: () => opened,
+    }
   }
 
   it('raises a banner, then only inbox entries until the gap has passed', async () => {
@@ -109,6 +121,15 @@ describe('createInbox', () => {
     expect(await h.inbox.raise({ title: 'C', line: '' })).toBe('banner')
     expect(h.banners).toEqual(['A', 'C'])
     expect(h.stored().entries.map((e) => e.title)).toEqual(['C', 'B', 'A'])
+  })
+
+  it('opens the exact session entry retained by its native banner', async () => {
+    const h = harness(false)
+    const notice = { title: 'Pi needs attention', line: 'Review it.', session: '0123abcd' }
+    expect(await h.inbox.raise(notice)).toBe('banner')
+    h.click()
+    expect(h.opened()).toMatchObject(notice)
+    expect(h.opened()?.id).toBe(h.stored().entries[0]?.id)
   })
 
   it('keeps everything in the inbox while Holi has focus', async () => {
@@ -213,10 +234,18 @@ describe('holi agent notify', () => {
     }
   }
 
-  it('takes only a job id as the session, never something a CLI reads as a flag', async () => {
-    await expect(notify({ title: 'T', line: 'L', session: '--help' }, true)).rejects.toThrow()
-    const ok = await notify({ title: 'T', line: 'L', session: '0a1b2c3d' }, true)
-    expect(ok.raised).toEqual([{ title: 'T', line: 'L', session: '0a1b2c3d' }])
+  it.each(['0a1b2c3d', 'j0123456789ab', 'p0123456789ab'])(
+    'retains a supported Holi session id %s',
+    async (session) => {
+      const ok = await notify({ title: 'T', line: 'L', session }, true)
+      expect(ok.raised).toEqual([{ title: 'T', line: 'L', session }])
+    },
+  )
+
+  it('rejects values that could be interpreted as CLI options or foreign IDs', async () => {
+    for (const session of ['--help', 'a1b2c3d4e5f6', '11111111-1111-4111-8111-111111111111']) {
+      await expect(notify({ title: 'T', line: 'L', session }, true)).rejects.toThrow()
+    }
   })
 
   it('opens only a path a person may be shown: no machine state, no secret file', async () => {
