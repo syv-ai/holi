@@ -38,6 +38,8 @@ import {
   plainMarkdownExtensions,
   registerBuffer,
   useVimEditor,
+  useVimField,
+  VimFieldMode,
   vimCodeEditingAtom,
 } from '@/plugin-api'
 import { composeFrom, type ComposeIntent } from './compose-intent'
@@ -450,6 +452,8 @@ export function MailComposer({
   const departingRef = useRef(false)
   const discardingRef = useRef(false)
   const canSend = to.length > 0 && !sending && !departing && !discarding && !loadingRef.current
+  const fieldIdentity = `${accountSubProp ?? currentSub ?? 'no-account'}:${draftId ?? 'new'}:${loads}:${tab}:${confirmingSubject}:${confirmingDiscard}`
+  const subjectVim = useVimField(`google-subject:${fieldIdentity}`, subject)
 
   const send = useCallback(async (): Promise<void> => {
     if (sendingRef.current || discardingRef.current || departingRef.current || loadingRef.current)
@@ -625,6 +629,7 @@ export function MailComposer({
             if (markDirty({ to: next })) setTo(next)
           }}
           suggestions={suggestions}
+          vimIdentity={`google-to:${fieldIdentity}`}
         />
         {!showCc && (
           <Button
@@ -659,6 +664,7 @@ export function MailComposer({
               if (markDirty({ cc: next })) setCc(next)
             }}
             suggestions={suggestions}
+            vimIdentity={`google-cc:${fieldIdentity}`}
           />
         </div>
       )}
@@ -674,6 +680,7 @@ export function MailComposer({
               if (markDirty({ bcc: next })) setBcc(next)
             }}
             suggestions={suggestions}
+            vimIdentity={`google-bcc:${fieldIdentity}`}
           />
         </div>
       )}
@@ -684,11 +691,16 @@ export function MailComposer({
           aria-label="Subject"
           disabled={loadingRef.current || sending || departing || discarding}
           value={subject}
+          {...subjectVim.vimFieldProps}
           onChange={(event) => {
             if (markDirty({ subject: event.target.value })) setSubject(event.target.value)
           }}
-          onBlur={() => void save().catch(() => {})}
+          onBlur={(event) => {
+            subjectVim.vimFieldProps.onBlur?.(event)
+            void save().catch(() => {})
+          }}
         />
+        <VimFieldMode mode={subjectVim.vimFieldMode} />
       </div>
 
       {forwarded.length > 0 && (
