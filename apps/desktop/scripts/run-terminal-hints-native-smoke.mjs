@@ -274,6 +274,15 @@ try {
     })
   }
   const trustedClick = async (selector) => {
+    if (selector === '[aria-label="Show terminal hints"]') {
+      await waitFor(
+        `!document.querySelector('[role="listbox"]')`,
+        'terminal picker released foreground ownership',
+      )
+      await evaluate(`(async()=>{await Promise.all(document.getAnimations().filter(animation =>
+        Number.isFinite(animation.effect?.getComputedTiming().endTime)
+      ).map(animation => animation.finished.catch(() => {})));await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))})()`)
+    }
     const rect = await evaluate(
       `(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
     )

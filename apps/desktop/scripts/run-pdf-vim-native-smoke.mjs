@@ -502,10 +502,27 @@ try {
     `!document.querySelector('[data-host-hints]')`,
     'pane ownership change invalidates hint session',
   )
+  await click('[data-pdf-fixture="a"]')
+  await key('f')
+  await until(
+    `!!document.querySelector('[data-host-hints]')`,
+    'active PDF hint session before hiding viewer',
+  )
+  const hiddenSearch = (await details()).find((entry) => entry.label === 'Search')
+  assert(hiddenSearch, 'PDF Search missing before visibility invalidation')
   await evaluate(`window.__holiPdfSmoke.viewer('docs/replaced.pdf',false,false)`)
   await until(
     `!document.querySelector('[data-host-hints]')`,
     'hidden/inactive viewer hint session canceled',
+  )
+  for (const character of hiddenSearch.key) await key(character)
+  assert.equal(await hintCount(), 0, 'hidden viewer revived old hint labels')
+  assert.equal(
+    await evaluate(
+      `!!document.querySelector('[data-pane-id="a"] holi-pdf-container')?.shadowRoot?.querySelector('[data-sidebar-id="search-panel"]')`,
+    ),
+    false,
+    'stale label opened Search in hidden viewer',
   )
   const publicState = await evaluate(
     `JSON.stringify({calls:window.__holiPdfCalls??[], hints:document.querySelectorAll('[data-host-hints] [data-hint-key]').length})`,
