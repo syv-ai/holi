@@ -1,17 +1,10 @@
 import { GFM, parser } from '@lezer/markdown'
-import {
-  fileKind,
-  isPortableInlineCaption,
-  parseWikiLinks,
-  readMarkdownCaptionEnvelopes,
-} from '@holi/shared'
+import { isPortableInlineCaption, parseWikiLinks, readMarkdownCaptionEnvelopes } from '@holi/shared'
 
 const markdownParser = parser.configure(GFM)
 const UNSUPPORTED = new Set([
   'HTMLBlock',
   'HTMLTag',
-  'Image',
-  'LinkReference',
   'Autolink',
   'FootnoteReference',
   'FootnoteDefinition',
@@ -50,10 +43,6 @@ export function readMarkdownTableCaptions(markdown: string): MarkdownTableCaptio
         if (node.node.parent?.name === 'Document') elements.push(node.name)
       },
     })
-    const proseWikiLinks = wikiLinks.filter(
-      (link) => !codeRanges.some((range) => link.start >= range.from && link.start < range.to),
-    )
-    if (proseWikiLinks.some((link) => fileKind(link.target) === 'image')) unsupported = true
     if (elements.length !== 1 || elements[0] !== 'Table' || unsupported) return []
     const caption = markdown.slice(frame.caption.from, frame.caption.to)
     if (!isPortableInlineCaption(caption)) return []
