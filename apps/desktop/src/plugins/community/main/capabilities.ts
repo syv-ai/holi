@@ -45,6 +45,7 @@ import {
   listReleases,
   listVersions,
   newestFirst,
+  readBoundedRegularText,
   readManifest,
   versionsOf,
   type GitAccess,
@@ -154,7 +155,9 @@ async function readPins(root: string): Promise<Map<string, PluginPin>> {
   const pins = new Map<string, PluginPin>()
   const dirs = await readdir(join(root, PLUGIN_PINS_DIR)).catch(() => [] as string[])
   for (const id of dirs) {
-    const text = await readFile(join(root, pluginPinPath(id)), 'utf8').catch(() => null)
+    const text = await readBoundedRegularText(join(root, pluginPinPath(id)), 'plugin pin').catch(
+      () => null,
+    )
     if (text === null) continue
     try {
       const parsed = parsePluginPin(JSON.parse(text))
@@ -660,7 +663,9 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             deny(`${id} has no safe release pin in this vault`)
           let pin: PluginPin
           try {
-            const parsed = parsePluginPin(JSON.parse(await readFile(pinPath, 'utf8')))
+            const parsed = parsePluginPin(
+              JSON.parse(await readBoundedRegularText(pinPath, 'plugin pin')),
+            )
             if (!parsed.ok || parsed.value.id !== id) throw new Error('invalid identity')
             pin = parsed.value
           } catch {
@@ -741,7 +746,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           const guard = async () => {
             ensureLive()
             const [currentPin, currentInstall, consented, settings] = await Promise.all([
-              readFile(pinPath, 'utf8').catch(() => null),
+              readBoundedRegularText(pinPath, 'plugin pin').catch(() => null),
               deps.store.get(id),
               deps.consent.has(id, source.commit),
               readVaultSettings(ctx.root),

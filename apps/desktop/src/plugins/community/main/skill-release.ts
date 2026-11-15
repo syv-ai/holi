@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
+import { lstat, readdir, realpath } from 'node:fs/promises'
 import { isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { devNull } from 'node:os'
 import { PLUGIN_PINS_DIR, parsePluginPin, parsePluginManifest } from '@holi/shared'
+import { readBoundedRegularText } from './fetch'
 import type { SkillSnapshot } from './skill-transaction'
 
 const MAX_TREE_BYTES = 16 * 1024 * 1024
@@ -127,6 +128,9 @@ async function tree(git: GitReader, commit: string): Promise<Map<string, TreeEnt
   if (!rootTree) throw new Error('pinned Git commit has no valid tree')
   const entries = new Map<string, TreeEntry>()
   const seenPaths = new Set<string>()
+  let expandedEntries = 0
+  let totalTreeBytes = 0
+  const authenticatedTrees = new Map<string, Buffer>()
   const readTree = async (
     oid: string,
     parent: string,
@@ -135,13 +139,21 @@ async function tree(git: GitReader, commit: string): Promise<Map<string, TreeEnt
   ): Promise<void> => {
     if (depth > MAX_PATH_DEPTH || ancestors.has(oid)) throw new Error('invalid or cyclic Git tree')
     const nextAncestors = new Set(ancestors).add(oid)
-    const raw = await git.read(['cat-file', 'tree', oid], MAX_TREE_BYTES)
-    if (objectId('tree', raw) !== oid) throw new Error('invalid Git tree object')
+    let raw = authenticatedTrees.get(oid)
+    if (raw === undefined) {
+      raw = await git.read(['cat-file', 'tree', oid], MAX_TREE_BYTES)
+      totalTreeBytes += raw.length
+      if (totalTreeBytes > MAX_TREE_BYTES) throw new Error('pinned release trees exceed byte limit')
+      if (objectId('tree', raw) !== oid) throw new Error('invalid Git tree object')
+      authenticatedTrees.set(oid, raw)
+    }
     let offset = 0
     while (offset < raw.length) {
       const space = raw.indexOf(0x20, offset)
       const nul = raw.indexOf(0, space + 1)
       if (space < 0 || nul < 0 || nul + 21 > raw.length) throw new Error('invalid raw Git tree')
+      if (++expandedEntries > MAX_TREE_ENTRIES)
+        throw new Error('pinned release tree exceeds entry limit')
       const mode = raw.subarray(offset, space).toString('ascii')
       const nameBytes = raw.subarray(space + 1, nul)
       const name = nameBytes.toString('utf8')
@@ -168,8 +180,6 @@ async function tree(git: GitReader, commit: string): Promise<Map<string, TreeEnt
         if (parentPath === '.') break
       }
       if (entries.has(path)) throw new Error('duplicate Git tree path')
-      if (entries.size >= MAX_TREE_ENTRIES)
-        throw new Error('pinned release tree exceeds file limit')
       seenPaths.add(path)
       if ([...seenPaths].some((candidate) => candidate.startsWith(`${path}/`) && type === 'blob'))
         throw new Error('Git file collides with tree path')
@@ -281,22 +291,30 @@ export async function validateSkillSnapshot(
     const expectedDirs = new Set<string>()
     // Resolve path links asynchronously while preserving the virtual output path.
     const resolveLink = async (linkPath: string, seen: Set<string>): Promise<string> => {
-      if (!cleanPath(linkPath) || seen.has(linkPath))
-        throw new Error('invalid or cyclic skill symlink')
-      const entry = entries.get(linkPath)
-      if (!entry && childrenByDir.has(linkPath)) return linkPath
-      if (!entry || entry.type !== 'blob')
-        throw new Error(`skill path absent from pinned tree: ${linkPath}`)
-      if (entry.mode !== '120000') return linkPath
-      const target = (await readBlob(entry)).toString('utf8')
-      if (isAbsolute(target) || target.includes('\\')) throw new Error('unsafe skill symlink')
-      const next = posix.normalize(posix.join(posix.dirname(linkPath), target))
-      if (
-        !cleanPath(next) ||
-        (sourcePath && next !== sourcePath && !next.startsWith(`${sourcePath}/`))
-      )
-        throw new Error('skill symlink escapes plugin')
-      return resolveLink(next, new Set(seen).add(linkPath))
+      if (!cleanPath(linkPath)) throw new Error('invalid skill symlink path')
+      const parts = linkPath.split('/')
+      for (let index = 1; index <= parts.length; index++) {
+        const component = parts.slice(0, index).join('/')
+        const entry = entries.get(component)
+        if (entry?.mode !== '120000') continue
+        if (seen.has(component)) throw new Error('invalid or cyclic skill symlink')
+        const target = (await readBlob(entry)).toString('utf8')
+        if (isAbsolute(target) || target.includes('\\')) throw new Error('unsafe skill symlink')
+        const resolvedTarget = posix.normalize(posix.join(posix.dirname(component), target))
+        if (
+          !cleanPath(resolvedTarget) ||
+          (sourcePath &&
+            resolvedTarget !== sourcePath &&
+            !resolvedTarget.startsWith(`${sourcePath}/`))
+        )
+          throw new Error('skill symlink escapes plugin')
+        const suffix = parts.slice(index).join('/')
+        const combined = suffix ? `${resolvedTarget}/${suffix}` : resolvedTarget
+        return resolveLink(combined, new Set(seen).add(component))
+      }
+      if (entries.has(linkPath)) return linkPath
+      if (childrenByDir.has(linkPath)) return linkPath
+      throw new Error(`skill path absent from pinned tree: ${linkPath}`)
     }
     const hasDescendant = (path: string) => childrenByDir.has(path)
     const walk = async (
@@ -428,7 +446,7 @@ export async function assertNoCompetingSkillClaims(
       throw new Error('unsafe plugin pin path')
     let parsed
     try {
-      parsed = parsePluginPin(JSON.parse(await readFile(file, 'utf8')))
+      parsed = parsePluginPin(JSON.parse(await readBoundedRegularText(file, 'plugin pin')))
     } catch {
       throw new Error('malformed plugin pin')
     }

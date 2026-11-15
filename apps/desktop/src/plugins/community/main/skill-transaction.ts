@@ -559,6 +559,11 @@ export async function transactSkillRefresh(
         record.originalFingerprint = plan.before
         await skillTransactionFs.rename(record.target, record.backup)
         record.backedUp = true
+        if (
+          identity(await lstat(record.backup)) !== record.originalIdentity ||
+          (await fingerprint(record.backup)) !== record.originalFingerprint
+        )
+          fail(`original skill changed during backup; recovery data preserved: ${plan.name}`)
       }
       await options.guard()
       await assertStage()
@@ -654,6 +659,16 @@ export async function transactSkillRefresh(
   }
   try {
     await assertStage()
+    for (const record of records) {
+      if (
+        record.backedUp &&
+        (identity(await lstat(record.backup)) !== record.originalIdentity ||
+          (await fingerprint(record.backup)) !== record.originalFingerprint)
+      )
+        fail(
+          `original skill changed during refresh; recovery data preserved at ${relative(vault, record.backup).split(sep).join('/')}`,
+        )
+    }
     await rm(stage, { recursive: true, force: true })
   } catch (error) {
     throw new Error(
