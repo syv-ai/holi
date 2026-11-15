@@ -20,7 +20,7 @@ type VimSettings = {
 type VimState = { enabled: boolean; mode: RichTextVimMode; prefix: boolean }
 const KEY = new PluginKey<VimState>('richTextVim')
 const EMPTY: VimState = { enabled: false, mode: '', prefix: false }
-const WORD = /^[\p{L}\p{N}_]$/u
+const WORD = /^[\p{L}\p{N}_][\p{L}\p{N}\p{M}_]*$/u
 
 function segments(value: string): string[] {
   if (typeof Intl.Segmenter === 'function') {
@@ -152,16 +152,13 @@ function vertical(view: EditorView, direction: -1 | 1) {
 function wordPositions(state: EditorState) {
   const chars: { value: string; from: number; to: number }[] = []
   for (const block of blocks(state)) {
-    block.node.forEach((child, offset) => {
-      const from = block.from + offset
-      if (child.isText) {
-        let at = from
-        for (const value of segments(child.text ?? '')) {
-          chars.push({ value, from: at, to: at + value.length })
-          at += value.length
-        }
-      } else if (child.isInline) chars.push({ value: '\u0000', from, to: from + child.nodeSize })
-    })
+    const boundaries = graphemeBoundaries(state, block.from, block.to)
+    for (let index = 0; index < boundaries.length - 1; index++) {
+      const from = boundaries[index]!
+      const to = boundaries[index + 1]!
+      const value = state.doc.textBetween(from, to, '\u0000', '\u0000') || '\u0000'
+      chars.push({ value, from, to })
+    }
     chars.push({ value: ' ', from: block.to, to: block.to })
   }
   return chars
@@ -244,7 +241,11 @@ function deleteChar(view: EditorView) {
   const from = state.selection.head
   const to = positions.find((at) => at > from)
   if (to === undefined) return
-  view.dispatch(state.tr.delete(from, to))
+  const index = positions.indexOf(from)
+  const target = to === line.to && index > 0 ? positions[index - 1]! : from
+  const transaction = state.tr.delete(from, to)
+  transaction.setSelection(TextSelection.create(transaction.doc, target))
+  view.dispatch(transaction)
 }
 
 function openLine(view: EditorView, above: boolean, editable: () => boolean) {
