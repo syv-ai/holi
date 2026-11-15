@@ -78,7 +78,9 @@ async function runVersionCommand(
     child.once('close', (exitCode) => resolve([exitCode])),
   )
   clearTimeout(timer)
-  if (stopping) {
+  // The root may exit normally while leaving descendants in its detached group.
+  stop()
+  try {
     await new Promise((resolve) => setTimeout(resolve, 220))
     if (process.platform !== 'win32' && child.pid) {
       const deadline = Date.now() + 2000
@@ -98,8 +100,9 @@ async function runVersionCommand(
         if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
       }
     }
+  } finally {
+    clearTimeout(killTimer)
   }
-  clearTimeout(killTimer)
   return { code, stdout, stderr, timedOut, outputExceeded, spawnError }
 }
 
@@ -116,6 +119,28 @@ it('drains a SIGTERM-resistant descendant when the version check hangs', async (
     await chmod(bin, 0o755)
     const result = await runVersionCommand(bin, root, process.env, 500)
     expect(result.timedOut).toBe(true)
+    const pid = Number(await readFile(pidPath, 'utf8'))
+    expect(() => process.kill(pid, 0)).toThrow()
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it.each([0, 7])('drains a SIGTERM-resistant descendant after version exit %i', async (exitCode) => {
+  if (process.platform === 'win32') return
+  const root = await mkdtemp(join(tmpdir(), 'holi-pi-version-exit-'))
+  const bin = join(root, 'pi')
+  const pidPath = join(root, 'descendant.pid')
+  try {
+    await writeFile(
+      bin,
+      `#!/usr/bin/env node\nconst { spawn } = require('node:child_process')\nconst fs = require('node:fs')\nconst child = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"], {stdio:'ignore'})\nfs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))\nconsole.log('version')\nprocess.exit(${exitCode})\n`,
+    )
+    await chmod(bin, 0o755)
+    const result = await runVersionCommand(bin, root, process.env, 5_000)
+    expect(result.code).toBe(exitCode)
+    expect(result.timedOut).toBe(false)
+    expect(result.stdout.trim()).toBe('version')
     const pid = Number(await readFile(pidPath, 'utf8'))
     expect(() => process.kill(pid, 0)).toThrow()
   } finally {
