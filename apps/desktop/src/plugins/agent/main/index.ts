@@ -218,7 +218,6 @@ export const agentMain: MainPlugin = {
       store: jsonFileStore(join(ctx.root, INBOX_FILE), parseInbox),
       notify: (notice) => ctx.notify(notice),
       changed: (view) => ctx.emit(ctx.remote, 'inbox', view),
-      open: (entry) => ctx.navigate(ctx.remote, 'inbox-open', entry),
     })
     ctx.register(AGENT_NAMESPACES, {
       ...agentCapabilities({

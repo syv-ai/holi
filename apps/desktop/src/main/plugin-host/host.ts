@@ -669,7 +669,28 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         mentionListeners.add(entry)
         return keep(() => void mentionListeners.delete(entry))
       },
-      notify: (notice) => (valid() || draining() ? deps.notify(notice) : false),
+      notify: (notice) => {
+        if (!valid() && !draining()) return false
+        const click = notice.onClick
+        const target =
+          notice.navigate === undefined
+            ? null
+            : Object.freeze({
+                plugin: id,
+                remote,
+                name: notice.navigate.name,
+                payload: structuredClone(notice.navigate.payload),
+              })
+        return deps.notify({
+          title: notice.title,
+          body: notice.body,
+          onClick: () => {
+            if (target !== null)
+              deps.navigate?.(target.plugin, target.remote, target.name, target.payload)
+            click?.()
+          },
+        })
+      },
       navigate: (at, name, payload) => {
         if (valid() || draining()) deps.navigate?.(id, at, name, payload)
       },

@@ -81,8 +81,7 @@ describe('createInbox', () => {
   function harness(focused: boolean) {
     let stored = parseInbox(null)
     const banners: string[] = []
-    let clicked: (() => void) | undefined
-    let opened: InboxEntry | undefined
+    let target: { name: string; payload: unknown } | undefined
     let clock = T0
     const inbox = createInbox({
       store: {
@@ -92,13 +91,10 @@ describe('createInbox', () => {
       notify: (n) => {
         if (focused) return false
         banners.push(n.title)
-        clicked = n.onClick
+        target = n.navigate
         return true
       },
       changed: () => {},
-      open: (entry) => {
-        opened = entry
-      },
       now: () => new Date(clock),
     })
     return {
@@ -106,8 +102,7 @@ describe('createInbox', () => {
       banners,
       tick: (ms: number) => (clock += ms),
       stored: () => stored,
-      click: () => clicked?.(),
-      opened: () => opened,
+      target: () => target,
     }
   }
 
@@ -123,13 +118,15 @@ describe('createInbox', () => {
     expect(h.stored().entries.map((e) => e.title)).toEqual(['C', 'B', 'A'])
   })
 
-  it('opens the exact session entry retained by its native banner', async () => {
+  it('captures the exact inbox event target in its native banner', async () => {
     const h = harness(false)
     const notice = { title: 'Pi needs attention', line: 'Review it.', session: '0123abcd' }
     expect(await h.inbox.raise(notice)).toBe('banner')
-    h.click()
-    expect(h.opened()).toMatchObject(notice)
-    expect(h.opened()?.id).toBe(h.stored().entries[0]?.id)
+    expect(h.target()).toEqual({
+      name: 'inbox-open',
+      payload: expect.objectContaining(notice),
+    })
+    expect((h.target()?.payload as InboxEntry).id).toBe(h.stored().entries[0]?.id)
   })
 
   it('keeps everything in the inbox while Holi has focus', async () => {
