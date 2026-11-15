@@ -9,6 +9,7 @@ import { vimCodeEditingAtom } from '@/state/preferences'
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { hostHintKeyAtom } from '@/state/shortcuts'
+import { HOST_HINT_REQUEST } from '@/lib/host-hints'
 
 function Field({ onSubmit, trackValue = false }: { onSubmit: () => void; trackValue?: boolean }) {
   const [value, setValue] = useState('alpha')
@@ -200,6 +201,65 @@ describe('plugin-consumed native field binding', () => {
     expect(handleHint).toHaveBeenCalledOnce()
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(field).toHaveFocus()
+  })
+
+  it('does not route the host-hint opening key into the newly active hint session', async () => {
+    localStorage.setItem('holi:vimCodeEditing', 'true')
+    const store = createStore()
+    let hintsActive = false
+    const consumedKeys: string[] = []
+    store.set(hostHintKeyAtom, () => (event: KeyboardEvent) => {
+      if (!hintsActive) return false
+      consumedKeys.push(event.key)
+      return true
+    })
+    const onHintRequest = () => {
+      hintsActive = true
+    }
+    const onShortcutCapture = (event: KeyboardEvent) => {
+      if (store.get(hostHintKeyAtom)?.(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    }
+    window.addEventListener(HOST_HINT_REQUEST, onHintRequest)
+    try {
+      render(
+        <Provider store={store}>
+          <Field onSubmit={vi.fn()} />
+        </Provider>,
+      )
+      // Installed after the field's capture listener, like AppShell's dispatcher.
+      window.addEventListener('keydown', onShortcutCapture, true)
+      const field = screen.getByRole('textbox', { name: 'search' })
+      await userEvent.click(field)
+      await userEvent.keyboard('{Escape}')
+
+      const openingKey = new KeyboardEvent('keydown', {
+        key: 'f',
+        bubbles: true,
+        cancelable: true,
+      })
+      act(() => field.dispatchEvent(openingKey))
+      expect(openingKey.defaultPrevented).toBe(true)
+      expect(hintsActive).toBe(true)
+      expect(consumedKeys).toEqual([])
+      expect(screen.getByLabelText('Vim normal mode')).toBeInTheDocument()
+
+      const nextKey = new KeyboardEvent('keydown', {
+        key: 'a',
+        bubbles: true,
+        cancelable: true,
+      })
+      act(() => field.dispatchEvent(nextKey))
+      expect(nextKey.defaultPrevented).toBe(true)
+      expect(consumedKeys).toEqual(['a'])
+      expect(hintsActive).toBe(true)
+    } finally {
+      window.removeEventListener('keydown', onShortcutCapture, true)
+      window.removeEventListener(HOST_HINT_REQUEST, onHintRequest)
+      localStorage.removeItem('holi:vimCodeEditing')
+    }
   })
 
   it('does not intercept a composing Escape key', async () => {
