@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest'
 import { hostBridgeMessage, openTarget } from '../renderer/bridge-host'
 import type { PluginStore } from '@/plugin-api'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
 function appTabIds(
   workspace: { entries: (string | { views: string[] })[] },
   calendarTab: string,
@@ -41,6 +49,92 @@ describe('vault app open bridge', () => {
     expect(store.get(shellWorkspaceAtom).entries).not.toContain(
       tabKey({ kind: 'app', id: 'calendar' }),
     )
+    expect(replies).toEqual([])
+  })
+
+  it('does not locally open after the current document is revoked during authorization', async () => {
+    const store = createStore() as PluginStore
+    const authorization = deferred<boolean>()
+    let current = true
+    const replies: unknown[] = []
+    hostBridgeMessage(
+      { nonce: 'lease', id: 'open-delayed', method: 'open', params: { target: 'calendar' } },
+      {
+        store,
+        remote: 'ada/a',
+        bundle: 'Tools/Calendar.app',
+        token: 'token',
+        nonce: 'lease',
+        current: () => current,
+        authorize: () => authorization.promise,
+        reply: (message) => replies.push(message),
+      },
+    )
+    current = false
+    authorization.resolve(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const { shellWorkspaceAtom } = await import('@/state/shell-tabs')
+    expect(store.get(shellWorkspaceAtom).entries).toEqual([])
+    expect(replies).toEqual([])
+  })
+
+  it('does not send a success reply when the current document is revoked during authorization', async () => {
+    const store = createStore() as PluginStore
+    const [{ shellWorkspaceAtom }] = await Promise.all([import('@/state/shell-tabs')])
+    const before = store.get(shellWorkspaceAtom)
+    const authorization = deferred<boolean>()
+    let current = true
+    let authorizations = 0
+    const replies: unknown[] = []
+    hostBridgeMessage(
+      { nonce: 'lease', id: 'success-delayed', method: 'open', params: { target: 'calendar' } },
+      {
+        store,
+        remote: 'ada/a',
+        bundle: 'Tools/Calendar.app',
+        token: 'token',
+        nonce: 'lease',
+        current: () => current,
+        authorize: () => (++authorizations === 1 ? Promise.resolve(true) : authorization.promise),
+        reply: (message) => replies.push(message),
+      },
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(authorizations).toBe(2)
+    expect(store.get(shellWorkspaceAtom)).not.toEqual(before)
+
+    current = false
+    authorization.resolve(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(replies).toEqual([])
+  })
+
+  it('does not reply when the current document is revoked during error authorization', async () => {
+    const store = createStore() as PluginStore
+    const authorization = deferred<boolean>()
+    let current = true
+    const replies: unknown[] = []
+    hostBridgeMessage(
+      { nonce: 'lease', id: 'error-delayed', method: 'docs.list' },
+      {
+        store,
+        remote: null,
+        bundle: 'Tools/Calendar.app',
+        token: 'token',
+        nonce: 'lease',
+        current: () => current,
+        authorize: () => authorization.promise,
+        reply: (message) => replies.push(message),
+      },
+    )
+    // The no-vault error reaches the error continuation, which must recheck
+    // current after its own awaited authorization.
+    await Promise.resolve()
+    current = false
+    authorization.resolve(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
     expect(replies).toEqual([])
   })
 

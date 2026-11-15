@@ -55,7 +55,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     )
     writeFileSync(
       join(vaultRoot, bundle, 'command.js'),
-      `window.holi.command(input=>({owner:'${owner}',text:input.text}))`,
+      `const commandScriptGate=Date.now()+350;while(Date.now()<commandScriptGate){};document.documentElement.dataset.commandRegistered='true';window.holi.command(input=>({owner:'${owner}',text:input.text,registered:document.documentElement.dataset.commandRegistered==='true'}))`,
     )
     writeFileSync(
       join(vaultRoot, bundle, 'style.css'),
@@ -320,9 +320,13 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       )
       assert.deepEqual(commandResult, {
         nonce: commandLease.nonce,
-        command: { ok: true, value: { owner: remote, text: `command-${remote}` } },
+        command: {
+          ok: true,
+          value: { owner: remote, text: `command-${remote}`, registered: true },
+        },
       })
       mark(`production-command-runner-result-${remote.toLowerCase()}`)
+      mark(`production-command-runner-waits-for-command-script-${remote.toLowerCase()}`)
       await capabilityHost.dispatch({
         door: 'ui',
         remote: active.remote,

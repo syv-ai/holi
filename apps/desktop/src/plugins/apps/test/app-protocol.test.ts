@@ -6,7 +6,7 @@ import { THEME_TOKENS } from '@holi/shared'
 import { APP_METHODS } from '../shared/bridge'
 import { appHost } from '../shared/bundle'
 import { appBaseTokens, missingBaseTokens } from '../main/tokens'
-import { BRIDGE_JS } from '../main/bridge-script'
+import { BRIDGE_JS, COMMAND_JS } from '../main/bridge-script'
 import {
   appFileAbsPath,
   appHeadHtml,
@@ -206,6 +206,61 @@ describe('BRIDGE_JS', () => {
     )
     expect(BRIDGE_JS).toContain('msg.nonce !== nonce')
     expect(BRIDGE_JS).toContain('{ nonce, log:')
+  })
+
+  it('waits for the delayed external command script before announcing ready', async () => {
+    const nonce = 'document-nonce'
+    const events = new Map<string, ((event?: unknown) => void)[]>()
+    const messages: unknown[] = []
+    const parent = { postMessage: (message: unknown) => messages.push(message) }
+    const window: Record<string, unknown> = {}
+    const document = {
+      readyState: 'loading',
+      querySelector: () => ({ content: nonce }),
+    }
+    const fake = {
+      addEventListener: (type: string, listener: (event?: unknown) => void) => {
+        const listeners = events.get(type) ?? []
+        listeners.push(listener)
+        events.set(type, listeners)
+      },
+      parent,
+      document,
+      window,
+      crypto: { randomUUID: () => 'request' },
+      setInterval: () => 0,
+      console: { error: () => {}, warn: () => {}, info: () => {}, log: () => {} },
+      HTMLElement: class {},
+      CSSStyleSheet: class {
+        replaceSync() {}
+      },
+      customElements: { get: () => undefined, define: () => {} },
+    }
+    const execute = (script: string) =>
+      new Function(...Object.keys(fake), script)(...Object.values(fake))
+
+    execute(BRIDGE_JS)
+    execute(COMMAND_JS)
+    expect(messages).toEqual([])
+
+    // The external classic script registers only after it has been released.
+    ;(window.holi as { command: (fn: (input: { text: string }) => unknown) => void }).command(
+      (input) => ({ received: input.text }),
+    )
+    for (const listener of events.get('DOMContentLoaded') ?? []) listener()
+    expect(messages).toEqual([{ nonce, ready: true }])
+
+    for (const listener of events.get('message') ?? []) {
+      void listener({
+        source: parent,
+        data: { nonce, run: { text: 'delayed-input' } },
+      })
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(messages.at(-1)).toEqual({
+      nonce,
+      command: { ok: true, value: { received: 'delayed-input' } },
+    })
   })
 
   it('implements every method on the wire', () => {
