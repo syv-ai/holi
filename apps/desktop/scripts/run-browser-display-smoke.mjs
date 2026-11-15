@@ -99,6 +99,7 @@ try {
     'stopping-a-preserves-b-native-view-and-capabilities',
     'departure-detaches-synchronously',
     'displayed-page-attached-with-loaded-content',
+    'native-browser-vim-mode-navigation-insertion-undo-redo',
     'hidden-authorized-page-read-type-and-press-work',
     'duplicate-page-ids-have-distinct-native-views',
     'return-requires-fresh-owner-placement',
@@ -110,7 +111,7 @@ try {
     'pending-reconcile-stop-all-detaches-to-null',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
-  assert(result.checks.length >= 17, 'native smoke produced too few assertions')
+  assert(result.checks.length >= 18, 'native smoke produced too few assertions')
   assert(
     typeof result.electron === 'string' && result.electron.length > 0,
     'missing Electron version',
@@ -121,7 +122,7 @@ try {
   )
   assert.deepEqual(
     result.screenshots,
-    ['browser-before.png', 'shell-before.png', 'browser-after.png'],
+    ['browser-before.png', 'browser-dark.png', 'shell-before.png', 'browser-after.png'],
     'native smoke screenshot list is incomplete',
   )
   for (const name of result.screenshots)
