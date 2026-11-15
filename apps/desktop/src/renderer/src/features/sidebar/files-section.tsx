@@ -20,7 +20,7 @@ import {
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { toast } from 'sonner'
-import { GITKEEP, holiWebLink, TASKS_CLAIM } from '@holi/shared'
+import { GITKEEP, holiWebLink, isSecretPath, TASKS_CLAIM } from '@holi/shared'
 import { cn } from '@/lib/cn'
 
 import { ConfirmDialog } from '@/composites/confirm-dialog'
@@ -240,7 +240,9 @@ export function FilesSection({
       try {
         const scopes = await trpc.subscriptions.list.query({
           remote,
-          paths: JSON.stringify(['', ...files.dirs]),
+          paths: JSON.stringify(
+            ['', ...files.dirs, ...files.paths].filter((path) => !isSecretPath(path)),
+          ),
         })
         if (!currentRequest()) return
         setSubscriptionData((current) => ({
@@ -261,7 +263,7 @@ export function FilesSection({
         }))
       }
     },
-    [files.dirs, stillCurrent],
+    [files.dirs, files.paths, stillCurrent],
   )
 
   useEffect(() => {
@@ -1119,7 +1121,8 @@ export function FilesSection({
                             <HeldBackMark
                               held={item.isExpanded() ? undefined : heldUnder.get(item.getId())}
                             />
-                            {item.isFolder() && subscriptionData?.remote === files.remote
+                            {subscriptionData?.remote === files.remote &&
+                            !isSecretPath(item.getId())
                               ? (() => {
                                   const scope = subscriptionData.scopes.find(
                                     (entry) => entry.path === item.getId(),

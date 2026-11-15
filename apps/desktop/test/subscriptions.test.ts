@@ -18,6 +18,8 @@ async function fixture(withCommit = true) {
   await exec('git', ['-C', root, 'config', 'user.email', 'test@example.invalid'])
   await mkdir(join(root, 'notes'))
   await writeFile(join(root, 'notes', '.gitkeep'), '')
+  await writeFile(join(root, 'notes', 'alpha.md'), '# Alpha')
+  await writeFile(join(root, 'notes', 'beta.md'), '# Beta')
   if (withCommit) {
     await writeFile(join(root, 'README.md'), 'initial')
     await exec('git', ['-C', root, 'add', '.'])
@@ -61,6 +63,32 @@ describe('machine-local subscriptions', () => {
     ])
   })
 
+  it('subscribes to one file without covering siblings and preserves inherited folder coverage', async () => {
+    const root = await fixture()
+    const manager = createSubscriptions(join(root, 'state.json'))
+    const head = await openRepo(root).head()
+    await manager.set('one/repo', root, 'notes/alpha.md', true, async () => head)
+    expect(
+      await manager.list('one/repo', root, ['notes/alpha.md', 'notes/beta.md', 'notes']),
+    ).toEqual([
+      { path: 'notes/alpha.md', explicit: true, coveredBy: null, baseline: head },
+      { path: 'notes/beta.md', explicit: false, coveredBy: null, baseline: null },
+      { path: 'notes', explicit: false, coveredBy: null, baseline: null },
+    ])
+
+    await manager.set('one/repo', root, 'notes', true, async () => head)
+    expect(await manager.list('one/repo', root, ['notes/alpha.md', 'notes/beta.md'])).toMatchObject(
+      [
+        { explicit: true, coveredBy: 'notes', baseline: head },
+        { explicit: false, coveredBy: 'notes', baseline: null },
+      ],
+    )
+    await manager.set('one/repo', root, 'notes/alpha.md', false, async () => null)
+    expect(await manager.list('one/repo', root, ['notes/alpha.md'])).toMatchObject([
+      { explicit: false, coveredBy: 'notes' },
+    ])
+  })
+
   it('represents an unborn repository with a pending baseline and rejects unsafe/missing paths', async () => {
     const root = await fixture(false)
     const manager = createSubscriptions(join(root, 'state.json'))
@@ -75,6 +103,13 @@ describe('machine-local subscriptions', () => {
       manager.set('one/repo', root, '../other', true, async () => null),
     ).rejects.toThrow()
     await expect(manager.set('one/repo', root, '.env', true, async () => null)).rejects.toThrow()
+    await expect(
+      manager.set('one/repo', root, 'notes/alpha.md/child', true, async () => null),
+    ).rejects.toThrow()
+    await writeFile(join(root, 'notes', '.env'), 'secret')
+    await expect(
+      manager.set('one/repo', root, 'notes/.env', true, async () => null),
+    ).rejects.toThrow()
   })
 
   it('rejects corrupt state without replacing it and serializes concurrent updates', async () => {
@@ -170,10 +205,14 @@ describe('machine-local subscriptions', () => {
     await expect(openRepo(missingObject).head()).rejects.toBeInstanceOf(GitError)
   })
 
-  it('refuses directory symlink aliases', async () => {
+  it('refuses file and directory symlink aliases', async () => {
     const root = await fixture()
     await symlink(join(root, 'notes'), join(root, 'alias'))
+    await symlink(join(root, 'notes', 'alpha.md'), join(root, 'notes', 'linked.md'))
     const manager = createSubscriptions(join(root, 'state.json'))
     await expect(manager.set('one/repo', root, 'alias', true, async () => null)).rejects.toThrow()
+    await expect(
+      manager.set('one/repo', root, 'notes/linked.md', true, async () => null),
+    ).rejects.toThrow()
   })
 })

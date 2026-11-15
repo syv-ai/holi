@@ -69,10 +69,16 @@ export function createSubscriptions(file: string) {
     if (path === '') return ''
     const normalized = vaultRelPath(path)
     if (normalized !== path || isSecretPath(normalized))
-      throw new Error('This folder cannot be subscribed.')
+      throw new Error('This path cannot be subscribed.')
     const resolved = await exactPath(root, normalized)
-    if (resolved === null || !(await stat(resolved)).isDirectory())
-      throw new Error('This folder no longer exists at that path. Refresh the file tree and retry.')
+    if (resolved === null) {
+      throw new Error(
+        'This path no longer exists at that location. Refresh the file tree and retry.',
+      )
+    }
+    const entry = await stat(resolved)
+    if (!entry.isDirectory() && !entry.isFile())
+      throw new Error('Only files and folders can be subscribed.')
     return normalized
   }
 
