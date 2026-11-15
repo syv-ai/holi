@@ -113,10 +113,34 @@ function wikiLinksOutsideRawTypst(markdown: string): string {
   )
 }
 
-function captionComment(body: string, caption: string, table = false, tableId = ''): string {
+function readReferenceDefinitions(markdown: string): string {
+  const definitions: string[] = []
+  let fence: { marker: string; length: number } | undefined
+  for (const line of markdown.split('\n')) {
+    const opening = /^ {0,3}(`{3,}|~{3,})/.exec(line)
+    if (fence !== undefined) {
+      if (opening?.[1]?.[0] === fence.marker && opening[1].length >= fence.length) fence = undefined
+      continue
+    }
+    if (opening !== null) {
+      fence = { marker: opening[1]![0]!, length: opening[1]!.length }
+      continue
+    }
+    if (/^ {0,3}\[[^\]]+\]:\s*\S/.test(line)) definitions.push(line)
+  }
+  return definitions.length === 0 ? '' : `\n\n${definitions.join('\n')}`
+}
+
+function captionComment(
+  body: string,
+  caption: string,
+  table = false,
+  tableId = '',
+  definitions = '',
+): string {
   const diagram = /^ {0,3}<!--raw-typst ([\s\S]*?)-->$/.exec(body)?.[1]
   if (table) {
-    const source = commentSafeString(wikiLinksToText(body))
+    const source = commentSafeString(wikiLinksToText(`${body}${definitions}`))
     const label = commentSafeString(caption)
     // Every last-row cell gets a marker: a different cell can wrap farther than
     // the last short cell, so the repeat footer uses their maximum physical page.
@@ -215,6 +239,7 @@ export async function renderPdf({
     // count is retained for warnings from everything after the envelope.
     let markdown = drawn.markdown
     const transformedEnvelopes = readMarkdownCaptionEnvelopes(drawn.markdown)
+    const referenceDefinitions = readReferenceDefinitions(original)
     const transformations = frames.flatMap((frame, index) => {
       const identity = `<!-- ${nonce}-${index} -->`
       const transformed = transformedEnvelopes.find((item) =>
@@ -231,6 +256,7 @@ export async function renderPdf({
           table: tableFrameStarts.has(frame.envelope.from),
           tableId: `${nonce}-${index}`,
           body: undefined as string | undefined,
+          definitions: tableFrameStarts.has(frame.envelope.from) ? referenceDefinitions : '',
         },
       ]
     })
@@ -254,7 +280,13 @@ export async function renderPdf({
       const body = drawn.markdown.slice(item.frame.body.from, item.frame.body.to)
       markdown =
         markdown.slice(0, item.frame.envelope.from) +
-        captionComment(item.body ?? body, item.caption, item.table, item.tableId) +
+        captionComment(
+          item.body ?? body,
+          item.caption,
+          item.table,
+          item.tableId,
+          item.definitions,
+        ) +
         '\n'.repeat(Math.max(0, item.sourceLines - 1)) +
         markdown.slice(item.frame.envelope.to)
     }

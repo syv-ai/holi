@@ -12,12 +12,6 @@ describe('readMarkdownTableCaptions', () => {
   })
 
   it.each([
-    '| Name |\n| --- |\n| ![image](x.png) |',
-    '| Name |\n| --- |\n| [[dot.png|photo]] |',
-    '| Name |\n| --- |\n| [[dot.avif|photo]] |',
-    '| Name |\n| --- |\n| ![[dot.svg|diagram]] |',
-    '| Name |\n| --- |\n| ![[dot.jpeg|photo]] |',
-    '| Name |\n| --- |\n| [reference][r] |',
     '| Name |\n| --- |\n| <b>raw</b> |',
     '| Name |\n| --- |\n| [^note] |',
     '| Name |\n| --- |\n| value |\n\nMore prose',
@@ -47,9 +41,16 @@ describe('readMarkdownTableCaptions', () => {
     expect(readMarkdownTableCaptions(source)).toEqual([])
   })
 
-  it('rejects genuine Markdown reference links in table cells', () => {
+  it('accepts inline and reference images for the PDF image adapter', () => {
+    for (const image of ['![photo](x.png)', '![photo][image]']) {
+      const source = writeMarkdownCaptionEnvelope(`| A |\n| --- |\n| ${image} |`, 'Caption')
+      expect(readMarkdownTableCaptions(source)).toHaveLength(1)
+    }
+  })
+
+  it('accepts Markdown reference links for document-wide resolution', () => {
     const source = writeMarkdownCaptionEnvelope('| A |\n| --- |\n| [ref][label] |', 'Caption')
-    expect(readMarkdownTableCaptions(source)).toEqual([])
+    expect(readMarkdownTableCaptions(source)).toHaveLength(1)
   })
 
   it('rejects a nested table envelope without selecting its inner frame', () => {
