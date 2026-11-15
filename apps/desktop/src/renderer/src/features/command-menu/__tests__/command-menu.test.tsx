@@ -114,9 +114,10 @@ test('Vim mode has an explicit keyboard-close action without opening a document'
   search.mockResolvedValue([])
   const { onOpen, onOpenChange } = setup({ vim: true })
   const input = screen.getByRole('combobox')
-  await userEvent.click(input)
+  await userEvent.type(input, 'road')
+  expect(screen.getByRole('option', { name: /roadmap/ })).toBeInTheDocument()
   const footerKeys = [...document.querySelectorAll('[data-slot=kbd]')]
-  await userEvent.keyboard('{Escape}{Enter}')
+  await userEvent.keyboard('{Escape}')
   expect([...document.querySelectorAll('[data-slot=kbd]')]).toEqual(footerKeys)
   expect(onOpen).not.toHaveBeenCalled()
   expect(onOpenChange).not.toHaveBeenCalled()
