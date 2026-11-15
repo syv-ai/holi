@@ -7,13 +7,14 @@ import { promisify } from 'node:util'
 import {
   isMachineStatePath,
   isSecretPath,
+  isPortableInlineCaption,
   readMarkdownCaptionEnvelopes,
   readMarkdownCodeCaptions,
   wikiLinksToText,
 } from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
 import type { TemplateField } from '../shared/template-fields'
-import { inlineImages } from './images'
+import { hasSingleMarkdownImage, inlineImages } from './images'
 import { commentSafeString, drawMermaid, type DrawDiagrams } from './mermaid'
 import { composeWrapper } from './wrapper'
 import { readMarkdownTableCaptions } from './table-captions'
@@ -126,7 +127,7 @@ function captionComment(body: string, caption: string, table = false, tableId = 
     diagram === undefined
       ? `#cmarker.render(${commentSafeString(`${body}\n\n${caption}`)}, raw-typst: false)`
       : `${diagram} #cmarker.render(${commentSafeString(caption)}, raw-typst: false)`
-  return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(sticky: true)[#align(center)[${content}]]-->`
+  return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(width: 100%, sticky: true)[#align(center)[${content}]]-->`
 }
 
 export async function renderPdf({
@@ -160,6 +161,11 @@ export async function renderPdf({
     const frames = [...readMarkdownCodeCaptions(original), ...tableFrames].sort(
       (a, b) => a.envelope.from - b.envelope.from,
     )
+    const imageFrames = readMarkdownCaptionEnvelopes(original).filter(
+      (frame) =>
+        isPortableInlineCaption(original.slice(frame.caption.from, frame.caption.to)) &&
+        hasSingleMarkdownImage(original, frame.body.from, frame.body.to),
+    )
     // Carry each supported frame's identity in its caption through transforms.
     // The nonce is absent from the literal source, and these inline comments add
     // no lines (so source warning locations remain stable).
@@ -168,11 +174,23 @@ export async function renderPdf({
     do {
       nonce = `holi-pdf-${Math.random().toString(36).slice(2)}`
     } while (original.includes(nonce))
-    for (const [index, frame] of [...frames.entries()].reverse()) {
+    const identityInsertions = [
+      ...frames.map((frame, index) => ({
+        at: frame.caption.to,
+        marker: ` <!-- ${nonce}-${index} -->`,
+      })),
+      ...imageFrames.map((frame, index) => ({
+        at: frame.body.to,
+        marker: `<!-- ${nonce}-image-${index} -->`,
+      })),
+    ]
+      .map((insertion, order) => ({ ...insertion, order }))
+      .sort((a, b) => b.at - a.at || a.order - b.order)
+    for (const insertion of identityInsertions) {
       taggedOriginal =
-        taggedOriginal.slice(0, frame.caption.to) +
-        ` <!-- ${nonce}-${index} -->` +
-        taggedOriginal.slice(frame.caption.to)
+        taggedOriginal.slice(0, insertion.at) +
+        insertion.marker +
+        taggedOriginal.slice(insertion.at)
     }
     const pictured = await inlineImages(taggedOriginal, noteRel, (rel) =>
       readVaultImage(vaultRoot, rel),
@@ -180,13 +198,16 @@ export async function renderPdf({
     const drawn =
       diagrams === undefined
         ? {
-            markdown: frames.length ? pictured.markdown : wikiLinksToText(pictured.markdown),
+            markdown:
+              frames.length || imageFrames.length
+                ? pictured.markdown
+                : wikiLinksToText(pictured.markdown),
             warnings: [],
           }
         : await drawMermaid(
             pictured.markdown,
             diagrams,
-            frames.length ? undefined : wikiLinksToText,
+            frames.length || imageFrames.length ? undefined : wikiLinksToText,
           )
     // Mermaid and image transforms run while the original envelopes still
     // surround their body. Then each supported element and caption becomes one
@@ -209,20 +230,37 @@ export async function renderPdf({
           sourceLines,
           table: tableFrameStarts.has(frame.envelope.from),
           tableId: `${nonce}-${index}`,
+          body: undefined as string | undefined,
         },
       ]
     })
-    for (const item of transformations.reverse()) {
+    const imageTransformations = imageFrames.flatMap((frame, index) => {
+      const identity = `<!-- ${nonce}-image-${index} -->`
+      const transformed = transformedEnvelopes.find((item) =>
+        drawn.markdown.slice(item.body.from, item.body.to).includes(identity),
+      )
+      if (transformed === undefined) return []
+      const caption = original.slice(frame.caption.from, frame.caption.to)
+      const sourceLines = original.slice(frame.envelope.from, frame.envelope.to).split('\n').length
+      const body = drawn.markdown
+        .slice(transformed.body.from, transformed.body.to)
+        .replace(identity, '')
+        .trim()
+      return [{ frame: transformed, caption, sourceLines, body, table: false, tableId: '' }]
+    })
+    for (const item of [...transformations, ...imageTransformations].sort(
+      (a, b) => b.frame.envelope.from - a.frame.envelope.from,
+    )) {
       const body = drawn.markdown.slice(item.frame.body.from, item.frame.body.to)
       markdown =
         markdown.slice(0, item.frame.envelope.from) +
-        captionComment(body, item.caption, item.table, item.tableId) +
+        captionComment(item.body ?? body, item.caption, item.table, item.tableId) +
         '\n'.repeat(Math.max(0, item.sourceLines - 1)) +
         markdown.slice(item.frame.envelope.to)
     }
     // Keep the generated caption expression (including literal code source)
     // and Mermaid drawings intact. The uncaptained wiki-link rewrite is unchanged.
-    if (frames.length) markdown = wikiLinksOutsideRawTypst(markdown)
+    if (frames.length || imageFrames.length) markdown = wikiLinksOutsideRawTypst(markdown)
     const noteForTypst = join(work, 'note.md')
     await writeFile(noteForTypst, markdown)
 

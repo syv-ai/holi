@@ -151,6 +151,52 @@ after diagram`
     expect(await readFile(notePath, 'utf8')).toBe(`${nested}\n\n${later}`)
   })
 
+  it('keeps mixed table, image, code, and Mermaid captions in source order', async () => {
+    const root = await work()
+    const templateDir = join(root, 'template')
+    await mkdir(templateDir)
+    await writeFile(join(templateDir, 'template.typ'), '')
+    const typstBin = join(root, 'capture-typst')
+    await writeFile(
+      typstBin,
+      '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
+    )
+    await chmod(typstBin, 0o755)
+    const original = [
+      writeMarkdownCaptionEnvelope('| Item |\n| --- |\n| table |', 'Table caption'),
+      writeMarkdownCaptionEnvelope('![](missing.png)', 'Image caption'),
+      writeMarkdownCaptionEnvelope('```js\nconst code = 1\n```', 'Code caption'),
+      writeMarkdownCaptionEnvelope('```mermaid\nflowchart LR\n A --> B\n```', 'Mermaid caption'),
+    ].join('\n\n')
+    const notePath = join(root, 'mixed.md')
+    await writeFile(notePath, original)
+    const outPath = join(root, 'captured.md')
+    const result = await renderPdf({
+      typstBin,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+      diagrams: async () => [
+        { svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>diagram</text></svg>' },
+      ],
+    })
+    const transformed = await readFile(outPath, 'utf8')
+    const captions = ['Table caption', 'Image caption', 'Code caption', 'Mermaid caption']
+    const positions = captions.map((caption) => transformed.indexOf(caption))
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
+    expect(transformed).toContain('const code = 1')
+    expect(transformed).toContain('diagram')
+    expect(transformed).not.toMatch(/<!--\s*holi-pdf-[a-z0-9]+-(?:image-)?\d+\s*-->/)
+    expect(result.warnings).toEqual([
+      'The image on line 15 is left out: missing.png: no such file in the vault',
+    ])
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+  })
+
   it.each([false, true])(
     'preserves literal SVG wiki-link labels (caption present: %s)',
     async (captioned) => {
