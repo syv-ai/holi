@@ -101,7 +101,13 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
               </RenderedMediaAction>
             </RenderedMediaToolbar>
             <div onDoubleClick={() => setLightboxOpen(true)}>
-              <MermaidDiagram source={source} theme={theme} onRendered={labels.onRendered} />
+              <MermaidDiagram
+                source={source}
+                theme={theme}
+                onRendered={labels.onRendered}
+                renderTicket={node}
+                renderContext={`${String(currentPosition())}:${editable}`}
+              />
             </div>
             <RenderedMediaLightbox
               title="Mermaid diagram"
@@ -113,6 +119,8 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
                   source={source}
                   theme={theme}
                   enlarged
+                  renderTicket={node}
+                  renderContext={`${String(currentPosition())}:${editable}`}
                   className="flex min-h-24 w-full max-w-full items-center justify-center overflow-auto [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:w-full [&_svg]:max-w-full"
                 />
               }

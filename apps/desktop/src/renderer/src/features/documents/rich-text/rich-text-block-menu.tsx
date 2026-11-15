@@ -191,9 +191,7 @@ export function RichTextBlockMenuItems({
     <>
       <DropdownMenuGroup>
         <DropdownMenuLabel>{BLOCK_TITLES.get(menu.kind) ?? 'Block'}</DropdownMenuLabel>
-        {menu.kind === 'code-block' &&
-        String(editor.state.doc.nodeAt(menu.pos)?.attrs.language ?? '').toLowerCase() !==
-          'mermaid' ? (
+        {menu.kind === 'code-block' ? (
           <DropdownMenuItem onClick={() => addCodeCaption(editor, menu.pos)}>
             <CaptionsIcon aria-hidden="true" />
             Add caption

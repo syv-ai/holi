@@ -44,12 +44,17 @@ export function MermaidDiagram({
   enlarged = false,
   className,
   onRendered,
+  renderTicket,
+  renderContext,
 }: {
   source: string
   theme: 'dark' | 'default'
   enlarged?: boolean
   className?: string
   onRendered?: (root: SVGSVGElement, targets: MermaidTarget[]) => void
+  /** Changes when this source block is replaced, moved, or its editability changes. */
+  renderTicket?: unknown
+  renderContext?: string
 }) {
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState(false)
@@ -62,30 +67,27 @@ export function MermaidDiagram({
 
   useEffect(() => {
     let current = true
-    const visitIsCurrent = activity.capture()
-    setSvg(null)
     setError(false)
-    if (!activity.displayed || !activity.focused) return
+    if (!activity.displayed) return
     void renderMermaid(source, theme)
       .then((result) => {
-        if (current && visitIsCurrent()) {
+        if (current && activity.displayed) {
           setTargets(result.targets)
           setSvg(result.svg)
         }
       })
       .catch(() => {
         document.getElementById(instanceId)?.remove()
-        if (current && visitIsCurrent()) setError(true)
+        if (current && activity.displayed) setError(true)
       })
     return () => {
       current = false
     }
-  }, [activity, activitySnapshot, instanceId, source, theme, retry])
+  }, [activity, activitySnapshot, instanceId, renderContext, renderTicket, source, theme, retry])
 
   useEffect(() => {
     const target = host.current
-    if (!target || !activity.displayed || !activity.focused) return
-    target.replaceChildren()
+    if (!target || !activity.displayed) return
     if (!svg) return
     const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
     const root = parsed.documentElement
