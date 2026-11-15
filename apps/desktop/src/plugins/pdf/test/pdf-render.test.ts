@@ -86,6 +86,49 @@ after diagram`
     ])
     expect(await readFile(notePath, 'utf8')).toBe(original)
   })
+  it('centers image captions through success, empty-alt fallback, and full-note references', async () => {
+    const root = await work()
+    const templateDir = join(root, 'template')
+    await mkdir(templateDir)
+    await writeFile(join(templateDir, 'template.typ'), '')
+    const typstBin = join(root, 'capture-typst')
+    await writeFile(
+      typstBin,
+      '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
+    )
+    await chmod(typstBin, 0o755)
+    const notePath = join(root, 'note.md')
+    await writeFile(join(root, 'image.png'), Buffer.from(DOT_PNG, 'base64'))
+    const missing = writeMarkdownCaptionEnvelope('![](missing.png)', 'empty **caption**')
+    const reference = writeMarkdownCaptionEnvelope(
+      '![Diagram *alt*][photo]',
+      '`#raw-typst malicious`',
+    )
+    const original = `${missing}\n\n${reference}\n\n[photo]: image.png`
+    await writeFile(notePath, original)
+    const outPath = join(root, 'captured.md')
+    const result = await renderPdf({
+      typstBin,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+      diagrams: async () => [],
+    })
+    const transformed = await readFile(outPath, 'utf8')
+    expect(transformed.match(/#align\(center\)/g)).toHaveLength(2)
+    expect(transformed.match(/empty \*\*caption\*\*/g)).toHaveLength(1)
+    expect(transformed.match(/#raw-typst malicious/g)).toHaveLength(1)
+    expect(transformed).toContain('format: "png", alt: "Diagram *alt*"')
+    expect(transformed.indexOf('empty')).toBeLessThan(transformed.indexOf('malicious'))
+    expect(result.warnings).toEqual([
+      'The image on line 3 is left out: missing.png: no such file in the vault',
+    ])
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+  })
+
   it.each([false, true])(
     'preserves literal SVG wiki-link labels (caption present: %s)',
     async (captioned) => {
