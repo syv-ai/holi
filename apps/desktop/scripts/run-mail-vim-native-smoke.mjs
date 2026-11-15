@@ -19,6 +19,7 @@ let log = ''
 let ws
 let nextId = 0
 const pending = new Map()
+let successResult
 try {
   await mkdir(evidence, { recursive: true })
   for (const name of ['result.json', 'electron-smoke.log', 'composer.png'])
@@ -352,9 +353,22 @@ try {
   await click('[aria-label="Subject"]')
   await key('Escape')
   await key('d')
-  await clickText('Preview')
-  await clickText('Edit')
-  await click('[aria-label="Subject"]')
+  // Invoke the toggle without moving focus, so only its identity change can reset Vim.
+  await evaluate(
+    `[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Preview').click()`,
+  )
+  await until(
+    `document.querySelector('[aria-label="Vim insert mode"]')!==null`,
+    'preview identity reset with subject still focused',
+  )
+  assert.equal(
+    await evaluate(`document.activeElement===document.querySelector('[aria-label="Subject"]')`),
+    true,
+    'preview transition blurred subject before testing identity invalidation',
+  )
+  await evaluate(
+    `[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Edit').click()`,
+  )
   assert.equal(
     await evaluate(`document.body.innerText.includes('INSERT')`),
     true,
@@ -477,7 +491,6 @@ try {
     cleanup: { root, removed: true },
     calls: saved,
   }
-  await writeFile(join(evidence, 'result.json'), JSON.stringify(result, null, 2))
   assert((await stat(join(evidence, 'composer.png'))).size > 0)
   child.kill('SIGTERM')
   const code = await Promise.race([
@@ -492,9 +505,9 @@ try {
     JSON.parse(await readFile(join(evidence, 'blocked-network-requests.json'), 'utf8')),
     [],
   )
-  const finalResult = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
-  assert.equal(finalResult.ok, true)
-  assert.equal(finalResult.electron.split('.')[0], '43')
+  await rm(root, { recursive: true, force: true })
+  await assert.rejects(stat(root), { code: 'ENOENT' })
+  successResult = result
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close()
   if (child && child.exitCode === null) {
@@ -506,3 +519,4 @@ try {
   await rm(root, { recursive: true, force: true })
   await writeFile(join(evidence, 'cleanup.json'), JSON.stringify({ removed: root }, null, 2))
 }
+await writeFile(join(evidence, 'result.json'), JSON.stringify(successResult, null, 2))
