@@ -183,6 +183,7 @@ after diagram`
     })
     const transformed = await readFile(outPath, 'utf8')
     expect(transformed.match(/#align\(center\)/g)).toHaveLength(2)
+    expect(transformed.match(/#block\(width: 100%, sticky: true\)/g)).toHaveLength(2)
     expect(transformed.match(/empty \*\*caption\*\*/g)).toHaveLength(1)
     expect(transformed.match(/#raw-typst malicious/g)).toHaveLength(1)
     expect(transformed).toContain('format: "png", alt: "Diagram *alt*"')
