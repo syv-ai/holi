@@ -15,15 +15,11 @@ const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(
   process.argv.slice(2).find((arg) => arg !== '--') ?? '/tmp/holi-pr512-native',
 )
-const root = await mkdtemp(join(tmpdir(), 'holi-pr512-native-'))
-await mkdir(evidence, { recursive: true })
-assert.deepEqual(await readdir(evidence), [], `refusing to overwrite ${evidence}`)
-await mkdir(join(root, 'vaults', 'synthetic-vault-a', 'docs'), { recursive: true })
-await mkdir(join(root, 'vaults', 'synthetic-vault-b', 'docs'), { recursive: true })
-await writeFile(join(root, 'vaults', 'synthetic-vault-a', 'docs', 'fixture.pdf'), pdf)
-await writeFile(join(root, 'vaults', 'synthetic-vault-b', 'docs', 'fixture.pdf'), pdf)
+let root
 let child
 let closed
+let succeeded = false
+let closeWindow
 let log = ''
 let ws
 let id = 0
@@ -58,6 +54,13 @@ const makePdf = () => {
 }
 const pdf = makePdf()
 try {
+  await mkdir(evidence, { recursive: true })
+  assert.deepEqual(await readdir(evidence), [], `refusing to overwrite ${evidence}`)
+  root = await mkdtemp(join(tmpdir(), 'holi-pr512-native-'))
+  await mkdir(join(root, 'vaults', 'synthetic-vault-a', 'docs'), { recursive: true })
+  await mkdir(join(root, 'vaults', 'synthetic-vault-b', 'docs'), { recursive: true })
+  await writeFile(join(root, 'vaults', 'synthetic-vault-a', 'docs', 'fixture.pdf'), pdf)
+  await writeFile(join(root, 'vaults', 'synthetic-vault-b', 'docs', 'fixture.pdf'), pdf)
   await build({
     configFile: false,
     root: desktop,
@@ -145,6 +148,9 @@ try {
     child.once('error', reject)
     child.once('close', resolve)
   })
+  let evaluate = async () => {
+    throw new Error('renderer evaluation is unavailable before CDP attachment')
+  }
   const wait = async (fn, description, timeout = 30000) => {
     const until = Date.now() + timeout
     while (Date.now() < until) {
@@ -165,22 +171,22 @@ try {
         .catch(() => null),
     'Electron CDP endpoint',
   )
-  const browserWs = new WebSocket(endpoint.webSocketDebuggerUrl)
+  ws = new WebSocket(endpoint.webSocketDebuggerUrl)
   await new Promise((resolve, reject) => {
-    browserWs.addEventListener('open', resolve, { once: true })
-    browserWs.addEventListener('error', reject, { once: true })
+    ws.addEventListener('open', resolve, { once: true })
+    ws.addEventListener('error', reject, { once: true })
   })
   const browserCall = (method, params = {}) =>
     new Promise((resolve, reject) => {
       const callId = ++id
       pending.set(callId, { resolve, reject })
-      browserWs.send(JSON.stringify({ id: callId, method, params }))
+      ws.send(JSON.stringify({ id: callId, method, params }))
     })
-  browserWs.addEventListener('message', (event) => {
+  ws.addEventListener('message', (event) => {
     const msg = JSON.parse(event.data)
     if (msg.method === 'Page.screencastFrame') {
       frames.push(Buffer.from(msg.params.data, 'base64'))
-      browserWs.send(
+      ws.send(
         JSON.stringify({
           id: -frames.length,
           sessionId: msg.sessionId,
@@ -212,12 +218,12 @@ try {
     new Promise((resolve, reject) => {
       const callId = ++id
       pending.set(callId, { resolve, reject })
-      browserWs.send(JSON.stringify({ id: callId, sessionId, method, params }))
+      ws.send(JSON.stringify({ id: callId, sessionId, method, params }))
     })
   // Flattened sessions place target responses on the browser websocket.
   await call('Page.enable')
   await call('Runtime.enable')
-  const evaluate = async (expression) => {
+  evaluate = async (expression) => {
     const result = await call('Runtime.evaluate', {
       expression,
       returnByValue: true,
@@ -226,6 +232,7 @@ try {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.text)
     return result.result.value
   }
+  closeWindow = () => evaluate('window.close()')
   const until = async (expression, description) =>
     wait(async () => evaluate(expression), description)
   const key = async (keyName) => {
@@ -263,13 +270,10 @@ try {
     `!!document.querySelector('holi-pdf-container')?.shadowRoot?.querySelector('[data-epdf-i$="-toolbar"] button')`,
     'EmbedPDF toolbar ready',
   )
-  await call('Page.startScreencast', {
-    format: 'jpeg',
-    everyNthFrame: 1,
-    maxWidth: 1440,
-    maxHeight: 1080,
-  })
-  await new Promise((resolve) => setTimeout(resolve, 300))
+  await until(
+    `(()=>{const viewer=document.querySelector('[data-pdf-viewer="docs/fixture.pdf"]');const host=viewer?.querySelector('[class*="motion-in-fade"]');const root=viewer?.querySelector('holi-pdf-container')?.shadowRoot;const search=root?.querySelector('[data-epdf-i$="-toolbar"] button[aria-label="Search"]');if(!host||!search)return false;const style=getComputedStyle(host);const rect=search.getBoundingClientRect();return Number(style.opacity)>0.9&&style.visibility==='visible'&&rect.width>0&&rect.height>0})()`,
+    'PDF page reveal completed and real toolbar is interactive',
+  )
   const screenshot = async (name) => {
     const result = await call('Page.captureScreenshot', { format: 'png', fromSurface: true })
     await writeFile(join(evidence, name), Buffer.from(result.data, 'base64'))
@@ -295,19 +299,43 @@ try {
     'surface registrations:',
     await evaluate('JSON.stringify(window.__holiPdfSmoke.surfaces())'),
   )
-  assert(labels.length > 0, 'no prefix-free host/PDF hints discovered')
+  assert(
+    labels.some((entry) => entry.label.includes('Search')),
+    'real PDF Search target missing',
+  )
+  assert(
+    labels.some((entry) => !entry.label.includes('Search')),
+    'host target missing',
+  )
+  assert(labels.length > 0, 'no host/PDF hints discovered')
   assert.equal(new Set(labels.map((entry) => entry.key)).size, labels.length, 'hint keys collide')
   for (const entry of labels) assert(entry.key.length >= 1, 'empty native hint key')
+  for (const left of labels)
+    for (const right of labels) {
+      if (left !== right)
+        assert(!right.key.startsWith(left.key), `hint key ${left.key} prefixes ${right.key}`)
+    }
   await screenshot('dark.png')
   await key('Escape')
   await until(`!document.querySelector('[data-host-hints]')`, 'Escape cancels hints')
-  await key('h')
-  await until(
-    `!!document.querySelector('holi-pdf-container')?.shadowRoot?.querySelector('[data-sidebar-id="search-panel"] input[type="text"]')`,
-    'actual PDF Search panel opened by native PDF shortcut',
+  await click('[data-pdf-fixture="a"]')
+  await key('f')
+  await until(`!!document.querySelector('[data-host-hints]')`, 'viewer-focused host hints')
+  const focusedLabels = await details()
+  assert(
+    focusedLabels.some((entry) => entry.label.includes('Search')),
+    'focused PDF lost Search target',
   )
+  const searchHint = focusedLabels.find((entry) => entry.label.includes('Search'))
+  assert(searchHint, 'Search hint unavailable for activation')
+  for (const character of searchHint.key) await key(character)
   const fieldSelector = `document.querySelector('holi-pdf-container').shadowRoot.querySelector('[data-sidebar-id="search-panel"] input[type="text"]')`
-  const beforeSearch = await evaluate(`${fieldSelector}.value`)
+  await until(`${fieldSelector}`, 'real PDF Search opened by its native hint label')
+  await until(
+    `(()=>{let active=document.activeElement;while(active?.shadowRoot?.activeElement)active=active.shadowRoot.activeElement;return active===document.querySelector('holi-pdf-container').shadowRoot.querySelector('[data-sidebar-id="search-panel"] input[type="text"]')})()`,
+    'Search input owns focus after native hint activation',
+  )
+  assert.equal(await hintCount(), 0, 'Search hint activation left hint overlay open')
   await key('f')
   await until(
     `${fieldSelector}.value.includes('f')`,
@@ -344,10 +372,11 @@ try {
   await evaluate(`window.__holiPdfSmoke.setOverlay(false)`)
   await key('f')
   await until(`!!document.querySelector('[data-host-hints]')`, 'light capture hints')
-  await evaluate(
-    `document.documentElement.dataset.theme='light';window.__holiPdfSmoke.mode('light')`,
+  await evaluate(`window.__holiPdfSmoke.mode('light')`)
+  await until(
+    `document.documentElement.dataset.theme==='light'`,
+    'activeModeAtom switches to light theme',
   )
-  await new Promise((resolve) => setTimeout(resolve, 300))
   await screenshot('light.png')
   await key('Escape')
   await until(`!document.querySelector('[data-host-hints]')`, 'cancel light capture')
@@ -355,15 +384,56 @@ try {
   // Isolation/lifetime checks through actual production PdfViewer instances and the host shell.
   await evaluate(`window.__holiPdfSmoke.remote('synthetic/vault-b')`)
   await until(`window.__holiPdfSmoke.state().remote==='synthetic/vault-b'`, 'vault B active')
+  await key('f')
+  await until(
+    `!!document.querySelector('[data-host-hints]')`,
+    'vault B hints available after A-B scope transition',
+  )
+  const vaultBLabels = await details()
   await evaluate(`window.__holiPdfSmoke.remote('synthetic/vault-a')`)
   await until(`window.__holiPdfSmoke.state().remote==='synthetic/vault-a'`, 'vault A restored')
+  await until(`!document.querySelector('[data-host-hints]')`, 'A-B-A invalidates B hint session')
+  const staleTarget = vaultBLabels.find((entry) => entry.label.includes('Search'))
+  if (staleTarget) for (const character of staleTarget.key) await key(character)
+  assert.equal(await hintCount(), 0, 'stale B hint activation survived A-B-A transition')
+  await key('f')
+  await until(
+    `!!document.querySelector('[data-host-hints]')`,
+    'old viewer session active before source replacement',
+  )
+  const oldLabels = await details()
   await evaluate(`window.__holiPdfSmoke.viewer('docs/replaced.pdf',true,true)`)
+  await until(
+    `!document.querySelector('[data-host-hints]')`,
+    'source replacement invalidates old labels',
+  )
   await until(
     `document.querySelector('[data-pdf-viewer="docs/replaced.pdf"]') && document.querySelector('holi-pdf-container')?.shadowRoot?.querySelector('canvas')`,
     'replacement PDF ready',
   )
   await key('f')
   await until(`!!document.querySelector('[data-host-hints]')`, 'replacement viewer hints')
+  const replacementSearch = (await details()).find((entry) => entry.label.includes('Search'))
+  if (oldLabels[0]) for (const character of oldLabels[0].key) await key(character)
+  assert.equal(await hintCount(), 0, 'stale label activation reached a replacement control')
+  await key('f')
+  await until(`!!document.querySelector('[data-host-hints]')`, 'replacement labels restored')
+  assert(replacementSearch, 'replacement PDF has no actual Search target')
+  await evaluate(`window.__holiPdfSmoke.focusPane('b')`)
+  await until(
+    `document.querySelector('[data-pane-id="b"]').getAttribute('data-pane-focused')==='true'`,
+    'split pane B receives focus',
+  )
+  await key('f')
+  await until(
+    `!!document.querySelector('[data-host-hints]')`,
+    'inactive pane does not own hints; active split pane does',
+  )
+  await evaluate(`window.__holiPdfSmoke.focusPane('a')`)
+  await until(
+    `!document.querySelector('[data-host-hints]')`,
+    'pane ownership change invalidates hint session',
+  )
   await evaluate(`window.__holiPdfSmoke.viewer('docs/replaced.pdf',false,false)`)
   await until(
     `!document.querySelector('[data-host-hints]')`,
@@ -379,32 +449,6 @@ try {
     'synthetic PDF read seam did not run',
   )
   await evaluate(`document.documentElement.dataset.theme='dark'`)
-  if (frames.length) {
-    const ffmpeg = spawn(
-      'ffmpeg',
-      [
-        '-y',
-        '-loglevel',
-        'error',
-        '-f',
-        'image2pipe',
-        '-framerate',
-        '8',
-        '-vcodec',
-        'mjpeg',
-        '-i',
-        'pipe:0',
-        '-pix_fmt',
-        'yuv420p',
-        join(evidence, 'interaction.mp4'),
-      ],
-      { stdio: ['pipe', 'ignore', 'pipe'] },
-    )
-    for (const frame of frames) ffmpeg.stdin.write(frame)
-    ffmpeg.stdin.end()
-    const [code] = await new Promise((resolve) => ffmpeg.once('close', (code) => resolve([code])))
-    assert.equal(code, 0, 'ffmpeg failed to encode native interaction recording')
-  }
   const result = {
     task: 'PR512 PDF Vim native Electron smoke',
     checks: [
@@ -418,7 +462,7 @@ try {
       'vault-A-B-A-and-viewer-source-replacement',
       'inactive-viewer cancellation',
     ],
-    evidence: ['dark.png', 'light.png', 'interaction.mp4'],
+    evidence: ['dark.png', 'light.png', 'fixture.pdf', 'electron.log'],
     synthetic: true,
     networkDenied: true,
     permissionsDenied: true,
@@ -427,21 +471,36 @@ try {
     limits: [
       'PDF files.read/files.write and pdf signatures are harness-only in-memory adapters; production main IPC, real vault filesystem, networked session and packaged application are out of scope.',
       'Vim toggle, focus/visibility, vault identity and source replacement are driven through the fixture control surface; this does not validate app-shell tab switching or actual vault watcher delivery.',
-      'Video file is reserved but not encoded by this runner pending ffmpeg availability.',
     ],
   }
   assert(result.trustedNativeKeyboard, 'native keyboard events were not trusted')
   await writeFile(join(evidence, 'result.json'), JSON.stringify(result, null, 2))
   await writeFile(join(evidence, 'fixture.pdf'), pdf)
+  succeeded = true
 } finally {
-  if (ws?.readyState === WebSocket.OPEN) ws.close()
   if (child && child.exitCode === null) {
-    child.kill('SIGTERM')
-    await Promise.race([closed, new Promise((resolve) => setTimeout(resolve, 5000))])
-    if (child.exitCode === null) child.kill('SIGKILL')
+    if (ws?.readyState === WebSocket.OPEN) {
+      try {
+        await closeWindow()
+      } catch {}
+    }
+    const exited = await Promise.race([
+      closed.then((code) => ({ code })),
+      new Promise((resolve) => setTimeout(() => resolve(null), 10000)),
+    ])
+    if (!exited && child.exitCode === null) {
+      child.kill('SIGTERM')
+      await Promise.race([closed, new Promise((resolve) => setTimeout(resolve, 5000))])
+    }
+    if (child.exitCode === null) {
+      child.kill('SIGKILL')
+      await closed.catch(() => {})
+    }
+    if (succeeded) assert.equal(child.exitCode, 0, 'Electron did not exit cleanly')
   }
-  await writeFile(join(evidence, 'electron.log'), log)
-  await rm(root, { recursive: true, force: true })
+  if (ws?.readyState === WebSocket.OPEN) ws.close()
+  if (evidence) await writeFile(join(evidence, 'electron.log'), log).catch(() => {})
+  if (root) await rm(root, { recursive: true, force: true })
   const resultPath = join(evidence, 'result.json')
   const result = await readFile(resultPath, 'utf8')
     .then(JSON.parse)
@@ -449,9 +508,12 @@ try {
   if (result) {
     result.cleanup = {
       electronExitCode: child?.exitCode ?? null,
-      tempRootDeleted: !(await stat(root)
-        .then(() => true)
-        .catch(() => false)),
+      tempRootDeleted: root
+        ? !(await stat(root)
+            .then(() => true)
+            .catch(() => false))
+        : true,
+      processExited: child ? child.exitCode !== null : true,
     }
     await writeFile(resultPath, JSON.stringify(result, null, 2))
   }
