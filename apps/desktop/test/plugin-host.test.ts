@@ -62,6 +62,7 @@ function rig(
     rootFor?: (remote: string) => Promise<string | null>
     window?: () => import('electron').BrowserWindow | null
     frameOrigin?: (origin: string) => () => void
+    navigate?: (plugin: string, remote: string, name: string, payload: unknown) => void
   } = {},
 ) {
   const calls = { started: 0, stopped: 0 }
@@ -122,6 +123,7 @@ function rig(
     githubToken: () => null,
     frameOrigin: opts.frameOrigin ?? (() => () => {}),
     notify: () => false,
+    navigate: opts.navigate,
     focused: () => false,
     window: opts.window,
     activity: (entry) => activity.push(entry),
@@ -212,6 +214,17 @@ function logged(
 }
 
 describe('the plugin host', () => {
+  it('routes plugin navigation requests through the host seam', async () => {
+    const navigations: unknown[][] = []
+    const r = rig({ navigate: (...args) => void navigations.push(args) })
+    const root = await tempDir()
+    await r.enter(openVault('o/r', root))
+
+    r.ctx().navigate('o/target', 'inbox-open', { session: 'p0123456789ab' })
+
+    expect(navigations).toEqual([['fake', 'o/target', 'inbox-open', { session: 'p0123456789ab' }]])
+  })
+
   it('tags plugin log lines and activation failures with actual ids, not labels', async () => {
     const plugins: MainPlugin[] = [
       {

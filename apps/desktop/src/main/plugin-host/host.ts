@@ -83,6 +83,8 @@ export interface PluginHostDeps {
   /** A native notification, raised only while no Holi window has focus
    *  (`PluginCtx.notify`). */
   notify(notice: Notice): boolean
+  /** Navigate to a vault, then deliver an event to that plugin's renderer. */
+  navigate?(plugin: string, remote: string, name: string, payload: unknown): void
   /** Whether a Holi window has focus. */
   focused(): boolean
   /** Holi's window, or null with none open. Absent, as in most tests, it is
@@ -668,6 +670,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         return keep(() => void mentionListeners.delete(entry))
       },
       notify: (notice) => (valid() || draining() ? deps.notify(notice) : false),
+      navigate: (at, name, payload) => {
+        if (valid() || draining()) deps.navigate?.(id, at, name, payload)
+      },
       focused: deps.focused,
       // Display authority is separate from vault lifetime: a retained vault's
       // activation may work on its data but cannot touch Holi's native window.

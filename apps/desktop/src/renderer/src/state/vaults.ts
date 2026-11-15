@@ -386,6 +386,34 @@ export function subscribeToVault(
         void restoreSelection(store.get(openRequestAtom))
     }
   })
+  let navigationIntent = 0
+  const offNavigation = window.holi.vault.onNavigate((request) => {
+    const intent = ++navigationIntent
+    const navigate = async (): Promise<void> => {
+      const landed =
+        request.remote === store.get(activeRemoteAtom) ||
+        (await store.set(openVaultAtom, request.remote))
+      if (
+        !landed ||
+        intent !== navigationIntent ||
+        store.get(activeRemoteAtom) !== request.remote ||
+        store.get(openedRemoteAtom) !== request.remote
+      )
+        return
+      window.holi.plugin.send(request.plugin, {
+        remote: request.remote,
+        name: request.name,
+        payload: request.payload,
+      })
+    }
+    void navigate().catch((error: unknown) => {
+      if (intent === navigationIntent) {
+        toast.error('Could not open the agent session', {
+          description: error instanceof Error ? error.message : String(error),
+        })
+      }
+    })
+  })
   // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
   // opened the tab first, over `onOpen`, which arrives before this; a file's
   // tab is keyed by its path.
@@ -409,6 +437,7 @@ export function subscribeToVault(
     offHeldBack()
     offCommitted()
     offReminder()
+    offNavigation()
     offLocate()
     offEvents.forEach((off) => off())
   }

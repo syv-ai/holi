@@ -94,6 +94,75 @@ function observeReady() {
 }
 
 describe('vaults', () => {
+  it('switches vaults before delivering a navigation event', async () => {
+    holi = installFakeHoli((op) => (op.path === 'vaults.open' ? snapshot() : undefined))
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/origin')
+    store.set(openedRemoteAtom, 'syv-ai/origin')
+    unsubscribe = subscribeToVault(store)
+
+    holi.pushNavigate({
+      remote: 'syv-ai/target',
+      plugin: 'agent',
+      name: 'inbox-open',
+      payload: { session: 'p0123456789ab' },
+    })
+    await vi.waitFor(() => expect(holi?.pluginSent).toHaveLength(1))
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/target')
+    expect(holi.calls).toContainEqual({ path: 'vaults.open', input: { remote: 'syv-ai/target' } })
+    expect(holi.pluginSent[0]?.id).toBe('agent')
+  })
+
+  it('does not route a navigation event when switching vaults fails', async () => {
+    holi = installFakeHoli((op) => {
+      if (op.path === 'vaults.open') throw new Error('switch refused')
+      return undefined
+    })
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/origin')
+    store.set(openedRemoteAtom, 'syv-ai/origin')
+    unsubscribe = subscribeToVault(store)
+    const error = vi.spyOn(toast, 'error').mockImplementation(() => 'toast-id')
+
+    holi.pushNavigate({
+      remote: 'syv-ai/target',
+      plugin: 'agent',
+      name: 'inbox-open',
+      payload: { session: 'p0123456789ab' },
+    })
+    await vi.waitFor(() => expect(error).toHaveBeenCalled())
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/origin')
+    expect(holi.pluginSent).toEqual([])
+  })
+
+  it('delivers a navigation event only after its vault is active', async () => {
+    holi = installFakeHoli()
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/origin')
+    store.set(openedRemoteAtom, 'syv-ai/origin')
+    unsubscribe = subscribeToVault(store)
+
+    holi.pushNavigate({
+      remote: 'syv-ai/origin',
+      plugin: 'agent',
+      name: 'inbox-open',
+      payload: { session: 'p0123456789ab' },
+    })
+    await vi.waitFor(() => expect(holi?.pluginSent).toHaveLength(1))
+
+    expect(holi.pluginSent[0]).toEqual({
+      id: 'agent',
+      event: {
+        remote: 'syv-ai/origin',
+        name: 'inbox-open',
+        payload: { session: 'p0123456789ab' },
+      },
+    })
+    expect(holi.calls).toEqual([])
+  })
+
   it('lists vaults and makes the first one active', async () => {
     holi = installFakeHoli(() => [entry('syv-ai/notes'), entry('syv-ai/other')])
     const store = createStore()
