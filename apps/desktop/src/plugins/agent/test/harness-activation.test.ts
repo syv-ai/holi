@@ -592,8 +592,16 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
       adapters.run.mock.calls.some(([, args]) => args.includes('--dangerously-skip-permissions')),
     ).toBe(false)
 
-    const turnsA = (await call(A, 'agent.turns')) as { sessionId: string }[]
-    const turnsB = (await call(B, 'agent.turns')) as { sessionId: string }[]
+    const settledTurns = async (remote: typeof A | typeof B, sessionId: string) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const turns = (await call(remote, 'agent.turns')) as { sessionId: string }[]
+        if (turns.some((turn) => turn.sessionId === sessionId)) return turns
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      throw new Error(`Pi turn log did not settle for ${remote}`)
+    }
+    const turnsA = await settledTurns(A, piA.sessionId)
+    const turnsB = await settledTurns(B, piB.sessionId)
     expect(turnsA.map((turn) => turn.sessionId)).toContain('abc12345')
     expect(turnsB.map((turn) => turn.sessionId)).not.toContain('abc12345')
     await expect(call(A, 'agent.reply', { session: 'abc12345' })).rejects.toThrow(/Pi run/)
