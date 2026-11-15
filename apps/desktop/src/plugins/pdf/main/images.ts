@@ -33,6 +33,7 @@ interface Found {
   from: number
   to: number
   alt: string
+  source: 'markdown' | 'wiki'
   /** A vault path, or an `http(s)` address. */
   target: { kind: 'vault'; path: string } | { kind: 'external'; url: string }
 }
@@ -133,6 +134,7 @@ function findImages(markdown: string, notePath: string): Found[] {
       from: image.from,
       to: image.to,
       alt: image.alt,
+      source: 'markdown',
       target: resolveImageRef(notePath, destination(url)),
     })
   }
@@ -145,6 +147,7 @@ function findImages(markdown: string, notePath: string): Found[] {
       from,
       to: link.end,
       alt: link.label ?? link.target,
+      source: 'wiki',
       target: { kind: 'vault', path: link.target },
     })
   }
@@ -179,6 +182,18 @@ function unusable(bytes: Uint8Array, format: string): string | null {
 function imageMarkdown(bytes: Uint8Array, format: string, alt: string): string {
   const altArg = alt === '' ? '' : `, alt: ${commentSafeString(alt)}`
   return `<!--raw-typst #image(bytes((${bytes.join(',')})), format: "${format}"${altArg})-->`
+}
+
+/** True when a range contains exactly one ordinary Markdown image and whitespace. */
+export function hasSingleMarkdownImage(markdown: string, from: number, to: number): boolean {
+  const images = findImages(markdown, '').filter(
+    (image) => image.source === 'markdown' && image.from >= from && image.to <= to,
+  )
+  if (images.length !== 1) return false
+  const image = images[0]!
+  return (
+    markdown.slice(from, image.from).trim() === '' && markdown.slice(image.to, to).trim() === ''
+  )
 }
 
 /**

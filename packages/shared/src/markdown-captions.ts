@@ -44,7 +44,7 @@ export function readMarkdownCodeCaptions(text: string): MarkdownCodeCaption[] {
 }
 
 /** Only accept one paragraph of portable inline Markdown, never raw HTML. */
-function isPortableInlineCaption(caption: string): boolean {
+export function isPortableInlineCaption(caption: string): boolean {
   if (!caption.trim() || /[\r\n\u2028\u2029]/.test(caption)) return false
   if (/^[ \t]/.test(caption)) return false
   // Reference definitions and reference links depend on document-wide definitions;
