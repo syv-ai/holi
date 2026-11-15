@@ -102,16 +102,17 @@ function runInFrame(
         finish(undefined, error)
         return
       }
+      const logLease = lease
+      finish(undefined, error)
       void appsCap
         .log(remote, {
           bundle,
           level: 'error',
           text: `/${command}: ${error.message}`,
-          token: lease.token,
-          nonce: lease.nonce,
+          token: logLease.token,
+          nonce: logLease.nonce,
         })
         .catch(() => {})
-        .finally(() => finish(undefined, error))
     }, COMMAND_TIMEOUT_MS)
     const onMessage = (event: MessageEvent): void => {
       if (frame === null || lease === null || event.source !== frame.contentWindow || !isCurrent())

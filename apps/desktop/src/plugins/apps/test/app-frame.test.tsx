@@ -113,6 +113,13 @@ function withApps(...bundles: string[]) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  bridgeMock.mockReset().mockImplementation((input: { remote: string; method: string }) => {
+    if (input.method === 'docs.read') return Promise.resolve('# A')
+    if (input.method === 'docs.list') {
+      return Promise.resolve([{ path: 'a.md', kind: 'note', updatedAt: '' }])
+    }
+    return Promise.resolve([])
+  })
   frameLeaseMock.mockReset().mockResolvedValue({ token: FRAME_TOKEN, nonce: FRAME_NONCE })
   frameLeaseValidMock.mockReset().mockResolvedValue(true)
   releaseLeaseMock.mockReset().mockResolvedValue(true)
@@ -474,6 +481,7 @@ for (const replacement of ['reload', 'path', 'remote', 'mode', 'code', 'dispose'
     const old = runningFrame()!
     const oldPost = vi.spyOn(old.contentWindow!, 'postMessage')
     fromFrame({ id: 'late', method: 'docs.read', params: { path: 'a.md' } }, old.contentWindow)
+    await waitFor(() => expect(bridgeMock).toHaveBeenCalled())
     replace(view)
     if (replacement !== 'dispose') await waitFor(() => expect(runningFrame()).not.toBeNull())
     const newPost = runningFrame() ? vi.spyOn(runningFrame()!.contentWindow!, 'postMessage') : null
@@ -606,6 +614,50 @@ test('a pending capture is invalidated when its same-vault frame moves', async (
   })
   await act(async () => pending.resolve({ saved: true }))
   expect(store.get(previewVersionsAtom)).toEqual({})
+  view.unmount()
+})
+
+test('an overlay invalidates a pending preview capture before publication', async () => {
+  withApps('Team/Retro.app')
+  const view = render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(runningFrame()).not.toBeNull())
+  const frame = runningFrame()!
+  vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+    left: 0,
+    top: 0,
+    right: 400,
+    bottom: 400,
+    width: 400,
+    height: 400,
+  } as DOMRect)
+  let overlay: HTMLElement | null = null
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    value: () => overlay ?? frame,
+  })
+  const pending = deferred<{ saved: boolean }>()
+  captureMock.mockReturnValueOnce(pending.promise)
+  vi.useFakeTimers()
+  fireEvent.load(frame)
+  await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+  expect(captureMock).toHaveBeenCalledTimes(1)
+  overlay = document.createElement('div')
+  document.body.append(overlay)
+  await act(async () => {
+    await Promise.resolve()
+    vi.advanceTimersByTime(20)
+  })
+  expect(fakeHoli.pluginSent).toContainEqual({
+    id: 'apps',
+    event: expect.objectContaining({
+      remote: REMOTE,
+      name: 'preview-placement',
+      payload: expect.objectContaining({ rect: null }),
+    }),
+  })
+  await act(async () => pending.resolve({ saved: true }))
+  expect(store.get(previewVersionsAtom)).toEqual({})
+  overlay.remove()
   view.unmount()
 })
 
