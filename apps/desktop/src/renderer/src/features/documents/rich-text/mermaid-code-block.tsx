@@ -25,7 +25,11 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const activeMode = useAtomValue(activeModeAtom)
   const theme = activeMode === 'dark' ? 'dark' : 'default'
   const source = node.textContent
-  const isMermaid = String(node.attrs.language ?? '').toLowerCase() === 'mermaid'
+  const isMermaid =
+    String(node.attrs.language ?? '')
+      .trim()
+      .split(/\s+/, 1)[0]
+      ?.toLowerCase() === 'mermaid'
   const currentPosition = useCallback(
     () => (typeof getPos === 'function' ? getPos() : undefined),
     [getPos],

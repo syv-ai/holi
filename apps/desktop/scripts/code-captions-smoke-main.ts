@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
-import { readMarkdownCodeCaptions } from '@holi/shared'
+import { readMarkdownCodeCaptions, writeMarkdownCaptionEnvelope } from '@holi/shared'
 import { init } from '@embedpdf/pdfium'
 import { PdfiumNative } from '@embedpdf/engines/pdfium'
 import { createRouter, type RouterDeps } from '../src/main/router'
@@ -19,6 +19,7 @@ import { noCoreServices } from '../src/main/capabilities/services'
 import { createBridgeServer } from '../src/main/bridge/server'
 import { installHoliCli } from '../src/main/bridge/cli'
 import { publishCliEndpoint } from '../src/main/bridge/cli-endpoint'
+import { createMermaidWindow } from '../src/plugins/pdf/main/mermaid-window'
 import {
   pdfCapabilities,
   PDF_NAMESPACES,
@@ -50,7 +51,10 @@ const mark = (name: string) => {
   console.log(`PASS ${name}`)
 }
 
-async function inspectPdf(file: string) {
+async function inspectPdf(
+  file: string,
+  expected = { caption: 'A portable caption. Pending reload', source: 'const value = 1' },
+) {
   const require = createRequire(join(process.env.HOLI_502_DESKTOP!, 'package.json'))
   const wasm = await readFile(require.resolve('@embedpdf/pdfium/pdfium.wasm'))
   const module = await init({
@@ -83,8 +87,11 @@ async function inspectPdf(file: string) {
       .toPromise()
     const text = slices.join('')
     const textGlyphs = slices.flatMap((part, index) => part.split('').map(() => glyphs[index]!))
-    assert.match(text.replace(/\s+/g, ' '), /A portable caption\. Pending reload/)
-    assert.match(text.replace(/\s+/g, ' '), /const value = 1/)
+    assert(
+      text.replace(/\s+/g, ' ').includes(expected.caption),
+      `missing PDF caption: ${expected.caption}`,
+    )
+    assert(text.includes(expected.source), `missing PDF source or fallback: ${expected.source}`)
     assert(!text.includes('holi:figure') && !text.includes('holi:caption'))
     const at = text.indexOf('A portable caption.')
     assert(at >= 0)
@@ -143,14 +150,13 @@ async function run() {
       throw new Error('No GitHub access in caption acceptance')
     },
   })
+  const mermaid = createMermaidWindow()
   const capabilities = createCapabilityRegistry()
   capabilities.register(
     PDF_NAMESPACES,
     pdfCapabilities({
       typst: async () => typst,
-      diagrams: async () => {
-        throw new Error('Ordinary-code fixture must not draw Mermaid')
-      },
+      diagrams: (sources) => mermaid.draw(sources),
       signatures: {
         read: async () => [],
         write: async () => {},
@@ -307,8 +313,8 @@ async function run() {
   )
   const js = <T = unknown>(code: string): Promise<T> =>
     win.webContents.executeJavaScript(`(async()=>{${code}})()`)
-  async function wait(code: string, label: string) {
-    const until = Date.now() + 15000
+  async function wait(code: string, label: string, timeout = 15000) {
+    const until = Date.now() + timeout
     while (Date.now() < until) {
       if (await js(`try{return Boolean(${code})}catch{return false}`)) return
       await sleep(50)
@@ -748,6 +754,99 @@ async function run() {
     )
     await writeFile(join(evidence, 'editor-saved.md.txt'), beforePdf)
     mark('actual-holi-cli-through-private-bridge-and-real-pdf-capability')
+
+    const caption = 'A portable caption. Pending reload'
+    const mermaidSource = `flowchart TD\nA[Mermaid success] --> B[Target]`
+    const validFigure = writeMarkdownCaptionEnvelope(`~~~mermaid\n${mermaidSource}\n~~~`, caption)
+    const mermaidDocument = `${head}# Mermaid caption\n\n${validFigure}\n`
+    await js(`await window.captionFixture.replace(${JSON.stringify(mermaidDocument)}); return true`)
+    assert.equal(readMarkdownCodeCaptions(await readFile(note, 'utf8')).length, 1)
+    await js(`window.captionFixture.theme('light'); return true`)
+    await sleep(300)
+    await capture('mermaid-light.png')
+    await js(`window.captionFixture.theme('dark'); return true`)
+    await sleep(300)
+    await capture('mermaid-dark.png')
+    await js(`window.captionFixture.theme('light'); return true`)
+    await js(
+      `Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Convert to PDF').click(); return true`,
+    )
+    await wait(
+      `document.querySelector('[data-convert-confirm]:not([disabled])')`,
+      'Mermaid UI PDF ready',
+      45000,
+    )
+    await js(
+      `const button=document.querySelector('[data-convert-confirm]'); if(button.disabled)throw Error('Mermaid PDF convert button stayed disabled'); button.click(); return true`,
+    )
+    await wait(
+      `!document.querySelector('[role="dialog"]') || document.querySelector('[role="dialog"]')?.innerText.includes('The PDF is made')`,
+      'Mermaid UI PDF conversion',
+      45000,
+    )
+    if (await js(`Boolean(document.querySelector('[role="dialog"]'))`))
+      await js(
+        `Array.from(document.querySelectorAll('[role="dialog"] button')).find(e=>e.textContent.trim()==='Done')?.click(); return true`,
+      )
+    const validUiPdf = join(vault, 'notes/Code-caption 2.pdf')
+    const validUi = await inspectPdf(validUiPdf, { caption, source: 'Mermaid success' })
+    await copyFile(validUiPdf, join(evidence, 'mermaid-ui-valid.pdf'))
+    const validCliResult = await exec(
+      cli,
+      ['pdf', 'render', path, 'plain', '--out', 'notes/mermaid-cli.pdf', '--json'],
+      { cwd: vault, env: { ...process.env, CLAUDE_JOB_DIR: '' } },
+    )
+    assert.deepEqual(JSON.parse(validCliResult.stdout).warnings, [])
+    const validCliPdf = join(vault, 'notes/mermaid-cli.pdf')
+    const validCli = await inspectPdf(validCliPdf, { caption, source: 'Mermaid success' })
+    await copyFile(validCliPdf, join(evidence, 'mermaid-cli-valid.pdf'))
+    mark('production-mermaid-renderer-caption-in-ui-and-cli-pdfs')
+
+    const invalidSource = 'not a Mermaid diagram'
+    const invalidFigure = writeMarkdownCaptionEnvelope(`~~~mermaid\n${invalidSource}\n~~~`, caption)
+    await js(
+      `await window.captionFixture.replace(${JSON.stringify(`${head}# Mermaid fallback\n\n${invalidFigure}\n`)}); return true`,
+    )
+    await js(
+      `Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Convert to PDF').click(); return true`,
+    )
+    await wait(
+      `document.querySelector('[data-convert-confirm]:not([disabled])')`,
+      'fallback UI PDF ready',
+      45000,
+    )
+    await js(
+      `const button=document.querySelector('[data-convert-confirm]'); if(button.disabled)throw Error('Fallback PDF convert button stayed disabled'); button.click(); return true`,
+    )
+    await wait(
+      `document.querySelector('[role="dialog"]')?.innerText.includes('shows as code')`,
+      'fallback UI PDF warning',
+      45000,
+    )
+    await js(`document.querySelector('[data-convert-done]')?.click(); return true`)
+    await wait(`!document.querySelector('[role="dialog"]')`, 'fallback UI PDF conversion')
+    const fallbackUiPdf = join(vault, 'notes/Code-caption 3.pdf')
+    const fallbackUi = await inspectPdf(fallbackUiPdf, { caption, source: invalidSource })
+    await copyFile(fallbackUiPdf, join(evidence, 'mermaid-ui-fallback.pdf'))
+    const fallbackCliResult = await exec(
+      cli,
+      ['pdf', 'render', path, 'plain', '--out', 'notes/mermaid-fallback-cli.pdf', '--json'],
+      { cwd: vault, env: { ...process.env, CLAUDE_JOB_DIR: '' } },
+    )
+    assert.equal(JSON.parse(fallbackCliResult.stdout).warnings.length, 1)
+    const fallbackCliPdf = join(vault, 'notes/mermaid-fallback-cli.pdf')
+    const fallbackCli = await inspectPdf(fallbackCliPdf, { caption, source: invalidSource })
+    await copyFile(fallbackCliPdf, join(evidence, 'mermaid-cli-fallback.pdf'))
+    await writeFile(
+      join(evidence, 'mermaid-pdf-proof.json'),
+      JSON.stringify(
+        { valid: { ui: validUi, cli: validCli }, fallback: { ui: fallbackUi, cli: fallbackCli } },
+        null,
+        2,
+      ),
+    )
+    mark('mermaid-caption-source-fallback-in-ui-and-cli-pdfs')
+
     assert.deepEqual(denied, [])
     assert.deepEqual(await js('return window.captionFixture.errors'), [])
     assert.deepEqual(rendererErrors, [])
@@ -777,6 +876,7 @@ async function run() {
     )
     ipcMain.removeHandler('holi-caption-fixture')
     if (!win.isDestroyed()) win.destroy()
+    mermaid.close()
     await bridge.stop()
     await endpoint.dispose()
   }
