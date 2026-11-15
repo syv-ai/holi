@@ -24,6 +24,16 @@ vi.mock('electron', () => {
       paste: vi.fn(),
       reload: vi.fn(),
       loadURL: vi.fn(async () => {}),
+      executeJavaScriptInIsolatedWorld: vi.fn(
+        async (_world: number, scripts: { code: string }[]) => {
+          const code = scripts.at(-1)?.code ?? ''
+          if (code.includes('__holiPage.vim.documentNonce()')) return 'document-nonce'
+          if (code.includes('__holiPage.vim.mode()')) return { revision: 1, mode: 'insert' }
+          if (code.includes('__holiPage.vim.configure(') || code.includes('__holiPage.vim.reset('))
+            return true
+          return undefined
+        },
+      ),
       on: vi.fn(function (this: any, event: string, callback: (...args: any[]) => void) {
         this.listeners ??= new Map()
         this.listeners.set(event, callback)
@@ -82,6 +92,50 @@ describe('browser page activation', () => {
   beforeEach(() => {
     native.views.length = 0
     native.menus.length = 0
+  })
+
+  it('fences browser Vim configuration across A-B-A attachment changes', async () => {
+    const { createPages } = await import('../main/pages')
+    const window = win()
+    const snapshots: {
+      nonce: string
+      attachment: string
+      revision: number
+      mode: 'insert' | 'normal'
+    }[] = []
+    const pages = createPages({
+      window: () => window,
+      presentationLease: () => () => true,
+      changed: () => {},
+      address: () => {},
+      key: () => {},
+      reveal: () => {},
+      vimMode: (_id, snapshot) => snapshots.push(snapshot),
+    })
+    await pages.open({ id: 'vim', reveal: false })
+    const view = native.views[0]
+    view.webContents.emit('did-finish-load')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    pages.place('vim', { x: 0, y: 0, width: 100, height: 100 })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const first = snapshots.at(-1)!
+    await pages.configureVim('vim', true, 1, first.nonce, first.attachment)
+    pages.place('vim', null)
+    pages.place('vim', { x: 0, y: 0, width: 100, height: 100 })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const second = snapshots.at(-1)!
+    expect(second.attachment).not.toBe(first.attachment)
+    const configCalls = () =>
+      view.webContents.executeJavaScriptInIsolatedWorld.mock.calls.filter(
+        ([, scripts]: [number, { code: string }[]]) =>
+          scripts.at(-1)?.code.includes('__holiPage.vim.configure('),
+      ).length
+    const beforeStale = configCalls()
+    await pages.configureVim('vim', true, 2, first.nonce, first.attachment)
+    expect(configCalls()).toBe(beforeStale)
+    await pages.configureVim('vim', true, 3, second.nonce, second.attachment)
+    expect(configCalls()).toBe(beforeStale + 1)
+    pages.dispose()
   })
 
   it('requires fresh placement after hide and binds delayed actions to the exact attachment', async () => {

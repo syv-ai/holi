@@ -14,7 +14,8 @@ interface HoliPage {
   valueOf(ref: number): string | null
   fill(ref: number, text: string): boolean
   vim: {
-    configure(enabled: boolean, revision: number): boolean
+    documentNonce(): string
+    configure(enabled: boolean, revision: number, nonce: string): boolean
     mode(): { revision: number; mode: 'insert' | 'normal' }
   }
 }
@@ -91,10 +92,11 @@ test('a number finds its control until it leaves the page', () => {
 
 test('vim mode uses native selections and blocks unsupported edits synchronously', () => {
   const textarea = document.createElement('textarea')
-  textarea.value = 'one two\\n  three'
+  textarea.value = 'one two\n  three'
   document.body.append(textarea)
   textarea.focus()
-  expect(holi().vim.configure(true, 1)).toBe(true)
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 1, nonce)).toBe(true)
   expect(holi().vim.mode()).toEqual({ revision: 1, mode: 'insert' })
   const key = (value: string) => {
     const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })
@@ -109,12 +111,95 @@ test('vim mode uses native selections and blocks unsupported edits synchronously
   const before = textarea.value
   expect(key('Backspace').defaultPrevented).toBe(true)
   expect(textarea.value).toBe(before)
+  expect(key('Tab').defaultPrevented).toBe(false)
   key('a')
   expect(holi().vim.mode().mode).toBe('insert')
   expect(key('x').defaultPrevented).toBe(false)
-  expect(holi().vim.configure(false, 2)).toBe(true)
-  expect(holi().vim.configure(true, 1)).toBe(false)
+  expect(holi().vim.configure(false, 2, nonce)).toBe(true)
+  expect(holi().vim.configure(true, 1, nonce)).toBe(false)
   expect(holi().vim.mode()).toEqual({ revision: 2, mode: 'insert' })
+})
+
+test('moves by grapheme, Unicode word, and logical textarea line without editing', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = '  café🙂 x\nlonger'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 10, nonce)).toBe(true)
+  const key = (value: string) => {
+    const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })
+    textarea.dispatchEvent(event)
+    return event
+  }
+  key('Escape')
+  textarea.setSelectionRange(6, 6)
+  key('l')
+  expect(textarea.selectionStart).toBe(8)
+  key('h')
+  expect(textarea.selectionStart).toBe(6)
+  key('^')
+  expect(textarea.selectionStart).toBe(2)
+  key('w')
+  expect(textarea.selectionStart).toBe(9)
+  key('b')
+  expect(textarea.selectionStart).toBe(2)
+  key('w')
+  expect(textarea.selectionStart).toBe(9)
+  key('e')
+  expect(textarea.selectionStart).toBe(9)
+  key('j')
+  expect(textarea.selectionStart).toBe(17)
+  key('k')
+  expect(textarea.selectionStart).toBe(9)
+  key('I')
+  expect(textarea.selectionStart).toBe(2)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(textarea.value).toBe('  café🙂 x\nlonger')
+})
+
+test('blur, replacement focus, IME and modified shortcuts keep native ownership', () => {
+  const first = document.createElement('textarea')
+  const second = document.createElement('textarea')
+  first.value = 'first'
+  second.value = 'second'
+  document.body.append(first, second)
+  first.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 20, nonce)).toBe(true)
+  const key = (field: HTMLTextAreaElement, value: string, options: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent('keydown', {
+      key: value,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    })
+    field.dispatchEvent(event)
+    return event
+  }
+  key(first, 'Escape')
+  expect(holi().vim.mode().mode).toBe('normal')
+  first.blur()
+  expect(holi().vim.mode().mode).toBe('insert')
+  second.focus()
+  expect(key(second, 'Escape', { isComposing: true }).defaultPrevented).toBe(false)
+  expect(key(second, 'z', { ctrlKey: true }).defaultPrevented).toBe(false)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(holi().vim.configure(false, 21, nonce)).toBe(true)
+  expect(key(second, 'Escape').defaultPrevented).toBe(false)
+})
+
+test('rejects stale document configuration and leaves unsupported fields native', () => {
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 11, 'stale-document')).toBe(false)
+  const password = document.createElement('input')
+  password.type = 'password'
+  document.body.append(password)
+  password.focus()
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  password.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(false)
+  expect(holi().vim.configure(true, 22, nonce)).toBe(true)
 })
 
 test('fills a field and picks an option, as typing would', () => {
