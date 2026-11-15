@@ -12,6 +12,9 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
+
+/** Internal filesystem seam used to deterministically exercise transaction failures. */
+export const skillTransactionFs = { rename }
 import { exactPath } from '@holi/shared/path-safety-node'
 import { CapabilityError } from '../../../main/plugin-api'
 
@@ -123,7 +126,7 @@ export async function transactSkillRefresh(
   vaultRoot: string,
   options: {
     force: boolean
-    guard: () => void
+    guard: () => void | Promise<void>
     /** Validates detached copies of the exact bytes and modes that the private snapshot will publish. */
     validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
   },
@@ -211,7 +214,7 @@ export async function transactSkillRefresh(
       files: files.map((file) => ({ ...file, bytes: Buffer.from(file.bytes) })),
     })),
   )
-  options.guard()
+  await options.guard()
   if (!changed.length) return []
   if ((await exactPath(vault, `.holi/state/${basename(stage)}`)) !== stage)
     fail('unsafe skill staging path')
@@ -232,23 +235,25 @@ export async function transactSkillRefresh(
     for (let i = 0; i < changed.length; i++) {
       const plan = changed[i]!,
         record = records[i]!
-      options.guard()
+      await options.guard()
       if ((await fingerprint(plan.target)) !== plan.before)
         fail(`skill destination changed during refresh: ${plan.name}`)
-      // Recheck all destination paths immediately before each publish.
+      // Recheck both private staging and destination paths immediately before each publish.
+      if ((await exactPath(vault, stageRel)) !== stage) fail('unsafe skill staging path')
       if ((await exactPath(vault, `${destinationRel}/${plan.name}`)) !== plan.target)
         fail(`unsafe skill destination: ${plan.name}`)
       if (plan.before !== null) {
-        await rename(record.target, record.backup)
+        await skillTransactionFs.rename(record.target, record.backup)
         record.backedUp = true
       }
-      options.guard()
+      await options.guard()
+      if ((await exactPath(vault, stageRel)) !== stage) fail('unsafe skill staging path')
       if ((await exactPath(vault, `${destinationRel}/${plan.name}`)) !== plan.target)
         fail(`unsafe skill destination: ${plan.name}`)
-      await rename(record.staged, record.target)
+      await skillTransactionFs.rename(record.staged, record.target)
       record.published = true
     }
-    options.guard()
+    await options.guard()
   } catch (error) {
     let rollbackFailure: unknown
     for (const record of [...records].reverse()) {
@@ -264,7 +269,7 @@ export async function transactSkillRefresh(
             throw Error('destination replaced during rollback')
           await rm(record.target, { recursive: true, force: true })
         }
-        if (record.backedUp) await rename(record.backup, record.target)
+        if (record.backedUp) await skillTransactionFs.rename(record.backup, record.target)
       } catch (failure) {
         rollbackFailure ??= failure
       }
@@ -273,7 +278,13 @@ export async function transactSkillRefresh(
       throw new Error(
         `skill refresh failed (${String(error)}); rollback incomplete; recovery files preserved at ${relative(vault, stage).split(sep).join('/')}: ${String(rollbackFailure)}`,
       )
-    await rm(stage, { recursive: true, force: true }).catch(() => undefined)
+    try {
+      await rm(stage, { recursive: true, force: true })
+    } catch (cleanupFailure) {
+      throw new Error(
+        `skill refresh failed (${String(error)}); staging cleanup failed; recovery files preserved at ${relative(vault, stage).split(sep).join('/')}: ${String(cleanupFailure)}`,
+      )
+    }
     throw error
   }
   try {
