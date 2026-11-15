@@ -1188,14 +1188,6 @@ async function main(): Promise<void> {
   }
 }
 
-/**
- * `requestFlush`'s channel, over the one window.
- *
- * A window that is gone or destroyed has no buffer left to lose, so it answers
- * at once rather than making the quit sit out the full timeout for a renderer
- * that cannot possibly reply.
- */
-
 // Closing the last window quits, as in any app, except on macOS, where an app
 // stays in the dock. While a plugin works in the background (reminders) Holi
 // stays open everywhere, in the tray: a real quit is then the tray's Quit or

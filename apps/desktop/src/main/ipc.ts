@@ -161,6 +161,10 @@ export function listenForPluginMessages(
   return () => void ipcMain.removeListener(channel, listener)
 }
 
+/**
+ * `requestFlush`'s channel, over the one window.
+ * A missing or destroyed window has no buffer to lose and answers immediately.
+ */
 export function createRendererFlushChannel(
   win: BrowserWindow | null,
   authorizeSender: (event: Electron.IpcMainEvent) => boolean,
