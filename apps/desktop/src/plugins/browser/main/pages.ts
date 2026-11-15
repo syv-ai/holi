@@ -324,9 +324,7 @@ export function createPages(deps: PagesDeps): Pages & {
     const generation = ++tab.vimGeneration
     tab.vimNonce = null
     try {
-      await inPage(tab, '0')
-      await inPage<string>(tab, '__holiPage.vim.rearm()')
-      const nonce = await inPage<string>(tab, '__holiPage.vim.documentNonce()')
+      const nonce = await inPage<string>(tab, '__holiPage.vim.rearm()')
       if (!isLive(tab) || generation !== tab.vimGeneration) return
       tab.vimNonce = nonce
       tab.vimRevision++
@@ -562,7 +560,8 @@ export function createPages(deps: PagesDeps): Pages & {
       }
       changed()
     })
-    wc.on('did-navigate-in-page', () => {
+    wc.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+      if (!isMainFrame) return
       // History API and fragment changes retain the document, but relinquish
       // its prior Vim owner and arm it again as insert mode.
       resetVimOwnership(tab)
