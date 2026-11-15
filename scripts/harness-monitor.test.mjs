@@ -310,6 +310,58 @@ test('fixture and CLI passes cannot close while Claude signals remain unverified
   assert.doesNotMatch(issue.body, /No provider harness was installed or executed/)
 })
 
+test('Pi producer outcomes propagate through workflow projection without issue writes', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'holi-pi-projection-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const input = {
+    sha: 'abc',
+    runNumber: 7,
+    runUrl: 'https://example.test/run',
+    providers: [observation('pi')],
+  }
+  const reportPath = join(dir, 'report.json')
+  const cliPath = join(dir, 'cli.json')
+  const consumerPath = join(dir, 'consumer.json')
+  const producerPath = join(dir, 'producer.json')
+  await writeFile(reportPath, JSON.stringify(input))
+  await writeFile(cliPath, JSON.stringify({ outcome: 'pass' }))
+  await writeFile(consumerPath, JSON.stringify({ outcome: 'pass' }))
+  for (const outcome of ['pass', 'unverified', 'mismatch']) {
+    await writeFile(producerPath, JSON.stringify({ outcome, detail: `native ${outcome}` }))
+    const merged = spawnSync(
+      process.execPath,
+      ['scripts/harness-monitor.mjs', 'merge-pi', reportPath, cliPath, consumerPath, producerPath],
+      { encoding: 'utf8' },
+    )
+    assert.equal(merged.status, 0, merged.stderr)
+    const pi = JSON.parse(merged.stdout).providers[0]
+    const normalized = normalizeReport(pi)
+    assert.equal(normalized.checks.find((check) => check.name === 'rpc-producer').outcome, outcome)
+    assert.equal(
+      normalized.checks.find((check) => check.name === 'rpc-producer').detail,
+      `native ${outcome}`,
+    )
+  }
+  const adapter = fakeAdapter()
+  await reconcile(
+    {
+      ...input,
+      providers: [
+        normalizeReport({
+          ...input.providers[0],
+          checks: [
+            { name: 'cli-contract', outcome: 'pass' },
+            { name: 'rpc-consumer', outcome: 'pass' },
+            { name: 'rpc-producer', outcome: 'unverified', detail: 'native unverified' },
+          ],
+        }),
+      ],
+    },
+    adapter,
+  )
+  assert.equal([...adapter.issues.values()][0].state, 'open')
+})
+
 test('malformed runner checks cannot become a pass', () => {
   for (const invalid of [
     null,

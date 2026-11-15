@@ -176,7 +176,7 @@ function renderBody(report) {
   )
   const mismatches = report.checks.filter((check) => check.outcome === 'mismatch')
   return [
-    `Monitoring-only observation for **${report.name}** (\`${report.package}\`). ${report.id === 'pi' ? 'The isolated CLI contract executes the exact npm version without provider credentials or live prompts; RPC consumer fixtures are constructed from attributed upstream sources, and producer emission remains unverified.' : report.id === 'codex' || report.id === 'claude-code' ? 'The exact npm CLI surface and production consumer fixtures are checked in an isolated, read-only job; live provider execution and output not captured by fixtures remain unverified.' : 'No provider harness was installed or executed.'}`,
+    `Monitoring-only observation for **${report.name}** (\`${report.package}\`). ${report.id === 'pi' ? 'The isolated CLI contract and local synthetic-provider RPC producer execute the exact npm package without external provider credentials; RPC consumer fixtures are constructed from attributed upstream sources.' : report.id === 'codex' || report.id === 'claude-code' ? 'The exact npm CLI surface and production consumer fixtures are checked in an isolated, read-only job; live provider execution and output not captured by fixtures remain unverified.' : 'No provider harness was installed or executed.'}`,
 
     '',
     `Observed npm latest: \`${report.version}\``,
@@ -272,17 +272,13 @@ if (process.argv[2] === 'merge-codex' || process.argv[2] === 'merge-claude') {
   const report = JSON.parse(await readFile(process.argv[3], 'utf8'))
   const cli = JSON.parse(await readFile(process.argv[4], 'utf8'))
   const consumer = JSON.parse(await readFile(process.argv[5], 'utf8'))
+  const producer = JSON.parse(await readFile(process.argv[6], 'utf8'))
   const pi = report.providers.find((provider) => provider.id === 'pi')
   if (!pi) throw new Error('Pi observation is missing')
   pi.checks = [
     { name: 'cli-contract', ...cli },
     { name: 'rpc-consumer', ...consumer },
-    {
-      name: 'rpc-producer',
-      outcome: 'unverified',
-      detail:
-        'No JSONL transcript was captured from the exact npm release; fixtures attributed to upstream revision b4899f59ef0fba6507c2e619fd804dcde51920ba do not prove producer emission.',
-    },
+    { name: 'rpc-producer', ...producer },
   ]
   process.stdout.write(JSON.stringify(report))
 } else if (process.argv[2] === 'discover') {
