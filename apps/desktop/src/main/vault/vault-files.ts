@@ -134,14 +134,26 @@ export async function writeAtomic(
   root: string,
   rel: VaultRelPath,
   data: string | Uint8Array,
+  assertCurrent?: () => void,
 ): Promise<void> {
   const abs = absPathFor(root, rel)
-  await mkdir(dirname(abs), { recursive: true })
   const tmp = tmpPathIn(dirname(abs))
-  // A string still defaults to utf8; a Uint8Array/Buffer writes bytes verbatim —
-  // the branded templates seed binary fonts + logo through this same writer.
-  await writeFile(tmp, data)
-  await rename(tmp, abs)
+  assertCurrent?.()
+  await mkdir(dirname(abs), { recursive: true })
+  let tempMayExist = false
+  try {
+    assertCurrent?.()
+    // A string still defaults to utf8; a Uint8Array/Buffer writes bytes verbatim —
+    // the branded templates seed binary fonts + logo through this same writer.
+    tempMayExist = true
+    await writeFile(tmp, data)
+    assertCurrent?.()
+    await rename(tmp, abs)
+  } finally {
+    // Cancellation may happen after the temporary file was created. This file
+    // is ours, so removing it remains safe after the caller's authority expires.
+    if (tempMayExist) await rm(tmp, { force: true }).catch(() => {})
+  }
 }
 
 /** abs → the tail of the work queued on that file; gone once it drains. */

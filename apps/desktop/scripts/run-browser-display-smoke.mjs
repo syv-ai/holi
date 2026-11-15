@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'vite'
+import react from '@vitejs/plugin-react'
 import { readFileSync } from 'node:fs'
 import { externalizeDepsPlugin } from 'electron-vite'
 
@@ -16,12 +17,67 @@ const toolbarAcceptance = process.env.HOLI_523_UI === '1'
 const recordingPath = join(evidence, 'interaction.mp4')
 const root = await mkdtemp(join(tmpdir(), 'holi-523-smoke-'))
 await mkdir(evidence, { recursive: true })
+const fixtureRoot = join(root, 'app-frame-renderer')
+await mkdir(fixtureRoot, { recursive: true })
+const reactPlugin = react()
+await build({
+  configFile: false,
+  root: desktop,
+  base: './',
+  resolve: {
+    alias: [
+      {
+        find: '@/plugin-api',
+        replacement: join(desktop, 'scripts/app-frame-renderer-fixture-api.ts'),
+      },
+      { find: '@', replacement: join(desktop, 'src/renderer/src') },
+      { find: 'react-dom', replacement: join(desktop, 'node_modules/react-dom') },
+      { find: 'react', replacement: join(desktop, 'node_modules/react') },
+    ],
+    dedupe: ['react', 'react-dom', 'jotai'],
+  },
+  plugins: [reactPlugin],
+  define: { process: JSON.stringify({ env: { NODE_ENV: 'development' } }) },
+  build: {
+    outDir: join(fixtureRoot, 'dist'),
+    emptyOutDir: true,
+    lib: {
+      entry: join(desktop, 'scripts/app-frame-renderer-fixture.tsx'),
+      name: 'HoliAppFrameFixture',
+      formats: ['iife'],
+      fileName: () => 'fixture.js',
+    },
+  },
+})
+await writeFile(
+  join(fixtureRoot, 'index.html'),
+  '<!doctype html><html><head><meta charset="UTF-8"></head><body><div id="root"></div><script src="dist/fixture.js"></script></body></html>',
+)
+await build({
+  configFile: false,
+  root: desktop,
+  build: {
+    ssr: true,
+    target: 'node24',
+    outDir: root,
+    emptyOutDir: false,
+    rollupOptions: {
+      input: join(desktop, 'src/preload/index.ts'),
+      external: ['electron'],
+      output: { format: 'cjs', entryFileNames: 'production-preload.cjs' },
+    },
+  },
+})
 for (const name of [
   'result.json',
   'electron-smoke.log',
   'browser-before.png',
   'shell-before.png',
   'browser-after.png',
+  'vault-app-a.png',
+  'vault-app-b.png',
+  'app-frame-read-a.png',
+  'app-frame-read-b.png',
   'browser-dark.png',
   'recording.json',
   'ui-light.png',
@@ -108,6 +164,10 @@ try {
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
       .join(delimiter),
+    HOLI_473_ROOT: root,
+    HOLI_473_EVIDENCE: evidence,
+    HOLI_473_RENDERER: join(fixtureRoot, 'index.html'),
+    HOLI_473_PRELOAD: join(root, 'production-preload.cjs'),
     HOLI_472_ROOT: root,
     HOLI_472_EVIDENCE: evidence,
     HOLI_523_RENDERER: join(root, 'renderer'),
@@ -148,6 +208,15 @@ try {
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   for (const check of [
+    'production-host-and-browser-activations',
+    'electron43-webrequest-native-window-and-frame-provenance',
+    'queued-native-action-expires-on-tab-hide',
+    'queued-action-expires-across-return',
+    'hidden-native-input-and-placement-are-inert',
+    'hidden-popup-keeps-data-without-presentation',
+    'stopping-a-preserves-b-native-view-and-capabilities',
+    'departure-detaches-synchronously',
+    'displayed-page-attached-with-loaded-content',
     ...(toolbarAcceptance
       ? [
           'production-host-and-browser-activations',
@@ -195,6 +264,31 @@ try {
     'pending-reconcile-stop-detaches-to-null',
     'pending-reconcile-stop-all-detaches-to-b',
     'pending-reconcile-stop-all-detaches-to-null',
+    'leased-real-app-frame-owner-a-resources',
+    'actual-vault-app-screenshot-a',
+    'native-svg-replacement-revokes-before-subsequent-capability-use-a',
+    'revoked-app-lease-denied-a',
+    'leased-real-app-frame-owner-b-resources',
+    'actual-vault-app-screenshot-b',
+    'production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-a',
+    'production-app-frame-wrong-source-message-has-no-capability-side-effect',
+    'production-app-frame-old-nonce-after-replacement-has-no-side-effect-or-reply',
+    'production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-b',
+    'production-app-frame-hidden-after-real-capture-rejects-stale-preview',
+    'production-app-frame-fresh-visible-capture-saved-native-preview',
+    'production-app-frame-overlay-without-layout-event-rejects-stale-capture-and-recovers',
+    'production-app-frame-a-to-b-to-a-invalidates-delayed-real-capture',
+    'production-app-frame-navigation-replacement-cannot-reach-hostbridge',
+    'native-child-dom-removal-revokes-lease-and-suppresses-queued-bridge-reply',
+    'root-renderer-reload-revokes-old-lease-and-fresh-frame-reads-own-note',
+    'native-svg-replacement-revokes-before-subsequent-capability-use-b',
+    'revoked-app-lease-denied-b',
+    'production-command-runner-result-a',
+    'production-command-runner-result-b',
+    'legacy-unleased-app-url-denied-a',
+    'legacy-unleased-app-url-denied-b',
+    'foreign-window-app-request-denied-a',
+    'foreign-window-app-request-denied-b',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
   assert(
@@ -222,7 +316,16 @@ try {
   )
   assert.deepEqual(
     result.screenshots,
-    ['browser-before.png', 'browser-dark.png', 'shell-before.png', 'browser-after.png'],
+    [
+      'browser-before.png',
+      'browser-dark.png',
+      'shell-before.png',
+      'browser-after.png',
+      'vault-app-a.png',
+      'vault-app-b.png',
+      'app-frame-read-a.png',
+      'app-frame-read-b.png',
+    ],
     'native smoke screenshot list is incomplete',
   )
   for (const name of result.screenshots) {
