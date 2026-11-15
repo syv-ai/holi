@@ -144,6 +144,18 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     windowForContents: (contents) => BrowserWindow.fromWebContents(contents),
   })
   const inboundPluginEvents = new Set<(message: unknown) => void>()
+  let overlayInvalidationMessage = false
+  const observeOverlayInvalidation = (message: unknown): void => {
+    if (message === null || typeof message !== 'object') return
+    const event = message as { name?: unknown; payload?: { token?: unknown; rect?: unknown } }
+    if (
+      event.name === 'preview-placement' &&
+      event.payload?.token === fixtureLease?.token &&
+      event.payload.rect === null
+    )
+      overlayInvalidationMessage = true
+  }
+  inboundPluginEvents.add(observeOverlayInvalidation)
   const events = {
     send: () => {},
     listen: (_channel: string, handler: (message: unknown) => void) => {
@@ -489,6 +501,49 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     assert.match(previewA as string, /^data:image\/jpeg;base64,/)
     assert(captureResults.includes(true), 'real capture capability never saved a current preview')
     mark('production-app-frame-fresh-visible-capture-saved-native-preview')
+    const overlayCaptureStart = captureResults.length
+    const overlayCapture = holdNextCapture()
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-reload'},'*')`,
+    )
+    await overlayCapture.waiting
+    await frameWindow.webContents.executeJavaScript(
+      `(()=>{const overlay=document.createElement('div');overlay.id='smoke-capture-overlay';Object.assign(overlay.style,{position:'fixed',inset:'0',zIndex:'2147483647',background:'transparent'});document.body.append(overlay)})()`,
+    )
+    const invalidationDeadline = Date.now() + 5_000
+    while (!overlayInvalidationMessage && Date.now() < invalidationDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    assert(overlayInvalidationMessage, 'main did not receive overlay placement invalidation')
+    overlayCapture.release()
+    await waitForCaptureResult(overlayCaptureStart, false)
+    assert.equal(captureResults.slice(overlayCaptureStart).at(-1), false)
+    await capabilityHost.dispatch({
+      door: 'ui',
+      remote: 'ada/a',
+      name: 'apps.forgetPreview',
+      params: { bundle },
+    })
+    const noStalePreview = (
+      await capabilityHost.dispatch({
+        door: 'ui',
+        remote: 'ada/a',
+        name: 'apps.preview',
+        params: { bundle },
+      })
+    ).value as { dataUrl: string | null }
+    assert.equal(noStalePreview.dataUrl, null)
+    await frameWindow.webContents.executeJavaScript(
+      `document.querySelector('#smoke-capture-overlay')?.remove()`,
+    )
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-reload'},'*')`,
+    )
+    const overlayRecovery = await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+12000;const poll=async()=>{try{const result=await window.holi.trpc({path:'cap.run',type:'mutation',input:{remote:'ada/a',name:'apps.preview',paramsJson:${JSON.stringify(JSON.stringify({ bundle }))}}});const data=result.data?.data??result.data;if(data?.dataUrl)resolve(data.dataUrl);else if(Date.now()>end)reject(new Error('visible preview after overlay timed out'));else setTimeout(poll,100)}catch(error){reject(error)}};poll()})`,
+    )
+    assert.match(overlayRecovery as string, /^data:image\/jpeg;base64,/)
+    mark('production-app-frame-overlay-without-layout-event-rejects-stale-capture-and-recovers')
     const reincarnationCapture = holdNextCapture()
     await frameWindow.webContents.executeJavaScript(
       `window.postMessage({kind:'fixture-reload'},'*')`,

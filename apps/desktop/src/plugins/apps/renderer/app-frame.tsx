@@ -151,6 +151,21 @@ function usePreviewCapture(
     let idle: number | null = null
     let animationFrame: number | null = null
     let placement: { x: number; y: number; width: number; height: number } | null = null
+    let observer: ResizeObserver | null = null
+    let mutations: MutationObserver | null = null
+    const stopMonitoring = (): void => {
+      observer?.disconnect()
+      mutations?.disconnect()
+      observer = null
+      mutations = null
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame)
+        animationFrame = null
+      }
+      window.removeEventListener('scroll', checkPlacement, true)
+      window.removeEventListener('resize', checkPlacement)
+      document.removeEventListener('visibilitychange', checkPlacement)
+    }
     const invalidate = (): void => {
       if (placement === null) return
       placement = null
@@ -211,11 +226,13 @@ function usePreviewCapture(
         })
         .then((res) => {
           checkPlacement()
+          stopMonitoring()
           if (!live || request !== generation.current || !res.saved) return
           completed.current = captureKey
           taken(path)
         })
         .catch((e: unknown) => {
+          stopMonitoring()
           if (live) console.warn('[apps] preview:', e)
         })
     }
@@ -224,8 +241,8 @@ function usePreviewCapture(
       if (live && placement !== null)
         animationFrame = window.requestAnimationFrame(observePendingPlacement)
     }
-    const observer = new ResizeObserver(checkPlacement)
-    const mutations = new MutationObserver(checkPlacement)
+    observer = new ResizeObserver(checkPlacement)
+    mutations = new MutationObserver(checkPlacement)
     const frame = frameRef.current
     if (frame !== null) observer.observe(frame)
     mutations.observe(document.documentElement, {
@@ -247,12 +264,7 @@ function usePreviewCapture(
     return () => {
       live = false
       invalidate()
-      observer.disconnect()
-      mutations.disconnect()
-      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
-      window.removeEventListener('scroll', checkPlacement, true)
-      window.removeEventListener('resize', checkPlacement)
-      document.removeEventListener('visibilitychange', checkPlacement)
+      stopMonitoring()
       window.clearTimeout(timer)
       if (idle !== null) window.cancelIdleCallback(idle)
     }
