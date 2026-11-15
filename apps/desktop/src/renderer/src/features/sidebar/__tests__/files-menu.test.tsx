@@ -238,6 +238,48 @@ test('vault and folder subscription controls persist explicit scopes and explain
   expect(await screen.findByRole('button', { name: 'Unsubscribe kunder' })).toBeInTheDocument()
 })
 
+test('folder subscription actions keep a trailing slot and reveal on pointer or keyboard focus', async () => {
+  const { store } = mount()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      dirs: ['kunder', 'a folder with a much longer name'],
+    }),
+  )
+
+  const short = await screen.findByRole('treeitem', { name: 'kunder' })
+  const long = await screen.findByRole('treeitem', { name: 'a folder with a much longer name' })
+  const shortLabel = short.querySelector('[data-slot=tree-item-label]')!
+  const longLabel = long.querySelector('[data-slot=tree-item-label]')!
+  const shortAction = short.querySelector<HTMLButtonElement>('[data-tree-row-action]')!
+  const longAction = long.querySelector<HTMLButtonElement>('[data-tree-row-action]')!
+
+  expect(shortLabel).toHaveClass('w-full')
+  expect(longLabel).toHaveClass('w-full')
+  // The action's own auto margin places it at the row's trailing edge;
+  // opacity-based reveal keeps that slot and the name's layout stable.
+  expect(shortAction).toHaveClass('ms-auto')
+  expect(longAction).toHaveClass('ms-auto')
+  expect(shortAction.parentElement).toHaveClass('flex', 'flex-1', 'min-w-0')
+  expect(longAction.parentElement).toHaveClass('flex', 'flex-1', 'min-w-0')
+  expect(shortLabel.className).toContain('[&_[data-tree-row-action]]:opacity-0')
+  expect(shortLabel.className).toContain('[&:hover_[data-tree-row-action]]:opacity-100')
+  expect(shortLabel.className).toContain('[&:focus-within_[data-tree-row-action]]:opacity-100')
+  expect(shortLabel.className).toContain(
+    '[@media(hover:none)]:[&_[data-tree-row-action]]:opacity-100',
+  )
+  expect(shortAction).toHaveAttribute('aria-label', 'Subscribe kunder')
+  expect(longAction).toHaveAttribute('aria-label', 'Subscribe a folder with a much longer name')
+
+  shortAction.focus()
+  expect(document.activeElement).toBe(shortAction)
+  const originalName = shortLabel.querySelector('.truncate')?.textContent
+  await userEvent.keyboard('{Enter}')
+  expect(await screen.findByRole('button', { name: 'Unsubscribe kunder' })).toBeInTheDocument()
+  expect(short.querySelector('.truncate')).toHaveTextContent(originalName!)
+  expect(short.querySelector('[data-tree-row-action]')).toBe(shortAction)
+})
+
 test('tree rows activate by Enter and Space without consuming nested controls', async () => {
   const { onOpen } = mount()
   const folder = await screen.findByRole('treeitem', { name: 'kunder' })

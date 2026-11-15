@@ -1054,6 +1054,7 @@ export function FilesSection({
                       arrived={arrived.has(item.getId())}
                     >
                       <TreeItemLabel
+                        rowActions={item.isFolder() && subscriptionData?.remote === files.remote}
                         onClick={(event) => onLabelClick(item, event)}
                         className={cn(
                           'hover:bg-foreground/5 bg-transparent',
@@ -1141,6 +1142,8 @@ export function FilesSection({
                                         <Button
                                           variant="ghost"
                                           size="icon-xs"
+                                          className="ms-auto"
+                                          data-tree-row-action=""
                                           aria-label={label}
                                           disabled={
                                             subscriptionData.pending !== null ||
