@@ -7,6 +7,7 @@
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
 import { lstat, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import { resolveRelative } from '@holi/shared/path-safety-node'
@@ -60,6 +61,8 @@ import { GitHubApiError, type Contributor, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
+import type { MdxTrustStore } from './mdx-trust'
+import { canonicalGitHubRemote } from './mdx-trust'
 import type { ActiveVault, SyncInfo, SyncState, VaultHost } from './vault/active-vault'
 import type { ActivityEntry, ActivityLog } from './activity/log'
 import type { AppLog, AppLogEntry } from './logs/app-log'
@@ -142,6 +145,8 @@ export interface RouterDeps {
     url: string,
   ) => Promise<{ ok: true } | { ok: false; message: string; detail: string }>
   session: GitHubSession
+  /** The one machine-local MDX trust store, composed by main. */
+  mdxTrust?: MdxTrustStore
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /**
@@ -410,6 +415,17 @@ export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? (() => localDate(new Date()))
   let vaultOpenRevision = 0
+  let completedVaultOpenRevision = 0
+  // One token per live ownership context, shared by split source views. Never
+  // retain every status request or references to a growing set of old vaults.
+  let trustContext: {
+    token: string
+    accountGeneration: number
+    accountId: string
+    remote: string
+    openRevision: number
+    active: ActiveVault
+  } | null = null
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const capabilities =
     deps.capabilities ??
@@ -842,6 +858,7 @@ export function createRouter(deps: RouterDeps) {
         await deps.plugins.reconcile(active, 'open')
         if (revision !== vaultOpenRevision) return snapshotFor(input.remote)
         deps.opened?.(input.remote)
+        if (revision === vaultOpenRevision) completedVaultOpenRevision = revision
         return active.snapshot()
       }),
 
@@ -1129,6 +1146,114 @@ export function createRouter(deps: RouterDeps) {
         return { updatedAt: info.mtime.toISOString() }
       }),
   })
+
+  function trustContextCurrent(
+    context: {
+      accountGeneration: number
+      accountId: string
+      remote: string
+      openRevision: number
+      active: ActiveVault
+    },
+    requestedRemote: string,
+  ): boolean {
+    return (
+      deps.session.generation === context.accountGeneration &&
+      String(deps.session.viewer?.accountId) === context.accountId &&
+      context.remote === canonicalGitHubRemote(requestedRemote) &&
+      vaultOpenRevision === context.openRevision &&
+      completedVaultOpenRevision === context.openRevision &&
+      deps.host.active() === context.active &&
+      canonicalGitHubRemote(context.active.remote) === canonicalGitHubRemote(requestedRemote)
+    )
+  }
+
+  const mdxTrust = t.router({
+    status: t.procedure.input(fields({ remote: 'string' })).query(async ({ input }) => {
+      const viewer = deps.session.viewer
+      if (
+        !deps.mdxTrust ||
+        viewer === null ||
+        !Number.isSafeInteger(viewer.accountId) ||
+        viewer.accountId <= 0
+      )
+        return { trusted: false, identityAvailable: false, context: null }
+      const remote = canonicalGitHubRemote(input.remote)
+      const active = deps.host.active()
+      const revision = vaultOpenRevision
+      if (
+        !active ||
+        canonicalGitHubRemote(active.remote) !== remote ||
+        completedVaultOpenRevision !== revision
+      )
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Vault context changed' })
+      const accountGeneration = deps.session.generation
+      const accountId = String(viewer.accountId)
+      const entry = (await deps.registry.list()).find(
+        (vault) => canonicalGitHubRemote(vault.remote) === remote,
+      )
+      if (!entry)
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Vault is not registered on this machine',
+        })
+      const owner = { accountId, remote }
+      const current = () =>
+        deps.session.generation === accountGeneration &&
+        deps.session.viewer?.accountId === viewer.accountId &&
+        deps.host.active() === active &&
+        vaultOpenRevision === revision &&
+        completedVaultOpenRevision === revision
+      const trusted = await deps.mdxTrust.status(owner)
+      if (!current())
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Vault or account context changed',
+        })
+      const token =
+        trustContext !== null && trustContextCurrent(trustContext, input.remote)
+          ? trustContext.token
+          : randomBytes(32).toString('hex')
+      trustContext = {
+        token,
+        accountGeneration,
+        accountId,
+        remote,
+        openRevision: revision,
+        active,
+      }
+      return { trusted, identityAvailable: true, context: token }
+    }),
+    approve: t.procedure
+      .input(fields({ remote: 'string', context: 'string' }))
+      .mutation(({ input }) => mutateTrust(input, true)),
+    revoke: t.procedure
+      .input(fields({ remote: 'string', context: 'string' }))
+      .mutation(({ input }) => mutateTrust(input, false)),
+  })
+
+  async function mutateTrust(
+    input: { remote: string; context: string },
+    approve: boolean,
+  ): Promise<{ trusted: boolean }> {
+    const context = trustContext?.token === input.context ? trustContext : null
+    if (!context || !deps.mdxTrust || !trustContextCurrent(context, input.remote))
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
+    const remote = canonicalGitHubRemote(input.remote)
+    const registered = (await deps.registry.list()).some(
+      (vault) => canonicalGitHubRemote(vault.remote) === remote,
+    )
+    if (!registered || !trustContextCurrent(context, input.remote))
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
+    const stillOwned = () => trustContextCurrent(context, input.remote)
+    await (approve ? deps.mdxTrust.approve : deps.mdxTrust.revoke)(
+      { accountId: context.accountId, remote },
+      stillOwned,
+    )
+    if (!stillOwned())
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
+    return { trusted: approve }
+  }
 
   const notes = t.router({
     read: t.procedure
@@ -2088,6 +2213,7 @@ export function createRouter(deps: RouterDeps) {
     github,
     vaults,
     notes,
+    mdxTrust,
     comments,
     files,
     sync,

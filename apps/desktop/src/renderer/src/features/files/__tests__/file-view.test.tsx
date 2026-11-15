@@ -18,14 +18,21 @@ import {
 import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { vimCodeEditingAtom } from '@/state/preferences'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { sessionAtom } from '@/state/session'
 import { FileView, isCoreTextFilePath } from '../file-view'
+import { HostHintLayer } from '@/features/shell/host-hint-layer'
+import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
+import { installHintLayout } from '@/test/host-hint-layout'
 
 let lastStore: ReturnType<typeof createStore>
 const read = vi.fn()
 const write = vi.fn()
 const historyList = vi.fn()
 const fileDiff = vi.fn()
+const mdxStatus = vi.fn()
+const mdxApprove = vi.fn()
+const mdxRevoke = vi.fn()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -40,6 +47,11 @@ vi.mock('@/lib/trpc', () => ({
       list: { query: (input: unknown) => historyList(input) },
       fileDiff: { query: (input: unknown) => fileDiff(input) },
     },
+    mdxTrust: {
+      status: { query: (input: unknown) => mdxStatus(input) },
+      approve: { mutate: (input: unknown) => mdxApprove(input) },
+      revoke: { mutate: (input: unknown) => mdxRevoke(input) },
+    },
   },
 }))
 
@@ -48,12 +60,22 @@ afterEach(() => {
   write.mockReset()
   historyList.mockReset()
   fileDiff.mockReset()
+  mdxStatus.mockReset()
+  mdxApprove.mockReset()
+  mdxRevoke.mockReset()
 })
 
-function setup(path: string, claims = false, vimEnabled = false) {
+function HintKeys() {
+  useShortcutDispatcher()
+  return <HostHintLayer scopeKey="fixture:file" />
+}
+
+function setup(path: string, claims = false, vimEnabled = false, hints = false) {
   const store = createStore()
   lastStore = store
   store.set(activeRemoteAtom, 'syv-ai/site')
+  store.set(openedRemoteAtom, 'syv-ai/site')
+  store.set(sessionAtom, { login: 'fixture-user' })
   store.set(vimCodeEditingAtom, vimEnabled)
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
@@ -74,6 +96,7 @@ function setup(path: string, claims = false, vimEnabled = false) {
   return render(
     <Provider store={store}>
       <FileView path={path} />
+      {hints ? <HintKeys /> : null}
     </Provider>,
   )
 }
@@ -102,6 +125,7 @@ test('only paths actually routed to the core text editor are retainable', () => 
   expect(isCoreTextFilePath('extensionless', [])).toBe(true)
   expect(isCoreTextFilePath('data.json', [])).toBe(true)
   expect(isCoreTextFilePath('note.md', [])).toBe(false)
+  expect(isCoreTextFilePath('page.mdx', [pdfClaim])).toBe(true)
   expect(isCoreTextFilePath('photo.png', [])).toBe(false)
   expect(isCoreTextFilePath('archive.docx', [])).toBe(false)
   expect(isCoreTextFilePath('paper.pdf', [pdfClaim])).toBe(false)
@@ -439,6 +463,79 @@ test('Vim key events drive modes, motions, edits, yank, paste, undo and redo', a
   expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(3)
 })
 
+test('normal Vim f opens host hints without edits; insert and visual mode keep native input', async () => {
+  installHintLayout()
+  try {
+    read.mockResolvedValue('alpha beta\n')
+    historyList.mockResolvedValue([])
+    const result = setup('src/hints.txt', false, true, true)
+    const content = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('.cm-content')
+      if (node === null) throw new Error('no editor')
+      return node
+    })
+    const { EditorView } = await import('@codemirror/view')
+    const view = EditorView.findFromDOM(content)!
+    view.focus()
+    await userEvent.keyboard('f')
+    expect(screen.getByLabelText('Vim host hints')).toBeInTheDocument()
+    expect(view.state.doc.toString()).toBe('alpha beta\n')
+    const selection = view.state.selection
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    expect(view.hasFocus).toBe(true)
+    expect(view.state.selection.eq(selection)).toBe(true)
+    await userEvent.keyboard('if')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    expect(view.state.doc.toString()).toBe('falpha beta\n')
+    await userEvent.keyboard('{Escape}vf')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    await act(async () => lastStore.set(vimCodeEditingAtom, false))
+    await userEvent.keyboard('f')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    expect(view.state.doc.toString()).toContain('ff')
+    result.unmount()
+  } finally {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  }
+})
+
+test.each([
+  { prefix: 'd', after: '{Escape}w', expected: 'alpha beta\n' },
+  { prefix: 'r', after: '', expected: 'flpha beta\n' },
+  { prefix: '2', after: '{Escape}w', expected: 'alpha beta\n' },
+  { prefix: '"a', after: '{Escape}w', expected: 'alpha beta\n' },
+  { prefix: 'g', after: '{Escape}', expected: 'alpha beta\n' },
+  { prefix: 'z', after: '{Escape}', expected: 'alpha beta\n' },
+])('pending Vim $prefix keeps f inside the editor', async ({ prefix, after, expected }) => {
+  installHintLayout()
+  try {
+    const user = userEvent.setup()
+    read.mockResolvedValue('alpha beta\n')
+    historyList.mockResolvedValue([])
+    setup('src/pending-vim.txt', false, true, true)
+    const content = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('.cm-content')
+      if (node === null) throw new Error('no editor')
+      return node
+    })
+    const { EditorView } = await import('@codemirror/view')
+    const view = EditorView.findFromDOM(content)!
+    content.focus()
+
+    await user.keyboard(prefix)
+    await user.keyboard('f')
+    expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
+    if (after) await user.keyboard(after)
+    expect(view.state.doc.toString()).toBe(expected)
+  } finally {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  }
+})
+
 test('changing Vim preference reconfigures the same dirty editor and retains history', async () => {
   const user = userEvent.setup()
   read.mockResolvedValue('alpha beta\n')
@@ -476,6 +573,36 @@ test('changing Vim preference reconfigures the same dirty editor and retains his
   await user.keyboard('u')
   expect(view.state.doc.toString()).toBe(edited)
   expect(result.container.querySelector('[data-file-editor="src/list.txt"]')).toBeInTheDocument()
+})
+
+test.each([
+  ['Find', false],
+  ['Replace', true],
+])('normal Vim lets the %s field keep typed f and focus', async (_label, replace) => {
+  const user = userEvent.setup()
+  read.mockResolvedValue('alpha beta\n')
+  historyList.mockResolvedValue([])
+  setup('src/find-vim.txt', false, true, true)
+
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  content.focus()
+  await user.keyboard('{Meta>}f{/Meta}')
+  const findField = await screen.findByRole('textbox', { name: 'Find' })
+  if (replace) {
+    await user.click(screen.getByRole('button', { name: 'Show replace' }))
+  }
+  const field = replace ? screen.getByRole('textbox', { name: 'Replace' }) : findField
+
+  await user.type(field, 'f')
+  await user.type(field, 'moretext')
+
+  expect(field).toHaveValue('fmoretext')
+  expect(field).toHaveFocus()
+  expect(screen.queryByLabelText('Vim host hints')).not.toBeInTheDocument()
 })
 
 test.each([
@@ -718,4 +845,62 @@ test('Vim-off find handling respects keys consumed inside CodeMirror', async () 
   content.focus()
   await user.keyboard('{Escape}')
   expect(screen.getByRole('textbox', { name: 'Find' })).toBeInTheDocument()
+})
+
+test('MDX trust requires explicit confirmation and can be cancelled or approved', async () => {
+  read.mockResolvedValue('# source')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true, context: 'consent-1' })
+  mdxApprove.mockResolvedValue({ trusted: true })
+  setup('content/page.mdx')
+  await screen.findByText('Not approved')
+  await userEvent.click(screen.getByRole('button', { name: 'Review MDX trust' }))
+  expect(screen.getByText(/including future documents and synced changes/)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(mdxApprove).not.toHaveBeenCalled()
+  await userEvent.click(screen.getByRole('button', { name: 'Review MDX trust' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Approve vault' }))
+  await waitFor(() =>
+    expect(mdxApprove).toHaveBeenCalledWith({ remote: 'syv-ai/site', context: 'consent-1' }),
+  )
+})
+
+test('MDX trust can be revoked from a source view', async () => {
+  read.mockResolvedValue('# source')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
+  mdxRevoke.mockRejectedValueOnce(new Error('EISDIR: Is a directory'))
+  mdxRevoke.mockResolvedValue({ trusted: false })
+  setup('content/page.mdx')
+  await screen.findByText('Approved')
+
+  const region = screen.getByTestId('mdx-trust-region')
+  const header = region.previousElementSibling as HTMLElement | null
+  expect(header?.tagName).toBe('HEADER')
+  expect(header).toHaveClass('h-14', 'shrink-0')
+  expect(header?.parentElement).toBe(region.parentElement)
+  expect(region).toContainElement(screen.getByText('Approved'))
+
+  await userEvent.click(screen.getByRole('button', { name: 'Revoke MDX trust' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('EISDIR: Is a directory')
+  const retryButton = screen.getByRole('button', { name: 'Retry revoke' })
+  expect(region).toContainElement(retryButton)
+  expect(retryButton).not.toBeDisabled()
+  expect(document.querySelector('.cm-content')).toBeInTheDocument()
+
+  await userEvent.click(retryButton)
+  await waitFor(() =>
+    expect(mdxRevoke).toHaveBeenCalledWith({ remote: 'syv-ai/site', context: 'consent-1' }),
+  )
+})
+
+test('MDX trust reports status failure with a retry action', async () => {
+  read.mockResolvedValue('# source')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockRejectedValueOnce(new Error('offline'))
+  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true, context: 'consent-1' })
+  setup('content/page.mdx')
+  expect(await screen.findByText(/MDX trust unavailable/)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByText('Not approved')).toBeInTheDocument()
 })

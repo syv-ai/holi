@@ -14,6 +14,7 @@ import {
   CheckIcon,
   CodeIcon,
   CopyIcon,
+  FileCode2Icon,
   FileTextIcon,
   HashIcon,
   MoreHorizontalIcon,
@@ -53,6 +54,8 @@ export interface DocumentActionsProps {
   /** Null while an agent run is already going, there is no agent, this
    *  machine's agent is not yet known, or the note cannot have an app. */
   onCreateVaultApp: (() => void) | null
+  /** Explicitly move an eligible Markdown note to its inert `.mdx` source editor. */
+  onUpgradeToMdx?: (() => void) | null
   /** The document's Holi link; null for a file a teammate could not open
    *  (a local file). */
   holiLink?: (() => string) | null
@@ -69,6 +72,7 @@ export function DocumentActions({
   onFullWidthChange,
   onSmallTextChange,
   onCreateVaultApp,
+  onUpgradeToMdx = null,
   holiLink = null,
   headingLink = null,
   compact = false,
@@ -173,6 +177,15 @@ export function DocumentActions({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         </DropdownMenuGroup>
+        {onUpgradeToMdx ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={!editor} onClick={onUpgradeToMdx}>
+              <FileCode2Icon aria-hidden="true" />
+              Upgrade to MDX
+            </DropdownMenuItem>
+          </>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled={onCreateVaultApp === null} onClick={() => onCreateVaultApp?.()}>
           <CREATE_VAULT_APP.icon aria-hidden="true" />

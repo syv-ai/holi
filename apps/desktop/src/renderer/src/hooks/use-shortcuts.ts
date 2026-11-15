@@ -6,6 +6,7 @@ import { keyTargetOf, resolveShortcut } from '@/lib/shortcuts'
 import { dialogOpen } from '@/lib/dialog-open'
 import {
   handlersAtom,
+  hostHintKeyAtom,
   liveShortcutIdsAtom,
   type ShortcutHandler,
   type Slot,
@@ -72,6 +73,11 @@ export function useShortcutDispatcher(): void {
     const listener =
       (capture: boolean) =>
       (e: KeyboardEvent): void => {
+        if (capture && store.get(hostHintKeyAtom)?.(e)) {
+          e.preventDefault()
+          e.stopPropagation()
+          return
+        }
         const match = resolveShortcut(e, {
           mac: isMac(),
           target: keyTargetOf(e.target),

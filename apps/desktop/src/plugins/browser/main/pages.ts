@@ -65,14 +65,16 @@ interface PageKey {
 
 export interface PagesDeps {
   window(): BrowserWindow | null
+  presentationLease?(): () => boolean
+  onDisplayChange?(cb: (remote: string | null) => void): () => void
   /** The tabs changed: their list, as the renderer draws them. */
   changed(list: PageInfo[]): void
   /** Show tab `id` in Holi: one the agent or a page opened. */
-  reveal(id: string): void
+  reveal(id: string, attachment?: () => boolean): void
   /** The person asked the tab for its address bar (⌘L). */
-  address(id: string): void
+  address(id: string, attachment?: () => boolean): void
   /** A shortcut of Holi's, pressed while a page had the keyboard. */
-  key(id: string, key: PageKey): void
+  key(id: string, key: PageKey, attachment?: () => boolean): void
 }
 
 /** A `mailto:` or `tel:` link, to the system. */
@@ -85,6 +87,9 @@ interface Tab {
   favicon: string | null
   /** The window it is drawn in, or null while it is off screen. */
   shownIn: BrowserWindow | null
+  shownLease: (() => boolean) | null
+  attachment: symbol | null
+  menu: Menu | null
 }
 
 let shared: Session | null = null
@@ -183,16 +188,33 @@ const PAGE_KEYS = new Set(['a', 'c', 'v', 'x', 'z', 'y'])
 
 export function createPages(deps: PagesDeps): Pages & {
   place(id: string, rect: Rect | null): void
+  placementGuard(id: unknown, presentation: () => boolean): () => boolean
   dispose(): void
 } {
   const tabs = new Map<string, Tab>()
   let current: string | null = null
   let telling = false
+  let disposed = false
 
   const tabOf = (id: string): Tab => {
     const tab = tabs.get(id)
     if (tab === undefined) throw new CapabilityError('NOT_FOUND', `no browser tab ${id}`)
     return tab
+  }
+
+  const isLive = (tab: Tab): boolean =>
+    !disposed && tabs.get(tab.id) === tab && !tab.view.webContents.isDestroyed()
+
+  const isPresented = (tab: Tab): boolean =>
+    isLive(tab) &&
+    tab.shownIn !== null &&
+    !tab.shownIn.isDestroyed() &&
+    tab.shownLease !== null &&
+    tab.shownLease()
+
+  function placementGuard(id: unknown, presentation: () => boolean): () => boolean {
+    const tab = typeof id === 'string' ? tabs.get(id) : undefined
+    return () => tab !== undefined && isLive(tab) && presentation()
   }
 
   const info = (tab: Tab): PageInfo => {
@@ -217,11 +239,11 @@ export function createPages(deps: PagesDeps): Pages & {
   /** Tell the renderer once per turn of the event loop, however many of a
    *  page's events fired in it. */
   const changed = (): void => {
-    if (telling) return
+    if (disposed || telling) return
     telling = true
     queueMicrotask(() => {
       telling = false
-      deps.changed(list())
+      if (!disposed) deps.changed(list())
     })
   }
 
@@ -256,50 +278,121 @@ export function createPages(deps: PagesDeps): Pages & {
   }
 
   function contextMenu(tab: Tab, params: Electron.ContextMenuParams): void {
+    const win = deps.window()
+    if (!isPresented(tab) || win === null || tab.shownIn !== win) return
+    const lease = tab.shownLease
+    const attachment = tab.attachment
+    const attached = (): boolean => attachment !== null && tab.attachment === attachment
+    const live = (): boolean =>
+      isPresented(tab) && tab.shownLease === lease && attached() && deps.window() === win
     const wc = tab.view.webContents
     const items: MenuItemConstructorOptions[] = []
     const link = params.linkURL
     if (link !== '' && isPageUrl(link)) {
       items.push(
-        { label: 'Open Link in New Tab', click: () => void open({ url: link, reveal: true }) },
-        { label: 'Open Link in Your Browser', click: () => void shell.openExternal(link) },
-        { label: 'Copy Link Address', click: () => clipboard.writeText(link) },
+        {
+          label: 'Open Link in New Tab',
+          click: () => {
+            if (live()) void open({ url: link, reveal: true, attachment: live })
+          },
+        },
+        {
+          label: 'Open Link in Your Browser',
+          click: () => {
+            if (live()) void shell.openExternal(link)
+          },
+        },
+        {
+          label: 'Copy Link Address',
+          click: () => {
+            if (live()) clipboard.writeText(link)
+          },
+        },
         { type: 'separator' },
       )
     }
     if (params.isEditable) {
-      items.push({ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' })
+      items.push(
+        {
+          label: 'Cut',
+          click: () => {
+            if (live()) wc.cut()
+          },
+        },
+        {
+          label: 'Copy',
+          click: () => {
+            if (live()) wc.copy()
+          },
+        },
+        {
+          label: 'Paste',
+          click: () => {
+            if (live()) wc.paste()
+          },
+        },
+        { type: 'separator' },
+      )
     } else if (params.selectionText.trim() !== '') {
-      items.push({ role: 'copy' }, { type: 'separator' })
+      items.push(
+        {
+          label: 'Copy',
+          click: () => {
+            if (live()) wc.copy()
+          },
+        },
+        { type: 'separator' },
+      )
     }
     items.push(
       {
         label: 'Back',
         enabled: wc.navigationHistory.canGoBack(),
-        click: () => wc.navigationHistory.goBack(),
+        click: () => {
+          if (live()) wc.navigationHistory.goBack()
+        },
       },
       {
         label: 'Forward',
         enabled: wc.navigationHistory.canGoForward(),
-        click: () => wc.navigationHistory.goForward(),
+        click: () => {
+          if (live()) wc.navigationHistory.goForward()
+        },
       },
-      { label: 'Reload', click: () => wc.reload() },
+      {
+        label: 'Reload',
+        click: () => {
+          if (live()) wc.reload()
+        },
+      },
     )
-    const win = deps.window()
-    Menu.buildFromTemplate(items).popup(win === null ? {} : { window: win })
+    const menu = Menu.buildFromTemplate(items)
+    tab.menu?.closePopup()
+    tab.menu = menu
+    menu.once('menu-will-close', () => {
+      if (tab.menu === menu) tab.menu = null
+    })
+    menu.popup({ window: win })
   }
 
   function watch(tab: Tab): void {
     const wc = tab.view.webContents
     wc.setWindowOpenHandler(({ url }) => {
-      if (isPageUrl(url) && url !== 'about:blank') void open({ url, reveal: true })
-      else if (/^(mailto|tel):/i.test(url)) toSystem(url)
+      if (!isLive(tab)) return { action: 'deny' }
+      if (isPageUrl(url) && url !== 'about:blank') {
+        const attachment = tab.attachment
+        void open({
+          url,
+          reveal: true,
+          attachment: () => isPresented(tab) && tab.attachment === attachment,
+        })
+      } else if (/^(mailto|tel):/i.test(url) && isPresented(tab)) toSystem(url)
       return { action: 'deny' }
     })
     const guard = (event: { preventDefault(): void }, url: string): void => {
       if (isPageUrl(url)) return
       event.preventDefault()
-      if (/^(mailto|tel):/i.test(url)) toSystem(url)
+      if (/^(mailto|tel):/i.test(url) && isPresented(tab)) toSystem(url)
     }
     wc.on('will-navigate', (event) => guard(event, event.url))
     wc.on('will-redirect', (event) => guard(event, event.url))
@@ -338,25 +431,42 @@ export function createPages(deps: PagesDeps): Pages & {
     // ⌘L, ⌘R, ⌘[ and ⌘] are the tab's; editing keys are the page's; any
     // other ⌘ key goes back to Holi's window as if pressed there.
     wc.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown') return
+      if (!isPresented(tab) || input.type !== 'keyDown') return
       const command = process.platform === 'darwin' ? input.meta : input.control
       if (!command) return
+      const win = deps.window()
+      if (win === null) return
+      const lease = tab.shownLease
+      const attachment = tab.attachment
+      const live = (): boolean =>
+        isPresented(tab) &&
+        tab.shownLease === lease &&
+        tab.attachment === attachment &&
+        deps.window() === win
       const key = input.key.toLowerCase()
       if (PAGE_KEYS.has(key) && !input.alt) return
       event.preventDefault()
-      if (key === 'l') return deps.address(tab.id)
+      if (key === 'l') {
+        if (live()) deps.address(tab.id, live)
+        return
+      }
       if (key === 'r') return void wc.reload()
       if (key === '[') return void wc.navigationHistory.goBack()
       if (key === ']') return void wc.navigationHistory.goForward()
-      deps.window()?.webContents.focus()
-      deps.key(tab.id, {
-        key: input.key,
-        code: input.code,
-        meta: input.meta,
-        ctrl: input.control,
-        shift: input.shift,
-        alt: input.alt,
-      })
+      if (!live()) return
+      win.webContents.focus()
+      deps.key(
+        tab.id,
+        {
+          key: input.key,
+          code: input.code,
+          meta: input.meta,
+          ctrl: input.control,
+          shift: input.shift,
+          alt: input.alt,
+        },
+        live,
+      )
     })
   }
 
@@ -364,10 +474,12 @@ export function createPages(deps: PagesDeps): Pages & {
     url,
     id,
     reveal,
+    attachment,
   }: {
     url?: string
     id?: string
     reveal: boolean
+    attachment?: () => boolean
   }): Promise<PageInfo> {
     const known = id === undefined ? undefined : tabs.get(id)
     if (known !== undefined) return url === undefined ? info(known) : load(known, url)
@@ -391,23 +503,31 @@ export function createPages(deps: PagesDeps): Pages & {
       error: null,
       favicon: null,
       shownIn: null,
+      shownLease: null,
+      attachment: null,
+      menu: null,
     }
     tabs.set(tab.id, tab)
     current = tab.id
     watch(tab)
     changed()
-    if (reveal) deps.reveal(tab.id)
+    if (reveal && deps.window() !== null)
+      deps.reveal(tab.id, () => isLive(tab) && (attachment === undefined || attachment()))
     return url === undefined ? info(tab) : load(tab, url)
   }
 
   function hide(tab: Tab): void {
     const win = tab.shownIn
     tab.shownIn = null
+    tab.shownLease = null
+    tab.attachment = null
+    tab.menu?.closePopup()
+    tab.menu = null
     if (win !== null && !win.isDestroyed()) win.contentView.removeChildView(tab.view)
   }
 
   function onScreen(tab: Tab): boolean {
-    return tab.shownIn !== null && !tab.shownIn.isDestroyed() && tab.shownIn.isVisible()
+    return isPresented(tab) && tab.shownIn !== null && tab.shownIn.isVisible()
   }
 
   async function press(tab: Tab, spec: string): Promise<void> {
@@ -419,6 +539,11 @@ export function createPages(deps: PagesDeps): Pages & {
     if (char !== null) wc.sendInputEvent({ type: 'char', keyCode: char, modifiers })
     wc.sendInputEvent({ type: 'keyUp', keyCode: code, modifiers })
   }
+
+  const offDisplay = deps.onDisplayChange?.(() => {
+    // A returning vault must receive fresh renderer placement messages.
+    for (const tab of tabs.values()) hide(tab)
+  })
 
   return {
     list,
@@ -571,15 +696,22 @@ export function createPages(deps: PagesDeps): Pages & {
       return `data:image/jpeg;base64,${image.toJPEG(85).toString('base64')}`
     },
 
+    placementGuard,
+
     place(id, rect) {
       const tab = tabs.get(id)
       if (tab === undefined) return
+      if (disposed) return
       const win = deps.window()
       if (rect === null || win === null || rect.width < 1 || rect.height < 1) return hide(tab)
-      if (tab.shownIn !== win) {
+      const presentation = deps.presentationLease?.() ?? (() => true)
+      if (!presentation()) return hide(tab)
+      if (tab.shownIn !== win || tab.shownLease?.() !== true) {
         hide(tab)
         win.contentView.addChildView(tab.view)
         tab.shownIn = win
+        tab.shownLease = presentation
+        tab.attachment = Symbol(id)
         // The tab the person brings up is the one "the page" means.
         current = id
       }
@@ -593,6 +725,9 @@ export function createPages(deps: PagesDeps): Pages & {
     },
 
     dispose() {
+      if (disposed) return
+      disposed = true
+      offDisplay?.()
       for (const id of [...tabs.keys()]) {
         const tab = tabs.get(id)!
         hide(tab)

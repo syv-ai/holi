@@ -28,6 +28,8 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 // eslint-disable-next-line no-restricted-imports
 import { tasksRenderer } from '../../../../../plugins/tasks/renderer'
 import { FilesSection } from '../files-section'
+import { activateHostHint, discoverHostHintTargets } from '@/lib/host-hints'
+import { installHintLayout } from '@/test/host-hint-layout'
 
 const deleteMany = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 const createNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
@@ -367,6 +369,27 @@ test.each([{ metaKey: true }, { ctrlKey: true }])(
     expect(store.get(shellWorkspaceAtom).entries).toHaveLength(2)
   },
 )
+
+test('a hinted deck label opens the folder document without expanding its chevron', async () => {
+  const { onOpen } = mount()
+  const deck = await screen.findByRole('treeitem', { name: 'talk.deck' })
+  const label = deck.querySelector<HTMLElement>('[data-slot=tree-item-label]')!
+  const chevron = label.querySelector('svg')!
+  const { place } = installHintLayout()
+  try {
+    place(deck, 10, 300, 300, 28)
+    place(label, 10, 300, 300, 28)
+    place(chevron, 20, 306, 12, 16)
+    const target = discoverHostHintTargets(document.body).find(({ element }) => element === deck)!
+    expect(target.x).toBeGreaterThan(chevron.getBoundingClientRect().right)
+    act(() => expect(activateHostHint(target)).toBe(true))
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('talk.deck')
+    expect(deck).toHaveAttribute('aria-expanded', 'false')
+  } finally {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  }
+})
 
 test('primary-modifier open focuses the clicked row for ArrowDown', async () => {
   const { store } = mount()

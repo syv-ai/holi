@@ -4,12 +4,20 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { isMachineStatePath, isSecretPath, wikiLinksToText } from '@holi/shared'
+import {
+  isMachineStatePath,
+  isSecretPath,
+  isPortableInlineCaption,
+  readMarkdownCaptionEnvelopes,
+  readMarkdownCodeCaptions,
+  wikiLinksToText,
+} from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
 import type { TemplateField } from '../shared/template-fields'
-import { inlineImages } from './images'
-import { drawMermaid, type DrawDiagrams } from './mermaid'
+import { hasSingleMarkdownImage, inlineImages } from './images'
+import { commentSafeString, drawMermaid, type DrawDiagrams } from './mermaid'
 import { composeWrapper } from './wrapper'
+import { readMarkdownTableCaptions } from './table-captions'
 
 const exec = promisify(execFile)
 
@@ -79,6 +87,49 @@ async function readVaultImage(root: string, rel: string): Promise<Uint8Array> {
  * not fail the PDF: the image leaves its alt text, the diagram stays code, and
  * the result says so.
  */
+function wikiLinksOutsideRawTypst(markdown: string): string {
+  const ranges = [...markdown.matchAll(/<!--raw-typst[\s\S]*?-->/g)]
+    .map((match) => ({ from: match.index!, to: match.index! + match[0].length }))
+    .sort((a, b) => a.from - b.from)
+  if (ranges.length === 0) return wikiLinksToText(markdown)
+  let protectedMarkdown = ''
+  let at = 0
+  const saved: string[] = []
+  let prefix = 'HOLI_LITERAL_'
+  while (markdown.includes(prefix)) prefix += 'X'
+  for (const range of ranges) {
+    if (range.from < at) continue
+    protectedMarkdown += markdown.slice(at, range.from)
+    const token = `${prefix}${saved.length}_END`
+    saved.push(markdown.slice(range.from, range.to))
+    protectedMarkdown += token
+    at = range.to
+  }
+  protectedMarkdown += markdown.slice(at)
+  protectedMarkdown = wikiLinksToText(protectedMarkdown)
+  return protectedMarkdown.replace(
+    new RegExp(`${prefix}(\\d+)_END`, 'g'),
+    (token, index: string) => saved[Number(index)] ?? token,
+  )
+}
+
+function captionComment(body: string, caption: string, table = false, tableId = ''): string {
+  const diagram = /^ {0,3}<!--raw-typst ([\s\S]*?)-->$/.exec(body)?.[1]
+  if (table) {
+    const source = commentSafeString(wikiLinksToText(body))
+    const label = commentSafeString(caption)
+    // Every last-row cell gets a marker: a different cell can wrap farther than
+    // the last short cell, so the repeat footer uses their maximum physical page.
+    const marker = commentSafeString(tableId)
+    return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(breakable: true)[#show std.table: it => { let fields = it.fields(); let cells = fields.remove("children"); if cells.any(c => c.func() == std.table.footer) { it } else { let row-cells = cells.filter(c => c.func() == std.table.cell); if row-cells.len() > 0 { let final-start = cells.len() - it.columns.len(); cells = cells.enumerate().map(((index, c)) => { if c.func() == std.table.cell and index >= final-start { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) } else { c } }) } else { let header-index = cells.position(c => c.func() == std.table.header); if header-index != none { let header-fields = cells.at(header-index).fields(); let header-cells = header-fields.remove("children"); let marked-header = header-cells.map(c => { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) }); cells = cells.enumerate().map(((index, cell)) => if index == header-index { table.header(..header-fields, ..marked-header) } else { cell }) } }; let table-width = measure(it).width; std.table(..fields, ..cells, std.table.footer(repeat: true, std.table.cell(colspan: it.columns.len(), stroke: none, fill: none, context { let marker-locations = query(metadata.where(value: ${marker})); let final-page = if marker-locations.len() > 0 { calc.max(..marker-locations.map(location => counter(page).at(location.location()).first())) } else { counter(page).get().first() }; let on-final-page = counter(page).get().first() == final-page; let caption = block(width: table-width)[#align(center)[#cmarker.render(${label}, raw-typst: false, scope: (table: table))]]; if on-final-page { caption } else { block(height: measure(caption, width: table-width).height)[] } }))) } }; #cmarker.render(${source}, raw-typst: false, scope: (table: table))]-->`
+  }
+  const content =
+    diagram === undefined
+      ? `#cmarker.render(${commentSafeString(`${body}\n\n${caption}`)}, raw-typst: false)`
+      : `${diagram} #cmarker.render(${commentSafeString(caption)}, raw-typst: false)`
+  return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(width: 100%, sticky: true)[#align(center)[${content}]]-->`
+}
+
 export async function renderPdf({
   typstBin,
   vaultRoot,
@@ -104,15 +155,114 @@ export async function renderPdf({
     const noteRel = relative(await realpath(vaultRoot), await realpath(notePath))
       .split(sep)
       .join('/')
-    const pictured = await inlineImages(await readFile(notePath, 'utf8'), noteRel, (rel) =>
+    const original = await readFile(notePath, 'utf8')
+    const tableFrames = readMarkdownTableCaptions(original)
+    const tableFrameStarts = new Set(tableFrames.map((frame) => frame.envelope.from))
+    const frames = [...readMarkdownCodeCaptions(original), ...tableFrames].sort(
+      (a, b) => a.envelope.from - b.envelope.from,
+    )
+    const imageFrames = readMarkdownCaptionEnvelopes(original).filter(
+      (frame) =>
+        isPortableInlineCaption(original.slice(frame.caption.from, frame.caption.to)) &&
+        hasSingleMarkdownImage(original, frame.body.from, frame.body.to),
+    )
+    // Carry each supported frame's identity in its caption through transforms.
+    // The nonce is absent from the literal source, and these inline comments add
+    // no lines (so source warning locations remain stable).
+    let taggedOriginal = original
+    let nonce = ''
+    do {
+      nonce = `holi-pdf-${Math.random().toString(36).slice(2)}`
+    } while (original.includes(nonce))
+    const identityInsertions = [
+      ...frames.map((frame, index) => ({
+        at: frame.caption.to,
+        marker: ` <!-- ${nonce}-${index} -->`,
+      })),
+      ...imageFrames.map((frame, index) => ({
+        at: frame.body.to,
+        marker: `<!-- ${nonce}-image-${index} -->`,
+      })),
+    ]
+      .map((insertion, order) => ({ ...insertion, order }))
+      .sort((a, b) => b.at - a.at || a.order - b.order)
+    for (const insertion of identityInsertions) {
+      taggedOriginal =
+        taggedOriginal.slice(0, insertion.at) +
+        insertion.marker +
+        taggedOriginal.slice(insertion.at)
+    }
+    const pictured = await inlineImages(taggedOriginal, noteRel, (rel) =>
       readVaultImage(vaultRoot, rel),
     )
     const drawn =
       diagrams === undefined
-        ? { markdown: wikiLinksToText(pictured.markdown), warnings: [] }
-        : await drawMermaid(pictured.markdown, diagrams, wikiLinksToText)
+        ? {
+            markdown:
+              frames.length || imageFrames.length
+                ? pictured.markdown
+                : wikiLinksToText(pictured.markdown),
+            warnings: [],
+          }
+        : await drawMermaid(
+            pictured.markdown,
+            diagrams,
+            frames.length || imageFrames.length ? undefined : wikiLinksToText,
+          )
+    // Mermaid and image transforms run while the original envelopes still
+    // surround their body. Then each supported element and caption becomes one
+    // self-contained, non-executable-to-cmarker Typst block. The original line
+    // count is retained for warnings from everything after the envelope.
+    let markdown = drawn.markdown
+    const transformedEnvelopes = readMarkdownCaptionEnvelopes(drawn.markdown)
+    const transformations = frames.flatMap((frame, index) => {
+      const identity = `<!-- ${nonce}-${index} -->`
+      const transformed = transformedEnvelopes.find((item) =>
+        drawn.markdown.slice(item.caption.from, item.caption.to).includes(identity),
+      )
+      if (transformed === undefined) return []
+      const caption = original.slice(frame.caption.from, frame.caption.to)
+      const sourceLines = original.slice(frame.envelope.from, frame.envelope.to).split('\n').length
+      return [
+        {
+          frame: transformed,
+          caption,
+          sourceLines,
+          table: tableFrameStarts.has(frame.envelope.from),
+          tableId: `${nonce}-${index}`,
+          body: undefined as string | undefined,
+        },
+      ]
+    })
+    const imageTransformations = imageFrames.flatMap((frame, index) => {
+      const identity = `<!-- ${nonce}-image-${index} -->`
+      const transformed = transformedEnvelopes.find((item) =>
+        drawn.markdown.slice(item.body.from, item.body.to).includes(identity),
+      )
+      if (transformed === undefined) return []
+      const caption = original.slice(frame.caption.from, frame.caption.to)
+      const sourceLines = original.slice(frame.envelope.from, frame.envelope.to).split('\n').length
+      const body = drawn.markdown
+        .slice(transformed.body.from, transformed.body.to)
+        .replace(identity, '')
+        .trim()
+      return [{ frame: transformed, caption, sourceLines, body, table: false, tableId: '' }]
+    })
+    for (const item of [...transformations, ...imageTransformations].sort(
+      (a, b) => b.frame.envelope.from - a.frame.envelope.from,
+    )) {
+      const body = drawn.markdown.slice(item.frame.body.from, item.frame.body.to)
+      markdown =
+        markdown.slice(0, item.frame.envelope.from) +
+        captionComment(item.body ?? body, item.caption, item.table, item.tableId) +
+        '\n'.repeat(Math.max(0, item.sourceLines - 1)) +
+        markdown.slice(item.frame.envelope.to)
+    }
+    // Keep the generated caption expression (including literal code source)
+    // and Mermaid drawings intact. The uncaptained wiki-link rewrite is unchanged.
+    if (frames.length || imageFrames.length) markdown = wikiLinksOutsideRawTypst(markdown)
     const noteForTypst = join(work, 'note.md')
-    await writeFile(noteForTypst, drawn.markdown)
+    await writeFile(noteForTypst, markdown)
 
     const wrapperPath = join(work, 'wrapper.typ')
     await writeFile(
@@ -134,7 +284,9 @@ export async function renderPdf({
       ...fontPathArgs(templateDir),
       ...(language === undefined ? [] : ['--input', `lang=${language}`]),
     ])
-    return { warnings: [...pictured.warnings, ...drawn.warnings] }
+    const warnings = [...pictured.warnings, ...drawn.warnings]
+    warnings.sort((a, b) => Number(/line (\d+)/.exec(a)?.[1]) - Number(/line (\d+)/.exec(b)?.[1]))
+    return { warnings }
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr ?? String(err)
     throw new Error(`typst compile failed: ${stderr}`)

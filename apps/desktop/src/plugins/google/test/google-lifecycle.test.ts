@@ -17,6 +17,7 @@ import { googleMain } from '../main/index'
 import { GOOGLE_SCOPES } from '../main/session'
 import { GoogleTokenStore } from '../main/token-store'
 import { createVaultAccounts } from '../main/vault-accounts'
+import { createMailMarkerStore } from '../main/markers'
 import type { LoopbackServer } from '../main/loopback-flow'
 
 vi.mock('../main/electron', () => ({ createGoogleAccountsManager: vi.fn() }))
@@ -196,6 +197,31 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
     expect(await r.call(A, 'agendaCached', WINDOW)).toEqual(agenda)
   })
 
+  it('preserves markers when a vault unlinks and purges only the removed account', async () => {
+    const one = createMailMarkerStore(dir, 'one')
+    const two = createMailMarkerStore(dir, 'two')
+    await one.set('thread-1', 'red-star')
+    await one.setPreferences({ enabledOrder: ['red-star', 'blue-question'] })
+    await two.set('thread-1', 'blue-question')
+    const r = await rig()
+    await Promise.all([r.enter(A), r.enter(B)])
+
+    await r.call(A, 'disconnectVault')
+    expect(await one.read(['thread-1'])).toEqual({ 'thread-1': 'red-star' })
+    expect(await one.preferences()).toEqual({ enabledOrder: ['red-star', 'blue-question'] })
+
+    await manager.removeAccount('one')
+    await vi.waitFor(async () => {
+      expect(await createMailMarkerStore(dir, 'one').read(['thread-1'])).toEqual({
+        'thread-1': null,
+      })
+    })
+    expect(await createMailMarkerStore(dir, 'one').preferences()).toEqual({
+      enabledOrder: ['yellow-star'],
+    })
+    expect(await two.read(['thread-1'])).toEqual({ 'thread-1': 'blue-question' })
+  })
+
   it('isolates accounts and vault calendar settings', async () => {
     await manager.link(B, 'two')
     const r = await rig()
@@ -309,6 +335,25 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
     expect(existsSync(join(dir, 'google-cache-one.db'))).toBe(false)
     expect(await r.call(A, 'status')).toMatchObject({ account: null })
     expect(await r.call(B, 'status')).toMatchObject({ account: null })
+  })
+
+  it('awaits marker purge on removal and retires the cache even when purge fails', async () => {
+    const r = await rig()
+    await r.enter(A)
+    const markerPath = join(dir, 'google-mail-markers-one.json')
+    await mkdir(markerPath)
+    await writeFile(join(markerPath, 'blocked'), 'cannot remove the non-empty marker directory')
+    const cachePath = join(dir, 'google-cache-one.db')
+    await Promise.all(
+      ['', '-wal', '-shm', '-journal'].map((suffix) => writeFile(cachePath + suffix, 'old')),
+    )
+
+    await expect(manager.removeAccount('one')).rejects.toThrow(
+      /personal mail markers could not be deleted/,
+    )
+    for (const suffix of ['', '-wal', '-shm', '-journal'])
+      expect(existsSync(cachePath + suffix)).toBe(false)
+    expect(manager.list().some((account) => account.sub === 'one')).toBe(false)
   })
 
   it('deletes unopened persisted caches and all SQLite sidecars on removal', async () => {

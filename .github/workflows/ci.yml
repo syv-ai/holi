@@ -230,6 +230,41 @@ jobs:
       - name: Run clone preservation and seed-update fixtures on Windows Git
         run: pnpm --filter @holi/desktop exec vitest run test/prepare-clone.test.ts --project node
 
+  browser-display-smoke:
+    name: Native browser display isolation
+    runs-on: macos-26-intel
+    env:
+      LANG: en_US.UTF-8
+      ELECTRON_SKIP_BINARY_DOWNLOAD: ''
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install Electron
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: Run isolated native browser display smoke
+        run: pnpm --filter @holi/desktop exec node scripts/run-browser-display-smoke.mjs "$RUNNER_TEMP/holi-472-evidence"
+
+      - name: Upload native display evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-display-isolation-evidence
+          path: ${{ runner.temp }}/holi-472-evidence/
+          if-no-files-found: error
+
   test:
     name: Test
     # macOS on purpose: the tests encode the filesystem Holi ships on (macOS and
@@ -252,6 +287,22 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install the production Typst version for native PDF tests
+        run: |
+          VERSION="$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const source = readFileSync('apps/desktop/src/plugins/pdf/main/typst-bin.ts', 'utf8'); const match = source.match(/export const TYPST_VERSION = '([0-9.]+)'/); if (!match) throw new Error('Typst version not found'); console.log(match[1]);")"
+          case "$(uname -m)" in
+            x86_64) TARGET=x86_64-apple-darwin ;;
+            arm64) TARGET=aarch64-apple-darwin ;;
+            *) echo 'Unsupported native Typst runner architecture' >&2; exit 1 ;;
+          esac
+          ROOT="$RUNNER_TEMP/holi-native-typst"
+          mkdir -p "$ROOT"
+          curl --fail --location --retry 3 "https://github.com/typst/typst/releases/download/v$VERSION/typst-$TARGET.tar.xz" --output "$ROOT/typst.tar.xz"
+          tar -xJf "$ROOT/typst.tar.xz" -C "$ROOT"
+          "$ROOT/typst-$TARGET/typst" --version
+          echo "TYPST_BIN=$ROOT/typst-$TARGET/typst" >> "$GITHUB_ENV"
+          echo "TYPST_PACKAGE_CACHE_PATH=$RUNNER_TEMP/holi-typst-packages" >> "$GITHUB_ENV"
 
       # The node suite creates real repositories and commits in them.
       - name: Git identity for the tests

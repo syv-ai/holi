@@ -3,6 +3,7 @@
  * owns the envelope: callers decide which body Markdown is a supported element
  * and which inline Markdown is an editable caption.
  */
+import { fencedBlocks } from './fences'
 
 export interface CaptionRange {
   /** Exact JavaScript string offsets; end is exclusive. */
@@ -14,6 +15,54 @@ export interface MarkdownCaptionEnvelope {
   envelope: CaptionRange
   body: CaptionRange
   caption: CaptionRange
+}
+
+/** A caption envelope whose body is exactly one supported fenced code block. */
+export interface MarkdownCodeCaption {
+  envelope: CaptionRange
+  body: CaptionRange
+  caption: CaptionRange
+  language: string
+}
+
+/**
+ * Select only envelopes that can be rendered as one code element and one inline
+ * paragraph. Unsupported structures remain opaque source text for their caller.
+ */
+export function readMarkdownCodeCaptions(text: string): MarkdownCodeCaption[] {
+  return readMarkdownCaptionEnvelopes(text).flatMap((frame) => {
+    const body = text.slice(frame.body.from, frame.body.to)
+    const [block] = fencedBlocks(body)
+    // The element is exactly one fence, not an opening and closing fence
+    // surrounding arbitrary prose or additional blocks. `fencedBlocks` owns
+    // CommonMark's fence and indentation semantics.
+    if (!block || block.from !== 0 || block.to !== body.length) return []
+    const caption = text.slice(frame.caption.from, frame.caption.to)
+    if (!isPortableInlineCaption(caption)) return []
+    return [{ ...frame, language: block.lang }]
+  })
+}
+
+/** Only accept one paragraph of portable inline Markdown, never raw HTML. */
+export function isPortableInlineCaption(caption: string): boolean {
+  if (!caption.trim() || /[\r\n\u2028\u2029]/.test(caption)) return false
+  if (/^[ \t]/.test(caption)) return false
+  // Reference definitions and reference links depend on document-wide definitions;
+  // extracting them would change their meaning in the surrounding document.
+  const plain = caption.replace(/(`+)(.*?)\1/g, '').replace(/\\([\\[\\]<>!])/g, '')
+  if (/!\s*\[/.test(plain)) return false
+  if (/^ {0,3}\[[^\]]+\]:/.test(plain)) return false
+  if (/\[[^\]]+\](?:\[[^\]]*\])?(?!\s*\()/.test(plain)) return false
+  // Reject angle brackets only when they are not protected by inline code.
+  if (/[<>]/.test(plain)) return false
+  // CommonMark block openers, including empty headings and thematic breaks.
+  if (
+    /^ {0,3}(?:#{1,6}(?:\s|$)|>|(?:[-*_][ \t]*){3,}[ \t]*$|(?:[-*+]|\d+[.)])(?:[ \t]+|$)|(?:`{3,}|~{3,}))/i.test(
+      caption,
+    )
+  )
+    return false
+  return true
 }
 
 const FIGURE = '<!-- holi:figure -->'
@@ -214,19 +263,38 @@ export function readMarkdownCaptionEnvelopes(text: string): MarkdownCaptionEnvel
     nextCaption[index] = marker[index] === CAPTION ? index : nextCaption[index + 1]!
     nextEnd[index] = marker[index] === END ? index : nextEnd[index + 1]!
   }
-  const result: MarkdownCaptionEnvelope[] = []
-  for (let i = 0; i < lines.length; i++) {
-    if (marker[i] !== FIGURE) continue
-    const next = nextBoundary[i + 1]!
-    const outerCaption = nextCaption[i + 1]!
-    if (next !== -1 && marker[next] === FIGURE && outerCaption !== -1 && outerCaption < next) {
-      const innerEnd = nextEnd[next + 1]!
-      const outerEnd = innerEnd === -1 ? -1 : nextBoundary[innerEnd + 1]!
-      if (outerEnd !== -1 && marker[outerEnd] === END) {
-        i = outerEnd
-        continue
-      }
+  const nestedRanges: Array<{ from: number; to: number }> = []
+  const openFigures: Array<{ index: number; nested: boolean }> = []
+  for (let index = 0; index < marker.length; index++) {
+    if (marker[index] === FIGURE) {
+      if (openFigures.length > 0) openFigures[openFigures.length - 1]!.nested = true
+      openFigures.push({ index, nested: false })
+    } else if (marker[index] === END && openFigures.length > 0) {
+      const opened = openFigures.pop()!
+      if (opened.nested) nestedRanges.push({ from: opened.index, to: index })
     }
+  }
+  nestedRanges.sort((left, right) => left.from - right.from)
+  const mergedNestedRanges: Array<{ from: number; to: number }> = []
+  for (const range of nestedRanges) {
+    const previous = mergedNestedRanges.at(-1)
+    if (previous && range.from <= previous.to + 1) previous.to = Math.max(previous.to, range.to)
+    else mergedNestedRanges.push({ ...range })
+  }
+  const result: MarkdownCaptionEnvelope[] = []
+  let nestedRangeIndex = 0
+  for (let i = 0; i < lines.length; i++) {
+    while (
+      nestedRangeIndex < mergedNestedRanges.length &&
+      mergedNestedRanges[nestedRangeIndex]!.to < i
+    )
+      nestedRangeIndex++
+    const nestedRange = mergedNestedRanges[nestedRangeIndex]
+    if (nestedRange && nestedRange.from <= i) {
+      i = nestedRange.to
+      continue
+    }
+    if (marker[i] !== FIGURE) continue
     if (lines[i + 1]?.text !== '') continue
     const cap = nextMarker[i + 2]!
     if (cap === -1 || marker[cap] !== CAPTION || lines[cap - 1]?.text !== '') continue

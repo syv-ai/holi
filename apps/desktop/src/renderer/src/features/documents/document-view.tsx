@@ -30,6 +30,7 @@ import {
   parseTaskFile,
   SCRATCHPAD_PATH,
   TASKS_CLAIM,
+  type VaultSnapshot,
 } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
@@ -56,6 +57,8 @@ import {
   RichTextTableBubble,
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { cn } from '@/lib/cn'
 import { TaskProperties, useHasTaskProperties } from '@/features/planning/task-properties'
@@ -63,14 +66,19 @@ import { useSettingsWrite } from '@/features/settings/use-vault-settings'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
-import { isRunLive, useAgentLabel } from '@/state/document-runs'
+import {
+  documentRunsAtom,
+  documentUpgradesAtom,
+  isRunLive,
+  useAgentLabel,
+} from '@/state/document-runs'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { claimsAtom } from '@/state/plugins'
 import { activeVaultSettingsAtom, useAppSetting } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTab, entryOf, focusedTab } from '@/state/shell-workspace'
 import { tabKey, tabPath } from '@/state/tab-descriptor'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, moveNotesAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
@@ -83,6 +91,7 @@ import { createDocumentExtensions } from './document-extensions'
 import { headingAtCaret } from './document-headings'
 import { DocumentFindBar } from './document-find-bar'
 import { resolveLink } from './resolve-link'
+import { mdxUpgradeMove } from './upgrade-mdx'
 import { DocumentSkeleton } from './document-skeleton'
 import { useDocumentAgentPrompt } from './use-document-agent-prompt'
 import { useDocumentComments } from './use-document-comments'
@@ -148,6 +157,7 @@ export function DocumentView({
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const docs = snapshot.docs
+  const mdxFiles = snapshot.files.filter((file) => file.path.toLowerCase().endsWith('.mdx'))
   const mtime =
     docs.find((doc) => doc.path === path)?.updatedAt ??
     (path === SCRATCHPAD_PATH
@@ -199,6 +209,8 @@ export function DocumentView({
         initial={load}
         mtime={mtime}
         docs={docs}
+        mdxFiles={mdxFiles}
+        snapshot={snapshot}
         onOpen={onOpen}
         onMoved={onMoved}
         visible={visible}
@@ -214,6 +226,8 @@ function DocumentEditor({
   initial,
   mtime,
   docs,
+  mdxFiles,
+  snapshot,
   onOpen,
   onMoved,
   visible,
@@ -224,6 +238,8 @@ function DocumentEditor({
   initial: { head: string; body: string; text: string }
   mtime: string | undefined
   docs: readonly { path: string }[]
+  mdxFiles: readonly { path: string }[]
+  snapshot: VaultSnapshot
   onOpen: (path: string) => void
   onMoved?: (from: string, to: string) => void
   visible: boolean
@@ -250,8 +266,11 @@ function DocumentEditor({
   }, [agentLabel])
   const store = useStore()
   const locked = locksDocument(agent.run)
+  const upgrades = useAtomValue(documentUpgradesAtom)
+  const upgradePending = upgrades.has(path)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [donePending, setDonePending] = useState(false)
+  const upgradeInFlight = useRef(false)
   const [doneError, setDoneError] = useState<string | null>(null)
   const doneInFlight = useRef(false)
   const [linkOpen, setLinkOpen] = useState(false)
@@ -297,6 +316,7 @@ function DocumentEditor({
   const reloadFailed = useRef(false)
   const frozen = useRef(false)
   const doneFreeze = useRef(false)
+  const batchFreeze = useRef(false)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -321,9 +341,17 @@ function DocumentEditor({
   })
   handlers.current.openLink = (target) => {
     if (!activity.displayed) return
-    const found = resolveLink(target, path, docs)
+    const found = resolveLink(target, path, docs, mdxFiles)
     if (found) onOpen(found)
   }
+
+  const mapTargetsRef = useRef<
+    (
+      _mapping: import('@tiptap/pm/transform').Mapping,
+      _doc: import('@tiptap/pm/model').Node,
+      _externalReload?: boolean,
+    ) => void
+  >(() => {})
 
   const extensions = useMemo(
     () => [
@@ -335,7 +363,7 @@ function DocumentEditor({
         addProseMirrorPlugins: () => [
           new Plugin({
             filterTransaction: (transaction) =>
-              (!frozen.current && !doneFreeze.current) ||
+              (!frozen.current && !doneFreeze.current && !batchFreeze.current) ||
               !transaction.docChanged ||
               transaction.getMeta('preventUpdate') === true,
           }),
@@ -379,6 +407,14 @@ function DocumentEditor({
           'aria-multiline': 'true',
         },
       },
+      onTransaction: ({ transaction }) => {
+        if (transaction.docChanged)
+          mapTargetsRef.current(
+            transaction.mapping,
+            transaction.doc,
+            transaction.getMeta('externalDocumentReload') === true,
+          )
+      },
       onUpdate: ({ transaction }) => {
         if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
         dirty.current = true
@@ -395,8 +431,24 @@ function DocumentEditor({
 
   const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
-  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp } =
-    useDocumentAgentPrompt({ editor, path, agent, handlers, save })
+  const {
+    promptOpen,
+    promptInitial,
+    closePrompt,
+    sendPrompt,
+    quickCommand,
+    createVaultApp,
+    rewriteQueue,
+    addToBatch,
+    submitBatch,
+    removeFromBatch,
+    editBatchItem,
+    reselection,
+    mapTargets,
+    batchSubmitting,
+    batchError,
+  } = useDocumentAgentPrompt({ editor, path, agent, handlers, save, freeze: freezeBatch })
+  mapTargetsRef.current = mapTargets
 
   const comments = useDocumentComments({ editor, path, docs, head, save })
   const {
@@ -448,6 +500,18 @@ function DocumentEditor({
     : null
 
   handlers.current.pressThread = comments.pressThread
+
+  function freezeBatch(value: boolean) {
+    batchFreeze.current = value
+    if (editor && !editor.isDestroyed)
+      editor.setEditable(
+        !value &&
+          !lockedRef.current &&
+          visibleRef.current &&
+          !frozen.current &&
+          !doneFreeze.current,
+      )
+  }
 
   /** The document as it would be saved. */
   function markdown(): string {
@@ -533,7 +597,11 @@ function DocumentEditor({
         (value) => {
           frozen.current = value
           editor?.setEditable(
-            !value && visibleRef.current && !doneFreeze.current && !lockedRef.current,
+            !value &&
+              visibleRef.current &&
+              !doneFreeze.current &&
+              !batchFreeze.current &&
+              !lockedRef.current,
           )
         },
       ),
@@ -618,8 +686,15 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked && visible && !frozen.current && !doneFreeze.current)
-  }, [editor, locked, visible])
+    editor.setEditable(
+      !locked &&
+        !upgradePending &&
+        visible &&
+        !frozen.current &&
+        !doneFreeze.current &&
+        !batchFreeze.current,
+    )
+  }, [editor, locked, upgradePending, visible])
 
   // A finished edit clears its pill on its own. A finished vault app opens
   // when the document is still the tab in front and was never left while it
@@ -726,7 +801,9 @@ function DocumentEditor({
       doneInFlight.current = false
       if (!editor.isDestroyed) {
         doneFreeze.current = false
-        editor.setEditable(!lockedRef.current && activity.displayed && !frozen.current)
+        editor.setEditable(
+          !lockedRef.current && activity.displayed && !frozen.current && !batchFreeze.current,
+        )
       }
       setDonePending(false)
     }
@@ -753,6 +830,45 @@ function DocumentEditor({
   }
 
   const canAsk = agent.available && !isRunLive(agent.run)
+  const upgradeMove = mdxUpgradeMove(path, snapshot, claims)
+
+  async function upgradeToMdx() {
+    if (
+      !upgradeMove ||
+      upgradeInFlight.current ||
+      lockedRef.current ||
+      store.get(documentUpgradesAtom).has(path) ||
+      isRunLive(store.get(documentRunsAtom)[path]) ||
+      frozen.current ||
+      !editor?.isEditable
+    )
+      return
+    upgradeInFlight.current = true
+    store.set(documentUpgradesAtom, (paths) => new Set(paths).add(path))
+    editor?.setEditable(false)
+    try {
+      await store.set(moveNotesAtom, {
+        moves: [upgradeMove],
+        expectedRemote: remote,
+        upgradePath: path,
+      })
+    } catch (error) {
+      toast.error('Could not upgrade to MDX.', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      store.set(documentUpgradesAtom, (paths) => {
+        const next = new Set(paths)
+        next.delete(path)
+        return next
+      })
+      upgradeInFlight.current = false
+      if (editor && !editor.isDestroyed)
+        editor.setEditable(
+          !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
+        )
+    }
+  }
   const canStartChat = useAtomValue(canStartConversationAtom)
   const startConversation = useSetAtom(startConversationAtom)
 
@@ -778,7 +894,10 @@ function DocumentEditor({
         onKeyDown={handleViewKeyDown}
       >
         {/* Locked while a run edits the document: nothing in it answers. */}
-        <div inert={locked} className="flex min-h-0 flex-1 flex-col">
+        <div
+          inert={locked || batchSubmitting || upgradePending}
+          className="flex min-h-0 flex-1 flex-col"
+        >
           {/* On the page's own ground, a hairline under it; the text scrolls
               beneath the line, not under the header. */}
           <DocumentHeader
@@ -787,7 +906,7 @@ function DocumentEditor({
             path={path}
             title={documentTitle(path)}
             saveState={saveState}
-            locked={locked}
+            locked={locked || batchSubmitting}
             taskDone={
               isTaskPath(path)
                 ? { pending: donePending, error: doneError, onDone: finishTask }
@@ -800,6 +919,11 @@ function DocumentEditor({
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
             onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
+            onUpgradeToMdx={
+              upgradeMove && !locked && !upgradePending && editor?.isEditable
+                ? () => void upgradeToMdx()
+                : null
+            }
             holiLink={holiLinks?.file ?? null}
             headingLink={holiLinks?.heading ?? null}
             properties={
@@ -869,6 +993,76 @@ function DocumentEditor({
                 )}
               />
               <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
+                {rewriteQueue.length > 0 ? (
+                  <section
+                    aria-label="Queued rewrite requests"
+                    className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-4 sm:px-16"
+                  >
+                    <h2 className="text-sm font-medium">Rewrite batch ({rewriteQueue.length})</h2>
+                    {rewriteQueue.map((item, index) => (
+                      <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
+                          {item.passage}
+                        </span>
+                        <Input
+                          aria-label={`Request for target ${index + 1}`}
+                          value={item.instruction}
+                          placeholder="Change this passage…"
+                          onChange={(event) => editBatchItem(item.id, event.target.value)}
+                          disabled={batchSubmitting}
+                          className="min-w-0 flex-1 basis-full sm:max-w-56 sm:basis-auto"
+                        />
+                        {!item.valid ? (
+                          <span role="status" className="text-sm text-muted-foreground">
+                            Target changed; reselect
+                          </span>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => reselection(item.id)}
+                          disabled={batchSubmitting}
+                        >
+                          {item.valid ? 'Show target' : 'Use selection'}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeFromBatch(item.id)}
+                          disabled={batchSubmitting}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                    {batchError ? (
+                      <p role="alert" className="text-destructive text-sm">
+                        {batchError}
+                      </p>
+                    ) : null}
+                    {batchSubmitting ? (
+                      <p role="status" className="text-muted-foreground text-sm">
+                        Submitting batch…
+                      </p>
+                    ) : null}
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={
+                          batchSubmitting ||
+                          !canAsk ||
+                          rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
+                        }
+                        onClick={() => void submitBatch()}
+                      >
+                        Submit batch
+                      </Button>
+                    </div>
+                  </section>
+                ) : null}
                 {editor ? (
                   <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
                     <EditorContent
@@ -903,6 +1097,7 @@ function DocumentEditor({
                           ? (instruction, passage) => void quickCommand(instruction, passage)
                           : null
                       }
+                      onAddToBatch={canAsk ? addToBatch : null}
                       onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
                       onComment={commentable ? () => void commentOnSelection() : null}
                     />

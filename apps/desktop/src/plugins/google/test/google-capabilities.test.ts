@@ -9,13 +9,25 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { emptyVaultSnapshot } from '@holi/shared'
+import type { MailMarkerPreferences } from '../shared/mail-markers'
 import { resolveArgv } from '../../../main/bridge/cli'
 import type { CapabilityError } from '../../../main/capabilities/error'
 import { createCapabilityRegistry, type Door } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
 import type { GoogleAccountsManager, GoogleAccountsOverview } from '../main/accounts'
 import { GoogleApiError } from '../main/api'
-import { googleCapabilities, GOOGLE_NAMESPACES } from '../main/capabilities'
+import {
+  disposeGoogleCapabilities,
+  googleCapabilities,
+  GOOGLE_NAMESPACES,
+} from '../main/capabilities'
+import { GoogleApi } from '../main/api'
+import { openGoogleCache } from '../main/cache'
+import { createGoogleData } from '../main/data'
+import { createMailMarkerStore } from '../main/markers'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fenceThread } from '../main/untrusted'
 import type { GoogleData } from '../main/data'
 
@@ -71,19 +83,17 @@ function rig({
           ...data,
         } as GoogleData)
   const registry = createCapabilityRegistry()
-  registry.register(
-    GOOGLE_NAMESPACES,
-    googleCapabilities({
-      accounts: {
-        sessionFor: async () =>
-          googleData === null ? null : { accountSub: 'sub-1', getAccessToken: async () => 'token' },
-        ...accounts,
-      } as GoogleAccountsManager,
-      dataFor: async () => googleData,
-      dataForSession: (session) => (dataForSession?.(session) ?? googleData) as GoogleData,
-      settings,
-    }),
-  )
+  const capabilities = googleCapabilities({
+    accounts: {
+      sessionFor: async () =>
+        googleData === null ? null : { accountSub: 'sub-1', getAccessToken: async () => 'token' },
+      ...accounts,
+    } as GoogleAccountsManager,
+    dataFor: async () => googleData,
+    dataForSession: (session) => (dataForSession?.(session) ?? googleData) as GoogleData,
+    settings,
+  })
+  registry.register(GOOGLE_NAMESPACES, capabilities)
   const run = (name: string, params: unknown, remote: string, door: Door) =>
     registry.run(
       `google.${name}`,
@@ -102,7 +112,14 @@ function rig({
     (await run(name, params, remote, 'ui')).value
   /** The agent's `holi google <name>`: the value `--json` prints, and the text. */
   const cli = (name: string, params?: unknown) => run(name, params, 'owner/repo', 'cli')
-  return { call, cli, calls, commands: registry.commands() }
+  return {
+    call,
+    cli,
+    run,
+    calls,
+    commands: registry.commands(),
+    dispose: () => disposeGoogleCapabilities(capabilities),
+  }
 }
 
 it('lists --full in the generated usage for google read', () => {
@@ -121,6 +138,207 @@ it('lists --full in the generated usage for google read', () => {
   )
   if (usage.kind !== 'help') throw new Error('expected generated CLI help')
   expect(usage.text).toContain('[--full]')
+})
+
+describe('UI-only mail markers', () => {
+  it('exposes local annotations only through the expected-account UI capability', async () => {
+    const annotations = vi.fn(async () => ({ t1: 'red-star' as const }))
+    const { call, cli } = rig({ data: { mailMarkerAnnotations: annotations } })
+    await expect(
+      call('mailMarkerAnnotations', { ids: ['t1'], expectedAccountSub: 'sub-2' }),
+    ).rejects.toThrow(/account changed/)
+    expect(annotations).not.toHaveBeenCalled()
+    expect(
+      await call('mailMarkerAnnotations', { ids: ['t1'], expectedAccountSub: 'sub-1' }),
+    ).toEqual({ t1: 'red-star' })
+    expect(annotations).toHaveBeenCalledWith(['t1'], expect.any(Function))
+    await expect(cli('mailMarkerAnnotations', { ids: ['t1'] })).rejects.toThrow()
+  })
+  it('validates batch ids, binds the expected account, and refuses non-UI doors', async () => {
+    const mailMarkers = vi.fn(async (ids: readonly string[]) =>
+      Object.fromEntries(ids.map((id) => [id, null])),
+    )
+    const setMailMarker = vi.fn(async () => {})
+    const { call, cli, calls } = rig({
+      data: { mailMarkers, setMailMarker },
+      accounts: { sessionFor: async () => ({ accountSub: 'sub-b' }) } as never,
+    })
+    await expect(
+      call('mailMarkers', { ids: ['../escape'], expectedAccountSub: 'sub-1' }),
+    ).rejects.toThrow(/invalid/)
+    await expect(call('setMailMarker', { id: 't1', marker: 'purple-star' })).rejects.toThrow(
+      /marker/,
+    )
+    await expect(call('mailMarkers', { ids: ['t1'], expectedAccountSub: 'sub-a' })).rejects.toThrow(
+      /account changed/,
+    )
+    expect(mailMarkers).not.toHaveBeenCalled()
+    await expect(cli('mailMarkers', { ids: ['t1'] })).rejects.toThrow()
+    expect(calls).toEqual([])
+
+    expect(
+      await call('setMailMarker', { id: 't1', marker: 'red-star', expectedAccountSub: 'sub-b' }),
+    ).toEqual({ ok: true })
+    expect(setMailMarker).toHaveBeenCalledWith('t1', 'red-star', expect.any(Function))
+  })
+})
+
+describe('UI-only mail marker preferences', () => {
+  it('requires the expected account and exposes ordered preferences only at the UI door', async () => {
+    const mailMarkerPreferences = vi.fn(async (): Promise<MailMarkerPreferences> => ({
+      enabledOrder: ['yellow-star'],
+    }))
+    const setMailMarkerPreferences = vi.fn(async () => {})
+    const { call, cli } = rig({ data: { mailMarkerPreferences, setMailMarkerPreferences } })
+    await expect(call('mailMarkerPreferences')).rejects.toThrow(/expectedAccountSub is required/)
+    await expect(
+      call('mailMarkerPreferences', { expectedAccountSub: 'another-account' }),
+    ).rejects.toThrow(/account changed/)
+    await expect(
+      call('setMailMarkerPreferences', {
+        expectedAccountSub: 'sub-1',
+        preferences: { enabledOrder: ['red-star', 'red-star'] },
+      }),
+    ).rejects.toThrow(/duplicate/)
+    await expect(cli('mailMarkerPreferences', { expectedAccountSub: 'sub-1' })).rejects.toThrow()
+    expect(await call('mailMarkerPreferences', { expectedAccountSub: 'sub-1' })).toEqual({
+      enabledOrder: ['yellow-star'],
+    })
+    expect(
+      await call('setMailMarkerPreferences', {
+        expectedAccountSub: 'sub-1',
+        preferences: { enabledOrder: ['blue-question', 'red-star'] },
+      }),
+    ).toEqual({ ok: true })
+    expect(setMailMarkerPreferences).toHaveBeenCalledWith(
+      { enabledOrder: ['blue-question', 'red-star'] },
+      expect.any(Function),
+    )
+  })
+})
+
+describe('queued star capability lifecycle', () => {
+  it('rejects a marker operation disposed while session validation is pending', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-google-marker-dispose-'))
+    const cache = openGoogleCache(join(root, 'cache.db'))
+    let release!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => (release = resolve))
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    const fetch = vi.fn(async () => Response.json({})) as typeof globalThis.fetch
+    const data = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'token', fetch }),
+      cache,
+      markers: createMailMarkerStore(root, 'sub-1'),
+    })
+    const session = { accountSub: 'sub-1', getAccessToken: async () => 'token' }
+    let validations = 0
+    const { call, dispose } = rig({
+      data,
+      accounts: {
+        sessionFor: async () => {
+          validations += 1
+          if (validations === 2) {
+            entered()
+            await waiting
+          }
+          return session
+        },
+      } as never,
+    })
+    try {
+      const request = call('star', { id: 'thread-1' })
+      await started
+      dispose()
+      release()
+      await expect(request).rejects.toThrow(/vault is stopped/)
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      release()
+      data.forget()
+      cache.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('revalidates a queued request from an unlinked vault while a shared account stays live', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-google-star-capability-'))
+    const cache = openGoogleCache(join(root, 'cache.db'))
+    let release!: (response: Response) => void
+    let entered!: () => void
+    const pending = new Promise<Response>((resolve) => (release = resolve))
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    let posts = 0
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        posts += 1
+        if (posts === 1) {
+          entered()
+          return pending
+        }
+        return Response.json({})
+      }
+      return Response.json({ messages: [{ labelIds: [] }] })
+    }) as typeof globalThis.fetch
+    const data = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'token', fetch }),
+      cache,
+      markers: createMailMarkerStore(root, 'sub-1'),
+    })
+    const session = { accountSub: 'sub-1', getAccessToken: async () => 'token' }
+    let aLinked = true
+    const { call, cli, run, dispose } = rig({
+      data,
+      accounts: {
+        sessionFor: async (remote: string) => (remote === 'owner/a' && !aLinked ? null : session),
+      } as never,
+    })
+    try {
+      await expect(
+        call('setMailMarker', {
+          id: 'thread-1',
+          marker: 'red-star',
+          expectedAccountSub: 'other-account',
+        }),
+      ).rejects.toThrow(/account changed/)
+      await expect(
+        run(
+          'setMailMarker',
+          { id: 'thread-1', marker: 'red-star', expectedAccountSub: 'sub-1' },
+          'owner/a',
+          'cli',
+        ),
+      ).rejects.toThrow()
+      await expect(
+        run('mailMarkers', { ids: ['thread-1'], expectedAccountSub: 'sub-1' }, 'owner/a', 'app'),
+      ).rejects.toThrow()
+      await expect(
+        Promise.resolve().then(() => data.setMailMarker('../invalid', 'red-star')),
+      ).rejects.toThrow(/invalid Gmail thread id/)
+      expect(posts).toBe(0)
+      const first = call('star', { id: 'thread-1' }, 'owner/a')
+      await started
+      const queued = call('star', { id: 'thread-1' }, 'owner/a')
+      aLinked = false
+      release(Response.json({}))
+      await expect(first).rejects.toThrow(/account changed/)
+      await expect(queued).rejects.toThrow(/not connected|account changed/)
+      expect(posts).toBe(1)
+      await expect(call('star', { id: 'thread-2' }, 'owner/b')).resolves.toEqual({ ok: true })
+      expect(posts).toBe(2)
+      await expect(cli('star', { id: 'thread-3' })).resolves.toMatchObject({
+        value: { ok: true },
+      })
+      expect(posts).toBe(3)
+      await expect(run('star', { id: 'thread-1' }, 'owner/b', 'app')).rejects.toThrow()
+    } finally {
+      release(Response.json({}))
+      dispose()
+      data.forget()
+      cache.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('remote image preferences', () => {

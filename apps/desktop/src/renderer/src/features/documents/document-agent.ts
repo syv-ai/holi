@@ -34,6 +34,7 @@ import {
   AGENT_MODEL,
   agentCapability,
   agentLabelAtom,
+  documentUpgradesAtom,
   documentRunsAtom,
   isRunLive,
   launchRunAtom,
@@ -256,16 +257,24 @@ export function useDocumentAgent(path: string, focused = true) {
     request: string,
     passage?: string,
     currentVisit: () => boolean = () => focused,
+    displayLabel?: string,
   ) => {
-    if (remote === null || store.get(activeRemoteAtom) !== remote) return
+    if (
+      remote === null ||
+      store.get(activeRemoteAtom) !== remote ||
+      store.get(documentUpgradesAtom).has(path)
+    )
+      return false
     if (kind === 'vault-app') {
       const starting = store.set(startVaultAppAtom, path)
       if (!currentVisit()) update({ away: true })
       await starting
-      return
+      return store.get(documentRunsAtom)[path]?.status !== 'failed'
     }
     const name = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')
-    const label = kind === 'rewrite' ? request.charAt(0).toUpperCase() + request.slice(1) : request
+    const label =
+      displayLabel ??
+      (kind === 'rewrite' ? request.charAt(0).toUpperCase() + request.slice(1) : request)
     setRuns((all) => ({
       ...all,
       [path]: {
@@ -284,9 +293,13 @@ export function useDocumentAgent(path: string, focused = true) {
     try {
       const settings = await loadSettings()
       if (settings === null) throw new Error('No vault is open.')
-      if (remoteRef.current !== remote || store.get(activeRemoteAtom) !== remote) {
+      if (
+        remoteRef.current !== remote ||
+        store.get(activeRemoteAtom) !== remote ||
+        store.get(documentUpgradesAtom).has(path)
+      ) {
         update({ status: 'stopped', message: 'The active vault changed before the agent started.' })
-        return
+        return false
       }
       provider = settings.agentProvider
     } catch (err) {
@@ -294,7 +307,7 @@ export function useDocumentAgent(path: string, focused = true) {
         status: 'failed',
         message: err instanceof Error ? err.message : 'The agent did not start.',
       })
-      return
+      return false
     }
     update({ provider, agent: store.set(agentLabelAtom, { remote, id: provider, path }) })
     await store.set(
@@ -327,6 +340,7 @@ export function useDocumentAgent(path: string, focused = true) {
             },
           },
     )
+    return store.get(documentRunsAtom)[path]?.status !== 'failed'
   }
 
   // Stopped wins over anything the session says after: a run no longer live

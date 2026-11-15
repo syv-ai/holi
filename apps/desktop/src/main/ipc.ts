@@ -25,10 +25,19 @@ export function registerIpc(deps: {
   router: AnyRouter
   /** A vault's clone on disk, or null when it is not known. */
   rootFor: (remote: string) => Promise<string | null>
+  /** Narrow guard for the only trust-changing routes. */
+  trustedMdxSender?: (event: Electron.IpcMainInvokeEvent) => boolean
 }): void {
-  ipcMain.handle('holi:trpc', (_event, op: TrpcOp): Promise<TrpcEnvelope> =>
-    toEnvelope(callProcedure(deps.router, op)),
-  )
+  ipcMain.handle('holi:trpc', (event, op: TrpcOp): Promise<TrpcEnvelope> => {
+    if (
+      typeof op?.path === 'string' &&
+      op.path.startsWith('mdxTrust.') &&
+      (!deps.trustedMdxSender || !deps.trustedMdxSender(event))
+    ) {
+      return toEnvelope(Promise.reject(new Error('MDX trust is available only to Holi')))
+    }
+    return toEnvelope(callProcedure(deps.router, op))
+  })
 
   // The SYSTEM browser, not a window: the sign-in page has to reuse the user's
   // existing GitHub session, and no credential should ever enter the app's web

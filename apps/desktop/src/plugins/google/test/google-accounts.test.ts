@@ -267,7 +267,7 @@ describe('a grant Google refuses', () => {
 
     await expect(session!.getAccessToken()).rejects.toThrow(/expired or been revoked/)
 
-    expect(changed).toHaveBeenCalledWith('sub-1')
+    expect(changed).toHaveBeenCalledWith('sub-1', 'expired')
     expect(await accounts.sessionFor(VAULT)).toBeNull()
     expect(accounts.list()).toEqual([])
     expect(await accounts.overview(VAULT)).toMatchObject({
@@ -391,7 +391,9 @@ describe('onChange', () => {
       [auth()],
       (async () => new Response('{}', { status: 200 })) as unknown as typeof globalThis.fetch,
     )
-    accounts.onChange((sub) => seen.push(sub))
+    accounts.onChange((sub) => {
+      seen.push(sub)
+    })
 
     await accounts.link(VAULT, 'sub-1')
     await accounts.removeAccount('sub-1')
@@ -508,7 +510,9 @@ describe('the client credentials', () => {
     await accounts.link(VAULT, 'sub-1')
     await accounts.link(WORK, 'sub-2')
     const changed: (string | null)[] = []
-    accounts.onChange((sub) => changed.push(sub))
+    accounts.onChange((sub) => {
+      changed.push(sub)
+    })
 
     await accounts.setClient({ id: 'other.apps.googleusercontent.com', secret: 's' })
 
