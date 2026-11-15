@@ -653,6 +653,9 @@ export function CommandMenu({
                 variant="quiet"
                 size="inline"
                 aria-label="Close command menu"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+                }}
                 onClick={() => handleOpenChange(false)}
               >
                 Close
