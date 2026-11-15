@@ -27,7 +27,14 @@ import {
 import { sanitizeMailHtml } from './mail-html'
 import { useRemoteContent, type RemoteContentIdentity } from './mail-images'
 import { registerMailFrame } from './mail-frames'
-import { activeRemoteAtom, matchHotkey, openExternal } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  matchHotkey,
+  openExternal,
+  registerHostHintAdapter,
+} from '@/plugin-api'
+import { createMailHintAdapter } from './mail-hints'
 
 interface SandboxedHtmlProps {
   /** Raw and untrusted. Sanitizing happens **here**; a caller must not pre-sanitize. */
@@ -40,6 +47,8 @@ interface SandboxedHtmlProps {
    * the choice lives and dies with this component.
    */
   identity?: RemoteContentIdentity
+  /** Mail-only ownership context, such as the thread or draft and view instance. */
+  hintScope?: string
 }
 
 const NO_IDENTITY: RemoteContentIdentity = { key: null, sender: null }
@@ -59,9 +68,11 @@ export function SandboxedHtml({
   html,
   label,
   identity = NO_IDENTITY,
+  hintScope = '',
 }: SandboxedHtmlProps): React.JSX.Element {
   const remote = useRemoteContent(identity)
   const activeRemote = useAtomValue(activeRemoteAtom)
+  const activeRemoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
   /** The unblock for a block with nothing to remember it by. */
   const [localAllowance, setLocalAllowance] = useState<{
     remote: string | null
@@ -172,6 +183,7 @@ export function SandboxedHtml({
         allowRemoteContent={allowRemoteContent}
         label={label}
         registerAs={identity.key}
+        hintScope={`${activeRemote ?? 'no-vault'}:${activeRemoteRevision}:${identity.key ?? 'anonymous'}:${hintScope}`}
       />
     </>
   )
@@ -192,6 +204,7 @@ interface HtmlFrameProps {
    * such as a calendar event description.
    */
   registerAs: string | null
+  hintScope: string
 }
 
 /**
@@ -209,8 +222,15 @@ function HtmlFrame({
   allowRemoteContent,
   label,
   registerAs,
+  hintScope,
 }: HtmlFrameProps): React.JSX.Element {
   const ref = useRef<HTMLIFrameElement>(null)
+  const generation = useRef(0)
+  const scopeRef = useRef(hintScope)
+  if (scopeRef.current !== hintScope) {
+    scopeRef.current = hintScope
+    generation.current += 1
+  }
   const [height, setHeight] = useState(0)
 
   // Layout, not passive: the frame has no height until it is measured, so an
@@ -220,6 +240,7 @@ function HtmlFrame({
     const document_ = frame?.contentDocument
     if (document_ == null) return
 
+    generation.current += 1
     document_.open()
     document_.write(mailFrameDocument({ html, css, palette, allowRemoteContent }))
     document_.close()
@@ -273,21 +294,42 @@ function HtmlFrame({
      * ⌘F means.
      */
     const onFrameKeyDown = (event: KeyboardEvent) => {
-      if (!matchHotkey(event, '⌘F')) return
-      event.preventDefault()
-      frame?.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: event.key,
-          metaKey: event.metaKey,
-          ctrlKey: event.ctrlKey,
-          bubbles: true,
-        }),
+      if (matchHotkey(event, '⌘F')) {
+        event.preventDefault()
+        frame?.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: event.key,
+            metaKey: event.metaKey,
+            ctrlKey: event.ctrlKey,
+            bubbles: true,
+          }),
+        )
+        return
+      }
+      const target = event.target
+      if (
+        event.key !== 'f' ||
+        event.isComposing ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        (target instanceof document_.defaultView!.Element &&
+          target.closest('input,textarea,select,[contenteditable]') !== null)
       )
+        return
+      event.preventDefault()
+      frame?.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true }))
     }
     document_.addEventListener('keydown', onFrameKeyDown)
 
     // Published last: the document is written and wired by this point, so a
     // searcher that reads the registry never gets a half-built page.
+    const hintAdapter = createMailHintAdapter({
+      frame: frame!,
+      generation: () => generation.current,
+      scope: () => scopeRef.current,
+    })
+    const unregisterHints = frame === null ? undefined : registerHostHintAdapter(frame, hintAdapter)
     const unregister = registerAs === null ? undefined : registerMailFrame(registerAs, document_)
 
     return () => {
@@ -296,8 +338,9 @@ function HtmlFrame({
       document_.removeEventListener('keydown', onFrameKeyDown)
       observer.disconnect()
       unregister?.()
+      unregisterHints?.()
     }
-  }, [html, css, palette, allowRemoteContent, registerAs])
+  }, [html, css, palette, allowRemoteContent, registerAs, hintScope])
 
   return (
     <iframe

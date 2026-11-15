@@ -40,6 +40,7 @@ export function MailReader({
   onCompose,
   standaloneComposer = null,
   visible,
+  accountSub,
 }: {
   mail: MailState
   /** The inline reply or forward, at the foot of the thread it answers. */
@@ -47,6 +48,7 @@ export function MailReader({
   onCompose: () => void
   standaloneComposer?: ReactNode
   visible: boolean
+  accountSub: string | null
 }) {
   const reader = mail.reader
 
@@ -121,6 +123,7 @@ export function MailReader({
             key={message.id}
             message={message}
             threadUrl={thread.webUrl}
+            hintOwner={`account:${accountSub ?? 'no-account'}:thread:${thread.id}:visible:${visible}`}
             // Only the last opens expanded, so a long thread does not bury
             // what is new.
             initiallyOpen={index === thread.messages.length - 1}
@@ -138,6 +141,7 @@ export function MailReader({
 function MessageBlock({
   message,
   threadUrl,
+  hintOwner,
   initiallyOpen,
   position,
   total,
@@ -145,6 +149,7 @@ function MessageBlock({
 }: {
   message: ThreadMessage
   threadUrl: string
+  hintOwner: string
   initiallyOpen: boolean
   position: number
   total: number
@@ -204,7 +209,7 @@ function MessageBlock({
         <CollapsibleContent>
           <div className="flex flex-col gap-3 md:pl-10.5">
             <MessageAddresses message={message} />
-            <MessageBody message={message} />
+            <MessageBody message={message} threadUrl={threadUrl} hintOwner={hintOwner} />
             <Attachments attachments={message.attachments} webUrl={threadUrl} visible={visible} />
           </div>
         </CollapsibleContent>
@@ -244,7 +249,15 @@ function MessageAddresses({ message }: { message: ThreadMessage }) {
 }
 
 /** A sandboxed frame when there is HTML, the plain text otherwise. */
-function MessageBody({ message }: { message: ThreadMessage }) {
+function MessageBody({
+  message,
+  threadUrl,
+  hintOwner,
+}: {
+  message: ThreadMessage
+  threadUrl: string
+  hintOwner: string
+}) {
   if (message.html === null) {
     return <p className="text-sm break-words whitespace-pre-wrap">{message.body}</p>
   }
@@ -253,6 +266,7 @@ function MessageBody({ message }: { message: ThreadMessage }) {
       html={message.html}
       label={`Message from ${message.from.name}`}
       identity={{ key: message.id, sender: message.from.email }}
+      hintScope={`${hintOwner}:url:${threadUrl}:message:${message.id}`}
     />
   )
 }

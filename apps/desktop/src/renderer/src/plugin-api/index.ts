@@ -140,5 +140,11 @@ export { useVimField } from '@/hooks/use-vim-field'
 /** @public Mode presentation for native fields attached through the plugin seam. */
 export { VimFieldMode } from '@/composites/vim-field-mode'
 export { matchHotkey } from '@/lib/hotkey'
+export {
+  registerHostHintAdapter,
+  type HostHintAdapter,
+  type HostHintAdapterTarget,
+  type HostHintTarget,
+} from '@/lib/host-hints'
 export { DiffView } from '@/composites/diff-view'
 export { plainMarkdownExtensions } from '@/editor/extensions'
