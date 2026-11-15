@@ -6,12 +6,64 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
+import react from '@vitejs/plugin-react'
 import { externalizeDepsPlugin } from 'electron-vite'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? join(tmpdir(), 'holi-473-app-evidence'))
 const root = await mkdtemp(join(tmpdir(), 'holi-473-smoke-'))
 await mkdir(evidence, { recursive: true })
+const fixtureRoot = join(root, 'app-frame-renderer')
+await mkdir(fixtureRoot, { recursive: true })
+const reactPlugin = react()
+await build({
+  configFile: false,
+  root: desktop,
+  base: './',
+  resolve: {
+    alias: [
+      {
+        find: '@/plugin-api',
+        replacement: join(desktop, 'scripts/app-frame-renderer-fixture-api.ts'),
+      },
+      { find: '@', replacement: join(desktop, 'src/renderer/src') },
+      { find: 'react-dom', replacement: join(desktop, 'node_modules/react-dom') },
+      { find: 'react', replacement: join(desktop, 'node_modules/react') },
+    ],
+    dedupe: ['react', 'react-dom', 'jotai'],
+  },
+  plugins: [reactPlugin],
+  define: { process: JSON.stringify({ env: { NODE_ENV: 'development' } }) },
+  build: {
+    outDir: join(fixtureRoot, 'dist'),
+    emptyOutDir: true,
+    lib: {
+      entry: join(desktop, 'scripts/app-frame-renderer-fixture.tsx'),
+      name: 'HoliAppFrameFixture',
+      formats: ['iife'],
+      fileName: () => 'fixture.js',
+    },
+  },
+})
+await writeFile(
+  join(fixtureRoot, 'index.html'),
+  '<!doctype html><html><head><meta charset="UTF-8"></head><body><div id="root"></div><script src="dist/fixture.js"></script></body></html>',
+)
+await build({
+  configFile: false,
+  root: desktop,
+  build: {
+    ssr: true,
+    target: 'node24',
+    outDir: root,
+    emptyOutDir: false,
+    rollupOptions: {
+      input: join(desktop, 'src/preload/index.ts'),
+      external: ['electron'],
+      output: { format: 'cjs', entryFileNames: 'production-preload.cjs' },
+    },
+  },
+})
 for (const name of [
   'result.json',
   'electron-smoke.log',
@@ -20,6 +72,8 @@ for (const name of [
   'browser-after.png',
   'vault-app-a.png',
   'vault-app-b.png',
+  'app-frame-read-a.png',
+  'app-frame-read-b.png',
 ])
   await rm(join(evidence, name), { force: true })
 let child
@@ -58,6 +112,8 @@ try {
       .join(delimiter),
     HOLI_473_ROOT: root,
     HOLI_473_EVIDENCE: evidence,
+    HOLI_473_RENDERER: join(fixtureRoot, 'index.html'),
+    HOLI_473_PRELOAD: join(root, 'production-preload.cjs'),
   }
   delete env.ELECTRON_RUN_AS_NODE
   child = spawn(electron, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -117,6 +173,14 @@ try {
     'revoked-app-lease-denied-a',
     'leased-real-app-frame-owner-b-resources',
     'actual-vault-app-screenshot-b',
+    'production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-a',
+    'production-app-frame-wrong-source-message-has-no-capability-side-effect',
+    'production-app-frame-old-nonce-after-replacement-has-no-side-effect-or-reply',
+    'production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-b',
+    'production-app-frame-hidden-after-real-capture-rejects-stale-preview',
+    'production-app-frame-fresh-visible-capture-saved-native-preview',
+    'production-app-frame-a-to-b-to-a-invalidates-delayed-real-capture',
+    'production-app-frame-navigation-replacement-cannot-reach-hostbridge',
     'native-svg-replacement-revokes-before-subsequent-capability-use-b',
     'revoked-app-lease-denied-b',
     'production-command-runner-result-a',
@@ -144,6 +208,8 @@ try {
       'browser-after.png',
       'vault-app-a.png',
       'vault-app-b.png',
+      'app-frame-read-a.png',
+      'app-frame-read-b.png',
     ],
     'native smoke screenshot list is incomplete',
   )

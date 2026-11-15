@@ -409,6 +409,8 @@ async function run(): Promise<void> {
           'browser-after.png',
           'vault-app-a.png',
           'vault-app-b.png',
+          'app-frame-read-a.png',
+          'app-frame-read-b.png',
         ],
       },
       null,
