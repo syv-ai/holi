@@ -8,6 +8,8 @@
 import type { AnyRouter } from '@trpc/server'
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from 'electron'
 import { isDockIconPng } from './dock-icon'
+import { unauthorizedApplicationSender } from './application-sender'
+import type { FlushChannel } from './flush'
 import { basename, dirname, join } from 'node:path'
 import { vaultRelPath } from '@holi/shared'
 import { callProcedure, toEnvelope, type TrpcEnvelope, type TrpcOp } from './trpc-call'
@@ -25,16 +27,12 @@ export function registerIpc(deps: {
   router: AnyRouter
   /** A vault's clone on disk, or null when it is not known. */
   rootFor: (remote: string) => Promise<string | null>
-  /** Narrow guard for the only trust-changing routes. */
-  trustedMdxSender?: (event: Electron.IpcMainInvokeEvent) => boolean
+  /** Required authorization for every inbound privileged IPC operation. */
+  authorizeSender: (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) => boolean
 }): void {
   ipcMain.handle('holi:trpc', (event, op: TrpcOp): Promise<TrpcEnvelope> => {
-    if (
-      typeof op?.path === 'string' &&
-      op.path.startsWith('mdxTrust.') &&
-      (!deps.trustedMdxSender || !deps.trustedMdxSender(event))
-    ) {
-      return toEnvelope(Promise.reject(new Error('MDX trust is available only to Holi')))
+    if (!deps.authorizeSender(event)) {
+      return toEnvelope(Promise.reject(unauthorizedApplicationSender()))
     }
     return toEnvelope(callProcedure(deps.router, op))
   })
@@ -42,7 +40,8 @@ export function registerIpc(deps: {
   // The SYSTEM browser, not a window: the sign-in page has to reuse the user's
   // existing GitHub session, and no credential should ever enter the app's web
   // context.
-  ipcMain.handle('holi:openExternal', async (_event, url: unknown) => {
+  ipcMain.handle('holi:openExternal', async (event, url: unknown) => {
+    if (!deps.authorizeSender(event)) throw unauthorizedApplicationSender()
     // A web page or a mail draft only, whatever the renderer sends: a `file:`
     // or another app's scheme would run something rather than show it.
     if (typeof url !== 'string' || !/^(https?:\/\/|mailto:)/i.test(url)) return
@@ -52,7 +51,8 @@ export function registerIpc(deps: {
   // The system FILE manager. `openExternal` is URL-only and will not reveal a
   // path on disk. It *reveals* (opens the parent with the item selected) so the
   // user sees the vault in place.
-  ipcMain.handle('holi:openPath', (_event, path: string) => {
+  ipcMain.handle('holi:openPath', (event, path: string) => {
+    if (!deps.authorizeSender(event)) throw unauthorizedApplicationSender()
     shell.showItemInFolder(path)
   })
 
@@ -73,7 +73,8 @@ export function registerIpc(deps: {
   // system's: the glass behind the window (macOS vibrancy, `index.ts`) is
   // drawn light or dark from it, as are native menus and scrollbars. The
   // scheme, never the resolved mode, so "system" keeps following the OS.
-  ipcMain.on('holi:appearance', (_event, scheme: unknown) => {
+  ipcMain.on('holi:appearance', (event, scheme: unknown) => {
+    if (!deps.authorizeSender(event)) return
     if (scheme === 'light' || scheme === 'dark' || scheme === 'system') {
       nativeTheme.themeSource = scheme
     }
@@ -82,13 +83,15 @@ export function registerIpc(deps: {
   // The dock's icon follows the theme: the window draws it in the theme's
   // colours (`renderer/src/lib/app-icon.ts`) and sends it as a PNG. Only a PNG
   // data URL of a sane size is taken; anything else leaves the icon as it is.
-  ipcMain.on('holi:dockIcon', (_event, pngDataUrl: unknown) => {
+  ipcMain.on('holi:dockIcon', (event, pngDataUrl: unknown) => {
+    if (!deps.authorizeSender(event)) return
     if (!app.dock || !isDockIconPng(pngDataUrl)) return
     const image = nativeImage.createFromDataURL(pngDataUrl)
     if (!image.isEmpty()) app.dock.setIcon(image)
   })
 
   ipcMain.on('holi:startDrag', (event, paths: string[]) => {
+    if (!deps.authorizeSender(event)) return
     if (paths.length === 0) return
     event.sender.startDrag({ files: paths, file: paths[0]!, icon: DRAG_ICON })
   })
@@ -106,6 +109,7 @@ export function registerIpc(deps: {
       event,
       input: { remote: string; path: string; extension: string; filterName: string },
     ): Promise<string | null> => {
+      if (!deps.authorizeSender(event)) throw unauthorizedApplicationSender()
       if (!/^[a-z0-9]+$/i.test(input.extension)) {
         throw new Error(`not a file extension: ${input.extension}`)
       }
@@ -135,10 +139,64 @@ export function registerIpc(deps: {
    * has no single name to type.
    */
   ipcMain.handle('holi:chooseFolder', async (event): Promise<string | null> => {
+    if (!deps.authorizeSender(event)) throw unauthorizedApplicationSender()
     const win = BrowserWindow.fromWebContents(event.sender)
     const opts = { properties: ['openDirectory' as const, 'createDirectory' as const] }
     const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     // `filePaths[0]` is `string | undefined` under noUncheckedIndexedAccess.
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
+}
+
+/** Electron adapter for the plugin event module's inbound subscription. */
+export function listenForPluginMessages(
+  channel: string,
+  handler: (message: unknown) => void,
+  authorizeSender: (event: Electron.IpcMainEvent) => boolean,
+): () => void {
+  const listener = (event: Electron.IpcMainEvent, message: unknown) => {
+    if (authorizeSender(event)) handler(message)
+  }
+  ipcMain.on(channel, listener)
+  return () => void ipcMain.removeListener(channel, listener)
+}
+
+/**
+ * `requestFlush`'s channel, over the one window.
+ * A missing or destroyed window has no buffer to lose and answers immediately.
+ */
+export function createRendererFlushChannel(
+  win: BrowserWindow | null,
+  authorizeSender: (event: Electron.IpcMainEvent) => boolean,
+): FlushChannel {
+  const target = win !== null && !win.isDestroyed() ? win : null
+  const contents = target?.webContents ?? null
+  let requestId: string | undefined
+  let done: ((id: string, error?: string) => void) | undefined
+  return {
+    onDone(cb) {
+      done = cb
+      if (target === null)
+        return () => {
+          done = undefined
+        }
+      const listener = (event: Electron.IpcMainEvent, id: string, error?: string) => {
+        if (!authorizeSender(event) || event.sender !== contents) return
+        if (typeof id !== 'string' || (error !== undefined && typeof error !== 'string')) return
+        cb(id, error)
+      }
+      ipcMain.on('vault:flush-done', listener)
+      return () => ipcMain.removeListener('vault:flush-done', listener)
+    },
+    send(id) {
+      requestId = id
+      if (target === null) queueMicrotask(() => done?.(id))
+      else target.webContents.send('vault:flush', { id })
+    },
+    cancel(id = requestId) {
+      if (target !== null && !target.isDestroyed() && id !== undefined) {
+        target.webContents.send('vault:flush-cancel', { id })
+      }
+    },
+  }
 }

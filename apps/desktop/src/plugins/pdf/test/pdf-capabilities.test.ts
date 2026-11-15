@@ -140,7 +140,12 @@ describe('pdf capabilities', () => {
           '![Photo][photo]',
           '**Centered image caption** with `#raw-typst malicious`',
         ) +
-        '\n\n[photo]: image.png\n',
+        '\n\n' +
+        writeMarkdownCaptionEnvelope(
+          '| Link | Image |\n| --- | --- |\n| [destination][dest] | ![Photo][photo] |',
+          'Reference table caption.',
+        ) +
+        '\n\n[photo]: image.png\n[dest]: https://example.com/\n  "Reference destination"\n',
     })
     await writeFile(
       join(root, 'image.png'),

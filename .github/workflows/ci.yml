@@ -324,12 +324,17 @@ jobs:
       - name: Run isolated native browser display smoke
         run: pnpm --filter @holi/desktop exec node scripts/run-browser-display-smoke.mjs "$RUNNER_TEMP/holi-472-evidence"
 
+      - name: Run isolated native IPC sender smoke
+        run: pnpm --filter @holi/desktop exec node scripts/run-ipc-sender-native-smoke.mjs "$RUNNER_TEMP/holi-506-evidence"
+
       - name: Upload native display evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: browser-display-isolation-evidence
-          path: ${{ runner.temp }}/holi-472-evidence/
+          path: |
+            ${{ runner.temp }}/holi-472-evidence/
+            ${{ runner.temp }}/holi-506-evidence/
           if-no-files-found: error
 
   test:
