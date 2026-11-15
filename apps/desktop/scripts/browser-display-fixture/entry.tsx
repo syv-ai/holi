@@ -12,10 +12,12 @@ window.qaPlatform.onEvent((event) => browserEvents[event.name]?.(event, store))
 function Fixture() {
   const [visible, setVisible] = useState(true)
   const [overlay, setOverlay] = useState(false)
+  const [otherPane, setOtherPane] = useState(false)
   window.qa = {
     setVim: (value) => store.set(vimCodeEditingAtom, value),
     setVisible,
     setOverlay,
+    setOtherPane,
     setRemote: (value) => store.set(activeRemoteAtom, value),
     state: () => ({
       modes: store.get(vimModesAtom),
@@ -26,7 +28,16 @@ function Fixture() {
   return (
     <Provider store={store}>
       <TooltipProvider>
-        <BrowserSurface id="same" visible={visible && !overlay} />
+        <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <BrowserSurface id="same" visible={visible && !overlay} />
+          </div>
+          {otherPane ? (
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <BrowserSurface id="other" visible={visible && !overlay} />
+            </div>
+          ) : null}
+        </div>
         {overlay ? (
           <div
             role="dialog"
