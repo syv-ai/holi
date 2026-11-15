@@ -174,6 +174,9 @@ try {
         ]
       : []),
     'native-h-l-w-b-e-0-caret-dollar-and-i-a',
+    'native-shift-selection-preserved-in-vim-normal-mode',
+    'native-same-document-navigation-rearms-insert-mode',
+    'native-aborted-navigation-recovers-surviving-document-configuration',
     'native-grapheme-safe-horizontal-motion',
     'native-j-k-vertical-column',
     'unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough',

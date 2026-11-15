@@ -342,7 +342,8 @@
 
   // Native textarea/input editing stays in this isolated world. The host
   // configures one specific document and revisions only move forward.
-  const vimNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  const newVimNonce = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  let vimNonce = newVimNonce()
   let vimEnabled = false
   let vimMode = 'insert'
   let vimRevision = 0
@@ -455,6 +456,11 @@
       }
       return
     }
+    if (
+      event.shiftKey &&
+      ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
+    )
+      return
     const value = target.value
     const at = target.selectionStart ?? 0
     const end = target.selectionEnd ?? at
@@ -549,6 +555,14 @@
   document.addEventListener('keydown', onVimKey, true)
   const vim = {
     documentNonce() {
+      return vimNonce
+    },
+    rearm() {
+      vimNonce = newVimNonce()
+      vimEnabled = false
+      vimMode = 'insert'
+      vimField = null
+      verticalColumn = null
       return vimNonce
     },
     configure(enabled, revision, nonce) {
