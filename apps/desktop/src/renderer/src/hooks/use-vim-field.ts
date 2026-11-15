@@ -138,7 +138,7 @@ export function useVimField(identity?: string | number, controlledValue?: string
         ctrlKey: nativeEvent.ctrlKey,
         altKey: nativeEvent.altKey,
         preventDefault: () => nativeEvent.preventDefault(),
-        stopPropagation: () => nativeEvent.stopPropagation(),
+        stopPropagation: () => nativeEvent.stopImmediatePropagation(),
       } as unknown as KeyboardEvent<NativeField>
       onKeyDown(synthetic)
     }
