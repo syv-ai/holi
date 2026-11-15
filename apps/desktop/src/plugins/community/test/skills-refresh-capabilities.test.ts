@@ -89,8 +89,10 @@ async function fixture(path = '') {
     remote: 'owner/vault',
     bundle: null,
   } as unknown as CapabilityContext
+  let live = true
   const table = communityCapabilities({
     store,
+    live: () => live,
     consent,
     supervisor: createSupervisor({ firstPort: 45600, onState() {}, frameOrigin: () => () => {} }),
     git: { url: () => origin, token: () => null },
@@ -118,6 +120,9 @@ async function fixture(path = '') {
     origin,
     store,
     consent,
+    setLive(value: boolean) {
+      live = value
+    },
     call,
   }
 }
@@ -253,6 +258,71 @@ describe('pinned refresh authorization', () => {
     sh(f.releaseDir, 'config', 'remote.origin.url', join(f.root, 'wrong-origin'))
     await expect(f.call()).rejects.toThrow(/checkout does not match its pin/)
   })
+
+  it('does not publish when the attachment closes during an authorization read', async () => {
+    const f = await fixture()
+    const has = f.consent.has.bind(f.consent)
+    let release!: () => void
+    let entered!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let first = true
+    f.consent.has = async (...args) => {
+      if (first) {
+        first = false
+        entered()
+        await held
+      }
+      return has(...args)
+    }
+    const pending = f.call()
+    await started
+    f.setLive(false)
+    release()
+    await expect(pending).rejects.toThrow(/attachment is closed/)
+    await expect(readFile(join(f.vault, '.claude/skills/demo/SKILL.md'))).rejects.toThrow()
+  })
+
+  it.each(['pin', 'settings', 'consent'])(
+    'refuses a %s change between preflight and publication',
+    async (changed) => {
+      const f = await fixture()
+      const has = f.consent.has.bind(f.consent)
+      let release!: () => void
+      let entered!: () => void
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      let first = true
+      f.consent.has = async (...args) => {
+        if (first) {
+          first = false
+          entered()
+          await held
+        }
+        return has(...args)
+      }
+      const pending = f.call()
+      await started
+      if (changed === 'pin') {
+        await writeFile(join(f.vault, pluginPinPath('demo')), JSON.stringify({ id: 'demo' }))
+      } else if (changed === 'settings') {
+        await writeFile(join(f.vault, '.holi/settings/plugins.yaml'), 'plugins:\n  demo: false\n')
+      } else {
+        await f.consent.forget('demo')
+      }
+      release()
+      await expect(pending).rejects.toThrow(/pin|disabled|consented|authorization changed/)
+      await expect(readFile(join(f.vault, '.claude/skills/demo/SKILL.md'))).rejects.toThrow()
+    },
+  )
 
   it('rejects dev, unapproved, unready, disabled, and unsafe pin states', async () => {
     const f = await fixture()
