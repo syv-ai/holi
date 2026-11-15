@@ -526,15 +526,18 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     await frameWindow.webContents.executeJavaScript(
       `new Promise((resolve,reject)=>{const end=Date.now()+8000;const poll=()=>{if((document.querySelector('#bridge-read-result')?.textContent??'').includes('owned-a'))resolve(true);else if(Date.now()>end)reject(new Error('returned vault A bridge result did not settle'));else setTimeout(poll,25)};poll()})`,
     )
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // The old note stays in the host during reload. Readiness requires the
+    // new document's nonce, not identical note text or an assigned frame src.
+    const beforeReplacementNonce =
+      await frameWindow.webContents.executeJavaScript(`window.fixtureNonces?.a`)
+    assert.equal(typeof beforeReplacementNonce, 'string')
     const beforeReplacementReads = docsReadCount
     await frameWindow.webContents.executeJavaScript(
       `(()=>{const message=JSON.stringify({id:'replacement-native',method:'docs.read',params:{path:'note.md'},nonce:window.fixtureNonces?.a});const html='<script>addEventListener("message",event=>{if(event.data?.id==="replacement-native")parent.postMessage({kind:"replacement-result",value:event.data.value},"*")});parent.postMessage('+message+',"*")<\\/script>';document.querySelector('iframe').src='data:text/html,'+encodeURIComponent(html)})()`,
     )
     await frameWindow.webContents.executeJavaScript(
-      `new Promise((resolve,reject)=>{const end=Date.now()+8000;const poll=()=>{const frame=document.querySelector('iframe');if(frame?.src.startsWith('holi-app:')&&(document.querySelector('#bridge-read-result')?.textContent??'').includes('owned-a'))resolve(true);else if(Date.now()>end)reject(new Error('AppFrame did not recover after replacement'));else setTimeout(poll,25)};poll()})`,
+      `new Promise((resolve,reject)=>{const end=Date.now()+8000;const poll=()=>{const frame=document.querySelector('iframe');const nonce=window.fixtureNonces?.a;if(frame?.src.startsWith('holi-app:')&&typeof nonce==='string'&&nonce!==${JSON.stringify(beforeReplacementNonce)}&&(document.querySelector('#bridge-read-result')?.textContent??'').includes('owned-a'))resolve(true);else if(Date.now()>end)reject(new Error('AppFrame did not recover after replacement'));else setTimeout(poll,25)};poll()})`,
     )
-    await new Promise((resolve) => setTimeout(resolve, 300))
     assert.equal(
       docsReadCount - beforeReplacementReads,
       1,
