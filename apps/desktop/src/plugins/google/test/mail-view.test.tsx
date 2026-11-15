@@ -2765,26 +2765,38 @@ test('hides a persisted annotation when Gmail reports the thread unstarred', asy
 })
 
 test('refresh and Gmail star writes invalidate the visible thread marker', async () => {
-  threadMock
-    .mockResolvedValueOnce(page([summary()]))
-    .mockResolvedValue(page([summary({ starred: true })]))
-  mailMarkersMock
-    .mockResolvedValueOnce({ t1: 'red-star' })
-    .mockResolvedValueOnce({ t1: 'blue-question' })
-    .mockResolvedValue({ t1: 'yellow-star' })
+  // Extra page reads must not star the thread before the write happens.
+  let starred = false
+  currentAnnotations = { t1: 'red-star' }
+  threadMock.mockImplementation(async () => page([summary({ starred })]))
+  mailMarkersMock.mockImplementation(async () => ({ ...currentAnnotations }))
+  const writeMarker = setMailMarkerMock.getMockImplementation()!
+  setMailMarkerMock.mockImplementation((raw) => {
+    starred = (raw as { marker: string | null }).marker !== null
+    return writeMarker(raw)
+  })
   const user = userEvent.setup()
   render(<MailView />)
 
   await screen.findByRole('button', { name: /Q2 budget/i })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
   expect(screen.queryByLabelText('Red star')).toBeNull()
   await user.click(screen.getByRole('button', { name: /Q2 budget/i }))
   await user.click(await screen.findByRole('button', { name: 'Star this thread' }))
-  expect((await screen.findAllByLabelText('Blue question mark')).length).toBeGreaterThan(0)
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 't1', marker: 'yellow-star' }),
+    ),
+  )
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
 
+  const readsBeforeRefresh = mailMarkersMock.mock.calls.length
+  mailMarkersMock.mockResolvedValueOnce({ t1: 'blue-question' })
   await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+  await waitFor(() => expect(mailMarkersMock.mock.calls.length).toBeGreaterThan(readsBeforeRefresh))
   // An older annotation refresh cannot undo the newest explicit marker intent.
-  expect((await screen.findAllByLabelText('Blue question mark')).length).toBeGreaterThan(0)
-  expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3)
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+  expect(screen.queryByLabelText('Blue question mark')).toBeNull()
 })
 
 test('reader Retry settles a failed marker reconciliation', async () => {
