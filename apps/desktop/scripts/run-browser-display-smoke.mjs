@@ -179,6 +179,7 @@ try {
     'production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-b',
     'production-app-frame-hidden-after-real-capture-rejects-stale-preview',
     'production-app-frame-fresh-visible-capture-saved-native-preview',
+    'production-app-frame-overlay-without-layout-event-rejects-stale-capture-and-recovers',
     'production-app-frame-a-to-b-to-a-invalidates-delayed-real-capture',
     'production-app-frame-navigation-replacement-cannot-reach-hostbridge',
     'native-child-dom-removal-revokes-lease-and-suppresses-queued-bridge-reply',

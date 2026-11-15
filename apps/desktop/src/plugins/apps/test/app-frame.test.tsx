@@ -17,6 +17,7 @@ import { activeRemoteAtom, snapshotAtom } from '@/plugin-api'
 import { setTestColorScheme } from '@/test/vault-app-shell'
 import { AppFrame } from '../renderer/app-frame'
 import { appCodeGenerationsAtom, appOpensAtom } from '../renderer/apps'
+import { appSlashCommandsAtom, followAppCommands } from '../renderer/commands'
 import { appsRenderer } from '../renderer'
 import { createAppCode } from '../main/code'
 import { createAppGrants } from '../main/grants'
@@ -69,7 +70,8 @@ vi.mock('../renderer/apps-cap', () => ({
     frameLease: (...args: unknown[]) => frameLeaseMock(...args),
     frameLeaseValid: () => frameLeaseValidMock(),
     releaseFrameLease: (...args: unknown[]) => releaseLeaseMock(...args),
-    log: () => Promise.resolve(true),
+    log: (...args: unknown[]) => logMock(...args),
+    commands: (...args: unknown[]) => commandsMock(...args),
   },
 }))
 
@@ -84,6 +86,10 @@ const status = () => ({
 const grantsMock = vi.fn((..._args: unknown[]) => Promise.resolve(status()))
 const grantMock = vi.fn((..._args: unknown[]) => Promise.resolve(true))
 const captureMock = vi.fn((..._args: unknown[]) => Promise.resolve({ saved: true }))
+const logMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => Promise.resolve(true)))
+const commandsMock = vi.hoisted(() =>
+  vi.fn((..._args: unknown[]) => Promise.resolve([{ bundle: 'Team/Retro.app', name: 'format' }])),
+)
 
 /** The tabs the tombstone's button closed, as `[surface, id]`. */
 const closed = vi.hoisted(() => [] as [string, string][])
@@ -126,6 +132,8 @@ beforeEach(() => {
   grantsMock.mockReset().mockImplementation(() => Promise.resolve(status()))
   grantMock.mockReset().mockResolvedValue(true)
   captureMock.mockReset().mockResolvedValue({ saved: true })
+  logMock.mockReset().mockResolvedValue(true)
+  commandsMock.mockReset().mockResolvedValue([{ bundle: 'Team/Retro.app', name: 'format' }])
   setTestColorScheme('dark')
   store.set(appOpensAtom, {})
   store.set(appCodeGenerationsAtom, {})
@@ -549,6 +557,57 @@ test('a refused grant rechecks the changed code instead of executing it', async 
   expect(grantsMock).toHaveBeenCalledTimes(2)
 })
 
+test('command timeout rejects before logging, ignores late success, and releases after logging', async () => {
+  const stop = followAppCommands(REMOTE, store)
+  await waitFor(() => expect(store.get(appSlashCommandsAtom)).toHaveLength(1))
+  const pendingLog = deferred<boolean>()
+  logMock.mockReturnValueOnce(pendingLog.promise)
+  vi.useFakeTimers()
+  const run = store
+    .get(appSlashCommandsAtom)[0]!
+    .run({ text: 'source', line: 'source', path: 'note.md' })
+  const rejected = expect(run).rejects.toThrow('took longer than 10 s')
+  await act(async () => {})
+  const frame = document.querySelector<HTMLIFrameElement>('iframe')!
+  const post = vi.spyOn(frame.contentWindow!, 'postMessage')
+  fromFrame({ ready: true })
+  await act(async () => {})
+  const pendingAuthorization = deferred<boolean>()
+  frameLeaseValidMock.mockReturnValueOnce(pendingAuthorization.promise)
+  fromFrame({ id: 'awaiting-auth', method: 'docs.read', params: { path: 'a.md' } })
+  await act(async () => {})
+  post.mockClear()
+  await act(async () => vi.advanceTimersByTime(10_000))
+  await rejected
+  expect(logMock).toHaveBeenCalledWith(
+    REMOTE,
+    expect.objectContaining({ text: '/format: took longer than 10 s', token: FRAME_TOKEN }),
+  )
+  expect(frame.isConnected).toBe(true)
+  const callCount = bridgeMock.mock.calls.length
+  await act(async () => pendingAuthorization.resolve(true))
+  fromFrame({ command: { ok: true, value: { replace: 'late' } } })
+  await act(async () => {})
+  expect(bridgeMock).toHaveBeenCalledTimes(callCount)
+  await act(async () => pendingLog.resolve(true))
+  expect(frame.isConnected).toBe(false)
+  expect(releaseLeaseMock).toHaveBeenCalledWith(
+    REMOTE,
+    expect.objectContaining({ token: FRAME_TOKEN }),
+  )
+  vi.useRealTimers()
+  const freshRun = store
+    .get(appSlashCommandsAtom)[0]!
+    .run({ text: 'fresh', line: 'fresh', path: 'note.md' })
+  await waitFor(() => expect(frameOf()).not.toBeNull())
+  fromFrame({ ready: true })
+  await act(async () => {})
+  fromFrame({ command: { ok: true, value: { replace: 'fresh result' } } })
+  await expect(freshRun).resolves.toEqual({ replace: 'fresh result' })
+  expect(frameOf()).toBeNull()
+  stop()
+})
+
 test('hidden previews are cancelled and resume only after display', async () => {
   const view = render(<AppFrame path="Team/Retro.app" />)
   await waitFor(() => expect(runningFrame()).not.toBeNull())
@@ -577,6 +636,53 @@ test('hidden previews are cancelled and resume only after display', async () => 
   await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
   expect(captureMock).toHaveBeenCalledTimes(1)
 })
+
+test.each([false, true])(
+  'preview placement monitoring stops after capture settles (saved=%s)',
+  async (saved) => {
+    withApps('Team/Retro.app')
+    const view = render(<AppFrame path="Team/Retro.app" />)
+    await waitFor(() => expect(runningFrame()).not.toBeNull())
+    const frame = runningFrame()!
+    vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 400,
+      bottom: 400,
+      width: 400,
+      height: 400,
+    } as DOMRect)
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => frame })
+    const pending = deferred<{ saved: boolean }>()
+    captureMock.mockReturnValueOnce(pending.promise)
+    vi.useFakeTimers()
+    fireEvent.load(frame)
+    await act(async () => vi.advanceTimersByTime(PREVIEW_SETTLE_MS + 100))
+    expect(captureMock).toHaveBeenCalledTimes(1)
+    const placementEvents = fakeHoli.pluginSent as {
+      id: string
+      event: { name: string; payload: { rect: unknown } }
+    }[]
+    const invalidations = placementEvents.filter(
+      (sent) =>
+        sent.id === 'apps' &&
+        sent.event.name === 'preview-placement' &&
+        sent.event.payload.rect === null,
+    ).length
+    await act(async () => pending.resolve({ saved }))
+    document.body.append(document.createElement('div'))
+    await act(async () => Promise.resolve())
+    expect(
+      placementEvents.filter(
+        (sent) =>
+          sent.id === 'apps' &&
+          sent.event.name === 'preview-placement' &&
+          sent.event.payload.rect === null,
+      ),
+    ).toHaveLength(invalidations)
+    view.unmount()
+  },
+)
 
 test('a pending capture is invalidated when its same-vault frame moves', async () => {
   withApps('Team/Retro.app')

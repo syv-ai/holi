@@ -77,9 +77,14 @@ function runInFrame(
     let frame: HTMLIFrameElement | null = null
     let lease: { token: string; nonce: string } | null = null
     let settled = false
+    let cleaned = false
     let handedInput = false
+    let cleanupFallback: ReturnType<typeof setTimeout> | null = null
     const done = (): void => {
+      if (cleaned) return
+      cleaned = true
       clearTimeout(timer)
+      if (cleanupFallback !== null) clearTimeout(cleanupFallback)
       inFlight.delete(cancel)
       window.removeEventListener('message', onMessage)
       frame?.remove()
@@ -95,15 +100,18 @@ function runInFrame(
       if (error) reject(error)
       else resolve(value)
     }
-    const cancel = (): void => finish(undefined, new Error('the vault was left'))
-    const timer = setTimeout(() => {
-      const error = new Error(`took longer than ${COMMAND_TIMEOUT_MS / 1000} s`)
-      if (lease === null || settled || !isCurrent()) {
-        finish(undefined, error)
+    const failWithLog = (error: Error): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      window.removeEventListener('message', onMessage)
+      reject(error)
+      const logLease = lease
+      if (logLease === null || !isCurrent()) {
+        done()
         return
       }
-      const logLease = lease
-      finish(undefined, error)
+      cleanupFallback = setTimeout(done, 1_000)
       void appsCap
         .log(remote, {
           bundle,
@@ -113,6 +121,19 @@ function runInFrame(
           nonce: logLease.nonce,
         })
         .catch(() => {})
+        .finally(done)
+    }
+    const cancel = (): void => {
+      if (settled) done()
+      else finish(undefined, new Error('the vault was left'))
+    }
+    const timer = setTimeout(() => {
+      const error = new Error(`took longer than ${COMMAND_TIMEOUT_MS / 1000} s`)
+      if (lease === null || settled || !isCurrent()) {
+        finish(undefined, error)
+        return
+      }
+      failWithLog(error)
     }, COMMAND_TIMEOUT_MS)
     const onMessage = (event: MessageEvent): void => {
       if (frame === null || lease === null || event.source !== frame.contentWindow || !isCurrent())
@@ -140,16 +161,7 @@ function runInFrame(
                 finish(undefined, error)
                 return
               }
-              void appsCap
-                .log(remote, {
-                  bundle,
-                  level: 'error',
-                  text: `/${command}: ${error.message}`,
-                  token: lease.token,
-                  nonce: lease.nonce,
-                })
-                .catch(() => {})
-                .finally(() => finish(undefined, error))
+              failWithLog(error)
               return
             }
             const action = commandActionOf(outcome.value)
@@ -159,16 +171,7 @@ function runInFrame(
                 finish(undefined, error)
                 return
               }
-              void appsCap
-                .log(remote, {
-                  bundle,
-                  level: 'error',
-                  text: `/${command}: ${error.message}`,
-                  token: lease.token,
-                  nonce: lease.nonce,
-                })
-                .catch(() => {})
-                .finally(() => finish(undefined, error))
+              failWithLog(error)
               return
             }
             finish(action)
