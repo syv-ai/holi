@@ -80,7 +80,8 @@ export function useMermaidLabelEditing({
     // React may replace the SVG without changing its source node. The anchor is
     // only a focus target; document mapping and node identity own validation.
     try {
-      return editor.state.doc.nodeAt(current.position) === current.node
+      const liveNode = editor.state.doc.nodeAt(current.position)
+      return liveNode === current.node && liveNode.textContent === current.source
         ? current.position
         : undefined
     } catch {

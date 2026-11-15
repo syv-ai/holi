@@ -171,6 +171,42 @@ describe('Mermaid fences in a document editor', () => {
     expect(e.getMarkdown().trim()).toBe('```js\nconst answer = 42\n```')
   })
 
+  it('rejects a pending drawing after a same-text nested figure replacement', async () => {
+    const pending: Array<(value: { svg: string }) => void> = []
+    renderMermaid.mockImplementation(() => new Promise((resolve) => pending.push(resolve)))
+    const e = makeEditor(
+      '<!-- holi:figure -->\n\n~~~mermaid\nflowchart LR\n~~~\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->',
+    )
+    await waitFor(() => expect(renderMermaid).toHaveBeenCalledOnce())
+    const figure = e.state.doc.firstChild!
+    act(() =>
+      e.view.dispatch(
+        e.state.tr.replaceWith(0, figure.nodeSize, e.schema.nodeFromJSON(figure.toJSON())),
+      ),
+    )
+    await waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(2))
+    await act(async () => pending[0]!({ svg: '<svg><text>obsolete occurrence</text></svg>' }))
+    expect(e.view.dom.textContent).not.toContain('obsolete occurrence')
+    await act(async () => pending[1]!({ svg: '<svg><text>current occurrence</text></svg>' }))
+    await waitFor(() => expect(e.view.dom.textContent).toContain('current occurrence'))
+  })
+
+  it('rejects a pending drawing across a batched lock and unlock', async () => {
+    const pending: Array<(value: { svg: string }) => void> = []
+    renderMermaid.mockImplementation(() => new Promise((resolve) => pending.push(resolve)))
+    const e = makeEditor('```mermaid\nflowchart LR\n```')
+    await waitFor(() => expect(renderMermaid).toHaveBeenCalledOnce())
+    act(() => {
+      e.setEditable(false)
+      e.setEditable(true)
+    })
+    await waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(2))
+    await act(async () => pending[0]!({ svg: '<svg><text>locked drawing</text></svg>' }))
+    expect(e.view.dom.textContent).not.toContain('locked drawing')
+    await act(async () => pending[1]!({ svg: '<svg><text>unlocked drawing</text></svg>' }))
+    await waitFor(() => expect(e.view.dom.textContent).toContain('unlocked drawing'))
+  })
+
   it('does not insert a late drawing after the source changes', async () => {
     let resolveFirst!: (value: { svg: string }) => void
     renderMermaid.mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))

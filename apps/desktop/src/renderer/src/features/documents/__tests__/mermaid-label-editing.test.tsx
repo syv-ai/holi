@@ -161,6 +161,25 @@ describe('editing labels in the rendered Mermaid drawing', () => {
     expect(e.getMarkdown()).toContain('A **portable** caption. Updated')
     view.unmount()
   })
+  it('invalidates old SVG labels immediately while a changed source redraws', async () => {
+    const { e } = await open()
+    await labelField()
+    let resolve!: (value: ReturnType<typeof drawing>) => void
+    renderDiagram.mockImplementationOnce(() => new Promise((done) => (resolve = done)))
+    const position = blockPosition(e)
+    const node = e.state.doc.nodeAt(position)!
+    const start = position + 1 + node.textContent.indexOf('Alpha')
+    act(() => e.view.dispatch(e.state.tr.insertText('Gamma', start, start + 'Alpha'.length)))
+    await waitFor(() => expect(renderDiagram).toHaveBeenCalledTimes(2))
+    expect(e.getMarkdown()).toContain('A[Gamma]')
+    expect(screen.queryByRole('textbox', { name: 'Alpha' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Edit labels' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Alpha' })).not.toBeInTheDocument()
+    await act(async () => resolve(drawing('flowchart LR\nA[Gamma] --> B[Beta]')))
+    await screen.findByRole('button', { name: 'Edit labels' })
+    expect(e.getMarkdown()).toContain('A[Gamma]')
+  })
+
   it('activates the connected SVG label and opens its anchored field', async () => {
     const { e } = await open()
     expect(await labelField()).toHaveValue('Alpha')
