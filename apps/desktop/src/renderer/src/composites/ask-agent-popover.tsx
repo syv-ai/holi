@@ -3,6 +3,8 @@ import type { AskResult, AskTargets } from '@/lib/ask-agent'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { InputGroup, InputGroupTextarea } from '@/components/ui/input-group'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /** What a new session is called in the picker, as in the note popover. */
 const NEW_SESSION = 'New session'
@@ -38,6 +40,7 @@ export function AskAgentPopover({
   )
   const open = anchor !== null
   const [text, setText] = useState('')
+  const vim = useVimField('ask-agent', text)
   const [notice, setNotice] = useState('')
   const [target, setTarget] = useState<string | 'new'>('new')
   const sending = useRef(false)
@@ -112,10 +115,13 @@ export function AskAgentPopover({
             rows={1}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            {...vim.vimFieldProps}
             placeholder="Ask the agent, ⌘↵ to send"
             aria-label="Instructions for the agent, Command Enter to send"
             className="max-h-40 min-h-0"
             onKeyDown={(e) => {
+              vim.vimFieldProps.onKeyDown?.(e)
+              if (e.defaultPrevented || e.nativeEvent.isComposing) return
               // ⌘/Ctrl + Enter, so a plain Enter is still a newline.
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault()
@@ -124,6 +130,7 @@ export function AskAgentPopover({
             }}
           />
         </InputGroup>
+        <VimFieldMode mode={vim.vimFieldMode} />
         {notice !== '' && (
           <p role="alert" className="text-xs text-destructive">
             {notice}

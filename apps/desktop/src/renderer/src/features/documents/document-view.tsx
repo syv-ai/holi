@@ -59,6 +59,8 @@ import {
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { cn } from '@/lib/cn'
 import { TaskProperties, useHasTaskProperties } from '@/features/planning/task-properties'
@@ -108,6 +110,36 @@ import {
   useDocumentActivity,
   useEditorActivity,
 } from '@/hooks/use-editor-activity'
+
+function BatchInstructionInput({
+  id,
+  index,
+  value,
+  disabled,
+  onChange,
+}: {
+  id: string
+  index: number
+  value: string
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
+  const vim = useVimField(`rewrite-batch-${id}`, value)
+  return (
+    <div className="min-w-0 flex-1 basis-full sm:max-w-56 sm:basis-auto">
+      <Input
+        aria-label={`Request for target ${index + 1}`}
+        value={value}
+        placeholder="Change this passage…"
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        className="w-full"
+        {...vim.vimFieldProps}
+      />
+      <VimFieldMode mode={vim.vimFieldMode} />
+    </div>
+  )
+}
 
 function isTaskPath(path: string): boolean {
   return /(?:^|\/)task\.[^/]+\.md$/.test(path)
@@ -1003,14 +1035,13 @@ function DocumentEditor({
                       <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
                         <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
                           {item.passage}
-                        </span>
-                        <Input
-                          aria-label={`Request for target ${index + 1}`}
+                        </span>{' '}
+                        <BatchInstructionInput
+                          id={item.id}
+                          index={index}
                           value={item.instruction}
-                          placeholder="Change this passage…"
-                          onChange={(event) => editBatchItem(item.id, event.target.value)}
                           disabled={batchSubmitting}
-                          className="min-w-0 flex-1 basis-full sm:max-w-56 sm:basis-auto"
+                          onChange={(value) => editBatchItem(item.id, value)}
                         />
                         {!item.valid ? (
                           <span role="status" className="text-sm text-muted-foreground">
