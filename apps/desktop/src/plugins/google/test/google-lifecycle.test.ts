@@ -201,18 +201,23 @@ describe('production Google attachments in two explicit vault lifetimes', () => 
     const one = createMailMarkerStore(dir, 'one')
     const two = createMailMarkerStore(dir, 'two')
     await one.set('thread-1', 'red-star')
+    await one.setPreferences({ enabledOrder: ['red-star', 'blue-question'] })
     await two.set('thread-1', 'blue-question')
     const r = await rig()
     await Promise.all([r.enter(A), r.enter(B)])
 
     await r.call(A, 'disconnectVault')
     expect(await one.read(['thread-1'])).toEqual({ 'thread-1': 'red-star' })
+    expect(await one.preferences()).toEqual({ enabledOrder: ['red-star', 'blue-question'] })
 
     await manager.removeAccount('one')
     await vi.waitFor(async () => {
       expect(await createMailMarkerStore(dir, 'one').read(['thread-1'])).toEqual({
         'thread-1': null,
       })
+    })
+    expect(await createMailMarkerStore(dir, 'one').preferences()).toEqual({
+      enabledOrder: ['yellow-star'],
     })
     expect(await two.read(['thread-1'])).toEqual({ 'thread-1': 'blue-question' })
   })

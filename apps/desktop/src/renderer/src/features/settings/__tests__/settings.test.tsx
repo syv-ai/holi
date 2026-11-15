@@ -228,7 +228,7 @@ test('the machine-wide Vim switch works while vault settings load and never writ
   const toggle = screen.getByRole('switch', { name: 'Vim mode' })
   expect(
     screen.getByText(
-      'Use Vim editing in notes, code and plain-text files, and mail message bodies on this machine. In normal mode, f shows labels for available Holi controls. Mail recipients and subjects, other fields, browser pages and terminals are unchanged.',
+      'Use Vim editing in notes, code, plain-text files, mail message bodies and plain browser text fields on this machine. In notes, code, plain-text and mail editors, f in normal mode labels available Holi controls. Mail recipients and subjects, other fields and terminals are unchanged.',
     ),
   ).toBeVisible()
   fireEvent.click(toggle)

@@ -29,6 +29,11 @@ export const BROWSER_SURFACE = 'browser'
 /** Every page main has open in this vault. */
 export const pagesAtom = atom<readonly PageInfo[]>([])
 
+/** Actual editing mode reported by each active browser page. */
+export const vimModesAtom = atom<
+  Record<string, { nonce: string; attachment: string; revision: number; mode: 'insert' | 'normal' }>
+>({})
+
 /** A tab asked for its address bar (⌘L in its page), counted so asking
  *  twice asks twice. */
 export const addressAskAtom = atom<{ id: string; n: number } | null>(null)
@@ -158,6 +163,34 @@ export const browserEvents: Readonly<Record<string, PluginEventHandler>> = {
   },
   key: ({ remote, payload }, store) => {
     if (remote === store.get(activeRemoteAtom)) replayKey(payload)
+  },
+  'vim-mode': ({ remote, payload }, store) => {
+    if (remote !== store.get(activeRemoteAtom) || typeof payload !== 'object' || payload === null)
+      return
+    const value = payload as {
+      id?: unknown
+      nonce?: unknown
+      attachment?: unknown
+      revision?: unknown
+      mode?: unknown
+    }
+    if (
+      typeof value.id !== 'string' ||
+      typeof value.nonce !== 'string' ||
+      typeof value.attachment !== 'string' ||
+      !Number.isSafeInteger(value.revision) ||
+      !['insert', 'normal'].includes(String(value.mode))
+    )
+      return
+    store.set(vimModesAtom, (modes) => ({
+      ...modes,
+      [value.id as string]: {
+        nonce: value.nonce as string,
+        attachment: value.attachment as string,
+        revision: value.revision as number,
+        mode: value.mode as 'insert' | 'normal',
+      },
+    }))
   },
 }
 
@@ -323,5 +356,6 @@ export function browserVault(remote: string, store: PluginStore): () => void {
     offPages()
     offTabs()
     store.set(pagesAtom, [])
+    store.set(vimModesAtom, {})
   }
 }

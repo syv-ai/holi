@@ -96,6 +96,43 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
         run: node scripts/check-commit-msg.mjs --message "$TITLE"
 
+  pi-native-producer:
+    name: Native Pi RPC producer
+    runs-on: ubuntu-24.04
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install repository test dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install isolated exact Pi package without lifecycle scripts
+        env:
+          npm_config_cache: ${{ runner.temp }}/pi-npm-cache
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-install"
+          npm install --prefix "$RUNNER_TEMP/pi-install" --ignore-scripts --no-audit --no-fund '@earendil-works/pi-coding-agent@1.5.2'
+      - name: Run native producer probe
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-native-evidence"
+          node scripts/pi-rpc-producer.mjs "$RUNNER_TEMP/pi-install/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" 1.5.2 > "$RUNNER_TEMP/pi-native-evidence/result.json"
+          node -e 'const r=require(process.env.RUNNER_TEMP+"/pi-native-evidence/result.json"); if(r.outcome!=="pass") { console.error(JSON.stringify(r)); process.exit(1) } if(r.evidence) require("fs").writeFileSync(process.env.RUNNER_TEMP+"/pi-native-evidence/evidence.json",JSON.stringify(r.evidence,null,2))'
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pi-native-producer-evidence
+          path: ${{ runner.temp }}/pi-native-evidence/
+          if-no-files-found: warn
+      - name: Remove temporary Pi installation and npm cache
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/pi-install" "$RUNNER_TEMP/pi-npm-cache"
+
   windows-askpass:
     name: Windows askpass
     runs-on: windows-2025
@@ -287,6 +324,22 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install the production Typst version for native PDF tests
+        run: |
+          VERSION="$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const source = readFileSync('apps/desktop/src/plugins/pdf/main/typst-bin.ts', 'utf8'); const match = source.match(/export const TYPST_VERSION = '([0-9.]+)'/); if (!match) throw new Error('Typst version not found'); console.log(match[1]);")"
+          case "$(uname -m)" in
+            x86_64) TARGET=x86_64-apple-darwin ;;
+            arm64) TARGET=aarch64-apple-darwin ;;
+            *) echo 'Unsupported native Typst runner architecture' >&2; exit 1 ;;
+          esac
+          ROOT="$RUNNER_TEMP/holi-native-typst"
+          mkdir -p "$ROOT"
+          curl --fail --location --retry 3 "https://github.com/typst/typst/releases/download/v$VERSION/typst-$TARGET.tar.xz" --output "$ROOT/typst.tar.xz"
+          tar -xJf "$ROOT/typst.tar.xz" -C "$ROOT"
+          "$ROOT/typst-$TARGET/typst" --version
+          echo "TYPST_BIN=$ROOT/typst-$TARGET/typst" >> "$GITHUB_ENV"
+          echo "TYPST_PACKAGE_CACHE_PATH=$RUNNER_TEMP/holi-typst-packages" >> "$GITHUB_ENV"
 
       # The node suite creates real repositories and commits in them.
       - name: Git identity for the tests

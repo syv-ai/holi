@@ -1,15 +1,23 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { jsonFileStore, type JsonFileStore } from '../../../main/plugin-api'
+import {
+  DEFAULT_MAIL_MARKER_PREFERENCES,
+  isMailMarker,
+  normalizeMailMarkerPreferences,
+  type MailMarkerPreferences,
+  type MailMarker,
+  type MarkerValue,
+} from '../shared/mail-markers'
 
-const MAIL_MARKERS = ['yellow-star', 'red-star', 'blue-question'] as const
-export type MailMarker = (typeof MAIL_MARKERS)[number]
-export type MarkerValue = MailMarker | null
+export { isMailMarker }
+export type { MarkerValue }
 
 type MarkerFile = {
   version: 1
   accountSub: string
   threads: Record<string, MailMarker>
+  preferences?: MailMarkerPreferences
 }
 
 export interface MailMarkerStore {
@@ -18,6 +26,8 @@ export interface MailMarkerStore {
     validate?: () => Promise<void>,
   ): Promise<Record<string, MarkerValue>>
   set(threadId: string, marker: MarkerValue, validate?: () => Promise<void>): Promise<void>
+  preferences(validate?: () => Promise<void>): Promise<MailMarkerPreferences>
+  setPreferences(preferences: MailMarkerPreferences, validate?: () => Promise<void>): Promise<void>
   /** Orders Gmail mutations across data handles for this account and thread. */
   runExclusive<T>(threadId: string, work: () => Promise<T>): Promise<T>
   purge(): Promise<void>
@@ -55,7 +65,11 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
         configurable: true,
       })
     }
-    return { version: 1, accountSub, threads }
+    const preferences =
+      raw.preferences === undefined
+        ? { enabledOrder: [...DEFAULT_MAIL_MARKER_PREFERENCES.enabledOrder] }
+        : normalizeMailMarkerPreferences(raw.preferences)
+    return { version: 1, accountSub, threads, preferences }
   })
 
   let retired = false
@@ -91,6 +105,33 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
         )
       })
     },
+    async preferences(validate) {
+      assertActive()
+      return serialize('store', async () => {
+        assertActive()
+        await validate?.()
+        const file = await store.read()
+        assertActive()
+        await validate?.()
+        return normalizeMailMarkerPreferences(file.preferences ?? DEFAULT_MAIL_MARKER_PREFERENCES)
+      })
+    },
+    async setPreferences(preferences, validate) {
+      const normalized = normalizeMailMarkerPreferences(preferences)
+      assertActive()
+      return serialize('store', async () => {
+        assertActive()
+        await validate?.()
+        await store.update(async (current) => {
+          assertActive()
+          await validate?.()
+          assertActive()
+          return { ...current, preferences: normalized }
+        })
+        assertActive()
+        await validate?.()
+      })
+    },
     async set(threadId, marker, validate) {
       validateThreadId(threadId)
       if (marker !== null && !isMailMarker(marker)) throw new Error('invalid mail marker')
@@ -111,7 +152,7 @@ export function createMailMarkerStore(userData: string, accountSub: string): Mai
               writable: true,
               configurable: true,
             })
-          return { version: 1, accountSub, threads }
+          return { ...current, version: 1, accountSub, threads }
         })
         assertActive()
         await validate?.()
@@ -143,10 +184,6 @@ export function validateBatch(ids: readonly string[]): void {
     if (seen.has(id)) throw new Error('duplicate Gmail thread id')
     seen.add(id)
   }
-}
-
-export function isMailMarker(value: unknown): value is MailMarker {
-  return typeof value === 'string' && (MAIL_MARKERS as readonly string[]).includes(value)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
