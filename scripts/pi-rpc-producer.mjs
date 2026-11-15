@@ -120,7 +120,7 @@ function runBounded(command, args, options, timeout) {
         return true
       } catch (error) {
         if (error?.code === 'ESRCH') return false
-        terminationError = error
+        if (error?.code !== 'EPERM') terminationError = error
         return true
       }
     }

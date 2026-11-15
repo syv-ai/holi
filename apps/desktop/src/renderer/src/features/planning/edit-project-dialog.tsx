@@ -8,6 +8,8 @@ import { PROJECT_STATUSES, type Milestone, type Project, type ProjectStatus } fr
 import { PlusIcon, Trash2Icon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 import {
   Dialog,
   DialogContent,
@@ -103,6 +105,7 @@ export function EditProjectDialog({
   onSave: (project: Project) => Promise<void>
 }) {
   const [draft, setDraft] = useState<Draft>(() => draftOf(project))
+  const vim = useVimField('project-editor')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const presentationFocused = useRef(focused)
@@ -171,6 +174,7 @@ export function EditProjectDialog({
         <div
           className="flex max-h-160 flex-col gap-6 overflow-y-auto"
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return
             // Enter in a one-line field saves, as the form it replaced did.
             if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
               event.preventDefault()
@@ -186,9 +190,11 @@ export function EditProjectDialog({
           </DialogHeader>
 
           <FieldGroup>
+            <VimFieldMode mode={vim.vimFieldMode} />
             <Field>
               <FieldLabel htmlFor="project-name">Name</FieldLabel>
               <Input
+                {...vim.vimFieldProps}
                 id="project-name"
                 value={draft.name}
                 placeholder={fallbackName}
@@ -233,6 +239,7 @@ export function EditProjectDialog({
               <Field>
                 <FieldLabel htmlFor="project-start">Start</FieldLabel>
                 <Input
+                  {...vim.vimFieldProps}
                   id="project-start"
                   type="date"
                   value={draft.start}
@@ -242,6 +249,7 @@ export function EditProjectDialog({
               <Field>
                 <FieldLabel htmlFor="project-due">Due</FieldLabel>
                 <Input
+                  {...vim.vimFieldProps}
                   id="project-due"
                   type="date"
                   value={draft.due}
@@ -252,6 +260,7 @@ export function EditProjectDialog({
             <Field>
               <FieldLabel htmlFor="project-about">About</FieldLabel>
               <Textarea
+                {...vim.vimFieldProps}
                 id="project-about"
                 rows={5}
                 value={draft.about}
@@ -265,12 +274,14 @@ export function EditProjectDialog({
               {draft.milestones.map((milestone, index) => (
                 <div key={index} className="flex items-center gap-2">
                   <Input
+                    {...vim.vimFieldProps}
                     aria-label={`Milestone ${index + 1} name`}
                     value={milestone.name}
                     placeholder="Milestone"
                     onChange={(event) => setMilestone(index, { name: event.target.value })}
                   />
                   <Input
+                    {...vim.vimFieldProps}
                     aria-label={`Milestone ${index + 1} date`}
                     type="date"
                     className="w-40 shrink-0"

@@ -20,6 +20,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { trpc } from '@/lib/trpc'
 import { switchBranchAtom } from '@/state/vaults'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /**
  * The status bar's branch picker (docs/features/status-bar.md), VS Code's:
@@ -139,6 +141,7 @@ function CreateBranch({
   onCreate: (name: string) => void
 }) {
   const [name, setName] = useState(initial)
+  const vim = useVimField('branch-create-name', name)
   const { problem, checking, typed } = useNameProblem(name, taken)
   const ready = typed !== '' && problem === null && !checking && !busy
   return (
@@ -157,7 +160,10 @@ function CreateBranch({
           autoCapitalize="off"
           autoCorrect="off"
           onChange={(e) => setName(e.target.value)}
+          {...vim.vimFieldProps}
           onKeyDown={(e) => {
+            vim.vimFieldProps.onKeyDown?.(e)
+            if (e.defaultPrevented || vim.vimFieldMode === 'normal') return
             if (e.key === 'Enter' && ready) {
               e.preventDefault()
               onCreate(typed)
@@ -168,6 +174,7 @@ function CreateBranch({
             }
           }}
         />
+        <VimFieldMode mode={vim.vimFieldMode} />
         {problem === null ? null : <FieldError>{problem}</FieldError>}
       </Field>
       <div className="flex justify-end gap-2">
@@ -203,6 +210,7 @@ export function BranchPicker({ trigger }: { trigger: ReactNode }) {
   const [query, setQuery] = useState('')
   const [pending, setPending] = useState<string | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
+  const searchVim = useVimField('branch-picker-search', query)
   const { load, retry } = useBranches(open)
   const switchBranch = useSetAtom(switchBranchAtom)
   const busy = pending !== null
@@ -258,91 +266,95 @@ export function BranchPicker({ trigger }: { trigger: ReactNode }) {
             onCreate={(name) => run(name, true)}
           />
         ) : (
-          <Command>
-            <CommandInput
-              placeholder="Switch to a branch"
-              value={query}
-              onValueChange={setQuery}
-              disabled={busy}
-            />
-            {load.kind === 'error' ? (
-              <div className="p-1">
-                <Alert variant="destructive">
-                  <AlertTitle className="text-xs">Could not list the branches</AlertTitle>
-                  <AlertAction>
-                    <Button type="button" variant="outline" size="xs" onClick={retry}>
-                      Retry
-                    </Button>
-                  </AlertAction>
-                </Alert>
-              </div>
-            ) : null}
-            <CommandList>
-              <CommandEmpty>No branch matches. Create it instead.</CommandEmpty>
-              <CommandGroup forceMount>
-                <CommandItem
-                  value="Create branch…"
-                  forceMount
-                  disabled={busy || load.kind !== 'ready'}
-                  onSelect={() => setMode('create')}
-                >
-                  <GitBranchPlusIcon aria-hidden />
-                  {query.trim() === '' ? 'Create branch…' : `Create branch “${query.trim()}”…`}
-                </CommandItem>
-              </CommandGroup>
-              {load.kind === 'loading' ? <LoadingRows /> : null}
-              {list === null ? null : (
-                <>
-                  <CommandSeparator />
-                  <CommandGroup heading="Branches">
-                    {list.local.map((b) => (
-                      <CommandItem
-                        key={`local:${b.name}`}
-                        value={b.name}
-                        data-checked={b.name === list.current}
-                        disabled={busy}
-                        onSelect={() => {
-                          if (b.name === list.current) onOpenChange(false)
-                          else run(b.name, false)
-                        }}
-                      >
-                        {pending === b.name ? (
-                          <Spinner aria-hidden />
-                        ) : (
-                          <GitBranchIcon aria-hidden />
-                        )}
-                        <span className="min-w-0 truncate">{b.name}</span>
-                        {b.upstream === null ? (
-                          <span className="text-muted-foreground ml-auto shrink-0 text-xs">
-                            not published
-                          </span>
-                        ) : null}
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                  {list.remote.length === 0 ? null : (
-                    <CommandGroup heading="Remote branches">
-                      {list.remote.map((b) => (
+          <>
+            <Command>
+              <CommandInput
+                placeholder="Switch to a branch"
+                value={query}
+                onValueChange={setQuery}
+                disabled={busy}
+                {...searchVim.vimFieldProps}
+              />
+              {load.kind === 'error' ? (
+                <div className="p-1">
+                  <Alert variant="destructive">
+                    <AlertTitle className="text-xs">Could not list the branches</AlertTitle>
+                    <AlertAction>
+                      <Button type="button" variant="outline" size="xs" onClick={retry}>
+                        Retry
+                      </Button>
+                    </AlertAction>
+                  </Alert>
+                </div>
+              ) : null}
+              <CommandList>
+                <CommandEmpty>No branch matches. Create it instead.</CommandEmpty>
+                <CommandGroup forceMount>
+                  <CommandItem
+                    value="Create branch…"
+                    forceMount
+                    disabled={busy || load.kind !== 'ready'}
+                    onSelect={() => setMode('create')}
+                  >
+                    <GitBranchPlusIcon aria-hidden />
+                    {query.trim() === '' ? 'Create branch…' : `Create branch “${query.trim()}”…`}
+                  </CommandItem>
+                </CommandGroup>
+                {load.kind === 'loading' ? <LoadingRows /> : null}
+                {list === null ? null : (
+                  <>
+                    <CommandSeparator />
+                    <CommandGroup heading="Branches">
+                      {list.local.map((b) => (
                         <CommandItem
-                          key={`remote:${b.name}`}
-                          value={`origin/${b.name}`}
+                          key={`local:${b.name}`}
+                          value={b.name}
+                          data-checked={b.name === list.current}
                           disabled={busy}
-                          onSelect={() => run(b.name, false)}
+                          onSelect={() => {
+                            if (b.name === list.current) onOpenChange(false)
+                            else run(b.name, false)
+                          }}
                         >
                           {pending === b.name ? (
                             <Spinner aria-hidden />
                           ) : (
                             <GitBranchIcon aria-hidden />
                           )}
-                          <span className="min-w-0 truncate">origin/{b.name}</span>
+                          <span className="min-w-0 truncate">{b.name}</span>
+                          {b.upstream === null ? (
+                            <span className="text-muted-foreground ml-auto shrink-0 text-xs">
+                              not published
+                            </span>
+                          ) : null}
                         </CommandItem>
                       ))}
                     </CommandGroup>
-                  )}
-                </>
-              )}
-            </CommandList>
-          </Command>
+                    {list.remote.length === 0 ? null : (
+                      <CommandGroup heading="Remote branches">
+                        {list.remote.map((b) => (
+                          <CommandItem
+                            key={`remote:${b.name}`}
+                            value={`origin/${b.name}`}
+                            disabled={busy}
+                            onSelect={() => run(b.name, false)}
+                          >
+                            {pending === b.name ? (
+                              <Spinner aria-hidden />
+                            ) : (
+                              <GitBranchIcon aria-hidden />
+                            )}
+                            <span className="min-w-0 truncate">origin/{b.name}</span>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    )}
+                  </>
+                )}
+              </CommandList>
+            </Command>
+            <VimFieldMode mode={searchVim.vimFieldMode} />
+          </>
         )}
       </PopoverContent>
     </Popover>

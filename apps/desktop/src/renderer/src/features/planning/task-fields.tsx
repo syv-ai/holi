@@ -32,6 +32,8 @@ import {
   UsersIcon,
   type LucideIcon,
 } from 'lucide-react'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -431,55 +433,64 @@ function PickList({
   /** A first item meaning "none", like the vault root for a project. */
   emptyOption?: { label: string; value: string }
 }) {
+  const vim = useVimField(`task-field-${placeholder}`, query)
   const typed = query.trim()
   const isNew =
     typed !== '' && !options.some((option) => option.toLowerCase() === typed.toLowerCase())
   return (
-    <Command>
-      <CommandInput placeholder={placeholder} value={query} onValueChange={setQuery} />
-      <CommandList>
-        <CommandEmpty>Type a name to add it.</CommandEmpty>
-        <CommandGroup>
-          {emptyOption !== undefined ? (
-            <CommandItem value={emptyOption.label} onSelect={() => onPick(emptyOption.value)}>
-              {emptyOption.label}
-              <CheckIcon
-                className={cn('ml-auto', !selected.includes(emptyOption.value) && 'opacity-0')}
-                aria-hidden="true"
-              />
-            </CommandItem>
-          ) : null}
-          {options.map((option) => (
-            <CommandItem
-              key={option}
-              value={option}
-              onSelect={() => {
-                onPick(option)
-                if (!multiple) setQuery('')
-              }}
-            >
-              {render(option)}
-              <CheckIcon
-                className={cn('ml-auto', !selected.includes(option) && 'opacity-0')}
-                aria-hidden="true"
-              />
-            </CommandItem>
-          ))}
-          {isNew ? (
-            <CommandItem
-              value={`create ${typed}`}
-              onSelect={() => {
-                onPick(typed)
-                setQuery('')
-              }}
-            >
-              <PlusIcon aria-hidden="true" />
-              Add “{typed}”
-            </CommandItem>
-          ) : null}
-        </CommandGroup>
-      </CommandList>
-    </Command>
+    <>
+      <Command>
+        <CommandInput
+          placeholder={placeholder}
+          value={query}
+          onValueChange={setQuery}
+          {...vim.vimFieldProps}
+        />
+        <CommandList>
+          <CommandEmpty>Type a name to add it.</CommandEmpty>
+          <CommandGroup>
+            {emptyOption !== undefined ? (
+              <CommandItem value={emptyOption.label} onSelect={() => onPick(emptyOption.value)}>
+                {emptyOption.label}
+                <CheckIcon
+                  className={cn('ml-auto', !selected.includes(emptyOption.value) && 'opacity-0')}
+                  aria-hidden="true"
+                />
+              </CommandItem>
+            ) : null}
+            {options.map((option) => (
+              <CommandItem
+                key={option}
+                value={option}
+                onSelect={() => {
+                  onPick(option)
+                  if (!multiple) setQuery('')
+                }}
+              >
+                {render(option)}
+                <CheckIcon
+                  className={cn('ml-auto', !selected.includes(option) && 'opacity-0')}
+                  aria-hidden="true"
+                />
+              </CommandItem>
+            ))}
+            {isNew ? (
+              <CommandItem
+                value={`create ${typed}`}
+                onSelect={() => {
+                  onPick(typed)
+                  setQuery('')
+                }}
+              >
+                <PlusIcon aria-hidden="true" />
+                Add “{typed}”
+              </CommandItem>
+            ) : null}
+          </CommandGroup>
+        </CommandList>
+      </Command>
+      <VimFieldMode mode={vim.vimFieldMode} />
+    </>
   )
 }
 
@@ -595,6 +606,7 @@ function EstimateField({
 }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(value ?? '')
+  const vim = useVimField('estimate', draft)
   const [savedValue, setSavedValue] = useState(value)
   if (savedValue !== value) {
     setSavedValue(value)
@@ -635,8 +647,10 @@ function EstimateField({
             aria-invalid={bad}
             placeholder="2h"
             value={draft}
+            {...vim.vimFieldProps}
             onChange={(event) => setDraft(event.target.value)}
           />
+          <VimFieldMode mode={vim.vimFieldMode} />
           <p className={cn('text-xs', bad ? 'text-destructive' : 'text-muted-foreground')}>
             A number and m, h, d or w, like 30m or 1.5d.
           </p>
