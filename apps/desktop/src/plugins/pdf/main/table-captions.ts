@@ -28,11 +28,15 @@ export interface MarkdownTableCaption {
 export function readMarkdownReferenceDefinitions(markdown: string): string {
   const body = splitFrontmatter(markdown).body
   const tree = markdownParser.parse(body)
-  const definitions: string[] = []
+  const definitions: { from: number; to: number; text: string }[] = []
+  const excluded: { from: number; to: number }[] = []
   const quoteMarks: { from: number; to: number }[] = []
   tree.iterate({
     enter(node) {
       if (node.name === 'QuoteMark') quoteMarks.push({ from: node.from, to: node.to })
+      if (['FencedCode', 'CodeBlock', 'HTMLBlock', 'HTMLTag'].includes(node.name)) {
+        excluded.push({ from: node.from, to: node.to })
+      }
     },
   })
   const fieldText = (field: { from: number; to: number }, collapseSpace = true): string => {
@@ -55,14 +59,16 @@ export function readMarkdownReferenceDefinitions(markdown: string): string {
         const url = node.node.getChild('URL')
         const title = node.node.getChild('LinkTitle')
         if (label !== null && url !== null) {
-          definitions.push(
-            `${fieldText(label)}: ${fieldText(url, false)}${title === null ? '' : ` ${fieldText(title)}`}`,
-          )
+          definitions.push({
+            from: node.from,
+            to: node.to,
+            text: `${fieldText(label)}: ${fieldText(url, false)}${title === null ? '' : ` ${fieldText(title)}`}`,
+          })
         } else if (label !== null) {
           // Lezer omits URL for valid angle destinations containing an escaped
           // closing angle bracket. Keep its parsed source intact rather than
           // silently dropping a definition that the Markdown renderer resolves.
-          definitions.push(body.slice(node.from, node.to))
+          definitions.push({ from: node.from, to: node.to, text: body.slice(node.from, node.to) })
         }
         return false
       }
@@ -70,14 +76,34 @@ export function readMarkdownReferenceDefinitions(markdown: string): string {
     },
   })
   // Lezer currently drops a definition whose angle destination escapes `>`.
-  // Preserve these valid single-line definitions directly from source so the
-  // same destination remains visible to cmarker after table isolation.
-  const escapedAngleDefinition = /^ {0,3}(\[[^\]\n]+\]:\s*<[^\n]*\\>[^\n]*>[^\n]*)$/gm
-  for (const match of body.matchAll(escapedAngleDefinition)) {
-    const definition = match[1]
-    if (definition !== undefined) definitions.push(definition)
+  // Match source lines only outside parser-recognized code and HTML blocks, and
+  // normalize blockquote/list markers before preserving the definition. The
+  // candidate's source span keeps fallback and parsed definitions in precedence
+  // order; overlapping equivalent spans handle Lezer's omitted-URL node case.
+  const lineStarts = [...body.matchAll(/^/gm)].map((match) => match.index ?? 0)
+  const escapedAngleDefinition = /^ {0,3}(\[[^\]\n]+\]:\s*<[^\n]*\\>[^\n]*>[^\n]*)$/
+  for (const from of lineStarts) {
+    const end = body.indexOf('\n', from)
+    const to = end === -1 ? body.length : end
+    if (excluded.some((range) => from >= range.from && from < range.to)) continue
+    let candidate = body.slice(from, to)
+    candidate = candidate.replace(/^(?: {0,3}> ?)+/, '')
+    candidate = candidate.replace(/^(?: {0,3}(?:[-+*]|\d+[.)]) +)/, '')
+    const match = escapedAngleDefinition.exec(candidate)
+    const definition = match?.[1]
+    if (definition !== undefined) definitions.push({ from, to, text: definition })
   }
-  return definitions.length === 0 ? '' : `\n\n${definitions.join('\n')}`
+  const ordered: typeof definitions = []
+  for (const definition of definitions.sort((a, b) => a.from - b.from || a.to - b.to)) {
+    const duplicate = ordered.some(
+      (previous) =>
+        previous.text === definition.text &&
+        definition.from < previous.to &&
+        previous.from < definition.to,
+    )
+    if (!duplicate) ordered.push(definition)
+  }
+  return ordered.length === 0 ? '' : `\n\n${ordered.map(({ text }) => text).join('\n')}`
 }
 
 /** Select envelopes whose body is exactly one portable GFM table. */
