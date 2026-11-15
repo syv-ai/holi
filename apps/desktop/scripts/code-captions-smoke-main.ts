@@ -228,9 +228,6 @@ async function run() {
     },
   })
   const url = pathToFileURL(join(root, 'renderer.html')).href
-  const nativeClipboard = clipboard
-    .availableFormats()
-    .map((format) => ({ format, data: clipboard.readBuffer(format) }))
   win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) =>
     callback(false),
   )
@@ -778,8 +775,6 @@ async function run() {
         2,
       ),
     )
-    clipboard.clear()
-    for (const entry of nativeClipboard) clipboard.writeBuffer(entry.format, entry.data)
     ipcMain.removeHandler('holi-caption-fixture')
     if (!win.isDestroyed()) win.destroy()
     await bridge.stop()

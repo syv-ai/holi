@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { access, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,12 +9,86 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { build } from 'vite'
 
+assert.equal(process.platform, 'darwin', 'native clipboard smoke requires macOS')
+
+const clipboardJxa = String.raw`
+ObjC.import('AppKit')
+ObjC.import('Foundation')
+const pb = $.NSPasteboard.generalPasteboard
+function dataMap() {
+  const items = []
+  const all = pb.pasteboardItems
+  for (let i = 0; i < all.count; i++) {
+    const item = all.objectAtIndex(i)
+    const itemTypes = item.types
+    const types = []
+    for (let j = 0; j < itemTypes.count; j++) types.push(ObjC.unwrap(itemTypes.objectAtIndex(j)))
+    types.sort()
+    const data = {}
+    for (const type of types) {
+      const bytes = item.dataForType($(type))
+      if (!bytes || String(bytes) === 'null') throw new Error('clipboard format data unavailable')
+      data[type] = ObjC.unwrap(bytes.base64EncodedStringWithOptions(0))
+    }
+    items.push({ types, data })
+  }
+  return items
+}
+function restore(items) {
+  const rebuilt = items.map((entry) => {
+    const item = $.NSPasteboardItem.alloc.init
+    for (const type of entry.types) {
+      if (entry.data[type] === null) continue
+      const bytes = $.NSData.alloc.initWithBase64EncodedStringOptions($(entry.data[type]), 0)
+      if (!bytes || String(bytes) === 'null' || !item.setDataForType(bytes, $(type))) throw new Error('could not rebuild clipboard data')
+    }
+    return item
+  })
+  pb.clearContents
+  if (rebuilt.length && !pb.writeObjects(ObjC.wrap(rebuilt))) throw new Error('clipboard write failed')
+  const actual = dataMap()
+  if (JSON.stringify(actual) !== JSON.stringify(items)) throw new Error('clipboard verification mismatch')
+  return { ok: true, items: actual.length, types: actual.reduce((n, item) => n + item.types.length, 0) }
+}
+function run(argv) {
+  const action = argv[0]
+  if (action === 'snapshot') return JSON.stringify(dataMap())
+  if (action === 'restore') return JSON.stringify(restore(JSON.parse(ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError($(argv[1]), $.NSUTF8StringEncoding, null)))))
+  if (action === 'self-test') {
+    const originalText = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError($(argv[1]), $.NSUTF8StringEncoding, null))
+    const original = JSON.parse(originalText)
+    let passed = false
+    try {
+      const first = $.NSPasteboardItem.alloc.init
+      first.setDataForType($.NSString.alloc.initWithUTF8String('opaque-custom').dataUsingEncoding($.NSUTF8StringEncoding), $('com.holi.smoke.opaque'))
+      first.setDataForType($.NSString.alloc.initWithUTF8String('<b>fixture</b>').dataUsingEncoding($.NSUTF8StringEncoding), $('public.html'))
+      const second = $.NSPasteboardItem.alloc.init
+      second.setDataForType($.NSString.alloc.initWithUTF8String('two items').dataUsingEncoding($.NSUTF8StringEncoding), $('public.utf8-plain-text'))
+      pb.clearContents
+      if (!pb.writeObjects(ObjC.wrap([first, second]))) throw new Error('self-test fixture write failed')
+      const expected = dataMap()
+      if (expected.length !== 2 || expected[0].types.length !== 2 || expected[1].types.length !== 1) throw new Error('self-test fixture shape mismatch')
+      restore(expected)
+      passed = true
+    } finally {
+      restore(original)
+    }
+    return JSON.stringify({ ok: passed, items: 2, types: 3 })
+  }
+  throw new Error('unknown clipboard action')
+}
+`
+
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? '/tmp/holi-502/native')
 const typst = process.env.HOLI_502_TYPST ?? process.argv[3]
 assert(typst, 'Provide a Typst executable as argument 3 or HOLI_502_TYPST')
 await access(typst)
 const root = await mkdtemp(join(tmpdir(), 'holi-502-native-'))
+await chmod(root, 0o700)
+const clipboardBackup = join(root, 'clipboard-snapshot.json')
+const clipboardScript = join(root, 'clipboard.jxa')
+await writeFile(clipboardScript, clipboardJxa, { mode: 0o600 })
 await mkdir(evidence, { recursive: true })
 await rm(join(evidence, 'frames'), { recursive: true, force: true })
 for (const name of ['result.json', 'electron-smoke.log', 'light.png', 'dark.png'])
@@ -22,7 +96,14 @@ for (const name of ['result.json', 'electron-smoke.log', 'light.png', 'dark.png'
 let child
 let closed
 let log = ''
+let clipboardRestored = false
+let clipboardSelfTest
 try {
+  const originalClipboard = clipboardCommand('snapshot')
+  await writeFile(clipboardBackup, originalClipboard, { mode: 0o600 })
+  clipboardSelfTest = JSON.parse(clipboardCommand('self-test', clipboardBackup))
+  assert.equal(clipboardSelfTest.ok, true)
+
   await build({
     configFile: false,
     root: desktop,
@@ -138,6 +219,62 @@ try {
   try {
     await writeFile(join(evidence, 'electron-smoke.log'), log)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    const hasClipboardBackup = await access(clipboardBackup).then(
+      () => true,
+      () => false,
+    )
+    if (hasClipboardBackup) {
+      try {
+        const restore = JSON.parse(clipboardCommand('restore', clipboardBackup))
+        clipboardRestored = restore.ok
+        assert.equal(clipboardRestored, true, 'clipboard restoration did not verify')
+        await writeFile(
+          join(evidence, 'clipboard-proof.json'),
+          JSON.stringify({ restored: true, ...clipboardSelfTest }, null, 2),
+        )
+        const resultPath = join(evidence, 'result.json')
+        if (
+          await access(resultPath).then(
+            () => true,
+            () => false,
+          )
+        ) {
+          const result = JSON.parse(await readFile(resultPath, 'utf8'))
+          result.clipboardRestored = true
+          result.clipboardSelfTest = {
+            ok: true,
+            items: clipboardSelfTest.items,
+            types: clipboardSelfTest.types,
+          }
+          await writeFile(resultPath, JSON.stringify(result, null, 2))
+        }
+      } catch (error) {
+        const resultPath = join(evidence, 'result.json')
+        const result = await readFile(resultPath, 'utf8')
+          .then(JSON.parse)
+          .catch(() => null)
+        if (result) {
+          result.ok = false
+          result.clipboardRestored = false
+          await writeFile(resultPath, JSON.stringify(result, null, 2))
+        }
+        console.error(
+          `Clipboard restoration failed; private backup preserved at ${clipboardBackup}`,
+        )
+        throw error
+      }
+    }
+    if (clipboardRestored || !hasClipboardBackup) await rm(root, { recursive: true, force: true })
+    else console.error(`Private clipboard backup preserved at ${clipboardBackup}`)
   }
+}
+
+function clipboardCommand(action, backup = '') {
+  const result = spawnSync('osascript', ['-l', 'JavaScript', clipboardScript, action, backup], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    timeout: 30000,
+  })
+  assert.equal(result.status, 0, `osascript ${action} failed: ${result.stderr.trim()}`)
+  return result.stdout.trim()
 }
