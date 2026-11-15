@@ -358,6 +358,100 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     }
   }, 30_000)
 
+  it.each([
+    {
+      name: 'frontmatter does not shadow a body definition',
+      prefix: '---\ndescription: |\n  [ref]: https://wrong.example/\n---\n\n',
+      cell: '[ref]',
+      definition: '[ref]: https://right.example/',
+      destination: 'https://right.example/',
+      visible: 'ref',
+    },
+    {
+      name: 'non-breaking space in a reference label is preserved',
+      prefix: '',
+      cell: '[a\u00a0b]',
+      definition: '[a\u00a0b]: https://example.com/unicode',
+      destination: 'https://example.com/unicode',
+      visible: 'a\u00a0b',
+    },
+    {
+      name: 'escaped angle bracket in a destination resolves',
+      prefix: '',
+      cell: '[ref]',
+      definition: String.raw`[ref]: <https://example.com/a\>b>`,
+      destination: 'https://example.com/a>b',
+      visible: 'ref',
+    },
+  ])(
+    'keeps native captioned-table reference behavior: $name',
+    async (fixture) => {
+      const typst = await resolveTypstBin()
+      if (typst === null) throw new Error('Typst is required for real PDF compilation')
+
+      const root = await work()
+      const templateDir = join(root, '.holi/document-templates/plain')
+      await mkdir(templateDir, { recursive: true })
+      await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+      const table = `| Link | Row marker |\n| --- | --- |\n| ${fixture.cell} | Differential table row |`
+      const references = `${fixture.definition}\n`
+      const ordinaryOriginal = `${fixture.prefix}${table}\n\n${references}`
+      const captionedOriginal =
+        `${fixture.prefix}` +
+        `${writeMarkdownCaptionEnvelope(table, 'Differential table caption.')}\n\n${references}`
+      const ordinaryNote = join(root, 'ordinary.md')
+      const captionedNote = join(root, 'captioned.md')
+      await writeFile(ordinaryNote, ordinaryOriginal)
+      await writeFile(captionedNote, captionedOriginal)
+      const ordinaryPdf = join(root, 'ordinary.pdf')
+      const captionedPdf = join(root, 'captioned.pdf')
+      for (const [notePath, outPath] of [
+        [ordinaryNote, ordinaryPdf],
+        [captionedNote, captionedPdf],
+      ] as const) {
+        await renderPdf({
+          typstBin: typst,
+          vaultRoot: root,
+          templateDir,
+          notePath,
+          outPath,
+          fields: [],
+          meta: {},
+        })
+        expect((await readFile(outPath)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+      }
+
+      const destinations = async (path: string) =>
+        (await readFile(path))
+          .toString('latin1')
+          .split('/URI (')
+          .slice(1)
+          .map((entry) => entry.split(')')[0]!)
+      const ordinaryDestinations = await destinations(ordinaryPdf)
+      const captionedDestinations = await destinations(captionedPdf)
+      expect(ordinaryDestinations).toContain(fixture.destination)
+      expect(captionedDestinations).toEqual(ordinaryDestinations)
+
+      const pages = await readPdfPages(captionedPdf)
+      const runs = pages.flatMap((page, pageIndex) =>
+        page.runs.map((run) => ({ ...run, pageIndex })),
+      )
+      const text = runs.map((run) => run.text).join(' ')
+      expect(text).toContain(fixture.visible)
+      expect(text.split('Differential table caption.')).toHaveLength(2)
+      const row = runs.find((run) => run.text.includes('Differential table row'))
+      const caption = runs.find((run) => run.text.includes('Differential table caption.'))
+      expect(row).toBeDefined()
+      expect(caption).toBeDefined()
+      expect(
+        caption!.pageIndex > row!.pageIndex || caption!.rect.origin.y > row!.rect.origin.y,
+      ).toBe(true)
+      expect(await readFile(ordinaryNote, 'utf8')).toBe(ordinaryOriginal)
+      expect(await readFile(captionedNote, 'utf8')).toBe(captionedOriginal)
+    },
+    30_000,
+  )
+
   it('resolves document-wide link and image definitions in a captioned table', async () => {
     const typst = await resolveTypstBin()
     if (typst === null) throw new Error('Typst is required for real PDF compilation')
