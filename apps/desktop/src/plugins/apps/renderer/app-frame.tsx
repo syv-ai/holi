@@ -149,6 +149,7 @@ function usePreviewCapture(
     if (completed.current === captureKey) return
     let live = true
     let idle: number | null = null
+    let animationFrame: number | null = null
     let placement: { x: number; y: number; width: number; height: number } | null = null
     const invalidate = (): void => {
       if (placement === null) return
@@ -187,6 +188,8 @@ function usePreviewCapture(
       const rect = { x: r.left + 2, y: r.top + 2, width: r.width - 4, height: r.height - 4 }
       placement = rect
       const request = ++generation.current
+      if (animationFrame === null)
+        animationFrame = window.requestAnimationFrame(observePendingPlacement)
       window.holi.plugin.send('apps', {
         remote,
         name: 'preview-placement',
@@ -207,6 +210,7 @@ function usePreviewCapture(
           generation: request,
         })
         .then((res) => {
+          checkPlacement()
           if (!live || request !== generation.current || !res.saved) return
           completed.current = captureKey
           taken(path)
@@ -215,9 +219,21 @@ function usePreviewCapture(
           if (live) console.warn('[apps] preview:', e)
         })
     }
+    const observePendingPlacement = (): void => {
+      checkPlacement()
+      if (live && placement !== null)
+        animationFrame = window.requestAnimationFrame(observePendingPlacement)
+    }
     const observer = new ResizeObserver(checkPlacement)
+    const mutations = new MutationObserver(checkPlacement)
     const frame = frameRef.current
     if (frame !== null) observer.observe(frame)
+    mutations.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+    })
     window.addEventListener('scroll', checkPlacement, true)
     window.addEventListener('resize', checkPlacement)
     document.addEventListener('visibilitychange', checkPlacement)
@@ -232,6 +248,8 @@ function usePreviewCapture(
       live = false
       invalidate()
       observer.disconnect()
+      mutations.disconnect()
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
       window.removeEventListener('scroll', checkPlacement, true)
       window.removeEventListener('resize', checkPlacement)
       document.removeEventListener('visibilitychange', checkPlacement)
