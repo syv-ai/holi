@@ -31,6 +31,27 @@ const DocumentImage = Image.extend<{ folder: string }>({
   addOptions() {
     return { ...this.parent!(), folder: '' }
   },
+  addAttributes() {
+    const folder = this.options.folder
+    const parent = this.parent?.() ?? {}
+    const sourceAttribute = (parent as { src?: Record<string, unknown> }).src ?? {}
+    return {
+      ...parent,
+      src: {
+        ...sourceAttribute,
+        parseHTML: (element: HTMLElement) => {
+          const source = element.getAttribute('data-holi-source-src')
+          const visible = element.getAttribute('src') ?? ''
+          return source && displaySrc(source, folder) === visible ? source : visible
+        },
+      },
+      sourceMarkdown: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: () => ({}),
+      },
+    }
+  },
   addNodeView() {
     const folder = this.options.folder
     return ReactNodeViewRenderer((props) => createElement(DocumentImageView, { ...props, folder }))
@@ -39,6 +60,7 @@ const DocumentImage = Image.extend<{ folder: string }>({
     return [
       'img',
       mergeAttributes(HTMLAttributes, {
+        'data-holi-source-src': String(HTMLAttributes.src ?? ''),
         src: displaySrc(String(HTMLAttributes.src ?? ''), this.options.folder),
       }),
     ]

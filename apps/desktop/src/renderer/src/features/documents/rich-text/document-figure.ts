@@ -1,7 +1,11 @@
 import { Node, mergeAttributes, type Editor } from '@tiptap/react'
 import { Fragment, Slice } from '@tiptap/pm/model'
-import { Plugin } from '@tiptap/pm/state'
-import { fencedBlocks, readMarkdownCodeCaptions, writeMarkdownCaptionEnvelope } from '@holi/shared'
+import { NodeSelection, Plugin } from '@tiptap/pm/state'
+import {
+  fencedBlocks,
+  readMarkdownCaptionEnvelopes,
+  writeMarkdownCaptionEnvelope,
+} from '@holi/shared'
 
 const SOURCE_FENCE_ATTR = 'data-holi-source-fence'
 const SOURCE_FENCE_LANGUAGE_ATTR = 'data-holi-source-fence-language'
@@ -18,6 +22,91 @@ export function sourceFenceMatches(source: string, code: string, language: strin
   const info = opening[3]!.trim().split(/\s+/, 1)[0] ?? ''
   if (info.toLowerCase() !== language.trim().split(/\s+/, 1)[0]?.toLowerCase()) return false
   return block.body === code
+}
+
+function renderCaptionMarkdown(
+  caption: any,
+  helpers: { renderChildren: (node: any) => string },
+): string {
+  const replacements = new Map<string, string>()
+  const captionText = (caption.content ?? [])
+    .map((part: { text?: string }) => part.text ?? '')
+    .join('')
+  const captionSource = JSON.stringify(caption)
+  let placeholderIndex = 0
+  const captionForMarkdown = {
+    ...caption,
+    content: caption.content?.map(
+      (part: { text?: string; marks?: { type: string; attrs?: Record<string, unknown> }[] }) => {
+        const marks = part.marks ?? []
+        const isCode = marks.some((mark) => mark.type === 'code')
+        let text = part.text
+        if (text && !isCode) {
+          text = text.replace(/[\[\]]/g, (bracket) => {
+            let placeholder = `HOLICAPBRACKET${placeholderIndex++}X`
+            while (captionText.includes(placeholder) || captionSource.includes(placeholder))
+              placeholder = `HOLICAPBRACKET${placeholderIndex++}X`
+            replacements.set(placeholder, bracket === '[' ? '&#91;' : '&#93;')
+            return placeholder
+          })
+        }
+        return {
+          ...part,
+          ...(text === undefined ? {} : { text }),
+          marks: marks.map((mark) =>
+            mark.type === 'link' && typeof mark.attrs?.href === 'string'
+              ? {
+                  ...mark,
+                  attrs: {
+                    ...mark.attrs,
+                    href: mark.attrs.href.replace(/\[/g, '%5B').replace(/\]/g, '%5D'),
+                  },
+                }
+              : mark,
+          ),
+        }
+      },
+    ),
+  }
+  let rendered = helpers.renderChildren(captionForMarkdown).replace(/\n+$/, '')
+  for (const [placeholder, entity] of replacements)
+    rendered = rendered.replaceAll(placeholder, entity)
+  return rendered
+}
+
+function writeFigureCaption(body: string, caption: any, rendered: string): string {
+  try {
+    return writeMarkdownCaptionEnvelope(body, rendered)
+  } catch {
+    const plainText = (caption.content ?? [])
+      .map((part: { text?: string }) => part.text ?? '')
+      .join('')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!plainText) return body
+    const escaped = plainText.replace(/([\\`*_{}\[\]()#+.!<>~-])/g, '\\$1')
+    try {
+      return writeMarkdownCaptionEnvelope(body, escaped)
+    } catch {
+      return body
+    }
+  }
+}
+
+function renderImageMarkdown(attrs: { src?: unknown; alt?: unknown; title?: unknown }): string {
+  const alt = String(attrs.alt ?? '')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('[', '\\[')
+    .replaceAll(']', '\\]')
+  const src = String(attrs.src ?? '')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('(', '\\(')
+    .replaceAll(')', '\\)')
+  const title =
+    typeof attrs.title === 'string' && attrs.title
+      ? ` "${attrs.title.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
+      : ''
+  return `![${alt}](${src}${title})`
 }
 
 function renderSafeFence(language: string, code: string): string {
@@ -66,7 +155,28 @@ export const DocumentFigure = Node.create({
   markdownTokenName: 'holiCodeFigure',
 
   addAttributes() {
-    return { sourceBody: { default: null } }
+    return {
+      sourceBody: { default: null },
+      sourceImageAttrs: {
+        default: null,
+        parseHTML: (element: HTMLElement) => {
+          const stored = element.getAttribute('data-holi-source-image')
+          if (stored) return stored
+          const image = element.querySelector(':scope > img')
+          return image
+            ? JSON.stringify([
+                image.getAttribute('src') ?? '',
+                image.getAttribute('alt'),
+                image.getAttribute('title'),
+              ])
+            : null
+        },
+        renderHTML: (attributes: Record<string, unknown>) =>
+          typeof attributes.sourceImageAttrs === 'string'
+            ? { 'data-holi-source-image': attributes.sourceImageAttrs }
+            : {},
+      },
+    }
   },
 
   addKeyboardShortcuts() {
@@ -85,7 +195,60 @@ export const DocumentFigure = Node.create({
     const { editor } = this
     return [
       new Plugin({
+        appendTransaction(transactions, _oldState, newState) {
+          if (!transactions.some((transaction) => transaction.docChanged)) return null
+          const repairs: Array<{
+            from: number
+            to: number
+            replacement: ReturnType<typeof newState.doc.nodeAt>
+          }> = []
+          newState.doc.descendants((node, pos) => {
+            if (node.type.name !== 'documentFigure') return
+            const child = node.firstChild
+            const caption = node.childCount > 1 ? node.child(1) : null
+            if (
+              node.childCount === 2 &&
+              child &&
+              (child.type.name === 'image' || child.type.name === 'codeBlock') &&
+              !(typeof node.attrs.sourceImageAttrs === 'string' && child.type.name !== 'image') &&
+              caption?.type.name === 'documentCaption'
+            )
+              return
+            repairs.push({
+              from: pos,
+              to: pos + node.nodeSize,
+              replacement:
+                node.childCount === 1 &&
+                child &&
+                (child.type.name === 'image' || child.type.name === 'codeBlock')
+                  ? child
+                  : null,
+            })
+          })
+          if (!repairs.length) return null
+          let transaction = newState.tr
+          for (const repair of repairs.reverse())
+            transaction = transaction.replaceWith(repair.from, repair.to, repair.replacement ?? [])
+          return transaction
+        },
         props: {
+          handleDOMEvents: {
+            dragstart(view) {
+              const { selection } = view.state
+              if (!(selection instanceof NodeSelection) || selection.node.type.name !== 'image')
+                return false
+              for (let depth = selection.$from.depth; depth > 0; depth--) {
+                if (selection.$from.node(depth).type.name === 'documentFigure') {
+                  const figurePos = selection.$from.before(depth)
+                  view.dispatch(
+                    view.state.tr.setSelection(NodeSelection.create(view.state.doc, figurePos)),
+                  )
+                  break
+                }
+              }
+              return false
+            },
+          },
           handlePaste(view, event) {
             const markdown = event.clipboardData?.getData('text/plain')
             const { $from } = view.state.selection
@@ -98,18 +261,16 @@ export const DocumentFigure = Node.create({
               view.dispatch(view.state.tr.insertText(markdown.replace(/\r?\n/g, ' ')))
               return true
             }
-            if (
-              !editor.isEditable ||
-              !markdown ||
-              !readMarkdownCodeCaptions(markdown).some(
-                (caption) => caption.language.toLowerCase() !== 'mermaid',
-              )
-            )
+            if (!editor.isEditable || !markdown || !readMarkdownCaptionEnvelopes(markdown).length)
               return false
             const manager = editor.markdown
             if (!manager) return false
             const parsed = editor.schema.nodeFromJSON(manager.parse(markdown))
-            if (!parsed.childCount) return false
+            let hasFigure = false
+            parsed.descendants((node) => {
+              if (node.type.name === 'documentFigure') hasFigure = true
+            })
+            if (!hasFigure) return false
             view.dispatch(
               view.state.tr.replaceSelection(new Slice(Fragment.from(parsed.content), 0, 0)),
             )
@@ -140,46 +301,19 @@ export const DocumentFigure = Node.create({
     if (!code || !caption || caption.type !== 'documentCaption') return ''
     if (code.type === 'image') {
       const source = node.attrs?.sourceBody
+      const imageAttrs = node.attrs?.sourceImageAttrs
+      const expected = JSON.stringify([
+        code.attrs?.src ?? '',
+        code.attrs?.alt ?? null,
+        code.attrs?.title ?? null,
+      ])
+      const fallback = renderImageMarkdown(code.attrs ?? {})
+      const body = typeof source === 'string' && imageAttrs === expected ? source : fallback
       const captionText = (caption.content ?? [])
         .map((part: { text?: string }) => part.text ?? '')
         .join('')
-      if (typeof source !== 'string') return ''
-      if (!captionText.trim()) return source
-      const replacements = new Map<string, string>()
-      const captionSource = JSON.stringify(caption)
-      let placeholderIndex = 0
-      const captionForMarkdown = {
-        ...caption,
-        content: caption.content?.map(
-          (part: {
-            text?: string
-            marks?: { type: string; attrs?: Record<string, unknown> }[]
-          }) => {
-            const marks = part.marks ?? []
-            const isCode = marks.some((mark) => mark.type === 'code')
-            let text = part.text
-            if (text && !isCode) {
-              text = text.replace(/[\\[\\]]/g, (bracket) => {
-                let placeholder = `HOLICAPBRACKET${placeholderIndex++}X`
-                while (captionText.includes(placeholder) || captionSource.includes(placeholder)) {
-                  placeholder = `HOLICAPBRACKET${placeholderIndex++}X`
-                }
-                replacements.set(placeholder, bracket === '[' ? '&#91;' : '&#93;')
-                return placeholder
-              })
-            }
-            return { ...part, ...(text === undefined ? {} : { text }) }
-          },
-        ),
-      }
-      let rendered = helpers.renderChildren(captionForMarkdown).replace(/\\n+$/, '')
-      for (const [placeholder, entity] of replacements)
-        rendered = rendered.replaceAll(placeholder, entity)
-      try {
-        return writeMarkdownCaptionEnvelope(source, rendered)
-      } catch {
-        return ''
-      }
+      if (!captionText.trim()) return body
+      return writeFigureCaption(body, caption, renderCaptionMarkdown(caption, helpers))
     }
     if (code.type !== 'codeBlock') return ''
     const rawFence = code.attrs?.sourceFence
@@ -197,98 +331,42 @@ export const DocumentFigure = Node.create({
       sourceFenceMatches(rawFence, codeText, language)
         ? rawFence
         : renderSafeFence(language, codeText)
-    const replacements = new Map<string, string>()
-    const captionText = (caption.content ?? [])
-      .map((part: { text?: string }) => part.text ?? '')
-      .join('')
-    const captionSource = JSON.stringify(caption)
-    let placeholderIndex = 0
-    const captionForMarkdown = {
-      ...caption,
-      content: caption.content?.map(
-        (part: { text?: string; marks?: { type: string; attrs?: Record<string, unknown> }[] }) => {
-          const marks = part.marks ?? []
-          const isCode = marks.some((mark) => mark.type === 'code')
-          let text = part.text
-          if (text && !isCode) {
-            text = text.replace(/[\[\]]/g, (bracket) => {
-              let placeholder = `HOLICAPBRACKET${placeholderIndex++}X`
-              while (captionText.includes(placeholder) || captionSource.includes(placeholder)) {
-                placeholder = `HOLICAPBRACKET${placeholderIndex++}X`
-              }
-              replacements.set(placeholder, bracket === '[' ? '&#91;' : '&#93;')
-              return placeholder
-            })
-          }
-          return {
-            ...part,
-            ...(text === undefined ? {} : { text }),
-            marks: marks.map((mark) =>
-              mark.type === 'link' && typeof mark.attrs?.href === 'string'
-                ? {
-                    ...mark,
-                    attrs: {
-                      ...mark.attrs,
-                      href: mark.attrs.href.replace(/\[/g, '%5B').replace(/\]/g, '%5D'),
-                    },
-                  }
-                : mark,
-            ),
-          }
-        },
-      ),
-    }
-    let renderedCaption = helpers.renderChildren(captionForMarkdown).replace(/\n+$/, '')
-    for (const [placeholder, entity] of replacements) {
-      renderedCaption = renderedCaption.replaceAll(placeholder, entity)
-    }
-    const escapedCaption = renderedCaption
+    const escapedCaption = renderCaptionMarkdown(caption, helpers)
 
     if (!escapedCaption.trim()) return body
-    try {
-      return writeMarkdownCaptionEnvelope(body, escapedCaption)
-    } catch {
-      // A mark the portable grammar cannot express must not erase the caption.
-      const plainText = (caption.content ?? [])
-        .map((part: { text?: string }) => part.text ?? '')
-        .join('')
-        .replace(/\s+/g, ' ')
-        .trim()
-      if (!plainText) return body
-      const escaped = plainText.replace(/([\\`*_{}\[\]()#+.!<>~-])/g, '\\$1')
-      try {
-        return writeMarkdownCaptionEnvelope(body, escaped)
-      } catch {
-        return body
-      }
-    }
+    return writeFigureCaption(body, caption, escapedCaption)
   },
 })
 
 /** Preserve the original fence byte-for-byte while the code itself is unchanged. */
 export function addImageCaption(editor: Editor, pos: number): boolean {
-  if (!editor.isEditable) return false
+  if (!editor.isEditable || pos < 0 || pos >= editor.state.doc.content.size) return false
   const node = editor.state.doc.nodeAt(pos)
-  if (!node || node.type.name !== 'image') return false
+  if (
+    !node ||
+    node.type.name !== 'image' ||
+    editor.state.doc.resolve(pos).parent.type.name !== 'doc'
+  )
+    return false
   const caption = editor.schema.nodes.documentCaption?.create()
   const image = editor.schema.nodes.image?.create(node.attrs, node.content, node.marks)
   const source = node.attrs.src
-  if (
-    !caption ||
-    !image ||
-    typeof source !== 'string' ||
-    !source ||
-    /^(?:holi-vault:|https?:)/i.test(source)
+  if (!caption || !image || typeof source !== 'string' || !source) return false
+  const body =
+    typeof node.attrs.sourceMarkdown === 'string'
+      ? node.attrs.sourceMarkdown
+      : renderImageMarkdown(node.attrs)
+  const figure = editor.schema.nodes.documentFigure?.create(
+    {
+      sourceBody: body,
+      sourceImageAttrs: JSON.stringify([
+        node.attrs.src ?? '',
+        node.attrs.alt ?? null,
+        node.attrs.title ?? null,
+      ]),
+    },
+    [image, caption],
   )
-    return false
-  const escapedSource = source.replace(/[\\()]/g, '\\$&')
-  const alt = String(node.attrs.alt ?? '').replace(/([\\\[\]])/g, '\\$1')
-  const title =
-    typeof node.attrs.title === 'string' && node.attrs.title
-      ? ` "${node.attrs.title.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
-      : ''
-  const body = `![${alt}](${escapedSource}${title})`
-  const figure = editor.schema.nodes.documentFigure?.create({ sourceBody: body }, [image, caption])
   if (!figure) return false
   editor.view.dispatch(editor.state.tr.replaceWith(pos, pos + node.nodeSize, figure))
   editor.commands.setTextSelection(pos + image.nodeSize + 2)
