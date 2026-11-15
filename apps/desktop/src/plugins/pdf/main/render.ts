@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,7 +18,7 @@ import type { TemplateField } from '../shared/template-fields'
 import { hasSingleMarkdownImage, inlineImages } from './images'
 import { commentSafeString, drawMermaid, type DrawDiagrams } from './mermaid'
 import { composeWrapper } from './wrapper'
-import { readMarkdownTableCaptions } from './table-captions'
+import { readMarkdownReferenceDefinitions, readMarkdownTableCaptions } from './table-captions'
 
 const exec = promisify(execFile)
 
@@ -113,15 +114,30 @@ function wikiLinksOutsideRawTypst(markdown: string): string {
   )
 }
 
-function captionComment(body: string, caption: string, table = false, tableId = ''): string {
+function captionComment(
+  body: string,
+  caption: string,
+  table = false,
+  tableId = '',
+  definitions = '',
+  trustedImages: ReadonlyMap<string, string> = new Map(),
+): string {
   const diagram = /^ {0,3}<!--raw-typst ([\s\S]*?)-->$/.exec(body)?.[1]
   if (table) {
-    const source = commentSafeString(wikiLinksToText(body))
+    // User Markdown is always non-executable, including HTML newly assembled by
+    // wiki aliases or missing-image fallback. Only opaque URLs registered when
+    // inlineImages generated an image can draw trusted Typst content.
+    const source = commentSafeString(wikiLinksToText(`${body}${definitions}`))
+    const entries = [...trustedImages]
+      .filter(([token]) => body.includes(token))
+      .map(([token, typst]) => `${commentSafeString(token)}: [${typst}],`)
+      .join('')
+    const images = `(${entries || ':'})`
     const label = commentSafeString(caption)
     // Every last-row cell gets a marker: a different cell can wrap farther than
     // the last short cell, so the repeat footer uses their maximum physical page.
     const marker = commentSafeString(tableId)
-    return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(breakable: true)[#show std.table: it => { let fields = it.fields(); let cells = fields.remove("children"); if cells.any(c => c.func() == std.table.footer) { it } else { let row-cells = cells.filter(c => c.func() == std.table.cell); if row-cells.len() > 0 { let final-start = cells.len() - it.columns.len(); cells = cells.enumerate().map(((index, c)) => { if c.func() == std.table.cell and index >= final-start { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) } else { c } }) } else { let header-index = cells.position(c => c.func() == std.table.header); if header-index != none { let header-fields = cells.at(header-index).fields(); let header-cells = header-fields.remove("children"); let marked-header = header-cells.map(c => { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) }); cells = cells.enumerate().map(((index, cell)) => if index == header-index { table.header(..header-fields, ..marked-header) } else { cell }) } }; let table-width = measure(it).width; std.table(..fields, ..cells, std.table.footer(repeat: true, std.table.cell(colspan: it.columns.len(), stroke: none, fill: none, context { let marker-locations = query(metadata.where(value: ${marker})); let final-page = if marker-locations.len() > 0 { calc.max(..marker-locations.map(location => counter(page).at(location.location()).first())) } else { counter(page).get().first() }; let on-final-page = counter(page).get().first() == final-page; let caption = block(width: table-width)[#align(center)[#cmarker.render(${label}, raw-typst: false, scope: (table: table))]]; if on-final-page { caption } else { block(height: measure(caption, width: table-width).height)[] } }))) } }; #cmarker.render(${source}, raw-typst: false, scope: (table: table))]-->`
+    return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(breakable: true)[#let images = ${images}; #show std.table: it => { let fields = it.fields(); let cells = fields.remove("children"); if cells.any(c => c.func() == std.table.footer) { it } else { let row-cells = cells.filter(c => c.func() == std.table.cell); if row-cells.len() > 0 { let final-start = cells.len() - it.columns.len(); cells = cells.enumerate().map(((index, c)) => { if c.func() == std.table.cell and index >= final-start { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) } else { c } }) } else { let header-index = cells.position(c => c.func() == std.table.header); if header-index != none { let header-fields = cells.at(header-index).fields(); let header-cells = header-fields.remove("children"); let marked-header = header-cells.map(c => { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) }); cells = cells.enumerate().map(((index, cell)) => if index == header-index { table.header(..header-fields, ..marked-header) } else { cell }) } }; let table-width = measure(it).width; std.table(..fields, ..cells, std.table.footer(repeat: true, std.table.cell(colspan: it.columns.len(), stroke: none, fill: none, context { let marker-locations = query(metadata.where(value: ${marker})); let final-page = if marker-locations.len() > 0 { calc.max(..marker-locations.map(location => counter(page).at(location.location()).first())) } else { counter(page).get().first() }; let on-final-page = counter(page).get().first() == final-page; let caption = block(width: table-width)[#align(center)[#cmarker.render(${label}, raw-typst: false, scope: (table: table))]]; if on-final-page { caption } else { block(height: measure(caption, width: table-width).height)[] } }))) } }; #cmarker.render(${source}, raw-typst: false, scope: (table: table, image: (path, ..args) => images.at(path, default: args.named().at("alt", default: none))))]-->`
   }
   const content =
     diagram === undefined
@@ -192,8 +208,28 @@ export async function renderPdf({
         insertion.marker +
         taggedOriginal.slice(insertion.at)
     }
-    const pictured = await inlineImages(taggedOriginal, noteRel, (rel) =>
-      readVaultImage(vaultRoot, rel),
+    const tableIdentities = frames.flatMap((frame, index) =>
+      tableFrameStarts.has(frame.envelope.from) ? [`<!-- ${nonce}-${index} -->`] : [],
+    )
+    const taggedTableBodies = readMarkdownCaptionEnvelopes(taggedOriginal)
+      .filter((frame) => {
+        const caption = taggedOriginal.slice(frame.caption.from, frame.caption.to)
+        return tableIdentities.some((identity) => caption.includes(identity))
+      })
+      .map((frame) => frame.body)
+    const trustedImages = new Map<string, string>()
+    const pictured = await inlineImages(
+      taggedOriginal,
+      noteRel,
+      (rel) => readVaultImage(vaultRoot, rel),
+      (typst, from) => {
+        if (!taggedTableBodies.some((body) => from >= body.from && from < body.to)) {
+          return `<!--raw-typst ${typst}-->`
+        }
+        const token = `holi-image-${randomUUID()}`
+        trustedImages.set(token, typst)
+        return `![](${token})`
+      },
     )
     const drawn =
       diagrams === undefined
@@ -215,6 +251,7 @@ export async function renderPdf({
     // count is retained for warnings from everything after the envelope.
     let markdown = drawn.markdown
     const transformedEnvelopes = readMarkdownCaptionEnvelopes(drawn.markdown)
+    const referenceDefinitions = readMarkdownReferenceDefinitions(original)
     const transformations = frames.flatMap((frame, index) => {
       const identity = `<!-- ${nonce}-${index} -->`
       const transformed = transformedEnvelopes.find((item) =>
@@ -231,6 +268,7 @@ export async function renderPdf({
           table: tableFrameStarts.has(frame.envelope.from),
           tableId: `${nonce}-${index}`,
           body: undefined as string | undefined,
+          definitions: tableFrameStarts.has(frame.envelope.from) ? referenceDefinitions : '',
         },
       ]
     })
@@ -248,15 +286,34 @@ export async function renderPdf({
         .trim()
       return [{ frame: transformed, caption, sourceLines, body, table: false, tableId: '' }]
     })
+    const usedImages = new Set<string>()
     for (const item of [...transformations, ...imageTransformations].sort(
       (a, b) => b.frame.envelope.from - a.frame.envelope.from,
     )) {
       const body = drawn.markdown.slice(item.frame.body.from, item.frame.body.to)
+      if (item.table) {
+        for (const token of trustedImages.keys()) {
+          if (body.includes(token)) usedImages.add(token)
+        }
+      }
       markdown =
         markdown.slice(0, item.frame.envelope.from) +
-        captionComment(item.body ?? body, item.caption, item.table, item.tableId) +
+        captionComment(
+          item.body ?? body,
+          item.caption,
+          item.table,
+          item.tableId,
+          'definitions' in item ? item.definitions : '',
+          trustedImages,
+        ) +
         '\n'.repeat(Math.max(0, item.sourceLines - 1)) +
         markdown.slice(item.frame.envelope.to)
+    }
+    // If preprocessing made a frame ambiguous, retain its ordinary rendering,
+    // including its generated images, rather than leaking placeholder URLs.
+    for (const [token, typst] of trustedImages) {
+      if (!usedImages.has(token))
+        markdown = markdown.replaceAll(`![](${token})`, `<!--raw-typst ${typst}-->`)
     }
     // Keep the generated caption expression (including literal code source)
     // and Mermaid drawings intact. The uncaptained wiki-link rewrite is unchanged.
