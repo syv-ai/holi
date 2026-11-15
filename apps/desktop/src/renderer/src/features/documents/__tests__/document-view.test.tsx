@@ -30,6 +30,7 @@ import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { forgetAgentLabelsAtom } from '@/state/document-runs'
 import { duplicateBlock, selectionBlockTarget } from '../rich-text/rich-text-block-actions'
+import { vimCodeEditingAtom } from '@/state/preferences'
 
 import { DocumentView } from '../document-view'
 
@@ -240,6 +241,32 @@ test('ordinary notes do not show Done', async () => {
   open('# Plan\n')
   await editorBox()
   expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument()
+})
+
+test('rich-text Vim preference updates the installed editor without saving navigation or mode changes', async () => {
+  store.set(vimCodeEditingAtom, true)
+  open('alpha\n')
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  expect(box).toHaveAttribute('data-vim-mode', 'normal')
+  expect(screen.getByText('Vim normal')).toBeInTheDocument()
+  act(() => fireEvent.keyDown(box, { key: 'l' }))
+  act(() => fireEvent.keyDown(box, { key: 'i' }))
+  expect(box).toHaveAttribute('data-vim-mode', 'insert')
+  expect(write).not.toHaveBeenCalled()
+  act(() => store.set(vimCodeEditingAtom, false))
+  await waitFor(() => expect(box).not.toHaveAttribute('data-vim-mode'))
+  expect((box as WithEditor).editor).toBe(editor)
+  expect(write).not.toHaveBeenCalled()
+  act(() => store.set(vimCodeEditingAtom, true))
+  await waitFor(() => expect(box).toHaveAttribute('data-vim-mode', 'normal'))
+  act(() => fireEvent.keyDown(box, { key: 'i' }))
+  act(() => editor.commands.insertContent('X'))
+  act(() => fireEvent.keyDown(box, { key: 'Escape' }))
+  await waitFor(() => expect(write).toHaveBeenCalledOnce(), { timeout: 2000 })
+  expect(files.get(PATH)).toContain('aXlpha')
+  act(() => store.set(vimCodeEditingAtom, false))
+  await waitFor(() => expect(box).not.toHaveAttribute('data-vim-mode'))
 })
 
 test('editing a Mermaid label persists through DocumentView autosave and reopen', async () => {

@@ -100,6 +100,8 @@ import { useDocumentPosition } from './use-document-position'
 import { useSelectionReport } from './use-selection-report'
 import { DocumentFormatBubble } from './document-format-bubble'
 import { DocumentHeader, type SaveState } from './document-header'
+import { configureRichTextVim, RichTextVim, type RichTextVimMode } from './rich-text-vim'
+import { vimCodeEditingAtom } from '@/state/preferences'
 import { documentTitle, joinDocument, splitDocument } from './markdown'
 import { ErrorState } from '@/composites/empty-state'
 import {
@@ -277,6 +279,11 @@ function DocumentEditor({
   const [deleteTableOpen, setDeleteTableOpen] = useState(false)
   const [fullWidth, setFullWidth] = useState(false)
   const [smallText, setSmallText] = useState(false)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
+  const [vimMode, setVimMode] = useState<RichTextVimMode>('')
+  const vimModeCallback = useRef<(mode: RichTextVimMode) => void>(() => {})
+  vimModeCallback.current = (mode) => setVimMode(mode)
+  const findOpenRef = useRef(false)
   const tableStyle = useAppSetting('tableStyle')
   const propertiesLayout = useAppSetting('propertiesLayout')
   const hasProperties = useHasTaskProperties(path)
@@ -345,6 +352,7 @@ function DocumentEditor({
     if (found) onOpen(found)
   }
 
+  const editorRef = useRef<import('@tiptap/react').Editor | null>(null)
   const mapTargetsRef = useRef<
     (
       _mapping: import('@tiptap/pm/transform').Mapping,
@@ -355,6 +363,13 @@ function DocumentEditor({
 
   const extensions = useMemo(
     () => [
+      RichTextVim.configure({
+        enabled: false,
+        active: true,
+        editable: () => editorRef.current?.isEditable ?? false,
+        onModeChange: (mode) => queueMicrotask(() => vimModeCallback.current(mode)),
+        escapeOwned: () => findOpenRef.current,
+      }),
       Extension.create({
         name: 'saveFreeze',
         onBeforeCreate() {
@@ -429,6 +444,7 @@ function DocumentEditor({
     [extensions],
   )
 
+  editorRef.current = editor
   const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
   const {
@@ -759,7 +775,13 @@ function DocumentEditor({
     setLinkOpen(true)
   }
 
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    configureRichTextVim(editor.view, vimEnabled, visible && focused, () => editor.isEditable)
+  }, [editor, vimEnabled, visible, focused, locked, upgradePending, batchSubmitting])
+
   const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef, focused)
+  findOpenRef.current = find !== null
 
   async function finishTask() {
     if (doneInFlight.current || lockedRef.current || frozen.current || !editor?.isEditable) return
@@ -906,6 +928,7 @@ function DocumentEditor({
             path={path}
             title={documentTitle(path)}
             saveState={saveState}
+            vimMode={vimMode}
             locked={locked || batchSubmitting}
             taskDone={
               isTaskPath(path)
