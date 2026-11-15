@@ -17,11 +17,11 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { cp, mkdir, readdir, realpath, rm, stat, lstat, readFile, rename } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { cp, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import { isAppBundlePath, type PluginManifest } from '@holi/shared'
 import { CapabilityError } from '../../../main/plugin-api'
+import { transactSkillRefresh, type SkillSnapshot } from './skill-transaction'
 
 /** Where a vault keeps Claude Code's skills. */
 const SKILLS_DIR = join('.claude', 'skills')
@@ -52,119 +52,18 @@ export async function refreshSkills(
   manifest: Pick<PluginManifest, 'skills'>,
   codeDir: string,
   vaultRoot: string,
-  options: { force: boolean; guard: () => void },
+  options: {
+    force: boolean
+    guard: () => void
+    validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
+  },
 ): Promise<string[]> {
-  const root = await realpath(codeDir)
-  const destination = join(vaultRoot, SKILLS_DIR)
-  const names = (manifest.skills ?? []).map((skill) => basename(skill))
-  if (new Set(names.map((name) => name.toLocaleLowerCase('en-US'))).size !== names.length)
-    throw new CapabilityError('BAD_REQUEST', 'declared skills have colliding destination names')
-  const stage = join(vaultRoot, '.holi', 'state', `community-skills.local.${randomUUID()}`)
-  const plans: { name: string; exists: boolean; equal: boolean }[] = []
-  const inspect = async (path: string, target: string, allowedRoot: string): Promise<void> => {
-    const info = await lstat(path)
-    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile()))
-      throw new CapabilityError('BAD_REQUEST', `unsafe special file in skill: ${path}`)
-    if (info.isDirectory()) {
-      for (const entry of await readdir(path))
-        await inspect(join(path, entry), join(target, entry), allowedRoot)
-    } else {
-      const real = await realpath(path)
-      if (!inside(allowedRoot, real))
-        throw new CapabilityError('BAD_REQUEST', `${path} points outside its allowed root`)
-    }
-  }
-  const equalTree = async (left: string, right: string): Promise<boolean> => {
-    const a = await lstat(left).catch(() => null)
-    const b = await lstat(right).catch(() => null)
-    if (
-      !a ||
-      !b ||
-      a.isSymbolicLink() ||
-      b.isSymbolicLink() ||
-      a.isDirectory() !== b.isDirectory() ||
-      a.isFile() !== b.isFile()
-    )
-      return false
-    if (a.isFile()) return (await readFile(left)).equals(await readFile(right))
-    const ae = (await readdir(left)).sort(),
-      be = (await readdir(right)).sort()
-    return (
-      ae.length === be.length &&
-      ae.every((entry, i) => entry === be[i]) &&
-      (
-        await Promise.all(ae.map((entry) => equalTree(join(left, entry), join(right, entry))))
-      ).every(Boolean)
-    )
-  }
-  for (const skill of manifest.skills ?? []) {
-    const source = join(root, skill)
-    await inspect(source, source, root)
-    const required = await lstat(join(source, 'SKILL.md')).catch(() => null)
-    if (!required?.isFile() || required.isSymbolicLink())
-      throw new CapabilityError('BAD_REQUEST', `skill ${skill} has no regular SKILL.md`)
-    const dest = join(destination, basename(skill))
-    const present = await lstat(dest).catch(() => null)
-    if (present?.isSymbolicLink() || (present && !present.isDirectory()))
-      throw new CapabilityError('BAD_REQUEST', `unsafe skill destination: ${dest}`)
-    if (present) await inspect(dest, dest, await realpath(vaultRoot))
-    plans.push({
-      name: basename(skill),
-      exists: Boolean(present),
-      equal: present ? await equalTree(source, dest) : false,
-    })
-  }
-  if (!options.force && plans.some((p) => p.exists && !p.equal))
-    throw new CapabilityError(
-      'CONFLICT',
-      'one or more skill folders differ; use --force to replace complete folders',
-    )
-  options.guard()
-  const changed = plans.filter((p) => !p.exists || !p.equal)
-  if (!changed.length) return []
-  await mkdir(stage, { recursive: true })
-  const backups: string[] = []
-  const published: string[] = []
-  try {
-    for (const plan of changed) {
-      options.guard()
-      const source = join(
-        root,
-        (manifest.skills ?? []).find((s) => basename(s) === plan.name)!,
-      )
-      await cp(source, join(stage, plan.name), {
-        recursive: true,
-        dereference: false,
-        errorOnExist: true,
-      })
-      await inspect(join(stage, plan.name), join(stage, plan.name), await realpath(vaultRoot))
-    }
-    options.guard()
-    await mkdir(destination, { recursive: true })
-    for (const plan of changed) {
-      options.guard()
-      const target = join(destination, plan.name)
-      const backup = join(stage, `${plan.name}.backup`)
-      if (await lstat(target).catch(() => null)) {
-        await rename(target, backup)
-        backups.push(backup)
-      }
-      await rename(join(stage, plan.name), target)
-      published.push(target)
-    }
-    options.guard()
-    await rm(stage, { recursive: true, force: true })
-    return changed.map(({ name }) => `.claude/skills/${name}`)
-  } catch (error) {
-    for (const target of published.reverse())
-      await rm(target, { recursive: true, force: true }).catch(() => undefined)
-    for (const backup of backups.reverse()) {
-      const target = join(destination, basename(backup).replace(/\\.backup$/, ''))
-      await rename(backup, target).catch(() => undefined)
-    }
-    await rm(stage, { recursive: true, force: true }).catch(() => undefined)
-    throw error
-  }
+  return transactSkillRefresh(
+    (manifest.skills ?? []).map((path) => ({ path, name: basename(path) })),
+    codeDir,
+    vaultRoot,
+    options,
+  )
 }
 
 /**
