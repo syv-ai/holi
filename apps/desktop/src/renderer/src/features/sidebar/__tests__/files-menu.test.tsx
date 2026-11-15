@@ -292,6 +292,32 @@ test('an older list response cannot erase a completed subscription refresh', asy
   expect(screen.getByRole('button', { name: 'Unsubscribe this vault' })).toBeInTheDocument()
 })
 
+test('a superseded post-save list response does not leave subscription controls disabled', async () => {
+  const { store } = mount()
+  await screen.findByRole('button', { name: 'Subscribe this vault' })
+  let resolvePostSave!: (scopes: typeof subscriptionScopes.values) => void
+  const postSaveResponse = new Promise<typeof subscriptionScopes.values>((resolve) => {
+    resolvePostSave = resolve
+  })
+  subscriptionList.mockImplementationOnce(async () => postSaveResponse)
+
+  await userEvent.click(screen.getByRole('button', { name: 'Subscribe this vault' }))
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(2))
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      dirs: ['kunder', 'new-folder'],
+    }),
+  )
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(3))
+  const unsubscribe = await screen.findByRole('button', { name: 'Unsubscribe this vault' })
+  await waitFor(() => expect(unsubscribe).toBeEnabled())
+
+  resolvePostSave([])
+  await act(async () => postSaveResponse)
+  expect(screen.getByRole('button', { name: 'Unsubscribe this vault' })).toBeEnabled()
+})
+
 test('an earlier activation is discarded across an A-B-A vault switch', async () => {
   const { store } = mount()
   let resolveFirst!: (scopes: typeof subscriptionScopes.values) => void
