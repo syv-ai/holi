@@ -17,6 +17,7 @@ import type { TemplateField } from '../shared/template-fields'
 import { hasSingleMarkdownImage, inlineImages } from './images'
 import { commentSafeString, drawMermaid, type DrawDiagrams } from './mermaid'
 import { composeWrapper } from './wrapper'
+import { readMarkdownTableCaptions } from './table-captions'
 
 const exec = promisify(execFile)
 
@@ -112,8 +113,16 @@ function wikiLinksOutsideRawTypst(markdown: string): string {
   )
 }
 
-function captionComment(body: string, caption: string): string {
+function captionComment(body: string, caption: string, table = false, tableId = ''): string {
   const diagram = /^ {0,3}<!--raw-typst ([\s\S]*?)-->$/.exec(body)?.[1]
+  if (table) {
+    const source = commentSafeString(wikiLinksToText(body))
+    const label = commentSafeString(caption)
+    // Every last-row cell gets a marker: a different cell can wrap farther than
+    // the last short cell, so the repeat footer uses their maximum physical page.
+    const marker = commentSafeString(tableId)
+    return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(breakable: true)[#show std.table: it => { let fields = it.fields(); let cells = fields.remove("children"); if cells.any(c => c.func() == std.table.footer) { it } else { let row-cells = cells.filter(c => c.func() == std.table.cell); if row-cells.len() > 0 { let final-start = cells.len() - it.columns.len(); cells = cells.enumerate().map(((index, c)) => { if c.func() == std.table.cell and index >= final-start { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) } else { c } }) } else { let header-index = cells.position(c => c.func() == std.table.header); if header-index != none { let header-fields = cells.at(header-index).fields(); let header-cells = header-fields.remove("children"); let marked-header = header-cells.map(c => { let cell-fields = c.fields(); let body = cell-fields.remove("body"); table.cell(..cell-fields, [#body#metadata(${marker})]) }); cells = cells.enumerate().map(((index, cell)) => if index == header-index { table.header(..header-fields, ..marked-header) } else { cell }) } }; let table-width = measure(it).width; std.table(..fields, ..cells, std.table.footer(repeat: true, std.table.cell(colspan: it.columns.len(), stroke: none, fill: none, context { let marker-locations = query(metadata.where(value: ${marker})); let final-page = if marker-locations.len() > 0 { calc.max(..marker-locations.map(location => counter(page).at(location.location()).first())) } else { counter(page).get().first() }; let on-final-page = counter(page).get().first() == final-page; let caption = block(width: table-width)[#align(center)[#cmarker.render(${label}, raw-typst: false, scope: (table: table))]]; if on-final-page { caption } else { block(height: measure(caption, width: table-width).height)[] } }))) } }; #cmarker.render(${source}, raw-typst: false, scope: (table: table))]-->`
+  }
   const content =
     diagram === undefined
       ? `#cmarker.render(${commentSafeString(`${body}\n\n${caption}`)}, raw-typst: false)`
@@ -147,7 +156,11 @@ export async function renderPdf({
       .split(sep)
       .join('/')
     const original = await readFile(notePath, 'utf8')
-    const frames = readMarkdownCodeCaptions(original)
+    const tableFrames = readMarkdownTableCaptions(original)
+    const tableFrameStarts = new Set(tableFrames.map((frame) => frame.envelope.from))
+    const frames = [...readMarkdownCodeCaptions(original), ...tableFrames].sort(
+      (a, b) => a.envelope.from - b.envelope.from,
+    )
     const imageFrames = readMarkdownCaptionEnvelopes(original).filter(
       (frame) =>
         isPortableInlineCaption(original.slice(frame.caption.from, frame.caption.to)) &&
@@ -210,7 +223,16 @@ export async function renderPdf({
       if (transformed === undefined) return []
       const caption = original.slice(frame.caption.from, frame.caption.to)
       const sourceLines = original.slice(frame.envelope.from, frame.envelope.to).split('\n').length
-      return [{ frame: transformed, caption, sourceLines, body: undefined as string | undefined }]
+      return [
+        {
+          frame: transformed,
+          caption,
+          sourceLines,
+          table: tableFrameStarts.has(frame.envelope.from),
+          tableId: `${nonce}-${index}`,
+          body: undefined as string | undefined,
+        },
+      ]
     })
     const imageTransformations = imageFrames.flatMap((frame, index) => {
       const identity = `<!-- ${nonce}-image-${index} -->`
@@ -224,7 +246,7 @@ export async function renderPdf({
         .slice(transformed.body.from, transformed.body.to)
         .replace(identity, '')
         .trim()
-      return [{ frame: transformed, caption, sourceLines, body }]
+      return [{ frame: transformed, caption, sourceLines, body, table: false, tableId: '' }]
     })
     for (const item of [...transformations, ...imageTransformations].sort(
       (a, b) => b.frame.envelope.from - a.frame.envelope.from,
@@ -232,7 +254,7 @@ export async function renderPdf({
       const body = drawn.markdown.slice(item.frame.body.from, item.frame.body.to)
       markdown =
         markdown.slice(0, item.frame.envelope.from) +
-        captionComment(item.body ?? body, item.caption) +
+        captionComment(item.body ?? body, item.caption, item.table, item.tableId) +
         '\n'.repeat(Math.max(0, item.sourceLines - 1)) +
         markdown.slice(item.frame.envelope.to)
     }
