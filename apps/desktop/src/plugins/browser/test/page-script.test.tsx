@@ -307,6 +307,54 @@ test('rearming a surviving document rotates ownership and returns Vim to insert 
   expect(holi().vim.configure(true, 31, nonce)).toBe(true)
 })
 
+test('plaintext-only single-line hosts use native selection for Vim motions', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  host.setAttribute('aria-label', 'plain')
+  host.append(document.createTextNode('café'), document.createTextNode('🙂 two'))
+  document.body.append(host)
+  host.focus()
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 40, nonce)
+  const key = (value: string) => {
+    const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  expect(key('Escape').defaultPrevented).toBe(true)
+  const range = document.createRange()
+  range.setStart(host.firstChild!, 0)
+  range.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(range)
+  key('w')
+  expect(getSelection()!.anchorNode).toBe(host.lastChild)
+  expect(getSelection()!.anchorOffset).toBe(3)
+  expect(host.textContent).toBe('café🙂 two')
+})
+
+test('plaintext-only shape loss resets normal mode and does not resurrect it', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  host.append(document.createTextNode('alpha beta'))
+  document.body.append(host)
+  host.focus()
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 41, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  press('Escape')
+  expect(holi().vim.mode().mode).toBe('normal')
+  host.append(document.createElement('span'))
+  expect(holi().vim.mode().mode).toBe('insert')
+  host.lastChild?.remove()
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(press('x').defaultPrevented).toBe(false)
+})
+
 test('fills a field and picks an option, as typing would', () => {
   holi().read(12_000)
   const input = vi.fn()

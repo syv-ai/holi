@@ -61,6 +61,8 @@ async function run(): Promise<void> {
       <label>Number <input aria-label="Number" type="number" id="number" value="12"></label>
       <label>Readonly <input aria-label="Readonly" id="readonly" value="locked" readonly></label>
       <label>Editable <div aria-label="Editable" id="editable" contenteditable="true">edit me</div></label>
+      <label>Plain text <div aria-label="Plain text" id="plaintext" contenteditable="plaintext-only">café🙂 two</div></label>
+      <label>Empty plain text <div aria-label="Empty plain text" id="plaintext-empty" contenteditable="plaintext-only"></div></label>
       <label>Not editable <div aria-label="Not editable" id="inert" contenteditable="false">inert</div></label>
       <label>Graphemes <textarea aria-label="Graphemes" id="graphemes">a café🙂 z</textarea></label>
       <label>Rows <textarea aria-label="Rows" id="rows">  alpha beta\n  gamma delta\n  omega</textarea></label>
@@ -461,6 +463,33 @@ async function run(): Promise<void> {
     'aframe',
   )
   mark('unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough')
+  await inPage(
+    a,
+    `(() => { const host = document.querySelector('#plaintext'); host.focus(); const range = document.createRange(); range.setStart(host.firstChild, 0); range.collapse(true); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range) })()`,
+  )
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'w')
+  assert.equal(
+    await inPage<number>(
+      a,
+      `(() => { const s = getSelection(); return s.anchorNode === document.querySelector('#plaintext').firstChild ? s.anchorOffset : s.anchorNode.textContent.length + s.anchorOffset })()`,
+    ),
+    8,
+    'plaintext-only w uses the native caret across plain text',
+  )
+  await nativePress(a, 'i')
+  await nativePress(a, 'Z')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    'café🙂 Ztwo',
+  )
+  await inPage(a, `document.querySelector('#plaintext-empty').focus()`)
+  await nativePress(a, 'Escape')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext-empty').textContent`),
+    '',
+  )
+  mark('native-plaintext-only-motion-insert-and-empty-host')
   await inPage(a, `document.querySelector('#text').focus()`)
   await nativePress(a, 'Escape')
   await nativePress(a, 'Escape')
