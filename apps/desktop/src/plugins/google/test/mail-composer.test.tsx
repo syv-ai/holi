@@ -8,15 +8,16 @@
  * The body editor is exercised through its real CodeMirror contenteditable so
  * its document/history survive the composer busy-state transitions.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Provider, createStore } from 'jotai'
 import { createRef, useState } from 'react'
 import { undo, redo } from '@codemirror/commands'
+import { getCM } from '@replit/codemirror-vim'
 import { EditorView } from '@codemirror/view'
 import { MailComposer, type MailComposerHandle } from '../renderer/mail-composer'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, vimCodeEditingAtom } from '@/plugin-api'
 import type { ComposeIntent } from '../renderer/compose-intent'
 import type { ThreadMessage } from '../renderer/mail-types'
 
@@ -86,12 +87,13 @@ const REPLY: ComposeIntent = {
   all: false,
 }
 
-function mount(props: Partial<React.ComponentProps<typeof MailComposer>> = {}) {
+function mount(props: Partial<React.ComponentProps<typeof MailComposer>> = {}, vimEnabled = false) {
   const onSent = vi.fn()
   const onDiscarded = vi.fn()
   const onClose = vi.fn()
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/vault')
+  store.set(vimCodeEditingAtom, vimEnabled)
   const { unmount } = render(
     <Provider store={store}>
       <MailComposer
@@ -105,7 +107,7 @@ function mount(props: Partial<React.ComponentProps<typeof MailComposer>> = {}) {
       />
     </Provider>,
   )
-  return { onSent, onDiscarded, onClose, unmount }
+  return { onSent, onDiscarded, onClose, unmount, store }
 }
 
 const subjectField = (): HTMLElement => screen.getByRole('textbox', { name: 'Subject' })
@@ -1138,10 +1140,155 @@ describe('discarding', () => {
 describe('the preview', () => {
   it('renders the markdown rather than describing it', async () => {
     const user = setup()
-    mount()
+    mount({}, true)
+    await user.click(screen.getByRole('textbox', { name: 'Message' }))
+    expect(screen.getByTestId('vim-mode')).toBeInTheDocument()
 
     await user.click(screen.getByRole('radio', { name: 'Preview' }))
 
     expect(screen.getByLabelText('Preview of your message')).toBeInTheDocument()
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+  })
+})
+
+describe('Vim in the message body', () => {
+  it('reserves mode-row space when focus leaves so action buttons do not move', async () => {
+    const user = setup()
+    mount({ intent: { kind: 'new' } }, true)
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    await user.click(body)
+    const slot = screen.getByTestId('vim-mode-slot')
+    expect(slot).toHaveClass('min-h-6')
+    expect(screen.getByTestId('vim-mode')).toHaveTextContent('NORMAL')
+
+    await user.click(subjectField())
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+    expect(screen.getByTestId('vim-mode-slot')).toBe(slot)
+    expect(slot).toBeEmptyDOMElement()
+  })
+
+  it('restores mode disclosure after enabling Vim live and refocusing the body', async () => {
+    const user = setup()
+    const { store } = mount({ intent: { kind: 'new' } })
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    const editor = EditorView.findFromDOM(body)!
+    await user.click(body)
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+
+    act(() => store.set(vimCodeEditingAtom, true))
+    await waitFor(() => expect(screen.getByTestId('vim-mode')).toHaveTextContent('NORMAL'))
+    await user.click(subjectField())
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+    await user.click(body)
+    expect(screen.getByTestId('vim-mode')).toHaveTextContent('NORMAL')
+    expect(EditorView.findFromDOM(body)).toBe(editor)
+
+    await user.keyboard('i')
+    await waitFor(() => expect(screen.getByTestId('vim-mode')).toHaveTextContent('INSERT'))
+    await user.click(subjectField())
+    await user.click(body)
+    expect(screen.getByTestId('vim-mode')).toHaveTextContent('INSERT')
+    expect(EditorView.findFromDOM(body)).toBe(editor)
+  })
+
+  it('edits through real keys and keeps the editor and undo history across preference changes', async () => {
+    const user = setup()
+    const { store } = mount({ intent: { kind: 'new' } }, true)
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    const editor = EditorView.findFromDOM(body)!
+    await user.click(body)
+
+    await user.keyboard('ihello')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(getCM(editor)?.state.vim?.insertMode).toBe(false))
+    expect(editor.state.doc.toString()).toBe('hello')
+    expect(screen.getByTestId('vim-mode')).toHaveTextContent('NORMAL')
+
+    act(() => store.set(vimCodeEditingAtom, false))
+    expect(EditorView.findFromDOM(body)).toBe(editor)
+    expect(editor.state.doc.toString()).toBe('hello')
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+
+    act(() => store.set(vimCodeEditingAtom, true))
+    expect(EditorView.findFromDOM(body)).toBe(editor)
+    expect(editor.state.doc.toString()).toBe('hello')
+    expect(undo(editor)).toBe(true)
+    expect(editor.state.doc.toString()).toBe('')
+  })
+
+  it('keeps normal-mode f out of the body while insert-mode f is text', async () => {
+    const user = setup()
+    mount({ intent: { kind: 'new' } }, true)
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    const editor = EditorView.findFromDOM(body)!
+    await user.click(body)
+
+    await user.keyboard('f')
+    expect(editor.state.doc.toString()).toBe('')
+    await user.keyboard('if')
+    expect(editor.state.doc.toString()).toBe('f')
+    await user.click(subjectField())
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+    await user.keyboard('f')
+    expect(editor.state.doc.toString()).toBe('f')
+  })
+
+  it('keeps the same Vim editor when a pending send makes the body readonly', async () => {
+    const user = setup()
+    let resolveSend: ((result: { id: string }) => void) | undefined
+    send.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSend = resolve
+        }),
+    )
+    mount({ intent: { kind: 'new' } }, true)
+    await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
+    await user.type(subjectField(), 'Subject')
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    const editor = EditorView.findFromDOM(body)!
+    await user.click(body)
+    await user.keyboard('ihello{Escape}')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(body).toHaveAttribute('contenteditable', 'false'))
+
+    expect(EditorView.findFromDOM(body)).toBe(editor)
+    expect(editor.state.doc.toString()).toBe('hello')
+    expect(screen.queryByTestId('vim-mode')).not.toBeInTheDocument()
+    resolveSend?.({ id: 'm-9' })
+  })
+
+  it('keeps Vim find motions available after an operator prefix', async () => {
+    const user = setup()
+    mount({ intent: { kind: 'new' } }, true)
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    const editor = EditorView.findFromDOM(body)!
+    await user.click(body)
+
+    await user.keyboard('iabcxdef{Escape}0dfx')
+
+    expect(editor.state.doc.toString()).toBe('def')
+  })
+
+  it('reports visual mode and uses the first Escape for Vim before close', async () => {
+    const user = setup()
+    const { onClose } = mount({ intent: { kind: 'new' } }, true)
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    const editor = EditorView.findFromDOM(body)!
+    await user.click(body)
+
+    await user.keyboard('iword')
+    await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(getCM(editor)?.state.vim?.insertMode).toBe(false)
+    await user.keyboard('v')
+    await waitFor(() => expect(screen.getByTestId('vim-mode')).toHaveTextContent('VISUAL'))
+    await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(getCM(editor)?.state.vim?.visualMode).toBe(false)
+    await user.keyboard('{Control>}z{/Control}')
+    expect(editor.state.doc.toString()).toBe('')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
   })
 })

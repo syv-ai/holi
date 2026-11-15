@@ -4,11 +4,24 @@
  */
 import { describe, expect, it } from 'vitest'
 import { wikiLinksToText } from '@holi/shared'
-import { drawMermaid, type DrawDiagrams } from '../main/mermaid'
+import { commentSafeString, drawMermaid, type DrawDiagrams } from '../main/mermaid'
 
 const drawsAll: DrawDiagrams = async (sources) => sources.map((s) => ({ svg: `<svg>${s}</svg>` }))
 
 describe('drawMermaid', () => {
+  it('encodes comment delimiters and branded tokens injectively', () => {
+    const values = [
+      '@@FIG:diagram@@ -->',
+      '@FIG:diagram@ -->',
+      '"quoted" \\\\ path',
+      'line one\\nline two',
+    ]
+    const encoded = values.map(commentSafeString)
+    expect(new Set(encoded).size).toBe(values.length)
+    expect(encoded[0]).not.toContain('@@FIG')
+    expect(encoded[0]).not.toContain('-->')
+    expect(encoded[0]).toContain('\\u{40}')
+  })
   it('puts each mermaid fence’s drawing where the fence was, and leaves other code', async () => {
     const md = '# T\n\n```mermaid\nflowchart LR\n```\n\n```js\nx()\n```\n'
     const { markdown, warnings } = await drawMermaid(md, drawsAll)

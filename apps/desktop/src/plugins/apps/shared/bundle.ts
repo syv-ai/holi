@@ -24,6 +24,7 @@ const HOST_TAIL = '.app'
  * lookup and no collisions. The fixed last label is load-bearing: URL parsers
  * read a host whose last label is numeric as IPv4, and `41` is valid hex.
  */
+/** @public */
 export function appHost(bundle: string): string {
   let hex = ''
   for (const byte of new TextEncoder().encode(bundle)) hex += byte.toString(16).padStart(2, '0')
@@ -48,4 +49,17 @@ export function bundleFromAppHost(host: string): string | null {
     return null
   }
   return isAppBundlePath(path) ? path : null
+}
+
+/** Host carrying a per-document lease without changing the bundle encoding. */
+export function leasedAppHost(bundle: string, token: string): string {
+  if (!/^[a-f0-9]{48}$/.test(token)) throw new Error('invalid app frame lease token')
+  return `t${token}.${appHost(bundle)}`
+}
+
+export function appLeaseFromHost(host: string): { bundle: string; token: string } | null {
+  const match = /^t([a-f0-9]{48})\.(.+)$/i.exec(host)
+  if (match === null) return null
+  const bundle = bundleFromAppHost(match[2]!)
+  return bundle === null ? null : { bundle, token: match[1]!.toLowerCase() }
 }

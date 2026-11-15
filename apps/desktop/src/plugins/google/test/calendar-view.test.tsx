@@ -118,7 +118,7 @@ const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.schedule': (p) => scheduleMock(p),
   'google.reschedule': (p) => rescheduleMock(p),
   'google.unschedule': (p) => unscheduleMock(p),
-  'google.imageSenders': () => [],
+  'google.imageSenders': () => ({ senders: [], allSenders: false }),
   'tasks.create': (p) => taskMock(p),
 }
 vi.mock('@/lib/trpc', () => ({
@@ -207,6 +207,49 @@ describe('the calendar view', () => {
     expect(screen.getAllByRole('button', { name: 'Calendars' })).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Select view' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New event' })).toBeInTheDocument()
+  })
+
+  test('collapses and restores the calendar rail without losing calendar controls or view state', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+
+    const rail = container.querySelector<HTMLElement>('aside')!
+    const title = container.querySelector('[data-slot="event-calendar-title"]')?.textContent
+    expect(rail).toHaveClass('@min-[64rem]/calendar-host:flex')
+    expect(screen.getByRole('button', { name: 'Hide calendar rail' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Hide calendar rail' }))
+    expect(rail).toHaveClass('hidden')
+    expect(rail).not.toHaveClass('@min-[64rem]/calendar-host:flex')
+    expect(
+      container.querySelector('[class*="@min-[64rem]/calendar-host:hidden"]'),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show calendar rail' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(screen.getAllByRole('button', { name: 'Calendars' })).toHaveLength(2)
+    expect(container.querySelector('[data-slot="event-calendar-title"]')?.textContent).toBe(title)
+    expect(screen.getAllByText('Focus block').length).toBeGreaterThan(0)
+
+    const pickers = screen.getAllByRole('button', { name: 'Calendars' })
+    await user.click(pickers.at(-1)!)
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: 'Team' }))
+    expect(setCalendarMock).toHaveBeenCalledWith({ id: 'team', enabled: true })
+    await user.keyboard('{Escape}')
+
+    await user.click(screen.getByRole('button', { name: 'Show calendar rail' }))
+    expect(rail).toHaveClass('@min-[64rem]/calendar-host:flex')
+    expect(screen.getByRole('button', { name: 'Hide calendar rail' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(container.querySelector('[data-slot="event-calendar-title"]')?.textContent).toBe(title)
+    expect(screen.getAllByText('Focus block').length).toBeGreaterThan(0)
   })
 
   test('one sideways swipe pages one week, and a vertical scroll pages none', async () => {
@@ -715,6 +758,70 @@ describe('the calendar view', () => {
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(agendaMock).toHaveBeenCalled())
     expect((await screen.findAllByText('Focus block')).length).toBeGreaterThan(0)
+  })
+
+  test('parking closes calendar menus but retains the selected view and range', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const switcher = screen.getByRole('button', { name: 'Select view' })
+    await user.click(switcher)
+    expect(await screen.findByRole('menu')).toBeInTheDocument()
+    view.rerender(<CalendarView visible={false} />)
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    view.rerender(<CalendarView visible />)
+    expect(screen.getByRole('button', { name: 'Select view' })).toHaveTextContent('Week')
+  })
+
+  test('parking closes both calendar pickers without reopening either', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const triggers = screen.getAllByRole('button', { name: 'Calendars' })
+    for (const trigger of triggers) {
+      await user.click(trigger)
+      expect(await screen.findByRole('menu')).toBeInTheDocument()
+      view.rerender(<CalendarView visible={false} />)
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+      expect(document.body.style.pointerEvents).toBe('')
+      view.rerender(<CalendarView visible />)
+      expect(screen.queryByRole('menu')).toBeNull()
+    }
+  })
+
+  test('a create draft survives parking and cancel discards it', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    await user.type(await screen.findByRole('textbox', { name: 'Title' }), 'Draft event')
+    view.rerender(<CalendarView visible={false} />)
+    expect(screen.queryByRole('dialog', { name: 'New event' })).toBeNull()
+    view.rerender(<CalendarView visible />)
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Draft event')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('')
+  })
+
+  test('an edit draft survives parking and account changes clear it', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getAllByText('Focus block')[0]!)
+    const details = await screen.findByRole('dialog', { name: 'Focus block' })
+    await user.click(within(details).getByRole('button', { name: 'Edit' }))
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await user.clear(title)
+    await user.type(title, 'Edited focus')
+    view.rerender(<CalendarView visible={false} />)
+    view.rerender(<CalendarView visible />)
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Edited focus')
+
+    getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('')
   })
 
   test('without a connection it offers Connections', async () => {

@@ -212,6 +212,38 @@ describe("a plugin's own settings", () => {
     expect(r.warnings.filter((w) => w.includes('"mail.'))).toHaveLength(2)
   })
 
+  it('keeps local-only values private and defaults committed or malformed answers', () => {
+    const privateMail: PluginInfo = {
+      ...MAIL,
+      settings: MAIL.settings?.map((setting) =>
+        setting.key === 'senders' ? { ...setting, localOnly: true } : setting,
+      ),
+    }
+    expect(
+      resolvePluginSettings('mail:\n  senders: [shared@example.com]\n', null, [privateMail]).values
+        .mail!.senders,
+    ).toEqual([])
+    expect(
+      resolvePluginSettings(
+        'mail:\n  senders: [shared@example.com]\n',
+        'mail:\n  senders: invalid\n',
+        [privateMail],
+      ).values.mail!.senders,
+    ).toEqual([])
+    expect(
+      resolvePluginSettings(
+        'mail:\n  senders: [shared@example.com]\n',
+        'mail:\n  senders: [local@example.com]\n',
+        [privateMail],
+      ).values.mail!.senders,
+    ).toEqual(['local@example.com'])
+    expect(() =>
+      checkPluginCatalogue([
+        { ...privateMail, settings: [{ ...privateMail.settings![1]!, localOnly: 'yes' as never }] },
+      ]),
+    ).toThrow(/localOnly/)
+  })
+
   it('writes only declared, valid keys of known plugins', () => {
     const { patch, warnings } = parsePluginSettingsPatch(
       JSON.stringify({

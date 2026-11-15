@@ -226,7 +226,11 @@ are no barrels; check `components/ui` and `composites/` before writing a compone
   ```
 
   Tests inject/fake the PTY and do not prove that the live Electron native
-  module is loadable.
+  module is loadable. On Windows `node-pty` ships a prebuilt N-API `win32-x64`
+  binary that loads in Electron as installed: skip `rebuild:natives` (node-gyp
+  cannot find Visual Studio from an agent shell) and run only the check, which
+  spawns `cmd.exe` there. The `ELECTRON_RUN_AS_NODE=1` prefix is POSIX shell
+  syntax: in PowerShell set `$env:ELECTRON_RUN_AS_NODE=1` first, or use Git Bash.
 
 ## Working safely
 
@@ -261,6 +265,7 @@ Gotchas of a fresh checkout or worktree that no file states.
   check fails to start it), run `node apps/desktop/node_modules/electron/install.js`.
   Every fresh install then needs `pnpm --filter @holi/desktop run rebuild:natives`
   before `pnpm dev`, because `node-pty` is built for Node's ABI, not Electron's.
+  Not on Windows: there the prebuild already loads.
 - `REUI_LICENSE_KEY`, the key the `@reui` registry in `components.json` reads, lives in
   `apps/desktop/.env.local` (gitignored, never copied into worktrees). Without it some
   `shadcn add @reui/<name>` installs fail with a 401.

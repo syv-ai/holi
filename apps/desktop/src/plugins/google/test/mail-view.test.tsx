@@ -5,13 +5,14 @@
  * the checks are that HTML goes through it rather than around it, that blocked
  * remote content can be unblocked, and that links open externally.
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../renderer/mail-view'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, loadVaultSettingsAtom } from '@/plugin-api'
+import { refreshGoogleAtom } from '../renderer/account'
 import { getDefaultStore } from 'jotai'
 
 const threadMock = vi.fn()
@@ -26,6 +27,7 @@ const untrashMock = vi.fn()
 const toastMock = vi.fn()
 const categoryCountsMock = vi.fn()
 const imageSendersMock = vi.fn()
+const setImagesFromAllSendersMock = vi.fn()
 const allowImagesFromMock = vi.fn()
 const forgetImageSendersMock = vi.fn()
 const sendAsMock = vi.fn()
@@ -35,16 +37,27 @@ const discardDraftMock = vi.fn()
 const draftMock = vi.fn()
 const draftsMock = vi.fn()
 const meetingMock = vi.fn()
+const mailMarkersMock = vi.fn()
 /** What `openDialogAtom` was asked to open. */
 const openedDialog = vi.fn()
 const createTaskMock = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
+let mailAccountSub = 'mail-view-account'
 const google: Record<string, (params: unknown) => unknown> = {
-  status: () => ({ account: { sub: 'mail-view-account', email: 'ada@syv.ai' }, missingScopes: [] }),
+  status: () => ({
+    account: {
+      sub: mailAccountSub,
+      email: mailAccountSub === 'mail-view-account' ? 'ada@syv.ai' : 'ada@home.test',
+    },
+    missingScopes: [],
+  }),
   allAccounts: () => ({
-    accounts: [{ sub: 'mail-view-account', email: 'ada@syv.ai' }],
-    current: 'mail-view-account',
+    accounts: [
+      { sub: 'mail-view-account', email: 'ada@syv.ai' },
+      { sub: 'account-b', email: 'ada@home.test' },
+    ],
+    current: mailAccountSub,
   }),
   search: (p) => threadMock(p),
   thread: (p) => readMock(p),
@@ -57,7 +70,16 @@ const google: Record<string, (params: unknown) => unknown> = {
   untrash: (p) => untrashMock(p),
   categoryCounts: () => categoryCountsMock(),
   imageSenders: () => imageSendersMock(),
-  allowImagesFrom: (p) => allowImagesFromMock(p),
+  setImagesFromAllSenders: (p) => setImagesFromAllSendersMock(p),
+  allowImagesFrom: async (p) => {
+    const result = await allowImagesFromMock(p)
+    const before = await imageSendersMock()
+    imageSendersMock.mockResolvedValue({
+      ...before,
+      imageSenders: [...before.imageSenders, (p as { sender: string }).sender],
+    })
+    return result
+  },
   forgetImageSenders: () => forgetImageSendersMock(),
   sendAs: () => sendAsMock(),
   saveDraft: (p) => saveDraftMock(p),
@@ -66,6 +88,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   draftBody: (p) => draftMock(p),
   drafts: () => draftsMock(),
   meeting: (p) => meetingMock(p),
+  mailMarkerAnnotations: (p) => mailMarkersMock(p),
 }
 
 vi.mock('@/plugin-api', async (original) => {
@@ -83,6 +106,14 @@ vi.mock('sonner', async (original) => ({
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
+    settings: {
+      read: {
+        query: async () => ({
+          pluginValues: { google: await imageSendersMock() },
+          plugins: { vault: {}, localOff: [] },
+        }),
+      },
+    },
     cap: {
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
@@ -191,6 +222,7 @@ async function frameOf(article: HTMLElement): Promise<Document> {
 
 beforeEach(() => {
   threadMock.mockReset()
+  mailAccountSub = 'mail-view-account'
   // A default, because the real query ALWAYS returns a promise. A bare
   // `mockReset()` returns `undefined`, which surfaces as an unhandled error
   // beside a passing suite rather than as a failure.
@@ -220,7 +252,9 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   categoryCountsMock.mockReset().mockResolvedValue({})
   meetingMock.mockReset().mockResolvedValue(null)
-  imageSendersMock.mockReset().mockResolvedValue([])
+  mailMarkersMock.mockReset().mockResolvedValue({})
+  imageSendersMock.mockReset().mockResolvedValue({ imageSenders: [], imagesFromAllSenders: false })
+  setImagesFromAllSendersMock.mockReset().mockResolvedValue({ ok: true })
   allowImagesFromMock.mockReset().mockResolvedValue({ ok: true })
   forgetImageSendersMock.mockReset().mockResolvedValue({ ok: true })
   sendAsMock.mockReset().mockResolvedValue(['ada@syv.ai'])
@@ -243,6 +277,7 @@ beforeEach(() => {
   window.holi = { openExternal }
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   // @ts-expect-error — as above.
   delete window.holi
 })
@@ -1282,7 +1317,11 @@ test('“always from this sender” is remembered in main, keyed on the address'
 })
 
 test('a sender already allowed never shows the banner at all', async () => {
-  imageSendersMock.mockResolvedValue(['jane@example.com'])
+  imageSendersMock.mockResolvedValue({
+    imageSenders: ['jane@example.com'],
+    imagesFromAllSenders: false,
+  })
+  await getDefaultStore().set(loadVaultSettingsAtom, { force: true })
   withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
 
   const article = await openThread()
@@ -2396,8 +2435,20 @@ test('failed dirty Close keeps the subject editable and Retry lets Close finish'
   await screen.findByRole('article')
   await user.click(screen.getByRole('button', { name: 'Reply' }))
   const subject = screen.getByRole('textbox', { name: 'Subject' })
+  const setTimeout = globalThis.setTimeout
+  const pendingAutosaves: TimerHandler[] = []
+  // Keep the two-second idle autosave pending so it cannot consume the failed
+  // save's Retry state; all other timers (including test-library waits) stay real.
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) {
+      pendingAutosaves.push(callback)
+      return 0 as never
+    }
+    return setTimeout(callback, delay, ...args)
+  })
   await user.clear(subject)
   await user.type(subject, 'Keep this subject')
+  expect(pendingAutosaves.length).toBeGreaterThan(0)
   let rejectSave!: (error: Error) => void
   saveDraftMock.mockImplementationOnce(
     () => new Promise((_resolve, reject) => (rejectSave = reject)),
@@ -2469,4 +2520,223 @@ test('failed mailbox-change save keeps the mailbox and editable text without req
   expect(screen.getByRole('button', { name: 'Choose a mailbox' })).not.toHaveTextContent('Sent')
   expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('Keep me in All mail')
+})
+
+test('renders account markers in the list and reader from one batched read', async () => {
+  const rows = [
+    summary({ id: 'yellow', subject: 'Yellow marker', starred: true }),
+    summary({ id: 'red', subject: 'Red marker', starred: true }),
+    summary({ id: 'blue', subject: 'Blue marker', starred: true }),
+  ]
+  threadMock.mockResolvedValue(page(rows))
+  mailMarkersMock.mockResolvedValue({
+    yellow: 'yellow-star',
+    red: 'red-star',
+    blue: 'blue-question',
+  })
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  for (const label of ['Yellow star', 'Red star', 'Blue question mark'])
+    expect(await screen.findByLabelText(label)).toBeInTheDocument()
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+  expect(mailMarkersMock.mock.calls[0]![0]).toMatchObject({
+    ids: ['blue', 'red', 'yellow'],
+    expectedAccountSub: 'mail-view-account',
+  })
+
+  for (const [subject, label] of Object.entries({
+    'Yellow marker': 'Yellow star',
+    'Red marker': 'Red star',
+    'Blue marker': 'Blue question mark',
+  })) {
+    await user.click(screen.getByRole('button', { name: new RegExp(subject, 'i') }))
+    await waitFor(() => expect(screen.getAllByLabelText(label).length).toBeGreaterThanOrEqual(2))
+  }
+})
+
+test('keeps account rows, messages, and annotations isolated across A-B-A switches and late reads', async () => {
+  const user = userEvent.setup()
+  let finishLateSearch: ((value: ReturnType<typeof page>) => void) | undefined
+  let finishLateRead: ((value: unknown) => void) | undefined
+  let delayNextSearch = false
+  let delayFirstRead = true
+  threadMock.mockImplementation(() => {
+    const account = mailAccountSub
+    if (delayNextSearch) {
+      delayNextSearch = false
+      return new Promise((resolve) => (finishLateSearch = resolve))
+    }
+    return Promise.resolve(
+      page([
+        summary({
+          starred: true,
+          subject: account === 'mail-view-account' ? 'Account A mail' : 'Account B mail',
+        }),
+      ]),
+    )
+  })
+  readMock.mockImplementation(() => {
+    const account = mailAccountSub
+    if (account === 'mail-view-account' && delayFirstRead) {
+      delayFirstRead = false
+      return new Promise((resolve) => (finishLateRead = resolve))
+    }
+    return Promise.resolve({
+      id: 't1',
+      subject: account === 'mail-view-account' ? 'Account A mail' : 'Account B mail',
+      webUrl: 'https://mail.google.com/x',
+      messages: [
+        {
+          id: `message-${account}`,
+          from: { name: 'Jane', email: 'jane@example.com' },
+          to: [],
+          cc: [],
+          bcc: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: `Message from ${account}`,
+          html: null,
+          attachments: [],
+        },
+      ],
+    })
+  })
+  mailMarkersMock.mockImplementation(async ({ ids }: { ids: string[] }) => ({
+    [ids[0]!]: mailAccountSub === 'mail-view-account' ? 'red-star' : 'blue-question',
+  }))
+  render(<MailView />)
+  const accountARow = await screen.findByRole('button', { name: /Account A mail/ })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+  expect(within(accountARow).getByLabelText('Red star')).toBeInTheDocument()
+  await user.click(accountARow)
+  await waitFor(() => expect(readMock).toHaveBeenCalledTimes(1))
+
+  mailAccountSub = 'account-b'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  const accountBRow = await screen.findByRole('button', { name: /Account B mail/ })
+  expect(screen.queryByRole('button', { name: /Account A mail/ })).toBeNull()
+  await waitFor(() =>
+    expect(within(accountBRow).getByLabelText('Blue question mark')).toBeInTheDocument(),
+  )
+  await user.click(accountBRow)
+  expect(await screen.findByText('Message from account-b')).toBeInTheDocument()
+
+  // Returning to A remounts its reader/list state, even though Gmail reuses t1.
+  mailAccountSub = 'mail-view-account'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  const returnedARow = await screen.findByRole('button', { name: /Account A mail/ })
+  await waitFor(() => expect(within(returnedARow).getByLabelText('Red star')).toBeInTheDocument())
+  expect(screen.queryByText('Message from account-b')).toBeNull()
+
+  // An in-flight list search from A cannot overwrite B's rows.
+  delayNextSearch = true
+  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+  await waitFor(() => expect(finishLateSearch).toBeDefined())
+  mailAccountSub = 'account-b'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await screen.findByRole('button', { name: /Account B mail/ })
+  await act(async () => finishLateSearch?.(page([summary({ subject: 'Stale A search' })])))
+  expect(screen.queryByRole('button', { name: /Stale A search/ })).toBeNull()
+
+  // A deferred read from the prior A mount must not leak into B.
+  mailAccountSub = 'mail-view-account'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await user.click(await screen.findByRole('button', { name: /Account A mail/ }))
+  await waitFor(() => expect(finishLateRead).toBeDefined())
+  mailAccountSub = 'account-b'
+  act(() => getDefaultStore().set(refreshGoogleAtom))
+  await screen.findByRole('button', { name: /Account B mail/ })
+  await act(async () =>
+    finishLateRead?.({
+      id: 't1',
+      subject: 'Account A mail',
+      webUrl: 'https://mail.google.com/x',
+      messages: [
+        {
+          id: 'message-account-a',
+          from: { name: 'Jane', email: 'jane@example.com' },
+          to: [],
+          cc: [],
+          bcc: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: 'Stale message from mail-view-account',
+          html: null,
+          attachments: [],
+        },
+      ],
+    }),
+  )
+  expect(screen.queryByText('Stale message from mail-view-account')).toBeNull()
+  expect(screen.queryByLabelText('Red star')).toBeNull()
+})
+
+test('invalidates markers across an A-B-A vault switch before accepting the latest identical-id read', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+  const pending: ((value: Record<string, string>) => void)[] = []
+  mailMarkersMock.mockImplementation(
+    () =>
+      new Promise((resolve) => pending.push(resolve as (value: Record<string, string>) => void)),
+  )
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/i })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+
+  act(() => getDefaultStore().set(activeRemoteAtom, 'other/vault'))
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(2))
+  act(() => getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault'))
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(3))
+
+  await act(async () => pending[2]!({ t1: 'red-star' }))
+  expect(await screen.findByLabelText('Red star')).toBeInTheDocument()
+  await act(async () => pending[0]!({ t1: 'yellow-star' }))
+  expect(screen.queryByLabelText('Yellow star')).toBeNull()
+  expect(screen.getByLabelText('Red star')).toBeInTheDocument()
+  await act(async () => pending[1]!({ t1: 'blue-question' }))
+  expect(screen.queryByLabelText('Blue question mark')).toBeNull()
+})
+
+test('hides a persisted annotation when Gmail reports the thread unstarred', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: false })]))
+  mailMarkersMock.mockResolvedValue({ t1: 'red-star' })
+  render(<MailView />)
+
+  await screen.findByRole('button', { name: /Q2 budget/i })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalledTimes(1))
+  expect(screen.queryByLabelText('Red star')).toBeNull()
+  expect(screen.queryByLabelText('Starred')).toBeNull()
+})
+
+test('refresh and Gmail star writes invalidate the visible thread marker', async () => {
+  threadMock
+    .mockResolvedValueOnce(page([summary()]))
+    .mockResolvedValue(page([summary({ starred: true })]))
+  mailMarkersMock
+    .mockResolvedValueOnce({ t1: 'red-star' })
+    .mockResolvedValueOnce({ t1: 'blue-question' })
+    .mockResolvedValue({ t1: 'yellow-star' })
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  await screen.findByRole('button', { name: /Q2 budget/i })
+  expect(screen.queryByLabelText('Red star')).toBeNull()
+  await user.click(screen.getByRole('button', { name: /Q2 budget/i }))
+  await user.click(await screen.findByRole('button', { name: 'Star this thread' }))
+  expect((await screen.findAllByLabelText('Blue question mark')).length).toBeGreaterThan(0)
+
+  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+  expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3)
+})
+
+test('shows ordinary Gmail stars only after the annotation read and retries marker errors', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+  mailMarkersMock.mockRejectedValueOnce(new Error('offline'))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  expect(await screen.findByRole('button', { name: 'Retry marker' })).toBeInTheDocument()
+  expect(await screen.findByLabelText('Starred')).toBeInTheDocument()
+  mailMarkersMock.mockResolvedValueOnce({})
+  await user.click(screen.getByRole('button', { name: 'Retry marker' }))
+  expect((await screen.findAllByLabelText('Starred')).length).toBeGreaterThan(0)
 })

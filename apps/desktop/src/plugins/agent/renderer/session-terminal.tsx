@@ -9,6 +9,7 @@
  * exits (a detach, or its session stopped) the tab closes.
  */
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
@@ -18,8 +19,20 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { agentCap } from './agent-cap'
 import { terminalKeyAction } from './lib/terminal-keys'
 import { createPiMouseSelectionFilter } from './lib/pi-mouse-selection'
+import { createPiWheelRouter } from './lib/pi-wheel-routing'
 import { vaultLinks } from './lib/terminal-links'
-import { terminalTheme, watchTerminalTheme, suppressTerminalColorQueries } from '@/plugin-api'
+import {
+  activateTerminalLink,
+  fileUrlLinks,
+  isTerminalLinkActivation,
+  wrappedTerminalLine,
+} from './lib/terminal-link-activation'
+import {
+  openExternal,
+  terminalTheme,
+  watchTerminalTheme,
+  suppressTerminalColorQueries,
+} from '@/plugin-api'
 import {
   registerSessionTerminal,
   resizeTerminal,
@@ -163,6 +176,15 @@ export function SessionTerminal({
     }
     selectionRef.current = ''
     lastSizeRef.current = { cols: 0, rows: 0 }
+    const activateLink = (text: string) => {
+      if (!isLive() || !visibleRef.current) return
+      activateTerminalLink(text, {
+        ...linkRef.current,
+        openDocument: (path) => openRef.current(path),
+        openExternal,
+        revealLocalFile: (path) => void window.holi?.openPath(path),
+      })
+    }
     const term = new Terminal({
       fontSize: 13,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
@@ -175,9 +197,26 @@ export function SessionTerminal({
       // palette as Holi's other terminal.
       allowTransparency: true,
       theme: terminalTheme(mount),
+      // OSC 8 hyperlinks may include file URLs, so allow the protocol through
+      // xterm only with an activation handler that explicitly classifies it.
+      linkHandler: {
+        allowNonHttpProtocols: true,
+        activate: (event, text) => {
+          if (!isTerminalLinkActivation(event)) return
+          event.preventDefault()
+          activateLink(text)
+        },
+      },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    term.loadAddon(
+      new WebLinksAddon((event, text) => {
+        if (!isTerminalLinkActivation(event)) return
+        event.preventDefault()
+        activateLink(text)
+      }),
+    )
     term.open(mount)
     // The WebGL renderer, after `open` (it needs the element). The DOM one
     // corrects each glyph to the cell with a letter-spacing under 1/64px,
@@ -197,8 +236,10 @@ export function SessionTerminal({
     // keyboard, its focus: see `session-terminals.ts` for the case the
     // visible effect below misses.
     const filterPiOutput = provider === 'pi' ? createPiMouseSelectionFilter() : undefined
+    const wheelRouter = provider === 'pi' ? createPiWheelRouter(sendData) : undefined
     const writeOutput = (data: string) => {
       if (!isLive()) return
+      wheelRouter?.observeOutput(data)
       const filtered = filterPiOutput ? filterPiOutput(data) : data
       if (filtered) term.write(filtered)
     }
@@ -250,23 +291,66 @@ export function SessionTerminal({
       return false
     })
 
+    const routeWheel = (event: WheelEvent) => {
+      if (!isLive() || !visibleRef.current || !wheelRouter || !mount.isConnected) return
+      // PTY observation leads xterm's asynchronous write queue. The live buffer
+      // is authoritative: don't capture native wheel scrolling until xterm has
+      // actually entered the alternate screen.
+      if (term.buffer.active.type !== 'alternate') return
+      const screen = mount.querySelector<HTMLElement>('.xterm-screen')
+      if (!screen) return
+      wheelRouter.onWheel(event, screen.getBoundingClientRect(), term.cols, term.rows)
+    }
+    mount.addEventListener('wheel', routeWheel, { capture: true, passive: false })
+
     const stopColorQueries = suppressTerminalColorQueries(term)
     const typed = term.onData(sendData)
 
     // A vault path in the output opens the file in a pane.
     const links = term.registerLinkProvider({
       provideLinks(y, callback) {
-        const text = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? ''
+        const buffer = term.buffer.active
+        const logical = wrappedTerminalLine(y - 1, term.cols, (row) => buffer.getLine(row))
         const { paths: known, root: clone } = linkRef.current
-        const found = vaultLinks(text, (path) => known.has(path), clone)
+        const vault = vaultLinks(logical.text, (path) => known.has(path), clone).map((link) => ({
+          text: link.path,
+          start: link.start,
+          end: link.end,
+          activate: (event: MouseEvent) => {
+            if (isLive() && visibleRef.current && isTerminalLinkActivation(event))
+              openRef.current(link.path)
+          },
+        }))
+        const fileUrls = fileUrlLinks(logical.text)
+          .filter(
+            (link) =>
+              !vault.some((candidate) => link.start < candidate.end && link.end > candidate.start),
+          )
+          .map((link) => ({
+            ...link,
+            activate: (event: MouseEvent) => {
+              if (isTerminalLinkActivation(event)) activateLink(link.text)
+            },
+          }))
+        const found = [...vault, ...fileUrls].sort((a, b) => a.start - b.start)
         callback(
           found.length === 0
             ? undefined
-            : found.map((link) => ({
-                range: { start: { x: link.start + 1, y }, end: { x: link.end, y } },
-                text: link.path,
-                activate: () => openRef.current(link.path),
-              })),
+            : found.flatMap((link) => {
+                const start = logical.cellAt(link.start)
+                const end = logical.cellAt(link.end - 1)
+                // xterm prunes overlapping ranges in the queried row. Returning
+                // another link elsewhere in this logical line can evict that
+                // link before xterm gets the query for its own row.
+                if (!start || !end || start.y > y || end.y < y) return []
+                return [
+                  {
+                    range: { start, end },
+                    text: link.text,
+                    activate: link.activate,
+                  },
+                ]
+              }),
         )
       },
     })
@@ -307,6 +391,7 @@ export function SessionTerminal({
       lifetime.live = false
       clearTimeout(reHide)
       unregister()
+      mount.removeEventListener('wheel', routeWheel, true)
       typed.dispose()
       stopColorQueries()
       links.dispose()

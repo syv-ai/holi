@@ -13,6 +13,7 @@ import { installedPluginsAtom } from '@/state/plugins'
 import { useShortcutHandlers } from '@/hooks/use-shortcuts'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { CommandMenu } from '../command-menu'
+import { vimCodeEditingAtom } from '@/state/preferences'
 
 const search = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
@@ -31,11 +32,16 @@ function Live({ split }: { split: () => void }) {
 function setup({
   start,
   plugin,
+  openScratchpad,
+  vim = false,
 }: {
+  vim?: boolean
   start?: (text: string) => void
   plugin?: (id: string) => void
+  openScratchpad?: () => void
 } = {}) {
   const store = createStore()
+  store.set(vimCodeEditingAtom, vim)
   if (plugin !== undefined) {
     store.set(installedPluginsAtom, [
       {
@@ -81,7 +87,13 @@ function setup({
   render(
     <Provider store={store}>
       <Live split={split} />
-      <CommandMenu open onOpenChange={onOpenChange} onOpen={onOpen} onAddVault={() => undefined} />
+      <CommandMenu
+        open
+        onOpenChange={onOpenChange}
+        onOpen={onOpen}
+        onAddVault={() => undefined}
+        onOpenScratchpad={openScratchpad}
+      />
     </Provider>,
   )
   return { onOpen, split, onOpenChange }
@@ -96,6 +108,32 @@ test('untyped, it offers the newest documents, places and live actions', () => {
   expect(options).toEqual(expect.arrayContaining([expect.stringContaining('Split view')]))
   // A shortcut nothing handles right now is not offered.
   expect(options.some((o) => o?.includes('Toggle terminal'))).toBe(false)
+})
+
+test('Vim mode has an explicit keyboard-close action without opening a document', async () => {
+  search.mockResolvedValue([])
+  const { onOpen, onOpenChange } = setup({ vim: true })
+  const input = screen.getByRole('combobox')
+  await userEvent.type(input, 'road')
+  expect(screen.getByRole('option', { name: /roadmap/ })).toBeInTheDocument()
+  const footerKeys = [...document.querySelectorAll('[data-slot=kbd]')]
+  await userEvent.keyboard('{Escape}')
+  expect([...document.querySelectorAll('[data-slot=kbd]')]).toEqual(footerKeys)
+  expect(onOpen).not.toHaveBeenCalled()
+  expect(onOpenChange).not.toHaveBeenCalled()
+  await userEvent.tab()
+  expect(screen.getByRole('button', { name: 'Close command menu' })).toHaveFocus()
+  await userEvent.keyboard('{Enter}')
+  expect(onOpenChange).toHaveBeenCalledWith(false)
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
+test('Vim-off keeps Escape dismissal without an added close control', async () => {
+  const { onOpenChange } = setup()
+  expect(screen.queryByRole('button', { name: 'Close command menu' })).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole('combobox'))
+  await userEvent.keyboard('{Escape}')
+  expect(onOpenChange).toHaveBeenCalledWith(false)
 })
 
 test('a document opens, and the menu closes first', async () => {
@@ -122,6 +160,14 @@ test("> lists actions only, and an action runs its shortcut's handler", async ()
   expect(options).toEqual([expect.stringContaining('Split view')])
   await userEvent.keyboard('{Enter}')
   await waitFor(() => expect(split).toHaveBeenCalled())
+})
+
+test('the scratchpad action calls the shell action', async () => {
+  const openScratchpad = vi.fn()
+  setup({ openScratchpad })
+  await userEvent.type(screen.getByRole('combobox'), '>scratchpad')
+  await userEvent.keyboard('{Enter}')
+  await waitFor(() => expect(openScratchpad).toHaveBeenCalledOnce())
 })
 
 test('notes whose text matches follow the name matches', async () => {

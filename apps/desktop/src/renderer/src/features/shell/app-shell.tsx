@@ -1,5 +1,5 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
-import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { SCRATCHPAD_PATH, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 
@@ -53,7 +53,12 @@ import {
 import { openingBeside } from '@/state/alt-open'
 import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
 import { shellTabForPathAtom } from '@/state/surfaces'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  openedRemoteAtom,
+  snapshotAtom,
+  snapshotLoadedAtom,
+} from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
@@ -71,10 +76,11 @@ import { AppSidebar } from '@/features/sidebar/app-sidebar'
 import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 import { useNewDocument } from '@/features/sidebar/use-files'
 import { DialogHost } from './dialog-host'
+import { HostHintLayer } from './host-hint-layer'
 import { MobileHeader } from './mobile-header'
 import { readShares, writeShares } from './split-shares'
 import { SplitView, type MemberSlot } from './split-view'
-import { useRetainedSurfaces } from './retained-surfaces'
+import { isLauncherSurfaceKey, useRetainedSurfaces } from './retained-surfaces'
 import { isCoreTextFilePath } from '@/features/files/file-view'
 import { claimsAtom } from '@/state/plugins'
 import { TabStrip } from './tab-strip'
@@ -95,6 +101,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const snapshotLoaded = useAtomValue(snapshotLoadedAtom)
   const settings = useAtomValue(vaultSettingsAtom)
   const loadSettings = useSetAtom(loadVaultSettingsAtom)
   const store = useStore()
@@ -265,6 +272,18 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   const createDocument = useNewDocument(openTabKey)
+  const openScratchpad =
+    remote !== null && snapshotLoaded && store.get(openedRemoteAtom) === remote
+      ? () => {
+          if (
+            store.get(activeRemoteAtom) === remote &&
+            store.get(openedRemoteAtom) === remote &&
+            store.get(snapshotLoadedAtom)
+          ) {
+            openTabKey(SCRATCHPAD_PATH)
+          }
+        }
+      : undefined
   function newDocument() {
     void createDocument()
   }
@@ -309,6 +328,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     reopenTab: () => setWs(reopenClosed),
     splitRight: () => setWs(splitActive),
     newDocument,
+    openScratchpad,
     toggleFiles: toggleSidebar,
     showFiles,
     openApp,
@@ -411,12 +431,18 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     memberBody,
     (key) => {
       const descriptor = parseTabKey(key)
-      if (
-        descriptor?.kind === 'doc' &&
-        vaultFiles.some((file) => file.path === descriptor.path) &&
-        isCoreTextFilePath(descriptor.path, claims)
-      ) {
+      if (isLauncherSurfaceKey(key)) return true
+      // TabView routes every markdown document to DocumentView before claims
+      // or file-kind dispatch, so retain it by the same rule even while its
+      // snapshot entry is absent.
+      if (descriptor?.kind === 'doc' && /\.md$/i.test(descriptor.path)) {
         return true
+      }
+      if (descriptor?.kind === 'doc' && vaultFiles.some((file) => file.path === descriptor.path)) {
+        if (isCoreTextFilePath(descriptor.path, claims)) return true
+        if (claims.some((claim) => claim.retainView === true && claim.match(descriptor.path))) {
+          return true
+        }
       }
       if (descriptor?.kind === 'board' || descriptor?.kind === 'settings') return true
       return (
@@ -577,6 +603,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           beside ? setWs((w) => openInSplit(w, keyFor(id))) : openTabKey(id)
         }
         onAddVault={onAddVault}
+        onOpenScratchpad={openScratchpad}
       />
       <ShortcutsDialog />
       <ConfirmDialog
@@ -599,6 +626,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         onConfirm={confirmPendingClose}
       />
       <DialogHost />
+      <HostHintLayer scopeKey={`${remote}:${ws.active}:${focusedKey}`} />
     </SidebarProvider>
   )
 }

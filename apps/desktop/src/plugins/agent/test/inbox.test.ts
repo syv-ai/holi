@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { VAULT_NOT_OPEN, type CapabilityContext } from '../../../main/plugin-api'
+import { jsonFileStore, VAULT_NOT_OPEN, type CapabilityContext } from '../../../main/plugin-api'
 import type { SessionSummary } from '../main/claude/listing'
 import { inboxCapabilities } from '../main/inbox/capabilities'
 import { createInbox } from '../main/inbox/inbox'
@@ -17,6 +17,7 @@ import {
   BANNER_GAP_MS,
   enteredNeedsYou,
   INBOX_CAP,
+  INBOX_FILE,
   parseInbox,
   REPEAT_MS,
   unreadCount,
@@ -81,6 +82,7 @@ describe('createInbox', () => {
   function harness(focused: boolean) {
     let stored = parseInbox(null)
     const banners: string[] = []
+    let target: { name: string; payload: unknown } | undefined
     let clock = T0
     const inbox = createInbox({
       store: {
@@ -90,13 +92,19 @@ describe('createInbox', () => {
       notify: (n) => {
         if (focused) return false
         banners.push(n.title)
+        target = n.navigate
         return true
       },
       changed: () => {},
-      open: () => {},
       now: () => new Date(clock),
     })
-    return { inbox, banners, tick: (ms: number) => (clock += ms), stored: () => stored }
+    return {
+      inbox,
+      banners,
+      tick: (ms: number) => (clock += ms),
+      stored: () => stored,
+      target: () => target,
+    }
   }
 
   it('raises a banner, then only inbox entries until the gap has passed', async () => {
@@ -109,6 +117,17 @@ describe('createInbox', () => {
     expect(await h.inbox.raise({ title: 'C', line: '' })).toBe('banner')
     expect(h.banners).toEqual(['A', 'C'])
     expect(h.stored().entries.map((e) => e.title)).toEqual(['C', 'B', 'A'])
+  })
+
+  it('captures the exact inbox event target in its native banner', async () => {
+    const h = harness(false)
+    const notice = { title: 'Pi needs attention', line: 'Review it.', session: '0123abcd' }
+    expect(await h.inbox.raise(notice)).toBe('banner')
+    expect(h.target()).toEqual({
+      name: 'inbox-open',
+      payload: expect.objectContaining(notice),
+    })
+    expect((h.target()?.payload as InboxEntry).id).toBe(h.stored().entries[0]?.id)
   })
 
   it('keeps everything in the inbox while Holi has focus', async () => {
@@ -213,10 +232,87 @@ describe('holi agent notify', () => {
     }
   }
 
-  it('takes only a job id as the session, never something a CLI reads as a flag', async () => {
-    await expect(notify({ title: 'T', line: 'L', session: '--help' }, true)).rejects.toThrow()
-    const ok = await notify({ title: 'T', line: 'L', session: '0a1b2c3d' }, true)
-    expect(ok.raised).toEqual([{ title: 'T', line: 'L', session: '0a1b2c3d' }])
+  it('accepts every generated Holi session id and keeps the target through persistence and click', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-inbox-'))
+    const store = jsonFileStore(join(root, INBOX_FILE), parseInbox)
+    const clicked: InboxEntry[] = []
+    const callbacks: Array<(() => void) | undefined> = []
+    let clock = T0
+    const inbox = createInbox({
+      store,
+      notify: (n) => {
+        callbacks.push(
+          n.navigate === undefined
+            ? undefined
+            : () => clicked.push(n.navigate!.payload as InboxEntry),
+        )
+        return true
+      },
+      changed: () => {},
+      now: () => new Date(clock),
+    })
+    const caps = inboxCapabilities({
+      inbox,
+      liveRemote: () => 'syv-ai/notes',
+      now: () => new Date(clock),
+    })
+    const ctx = {
+      remote: 'syv-ai/notes',
+      root,
+      core: { syncState: () => ({}) },
+    } as unknown as CapabilityContext
+    const targets = ['0a1b2c3d', 'p0a1b2c3d4e5f', 'j0a1b2c3d4e5f']
+
+    try {
+      expect(caps['agent.notify'].cli?.job).toBe('session')
+      for (const [index, session] of targets.entries()) {
+        const notice = { title: 'T', line: 'L', session }
+        const cap = caps['agent.notify']
+        await cap.run(ctx, cap.params(notice))
+        expect(callbacks[index]).toBeTypeOf('function')
+        callbacks[index]?.()
+        expect(clicked[index]).toMatchObject(notice)
+        clock += BANNER_GAP_MS
+      }
+      expect(
+        (
+          await createInbox({
+            store: jsonFileStore(join(root, INBOX_FILE), parseInbox),
+            notify: () => false,
+            changed: () => {},
+          }).view()
+        ).entries.map(({ session }) => session),
+      ).toEqual([...targets].reverse())
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    '--help',
+    '01234567-89ab-cdef-0123-456789abcdef',
+    'p0a1b2c3d4e5',
+    'p0a1b2c3d4e5ff',
+    'q0a1b2c3d4e5f',
+    'P0a1b2c3d4e5f',
+    '0A1B2C3D',
+    '0a1b2c3d\n',
+    'p0a1b2c3d4e5f\n',
+    'j0a1b2c3d4e5f\r\n',
+    ' 0a1b2c3d',
+    '0a1b2c3d --help',
+    'p'.repeat(1_000),
+    12345678,
+    {},
+  ])('rejects a malformed session target %j', async (session) => {
+    await expect(notify({ title: 'T', line: 'L', session }, true)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+  })
+
+  it.each([undefined, null, ''])('keeps an omitted optional session target %j', async (session) => {
+    const ok = await notify({ title: 'T', line: 'L', session }, true)
+    expect(ok.raised).toEqual([{ title: 'T', line: 'L' }])
   })
 
   it('opens only a path a person may be shown: no machine state, no secret file', async () => {

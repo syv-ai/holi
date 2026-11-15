@@ -96,6 +96,73 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
         run: node scripts/check-commit-msg.mjs --message "$TITLE"
 
+  native-codex-exec-producer:
+    name: Native Codex exec producer proof
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Run pinned native producer and host proof
+        env:
+          HOLI_CODEX_EVIDENCE: ${{ runner.temp }}/codex-exec-producer/evidence.json
+        run: node scripts/codex-exec-producer.mjs
+      - name: Upload native producer evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-codex-exec-producer-evidence
+          path: ${{ runner.temp }}/codex-exec-producer/evidence.json
+          if-no-files-found: error
+
+  pi-native-producer:
+    name: Native Pi RPC producer
+    runs-on: ubuntu-24.04
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install repository test dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install isolated exact Pi package without lifecycle scripts
+        env:
+          npm_config_cache: ${{ runner.temp }}/pi-npm-cache
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-install"
+          npm install --prefix "$RUNNER_TEMP/pi-install" --ignore-scripts --no-audit --no-fund '@earendil-works/pi-coding-agent@1.5.2'
+      - name: Run native producer probe
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-native-evidence"
+          node scripts/pi-rpc-producer.mjs "$RUNNER_TEMP/pi-install/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" 1.5.2 > "$RUNNER_TEMP/pi-native-evidence/result.json"
+          node -e 'const r=require(process.env.RUNNER_TEMP+"/pi-native-evidence/result.json"); if(r.outcome!=="pass") { console.error(JSON.stringify(r)); process.exit(1) } if(r.evidence) require("fs").writeFileSync(process.env.RUNNER_TEMP+"/pi-native-evidence/evidence.json",JSON.stringify(r.evidence,null,2))'
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pi-native-producer-evidence
+          path: ${{ runner.temp }}/pi-native-evidence/
+          if-no-files-found: warn
+      - name: Remove temporary Pi installation and npm cache
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/pi-install" "$RUNNER_TEMP/pi-npm-cache"
+
   windows-askpass:
     name: Windows askpass
     runs-on: windows-2025
@@ -117,6 +184,77 @@ jobs:
       - name: Exercise the generated Windows helper
         run: pnpm --filter @holi/desktop exec vitest run test/git-askpass.test.ts
 
+  windows-agent-launch:
+    name: Windows agent launch and cleanup
+    runs-on: windows-2025
+    env:
+      LANG: en_US.UTF-8
+      ELECTRON_SKIP_BINARY_DOWNLOAD: ''
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run native Windows launch and caller regressions
+        shell: pwsh
+        run: |
+          pnpm --filter @holi/desktop exec vitest run test/launch.test.ts test/tool-lookup.test.ts test/owned-process.test.ts src/plugins/agent/test/windows-agents.test.ts src/plugins/agent/test/agent-runtime.test.ts --project node --reporter=verbose --reporter=json --outputFile="$env:RUNNER_TEMP/windows-agent-tests.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/desktop/scripts/check-windows-launch-results.cjs "$env:RUNNER_TEMP/windows-agent-tests.json"
+
+      - name: Install Electron
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: Check native PTY under Electron
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          pnpm --filter @holi/desktop exec electron scripts/check-node-pty.cjs
+
+      - name: Build production desktop output
+        run: pnpm --filter @holi/desktop build
+
+      - name: Check space for unpacked Windows package
+        shell: pwsh
+        run: |
+          $drive = [System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)
+          $available = (Get-PSDrive -Name $drive.TrimEnd('\\').TrimEnd(':')).Free
+          if ($available -lt 8GB) { throw "Insufficient free space for packaged Windows runtime verification: $available bytes available; 8 GiB required" }
+          Write-Host "Available space before packaging: $available bytes"
+
+      - name: Package unpacked Windows app for runtime verification
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'holi-qa372-windows-package'
+          pnpm --filter @holi/desktop exec electron-builder --win --dir --publish never --config electron-builder.yml --config.directories.output="$output" --config.npmRebuild=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify packaged Windows Node runtime
+        run: node apps/desktop/scripts/check-packaged-windows-node.cjs "${{ runner.temp }}/holi-qa372-windows-package" "${{ runner.temp }}/windows-agent-evidence/packaged-node.json"
+
+      - name: Exercise disposable Electron and real ConPTY lifecycle
+        run: pnpm --filter @holi/desktop exec node scripts/run-windows-agent-smoke.mjs "${{ runner.temp }}/windows-agent-evidence"
+
+      - name: Upload native execution evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-agent-launch-evidence
+          path: |
+            ${{ runner.temp }}/windows-agent-tests.json
+            ${{ runner.temp }}/windows-agent-evidence/
+          if-no-files-found: error
+
   windows-helpers:
     name: Windows helper portability
     runs-on: windows-2025
@@ -137,6 +275,67 @@ jobs:
 
       - name: Run Git for Windows helper fixtures
         run: pnpm --filter @holi/desktop exec vitest run test/windows-helper-portability.test.ts --project node
+
+  windows-clone-preparation:
+    name: Windows clone preparation
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run clone preservation and seed-update fixtures on Windows Git
+        run: pnpm --filter @holi/desktop exec vitest run test/prepare-clone.test.ts --project node
+
+  browser-display-smoke:
+    name: Native browser display isolation
+    runs-on: macos-26-intel
+    env:
+      LANG: en_US.UTF-8
+      ELECTRON_SKIP_BINARY_DOWNLOAD: ''
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install Electron
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: Run isolated native browser display smoke
+        run: pnpm --filter @holi/desktop exec node scripts/run-browser-display-smoke.mjs "$RUNNER_TEMP/holi-472-evidence"
+
+      - name: Run isolated native IPC sender smoke
+        run: pnpm --filter @holi/desktop exec node scripts/run-ipc-sender-native-smoke.mjs "$RUNNER_TEMP/holi-506-evidence"
+
+      - name: Upload native display evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-display-isolation-evidence
+          path: |
+            ${{ runner.temp }}/holi-472-evidence/
+            ${{ runner.temp }}/holi-506-evidence/
+          if-no-files-found: error
 
   test:
     name: Test
@@ -160,6 +359,22 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install the production Typst version for native PDF tests
+        run: |
+          VERSION="$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const source = readFileSync('apps/desktop/src/plugins/pdf/main/typst-bin.ts', 'utf8'); const match = source.match(/export const TYPST_VERSION = '([0-9.]+)'/); if (!match) throw new Error('Typst version not found'); console.log(match[1]);")"
+          case "$(uname -m)" in
+            x86_64) TARGET=x86_64-apple-darwin ;;
+            arm64) TARGET=aarch64-apple-darwin ;;
+            *) echo 'Unsupported native Typst runner architecture' >&2; exit 1 ;;
+          esac
+          ROOT="$RUNNER_TEMP/holi-native-typst"
+          mkdir -p "$ROOT"
+          curl --fail --location --retry 3 "https://github.com/typst/typst/releases/download/v$VERSION/typst-$TARGET.tar.xz" --output "$ROOT/typst.tar.xz"
+          tar -xJf "$ROOT/typst.tar.xz" -C "$ROOT"
+          "$ROOT/typst-$TARGET/typst" --version
+          echo "TYPST_BIN=$ROOT/typst-$TARGET/typst" >> "$GITHUB_ENV"
+          echo "TYPST_PACKAGE_CACHE_PATH=$RUNNER_TEMP/holi-typst-packages" >> "$GITHUB_ENV"
 
       # The node suite creates real repositories and commits in them.
       - name: Git identity for the tests

@@ -184,6 +184,15 @@ describe('GoogleCache', () => {
     reopened.close()
   })
 
+  it('retire is terminal and never recreates a deleted account cache', () => {
+    cache.ensureShape()
+    cache.writeThreads('in:inbox|primary', [thread('t1')])
+    cache.retire()
+    expect(existsSync(path)).toBe(false)
+    expect(() => cache.ensureShape()).toThrow(/closed/)
+    expect(existsSync(path)).toBe(false)
+  })
+
   it('destroy leaves no file behind', () => {
     cache.ensureShape()
     cache.writeThreads('in:inbox|primary', [thread('t1')])

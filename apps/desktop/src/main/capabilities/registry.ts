@@ -39,6 +39,8 @@ export interface CapabilityContext {
   root: string
   /** The calling app's bundle at the app door; null at every other door. */
   bundle: string | null
+  /** Throws when an app-door capability's registration or dispatch lease was revoked. */
+  assertCurrent?(): void
   snapshot(): Promise<VaultSnapshot>
   /** The path claims of the plugins the vault runs (`MainPlugin.claims`): a
    *  core entry asks a claimed file's plugin about it rather than naming the
@@ -366,7 +368,16 @@ export function createCapabilityRegistry(): CapabilityRegistry {
       if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       if (beforeInvoke !== undefined) await beforeInvoke({ remote: ctx.remote, root: ctx.root })
       if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
-      const result = await entry.run(ctx, params)
+      const runContext: CapabilityContext =
+        door === 'app'
+          ? {
+              ...ctx,
+              assertCurrent: () => {
+                if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+              },
+            }
+          : ctx
+      const result = await entry.run(runContext, params)
       const value = door === 'cli' && entry.cliValue !== undefined ? entry.cliValue(result) : result
       const run = door === 'cli' ? (entry.cliRun?.(value) ?? null) : null
       if (run !== null && !current())

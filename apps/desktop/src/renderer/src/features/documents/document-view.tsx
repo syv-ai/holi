@@ -19,7 +19,7 @@
  * in a panel beside it, as the person's `propertiesLayout` says; the header's
  * toggle flips it.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import {
@@ -28,7 +28,9 @@ import {
   isHoliLinkable,
   isResolved,
   parseTaskFile,
+  SCRATCHPAD_PATH,
   TASKS_CLAIM,
+  type VaultSnapshot,
 } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
@@ -55,6 +57,10 @@ import {
   RichTextTableBubble,
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { cn } from '@/lib/cn'
 import { TaskProperties, useHasTaskProperties } from '@/features/planning/task-properties'
@@ -62,14 +68,19 @@ import { useSettingsWrite } from '@/features/settings/use-vault-settings'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
-import { isRunLive, useAgentLabel } from '@/state/document-runs'
+import {
+  documentRunsAtom,
+  documentUpgradesAtom,
+  isRunLive,
+  useAgentLabel,
+} from '@/state/document-runs'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { claimsAtom } from '@/state/plugins'
 import { activeVaultSettingsAtom, useAppSetting } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTab, entryOf, focusedTab } from '@/state/shell-workspace'
 import { tabKey, tabPath } from '@/state/tab-descriptor'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, moveNotesAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
@@ -82,6 +93,7 @@ import { createDocumentExtensions } from './document-extensions'
 import { headingAtCaret } from './document-headings'
 import { DocumentFindBar } from './document-find-bar'
 import { resolveLink } from './resolve-link'
+import { mdxUpgradeMove } from './upgrade-mdx'
 import { DocumentSkeleton } from './document-skeleton'
 import { useDocumentAgentPrompt } from './use-document-agent-prompt'
 import { useDocumentComments } from './use-document-comments'
@@ -90,8 +102,46 @@ import { useDocumentPosition } from './use-document-position'
 import { useSelectionReport } from './use-selection-report'
 import { DocumentFormatBubble } from './document-format-bubble'
 import { DocumentHeader, type SaveState } from './document-header'
+import { configureRichTextVim, RichTextVim, type RichTextVimMode } from './rich-text-vim'
+import { vimCodeEditingAtom } from '@/state/preferences'
 import { documentTitle, joinDocument, splitDocument } from './markdown'
 import { ErrorState } from '@/composites/empty-state'
+import {
+  bindEditorActivity,
+  EditorActivityContext,
+  useDocumentActivity,
+  useEditorActivity,
+} from '@/hooks/use-editor-activity'
+
+function BatchInstructionInput({
+  id,
+  index,
+  value,
+  disabled,
+  onChange,
+}: {
+  id: string
+  index: number
+  value: string
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
+  const vim = useVimField(`rewrite-batch-${id}`, value)
+  return (
+    <div className="min-w-0 flex-1 basis-full sm:max-w-56 sm:basis-auto">
+      <Input
+        aria-label={`Request for target ${index + 1}`}
+        value={value}
+        placeholder="Change this passage…"
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        className="w-full"
+        {...vim.vimFieldProps}
+      />
+      <VimFieldMode mode={vim.vimFieldMode} />
+    </div>
+  )
+}
 
 function isTaskPath(path: string): boolean {
   return /(?:^|\/)task\.[^/]+\.md$/.test(path)
@@ -124,18 +174,29 @@ export function DocumentView({
   path,
   onOpen,
   onMoved,
+  visible = true,
+  focused = visible,
 }: {
   path: string
   /** Open a vault path in a tab: a linked note, or a finished artifact. */
   onOpen: (path: string) => void
   /** The document moved (a task given another project): follow it. */
   onMoved?: (from: string, to: string) => void
+  /** Whether the shell displays this retained view. */
+  visible?: boolean
+  /** Whether it owns keyboard focus and may publish active UI state. */
+  focused?: boolean
 }) {
+  const activity = useDocumentActivity(visible, visible && focused)
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const docs = snapshot.docs
+  const mdxFiles = snapshot.files.filter((file) => file.path.toLowerCase().endsWith('.mdx'))
   const mtime =
     docs.find((doc) => doc.path === path)?.updatedAt ??
+    (path === SCRATCHPAD_PATH
+      ? snapshot.files.find((file) => file.path === SCRATCHPAD_PATH)?.updatedAt
+      : undefined) ??
     JSON.stringify(snapshot.claimed[TASKS_CLAIM]?.items.find((item) => item.path === path) ?? null)
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
@@ -174,16 +235,22 @@ export function DocumentView({
     )
 
   return (
-    <DocumentEditor
-      key={path}
-      path={path}
-      remote={remote}
-      initial={load}
-      mtime={mtime}
-      docs={docs}
-      onOpen={onOpen}
-      onMoved={onMoved}
-    />
+    <EditorActivityContext value={activity}>
+      <DocumentEditor
+        key={`${remote}:${path}`}
+        path={path}
+        remote={remote}
+        initial={load}
+        mtime={mtime}
+        docs={docs}
+        mdxFiles={mdxFiles}
+        snapshot={snapshot}
+        onOpen={onOpen}
+        onMoved={onMoved}
+        visible={visible}
+        focused={visible && focused}
+      />
+    </EditorActivityContext>
   )
 }
 
@@ -193,18 +260,27 @@ function DocumentEditor({
   initial,
   mtime,
   docs,
+  mdxFiles,
+  snapshot,
   onOpen,
   onMoved,
+  visible,
+  focused,
 }: {
   path: string
   remote: string
   initial: { head: string; body: string; text: string }
   mtime: string | undefined
   docs: readonly { path: string }[]
+  mdxFiles: readonly { path: string }[]
+  snapshot: VaultSnapshot
   onOpen: (path: string) => void
   onMoved?: (from: string, to: string) => void
+  visible: boolean
+  focused: boolean
 }) {
-  const agent = useDocumentAgent(path)
+  const activity = useEditorActivity()
+  const agent = useDocumentAgent(path, focused)
   const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const agentLabelRef = useRef(agentLabel)
   agentLabelRef.current = agentLabel
@@ -224,14 +300,22 @@ function DocumentEditor({
   }, [agentLabel])
   const store = useStore()
   const locked = locksDocument(agent.run)
+  const upgrades = useAtomValue(documentUpgradesAtom)
+  const upgradePending = upgrades.has(path)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [donePending, setDonePending] = useState(false)
+  const upgradeInFlight = useRef(false)
   const [doneError, setDoneError] = useState<string | null>(null)
   const doneInFlight = useRef(false)
   const [linkOpen, setLinkOpen] = useState(false)
   const [deleteTableOpen, setDeleteTableOpen] = useState(false)
   const [fullWidth, setFullWidth] = useState(false)
   const [smallText, setSmallText] = useState(false)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
+  const [vimMode, setVimMode] = useState<RichTextVimMode>('')
+  const vimModeCallback = useRef<(mode: RichTextVimMode) => void>(() => {})
+  vimModeCallback.current = (mode) => setVimMode(mode)
+  const findOpenRef = useRef(false)
   const tableStyle = useAppSetting('tableStyle')
   const propertiesLayout = useAppSetting('propertiesLayout')
   const hasProperties = useHasTaskProperties(path)
@@ -243,6 +327,9 @@ function DocumentEditor({
     box.className = 'my-1'
     return box
   })
+  useEffect(() => {
+    promptBox.hidden = !focused
+  }, [promptBox, focused])
   const pageRef = useRef<HTMLDivElement>(null)
   /** The page's scroller, whose place a tab switch keeps. */
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -268,6 +355,7 @@ function DocumentEditor({
   const reloadFailed = useRef(false)
   const frozen = useRef(false)
   const doneFreeze = useRef(false)
+  const batchFreeze = useRef(false)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -277,6 +365,10 @@ function DocumentEditor({
   }, [])
   const lockedRef = useRef(locked)
   lockedRef.current = locked
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
+  const focusedRef = useRef(focused)
+  focusedRef.current = focused
 
   // Callbacks the extensions hold, read through refs so the extensions are
   // made once per document.
@@ -287,18 +379,38 @@ function DocumentEditor({
     pluginItems: (): readonly RichTextSlashItem[] => [],
   })
   handlers.current.openLink = (target) => {
-    const found = resolveLink(target, path, docs)
+    if (!activity.displayed) return
+    const found = resolveLink(target, path, docs, mdxFiles)
     if (found) onOpen(found)
   }
 
+  const editorRef = useRef<import('@tiptap/react').Editor | null>(null)
+  const mapTargetsRef = useRef<
+    (
+      _mapping: import('@tiptap/pm/transform').Mapping,
+      _doc: import('@tiptap/pm/model').Node,
+      _externalReload?: boolean,
+    ) => void
+  >(() => {})
+
   const extensions = useMemo(
     () => [
+      RichTextVim.configure({
+        enabled: false,
+        active: true,
+        editable: () => editorRef.current?.isEditable ?? false,
+        onModeChange: (mode) => queueMicrotask(() => vimModeCallback.current(mode)),
+        escapeOwned: () => findOpenRef.current,
+      }),
       Extension.create({
         name: 'saveFreeze',
+        onBeforeCreate() {
+          bindEditorActivity(this.editor, activity)
+        },
         addProseMirrorPlugins: () => [
           new Plugin({
             filterTransaction: (transaction) =>
-              (!frozen.current && !doneFreeze.current) ||
+              (!frozen.current && !doneFreeze.current && !batchFreeze.current) ||
               !transaction.docChanged ||
               transaction.getMeta('preventUpdate') === true,
           }),
@@ -326,7 +438,7 @@ function DocumentEditor({
         labelSource,
       }),
     ],
-    [path, promptBox, labelSource],
+    [path, promptBox, labelSource, activity],
   )
 
   const editor = useEditor(
@@ -342,6 +454,14 @@ function DocumentEditor({
           'aria-multiline': 'true',
         },
       },
+      onTransaction: ({ transaction }) => {
+        if (transaction.docChanged)
+          mapTargetsRef.current(
+            transaction.mapping,
+            transaction.doc,
+            transaction.getMeta('externalDocumentReload') === true,
+          )
+      },
       onUpdate: ({ transaction }) => {
         if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
         dirty.current = true
@@ -356,10 +476,27 @@ function DocumentEditor({
     [extensions],
   )
 
+  editorRef.current = editor
   const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
-  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp } =
-    useDocumentAgentPrompt({ editor, path, agent, handlers, save })
+  const {
+    promptOpen,
+    promptInitial,
+    closePrompt,
+    sendPrompt,
+    quickCommand,
+    createVaultApp,
+    rewriteQueue,
+    addToBatch,
+    submitBatch,
+    removeFromBatch,
+    editBatchItem,
+    reselection,
+    mapTargets,
+    batchSubmitting,
+    batchError,
+  } = useDocumentAgentPrompt({ editor, path, agent, handlers, save, freeze: freezeBatch })
+  mapTargetsRef.current = mapTargets
 
   const comments = useDocumentComments({ editor, path, docs, head, save })
   const {
@@ -384,7 +521,7 @@ function DocumentEditor({
     refreshThreads,
   } = comments
 
-  useSelectionReport(editor, path, head)
+  useSelectionReport(editor, path, head, focused)
 
   const claims = useAtomValue(claimsAtom)
   /** The latest claims, for `save` and the reload, which outlive the render that made them. */
@@ -392,7 +529,7 @@ function DocumentEditor({
   claimsRef.current = claims
   /** What the first claim on this path draws above it: a link's card. */
   const Banner = claims.find((claim) => claim.banner !== undefined && claim.match(path))?.banner
-  useDocumentPosition({ editor, remote, path, scrollerRef, markdown })
+  useDocumentPosition({ editor, remote, path, scrollerRef, markdown, active: focused })
 
   const holiLinks = isHoliLinkable(path)
     ? {
@@ -411,6 +548,27 @@ function DocumentEditor({
     : null
 
   handlers.current.pressThread = comments.pressThread
+
+  const applyEditorEditability = useCallback(
+    (value: boolean) => {
+      if (!editor || editor.isDestroyed) return
+      editor.setEditable(value)
+      configureRichTextVim(
+        editor.view,
+        store.get(vimCodeEditingAtom),
+        visibleRef.current && focusedRef.current,
+        () => editor.isEditable,
+      )
+    },
+    [editor, store],
+  )
+
+  function freezeBatch(value: boolean) {
+    batchFreeze.current = value
+    applyEditorEditability(
+      !value && !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
+    )
+  }
 
   /** The document as it would be saved. */
   function markdown(): string {
@@ -495,14 +653,33 @@ function DocumentEditor({
         undefined,
         (value) => {
           frozen.current = value
-          editor?.setEditable(!value && !doneFreeze.current && !lockedRef.current)
+          applyEditorEditability(
+            !value &&
+              visibleRef.current &&
+              !doneFreeze.current &&
+              !batchFreeze.current &&
+              !lockedRef.current,
+          )
         },
       ),
-    [editor],
+    [editor, applyEditorEditability],
   )
 
   // Leaving the document writes what is pending, and leaves what it showed
   // for its tab to be compared to (`doc-changes.ts`).
+  useEffect(() => {
+    if (visible) return
+    const pending = dirty.current
+    const live = editor !== null && !editor.isDestroyed
+    sawText(remote, path, pending && live ? markdown() : lastText.current)
+    if (pending) void save().catch(() => undefined)
+    // Saving is an existing leave-view behavior; a retained editor remains
+    // mounted, so visibility replaces its former unmount transition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible])
+
+  // A close or vault disposal still unmounts the editor and needs the same
+  // final save that ordinary tabs used to get from unmounting on every leave.
   useEffect(
     () => () => {
       const pending = dirty.current
@@ -566,15 +743,22 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked && !frozen.current && !doneFreeze.current)
-  }, [editor, locked])
+    applyEditorEditability(
+      !locked &&
+        !upgradePending &&
+        visible &&
+        !frozen.current &&
+        !doneFreeze.current &&
+        !batchFreeze.current,
+    )
+  }, [applyEditorEditability, editor, locked, upgradePending, visible, focused, vimEnabled])
 
   // A finished edit clears its pill on its own. A finished vault app opens
   // when the document is still the tab in front and was never left while it
   // ran; otherwise it waits on the pill's Open.
   useEffect(() => {
     const run = agent.run
-    if (!run || run.status !== 'done') return
+    if (!focused || !activity.focused || !run || run.status !== 'done') return
     if (run.kind === 'vault-app') {
       // A partial copy stays on the pill until the person has seen what was left out.
       if (run.away || run.opened || run.appPath === undefined || run.message !== undefined) return
@@ -587,7 +771,7 @@ function DocumentEditor({
     return () => window.clearTimeout(timer)
     // `onOpen` is the shell's, new each render; the run is what changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.run, agent.dismiss, path, store])
+  }, [agent.run, agent.dismiss, path, store, focused, activity])
 
   /**
    * The whole page takes a press. Below the last line it starts a new one
@@ -632,7 +816,8 @@ function DocumentEditor({
     setLinkOpen(true)
   }
 
-  const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef)
+  const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef, focused)
+  findOpenRef.current = find !== null
 
   async function finishTask() {
     if (doneInFlight.current || lockedRef.current || frozen.current || !editor?.isEditable) return
@@ -642,9 +827,10 @@ function DocumentEditor({
     if (remoteAtStart !== remote || entryOf(workspaceAtStart, key) === null || !isTaskPath(path))
       return
 
+    const currentVisit = activity.capture()
     doneInFlight.current = true
     doneFreeze.current = true
-    editor.setEditable(false)
+    applyEditorEditability(false)
     setDonePending(true)
     setDoneError(null)
     try {
@@ -655,6 +841,7 @@ function DocumentEditor({
       // A vault switch or any workspace change while the write was pending
       // makes the original close stale. Never act on the newly active workspace.
       if (
+        !currentVisit() ||
         store.get(activeRemoteAtom) !== remoteAtStart ||
         store.get(shellWorkspaceAtom) !== workspaceAtStart ||
         frozen.current ||
@@ -672,14 +859,16 @@ function DocumentEditor({
       doneInFlight.current = false
       if (!editor.isDestroyed) {
         doneFreeze.current = false
-        editor.setEditable(!lockedRef.current && !frozen.current)
+        applyEditorEditability(
+          !lockedRef.current && activity.displayed && !frozen.current && !batchFreeze.current,
+        )
       }
       setDonePending(false)
     }
   }
 
   function handleViewKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (!editor || event.defaultPrevented) return
+    if (!focusedRef.current || !editor || event.defaultPrevented) return
     const mod = apple ? event.metaKey : event.ctrlKey
     const key = event.key.toLowerCase()
     if (mod && event.altKey && !event.shiftKey && event.code === 'KeyM') {
@@ -699,6 +888,44 @@ function DocumentEditor({
   }
 
   const canAsk = agent.available && !isRunLive(agent.run)
+  const upgradeMove = mdxUpgradeMove(path, snapshot, claims)
+
+  async function upgradeToMdx() {
+    if (
+      !upgradeMove ||
+      upgradeInFlight.current ||
+      lockedRef.current ||
+      store.get(documentUpgradesAtom).has(path) ||
+      isRunLive(store.get(documentRunsAtom)[path]) ||
+      frozen.current ||
+      !editor?.isEditable
+    )
+      return
+    upgradeInFlight.current = true
+    store.set(documentUpgradesAtom, (paths) => new Set(paths).add(path))
+    editor?.setEditable(false)
+    try {
+      await store.set(moveNotesAtom, {
+        moves: [upgradeMove],
+        expectedRemote: remote,
+        upgradePath: path,
+      })
+    } catch (error) {
+      toast.error('Could not upgrade to MDX.', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      store.set(documentUpgradesAtom, (paths) => {
+        const next = new Set(paths)
+        next.delete(path)
+        return next
+      })
+      upgradeInFlight.current = false
+      applyEditorEditability(
+        !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
+      )
+    }
+  }
   const canStartChat = useAtomValue(canStartConversationAtom)
   const startConversation = useSetAtom(startConversationAtom)
 
@@ -720,18 +947,24 @@ function DocumentEditor({
       <div
         ref={viewRef}
         className="text-foreground @container/document relative flex h-full min-h-0 w-full flex-col"
+        inert={!visible}
         onKeyDown={handleViewKeyDown}
       >
         {/* Locked while a run edits the document: nothing in it answers. */}
-        <div inert={locked} className="flex min-h-0 flex-1 flex-col">
+        <div
+          inert={locked || batchSubmitting || upgradePending}
+          className="flex min-h-0 flex-1 flex-col"
+        >
           {/* On the page's own ground, a hairline under it; the text scrolls
               beneath the line, not under the header. */}
           <DocumentHeader
             editor={editor}
+            visible={visible && focused}
             path={path}
             title={documentTitle(path)}
             saveState={saveState}
-            locked={locked}
+            vimMode={vimMode}
+            locked={locked || batchSubmitting}
             taskDone={
               isTaskPath(path)
                 ? { pending: donePending, error: doneError, onDone: finishTask }
@@ -744,6 +977,11 @@ function DocumentEditor({
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
             onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
+            onUpgradeToMdx={
+              upgradeMove && !locked && !upgradePending && editor?.isEditable
+                ? () => void upgradeToMdx()
+                : null
+            }
             holiLink={holiLinks?.file ?? null}
             headingLink={holiLinks?.heading ?? null}
             properties={
@@ -776,7 +1014,13 @@ function DocumentEditor({
               {/* The find bar floats at the page's top right, over the text,
                 and stays there as it scrolls. */}
               {editor && find ? (
-                <div className="sticky top-2 z-40 flex h-0 items-start justify-end px-4">
+                <div
+                  hidden={!focused}
+                  className={cn(
+                    'sticky top-2 z-40 flex h-0 items-start justify-end px-4',
+                    !focused && 'hidden',
+                  )}
+                >
                   <DocumentFindBar editor={editor} request={find} onClose={() => setFind(null)} />
                 </div>
               ) : null}
@@ -807,6 +1051,75 @@ function DocumentEditor({
                 )}
               />
               <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
+                {rewriteQueue.length > 0 ? (
+                  <section
+                    aria-label="Queued rewrite requests"
+                    className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-4 sm:px-16"
+                  >
+                    <h2 className="text-sm font-medium">Rewrite batch ({rewriteQueue.length})</h2>
+                    {rewriteQueue.map((item, index) => (
+                      <div key={item.id} className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="min-w-0 basis-full truncate text-sm sm:flex-1 sm:basis-auto">
+                          {item.passage}
+                        </span>{' '}
+                        <BatchInstructionInput
+                          id={item.id}
+                          index={index}
+                          value={item.instruction}
+                          disabled={batchSubmitting}
+                          onChange={(value) => editBatchItem(item.id, value)}
+                        />
+                        {!item.valid ? (
+                          <span role="status" className="text-sm text-muted-foreground">
+                            Target changed; reselect
+                          </span>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => reselection(item.id)}
+                          disabled={batchSubmitting}
+                        >
+                          {item.valid ? 'Show target' : 'Use selection'}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeFromBatch(item.id)}
+                          disabled={batchSubmitting}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                    {batchError ? (
+                      <p role="alert" className="text-destructive text-sm">
+                        {batchError}
+                      </p>
+                    ) : null}
+                    {batchSubmitting ? (
+                      <p role="status" className="text-muted-foreground text-sm">
+                        Submitting batch…
+                      </p>
+                    ) : null}
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={
+                          batchSubmitting ||
+                          !canAsk ||
+                          rewriteQueue.some((item) => !item.valid || !item.instruction.trim())
+                        }
+                        onClick={() => void submitBatch()}
+                      >
+                        Submit batch
+                      </Button>
+                    </div>
+                  </section>
+                ) : null}
                 {editor ? (
                   <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
                     <EditorContent
@@ -841,6 +1154,7 @@ function DocumentEditor({
                           ? (instruction, passage) => void quickCommand(instruction, passage)
                           : null
                       }
+                      onAddToBatch={canAsk ? addToBatch : null}
                       onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
                       onComment={commentable ? () => void commentOnSelection() : null}
                     />

@@ -3,6 +3,8 @@ import {
   CHECK_COOLDOWN_MS,
   CHECK_STALE_MS,
   initialStatus,
+  defaultUpdateChannel,
+  parseUpdatePrefs,
   reduce,
   shouldCheck,
   type UpdateEvent,
@@ -97,5 +99,29 @@ describe('shouldCheck', () => {
     const checking = fresh({ state: 'checking', checkStartedAt: 0 })
     expect(shouldCheck(checking, 'user', CHECK_STALE_MS - 1)).toBe(false)
     expect(shouldCheck(checking, 'user', CHECK_STALE_MS)).toBe(true)
+  })
+})
+
+describe('parseUpdatePrefs', () => {
+  it('reads only a channel that was chosen', () => {
+    expect(parseUpdatePrefs(null).channel).toBeNull()
+    expect(parseUpdatePrefs({}).channel).toBeNull()
+    expect(parseUpdatePrefs({ channel: null }).channel).toBeNull()
+    expect(parseUpdatePrefs({ channel: 'beta' }).channel).toBeNull()
+    expect(parseUpdatePrefs({ channel: 'stable' }).channel).toBe('stable')
+    expect(parseUpdatePrefs({ channel: 'dev' }).channel).toBe('dev')
+  })
+
+  it('leaves automatic checks on unless they were turned off', () => {
+    expect(parseUpdatePrefs(null).enabled).toBe(true)
+    expect(parseUpdatePrefs({ enabled: false }).enabled).toBe(false)
+  })
+})
+
+describe('defaultUpdateChannel', () => {
+  it('is stable on macOS and Linux, and dev on Windows', () => {
+    expect(defaultUpdateChannel('darwin')).toBe('stable')
+    expect(defaultUpdateChannel('linux')).toBe('stable')
+    expect(defaultUpdateChannel('win32')).toBe('dev')
   })
 })

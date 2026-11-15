@@ -2,12 +2,13 @@ import { useLayoutEffect, useRef, useState, type KeyboardEventHandler } from 're
 import { Vim, getCM, vim } from '@replit/codemirror-vim'
 import { Compartment, Prec, type Extension } from '@codemirror/state'
 import { EditorView, ViewPlugin } from '@codemirror/view'
+import { requestHostHints } from '@/lib/host-hints'
 
 type VimMode = 'normal' | 'insert' | 'visual'
 type ModeChange = (mode: VimMode | '') => void
 
-// Leave normal-mode f unused for the later host-hints feature. Insert mode is
-// still handled by the Vim engine as ordinary text input.
+// Host hints own normal f; insert mode remains ordinary text input. The
+// capture adapter below routes it before the Vim engine's character-find.
 Vim.map('f', '<Esc>', 'normal')
 
 function modeFor(view: EditorView): VimMode {
@@ -15,6 +16,28 @@ function modeFor(view: EditorView): VimMode {
   if (vimState?.insertMode) return 'insert'
   if (vimState?.visualMode) return 'visual'
   return 'normal'
+}
+
+function isIdleNormalMode(view: EditorView): boolean {
+  const vimState = getCM(view)?.state.vim
+  if (!vimState || vimState.insertMode || vimState.visualMode || vimState.expectLiteralNext) {
+    return false
+  }
+
+  const input = vimState.inputState
+  return (
+    input.operator == null &&
+    input.operatorArgs == null &&
+    input.motion == null &&
+    input.motionArgs == null &&
+    input.prefixRepeat.length === 0 &&
+    input.motionRepeat.length === 0 &&
+    input.keyBuffer.length === 0 &&
+    input.registerName == null &&
+    input.operatorShortcut == null &&
+    input.selectedCharacter == null &&
+    input.repeatOverride == null
+  )
 }
 
 function vimExtensions(onModeChange: ModeChange): Extension[] {
@@ -87,7 +110,27 @@ export function useVimEditor(
   }, [view, enabled, editor])
 
   const routeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    if (!event.defaultPrevented) callbacks.current.onKeyDown(event)
+    if (event.defaultPrevented) return
+    if (
+      enabled &&
+      view !== null &&
+      event.target instanceof Node &&
+      view.contentDOM.contains(event.target) &&
+      event.key === 'f' &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      !event.repeat &&
+      !event.nativeEvent.isComposing &&
+      isIdleNormalMode(view)
+    ) {
+      event.preventDefault()
+      event.stopPropagation()
+      requestHostHints(view.dom)
+      return
+    }
+    callbacks.current.onKeyDown(event)
   }
 
   return {

@@ -29,6 +29,7 @@ interface PiJob {
   usage?: SessionSummary['usage']
   contextPercent?: number
   busy: boolean
+  turn?: Promise<void>
   statsUpdated: boolean
   retentionTimer?: ReturnType<typeof setTimeout>
   /** Kept between turns until stopped, not for `RETAIN_MS`. */
@@ -128,7 +129,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     jobs.set(id, job)
     deps.bracket(id, 'begin')
     deps.changed()
-    void runTurn(job, args.prompt)
+    job.turn = runTurn(job, args.prompt)
     return { ok: true as const, sessionId: id }
   }
 
@@ -146,9 +147,13 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       result = { status: 'failed', output: '', error: String(error) }
     }
     if (jobs.get(job.id) !== job) return
-    job.busy = false
     job.model = typeof result.model === 'string' ? result.model : job.model
     if (!job.statsUpdated) job.usage = summarizeUsage(result.usage) ?? job.usage
+    // A failed or aborted turn may still have tools running. Keep its turn
+    // bracket and working state until the owned process has physically drained.
+    if (result.status !== 'completed') await job.run.close()
+    if (jobs.get(job.id) !== job) return
+    job.busy = false
     job.state = 'idle'
     job.outcome = result.status
     job.error = result.error
@@ -165,12 +170,15 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       if (job.keep) return
       job.retentionTimer = setTimeout(() => {
         if (jobs.get(job.id) !== job || job.busy) return
-        job.run.close()
-        jobs.delete(job.id)
-        deps.changed()
+        void (async () => {
+          await job.run.close()
+          if (jobs.get(job.id) !== job) return
+          jobs.delete(job.id)
+          deps.changed()
+        })()
       }, RETAIN_MS)
       job.retentionTimer.unref()
-    } else job.run.close()
+    }
   }
 
   return {
@@ -203,7 +211,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         if (job.retentionTimer) clearTimeout(job.retentionTimer)
         job.retentionTimer = undefined
         deps.bracket(job.id, 'begin')
-        void runTurn(job, text)
+        job.turn = runTurn(job, text)
       }
     },
     async stop(id: string) {
@@ -211,9 +219,11 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       if (!job || job.remote !== remote)
         return { ok: false as const, message: 'That session has ended.' }
       if (job.retentionTimer) clearTimeout(job.retentionTimer)
-      if (job.busy) job.run.cancel()
-      else {
-        job.run.close()
+      if (job.busy) {
+        await job.run.cancel()
+        await job.turn
+      } else {
+        await job.run.close()
         jobs.delete(job.id)
       }
       job.state = 'idle'
@@ -228,10 +238,14 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       const closing = [...jobs.values()].filter((job) => job.remote === oldRemote)
       for (const job of closing) {
         if (job.retentionTimer) clearTimeout(job.retentionTimer)
-        job.run.close()
         jobs.delete(job.id)
-        if (job.busy) deps.bracket(job.id, 'forget')
       }
+      await Promise.all(
+        closing.map(async (job) => {
+          await job.run.close()
+          if (job.busy) deps.bracket(job.id, 'forget')
+        }),
+      )
       if (closing.length) deps.changed()
     },
   }

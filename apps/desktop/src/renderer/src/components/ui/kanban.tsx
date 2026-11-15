@@ -878,6 +878,7 @@ function KanbanItem({
 
   const { activeId, isColumn } = useContext(KanbanContext)
   const isItemDragging = activeId ? !isColumn(activeId) : false
+  const { onKeyDown: itemOnKeyDown, ...itemProps } = props
 
   const style = {
     transition,
@@ -921,7 +922,11 @@ function KanbanItem({
           disabled && "opacity-50",
           className
         )}
-        {...props}
+        onKeyDown={(event) => {
+          if (event.target === event.currentTarget) listeners?.onKeyDown?.(event)
+          itemOnKeyDown?.(event)
+        }}
+        {...itemProps}
       >
         {children}
       </Comp>
@@ -942,6 +947,7 @@ function KanbanItemHandle({
   ...props
 }: KanbanItemHandleProps) {
   const { listeners, isDragging, disabled } = useContext(ItemContext)
+  const { onKeyDown, ...handleProps } = props
 
   const Comp = asChild ? Slot.Root : "div"
 
@@ -951,11 +957,12 @@ function KanbanItemHandle({
       data-dragging={isDragging}
       data-disabled={disabled}
       {...listeners}
+      onKeyDown={onKeyDown}
       className={cn(
         cursor && (isDragging ? "cursor-grabbing!" : "cursor-grab!"),
         className
       )}
-      {...props}
+      {...handleProps}
     >
       {children}
     </Comp>

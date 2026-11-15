@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { findParentNodeClosestToPos, type Editor } from '@tiptap/react'
 import { toast } from 'sonner'
 
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { ConfirmDialog } from '@/composites/confirm-dialog'
 
 import { TOAST_SUCCESS_ICON } from './icons'
@@ -36,6 +37,7 @@ interface DeleteTableDialogProps {
 
 /** Confirms before a whole table goes, then offers Undo. */
 export function DeleteTableDialog({ editor, open, onOpenChange }: DeleteTableDialogProps) {
+  const activity = useEditorActivity(editor)
   const [name, setName] = useState('This table')
   const [shownOpen, setShownOpen] = useState(open)
 
@@ -46,14 +48,18 @@ export function DeleteTableDialog({ editor, open, onOpenChange }: DeleteTableDia
   }
 
   function deleteTable() {
-    editor?.chain().focus().deleteTable().run()
+    if (!activity.focused || !editor || editor.isDestroyed) return
+    const current = activity.capture()
+    editor.chain().focus().deleteTable().run()
     toast.success('Table deleted', {
       icon: TOAST_SUCCESS_ICON,
       description: name,
       duration: UNDO_TOAST_MS,
       action: {
         label: 'Undo',
-        onClick: () => editor?.chain().focus().undo().run(),
+        onClick: () => {
+          if (current() && !editor.isDestroyed) editor.chain().focus().undo().run()
+        },
       },
     })
   }
@@ -75,7 +81,7 @@ export function DeleteTableDialog({ editor, open, onOpenChange }: DeleteTableDia
       // The bar that opened it hides with the table, so focus lands in the page.
       onCloseAutoFocus={(event) => {
         event.preventDefault()
-        editor?.view.focus()
+        if (activity.focused) editor?.view.focus()
       }}
       onConfirm={deleteTable}
     />

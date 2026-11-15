@@ -119,7 +119,7 @@ async function openFromSidebar(split?: { focused: boolean }) {
     <Provider store={store}>
       <button type="button">Plan</button>
       <section data-pane="doc" data-pane-focused={split?.focused || undefined}>
-        <DocumentView path={PATH} onOpen={() => undefined} />
+        <DocumentView path={PATH} onOpen={() => undefined} focused={split?.focused ?? true} />
       </section>
       {split ? <section data-pane="other" data-pane-focused={!split.focused || undefined} /> : null}
     </Provider>,

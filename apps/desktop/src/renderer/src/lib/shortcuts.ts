@@ -99,6 +99,15 @@ export const SHORTCUTS: readonly Shortcut[] = [
     listOnly: true,
   },
 
+  {
+    id: 'vim.hints',
+    label: 'Show host control hints',
+    group: 'Navigation',
+    keys: ['f'],
+    inDialogs: true,
+    capture: true,
+  },
+
   // Navigation
   {
     id: 'search.open',
@@ -324,6 +333,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     label: 'Open today’s note',
     group: 'Files',
     keys: ['⇧⌘D'],
+    whileTyping: true,
+  },
+  {
+    id: 'scratchpad.open',
+    label: 'Open scratchpad',
+    group: 'Files',
+    keys: ['⌥⌘S'],
     whileTyping: true,
   },
   {

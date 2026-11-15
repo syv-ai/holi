@@ -13,6 +13,7 @@ import type { FindRequest } from './document-find-bar'
 export function useDocumentFind(
   editor: Editor | null,
   viewRef: React.RefObject<HTMLDivElement | null>,
+  active = true,
 ) {
   const apple = isMac()
   /** The find bar, open while set; a new request refocuses it. */
@@ -45,25 +46,19 @@ export function useDocumentFind(
   const openFindRef = useRef(openFind)
   openFindRef.current = openFind
   useEffect(() => {
-    if (!editor) return
+    if (!editor || !active) return
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || !isFindKey(event)) return
       const root = viewRef.current
       const target = event.target instanceof Element ? event.target : null
       if (!root || target?.closest("[data-pane], [role='dialog']")) return
-      const pane = root.closest('[data-pane]')
-      const inFront =
-        !pane ||
-        pane.hasAttribute('data-pane-focused') ||
-        document.querySelectorAll('[data-pane]').length === 1
-      if (!inFront) return
       event.preventDefault()
       openFindRef.current()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, apple])
+  }, [editor, apple, active])
 
   return { find, setFind, apple, isFindKey, openFind }
 }

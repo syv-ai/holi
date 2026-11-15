@@ -20,6 +20,7 @@ import { AGENT_MARKER, DocumentMarkdown } from './markdown'
 import { MultiCursor } from './multi-cursor'
 import { WikiLink } from './wiki-link'
 import { MermaidCodeBlock } from './rich-text/mermaid-code-block'
+import { DocumentCaption, DocumentFigure } from './rich-text/document-figure'
 
 /** An image at its natural size up to the column's width, never scaled up.
  *  Its height is capped at 70% of the window but never below the column's
@@ -152,6 +153,8 @@ export function createDocumentExtensions({
       (extension) => extension.name !== 'textAlign',
     ),
     MermaidCodeBlock,
+    DocumentCaption,
+    DocumentFigure,
     WikiLink.configure({ onOpen: onOpenLink }),
     DocumentImage.configure({ folder }),
     HtmlBlock,

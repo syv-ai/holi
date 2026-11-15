@@ -36,5 +36,8 @@ export const runShortcutAtom = atom(null, (get, _set, id: string): boolean => {
   return true
 })
 
+/** The active host-hint session gets first refusal before widgets and shortcuts. */
+export const hostHintKeyAtom = atom<((event: KeyboardEvent) => boolean) | null>(null)
+
 /** Whether the Keyboard shortcuts dialog is open. */
 export const shortcutsDialogOpenAtom = atom(false)

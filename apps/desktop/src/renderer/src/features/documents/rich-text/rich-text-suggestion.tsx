@@ -1,3 +1,4 @@
+import { editorActivity, useEditorActivity } from '@/hooks/use-editor-activity'
 import {
   useEffect,
   useImperativeHandle,
@@ -66,6 +67,7 @@ export function RichTextSuggestionMenu<T>({
   onSelect,
   className,
 }: RichTextSuggestionMenuProps<T>) {
+  const activity = useEditorActivity(editor)
   const rootRef = useRef<HTMLDivElement>(null)
   const keys = groups.flatMap((group) => group.items.map(getKey))
   const signature = keys.join('\n')
@@ -82,7 +84,7 @@ export function RichTextSuggestionMenu<T>({
     ref,
     () => ({
       onKeyDown(event) {
-        if (!LIST_KEYS.has(event.key) || keys.length === 0) return false
+        if (!activity.focused || !LIST_KEYS.has(event.key) || keys.length === 0) return false
 
         // Command listens on its root, so the key is replayed there.
         rootRef.current?.dispatchEvent(
@@ -95,13 +97,15 @@ export function RichTextSuggestionMenu<T>({
         return true
       },
     }),
-    [keys.length],
+    [keys.length, activity],
   )
 
   useEffect(() => {
     const dom = editor.view.dom
     // Command marks the active option after this commit, so read it a task later.
+    const current = activity.capture()
     const timer = window.setTimeout(() => {
+      if (!current() || editor.isDestroyed) return
       const list = rootRef.current?.querySelector('[cmdk-list]')
       const active = list?.querySelector('[aria-selected="true"]')?.id
 
@@ -169,9 +173,25 @@ export function createRichTextSuggestionRender<I, S>(
   return () => {
     let renderer: ReactRenderer<RichTextSuggestionHandle, SuggestionListProps<I, S>> | null = null
     let unmount: (() => void) | null = null
+    let unsubscribe: (() => void) | null = null
+    let current = () => false
+    const dispose = () => {
+      unsubscribe?.()
+      unsubscribe = null
+      unmount?.()
+      unmount = null
+      renderer?.destroy()
+      renderer = null
+    }
 
     return {
       onStart: (props) => {
+        const activity = editorActivity(props.editor)
+        current = activity.capture()
+        if (!current()) return
+        unsubscribe = activity.subscribe(() => {
+          if (!current()) dispose()
+        })
         renderer = new ReactRenderer(List, {
           editor: props.editor,
           props,
@@ -181,16 +201,11 @@ export function createRichTextSuggestionRender<I, S>(
       },
       // A lookup in flight resends the stale list; wait for its result.
       onUpdate: (props) => {
-        if (!props.loading) renderer?.updateProps(props)
+        if (current() && !props.loading) renderer?.updateProps(props)
       },
       onKeyDown: ({ event }) =>
-        event.isComposing ? false : (renderer?.ref?.onKeyDown(event) ?? false),
-      onExit: () => {
-        unmount?.()
-        unmount = null
-        renderer?.destroy()
-        renderer = null
-      },
+        !current() || event.isComposing ? false : (renderer?.ref?.onKeyDown(event) ?? false),
+      onExit: dispose,
     }
   }
 }

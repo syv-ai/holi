@@ -1,14 +1,16 @@
 "use client"
 
 import * as React from "react"
+import { OverlayActivityContext, useActivityOpen, useOverlayAutoFocus } from "@/hooks/use-editor-activity"
 import { cn } from "@/lib/cn"
 import { Select as SelectPrimitive } from "radix-ui"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
 function Select({
-  ...props
+  open, defaultOpen, onOpenChange, ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />
+  const active = useActivityOpen(open, defaultOpen, onOpenChange)
+  return <OverlayActivityContext value={active.valid}><SelectPrimitive.Root data-slot="select" {...props} open={active.open} onOpenChange={active.onOpenChange} /></OverlayActivityContext>
 }
 
 function SelectGroup({
@@ -61,8 +63,9 @@ function SelectContent({
   children,
   position = "item-aligned",
   align = "center",
-  ...props
+  onCloseAutoFocus, ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
+  const closeAutoFocus = useOverlayAutoFocus(onCloseAutoFocus)
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
@@ -77,6 +80,7 @@ function SelectContent({
         position={position}
         align={align}
         {...props}
+        onCloseAutoFocus={closeAutoFocus}
       >
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport

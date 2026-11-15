@@ -60,6 +60,10 @@ function rig(
     appDoor?: boolean
     call?: Parameters<typeof createPluginHost>[0]['call']
     rootFor?: (remote: string) => Promise<string | null>
+    window?: () => import('electron').BrowserWindow | null
+    frameOrigin?: (origin: string) => () => void
+    navigate?: (plugin: string, remote: string, name: string, payload: unknown) => void
+    notify?: (notice: import('../src/main/plugin-api').Notice) => boolean
   } = {},
 ) {
   const calls = { started: 0, stopped: 0 }
@@ -118,9 +122,11 @@ function rig(
     route: (path, route, remote) => opts.bridge?.route(path, route, remote) ?? (() => {}),
     binDir: () => '/holi/bin',
     githubToken: () => null,
-    frameOrigin: () => () => {},
-    notify: () => false,
+    frameOrigin: opts.frameOrigin ?? (() => () => {}),
+    notify: opts.notify ?? (() => false),
+    navigate: opts.navigate,
     focused: () => false,
+    window: opts.window,
     activity: (entry) => activity.push(entry),
     call:
       opts.call ??
@@ -190,6 +196,24 @@ function rig(
 const turn = (root: string, on: boolean) =>
   writeVaultSettings(root, { committed: { plugins: { fake: on } } })
 
+describe('app frame activation leases', () => {
+  it('binds issued frame authority to its activation and presentation window', async () => {
+    const root = await tempDir()
+    const win = { isDestroyed: () => false } as unknown as import('electron').BrowserWindow
+    const h = rig({ window: () => win })
+    await h.enter(openVault('team/a', root))
+    const lease = h.ctx().issueAppFrameLease('Tool.app')
+    expect(lease.valid(win)).toBe(true)
+    expect(lease.remote).toBe('team/a')
+    expect(lease.root).toBe(root)
+
+    h.host.setDisplayed('team/b')
+    h.host.setDisplayed('team/a')
+    expect(lease.valid(win)).toBe(false)
+    await h.host.stop('team/a')
+  })
+})
+
 /** A plugin that logs its start and stop. */
 function logged(
   log: string[],
@@ -209,6 +233,45 @@ function logged(
 }
 
 describe('the plugin host', () => {
+  it('routes plugin navigation requests through the host seam', async () => {
+    const navigations: unknown[][] = []
+    const r = rig({ navigate: (...args) => void navigations.push(args) })
+    const root = await tempDir()
+    await r.enter(openVault('o/r', root))
+
+    r.ctx().navigate('o/target', 'inbox-open', { session: 'p0123456789ab' })
+
+    expect(navigations).toEqual([['fake', 'o/target', 'inbox-open', { session: 'p0123456789ab' }]])
+  })
+
+  it('keeps an admitted notification target after its originating plugin stops', async () => {
+    const navigations: unknown[][] = []
+    let notice: import('../src/main/plugin-api').Notice | null = null
+    const r = rig({
+      navigate: (...args) => void navigations.push(args),
+      notify: (value) => {
+        notice = value
+        return true
+      },
+    })
+    const root = await tempDir()
+    await r.enter(openVault('o/r', root))
+
+    r.ctx().notify({
+      title: 'Needs you',
+      body: 'A decision is waiting.',
+      navigate: { name: 'inbox-open', payload: { session: 'p0123456789ab' } },
+      onClick: () => navigations.push(['legacy callback']),
+    })
+    await r.enter(null)
+    notice!.onClick?.()
+
+    expect(navigations).toEqual([
+      ['fake', 'o/r', 'inbox-open', { session: 'p0123456789ab' }],
+      ['legacy callback'],
+    ])
+  })
+
   it('tags plugin log lines and activation failures with actual ids, not labels', async () => {
     const plugins: MainPlugin[] = [
       {
@@ -669,6 +732,206 @@ describe('the lifecycle', () => {
     expect(starts).toBe(1)
     await host.stop('A')
   })
+
+  it('invalidates presentation leases across A to B to A for queued plugin events', async () => {
+    let ctx: PluginCtx | undefined
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(context) {
+        ctx = context
+        return () => {}
+      },
+    }
+    const aRoot = await tempDir()
+    const bRoot = await tempDir()
+    const { host, sent } = rig({ plugins: [plugin], roots: { A: aRoot, B: bRoot } })
+    await host.reconcile(openVault('A', aRoot), 'open')
+    host.setDisplayed('A')
+    const presentation = ctx!.presentationLease()
+    ctx!.emit('A', 'key', { key: 'w' }, presentation)
+    host.setDisplayed('B')
+    host.setDisplayed('A')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(sent).toEqual([])
+    await host.stopAll()
+  })
+
+  it('rejects queued inbound placement after returning to the same displayed vault', async () => {
+    let gate = false
+    let release: () => void = () => {}
+    let entered: () => void = () => {}
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const waiting = new Promise<void>((resolve) => (entered = resolve))
+    const handled: unknown[] = []
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        ctx.on(
+          'place',
+          (_remote, payload) => handled.push(payload),
+          () => ctx.presentationLease(),
+        )
+        return () => {}
+      },
+    }
+    const aRoot = await tempDir()
+    const { host, enter, fromRenderer } = rig({
+      plugins: [plugin],
+      roots: { A: aRoot },
+      live: 'A',
+      rootFor: async (remote) => {
+        if (gate && remote === 'A') {
+          entered()
+          await blocked
+        }
+        return remote === 'A' ? aRoot : null
+      },
+    })
+    await enter(openVault('A', aRoot))
+    gate = true
+    fromRenderer({ remote: 'A', name: 'place', payload: { id: 'same-page-id', rect: null } })
+    await waiting
+    host.setDisplayed('B')
+    host.setDisplayed('A')
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(handled).toEqual([])
+    await host.stopAll()
+  })
+
+  it('releases a failed activation frame-origin lease before retry', async () => {
+    const { createFrameOrigins } = await import('../src/main/frame-origins')
+    const frameOrigins = createFrameOrigins()
+    let fail = true
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        ctx.frameOrigin('http://127.0.0.1:3040')
+        if (fail) throw new Error('activation failed')
+        return () => {}
+      },
+    }
+    const { host, enter, reconcile } = rig({ plugins: [plugin], frameOrigin: frameOrigins.acquire })
+    await enter(openVault('A', await tempDir()))
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(false)
+    fail = false
+    await reconcile('settings')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(true)
+    await host.stop('A')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(false)
+  })
+
+  it('leases duplicate frame origins across retained vault activations', async () => {
+    const { createFrameOrigins } = await import('../src/main/frame-origins')
+    const frameOrigins = createFrameOrigins()
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        ctx.frameOrigin('http://127.0.0.1:3040')
+        return () => {}
+      },
+    }
+    const { host, enter } = rig({ plugins: [plugin], frameOrigin: frameOrigins.acquire })
+    await enter(openVault('A', await tempDir()))
+    await host.reconcile(openVault('B', await tempDir()), 'open')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(true)
+    await host.stop('A')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(true)
+    await host.stop('B')
+    expect(frameOrigins.origins.has('http://127.0.0.1:3040')).toBe(false)
+  })
+
+  it('only exposes the native window to a live activation for the displayed vault', async () => {
+    const contexts: PluginCtx[] = []
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        contexts.push(ctx)
+        return () => {}
+      },
+    }
+    const win = {} as import('electron').BrowserWindow
+    const { host, enter } = rig({ plugins: [plugin], window: () => win })
+    await enter(openVault('A', await tempDir()))
+    const a = contexts[0]!
+    expect(a.window()).toBe(win)
+    host.setDisplayed('B')
+    expect(a.window()).toBeNull()
+    const bRoot = await tempDir()
+    // Keep both plugin contexts alive without changing selected-vault lifetime.
+    await host.reconcile(openVault('B', bRoot), 'open')
+    const b = contexts[1]!
+    expect(b.window()).toBe(win)
+    host.setDisplayed('A')
+    expect(a.window()).toBe(win)
+    await host.stopAll()
+    expect(a.window()).toBeNull()
+  })
+
+  it.each([
+    ['stop', 'B'],
+    ['stop', null],
+    ['stopAll', 'B'],
+    ['stopAll', null],
+  ] as const)(
+    'keeps detachment live during %s to %s without restoring authority',
+    async (method, target) => {
+      let ctx: PluginCtx | undefined
+      const displayed: (string | null)[] = []
+      let gate: { wait: Promise<void>; entered(): void } | undefined
+      const plugin: MainPlugin = {
+        info: { id: 'fake', label: 'Fake', default: true },
+        activate(context) {
+          ctx = context
+          context.onDisplayChange((remote) => displayed.push(remote))
+          return () => {}
+        },
+      }
+      const delayed: MainPlugin = {
+        info: { id: 'delayed', label: 'Delayed', default: false },
+        async activate() {
+          const pending = gate
+          if (pending) {
+            pending.entered()
+            await pending.wait
+          }
+          return () => {}
+        },
+      }
+      const win = {} as import('electron').BrowserWindow
+      const root = await tempDir()
+      const { host } = rig({ plugins: [plugin, delayed], window: () => win })
+      await writeVaultSettings(root, { committed: { plugins: { delayed: false } } })
+      await host.reconcile(openVault('A', root), 'open')
+      host.setDisplayed('A')
+      const lease = ctx!.presentationLease()
+      expect(ctx!.window()).toBe(win)
+      let entered!: () => void
+      const waiting = new Promise<void>((resolve) => (entered = resolve))
+      let release!: () => void
+      gate = {
+        wait: new Promise<void>((resolve) => (release = resolve)),
+        entered,
+      }
+      await writeVaultSettings(root, { committed: { plugins: { delayed: true } } })
+      const reconcile = host.reconcile(openVault('A', root), 'settings')
+      await waiting
+      const stopping = method === 'stop' ? host.stop('A') : host.stopAll()
+      expect(lease()).toBe(false)
+      expect(ctx!.window()).toBeNull()
+      host.setDisplayed(target)
+      expect(displayed).toEqual(['A', target])
+      host.setDisplayed('A')
+      expect(lease()).toBe(false)
+      expect(ctx!.presentationLease()()).toBe(false)
+      expect(ctx!.window()).toBeNull()
+      release()
+      gate = undefined
+      await Promise.all([reconcile, stopping])
+      host.setDisplayed(target)
+      expect(displayed).toEqual(['A', target, 'A'])
+    },
+  )
 
   it('revokes an old context on reactivation and exposes display changes through ctx', async () => {
     const contexts: PluginCtx[] = []

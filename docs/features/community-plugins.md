@@ -166,7 +166,8 @@ open its files.
 
 **Opening a file starts its server.** The tab acquires the file's server and releases it when it
 closes; tabs on one file share one server, and the last release stops it. Main picks a free port
-from 3040 up, spawns `serve` in the plugin's folder as its own process group, on `toolPath()`, with
+from 3040 up, spawns `serve` in the plugin's folder as its own process group (on Windows, which has
+none, as a tree that `taskkill` stops whole at once; `agent-sessions.md` has how), on `toolPath()`, with
 `HOLI_VAULT_ROOT`, `HOLI_FILE` and `HOLI_PORT`, and waits up to 60 seconds for the port to take a
 connection on 127.0.0.1 or ::1. The tab shows the server's output while it starts, and the output
 and Start again if it fails or stops. A retained tab whose plugin can no longer run releases its
