@@ -28,7 +28,6 @@ let controls: SmokeControls | null = null
 function Fixture() {
   const [account, setAccount] = useState('fixture-account-a')
   const [draft, setDraft] = useState('new')
-  const [key, setKey] = useState(0)
   const setVim = useSetAtom(vimCodeEditingAtom)
   useShortcutDispatcher()
   useEffect(() => {
@@ -39,7 +38,6 @@ function Fixture() {
       context: (nextAccount, nextDraft) => {
         setAccount(nextAccount)
         setDraft(nextDraft)
-        setKey((current) => current + 1)
       },
       vim: setVim,
       state: () => ({ account, draft }),
@@ -59,7 +57,6 @@ function Fixture() {
         Host action
       </button>
       <MailComposer
-        key={key}
         ref={ref}
         intent={{ kind: 'new' }}
         accountSub={account}

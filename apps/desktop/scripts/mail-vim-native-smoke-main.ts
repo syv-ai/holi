@@ -5,6 +5,7 @@ import { writeFileSync } from 'node:fs'
 const root = process.env.HOLI_563_ROOT!
 const evidence = process.env.HOLI_563_EVIDENCE!
 const windows = new Set<BrowserWindow>()
+const blockedRequests: string[] = []
 
 async function run() {
   app.setPath('userData', join(root, 'userData'))
@@ -17,7 +18,10 @@ async function run() {
   ses.setPermissionCheckHandler(() => false)
   ses.webRequest.onBeforeRequest(
     { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
-    (_details, callback) => callback({ cancel: true }),
+    (details, callback) => {
+      blockedRequests.push(details.url)
+      callback({ cancel: true })
+    },
   )
   const window = new BrowserWindow({
     width: 1000,
@@ -47,6 +51,10 @@ async function run() {
 }
 app.on('window-all-closed', () => app.quit())
 app.on('before-quit', () => {
+  writeFileSync(
+    join(evidence, 'blocked-network-requests.json'),
+    JSON.stringify(blockedRequests, null, 2),
+  )
   for (const window of windows) window.destroy()
 })
 void run().catch((error) => {

@@ -38,7 +38,7 @@ try {
           if (id.endsWith('/src/plugins/google/renderer/account.ts'))
             return `export function useGoogleAccount(){return {currentSub:'fixture-account-a',account:{sub:'fixture-account-a'},loading:false,readError:false,missingScopes:[],needsReconnect:false,accounts:[],refresh:()=>{},refreshAndWait:async()=>{}}}`
           if (id.endsWith('/src/plugins/google/renderer/google-cap.ts'))
-            return `const calls=()=>window.__mailVimCalls; export const googleCap={draftBody:async(_remote,{id})=>({to:[],cc:[],bcc:[],subject:'Draft '+id,text:'',html:null,markdown:'',foreign:false,threadId:null}),saveDraft:async(_remote,input)=>{calls().push({op:'saveDraft',account:input.expectedAccountSub,payload:input.mail});return{id:'synthetic-draft'}},send:async(_remote,input)=>{calls().push({op:'send',account:input.expectedAccountSub,payload:input.mail});return{id:'synthetic-send'}},discardDraft:async(_remote,input)=>{calls().push({op:'discardDraft',account:input.expectedAccountSub});return{} }}`
+            return `const calls=()=>window.__mailVimCalls; export const googleCap={draftBody:async(_remote,{id})=>({to:[],cc:[],bcc:[],subject:'Draft '+id,text:'',html:null,markdown:'',foreign:false,threadId:null}),saveDraft:async(_remote,input)=>{calls().push({op:'saveDraft',account:input.expectedAccountSub,payload:input.mail});return{id:'synthetic-draft'}},send:async()=>{calls().push({op:'send-rejected'});throw new Error('Native smoke blocks sending')},discardDraft:async(_remote,input)=>{calls().push({op:'discardDraft',account:input.expectedAccountSub});return{} }}`
           return null
         },
       },
@@ -184,6 +184,24 @@ try {
     await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: keyName, code, modifiers })
   }
   const insertText = (text) => cdp('Input.insertText', { text })
+  const clickText = async (text) => {
+    const rect = await evaluate(
+      `(()=>{const e=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()===${JSON.stringify(text)});if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+    )
+    assert(rect, `missing button ${text}`)
+    await cdp('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      ...rect,
+      button: 'left',
+      clickCount: 1,
+    })
+    await cdp('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      ...rect,
+      button: 'left',
+      clickCount: 1,
+    })
+  }
   const click = async (selector) => {
     const rect = await evaluate(
       `(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
@@ -224,13 +242,74 @@ try {
     'empty Enter created a chip',
   )
   assert.equal(
-    await evaluate(`window.__mailVimCalls.some(c=>c.op==='send')`),
+    await evaluate(`window.__mailVimCalls.some(c=>c.op==='send'||c.op==='send-rejected')`),
     false,
-    'Enter unexpectedly sent mail',
+    'Enter unexpectedly attempted to send mail',
+  )
+  await click('[aria-label="To"]')
+  await insertText('charlie@example.test')
+  await key('Escape')
+  await key('Enter')
+  assert.equal(
+    await evaluate(`document.querySelectorAll('[data-testid="chip"]').length`),
+    chipsAfterSuggestion,
+    'normal-mode Enter committed an uncommitted recipient',
+  )
+  assert.equal(
+    await evaluate(`window.__mailVimCalls.some(c=>c.op==='send'||c.op==='send-rejected')`),
+    false,
+    'normal-mode Enter attempted to send mail',
+  )
+  await key('i')
+  await key('Enter')
+  await until(
+    `[...document.querySelectorAll('[data-testid="chip"]')].some(chip=>chip.textContent.includes('charlie@example.test'))`,
+    'insert-mode recipient commit',
   )
   await click('button') // host action; then refocus recipient field
+  await clickText('Cc')
+  await until(`!!document.querySelector('[aria-label="Cc"]')`, 'Cc editable recipient field')
+  await click('[aria-label="Cc"]')
+  await insertText('alice@example.test')
+  await key('Tab')
+  await until(
+    `document.querySelector('[aria-label="Cc"]')!==null&&document.querySelectorAll('[data-testid="chip"]').length>=3`,
+    'Cc native Tab commit',
+  )
+  await clickText('Bcc')
+  await until(`!!document.querySelector('[aria-label="Bcc"]')`, 'Bcc editable recipient field')
+  await click('[aria-label="Bcc"]')
+  await insertText('not-an-address')
+  await key('Enter')
+  assert.equal(
+    await evaluate(
+      `document.querySelector('[aria-label="Bcc"]').getAttribute('aria-invalid')==='true'`,
+    ),
+    true,
+    'invalid Bcc address was not rejected',
+  )
+  await key('a', process.platform === 'darwin' ? 4 : 2)
+  await key('Backspace')
+  await insertText('bob@example.test')
+  await key('Enter')
+  await until(
+    `document.querySelectorAll('[data-testid="chip"]').length>=4`,
+    'Bcc native Enter commit',
+  )
+  await key('Backspace')
+  await until(
+    `document.querySelectorAll('[data-testid="chip"]').length===3`,
+    'native Backspace removes final recipient chip',
+  )
+  await insertText('bob@example.test')
+  await key('Enter')
+  await until(
+    `document.querySelectorAll('[data-testid="chip"]').length===4`,
+    'Bcc recipient available for payload persistence',
+  )
+  await key('Escape')
   await click('[aria-label="To"]')
-  await insertText('f')
+  await key('f')
   assert.equal(
     await evaluate(`document.querySelector('[data-host-hints]')!==null`),
     false,
@@ -243,6 +322,16 @@ try {
   )
   await key('Escape')
   await click('[aria-label="Subject"]')
+  await key('Escape')
+  await key('f')
+  await until(`document.querySelector('[data-host-hints]')!==null`, 'normal-mode host hints')
+  await key('Escape')
+  assert.equal(
+    await evaluate(`document.querySelector('[data-host-hints]')===null`),
+    true,
+    'Escape did not cancel host hints',
+  )
+  await key('i')
   await insertText('Draft subject')
   await key('Escape')
   await key('0')
@@ -260,6 +349,17 @@ try {
     `document.querySelector('[aria-label="Subject"]').value.includes('Draft subject')`,
     'subject undo restoration',
   )
+  await click('[aria-label="Subject"]')
+  await key('Escape')
+  await key('d')
+  await clickText('Preview')
+  await clickText('Edit')
+  await click('[aria-label="Subject"]')
+  assert.equal(
+    await evaluate(`document.body.innerText.includes('INSERT')`),
+    true,
+    'preview toggle did not reset pending Vim operator mode',
+  )
   await evaluate(`window.__mailVimFlush?.()`)
   await wait(
     () => evaluate(`window.__mailVimCalls.some(c=>c.op==='saveDraft')`),
@@ -273,9 +373,21 @@ try {
     'recipient missing from persisted payload',
   )
   assert(
+    saved.some((entry) => entry.payload.cc?.includes('alice@example.test')),
+    'Cc recipient missing from persisted payload',
+  )
+  assert(
+    saved.some((entry) => entry.payload.bcc?.includes('bob@example.test')),
+    'Bcc recipient missing from persisted payload',
+  )
+  assert(
     saved.some((entry) => entry.payload.subject.includes('Draft subject')),
     'subject missing from persisted payload',
   )
+  const disposableDraft = join(root, 'disposable-vault', 'draft.json')
+  await mkdir(dirname(disposableDraft), { recursive: true })
+  await writeFile(disposableDraft, JSON.stringify(saved.at(-1).payload, null, 2))
+  assert((await stat(disposableDraft)).size > 0, 'synthetic saved draft was not written to disk')
   assert.equal(
     await evaluate(
       `window.__mailVimCalls.some(c=>c.op==='send'||c.op==='discardDraft'||c.op.endsWith('callback'))`,
@@ -305,6 +417,39 @@ try {
     true,
     'keyboard events were not trusted native events',
   )
+  await click('[aria-label="Subject"]')
+  await key('Escape')
+  await key('d')
+  await evaluate(`window.__mailVim.context('fixture-account-b','replacement')`)
+  await until(
+    `window.__mailVim.state().account==='fixture-account-b'&&window.__mailVim.state().draft==='replacement'`,
+    'draft context update on mounted composer',
+  )
+  assert.equal(
+    await evaluate(`JSON.stringify(window.__mailVim.state())`),
+    JSON.stringify({ account: 'fixture-account-b', draft: 'replacement' }),
+    'fixture context did not update without remounting the composer',
+  )
+  assert.equal(
+    await evaluate(`document.body.innerText.includes('INSERT')`),
+    true,
+    'draft/account identity change did not invalidate pending Vim command',
+  )
+  await clickText('Discard')
+  await until(`document.body.innerText.includes('Discard this draft?')`, 'discard confirmation')
+  await clickText('Keep')
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.some(c=>c.op==='send'||c.op==='send-rejected'||c.op==='discardDraft'||c.op.endsWith('callback'))`,
+    ),
+    false,
+    'confirmation test performed a send, discard, or close action',
+  )
+  assert.deepEqual(
+    await evaluate(`window.__mailVimErrors||[]`),
+    [],
+    'renderer errors occurred during native smoke',
+  )
   const screenshot = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
   await writeFile(join(evidence, 'composer.png'), Buffer.from(screenshot.data, 'base64'))
   const electronVersion = /HOLI_563_ELECTRON=([0-9.]+)/.exec(log)?.[1]
@@ -316,11 +461,20 @@ try {
       'trusted-native-keyboard-and-mouse',
       'recipient-chip-and-payload-persistence',
       'subject-vim-undo',
+      'preview-toggle-invalidates-pending-vim-operator',
+      'draft-account-context-change-invalidates-pending-vim-command-without-remount',
+      'discard-confirmation-cancels-without-discard',
       'insert-mode-f-does-not-open-host-hints',
+      'normal-mode-f-opens-production-host-hints-and-escape-cancels',
+      'normal-enter-does-not-commit-or-send-uncommitted-recipient',
+      'cc-bcc-fields-validation-tab-backspace-and-enter',
+      'renderer-error-free-and-no-blocked-network-requests',
       'disabled-vim-native-edit-and-blur-refocus-reset',
       'no-unintended-send-discard-close',
     ],
     captures: ['composer.png'],
+    disposableFiles: [disposableDraft],
+    cleanup: { root, removed: true },
     calls: saved,
   }
   await writeFile(join(evidence, 'result.json'), JSON.stringify(result, null, 2))
@@ -334,6 +488,10 @@ try {
   ])
   assert.equal(code, 0)
   assert(!log.includes('Error occurred in handler'))
+  assert.deepEqual(
+    JSON.parse(await readFile(join(evidence, 'blocked-network-requests.json'), 'utf8')),
+    [],
+  )
   const finalResult = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(finalResult.ok, true)
   assert.equal(finalResult.electron.split('.')[0], '43')
@@ -346,4 +504,5 @@ try {
   }
   await writeFile(join(evidence, 'electron-smoke.log'), log)
   await rm(root, { recursive: true, force: true })
+  await writeFile(join(evidence, 'cleanup.json'), JSON.stringify({ removed: root }, null, 2))
 }
