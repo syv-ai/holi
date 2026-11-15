@@ -13,6 +13,10 @@ interface HoliPage {
   focus(ref: number): boolean
   valueOf(ref: number): string | null
   fill(ref: number, text: string): boolean
+  vim: {
+    configure(enabled: boolean, revision: number): boolean
+    mode(): { revision: number; mode: 'insert' | 'normal' }
+  }
 }
 
 const holi = (): HoliPage => (globalThis as unknown as { __holiPage: HoliPage }).__holiPage
@@ -83,6 +87,34 @@ test('a number finds its control until it leaves the page', () => {
   button.remove()
   expect(holi().click(7)).toBe(false)
   expect(holi().point(7)).toBeNull()
+})
+
+test('vim mode uses native selections and blocks unsupported edits synchronously', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = 'one two\\n  three'
+  document.body.append(textarea)
+  textarea.focus()
+  expect(holi().vim.configure(true, 1)).toBe(true)
+  expect(holi().vim.mode()).toEqual({ revision: 1, mode: 'insert' })
+  const key = (value: string) => {
+    const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })
+    textarea.dispatchEvent(event)
+    return event
+  }
+  expect(key('Escape').defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('normal')
+  textarea.setSelectionRange(0, 0)
+  key('w')
+  expect(textarea.selectionStart).toBe(4)
+  const before = textarea.value
+  expect(key('Backspace').defaultPrevented).toBe(true)
+  expect(textarea.value).toBe(before)
+  key('a')
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(key('x').defaultPrevented).toBe(false)
+  expect(holi().vim.configure(false, 2)).toBe(true)
+  expect(holi().vim.configure(true, 1)).toBe(false)
+  expect(holi().vim.mode()).toEqual({ revision: 2, mode: 'insert' })
 })
 
 test('fills a field and picks an option, as typing would', () => {
