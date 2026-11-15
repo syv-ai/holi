@@ -12,6 +12,8 @@ import {
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import type { ClaimCreate } from '@/plugin-api/types'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /**
  * The name a New menu item asks for before it makes anything (a link's
@@ -28,6 +30,7 @@ export function AskNameDialog({
   onMake: (name: string) => Promise<void>
 }) {
   const [name, setName] = useState('')
+  const vim = useVimField('ask-name', name)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const close = () => {
@@ -65,13 +68,21 @@ export function AskNameDialog({
               placeholder={asking?.create.placeholder}
               spellCheck={false}
               aria-invalid={error !== null || undefined}
+              {...vim.vimFieldProps}
               onChange={(event) => setName(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+                vim.vimFieldProps.onKeyDown?.(event)
+                if (
+                  event.defaultPrevented ||
+                  event.key !== 'Enter' ||
+                  event.nativeEvent.isComposing
+                )
+                  return
                 event.preventDefault()
                 submit()
               }}
             />
+            <VimFieldMode mode={vim.vimFieldMode} />
             {error !== null ? <FieldError>{error}</FieldError> : null}
           </Field>
           <DialogFooter>

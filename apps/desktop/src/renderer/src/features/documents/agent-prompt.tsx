@@ -22,6 +22,8 @@ import { claudeFirstRunAtom } from '@/state/claude-first-run'
 import { useAgentLabel, type AgentRun } from '@/state/document-runs'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /** Where the person types what the agent should do: on the line they opened
  *  it from, or for a selection from the format bubble's Ask AI. Enter sends,
@@ -50,6 +52,7 @@ export function AgentPrompt({
   const activity = useEditorActivity()
   const [local, setLocal] = useState(initial)
   const text = value ?? local
+  const vim = useVimField('document-agent-prompt', text)
   const setText = onValueChange ?? setLocal
   const agent = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const send = () => {
@@ -73,7 +76,10 @@ export function AgentPrompt({
         aria-label="What should the agent do?"
         placeholder={placeholder}
         onChange={(event) => setText(event.target.value)}
+        {...vim.vimFieldProps}
         onKeyDown={(event) => {
+          vim.vimFieldProps.onKeyDown?.(event)
+          if (event.defaultPrevented || event.nativeEvent.isComposing) return
           if (event.key === 'Escape') {
             event.preventDefault()
             onCancel()
@@ -85,6 +91,7 @@ export function AgentPrompt({
         className="min-h-0 text-sm"
       />
       <InputGroupAddon align="block-end" className="justify-between">
+        <VimFieldMode mode={vim.vimFieldMode} />
         <InputGroupText className="text-xs">
           <Kbd>Esc</Kbd> to close
         </InputGroupText>

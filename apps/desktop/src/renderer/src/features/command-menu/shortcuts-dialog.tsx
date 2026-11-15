@@ -21,6 +21,8 @@ import {
 import { liveShortcutIdsAtom, runShortcutAtom, shortcutsDialogOpenAtom } from '@/state/shortcuts'
 import { isMac } from '@/lib/platform'
 import { EmptyState } from '@/composites/empty-state'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /** The live table, grouped, filtered by label, group or key name. */
 function shortcutSections(
@@ -81,6 +83,7 @@ export function ShortcutsDialog() {
   const live = useAtomValue(liveShortcutIdsAtom)
   const runShortcut = useSetAtom(runShortcutAtom)
   const [query, setQuery] = useState('')
+  const vim = useVimField('shortcuts-search', query)
   const searchRef = useRef<HTMLInputElement | null>(null)
   /** Where focus was when the dialog opened, to hand it back before a run. */
   const returnFocus = useRef<HTMLElement | null>(null)
@@ -141,7 +144,11 @@ export function ShortcutsDialog() {
             value={query}
             onValueChange={setQuery}
             placeholder="Search shortcuts"
+            {...vim.vimFieldProps}
           />
+          <div className="px-2">
+            <VimFieldMode mode={vim.vimFieldMode} />
+          </div>
           <CommandList label="Keyboard shortcuts">
             {sections.map(({ group, lines }) => (
               <CommandGroup key={group} heading={group}>
