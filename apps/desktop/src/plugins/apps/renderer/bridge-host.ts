@@ -75,10 +75,11 @@ async function answerCall(
   params: unknown,
   token: string,
   nonce: string,
+  current: () => boolean,
   authorize: () => Promise<boolean>,
 ): Promise<unknown> {
   if (remote === null) throw new Error('no vault is open')
-  if (!(await authorize())) throw new Error('app document lease is no longer valid')
+  if (!(await authorize()) || !current()) throw new Error('app document lease is no longer valid')
   if (method === 'open') return openTarget(store, params)
   return await appsCap.call(remote, { bundle, method, params, token, nonce })
 }
@@ -132,12 +133,23 @@ export function hostBridgeMessage(
     reply({ nonce, id, ok: false, error: `no such method: ${String(msg.method)}` })
     return true
   }
-  answerCall(store, remote, bundle, msg.method, msg.params, token, nonce, ctx.authorize).then(
+  answerCall(
+    store,
+    remote,
+    bundle,
+    msg.method,
+    msg.params,
+    token,
+    nonce,
+    current,
+    ctx.authorize,
+  ).then(
     async (value) => {
-      if (current() && (await ctx.authorize())) reply({ nonce, id, ok: true, value })
+      if (!(await ctx.authorize()) || !current()) return
+      reply({ nonce, id, ok: true, value })
     },
     async (err: unknown) => {
-      if (!current() || !(await ctx.authorize())) return
+      if (!(await ctx.authorize()) || !current()) return
       const code = refusalCodeOf(err)
       reply({ nonce, id, ok: false, error: (err as Error).message, ...(code ? { code } : {}) })
     },
