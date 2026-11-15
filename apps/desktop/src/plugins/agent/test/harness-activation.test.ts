@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -11,6 +12,7 @@ import type { RunOptions } from '../main/claude/cli'
 import { PRESETS } from '../main/harness/record'
 import type { AgentExit, StartArgs } from '../main/host/pty'
 import { agentMain } from '../main/index'
+import type { BridgeRoute } from '../../../main/plugin-api'
 import { openTurnLog } from '../main/host/turn-log'
 
 const adapters = vi.hoisted(() => ({
@@ -18,12 +20,25 @@ const adapters = vi.hoisted(() => ({
   run: vi.fn<(bin: string, args: string[], opts: RunOptions) => Promise<string>>(),
   pty: [] as StartArgs[],
   backup: null as null | { source: string; entered: () => void; wait: Promise<void> },
+  heldExit: null as null | { cwd: string; entered: () => void; wait: Promise<void> },
+  historyRename: null as null | { source: string; entered: () => void; wait: Promise<void> },
+  exitObserved: null as null | { cwd: string; entered: () => void },
+  routes: new Map<string, Map<string, BridgeRoute>>(),
 }))
 
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
   return {
     ...fs,
+    rename: async (...args: Parameters<typeof fs.rename>) => {
+      const hold = adapters.historyRename
+      if (hold !== null && args[1] === hold.source) {
+        adapters.historyRename = null
+        hold.entered()
+        await hold.wait
+      }
+      return fs.rename(...args)
+    },
     copyFile: async (...args: Parameters<typeof fs.copyFile>) => {
       const pause = adapters.backup
       if (pause !== null && args[0] === pause.source) {
@@ -55,15 +70,25 @@ vi.mock('../main/host/pty', async (original) => {
   return {
     ...pty,
     AgentRuntime: class extends pty.AgentRuntime {
-      private exitCallbacks: Array<(event: AgentExit) => void> = []
+      private exitCallback: ((event: AgentExit) => void) | null = null
+      private args: StartArgs | null = null
       override start(args: StartArgs) {
+        this.args = args
         adapters.pty.push(args)
       }
       override onExit(callback: (event: AgentExit) => void) {
-        this.exitCallbacks.push(callback)
+        this.exitCallback = callback
       }
       override async kill() {
-        for (const callback of this.exitCallbacks.splice(0)) callback({ exitCode: 0 })
+        const hold = adapters.heldExit
+        if (hold !== null && this.args?.cwd === hold.cwd) {
+          adapters.heldExit = null
+          hold.entered()
+          await hold.wait
+        }
+        const observed = adapters.exitObserved
+        if (observed !== null && this.args?.cwd === observed.cwd) observed.entered()
+        this.exitCallback?.({ exitCode: 0 })
       }
     },
   }
@@ -82,6 +107,10 @@ beforeEach(() => {
     )
   adapters.pty.length = 0
   adapters.backup = null
+  adapters.heldExit = null
+  adapters.historyRename = null
+  adapters.exitObserved = null
+  adapters.routes.clear()
 })
 afterEach(async () => {
   await Promise.all(stops.splice(0).map((stop) => stop()))
@@ -98,6 +127,7 @@ function deferred() {
 async function rig(
   userData?: string,
   holdAgentDisposer?: { entered: () => void; wait: Promise<void> },
+  liveContext = false,
 ) {
   userData ??= await mkdtemp(join(tmpdir(), 'holi-agent-owner-'))
   dirs.push(userData)
@@ -105,8 +135,18 @@ async function rig(
   for (const root of Object.values(roots)) {
     await mkdir(join(root, '.holi/settings'), { recursive: true })
     await writeFile(join(root, '.holi/settings/plugins.yaml'), 'plugins:\n  automations: true\n')
+    await writeFile(
+      join(root, '.fixture-owner'),
+      Object.entries(roots).find(([, path]) => path === root)![0],
+    )
+    execFileSync('git', ['init', '-q', root])
+    execFileSync('git', ['-C', root, 'config', 'user.name', 'Holi test'])
+    execFileSync('git', ['-C', root, 'config', 'user.email', 'holi-test@example.invalid'])
+    execFileSync('git', ['-C', root, 'add', '.'])
+    execFileSync('git', ['-C', root, 'commit', '-qm', 'fixture'])
   }
   const sent: { remote: string; name: string }[] = []
+  let activeRemote: typeof A | typeof B | null = null
   const registry = createCapabilityRegistry()
   const activateAgent = agentMain.activate!
   const agentPlugin =
@@ -130,7 +170,25 @@ async function rig(
     registry,
     userData,
     coreSeeds: [],
-    active: () => null,
+    active: () =>
+      liveContext && activeRemote !== null
+        ? {
+            remote: activeRemote,
+            root: roots[activeRemote],
+            pause: () => {},
+            resume: () => {},
+            repo: {
+              head: async () =>
+                execFileSync('git', ['-C', roots[activeRemote!], 'rev-parse', 'HEAD'], {
+                  encoding: 'utf8',
+                }).trim(),
+            },
+            commitNow: async () =>
+              execFileSync('git', ['-C', roots[activeRemote!], 'rev-parse', 'HEAD'], {
+                encoding: 'utf8',
+              }).trim(),
+          }
+        : null,
     rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
     events: {
       send: (_channel, event) => sent.push({ remote: event.remote, name: event.name }),
@@ -140,7 +198,12 @@ async function rig(
     openAppDoor: () => {
       throw new Error('unused')
     },
-    route: () => () => {},
+    route: (path, route, remote) => {
+      const forRemote = adapters.routes.get(remote) ?? new Map<string, BridgeRoute>()
+      forRemote.set(path, route)
+      adapters.routes.set(remote, forRemote)
+      return () => forRemote.delete(path)
+    },
     binDir: () => userData,
     githubToken: () => null,
     frameOrigin: () => () => {},
@@ -157,22 +220,35 @@ async function rig(
     pluginEnabled: async (plugin, root) => (await host.serving(root)).has(plugin),
     claims: (root) => host.scanClaimsFor(root),
   })
-  const enter = (remote: typeof A | typeof B) =>
-    host.reconcile(
+  const enter = (remote: typeof A | typeof B) => {
+    if (liveContext) activeRemote = remote
+    return host.reconcile(
       {
         remote,
         root: roots[remote],
         pause: () => {},
         resume: () => {},
-        commitNow: async () => null,
-        repo: { head: async () => null },
+        commitNow: async () =>
+          execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
+            encoding: 'utf8',
+          }).trim(),
+        repo: {
+          head: async () =>
+            execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
+              encoding: 'utf8',
+            }).trim(),
+        },
       },
       'open',
     )
+  }
+  const setActive = (remote: typeof A | typeof B) => {
+    activeRemote = remote
+  }
   const call = async (remote: typeof A | typeof B, name: string, params: unknown = {}) =>
     (await capabilities.dispatch({ door: 'ui', remote, name, params })).value
   stops.push(() => host.stopAll())
-  return { host, enter, call, capabilities, roots, userData, sent }
+  return { host, enter, call, capabilities, roots, userData, sent, setActive }
 }
 
 const harness = {
@@ -189,7 +265,7 @@ const customRow = {
   ]),
 }
 
-it('updates real PTY history per activated vault and retains the other partition on stop', async () => {
+it('serializes overlapping PTY history updates across activations and drains stop A', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'holi-agent-history-'))
   const sharedId = 'p0123456789ab'
   const prior = {
@@ -224,14 +300,56 @@ it('updates real PTY history per activated vault and retains the other partition
   expect(bStarted.ok).toBe(true)
   expect(adapters.pty.slice(-2).map((session) => session.cwd)).toEqual([roots[A], roots[B]])
 
-  await call(A, 'agent.stop', { id: aStarted.sessionId })
   const historyFile = join(userData, 'agent-pty-history.json')
-  const afterAStops = JSON.parse(await readFile(historyFile, 'utf8')) as Record<string, unknown[]>
-  expect(afterAStops[A]).toHaveLength(2)
-  expect(afterAStops[B]).toEqual([prior])
-  expect(await call(B, 'agent.history')).toEqual([prior])
+  const aRenameEntered = deferred()
+  const releaseARename = deferred()
+  adapters.historyRename = {
+    source: historyFile,
+    entered: aRenameEntered.resolve,
+    wait: releaseARename.promise,
+  }
+  const stopA = call(A, 'agent.stop', { id: aStarted.sessionId })
+  await aRenameEntered.promise
 
-  await call(B, 'agent.stop', { id: bStarted.sessionId })
+  const bExitObserved = deferred()
+  const releaseBExit = deferred()
+  adapters.heldExit = {
+    cwd: roots[B],
+    entered: bExitObserved.resolve,
+    wait: releaseBExit.promise,
+  }
+  const bMutationAdmitted = deferred()
+  adapters.exitObserved = { cwd: roots[B], entered: bMutationAdmitted.resolve }
+  const stopB = call(B, 'agent.stop', { id: bStarted.sessionId })
+  await bExitObserved.promise
+  releaseBExit.resolve()
+  await bMutationAdmitted.promise
+  // B reached its real PTY exit callback and queued its real history mutation
+  // while A's jsonFileStore rename remains blocked.
+  let stoppedA = false
+  const teardownA = host.stop(A).then(() => {
+    stoppedA = true
+  })
+  const bRenameEntered = deferred()
+  const releaseBRename = deferred()
+  adapters.historyRename = {
+    source: historyFile,
+    entered: bRenameEntered.resolve,
+    wait: releaseBRename.promise,
+  }
+  releaseARename.resolve()
+  await stopA
+  await bRenameEntered.promise
+  await teardownA
+  expect(stoppedA).toBe(true)
+  let stoppedB = false
+  void stopB.then(() => {
+    stoppedB = true
+  })
+  expect(stoppedB).toBe(false)
+  releaseBRename.resolve()
+  await stopB
+  expect(stoppedA).toBe(true)
   const afterBothStop = JSON.parse(await readFile(historyFile, 'utf8')) as Record<string, unknown[]>
   expect(afterBothStop[A]).toHaveLength(2)
   expect(afterBothStop[B]).toHaveLength(2)
@@ -249,41 +367,56 @@ it('updates real PTY history per activated vault and retains the other partition
   )
 })
 
-it('routes concurrent turn reports through each activated vault and reloads them from disk', async () => {
-  const { host, enter, call, roots } = await rig()
+it('persists concurrent provider turn reports through each activated vault route', async () => {
+  const { host, enter, call, roots, setActive } = await rig(undefined, undefined, true)
   await enter(A)
   await enter(B)
-  const sameSession = 'same-session'
-  const logs = { [A]: openTurnLog(roots[A]), [B]: openTurnLog(roots[B]) }
-  await Promise.all(
-    Array.from({ length: 12 }, (_, n) =>
-      Promise.all(
-        ([A, B] as const).map((remote) =>
-          logs[remote].append({
-            base: `${remote}-base-${n}`,
-            end: `${remote}-end-${n}`,
-            at: `2026-09-09T10:${String(n).padStart(2, '0')}:00Z`,
-            sessionId: sameSession,
-          }),
-        ),
-      ),
-    ),
+  // Force each real background-session host to finish attaching to its vault
+  // before driving the provider's registered hook routes.
+  for (const remote of [A, B] as const) {
+    setActive(remote)
+    await call(remote, 'agent.sessions')
+  }
+  const jobs = ['a1234567']
+  const routesFor = (remote: string) => adapters.routes.get(remote)!
+  const report = (remote: string, path: string, job: string) => {
+    const query = new URLSearchParams({ job })
+    // The fake Claude process is not in a real listing, so identify the active
+    // producer with this live test process just as a hook supplies its PID.
+    if (path === '/turn/start') query.set('pid', String(process.pid))
+    return routesFor(remote).get(path)!.handle(remote, query, '', new AbortController().signal)
+  }
+  for (const remote of [A, B] as const) {
+    setActive(remote)
+    await Promise.all(jobs.map((job) => report(remote, '/turn/start', job)))
+  }
+  const endings = await Promise.all(
+    ([A, B] as const).flatMap((remote) => {
+      setActive(remote)
+      return jobs.map((job) => report(remote, '/turn/end', job))
+    }),
   )
+  expect(endings).toHaveLength(2)
+  expect(endings.every((reply) => reply.status === 200)).toBe(true)
 
+  const expected = expect.arrayContaining(
+    jobs.map((job) => expect.objectContaining({ base: expect.any(String), sessionId: job })),
+  )
   const aTurns = (await call(A, 'agent.turns')) as { base: string; sessionId: string }[]
   const bTurns = (await call(B, 'agent.turns')) as { base: string; sessionId: string }[]
-  expect(aTurns.map((turn) => turn.base)).toEqual(
-    Array.from({ length: 12 }, (_, n) => `${A}-base-${n}`).reverse(),
-  )
-  expect(bTurns.map((turn) => turn.base)).toEqual(
-    Array.from({ length: 12 }, (_, n) => `${B}-base-${n}`).reverse(),
-  )
-  expect(aTurns.every((turn) => turn.sessionId === sameSession)).toBe(true)
-  expect(bTurns.every((turn) => turn.sessionId === sameSession)).toBe(true)
+  expect(aTurns).toHaveLength(1)
+  expect(bTurns).toHaveLength(1)
+  expect(aTurns).toEqual(expected)
+  expect(bTurns).toEqual(expected)
+  expect(aTurns.map((turn) => turn.base)).not.toEqual(bTurns.map((turn) => turn.base))
+  expect(aTurns.every((turn) => jobs.includes(turn.sessionId))).toBe(true)
+  expect(bTurns.every((turn) => jobs.includes(turn.sessionId))).toBe(true)
   await host.stop(A)
   await enter(A)
   expect(await call(A, 'agent.turns')).toEqual(aTurns)
   expect(await call(B, 'agent.turns')).toEqual(bTurns)
+  expect(await openTurnLog(roots[A]).list()).toEqual(aTurns)
+  expect(await openTurnLog(roots[B]).list()).toEqual(bTurns)
 })
 
 it('activates real agents and shares save/remove/reset/reload and remote notifications', async () => {

@@ -62,11 +62,7 @@ function isRecord(value: unknown): value is TurnRecord {
   if (value === null || typeof value !== 'object') return false
   const r = value as Record<string, unknown>
   return (
-    typeof r['base'] === 'string' &&
-    typeof r['end'] === 'string' &&
-    typeof r['at'] === 'string' &&
-    (r['sessionId'] === undefined || typeof r['sessionId'] === 'string') &&
-    (r['overlapped'] === undefined || typeof r['overlapped'] === 'boolean')
+    typeof r['base'] === 'string' && typeof r['end'] === 'string' && typeof r['at'] === 'string'
   )
 }
 
