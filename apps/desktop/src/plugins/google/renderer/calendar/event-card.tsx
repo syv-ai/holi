@@ -91,8 +91,15 @@ export interface EventCardAnchor {
   fallback?: HTMLElement | null
 }
 
+export interface MeetingFormDraft {
+  guests: string
+  meet: boolean
+}
+
 interface EventCardProps {
   meetingIdentity: MeetingIdentity | null
+  meetingDraft: MeetingFormDraft
+  onMeetingDraftChange: (draft: MeetingFormDraft) => void
   onCreated: () => void
   state: EventCardState | null
   anchor: EventCardAnchor | null
@@ -208,6 +215,8 @@ function WhenDetail({ draft }: { draft: EventDraft }) {
 
 export function EventCard({
   meetingIdentity,
+  meetingDraft,
+  onMeetingDraftChange,
   onCreated,
   state,
   anchor,
@@ -300,6 +309,8 @@ export function EventCard({
               onOpenExternal={onOpenExternal}
               draft={state.draft}
               onDraftChange={onDraftChange}
+              meetingDraft={meetingDraft}
+              onMeetingDraftChange={onMeetingDraftChange}
               mode={state.mode as 'edit' | 'create'}
               error={error}
               saving={saving}
@@ -566,6 +577,8 @@ function EventForm({
   onOpenExternal,
   draft: initial,
   onDraftChange,
+  meetingDraft,
+  onMeetingDraftChange,
   mode,
   error,
   saving,
@@ -575,6 +588,8 @@ function EventForm({
 }: {
   draft: EventDraft
   onDraftChange: (draft: EventDraft) => void
+  meetingDraft: MeetingFormDraft
+  onMeetingDraftChange: (draft: MeetingFormDraft) => void
   mode: 'edit' | 'create'
   identity: MeetingIdentity | null
   onCreated: () => void
@@ -586,8 +601,8 @@ function EventForm({
   onClose: () => void
 }) {
   const [draft, setDraft] = useState(initial)
-  const [guests, setGuests] = useState('')
-  const [meet, setMeet] = useState(false)
+  const [guests, setGuests] = useState(meetingDraft.guests)
+  const [meet, setMeet] = useState(meetingDraft.meet)
   const [validation, setValidation] = useState<string | null>(null)
   const meeting = useMeetingCreation(identity, onCreated)
   const restored = meeting.operation?.input
@@ -609,9 +624,11 @@ function EventForm({
       start: restored.allDay ? old.start : time(start),
       end: restored.allDay ? old.end : time(end),
     }))
-    setGuests(restored.guests.join(', '))
+    const restoredGuests = restored.guests.join(', ')
+    setGuests(restoredGuests)
     setMeet(restored.meet)
-  }, [restored])
+    onMeetingDraftChange({ guests: restoredGuests, meet: restored.meet })
+  }, [restored, onMeetingDraftChange])
   const locked = meeting.busy || meeting.submitted !== null
   const disabled = saving || meeting.loading || meeting.busy
   const shownError = validation ?? meeting.error ?? error
@@ -821,7 +838,11 @@ function EventForm({
                       value={guests}
                       autoComplete="off"
                       placeholder="Email addresses, separated by commas"
-                      onChange={(event) => setGuests(event.target.value)}
+                      onChange={(event) => {
+                        const next = event.target.value
+                        setGuests(next)
+                        onMeetingDraftChange({ guests: next, meet })
+                      }}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter') event.preventDefault()
                       }}
@@ -833,7 +854,10 @@ function EventForm({
                       id="event-meet"
                       checked={meet}
                       disabled={!meeting.supported}
-                      onCheckedChange={setMeet}
+                      onCheckedChange={(checked) => {
+                        setMeet(checked)
+                        onMeetingDraftChange({ guests, meet: checked })
+                      }}
                     />
                   </Field>
                   {!meeting.loading && !meeting.supported && (

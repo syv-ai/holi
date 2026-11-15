@@ -64,6 +64,8 @@ function card(options: { connected?: boolean; initial?: EventDraft; strict?: boo
   const element = (
     <EventCard
       meetingIdentity={options.connected === false ? null : identity}
+      meetingDraft={{ guests: '', meet: false }}
+      onMeetingDraftChange={vi.fn()}
       onCreated={created}
       state={state}
       anchor={anchor}
@@ -175,6 +177,37 @@ it('restores unresolved intent on reopen, checks read-only, and explicitly retri
   await waitFor(() => expect(cap.createMeeting).toHaveBeenCalledWith(identity.remote, op.input))
 })
 
+it('unlocks a refused meeting after status confirms no operation, preserving fields for correction', async () => {
+  const user = userEvent.setup()
+  cap.meetingState
+    .mockResolvedValueOnce({ meetSupported: true, operation: null })
+    .mockResolvedValueOnce({ meetSupported: true, operation: op })
+    .mockResolvedValueOnce({ meetSupported: true, operation: op })
+  const first = card()
+  await ready()
+  cap.createMeeting.mockRejectedValueOnce(new Error('Google refused the event.'))
+  await user.type(screen.getByLabelText('Guests'), 'guest@example.com')
+  await user.click(screen.getByRole('button', { name: 'Create and send invitations' }))
+  expect(await screen.findByText(/Google refused the event/)).toBeInTheDocument()
+  expect(cap.meetingState).toHaveBeenCalled()
+  expect(screen.getByLabelText('Title')).toBeDisabled()
+
+  first.unmount()
+  card()
+  expect(await screen.findByText(/Delivery is uncertain/)).toBeInTheDocument()
+  expect(screen.getByLabelText('Title')).toBeDisabled()
+  cap.checkMeeting.mockResolvedValueOnce(null)
+  await user.click(screen.getByRole('button', { name: 'Check status' }))
+  expect(await screen.findByLabelText('Title')).toBeEnabled()
+  expect(screen.getByLabelText('Title')).toHaveValue(draft.title)
+  expect(screen.getByRole('button', { name: 'Create and send invitations' })).toBeEnabled()
+  await user.clear(screen.getByLabelText('Title'))
+  await user.type(screen.getByLabelText('Title'), 'Corrected event')
+  await user.click(screen.getByRole('button', { name: 'Create and send invitations' }))
+  await waitFor(() => expect(cap.createMeeting).toHaveBeenCalledTimes(2))
+  expect(cap.createMeeting.mock.calls[1]![1]).toMatchObject({ title: 'Corrected event' })
+})
+
 it('accepted Meet failure has status recovery and an external action, never a create retry', async () => {
   const accepted = {
     ...op,
@@ -275,6 +308,8 @@ it('account and vault changes discard late form results without sending again', 
   r.rerender(
     <EventCard
       meetingIdentity={{ remote: 'owner/other', sub: 'synthetic-other' }}
+      meetingDraft={{ guests: '', meet: false }}
+      onMeetingDraftChange={vi.fn()}
       onCreated={r.created}
       state={{ mode: 'create', draft: { ...draft, title: 'Different account draft' }, identity: 2 }}
       anchor={{ rect: new DOMRect(40, 40, 1, 1), element: null }}
