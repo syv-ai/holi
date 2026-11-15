@@ -160,6 +160,7 @@ try {
           'displayed-page-attached-with-loaded-content',
           'native-browser-vim-mode-navigation-insertion-undo-redo',
           'production-browser-surface-I-A-native-insertion-and-actual-mode',
+          'native-same-vault-two-pane-tabs-own-input-and-mode-independently',
           'production-preference-disables-and-reenables-native-page',
           'production-overlay-restores-vim-with-fresh-attachment',
           'production-visible-hide-return-rearms-field',

@@ -106,6 +106,96 @@
   }
   await pref(true)
   await badge('insert')
+
+  // Exercise two simultaneous native views whose tab IDs differ within one vault.
+  await invoke('A', 'open', { reopen: 'other', url: `${url}/a?other-pane`, shown: false })
+  await ui('qa.setOtherPane(true)')
+  win.webContents.send('qa:event', {
+    remote: 'A',
+    name: 'tabs',
+    payload: await invoke('A', 'tabs', {}),
+  })
+  for (const event of sent.filter((entry) => entry.remote === 'A' && entry.name === 'vim-mode'))
+    win.webContents.send('qa:event', event)
+  const nativeViewFor = (path: string) =>
+    win.contentView.children.find((candidate) => candidate.webContents.getURL().endsWith(path)) as
+      WebContentsView | undefined
+  await until(
+    () =>
+      win.contentView.children.length === 2 &&
+      nativeViewFor('/a') !== undefined &&
+      nativeViewFor('/a?other-pane') !== undefined,
+    'two same-vault native views',
+  )
+  const sameView = nativeViewFor('/a')!
+  const otherView = nativeViewFor('/a?other-pane')!
+  assert.notEqual(sameView, otherView)
+  await until(
+    async () =>
+      (await ui('qa.state().modes')).same?.revision > 0 &&
+      (await ui('qa.state().modes')).other?.revision > 0,
+    'per-tab vim configurations',
+  )
+  const paneBadge = async (id: string, mode: string) =>
+    until(
+      async () =>
+        await ui(
+          `document.querySelector('[data-browser-tab="${id}"] [aria-label="Vim ${mode} mode"]') !== null`,
+        ),
+      `${id} toolbar ${mode}`,
+    )
+  await paneBadge('same', 'insert')
+  await paneBadge('other', 'insert')
+  await captureFrame(sameView.webContents)
+  await captureFrame(otherView.webContents)
+  await sameView.webContents.executeJavaScript(
+    `document.querySelector('#text').value='same-pane';document.querySelector('#text').setSelectionRange(0,0);document.querySelector('#text').focus()`,
+  )
+  await otherView.webContents.executeJavaScript(
+    `document.querySelector('#text').value='other-pane';document.querySelector('#text').setSelectionRange(0,0);document.querySelector('#text').focus()`,
+  )
+  await trustedPress(sameView, 'Escape')
+  await paneBadge('same', 'normal')
+  await paneBadge('other', 'insert')
+  await trustedPress(otherView, 'Escape')
+  await paneBadge('other', 'normal')
+  await captureFrame(sameView.webContents)
+  await sameView.webContents.executeJavaScript(`document.querySelector('#text').focus()`)
+  await trustedPress(sameView, 'i')
+  await paneBadge('same', 'insert')
+  await trustedPress(sameView, 'S')
+  assert.equal(
+    await sameView.webContents.executeJavaScript(`document.querySelector('#text').value`),
+    'Ssame-pane',
+  )
+  assert.equal(
+    await otherView.webContents.executeJavaScript(`document.querySelector('#text').value`),
+    'other-pane',
+  )
+  await captureFrame(otherView.webContents)
+  await trustedPress(otherView, 'i')
+  await paneBadge('other', 'insert')
+  await trustedPress(otherView, 'O')
+  assert.equal(
+    await otherView.webContents.executeJavaScript(`document.querySelector('#text').value`),
+    'Oother-pane',
+  )
+  assert.equal(
+    await sameView.webContents.executeJavaScript(`document.querySelector('#text').value`),
+    'Ssame-pane',
+  )
+  await ui('qa.setOtherPane(false)')
+  await until(async () => win.contentView.children.length === 1, 'second pane detached')
+  assert.equal(child(), sameView)
+  view = sameView
+  await captureFrame(view.webContents)
+  await trustedPress(view, 'Escape')
+  await paneBadge('same', 'normal')
+  await trustedPress(view, 'i')
+  await paneBadge('same', 'insert')
+  mark('native-same-vault-two-pane-tabs-own-input-and-mode-independently')
+
+  await badge('insert')
   await focus()
   await trustedPress(view, 'Escape')
   await badge('normal')
