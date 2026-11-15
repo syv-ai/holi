@@ -186,10 +186,19 @@ async function run(): Promise<void> {
     'real SidebarProvider renders root subscription control',
   )
   check(initial.labels.includes('Subscribe Projects'), 'folder row renders subscription control')
+  await evaluate(`document.documentElement.setAttribute('data-theme', 'light')`)
+  const lightBackground = await evaluate<string>(
+    `getComputedStyle(document.querySelector('main')).backgroundColor`,
+  )
   await capture('files-initial-light.png')
-  await evaluate(`document.documentElement.classList.add('dark')`)
+  await evaluate(`document.documentElement.setAttribute('data-theme', 'dark')`)
+  check(
+    (await evaluate<string>(`getComputedStyle(document.querySelector('main')).backgroundColor`)) !==
+      lightBackground,
+    'dark theme changes the computed production surface color',
+  )
   await capture('files-initial-dark.png')
-  await evaluate(`document.documentElement.classList.remove('dark')`)
+  await evaluate(`document.documentElement.setAttribute('data-theme', 'light')`)
 
   await nativeSpace('Subscribe README.md')
   await waitFor(`document.querySelector('[aria-label="Unsubscribe README.md"]')`)
@@ -278,7 +287,7 @@ async function run(): Promise<void> {
     'removing root subscription retains explicit folder coverage',
   )
 
-  await evaluate(`document.documentElement.classList.add('dark')`)
+  await evaluate(`document.documentElement.setAttribute('data-theme', 'dark')`)
   await capture('files-final-dark.png')
   clearInterval(recorder)
   await capturing
