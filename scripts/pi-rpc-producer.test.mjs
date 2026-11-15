@@ -296,7 +296,22 @@ test('drains descendants after normal runner exits before resolving', async () =
     assert.equal(existsSync(readFileSync(evidenceFile, 'utf8')), false)
 
     process.env.PATH = `${passingFixture.directory}:${previousPath ?? ''}`
-    const success = await checkPiRpcProducer({ bin: '/synthetic/pi', expectedVersion: '1.0.0' })
+    let injectedGroupProbeError = false
+    const killProcess = (pid, signal) => {
+      if (signal === 0 && !injectedGroupProbeError) {
+        injectedGroupProbeError = true
+        const error = new Error('injected transient process-group probe failure')
+        error.code = 'EPERM'
+        throw error
+      }
+      return process.kill(pid, signal)
+    }
+    const success = await checkPiRpcProducer({
+      bin: '/synthetic/pi',
+      expectedVersion: '1.0.0',
+      killProcess,
+    })
+    assert.equal(injectedGroupProbeError, true)
     assert.equal(success.outcome, 'pass', success.detail)
     assert.equal(await descendantGone(), true)
     assert.equal(existsSync(readFileSync(evidenceFile, 'utf8')), false)
