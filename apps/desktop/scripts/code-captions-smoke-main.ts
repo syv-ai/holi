@@ -5,8 +5,15 @@ import { mkdir, readFile, writeFile, copyFile, realpath } from 'node:fs/promises
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
-import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
-import { readMarkdownCodeCaptions } from '@holi/shared'
+import { app, BrowserWindow, clipboard, ipcMain, protocol } from 'electron'
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'holi-vault',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  },
+])
+import { readMarkdownCaptionEnvelopes, readMarkdownCodeCaptions } from '@holi/shared'
 import { init } from '@embedpdf/pdfium'
 import { PdfiumNative } from '@embedpdf/engines/pdfium'
 import { createRouter, type RouterDeps } from '../src/main/router'
@@ -26,9 +33,9 @@ import {
 } from '../src/plugins/pdf/main/capabilities'
 
 const exec = promisify(execFile)
-const root = process.env.HOLI_502_ROOT!
-const evidence = process.env.HOLI_502_EVIDENCE!
-const typst = process.env.HOLI_502_TYPST!
+const root = process.env.HOLI_535_ROOT!
+const evidence = process.env.HOLI_535_EVIDENCE!
+const typst = process.env.HOLI_535_TYPST!
 assert(root && evidence && typst, 'runner must provide isolated roots and Typst')
 const remote = 'fixture/captions'
 const vault = join(root, 'vault')
@@ -37,9 +44,12 @@ const note = join(vault, path)
 const head = '---\ntitle:  Byte-sensitive caption\n# Keep this comment\ntags: [kept]\n---\n\n'
 const originalFence = '~~~typescript extra-info\nconst value = 1\n~~~'
 const initial = `${head}# Code caption\n\nBefore the code.\n\n${originalFence}\n\nAfter the code.\n`
+const imageSource = '![Smoke photo](../assets/smoke.png "Photo title")'
+const imageCaption = 'Image **portable** caption.'
 const checks: string[] = []
 const captures: string[] = []
 const rendererErrors: string[] = []
+const imageRequests: { url: string; bytes?: number; status: number }[] = []
 const denied: string[] = []
 const calls: { door: string; name: string }[] = []
 const roots = { app: root, profile: join(root, 'profile'), session: join(root, 'session'), vault }
@@ -51,7 +61,7 @@ const mark = (name: string) => {
 }
 
 async function inspectPdf(file: string) {
-  const require = createRequire(join(process.env.HOLI_502_DESKTOP!, 'package.json'))
+  const require = createRequire(join(process.env.HOLI_535_DESKTOP!, 'package.json'))
   const wasm = await readFile(require.resolve('@embedpdf/pdfium/pdfium.wasm'))
   const module = await init({
     wasmBinary: wasm.buffer.slice(
@@ -83,15 +93,15 @@ async function inspectPdf(file: string) {
       .toPromise()
     const text = slices.join('')
     const textGlyphs = slices.flatMap((part, index) => part.split('').map(() => glyphs[index]!))
-    assert.match(text.replace(/\s+/g, ' '), /A portable caption\. Pending reload/)
-    assert.match(text.replace(/\s+/g, ' '), /const value = 1/)
+    assert.match(text.replace(/\s+/g, ' '), /Image portable caption\./)
     assert(!text.includes('holi:figure') && !text.includes('holi:caption'))
-    const at = text.indexOf('A portable caption.')
+    const at = text.indexOf('Image portable caption.')
     assert(at >= 0)
     const caption = textGlyphs
-      .slice(at, at + 'A portable caption. Pending reload'.length)
+      .slice(at, at + imageCaption.length)
       .filter((g) => g.size.width > 0 && !g.isEmpty)
     assert(caption.length > 10)
+    assert(Buffer.from(await readFile(file)).includes(Buffer.from('/Subtype /Image')))
     const left = Math.min(...caption.map((g) => g.origin.x))
     const right = Math.max(...caption.map((g) => g.origin.x + g.size.width))
     assert(
@@ -114,9 +124,15 @@ async function inspectPdf(file: string) {
 }
 
 async function run() {
-  for (const dir of [roots.profile, roots.session, join(root, 'app-data'), join(vault, 'notes')])
+  for (const dir of [
+    roots.profile,
+    roots.session,
+    join(root, 'app-data'),
+    join(vault, 'notes'),
+    join(vault, 'assets'),
+  ])
     await mkdir(dir, { recursive: true })
-  app.setName('Holi code captions QA 502')
+  app.setName('Holi image captions QA 535')
   app.setPath('appData', join(root, 'app-data'))
   app.setPath('userData', roots.profile)
   app.setPath('sessionData', roots.session)
@@ -223,11 +239,22 @@ async function run() {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      partition: `caption-502-${process.pid}`,
+      partition: `caption-535-${process.pid}`,
       preload: join(root, 'preload.cjs'),
     },
   })
   const url = pathToFileURL(join(root, 'renderer.html')).href
+  await win.webContents.session.protocol.handle('holi-vault', async (request) => {
+    assert.equal(request.url, 'holi-vault://vault/assets/smoke.png')
+    try {
+      const bytes = await readFile(join(vault, 'assets/smoke.png'))
+      imageRequests.push({ url: request.url, bytes: bytes.byteLength, status: 200 })
+      return new Response(bytes, { headers: { 'content-type': 'image/png' } })
+    } catch {
+      imageRequests.push({ url: request.url, status: 404 })
+      return new Response(null, { status: 404 })
+    }
+  })
   win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) =>
     callback(false),
   )
@@ -248,7 +275,9 @@ async function run() {
   })
   win.webContents.session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, done) => {
     const allowed =
-      details.url.startsWith(pathToFileURL(root).href + '/') || details.url.startsWith('data:')
+      details.url.startsWith(pathToFileURL(root).href + '/') ||
+      details.url === 'holi-vault://vault/assets/smoke.png' ||
+      details.url.startsWith('data:')
     if (!allowed) denied.push(details.url)
     done({ cancel: !allowed })
   })
@@ -435,7 +464,7 @@ async function run() {
     await wait(`window.captionFixture?.state()?.json`, 'production DocumentView')
     mark('production-document-view-with-real-router-filesystem')
     videoTimer = setInterval(() => {
-      if (frameNumber >= 30) return
+      if (frameNumber >= 300) return
       const number = frameNumber++
       videoFrames.push(
         (async () => {
@@ -621,6 +650,10 @@ async function run() {
     mark('whole-figure-duplicate-and-native-undo')
     await js(`window.captionFixture.select('documentFigure'); return true`)
     await menu('Move Up')
+    await wait(
+      `window.captionFixture.state().markdown.indexOf('holi:figure')<window.captionFixture.state().markdown.indexOf('Before the code.')`,
+      'figure move up source order',
+    )
     assert.equal(
       await js(
         `const m=window.captionFixture.state().markdown; return m.indexOf('holi:figure')<m.indexOf('Before the code.')`,
@@ -629,6 +662,10 @@ async function run() {
     )
     await js(`window.captionFixture.select('documentFigure'); return true`)
     await menu('Move Down')
+    await wait(
+      `window.captionFixture.state().markdown.indexOf('holi:figure')>window.captionFixture.state().markdown.indexOf('Before the code.')`,
+      'figure move down source order',
+    )
     assert.equal(
       await js(
         `const m=window.captionFixture.state().markdown; return m.indexOf('holi:figure')>m.indexOf('Before the code.')`,
@@ -700,21 +737,97 @@ async function run() {
       (await js<string>('return window.captionFixture.state().markdown')).includes(originalFence),
     )
     mark('native-delete-undo-and-code-exit-shortcut-keep-one-figure')
+
+    const imageOnly = `${head}# Image caption\n\n${imageSource}\n`
+    await js('await window.captionFixture.flush(); return true')
+    await writeFile(note, imageOnly)
+    await js('await window.captionFixture.reopen(); return true')
+    await wait(
+      `window.captionFixture.state().markdown.includes('Smoke photo')`,
+      'relative image reload',
+    )
+    await js(`window.captionFixture.select('image'); return true`)
+    await menu('Add caption')
+    await wait(`document.querySelector('figcaption')`, 'native image caption')
+    await win.webContents.insertText('Image ')
+    press('b', ['meta'])
+    await win.webContents.insertText('portable')
+    press('b', ['meta'])
+    await win.webContents.insertText(' caption.')
+    await wait(
+      `window.captionFixture.state().markdown.includes('Image **portable** caption.')`,
+      'formatted image caption',
+    )
+    await sleep(850)
+    await js('await window.captionFixture.flush(); return true')
+    let imageSaved = await readFile(note, 'utf8')
+    assert(imageSaved.includes(imageSource), 'image src, alt and title must round-trip')
+    assert(imageSaved.includes('Image **portable** caption.'))
+    const imageAttrs = await js<{ src: string; alt: string; title: string }>(
+      `const stack=[...window.captionFixture.state().json.content];let image;while(stack.length){const node=stack.pop();if(node.type==='image')image=node;stack.push(...(node.content||[]))}return image.attrs`,
+    )
+    assert.equal(imageAttrs.src, '../assets/smoke.png')
+    assert.equal(imageAttrs.alt, 'Smoke photo')
+    assert.equal(imageAttrs.title, 'Photo title')
+    await capture('image-caption-failure.png')
+    await copyFile(
+      join(
+        process.env.HOLI_535_DESKTOP!,
+        'src/plugins/pdf/main/vault/once/.holi/document-templates/_brand/logo.png',
+      ),
+      join(vault, 'assets/smoke.png'),
+    )
+    await js(
+      `Array.from(document.querySelectorAll('button')).find((button)=>button.textContent.trim()==='Retry')?.setAttribute('data-image-retry','true'); return true`,
+    )
+    await click('[data-image-retry="true"]')
+    await wait(
+      `document.querySelector('img')?.complete && document.querySelector('img').naturalWidth>0`,
+      'image Retry recovery',
+    )
+    mark('native-image-load-failure-retry-recovers-real-vault-asset')
+    await js('await window.captionFixture.reopen(); return true')
+    await wait(
+      `window.captionFixture.state().markdown.includes('Image **portable** caption.')`,
+      'image caption filesystem reopen',
+    )
+    mark('native-relative-image-caption-edit-autosave-flush-reopen-preserves-source-attrs')
+    await js(`window.captionFixture.select('documentFigure'); return true`)
+    win.focus()
+    win.webContents.copy()
+    for (let attempt = 0; attempt < 100 && !clipboard.readHTML().includes('Smoke photo'); attempt++)
+      await sleep(50)
+    const imageClipboard = clipboard.readHTML()
+    await writeFile(join(evidence, 'image-clipboard.html.txt'), imageClipboard)
+    assert(imageClipboard.includes('Smoke photo'))
+    assert(imageClipboard.includes('Image ') && imageClipboard.includes('portable'))
+    mark('native-image-and-caption-copy-as-one-html-clipboard-selection')
+    await menu('Duplicate')
+    await wait(
+      `window.captionFixture.state().json.content.filter(n=>n.type==='documentFigure').length===2`,
+      'image figure duplication',
+    )
+    press('z', ['meta'])
+    await wait(
+      `window.captionFixture.state().json.content.filter(n=>n.type==='documentFigure').length===1`,
+      'image figure duplicate undo',
+    )
+    mark('native-image-and-caption-duplicate-undo-remains-atomic')
+    await capture('image-caption-light.png')
     await js(
       `window.captionFixture.select('documentFigure'); window.captionFixture.theme('dark'); return true`,
     )
+    await sleep(300)
+    await capture('image-caption-dark.png')
     await sleep(300)
     await capture('caption-dark.png')
     await js('await window.captionFixture.flush(); return true')
     const beforePdf = await readFile(note, 'utf8')
     await writeFile(join(evidence, 'editor-saved.md.txt'), beforePdf)
-    const portableFrames = readMarkdownCodeCaptions(beforePdf)
+    const portableFrames = readMarkdownCaptionEnvelopes(beforePdf)
     await writeFile(join(evidence, 'portable-frames.json'), JSON.stringify(portableFrames, null, 2))
-    assert.equal(
-      portableFrames.length,
-      1,
-      'saved editor fixture must be a supported portable code figure',
-    )
+    assert.equal(portableFrames.length, 1, 'saved editor fixture must be a supported image figure')
+    assert(beforePdf.includes(imageSource), 'portable image frame must retain source markdown')
     await js(
       `Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Convert to PDF').click(); return true`,
     )
@@ -767,6 +880,7 @@ async function run() {
           roots,
           writes,
           calls,
+          imageRequests,
           rendererErrors,
           denied,
           electron: process.versions.electron,

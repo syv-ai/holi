@@ -67,7 +67,7 @@ function select(kind: string, which = 'primary', whole = false) {
     }
   })
   if (at < 0) throw new Error(`Missing ${kind}`)
-  if (kind === 'documentFigure') current.commands.setNodeSelection(at)
+  if (kind === 'documentFigure' || kind === 'image') current.commands.setNodeSelection(at)
   else
     current.commands.setTextSelection(whole ? { from: at + 1, to: at + 1 + size } : at + 1 + size)
   current.view.focus()

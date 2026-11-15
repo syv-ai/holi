@@ -80,11 +80,11 @@ function run(argv) {
 `
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const evidence = resolve(process.argv[2] ?? '/tmp/holi-502/native')
-const typst = process.env.HOLI_502_TYPST ?? process.argv[3]
-assert(typst, 'Provide a Typst executable as argument 3 or HOLI_502_TYPST')
+const evidence = resolve(process.argv[2] ?? '/tmp/holi-535/native')
+const typst = process.env.HOLI_535_TYPST ?? process.argv[3]
+assert(typst, 'Provide a Typst executable as argument 3 or HOLI_535_TYPST')
 await access(typst)
-const root = await mkdtemp(join(tmpdir(), 'holi-502-native-'))
+const root = await mkdtemp(join(tmpdir(), 'holi-535-native-'))
 await chmod(root, 0o700)
 const clipboardBackup = join(root, 'clipboard-snapshot.json')
 const clipboardScript = join(root, 'clipboard.jxa')
@@ -139,7 +139,7 @@ try {
   })
   await writeFile(
     join(root, 'renderer.html'),
-    '<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; script-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src data:; font-src &#39;self&#39;; connect-src &#39;none&#39;"><title>Holi code captions native acceptance</title><link rel="stylesheet" href="renderer/renderer.css"></head><body><div id="root"></div><script type="module" src="renderer/renderer.js"></script></body></html>',
+    '<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; script-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src data: holi-vault:; font-src &#39;self&#39;; connect-src &#39;none&#39;"><title>Holi code captions native acceptance</title><link rel="stylesheet" href="renderer/renderer.css"></head><body><div id="root"></div><script type="module" src="renderer/renderer.js"></script></body></html>',
   )
   await writeFile(
     join(root, 'preload.cjs'),
@@ -147,7 +147,7 @@ try {
   )
   await writeFile(
     join(root, 'package.json'),
-    JSON.stringify({ name: 'holi-code-captions-smoke-502', main: 'main.cjs' }),
+    JSON.stringify({ name: 'holi-image-captions-smoke-535', main: 'main.cjs' }),
   )
   await cp(
     join(desktop, 'src/plugins/pdf/main/vault/once/.holi/document-templates/plain'),
@@ -157,10 +157,10 @@ try {
   const electron = createRequire(import.meta.url)('electron')
   const env = {
     ...process.env,
-    HOLI_502_ROOT: root,
-    HOLI_502_EVIDENCE: evidence,
-    HOLI_502_TYPST: resolve(typst),
-    HOLI_502_DESKTOP: desktop,
+    HOLI_535_ROOT: root,
+    HOLI_535_EVIDENCE: evidence,
+    HOLI_535_TYPST: resolve(typst),
+    HOLI_535_DESKTOP: desktop,
     HOLI_VAULT_ROOT: join(root, 'vault'),
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
