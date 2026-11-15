@@ -55,6 +55,7 @@ export async function refreshSkills(
   options: {
     force: boolean
     guard: () => void | Promise<void>
+    expectedSnapshots?: readonly SkillSnapshot[]
     validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
   },
 ): Promise<string[]> {
