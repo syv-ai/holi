@@ -6,7 +6,7 @@
  * merged frames instead of replacing them would pass a "the new note appeared"
  * test and still leave deleted notes on screen forever.
  */
-import { createStore } from 'jotai'
+import { atom, createStore } from 'jotai'
 import { flushAllBuffers, registerBuffer } from '@/lib/buffer-registry'
 import { toast } from 'sonner'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
@@ -94,6 +94,160 @@ function observeReady() {
 }
 
 describe('vaults', () => {
+  it('dispatches ready same-vault notification without reopening the plugin vault', async () => {
+    holi = installFakeHoli((op) => (op.path === 'vaults.open' ? snapshot() : undefined))
+    const store = createStore()
+    const handled = atom<string | null>(null)
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    store.set(openedRemoteAtom, 'syv-ai/alpha')
+    unsubscribe = subscribeToVault(store, [
+      {
+        info: { id: 'agent', label: 'Agent', default: true },
+        events: {
+          'inbox-open': ({ remote, payload }, eventStore) => {
+            eventStore.set(handled, `${remote}:${(payload as { session: string }).session}`)
+          },
+        },
+      },
+    ])
+
+    holi.pushNavigate({
+      remote: 'syv-ai/alpha',
+      plugin: 'agent',
+      name: 'inbox-open',
+      payload: { session: 'existing-session' },
+    })
+    await vi.waitFor(() => expect(store.get(handled)).toBe('syv-ai/alpha:existing-session'))
+    expect(holi.calls.filter((call) => call.path === 'vaults.open')).toHaveLength(0)
+    expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha')
+  })
+
+  it('switches vaults then invokes the supplied plugin event handler locally', async () => {
+    holi = installFakeHoli((op) => (op.path === 'vaults.open' ? snapshot() : undefined))
+    const store = createStore()
+    const handled = atom<string | null>(null)
+    store.set(activeRemoteAtom, 'syv-ai/origin')
+    store.set(openedRemoteAtom, 'syv-ai/origin')
+    unsubscribe = subscribeToVault(store, [
+      {
+        info: { id: 'agent', label: 'Agent', default: true },
+        events: {
+          'inbox-open': ({ remote, payload }, eventStore) => {
+            eventStore.set(handled, `${remote}:${(payload as { session: string }).session}`)
+          },
+        },
+      },
+    ])
+
+    holi.pushNavigate({
+      remote: 'syv-ai/target',
+      plugin: 'agent',
+      name: 'inbox-open',
+      payload: { session: 'p0123456789ab' },
+    })
+    await vi.waitFor(() => expect(store.get(handled)).toBe('syv-ai/target:p0123456789ab'))
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/target')
+    expect(holi.calls).toContainEqual({ path: 'vaults.open', input: { remote: 'syv-ai/target' } })
+    expect(holi.pluginSent).toEqual([])
+  })
+
+  it('does not route a navigation event when switching vaults fails', async () => {
+    holi = installFakeHoli((op) => {
+      if (op.path === 'vaults.open') {
+        const { remote } = op.input as { remote: string }
+        if (remote === 'syv-ai/target') throw new Error('switch refused')
+        return snapshot('origin.md')
+      }
+      return undefined
+    })
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/origin')
+    store.set(openedRemoteAtom, 'syv-ai/origin')
+    unsubscribe = subscribeToVault(store)
+    const error = vi.spyOn(toast, 'error').mockImplementation(() => 'toast-id')
+
+    holi.pushNavigate({
+      remote: 'syv-ai/target',
+      plugin: 'agent',
+      name: 'inbox-open',
+      payload: { session: 'p0123456789ab' },
+    })
+    await vi.waitFor(() => expect(error).toHaveBeenCalled())
+    await vi.waitFor(() => expect(store.get(openedRemoteAtom)).toBe('syv-ai/origin'))
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/origin')
+    expect(holi.pluginSent).toEqual([])
+    expect(holi.calls).toEqual([
+      { path: 'vaults.open', input: { remote: 'syv-ai/target' } },
+      { path: 'vaults.open', input: { remote: 'syv-ai/origin' } },
+    ])
+  })
+
+  it('invokes the event handler locally when the target vault is already active', async () => {
+    holi = installFakeHoli()
+    const store = createStore()
+    const handled = atom<string | null>(null)
+    store.set(activeRemoteAtom, 'syv-ai/origin')
+    store.set(openedRemoteAtom, 'syv-ai/origin')
+    unsubscribe = subscribeToVault(store, [
+      {
+        info: { id: 'agent', label: 'Agent', default: true },
+        events: {
+          'inbox-open': ({ remote, payload }, eventStore) => {
+            eventStore.set(handled, `${remote}:${(payload as { session: string }).session}`)
+          },
+        },
+      },
+    ])
+
+    holi.pushNavigate({
+      remote: 'syv-ai/origin',
+      plugin: 'agent',
+      name: 'inbox-open',
+      payload: { session: 'p0123456789ab' },
+    })
+    await vi.waitFor(() => expect(store.get(handled)).toBe('syv-ai/origin:p0123456789ab'))
+
+    expect(holi.calls).toEqual([])
+    expect(holi.pluginSent).toEqual([])
+  })
+
+  it('lets a newer same-vault navigation supersede an older cross-vault open', async () => {
+    const responses: ((value: VaultSnapshot) => void)[] = []
+    holi = installFakeHoli((op) =>
+      op.path === 'vaults.open'
+        ? new Promise<VaultSnapshot>((resolve) => responses.push(resolve))
+        : undefined,
+    )
+    const store = createStore()
+    const handled = atom<string[]>([])
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    store.set(openedRemoteAtom, 'syv-ai/alpha')
+    unsubscribe = subscribeToVault(store, [
+      {
+        info: { id: 'agent', label: 'Agent', default: true },
+        events: {
+          open: ({ remote, payload }, eventStore) =>
+            eventStore.set(handled, (events) => [...events, `${remote}:${String(payload)}`]),
+        },
+      },
+    ])
+
+    holi.pushNavigate({ remote: 'syv-ai/beta', plugin: 'agent', name: 'open', payload: 'beta' })
+    await vi.waitFor(() => expect(responses).toHaveLength(1))
+    holi.pushNavigate({ remote: 'syv-ai/alpha', plugin: 'agent', name: 'open', payload: 'alpha' })
+    await vi.waitFor(() => expect(responses).toHaveLength(2))
+
+    responses[1]!(snapshot('alpha-latest.md'))
+    await vi.waitFor(() => expect(store.get(handled)).toEqual(['syv-ai/alpha:alpha']))
+    responses[0]!(snapshot('beta-stale.md'))
+    await vi.waitFor(() => expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha'))
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/alpha')
+    expect(store.get(snapshotAtom).docs.map((doc) => doc.path)).toEqual(['alpha-latest.md'])
+    expect(store.get(handled)).toEqual(['syv-ai/alpha:alpha'])
+  })
+
   it('lists vaults and makes the first one active', async () => {
     holi = installFakeHoli(() => [entry('syv-ai/notes'), entry('syv-ai/other')])
     const store = createStore()

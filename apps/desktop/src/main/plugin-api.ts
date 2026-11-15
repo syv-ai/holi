@@ -245,6 +245,11 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    */
   onMention(cb: (mention: NoteMention) => void): () => void
   /**
+   * Bring a vault forward and deliver one event to this plugin after the
+   * renderer has switched to it. Used for native notification click targets.
+   */
+  navigate(remote: string, name: string, payload: unknown): void
+  /**
    * A native notification, the one the reminders use. Raised only while no
    * Holi window has focus: Holi's banners never cover Holi. True when it was
    * raised. Clicking it brings Holi's window forward, opening one if none is
@@ -279,6 +284,8 @@ export interface NoteMention extends CommentMention {
 export interface Notice {
   title: string
   body: string
+  /** A plugin-owned event, captured against this live plugin and vault when admitted. */
+  navigate?: { name: string; payload: unknown }
   onClick?: () => void
 }
 

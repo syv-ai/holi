@@ -62,6 +62,8 @@ function rig(
     rootFor?: (remote: string) => Promise<string | null>
     window?: () => import('electron').BrowserWindow | null
     frameOrigin?: (origin: string) => () => void
+    navigate?: (plugin: string, remote: string, name: string, payload: unknown) => void
+    notify?: (notice: import('../src/main/plugin-api').Notice) => boolean
   } = {},
 ) {
   const calls = { started: 0, stopped: 0 }
@@ -121,7 +123,8 @@ function rig(
     binDir: () => '/holi/bin',
     githubToken: () => null,
     frameOrigin: opts.frameOrigin ?? (() => () => {}),
-    notify: () => false,
+    notify: opts.notify ?? (() => false),
+    navigate: opts.navigate,
     focused: () => false,
     window: opts.window,
     activity: (entry) => activity.push(entry),
@@ -230,6 +233,45 @@ function logged(
 }
 
 describe('the plugin host', () => {
+  it('routes plugin navigation requests through the host seam', async () => {
+    const navigations: unknown[][] = []
+    const r = rig({ navigate: (...args) => void navigations.push(args) })
+    const root = await tempDir()
+    await r.enter(openVault('o/r', root))
+
+    r.ctx().navigate('o/target', 'inbox-open', { session: 'p0123456789ab' })
+
+    expect(navigations).toEqual([['fake', 'o/target', 'inbox-open', { session: 'p0123456789ab' }]])
+  })
+
+  it('keeps an admitted notification target after its originating plugin stops', async () => {
+    const navigations: unknown[][] = []
+    let notice: import('../src/main/plugin-api').Notice | null = null
+    const r = rig({
+      navigate: (...args) => void navigations.push(args),
+      notify: (value) => {
+        notice = value
+        return true
+      },
+    })
+    const root = await tempDir()
+    await r.enter(openVault('o/r', root))
+
+    r.ctx().notify({
+      title: 'Needs you',
+      body: 'A decision is waiting.',
+      navigate: { name: 'inbox-open', payload: { session: 'p0123456789ab' } },
+      onClick: () => navigations.push(['legacy callback']),
+    })
+    await r.enter(null)
+    notice!.onClick?.()
+
+    expect(navigations).toEqual([
+      ['fake', 'o/r', 'inbox-open', { session: 'p0123456789ab' }],
+      ['legacy callback'],
+    ])
+  })
+
   it('tags plugin log lines and activation failures with actual ids, not labels', async () => {
     const plugins: MainPlugin[] = [
       {
