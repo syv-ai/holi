@@ -18,7 +18,7 @@ export const globalPanelLayoutsAtom = atomWithStorage<Record<string, PanelLayout
   {},
 )
 
-/** Whether this machine enables Vim keys in code, plain-text and mail-body editors. */
+/** Whether this machine enables Vim keys in code, plain text, mail bodies and browser fields. */
 export const vimCodeEditingAtom = atomWithStorage<boolean>(
   'holi:vimCodeEditing',
   false,

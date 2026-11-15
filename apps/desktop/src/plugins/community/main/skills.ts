@@ -21,6 +21,7 @@ import { cp, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import { isAppBundlePath, type PluginManifest } from '@holi/shared'
 import { CapabilityError } from '../../../main/plugin-api'
+import { transactSkillRefresh, type SkillSnapshot } from './skill-transaction'
 
 /** Where a vault keeps Claude Code's skills. */
 const SKILLS_DIR = join('.claude', 'skills')
@@ -44,6 +45,26 @@ async function copyFromPlugin(root: string, from: string, to: string): Promise<v
   await assertContained(root, from)
   await mkdir(dirname(to), { recursive: true })
   await cp(from, to, { recursive: true, dereference: true })
+}
+
+/** Refresh only declared skill folders after preflighting every source and destination. */
+export async function refreshSkills(
+  manifest: Pick<PluginManifest, 'skills'>,
+  codeDir: string,
+  vaultRoot: string,
+  options: {
+    force: boolean
+    guard: () => void | Promise<void>
+    expectedSnapshots?: readonly SkillSnapshot[]
+    validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
+  },
+): Promise<string[]> {
+  return transactSkillRefresh(
+    (manifest.skills ?? []).map((path) => ({ path, name: basename(path) })),
+    codeDir,
+    vaultRoot,
+    options,
+  )
 }
 
 /**
