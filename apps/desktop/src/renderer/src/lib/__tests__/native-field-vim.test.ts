@@ -128,7 +128,7 @@ describe('native field Vim commands', () => {
       state.mode = 'normal'
       key(field, state, 'f')
       expect(request).toHaveBeenCalledOnce()
-      expect((request.mock.calls[0]?.[0] as CustomEvent).detail).toBe(field)
+      expect((request.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({ source: field })
       state.mode = 'visual'
       key(field, state, 'f')
       state.mode = 'normal'
