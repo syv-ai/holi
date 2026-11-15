@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -39,10 +40,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { IconButton } from '@/composites/icon-button'
-import { activeRemoteAtom, openExternal } from '@/plugin-api'
+import { activeRemoteAtom, openExternal, vimCodeEditingAtom } from '@/plugin-api'
 import { addressFor, type PageInfo } from '../shared/page'
 import { browserCap } from './browser-cap'
-import { addressAskAtom, BROWSER, pagesAtom } from './state'
+import { addressAskAtom, BROWSER, pagesAtom, vimModesAtom } from './state'
 
 /** What of Holi's can be drawn over a page: Radix's floating content and
  *  every dialog, each a child of `<body>` through its portal. */
@@ -51,6 +52,7 @@ const OVERLAY =
 
 /** How long a still may take before the page is moved aside without one. */
 const STILL_MS = 120
+let vimRequestSequence = 0
 
 interface Box {
   x: number
@@ -184,12 +186,35 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
   const remote = useAtomValue(activeRemoteAtom)
   const page = useAtomValue(pagesAtom).find((p) => p.id === id)
   const ask = useAtomValue(addressAskAtom)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
+  const vimMode = useAtomValue(vimModesAtom)[id ?? '']
   const host = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLInputElement>(null)
   const [typed, setTyped] = useState<string | null>(null)
+  const configuredVim = useRef('')
 
   const showsPage = page !== undefined && page.url !== '' && page.error === null
+  const vimPageReady = showsPage && page?.loading === false
   const still = usePlacement(remote, id, visible && showsPage, host)
+
+  useEffect(() => {
+    if (remote === null || id === undefined || vimMode === undefined) return
+    const enabled = vimEnabled && visible && vimPageReady
+    const key = `${remote}:${id}:${vimMode.nonce}:${vimMode.attachment}:${enabled}`
+    if (configuredVim.current === key) return
+    configuredVim.current = key
+    window.holi.plugin.send(BROWSER, {
+      remote,
+      name: 'vim-config',
+      payload: {
+        id,
+        nonce: vimMode.nonce,
+        attachment: vimMode.attachment,
+        enabled,
+        revision: ++vimRequestSequence,
+      },
+    })
+  }, [id, remote, vimEnabled, vimMode, visible, vimPageReady])
 
   // ⌘L in the page: the address bar, its text selected.
   useEffect(() => {
@@ -274,6 +299,13 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
               e.currentTarget.blur()
             }}
           />
+          {visible && vimPageReady && vimEnabled && vimMode !== undefined ? (
+            <InputGroupAddon align="inline-end">
+              <Badge variant="secondary" aria-label={`Vim ${vimMode.mode} mode`}>
+                {vimMode.mode === 'normal' ? 'NORMAL' : 'INSERT'}
+              </Badge>
+            </InputGroupAddon>
+          ) : null}
           {page !== undefined && page.url !== '' ? (
             <InputGroupAddon align="inline-end">
               <Tooltip>

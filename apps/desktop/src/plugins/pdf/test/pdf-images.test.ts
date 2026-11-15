@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { inlineImages } from '../main/images'
+import { hasSingleMarkdownImage, inlineImages } from '../main/images'
+import { readMarkdownCaptionEnvelopes, writeMarkdownCaptionEnvelope } from '@holi/shared'
 
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
 const jpg = new Uint8Array([0xff, 0xd8, 0xff])
@@ -11,6 +12,31 @@ async function inline(markdown: string, notePath = 'note.md', bytes = png) {
   const result = await inlineImages(markdown, notePath, async (p) => (asked.push(p), bytes))
   return { ...result, asked }
 }
+
+describe('caption image eligibility', () => {
+  it('accepts one GFM image with a full-note reference definition, but not wiki chips', () => {
+    const note = `${writeMarkdownCaptionEnvelope('![alt][photo]', 'caption')}\n\n[photo]: image.png`
+    const [frame] = readMarkdownCaptionEnvelopes(note)
+    expect(frame).toBeDefined()
+    expect(hasSingleMarkdownImage(note, frame!.body.from, frame!.body.to)).toBe(true)
+
+    const wiki = writeMarkdownCaptionEnvelope('![[image.png]]', 'caption')
+    const [wikiFrame] = readMarkdownCaptionEnvelopes(wiki)
+    expect(hasSingleMarkdownImage(wiki, wikiFrame!.body.from, wikiFrame!.body.to)).toBe(false)
+  })
+
+  it('rejects multiple or mixed image-body elements', () => {
+    for (const body of [
+      '![a](a.png) ![b](b.png)',
+      '![a](a.png)\n\n![b](b.png)',
+      '![a](a.png) text',
+    ]) {
+      const note = writeMarkdownCaptionEnvelope(body, 'caption')
+      const [frame] = readMarkdownCaptionEnvelopes(note)
+      expect(hasSingleMarkdownImage(note, frame!.body.from, frame!.body.to)).toBe(false)
+    }
+  })
+})
 
 describe('inlineImages', () => {
   it('puts a relative image in as bytes, resolved against the note’s folder', async () => {

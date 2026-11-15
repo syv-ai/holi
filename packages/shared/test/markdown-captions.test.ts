@@ -160,6 +160,24 @@ describe('Markdown caption envelopes', () => {
     expect(readMarkdownCaptionEnvelopes(nested)).toEqual([])
   })
 
+  it('rejects a complete nested envelope in a figure body and recovers afterwards', () => {
+    const inner = writeMarkdownCaptionEnvelope('| Inner |\n| --- |\n| x |', 'inner')
+    const nested = `<!-- holi:figure -->\n\nouter body\n\n${inner}\n\n<!-- holi:caption -->\n\nouter caption\n\n<!-- /holi:figure -->`
+    const later = writeMarkdownCaptionEnvelope('![later](x.png)', 'later')
+    const source = `${nested}\n\n${later}`
+    expect(readMarkdownCaptionEnvelopes(source)).toEqual([
+      expect.objectContaining({ envelope: { from: nested.length + 2, to: source.length } }),
+    ])
+  })
+
+  it('rejects balanced nested regions at arbitrary depth', () => {
+    const inner = writeMarkdownCaptionEnvelope('inner body', 'inner')
+    const middle = `<!-- holi:figure -->\n\nmiddle body\n\n${inner}\n\n<!-- holi:caption -->\n\nmiddle caption\n\n<!-- /holi:figure -->`
+    const outer = `<!-- holi:figure -->\n\nouter body\n\n${middle}\n\n<!-- holi:caption -->\n\nouter caption\n\n<!-- /holi:figure -->`
+    const later = writeMarkdownCaptionEnvelope('![later](x.png)', 'later')
+    expect(readMarkdownCaptionEnvelopes(`${outer}\n\n${later}`)).toHaveLength(1)
+  })
+
   it('recovers after malformed, nested and truncated framing', () => {
     const valid = writeMarkdownCaptionEnvelope('![later](x.png)', 'later')
     const source = [

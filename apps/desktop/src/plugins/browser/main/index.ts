@@ -43,6 +43,13 @@ export const browserMain: MainPlugin = {
           { id, ...key },
           combineLeases(ctx.presentationLease(), attachment),
         ),
+      vimMode: (id, snapshot, attachment) =>
+        ctx.emit(
+          ctx.remote,
+          'vim-mode',
+          { id, ...snapshot },
+          combineLeases(ctx.presentationLease(), attachment),
+        ),
     })
     const undo = ctx.register(BROWSER_NAMESPACES, browserCapabilities(pages))
     // Where each tab is drawn, as the renderer lays it out: every frame it
@@ -63,8 +70,46 @@ export const browserMain: MainPlugin = {
         return pages.placementGuard(id, ctx.presentationLease())
       },
     )
+    const offVim = ctx.on(
+      'vim-config',
+      (_remote, payload) => {
+        if (typeof payload !== 'object' || payload === null) return
+        const value = payload as {
+          id?: unknown
+          enabled?: unknown
+          revision?: unknown
+          nonce?: unknown
+          attachment?: unknown
+        }
+        if (
+          typeof value.id !== 'string' ||
+          typeof value.enabled !== 'boolean' ||
+          !Number.isSafeInteger(value.revision) ||
+          typeof value.nonce !== 'string' ||
+          value.nonce.length > 128 ||
+          typeof value.attachment !== 'string' ||
+          value.attachment.length > 128
+        )
+          return
+        void pages.configureVim(
+          value.id,
+          value.enabled,
+          value.revision as number,
+          value.nonce,
+          value.attachment,
+        )
+      },
+      (_remote, payload) => {
+        const id =
+          typeof payload === 'object' && payload !== null
+            ? (payload as { id?: unknown }).id
+            : undefined
+        return pages.placementGuard(id, ctx.presentationLease())
+      },
+    )
     return () => {
       offPlace()
+      offVim()
       undo()
       pages.dispose()
     }

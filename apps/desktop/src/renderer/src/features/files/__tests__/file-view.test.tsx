@@ -18,7 +18,8 @@ import {
 import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { vimCodeEditingAtom } from '@/state/preferences'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { sessionAtom } from '@/state/session'
 import { FileView, isCoreTextFilePath } from '../file-view'
 import { HostHintLayer } from '@/features/shell/host-hint-layer'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
@@ -29,6 +30,9 @@ const read = vi.fn()
 const write = vi.fn()
 const historyList = vi.fn()
 const fileDiff = vi.fn()
+const mdxStatus = vi.fn()
+const mdxApprove = vi.fn()
+const mdxRevoke = vi.fn()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -43,6 +47,11 @@ vi.mock('@/lib/trpc', () => ({
       list: { query: (input: unknown) => historyList(input) },
       fileDiff: { query: (input: unknown) => fileDiff(input) },
     },
+    mdxTrust: {
+      status: { query: (input: unknown) => mdxStatus(input) },
+      approve: { mutate: (input: unknown) => mdxApprove(input) },
+      revoke: { mutate: (input: unknown) => mdxRevoke(input) },
+    },
   },
 }))
 
@@ -51,6 +60,9 @@ afterEach(() => {
   write.mockReset()
   historyList.mockReset()
   fileDiff.mockReset()
+  mdxStatus.mockReset()
+  mdxApprove.mockReset()
+  mdxRevoke.mockReset()
 })
 
 function HintKeys() {
@@ -62,6 +74,8 @@ function setup(path: string, claims = false, vimEnabled = false, hints = false) 
   const store = createStore()
   lastStore = store
   store.set(activeRemoteAtom, 'syv-ai/site')
+  store.set(openedRemoteAtom, 'syv-ai/site')
+  store.set(sessionAtom, { login: 'fixture-user' })
   store.set(vimCodeEditingAtom, vimEnabled)
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
@@ -111,6 +125,7 @@ test('only paths actually routed to the core text editor are retainable', () => 
   expect(isCoreTextFilePath('extensionless', [])).toBe(true)
   expect(isCoreTextFilePath('data.json', [])).toBe(true)
   expect(isCoreTextFilePath('note.md', [])).toBe(false)
+  expect(isCoreTextFilePath('page.mdx', [pdfClaim])).toBe(true)
   expect(isCoreTextFilePath('photo.png', [])).toBe(false)
   expect(isCoreTextFilePath('archive.docx', [])).toBe(false)
   expect(isCoreTextFilePath('paper.pdf', [pdfClaim])).toBe(false)
@@ -830,4 +845,62 @@ test('Vim-off find handling respects keys consumed inside CodeMirror', async () 
   content.focus()
   await user.keyboard('{Escape}')
   expect(screen.getByRole('textbox', { name: 'Find' })).toBeInTheDocument()
+})
+
+test('MDX trust requires explicit confirmation and can be cancelled or approved', async () => {
+  read.mockResolvedValue('# source')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true, context: 'consent-1' })
+  mdxApprove.mockResolvedValue({ trusted: true })
+  setup('content/page.mdx')
+  await screen.findByText('Not approved')
+  await userEvent.click(screen.getByRole('button', { name: 'Review MDX trust' }))
+  expect(screen.getByText(/including future documents and synced changes/)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(mdxApprove).not.toHaveBeenCalled()
+  await userEvent.click(screen.getByRole('button', { name: 'Review MDX trust' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Approve vault' }))
+  await waitFor(() =>
+    expect(mdxApprove).toHaveBeenCalledWith({ remote: 'syv-ai/site', context: 'consent-1' }),
+  )
+})
+
+test('MDX trust can be revoked from a source view', async () => {
+  read.mockResolvedValue('# source')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
+  mdxRevoke.mockRejectedValueOnce(new Error('EISDIR: Is a directory'))
+  mdxRevoke.mockResolvedValue({ trusted: false })
+  setup('content/page.mdx')
+  await screen.findByText('Approved')
+
+  const region = screen.getByTestId('mdx-trust-region')
+  const header = region.previousElementSibling as HTMLElement | null
+  expect(header?.tagName).toBe('HEADER')
+  expect(header).toHaveClass('h-14', 'shrink-0')
+  expect(header?.parentElement).toBe(region.parentElement)
+  expect(region).toContainElement(screen.getByText('Approved'))
+
+  await userEvent.click(screen.getByRole('button', { name: 'Revoke MDX trust' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('EISDIR: Is a directory')
+  const retryButton = screen.getByRole('button', { name: 'Retry revoke' })
+  expect(region).toContainElement(retryButton)
+  expect(retryButton).not.toBeDisabled()
+  expect(document.querySelector('.cm-content')).toBeInTheDocument()
+
+  await userEvent.click(retryButton)
+  await waitFor(() =>
+    expect(mdxRevoke).toHaveBeenCalledWith({ remote: 'syv-ai/site', context: 'consent-1' }),
+  )
+})
+
+test('MDX trust reports status failure with a retry action', async () => {
+  read.mockResolvedValue('# source')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockRejectedValueOnce(new Error('offline'))
+  mdxStatus.mockResolvedValue({ trusted: false, identityAvailable: true, context: 'consent-1' })
+  setup('content/page.mdx')
+  expect(await screen.findByText(/MDX trust unavailable/)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByText('Not approved')).toBeInTheDocument()
 })
