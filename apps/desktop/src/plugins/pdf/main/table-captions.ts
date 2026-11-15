@@ -17,39 +17,40 @@ export interface MarkdownTableCaption {
   caption: { from: number; to: number }
 }
 
-/** Neutralize user raw-Typst comments without shifting any parser source positions. */
-export function removeRawTypstComments(markdown: string): string {
-  const tree = markdownParser.parse(markdown)
-  const ranges: { from: number; to: number }[] = []
-  tree.iterate({
-    enter(node) {
-      if (!['Comment', 'HTMLBlock', 'HTMLTag'].includes(node.name)) return
-      const text = markdown.slice(node.from, node.to)
-      const pattern = /<!--raw-typst\b[\s\S]*?(?:-->|$)/g
-      for (const match of text.matchAll(pattern)) {
-        const from = node.from + match.index
-        ranges.push({ from, to: from + match[0].length })
-      }
-    },
-  })
-  if (ranges.length === 0) return markdown
-  const chars = markdown.split('')
-  for (const { from, to } of ranges) {
-    for (let index = from; index < to; index++) {
-      if (chars[index] !== '\n' && chars[index] !== '\r') chars[index] = ' '
-    }
-  }
-  return chars.join('')
-}
-
-/** Full-document definitions as parsed by CommonMark, excluding code and HTML. */
+/** Full-document definitions as parsed by CommonMark, excluding code and HTML.
+ * Rebuild from syntax fields rather than copying container source: a definition
+ * can span blockquote/list lines whose markers are not part of its value. */
 export function readMarkdownReferenceDefinitions(markdown: string): string {
   const tree = markdownParser.parse(markdown)
   const definitions: string[] = []
+  const quoteMarks: { from: number; to: number }[] = []
+  tree.iterate({
+    enter(node) {
+      if (node.name === 'QuoteMark') quoteMarks.push({ from: node.from, to: node.to })
+    },
+  })
+  const fieldText = (field: { from: number; to: number }, collapseSpace = true): string => {
+    let text = ''
+    let at = field.from
+    for (const mark of quoteMarks) {
+      if (mark.from < at || mark.to > field.to) continue
+      text += markdown.slice(at, mark.from)
+      at = mark.to
+    }
+    text += markdown.slice(at, field.to)
+    return collapseSpace ? text.replace(/\s+/g, ' ') : text
+  }
   tree.iterate({
     enter(node) {
       if (node.name === 'LinkReference') {
-        definitions.push(markdown.slice(node.from, node.to))
+        const label = node.node.getChild('LinkLabel')
+        const url = node.node.getChild('URL')
+        const title = node.node.getChild('LinkTitle')
+        if (label !== null && url !== null) {
+          definitions.push(
+            `${fieldText(label)}: ${fieldText(url, false)}${title === null ? '' : ` ${fieldText(title)}`}`,
+          )
+        }
         return false
       }
       if (['FencedCode', 'CodeBlock', 'HTMLBlock', 'HTMLTag'].includes(node.name)) return false
