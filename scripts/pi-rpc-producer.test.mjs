@@ -257,6 +257,121 @@ test('drains SIGTERM-resistant process-group descendants on timeout and overflow
   }
 })
 
+test('does not let a transient process-group probe EPERM mask overflow', async () => {
+  if (process.platform === 'win32') return
+  const fixture = runner(
+    `process.on('SIGTERM',()=>{}); setInterval(()=>process.stdout.write('x'.repeat(65536)),1)`,
+  )
+  const previousPath = process.env.PATH
+  const originalKill = process.kill
+  let ownedGroup
+  let injected = false
+  try {
+    process.env.PATH = `${fixture.directory}:${previousPath ?? ''}`
+    process.kill = function (pid, signal) {
+      if (pid < 0 && signal === 'SIGKILL') ownedGroup = pid
+      if (pid === ownedGroup && signal === 0 && !injected) {
+        injected = true
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      }
+      return originalKill.call(process, pid, signal)
+    }
+    const result = await checkPiRpcProducer({
+      bin: '/synthetic/pi',
+      expectedVersion: '1.0.0',
+      timeout: 5000,
+    })
+    assert.equal(injected, true)
+    assert.equal(result.outcome, 'unverified')
+    assert.match(result.detail, /output exceeded bound/)
+    assert.doesNotMatch(result.detail, /EPERM/)
+  } finally {
+    process.kill = originalKill
+    process.env.PATH = previousPath
+    if (ownedGroup) {
+      try {
+        originalKill.call(process, ownedGroup, 'SIGKILL')
+      } catch {}
+    }
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('fails closed when process-group absence remains uncertain', async () => {
+  if (process.platform === 'win32') return
+  const fixture = runner(
+    `process.on('SIGTERM',()=>{}); setInterval(()=>process.stdout.write('x'.repeat(65536)),1)`,
+  )
+  const previousPath = process.env.PATH
+  const originalKill = process.kill
+  let ownedGroup
+  try {
+    process.env.PATH = `${fixture.directory}:${previousPath ?? ''}`
+    process.kill = function (pid, signal) {
+      if (pid < 0 && signal === 'SIGKILL') ownedGroup = pid
+      if (pid === ownedGroup && signal === 0)
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      return originalKill.call(process, pid, signal)
+    }
+    const result = await checkPiRpcProducer({
+      bin: '/synthetic/pi',
+      expectedVersion: '1.0.0',
+      timeout: 5000,
+    })
+    assert.equal(result.outcome, 'unverified')
+    assert.match(result.detail, /EPERM/)
+    assert.doesNotMatch(result.detail, /output exceeded bound/)
+  } finally {
+    process.kill = originalKill
+    process.env.PATH = previousPath
+    if (ownedGroup) {
+      try {
+        originalKill.call(process, ownedGroup, 'SIGKILL')
+      } catch {}
+    }
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('preserves process-group signal delivery errors after confirmed drain', async () => {
+  if (process.platform === 'win32') return
+  const fixture = runner(
+    `process.on('SIGTERM',()=>{}); setInterval(()=>process.stdout.write('x'.repeat(65536)),1)`,
+  )
+  const previousPath = process.env.PATH
+  const originalKill = process.kill
+  let ownedGroup
+  let injected = false
+  try {
+    process.env.PATH = `${fixture.directory}:${previousPath ?? ''}`
+    process.kill = function (pid, signal) {
+      if (pid < 0 && (signal === 'SIGTERM' || signal === 'SIGKILL')) ownedGroup = pid
+      if (pid === ownedGroup && signal === 'SIGTERM' && !injected) {
+        injected = true
+        throw Object.assign(new Error('signal EPERM'), { code: 'EPERM' })
+      }
+      return originalKill.call(process, pid, signal)
+    }
+    const result = await checkPiRpcProducer({
+      bin: '/synthetic/pi',
+      expectedVersion: '1.0.0',
+      timeout: 5000,
+    })
+    assert.equal(injected, true)
+    assert.equal(result.outcome, 'unverified')
+    assert.match(result.detail, /signal EPERM/)
+  } finally {
+    process.kill = originalKill
+    process.env.PATH = previousPath
+    if (ownedGroup) {
+      try {
+        originalKill.call(process, ownedGroup, 'SIGKILL')
+      } catch {}
+    }
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
 test('drains descendants after normal runner exits before resolving', async () => {
   if (process.platform === 'win32') return
   const pidFile = join(tmpdir(), `holi-producer-normal-descendant-${process.pid}.txt`)

@@ -104,6 +104,7 @@ function runBounded(command, args, options, timeout) {
     let overflowed = false
     let terminating = false
     let terminationError
+    let uncertainGroupProbeError
     const terminationCallbacks = []
     const signalOwned = (signal) => {
       try {
@@ -117,10 +118,15 @@ function runBounded(command, args, options, timeout) {
       if (process.platform === 'win32' || !child.pid) return false
       try {
         process.kill(-child.pid, 0)
+        uncertainGroupProbeError = undefined
         return true
       } catch (error) {
-        if (error?.code === 'ESRCH') return false
-        if (error?.code !== 'EPERM') terminationError = error
+        if (error?.code === 'ESRCH') {
+          uncertainGroupProbeError = undefined
+          return false
+        }
+        if (error?.code === 'EPERM') uncertainGroupProbeError = error
+        else terminationError = error
         return true
       }
     }
@@ -134,7 +140,11 @@ function runBounded(command, args, options, timeout) {
       const poll = () => {
         if (!groupExists()) return completeTermination()
         if (Date.now() >= deadline) {
-          terminationError ??= new Error('Owned native probe process group did not drain')
+          terminationError ??= uncertainGroupProbeError
+            ? new Error(
+                `Could not confirm owned native probe process group absence: ${uncertainGroupProbeError.message}`,
+              )
+            : new Error('Owned native probe process group did not drain')
           completeTermination()
         } else killTimer = setTimeout(poll, 20)
       }
