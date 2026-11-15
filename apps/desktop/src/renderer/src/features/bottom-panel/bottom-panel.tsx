@@ -441,6 +441,7 @@ function TerminalTab({ visible }: { visible: boolean }) {
           id={t.id}
           visible={visible && t.id === active}
           context={t.context}
+          exitCode={t.exitCode}
         />
       ))}
       {terminals.length > 0 ? null : remote === null ? (

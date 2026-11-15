@@ -256,21 +256,10 @@ try {
     `window.holi.trpc({path:'terminal.replay',type:'query',input:{remote:'native-smoke',id:'native-shell'}}).then(r=>r.ok&&r.data.includes('NATIVE_HINT_FIXTURE'))`,
     'real PTY replay',
   )
-  let settledReplay = await evaluate(
-    `window.holi.trpc({path:'terminal.replay',type:'query',input:{remote:'native-smoke',id:'native-shell'}}).then(r=>r.data)`,
+  await waitFor(
+    `!!document.querySelector('[data-panel-terminal="native-shell"] [data-terminal-replay-ready="true"]')`,
+    'xterm completed initial replay write',
   )
-  let steady = 0
-  while (steady < 5) {
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    const currentReplay = await evaluate(
-      `window.holi.trpc({path:'terminal.replay',type:'query',input:{remote:'native-smoke',id:'native-shell'}}).then(r=>r.data)`,
-    )
-    if (currentReplay === settledReplay) steady++
-    else {
-      settledReplay = currentReplay
-      steady = 0
-    }
-  }
   await cdp('Page.startScreencast', {
     format: 'png',
     everyNthFrame: 1,
@@ -743,9 +732,18 @@ try {
   assert(proofBeforeQuit.hasInterrupt, 'actual PTY input has no Ctrl-C byte')
   assert(proofBeforeQuit.fixtureProof.includes('f-enter'), 'actual child did not observe f+Enter')
   assert(proofBeforeQuit.fixtureProof.includes('sigint'), 'actual child did not observe SIGINT')
+  await trustedClick('[aria-label="Show terminal hints"]')
+  await waitFor(
+    `!!document.querySelector('[data-host-hints]')`,
+    'hint session immediately before exit',
+  )
+  const exitScrollback = await evaluate(
+    `document.querySelector('[data-panel-terminal="native-shell"] .xterm-screen').textContent`,
+  )
   await evaluate(
     `window.holi.trpc({path:'terminal.write',type:'mutation',input:{remote:'native-smoke',id:'native-shell',data:'exit\\n'}})`,
   )
+  await waitFor(`!document.querySelector('[data-host-hints]')`, 'child exit canceled active hints')
   await waitFor(
     `window.holi.trpc({path:'terminal.inputProof',type:'query'}).then(r=>typeof r.data.terminalExitCode==='number')`,
     'real terminal exit event',
@@ -753,6 +751,20 @@ try {
   await waitFor(
     `document.querySelector('[aria-label="Terminal"]')?.textContent?.includes('(exited)')`,
     'terminal picker reflects real exit',
+  )
+  assert(
+    (await evaluate(
+      `document.querySelector('[data-panel-terminal="native-shell"] .xterm-screen').textContent`,
+    )) === exitScrollback,
+    'exited shell did not preserve its readable scrollback',
+  )
+  await evaluate(
+    `window.dispatchEvent(new CustomEvent('holi:show-panel-terminal-hints',{detail:{id:'native-shell'}}))`,
+  )
+  assert.equal(
+    await evaluate(`!!document.querySelector('[data-host-hints]')`),
+    false,
+    'exited shell opened a new hint session',
   )
   await trustedClick('[aria-label="Terminal"]')
   await waitFor(`!!document.querySelector('[role="listbox"]')`, 'select second PTY for cleanup')
@@ -845,7 +857,7 @@ try {
       'wrapped-long-url-label-and-activation',
       'trusted-wheel-scroll-cancellation',
       'native-control-c-cancels-and-reaches-child-sigint',
-      'real-terminal-exit-and-picker-state',
+      'real-terminal-exit-cancels-and-rejects-hints-preserving-scrollback',
       'real-pty-exit-and-cleanup',
       'safe-url-intercepted',
       'trusted-interaction-recording',

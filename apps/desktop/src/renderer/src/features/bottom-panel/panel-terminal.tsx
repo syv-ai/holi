@@ -44,12 +44,15 @@ export function PanelTerminal({
   id,
   visible,
   context,
+  exitCode,
 }: {
   id: string
   /** In front, with the panel open. */
   visible: boolean
   /** Where it is and the git work there; null until main first reads it. */
   context: TerminalContext | null
+  /** A stopped shell keeps its scrollback but cannot start link hints. */
+  exitCode: number | null
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -69,6 +72,8 @@ export function PanelTerminal({
   }
   const visibleRef = useRef(visible)
   visibleRef.current = visible
+  const exitCodeRef = useRef(exitCode)
+  exitCodeRef.current = exitCode
 
   const syncSize = useCallback(() => {
     const term = termRef.current
@@ -137,6 +142,7 @@ export function PanelTerminal({
       isCurrent: () =>
         !disposed &&
         !replayPending &&
+        exitCodeRef.current === null &&
         remoteRef.current === boundRemote.remote &&
         remoteGeneration.current.generation === boundRemote.generation,
     })
@@ -187,6 +193,7 @@ export function PanelTerminal({
       void replay.then(() => {
         if (disposed) return
         replayPending = false
+        mount.dataset.terminalReplayReady = 'true'
         terminalHints.invalidate()
       })
     })
@@ -223,9 +230,20 @@ export function PanelTerminal({
   }, [visible, remote])
 
   useEffect(() => {
+    invalidateHintsRef.current?.()
+  }, [exitCode])
+
+  useEffect(() => {
     const onHintRequest = (event: Event) => {
       const detail = (event as CustomEvent<{ id: string }>).detail
-      if (detail?.id !== id || !visibleRef.current || !vimEnabled || !termRef.current) return
+      if (
+        detail?.id !== id ||
+        !visibleRef.current ||
+        exitCodeRef.current !== null ||
+        !vimEnabled ||
+        !termRef.current
+      )
+        return
       const terminal = mountRef.current?.querySelector<HTMLElement>('.xterm-helper-textarea')
       terminal?.focus()
       const root = mountRef.current?.closest<HTMLElement>('[data-panel-terminal]')
@@ -273,7 +291,11 @@ export function PanelTerminal({
       <div className="relative min-h-0 flex-1">
         {/* The gutter is an inset, not padding: xterm measures the box it
             opens in. */}
-        <div ref={mountRef} className="text-foreground absolute inset-3" />
+        <div
+          ref={mountRef}
+          data-terminal-replay-ready="false"
+          className="text-foreground absolute inset-3"
+        />
       </div>
     </div>
   )
