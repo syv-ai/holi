@@ -10,9 +10,10 @@ import { noCoreServices } from '../src/main/capabilities/services'
 import type { MainPlugin } from '../src/main/plugin-api'
 import type { PluginEvent } from '../src/main/plugin-host/events'
 import type { PageInfo, PageRead } from '../src/plugins/browser/shared/page'
+import { runAppFrameSmoke } from './app-frame-smoke'
 
-const root = process.env.HOLI_472_ROOT!
-const evidence = process.env.HOLI_472_EVIDENCE!
+const root = process.env.HOLI_473_ROOT!
+const evidence = process.env.HOLI_473_EVIDENCE!
 assert(root && evidence)
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 const rect = { x: 0, y: 0, width: 700, height: 450 }
@@ -73,6 +74,20 @@ async function run(): Promise<void> {
       </script>`)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const nativeRequests: { webContentsId: number; processId: number; routingId: number }[] = []
+  // This is Electron 43's native provenance seam: protocol Request itself
+  // does not expose a webContentsId, while webRequest details do.
+  const defaultSession = (await import('electron')).session.defaultSession
+  defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    if (details.url.startsWith('http://127.0.0.1:')) {
+      nativeRequests.push({
+        webContentsId: details.webContentsId,
+        processId: details.frame.processId,
+        routingId: details.frame.routingId,
+      })
+    }
+    callback({})
+  })
   const address = server.address()
   assert(address && typeof address === 'object')
   const url = `http://127.0.0.1:${address.port}`
@@ -82,6 +97,18 @@ async function run(): Promise<void> {
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   })
+  await win.loadURL('data:text/html,<h1>Holi shell: no browser page attached</h1>')
+  await win.loadURL(`${url}/a`)
+  assert(
+    nativeRequests.some(
+      (request) =>
+        request.webContentsId === win.webContents.id &&
+        Number.isInteger(request.processId) &&
+        Number.isInteger(request.routingId),
+    ),
+    'Electron webRequest did not expose exact native requester and frame provenance',
+  )
+  mark('electron43-webrequest-native-window-and-frame-provenance')
   await win.loadURL('data:text/html,<h1>Holi shell: no browser page attached</h1>')
   const roots = { A: join(root, 'vault-a'), B: join(root, 'vault-b') }
   for (const vault of Object.values(roots)) {
@@ -904,6 +931,7 @@ async function run(): Promise<void> {
   }
   // The toolbar acceptance runner inserts its isolated renderer phase before teardown.
   assert.equal(listeners.size, 0)
+  checks.push(...(await runAppFrameSmoke(root, evidence)))
   win.destroy()
   server.closeAllConnections()
   await new Promise<void>((resolve, reject) =>
@@ -931,6 +959,10 @@ async function run(): Promise<void> {
           'browser-dark.png',
           'shell-before.png',
           'browser-after.png',
+          'vault-app-a.png',
+          'vault-app-b.png',
+          'app-frame-read-a.png',
+          'app-frame-read-b.png',
         ],
       },
       null,

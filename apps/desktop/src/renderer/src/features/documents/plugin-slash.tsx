@@ -37,9 +37,9 @@ export function pluginSlashItem(
       const currentVisit = editorActivity(editor).capture()
       editor.chain().focus().deleteRange(range).run()
       const at = range.from
-      command.run({ text: '', line, path }).then(
+      command.run({ text: '', line, path }, currentVisit).then(
         (result) => {
-          if (result === null || editor.isDestroyed) return
+          if (!currentVisit() || result === null || editor.isDestroyed) return
           if ('agent' in result) {
             if (currentVisit()) ask(at, result.agent)
             return
@@ -48,10 +48,12 @@ export function pluginSlashItem(
           if (written === '') return
           editor.commands.insertContentAt(at, asContent(editor, written))
         },
-        () =>
+        () => {
+          if (!currentVisit() || editor.isDestroyed) return
           toast.error(`/${command.name} did not run`, {
             description: command.meta ? `${command.meta}’s log says why.` : undefined,
-          }),
+          })
+        },
       )
     },
   }

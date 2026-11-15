@@ -134,6 +134,7 @@ export async function storePut(
   collection: string,
   id: string | undefined,
   value: unknown,
+  assertCurrent?: () => void,
 ): Promise<string> {
   const { schema } = await collectionOf(root, bundle, collection)
   const recordId = idOrThrow(id ?? newRecordId())
@@ -145,7 +146,7 @@ export async function storePut(
   }
   const rel = recordRel(bundle, collection, recordId)
   await onDisk(root, rel)
-  await writeAtomic(root, relOrThrow(rel), text)
+  await writeAtomic(root, relOrThrow(rel), text, assertCurrent)
   return recordId
 }
 
@@ -154,6 +155,7 @@ export async function storeDelete(
   bundle: string,
   collection: string,
   id: string,
+  assertCurrent?: () => void,
 ): Promise<boolean> {
   await collectionOf(root, bundle, collection)
   const abs = await onDisk(root, recordRel(bundle, collection, idOrThrow(id)))
@@ -161,7 +163,10 @@ export async function storeDelete(
     () => true,
     () => false,
   )
-  if (existed) await rm(abs, { force: true })
+  if (existed) {
+    assertCurrent?.()
+    await rm(abs, { force: true })
+  }
   return existed
 }
 

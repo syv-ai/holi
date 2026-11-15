@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, formatRecord } from '@holi/shared'
 import { storeCapabilities } from '../main/capabilities'
+import { storeDelete, storePut } from '../main/store'
 import { noCoreServices } from '../../../main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../../../main/capabilities/vault-caps'
 import {
@@ -85,6 +86,29 @@ describe('the app store', () => {
     expect(await call('store.delete', { collection: 'items', id })).toBe(true)
     expect(await call('store.get', { collection: 'items', id })).toBeNull()
     expect(await call('store.delete', { collection: 'items', id })).toBe(false)
+  })
+
+  it('cancels a put after manifest validation when its app-door lease expires', async () => {
+    const assertCurrent = () => {
+      throw new Error('revoked')
+    }
+    await expect(
+      storePut(root, 'Work/Tracker.app', 'items', 'revoked', { title: 'No write' }, assertCurrent),
+    ).rejects.toThrow('revoked')
+    await expect(access(join(dataDir(), 'revoked.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('cancels a delete immediately before removing an existing record', async () => {
+    await call('store.put', { collection: 'items', id: 'keep', value: { title: 'Keep' } })
+    const assertCurrent = () => {
+      throw new Error('revoked')
+    }
+    await expect(
+      storeDelete(root, 'Work/Tracker.app', 'items', 'keep', assertCurrent),
+    ).rejects.toThrow('revoked')
+    await expect(readFile(join(dataDir(), 'keep.json'), 'utf8')).resolves.toBe(
+      formatRecord({ title: 'Keep' }),
+    )
   })
 
   it('takes a meaningful id, and lists in id order', async () => {

@@ -96,6 +96,36 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
         run: node scripts/check-commit-msg.mjs --message "$TITLE"
 
+  native-codex-exec-producer:
+    name: Native Codex exec producer proof
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Run pinned native producer and host proof
+        env:
+          HOLI_CODEX_EVIDENCE: ${{ runner.temp }}/codex-exec-producer/evidence.json
+        run: node scripts/codex-exec-producer.mjs
+      - name: Upload native producer evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-codex-exec-producer-evidence
+          path: ${{ runner.temp }}/codex-exec-producer/evidence.json
+          if-no-files-found: error
+
   pi-native-producer:
     name: Native Pi RPC producer
     runs-on: ubuntu-24.04

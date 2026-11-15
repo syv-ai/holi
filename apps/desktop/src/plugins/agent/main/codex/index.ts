@@ -50,7 +50,15 @@ import { isRunnable, resolveBin, shellReadBridgeEnv } from '../../../../main/plu
 import { buildAgentEnv } from '../claude/cli'
 import { personCodexHome, prepareCodexHome, releaseCodexHome } from './home'
 import { CONVERSATION_ID, PTY_SESSION_ID } from '../host/pty-sessions'
-import type { AgentProvider, JobEvent, JobRun, RouteServer, TurnRouteDeps } from '../provider'
+import {
+  hasJobs,
+  type AgentProvider,
+  type JobEvent,
+  type JobRun,
+  type JobsProvider,
+  type RouteServer,
+  type TurnRouteDeps,
+} from '../provider'
 
 /**
  * The variable that names the session to its hook.
@@ -299,13 +307,13 @@ export interface CodexProviderDeps {
   env?: () => Record<string, string>
 }
 
-export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
+export function codexProvider(deps: CodexProviderDeps = {}): JobsProvider {
   const base = deps.base ?? process.env
   /** Where the person's Codex folder is: their environment, then the
    *  preset's (a `CODEX_HOME` it sets). */
   const person = (): NodeJS.ProcessEnv => ({ ...base, ...deps.env?.() })
   const bin = deps.resolveBin ?? (() => resolveCodexBin(base))
-  return {
+  const provider: AgentProvider = {
     id: 'codex',
     label: 'Codex',
     notInstalled: NOT_INSTALLED,
@@ -383,4 +391,6 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
       },
     },
   }
+  if (!hasJobs(provider)) throw new Error('Codex jobs capability is unavailable')
+  return provider
 }

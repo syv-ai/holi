@@ -803,8 +803,36 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   async function head(): Promise<string | null> {
-    const res = await tryGit(root, ['rev-parse', 'HEAD'], opts)
-    return res.ok ? res.stdout.trim() : null
+    const res = await tryGit(root, ['rev-parse', '--verify', 'HEAD'], opts)
+    if (res.ok) {
+      const sha = res.stdout.trim()
+      if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
+        const object = await tryGit(root, ['cat-file', '-e', `${sha}^{commit}`], opts)
+        if (object.ok) return sha
+      }
+      throw new GitError(
+        'Could not read repository HEAD.',
+        1,
+        'HEAD does not name an available commit.',
+      )
+    }
+
+    // A missing HEAD is a pending baseline only for a valid symbolic branch
+    // whose ref does not exist yet. All other rev-parse failures are errors.
+    const symbolic = await tryGit(root, ['symbolic-ref', '--quiet', 'HEAD'], opts)
+    const workTree = await tryGit(root, ['rev-parse', '--is-inside-work-tree'], opts)
+    if (
+      symbolic.ok &&
+      workTree.ok &&
+      workTree.stdout.trim() === 'true' &&
+      /^refs\/heads\/[^\s]+$/.test(symbolic.stdout.trim())
+    ) {
+      const branch = symbolic.stdout.trim()
+      const valid = await tryGit(root, ['check-ref-format', branch], opts)
+      const ref = await tryGit(root, ['show-ref', '--verify', '--quiet', branch], opts)
+      if (valid.ok && !ref.ok && ref.code === 1) return null
+    }
+    throw new GitError('Could not read repository HEAD.', res.code, res.stderr)
   }
 
   /**

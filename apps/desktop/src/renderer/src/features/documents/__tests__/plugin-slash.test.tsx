@@ -60,11 +60,14 @@ test('is listed under its app, and writes its answer at the caret', async () => 
   expect(item.group).toBe('Budget')
   expect(item.title).toBe('sum')
   item.run(ed, range)
-  expect(run).toHaveBeenCalledWith({
-    text: '',
-    line: 'Total: ',
-    path: 'Notes/Plan.md',
-  })
+  expect(run).toHaveBeenCalledWith(
+    {
+      text: '',
+      line: 'Total: ',
+      path: 'Notes/Plan.md',
+    },
+    expect.any(Function),
+  )
   await vi.waitFor(() => expect(ed.getMarkdown()).toContain('Total: **42**'))
   expect(ed.getMarkdown()).not.toContain('/sum')
 })
@@ -92,26 +95,24 @@ test('a delayed agent answer does not open a prompt after leaving and returning'
 test.each([
   { kind: 'insert', response: { insert: '**42**' } },
   { kind: 'replace', response: { replace: '**42**' } },
-])(
-  'a delayed $kind answer inserts in the background without focusing the editor',
-  async ({ response }) => {
-    const { ed, range } = open()
-    let respond!: (result: { insert: string } | { replace: string }) => void
-    const run = vi.fn(
-      () => new Promise<{ insert: string } | { replace: string }>((resolve) => (respond = resolve)),
-    )
-    const item = pluginSlashItem({ name: 'sum', run }, 'Notes/Plan.md', ask)
-    item.run(ed, range)
-    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
-    const focus = vi.spyOn(ed.view, 'focus')
-    const activity = activityHook!.result.current
-    act(() => activity.update(false, false))
-    act(() => activity.update(true, false))
-    await act(async () => respond(response))
-    await vi.waitFor(() => expect(ed.getMarkdown()).toContain('Total: **42**'))
-    expect(focus).not.toHaveBeenCalled()
-  },
-)
+])('a delayed $kind answer is discarded after its focus visit ends', async ({ response }) => {
+  const { ed, range } = open()
+  let respond!: (result: { insert: string } | { replace: string }) => void
+  const run = vi.fn(
+    () => new Promise<{ insert: string } | { replace: string }>((resolve) => (respond = resolve)),
+  )
+  const item = pluginSlashItem({ name: 'sum', run }, 'Notes/Plan.md', ask)
+  item.run(ed, range)
+  await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+  const focus = vi.spyOn(ed.view, 'focus')
+  const activity = activityHook!.result.current
+  act(() => activity.update(false, false))
+  act(() => activity.update(true, false))
+  await act(async () => respond(response))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(ed.getMarkdown()).toBe('Total: ')
+  expect(focus).not.toHaveBeenCalled()
+})
 
 test('a delayed agent answer does not open a prompt while its split is displayed but unfocused', async () => {
   const { ed, range } = open()
