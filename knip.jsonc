@@ -43,6 +43,9 @@
         "scripts/browser-display-fixture/toolbar-sequence.ts",
         "scripts/mail-markers-smoke-main.ts",
         "scripts/mail-markers-smoke-renderer.tsx",
+        // Native file-subscription smoke entries are built by the disposable MJS runner.
+        "scripts/files-subscriptions-smoke-main.ts",
+        "scripts/files-subscriptions-smoke-renderer.tsx",
         // Vite's disposable #542 Electron smoke entry is selected by filesystem path.
         "scripts/agent-inbox-542-smoke-main.ts",
         "scripts/agent-inbox-542-smoke-renderer.tsx",
