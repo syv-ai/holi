@@ -74,10 +74,11 @@ export function useMermaidLabelEditing({
       editor.isDestroyed ||
       !editor.isEditable ||
       store.get(activeRemoteAtom) !== current.remote ||
-      (store.get(activeModeAtom) === 'dark' ? 'dark' : 'default') !== current.theme ||
-      !current.anchor.isConnected
+      (store.get(activeModeAtom) === 'dark' ? 'dark' : 'default') !== current.theme
     )
       return undefined
+    // React may replace the SVG without changing its source node. The anchor is
+    // only a focus target; document mapping and node identity own validation.
     try {
       return editor.state.doc.nodeAt(current.position) === current.node
         ? current.position
@@ -95,7 +96,7 @@ export function useMermaidLabelEditing({
       const size = editor.state.doc.nodeAt(currentPos)!.nodeSize
       if (from >= currentPos + 1 && to <= currentPos + size - 1)
         editor.commands.setNodeSelection(currentPos)
-      target.focus()
+      if (target.isConnected) target.focus()
     }
   }, [position, close, editor])
 
