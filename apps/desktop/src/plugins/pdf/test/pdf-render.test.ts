@@ -454,11 +454,11 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
       await cp(outPath, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'reference-table.pdf'))
     }
 
-    // User-authored raw-typst HTML comments force the lossless Markdown fallback,
-    // so even an apparent panic cannot become executable inside a native table.
+    // Explicit user HTML forces the ordinary Markdown fallback. Preserve that
+    // existing rendering contract rather than globally removing raw comments.
     const unsafeNote = join(root, 'unsafe.md')
     const unsafeSource = writeMarkdownCaptionEnvelope(
-      '| Value |\n| --- |\n| <!--raw-typst #panic("user comment")--> |',
+      '| Value |\n| --- |\n| <!--raw-typst [User raw fallback]--> |',
       'Unsafe comment fallback.',
     )
     await writeFile(unsafeNote, unsafeSource)
@@ -474,6 +474,12 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     })
     expect((await readFile(unsafePdf)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
     expect(await readFile(unsafeNote, 'utf8')).toBe(unsafeSource)
+    expect(
+      (await readPdfPages(unsafePdf))
+        .flatMap((page) => page.runs)
+        .map((run) => run.text)
+        .join(' '),
+    ).toContain('User raw fallback')
 
     for (const [name, cell] of [['footnote', '[^note]']] as const) {
       const fallbackNote = join(root, `${name}.md`)
@@ -517,6 +523,140 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
       }),
     ).rejects.toThrow('label `<citation>` does not exist')
     expect(await readFile(citationNote, 'utf8')).toBe(citationSource)
+  }, 30_000)
+
+  it.each([
+    ['wiki-alias', '[[note.md|<]]!--raw-typst #panic("review")-->'],
+    ['missing-image-alias', '![[missing.png|<]]!--raw-typst #panic("review")-->'],
+    ['wiki-image-syntax', '[[note.md|![]]untrusted](must-not-be-read.png)'],
+  ])(
+    'never executes raw Typst assembled by %s in a captioned table',
+    async (name, attack) => {
+      const typst = await resolveTypstBin()
+      if (typst === null) throw new Error('Typst is required for real PDF compilation')
+      const root = await work()
+      const templateDir = join(root, '.holi/document-templates/plain')
+      await mkdir(templateDir, { recursive: true })
+      await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+      await writeFile(join(root, 'photo.png'), Buffer.from(DOT_PNG, 'base64'))
+      const notePath = join(root, `${name}.md`)
+      const original = [
+        '<!--raw-typst [User raw outside table]-->',
+        '',
+        writeMarkdownCaptionEnvelope(
+          `| Text | Image |\n| --- | --- |\n| Visible cell ${attack} | ![Legitimate photo](photo.png) proof |\n| \`#panic("literal")\` | trailing cell |`,
+          'Safe attached caption.',
+        ),
+      ].join('\n')
+      await writeFile(notePath, original)
+      const outPath = join(root, `${name}.pdf`)
+      const result = await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      const pdf = await readFile(outPath)
+      expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+      expect(pdf.toString('latin1')).toMatch(/\/Subtype\s*\/Image\b/)
+      const pages = await readPdfPages(outPath)
+      const runs = pages.flatMap((page) => page.runs)
+      const text = runs.map((run) => run.text).join(' ')
+      expect(text).toContain('Visible cell')
+      expect(text).toContain('User raw outside table')
+      expect(text).toContain('#panic')
+      expect(text).toContain('literal')
+      expect(text).toContain('trailing cell')
+      expect(text).toContain('Safe attached caption.')
+      const caption = runs.find((run) => run.text.includes('Safe attached caption.'))
+      const lastCell = runs.find((run) => run.text.includes('trailing cell'))
+      expect(caption!.rect.origin.y).toBeGreaterThan(lastCell!.rect.origin.y)
+      expect(result.warnings.length).toBe(name === 'missing-image-alias' ? 1 : 0)
+      expect(await readFile(notePath, 'utf8')).toBe(original)
+      if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+        await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+        await cp(outPath, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, `safe-${name}.pdf`))
+      }
+    },
+    30_000,
+  )
+
+  it('matches ordinary table URIs for container, multiline, and escaped definitions', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) throw new Error('Typst is required for real PDF compilation')
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const table = String.raw`| Reference | Value |
+| --- | --- |
+| [target] | blockquote continuation |
+| [multi line] | nested multiline label and title |
+| [escaped\]label] | escaped label and destination |
+| [list] | list continuation |
+| [spaced] | destination spaces |
+| [hidden] [code-only] | hidden definitions stay hidden |`
+    const definitions =
+      String.raw`> [target]:
+>   https://example.org/destination
+>
+> > [multi
+> > line]: <https://example.org/multi> "title
+> > with \"quotes\""
+
+- [escaped\]label]: https://example.org/escaped\(path\) 'escaped title'
+- [list]:
+    https://example.org/list
+    "continued title"
+
+[spaced]: <https://example.org/a  b>
+[target]: https://ignored.invalid/duplicate
+
+<div>
+[hidden]: https://ignored.invalid/html
+</div>
+
+` + '\n```markdown\n[code-only]: https://ignored.invalid/code\n```\n'
+    const sources = [table, writeMarkdownCaptionEnvelope(table, 'Contextual reference caption.')]
+    const uris: string[][] = []
+    for (const [index, source] of sources.entries()) {
+      const name = index === 0 ? 'contextual-reference-control' : 'contextual-reference-captioned'
+      const notePath = join(root, `${name}.md`)
+      const original = `${source}\n\n${definitions}`
+      await writeFile(notePath, original)
+      const outPath = join(root, `${name}.pdf`)
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      const pdf = (await readFile(outPath)).toString('latin1')
+      uris.push([...pdf.matchAll(/\/URI \(([^\n]*)\)/g)].map((match) => match[1]!).sort())
+      const text = (await readPdfPages(outPath))
+        .flatMap((page) => page.runs)
+        .map((run) => run.text)
+        .join(' ')
+      expect(text).toContain('target')
+      expect(text).toContain('escaped')
+      expect(await readFile(notePath, 'utf8')).toBe(original)
+      if (index === 1) expect(text).toContain('Contextual reference caption.')
+      if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+        await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+        await cp(outPath, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, `${name}.pdf`))
+      }
+    }
+    expect(uris[1]).toEqual(uris[0])
+    expect(uris[1]).toHaveLength(5)
+    expect(uris[1]!.join(' ')).toContain('https://example.org/destination')
+    expect(uris[1]!.join(' ')).toContain('https://example.org/escaped')
+    expect(uris[1]!.join(' ')).not.toContain('ignored.invalid')
   }, 30_000)
 
   it('shows a table caption on its own final page before later prose', async () => {

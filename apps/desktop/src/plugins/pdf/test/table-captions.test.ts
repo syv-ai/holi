@@ -1,22 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { writeMarkdownCaptionEnvelope } from '@holi/shared'
-import {
-  readMarkdownReferenceDefinitions,
-  readMarkdownTableCaptions,
-  removeRawTypstComments,
-} from '../main/table-captions'
-
-describe('removeRawTypstComments', () => {
-  it('neutralizes comments outside code without shifting positions', () => {
-    const source =
-      'before <!--raw-typst #panic("no")--> after\n\n`<!--raw-typst #panic("code")-->`\n'
-    const safe = removeRawTypstComments(source)
-    expect(safe).toHaveLength(source.length)
-    expect(safe).not.toContain('#panic("no")')
-    expect(safe).toContain('`<!--raw-typst #panic("code")-->`')
-    expect(safe.split('\n')).toHaveLength(source.split('\n').length)
-  })
-})
+import { readMarkdownReferenceDefinitions, readMarkdownTableCaptions } from '../main/table-captions'
 
 describe('readMarkdownReferenceDefinitions', () => {
   it('keeps complete parsed definitions and excludes code, HTML, and malformed fences', () => {
@@ -41,7 +25,32 @@ describe('readMarkdownReferenceDefinitions', () => {
       '[second]: https://example.com/two',
     ].join('\n')
     expect(readMarkdownReferenceDefinitions(source)).toBe(
-      '\n\n[link]: https://example.com/one\n  "continued title"\n[quoted]: https://example.com/quoted\n[second]: https://example.com/two',
+      '\n\n[link]: https://example.com/one "continued title"\n[quoted]: https://example.com/quoted\n[second]: https://example.com/two',
+    )
+  })
+})
+
+describe('reference definition normalization', () => {
+  it('removes container markers, preserves escapes, and keeps duplicate source order', () => {
+    const source = String.raw`> [target]:
+>   https://example.org/destination
+>
+> > [multi
+> > line]: <https://example.org/a\(b> "title
+> > with \"quotes\""
+
+- [escaped\]label]:
+    https://example.org/escaped\(path\) 'list title'
+
+[target]: https://ignored.invalid/duplicate
+`
+    expect(readMarkdownReferenceDefinitions(source)).toBe(
+      String.raw`
+
+[target]: https://example.org/destination
+[multi line]: <https://example.org/a\(b> "title with \"quotes\""
+[escaped\]label]: https://example.org/escaped\(path\) 'list title'
+[target]: https://ignored.invalid/duplicate`,
     )
   })
 })
