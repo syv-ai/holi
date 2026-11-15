@@ -214,14 +214,9 @@ describe('pinned skill release verification', () => {
 
   it('budgets authenticated directory-only raw-tree fanout', async () => {
     const f = await fixture()
-    const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], {
-      cwd: f.release,
-      input: Buffer.from('x'),
-      encoding: 'utf8',
-    }).trim()
     const childTree = execFileSync('git', ['hash-object', '-t', 'tree', '-w', '--stdin'], {
       cwd: f.release,
-      input: Buffer.concat([Buffer.from('100644 x'), Buffer.from([0]), Buffer.from(blob, 'hex')]),
+      input: Buffer.alloc(0),
       encoding: 'utf8',
     }).trim()
     const oid = Buffer.from(childTree, 'hex')
