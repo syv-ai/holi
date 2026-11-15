@@ -14,12 +14,15 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 
-/** Internal filesystem seam used to deterministically exercise transaction failures. */
+/**
+ * Internal filesystem seam used to deterministically exercise transaction failures.
+ * @public
+ */
 export const skillTransactionFs = { rename }
 import { exactPath } from '@holi/shared/path-safety-node'
 import { CapabilityError } from '../../../main/plugin-api'
 
-export type FileSnapshot = { path: string; bytes: Buffer; mode: number }
+type FileSnapshot = { path: string; bytes: Buffer; mode: number }
 export type SkillSnapshot = { name: string; files: FileSnapshot[]; directories: string[] }
 type Plan = {
   name: string

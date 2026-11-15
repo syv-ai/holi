@@ -10,7 +10,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { execFileSync } from 'node:child_process'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -510,20 +510,36 @@ describe('refreshSkills', () => {
     ).toBeNull()
   })
 
-  it('rejects special source and destination entries and symlinked required files', async () => {
-    const f = await fixture()
-    execFileSync('mkfifo', [join(f.source, 'skills/demo/pipe')])
-    await expect(
-      refreshSkills(f.manifest, f.source, f.vault, { force: false, guard() {} }),
-    ).rejects.toThrow('special file')
-    await rm(join(f.source, 'skills/demo/pipe'))
-    await refreshSkills(f.manifest, f.source, f.vault, { force: false, guard() {} })
-    execFileSync('mkfifo', [join(f.vault, '.claude/skills/demo/pipe')])
-    await expect(
-      refreshSkills(f.manifest, f.source, f.vault, { force: true, guard() {} }),
-    ).rejects.toThrow('unsafe destination')
-    expect((await lstat(join(f.vault, '.claude/skills/demo/pipe'))).isFIFO()).toBe(true)
-  })
+  it.skipIf(process.platform === 'win32')(
+    'rejects special source and destination entries',
+    async () => {
+      const f = await fixture()
+      for (const location of ['source', 'destination'] as const) {
+        if (location === 'destination')
+          await refreshSkills(f.manifest, f.source, f.vault, { force: false, guard() {} })
+        const path =
+          location === 'source'
+            ? join(f.source, 'skills/demo/pipe')
+            : join(f.vault, '.claude/skills/demo/pipe')
+        const server = createServer()
+        try {
+          await new Promise<void>((resolve, reject) => {
+            server.once('error', reject)
+            server.listen(path, resolve)
+          })
+          await expect(
+            refreshSkills(f.manifest, f.source, f.vault, {
+              force: location === 'destination',
+              guard() {},
+            }),
+          ).rejects.toThrow(location === 'source' ? 'special file' : 'unsafe destination')
+          expect((await lstat(path)).isSocket()).toBe(true)
+        } finally {
+          await new Promise<void>((resolve) => server.close(() => resolve()))
+        }
+      }
+    },
+  )
 
   it('rejects exact, case-aliased, and overlapping destination declarations', async () => {
     const f = await fixture()

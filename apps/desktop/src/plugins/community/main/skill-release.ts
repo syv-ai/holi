@@ -93,6 +93,10 @@ function createGitReader(root: string, signal?: AbortSignal): GitReader {
   }
 }
 
+/**
+ * Kept accessible for portable filesystem-mode tests.
+ * @public
+ */
 export function gitModeMatches(
   mode: string,
   filesystemMode: number,
