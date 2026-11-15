@@ -13,10 +13,9 @@ const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? '/tmp/holi-523-ui-evidence')
 const fixture = join(desktop, 'scripts/browser-display-fixture')
 const toolbarAcceptance = process.env.HOLI_523_UI === '1'
+const recordingPath = join(evidence, 'interaction.mp4')
 const root = await mkdtemp(join(tmpdir(), 'holi-523-smoke-'))
-await rm(evidence, { recursive: true, force: true })
 await mkdir(evidence, { recursive: true })
-await rm('/tmp/holi-523-demo.mp4', { force: true })
 for (const name of [
   'result.json',
   'electron-smoke.log',
@@ -24,6 +23,10 @@ for (const name of [
   'shell-before.png',
   'browser-after.png',
   'browser-dark.png',
+  'recording.json',
+  'ui-light.png',
+  'ui-dark.png',
+  'interaction.mp4',
 ])
   await rm(join(evidence, name), { force: true })
 let child
@@ -237,18 +240,20 @@ try {
         String(fps),
         '-i',
         join(evidence, 'frames/%05d.png'),
+        '-frames:v',
+        String(recording.frames),
         '-c:v',
         'libx264',
         '-pix_fmt',
         'yuv420p',
         '-movflags',
         '+faststart',
-        '/tmp/holi-523-demo.mp4',
+        recordingPath,
       ],
       { encoding: 'utf8' },
     )
     assert.equal(video.status, 0, `video encoding failed: ${video.stderr}`)
-    assert((await stat('/tmp/holi-523-demo.mp4')).size > 0, 'video artifact is empty')
+    assert((await stat(recordingPath)).size > 0, 'video artifact is empty')
   }
 } finally {
   if (child && child.exitCode === null) {
