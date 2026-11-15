@@ -11,6 +11,7 @@ import type { RunOptions } from '../main/claude/cli'
 import { PRESETS } from '../main/harness/record'
 import type { StartArgs } from '../main/host/pty'
 import { agentMain } from '../main/index'
+import { openTurnLog } from '../main/host/turn-log'
 
 const adapters = vi.hoisted(() => ({
   version: vi.fn(() => 'test'),
@@ -181,6 +182,32 @@ const customRow = {
     expect.objectContaining({ harness: expect.objectContaining({ id: harness.id }) }),
   ]),
 }
+
+it('serves each activated vault turn report from its own persisted log', async () => {
+  const { host, enter, call, roots } = await rig()
+  await enter(A)
+  await enter(B)
+  const sameSession = 'same-session'
+  await Promise.all([
+    openTurnLog(roots[A]).append({
+      base: 'a-base',
+      end: 'a-end',
+      at: '2026-09-09T10:00:00Z',
+      sessionId: sameSession,
+    }),
+    openTurnLog(roots[B]).append({
+      base: 'b-base',
+      end: 'b-end',
+      at: '2026-09-09T10:00:00Z',
+      sessionId: sameSession,
+    }),
+  ])
+  expect(await call(A, 'agent.turns')).toMatchObject([{ base: 'a-base', sessionId: sameSession }])
+  expect(await call(B, 'agent.turns')).toMatchObject([{ base: 'b-base', sessionId: sameSession }])
+  await host.stop(A)
+  await enter(A)
+  expect(await call(A, 'agent.turns')).toMatchObject([{ end: 'a-end' }])
+})
 
 it('activates real agents and shares save/remove/reset/reload and remote notifications', async () => {
   const { host, enter, call, sent, userData } = await rig()

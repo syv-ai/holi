@@ -83,11 +83,44 @@ describe('appending', () => {
     expect(JSON.parse(await readFile(file(), 'utf8'))).toHaveLength(1)
   })
 
+  it('serializes concurrent appends across handles and equivalent path spellings', async () => {
+    const left = openTurnLog(root)
+    const right = openTurnLog(join(root, '.'))
+    await Promise.all(
+      Array.from({ length: 20 }, (_, n) => (n % 2 ? left : right).append(record(n))),
+    )
+    const list = await left.list()
+    expect(list).toHaveLength(20)
+    expect(new Set(list.map((item) => item.base)).size).toBe(20)
+  })
+
+  it('keeps independent vaults with the same session id isolated', async () => {
+    const otherRoot = await mkdtemp(join(tmpdir(), 'holi-turnlog-other-'))
+    dirs.push(otherRoot)
+    const first = openTurnLog(root)
+    const second = openTurnLog(otherRoot)
+    await Promise.all([
+      first.append({ ...record(1), sessionId: 'same' }),
+      second.append({ ...record(2), sessionId: 'same' }),
+    ])
+    expect(await first.list()).toEqual([{ ...record(1), sessionId: 'same' }])
+    expect(await second.list()).toEqual([{ ...record(2), sessionId: 'same' }])
+  })
+
   it('puts the newest first', async () => {
     const log = openTurnLog(root)
     await log.append(record(1))
     await log.append(record(2))
     expect(await log.list()).toEqual([record(2), record(1)])
+  })
+
+  it('continues queued appends after a failed write', async () => {
+    const log = openTurnLog(root)
+    await mkdir(file(), { recursive: true })
+    await expect(log.append(record(1))).rejects.toThrow()
+    await rm(file(), { recursive: true, force: true })
+    await log.append(record(2))
+    expect(await log.list()).toEqual([record(2)])
   })
 
   it('caps at fifty', async () => {
