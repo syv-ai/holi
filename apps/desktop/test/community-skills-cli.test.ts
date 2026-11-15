@@ -1,5 +1,16 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -24,6 +35,12 @@ const execFileAsync = promisify(execFile)
 const roots: string[] = []
 const evidence: Array<Record<string, unknown>> = []
 
+function sanitizeOutput(output: string): string {
+  return output
+    .replace(/Bearer\\s+\\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}\\b/g, '[REDACTED]')
+}
+
 async function run(bin: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
   try {
     const { stdout, stderr } = await execFileAsync(bin, args, { cwd, env })
@@ -36,6 +53,36 @@ async function run(bin: string, args: string[], cwd: string, env: NodeJS.Process
 
 function git(cwd: string, ...args: string[]) {
   return execFileAsync('git', args, { cwd }).then(({ stdout }) => stdout.trim())
+}
+
+async function fingerprint(path: string): Promise<string> {
+  const info = await lstat(path).catch(() => null)
+  if (!info) return 'absent'
+  if (info.isSymbolicLink()) return `link:${await readFile(path).catch(() => Buffer.from(''))}`
+  if (info.isFile())
+    return createHash('sha256')
+      .update(await readFile(path))
+      .digest('hex')
+  if (!info.isDirectory()) return `special:${info.mode}`
+  const entries = await Promise.all(
+    (await readdir(path))
+      .sort()
+      .map(async (name) => `${name}:${await fingerprint(join(path, name))}`),
+  )
+  return createHash('sha256').update(entries.join('\\n')).digest('hex')
+}
+
+async function captureFacts(f: { vaultA: string; vaultB: string; root: string }) {
+  const vault = async (root: string) => ({
+    pin: await fingerprint(join(root, '.holi/plugins/demo/manifest.json')),
+    settings: await fingerprint(join(root, '.holi/settings/plugins.yaml')),
+    consent: await fingerprint(join(f.root, 'user/plugin-consent.json')),
+    apps: await fingerprint(join(root, 'demo.app')),
+    gitignore: await fingerprint(join(root, '.gitignore')),
+    commandLinks: await fingerprint(join(root, '.holi/bin')),
+    otherSkills: await fingerprint(join(root, '.claude/skills/other')),
+  })
+  return { vaultA: await vault(f.vaultA), vaultB: await vault(f.vaultB) }
 }
 
 async function setup() {
@@ -52,6 +99,8 @@ async function setup() {
     await mkdir(join(vault, '.holi/plugins/demo'), { recursive: true })
     await mkdir(join(vault, '.holi/settings'), { recursive: true })
     await writeFile(join(vault, '.holi/settings/plugins.yaml'), 'plugins:\n  demo: true\n')
+    await mkdir(join(vault, '.claude/skills/other'), { recursive: true })
+    await writeFile(join(vault, '.claude/skills/other/SKILL.md'), 'unchanged skill\n')
   }
   await writeFile(join(plugin, skill, 'SKILL.md'), 'pinned skill\n')
   await writeFile(join(plugin, skill, 'tool.bin'), Buffer.from([0, 1, 255]))
@@ -114,8 +163,14 @@ async function setup() {
   registry.register(COMMUNITY_NAMESPACES, table)
   const host = createCapabilityHost({
     registry,
-    rootFor: async () => vaultA,
-    active: () => null,
+    rootFor: async (remote) =>
+      remote === 'owner/vault-a' ? vaultA : remote === 'owner/vault-b' ? vaultB : null,
+    active: () => ({
+      remote: 'owner/vault-b',
+      root: vaultB,
+      snapshot: () => ({ files: [] }) as never,
+      refresh: async () => undefined,
+    }),
     core: noCoreServices,
     pluginEnabled: async () => true,
     claims: async () => [],
@@ -125,7 +180,8 @@ async function setup() {
     cli: {
       dispatch: host.dispatch,
       commands: (remote) => registry.commands(remote),
-      rootFor: async () => vaultA,
+      rootFor: async (remote) =>
+        remote === 'owner/vault-a' ? vaultA : remote === 'owner/vault-b' ? vaultB : null,
       machine: {
         token: () => endpoint?.token ?? '',
         listVaults: async () => [
@@ -185,8 +241,8 @@ describe('community refresh-skills through the generated CLI and live bridge', (
       evidence.push({
         command: ['holi', ...args],
         code: result.code,
-        stdout: result.stdout,
-        stderr: result.stderr,
+        stdout: sanitizeOutput(result.stdout),
+        stderr: sanitizeOutput(result.stderr),
       })
       return result
     }
@@ -197,6 +253,7 @@ describe('community refresh-skills through the generated CLI and live bridge', (
         '--force replaces complete skill folders, including local edits',
       )
 
+      const before = await captureFacts(f)
       const aPin = await readFile(join(f.vaultA, '.holi/plugins/demo/manifest.json'), 'utf8')
       const bPin = await readFile(join(f.vaultB, '.holi/plugins/demo/manifest.json'), 'utf8')
       const settingsA = await readFile(join(f.vaultA, '.holi/settings/plugins.yaml'), 'utf8')
@@ -248,21 +305,37 @@ describe('community refresh-skills through the generated CLI and live bridge', (
       expect(await readFile(join(f.vaultA, '.holi/plugins/demo/manifest.json'), 'utf8')).toBe(aPin)
       expect(await readFile(join(f.vaultB, '.holi/plugins/demo/manifest.json'), 'utf8')).toBe(bPin)
       expect(await readFile(join(f.vaultA, '.holi/settings/plugins.yaml'), 'utf8')).toBe(settingsA)
+      const aSkillBeforeB = await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')
+      const addressedB = await command(
+        ['community', 'refresh-skills', 'demo', '--force', '--vault=owner/vault-b'],
+        f.vaultA,
+      )
+      expect(addressedB.code).toBe(0)
+      expect(await readFile(join(f.vaultB, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
+        'pinned skill\n',
+      )
+      expect(await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
+        aSkillBeforeB,
+      )
+      const after = await captureFacts(f)
+      expect(after.vaultA.pin).toBe(before.vaultA.pin)
+      expect(after.vaultA.settings).toBe(before.vaultA.settings)
+      expect(after.vaultA.consent).toBe(before.vaultA.consent)
+      expect(after.vaultA.apps).toBe(before.vaultA.apps)
+      expect(after.vaultA.gitignore).toBe(before.vaultA.gitignore)
+      expect(after.vaultA.commandLinks).toBe(before.vaultA.commandLinks)
+      expect(after.vaultA.otherSkills).toBe(before.vaultA.otherSkills)
+      expect(after.vaultB.pin).toBe(before.vaultB.pin)
+      expect(after.vaultB.settings).toBe(before.vaultB.settings)
+      expect(after.vaultB.consent).toBe(before.vaultB.consent)
+      expect(after.vaultB.apps).toBe(before.vaultB.apps)
+      expect(after.vaultB.gitignore).toBe(before.vaultB.gitignore)
+      expect(after.vaultB.commandLinks).toBe(before.vaultB.commandLinks)
+      expect(after.vaultB.otherSkills).toBe(before.vaultB.otherSkills)
       evidence.push({
-        facts: {
-          vaultA: {
-            skill: await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8'),
-            pinUnchanged:
-              (await readFile(join(f.vaultA, '.holi/plugins/demo/manifest.json'), 'utf8')) === aPin,
-            settingsUnchanged:
-              (await readFile(join(f.vaultA, '.holi/settings/plugins.yaml'), 'utf8')) === settingsA,
-          },
-          vaultB: {
-            skill: await readFile(join(f.vaultB, '.claude/skills/demo/SKILL.md'), 'utf8'),
-            pinUnchanged:
-              (await readFile(join(f.vaultB, '.holi/plugins/demo/manifest.json'), 'utf8')) === bPin,
-          },
-        },
+        fixture:
+          'generated CLI + live bridge + real capability host/registry; synthetic core services',
+        facts: { before, after },
       })
     } finally {
       await f.close()
