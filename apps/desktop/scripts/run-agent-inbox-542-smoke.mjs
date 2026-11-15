@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,15 +13,10 @@ const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? '/tmp/holi-542-evidence')
 const root = await mkdtemp(join(tmpdir(), 'holi-542-smoke-'))
 await mkdir(evidence, { recursive: true })
-for (const name of [
-  'result.json',
-  'failure.txt',
-  'electron-smoke.log',
-  'terminal-light.png',
-  'terminal-dark.png',
-  'interaction.mp4',
-])
-  await rm(join(evidence, name), { force: true })
+for (const name of await readdir(evidence)) {
+  if (/\.(png|jpg|mp4|json|txt|log)$/.test(name) || name === 'frames')
+    await rm(join(evidence, name), { recursive: true, force: true })
+}
 let child
 let closed
 let log = ''
@@ -61,11 +56,17 @@ try {
   })
   await writeFile(
     join(root, 'renderer.html'),
-    '<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; script-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src data:; font-src &#39;self&#39;; connect-src &#39;none&#39;"><title>Holi #542 inbox smoke</title><link rel="stylesheet" href="renderer/renderer.css"></head><body><div id="root"></div><script type="module" src="renderer/renderer.js"></script></body></html>',
+    '<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; script-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src data:; font-src &#39;self&#39;; connect-src &#39;none&#39;"><style>html,body,#root{height:100%;margin:0}body{font-family:system-ui,sans-serif}[hidden]{display:none!important}</style><title>Holi #542 inbox smoke</title><link rel="stylesheet" href="renderer/renderer.css"></head><body><div id="root"></div><script type="module" src="renderer/renderer.js"></script></body></html>',
   )
   await writeFile(
     join(root, 'preload.cjs'),
-    `const {contextBridge,ipcRenderer}=require('electron'); const on=(c,fn)=>{const h=(_e,p)=>fn(p);ipcRenderer.on(c,h);return()=>ipcRenderer.removeListener(c,h)}; contextBridge.exposeInMainWorld('agent542',{onCommand:(fn)=>on('vault:navigate',fn),onInbox:(fn)=>on('smoke-inbox',fn),request:(a,p)=>ipcRenderer.invoke('542-smoke',a,p),capture:(n)=>ipcRenderer.invoke('542-smoke','capture',n),clickBanner:(t)=>ipcRenderer.invoke('542-smoke','banner-callback',t),setTheme:(t)=>{document.documentElement.setAttribute('data-theme',t)},pushPty:(id,data)=>ipcRenderer.send('542-smoke-pty',{id,data})});`,
+    `const {contextBridge,ipcRenderer}=require('electron');
+const on=(channel,cb)=>{const handler=(_event,payload)=>cb(payload);ipcRenderer.on(channel,handler);return()=>ipcRenderer.removeListener(channel,handler)};
+contextBridge.exposeInMainWorld('agent542',{
+  onCommand:cb=>on('vault:navigate',cb),
+  onEvent:cb=>on('smoke-event',cb),
+  request:(action,payload)=>ipcRenderer.invoke('542-smoke',action,payload)
+});`,
   )
   await writeFile(
     join(root, 'package.json'),
@@ -81,7 +82,7 @@ try {
       .join(delimiter),
   }
   delete env.ELECTRON_RUN_AS_NODE
-  child = spawn(electron, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  child = spawn(electron, [root], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.on('data', (chunk) => {
     log += chunk
     process.stdout.write(chunk)
@@ -108,49 +109,56 @@ try {
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   assert.equal(result.electron.split('.')[0], '43')
-  assert(result.checks.length >= 4)
+  assert.equal(result.checks.length, 18)
   for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)
   assert.deepEqual(result.networkDenied, [])
   assert.deepEqual(result.rendererErrors, [])
+  const frames = JSON.parse(await readFile(join(evidence, 'screencast.json'), 'utf8'))
+  assert.equal(frames.length, result.frameCount)
+  assert(frames.length > 10)
+  const manifest = frames
+    .map((frame, i) => {
+      const duration =
+        i + 1 < frames.length ? Math.max(0.001, frames[i + 1].timestamp - frame.timestamp) : 0.5
+      return `file '${frame.file}'\nduration ${duration}`
+    })
+    .join('\n')
+  await writeFile(join(evidence, 'screencast.txt'), manifest + `\nfile '${frames.at(-1).file}'\n`)
   const video = join(evidence, 'interaction.mp4')
   const ffmpeg = spawnSync(
     'ffmpeg',
     [
       '-y',
-      '-loop',
-      '1',
-      '-t',
-      '1',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
       '-i',
-      join(evidence, 'inbox-light.png'),
-      '-loop',
-      '1',
-      '-t',
-      '1',
-      '-i',
-      join(evidence, 'inbox-dark.png'),
-      '-loop',
-      '1',
-      '-t',
-      '1',
-      '-i',
-      join(evidence, 'inbox-session-opened.png'),
-      '-filter_complex',
-      '[0:v][1:v][2:v]concat=n=3:v=1:a=0,format=yuv420p',
+      join(evidence, 'screencast.txt'),
+      '-vf',
+      'pad=ceil(iw/2)*2:ceil(ih/2)*2',
+      '-fps_mode',
+      'vfr',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
       '-movflags',
       '+faststart',
       video,
     ],
     { encoding: 'utf8' },
   )
-  if (ffmpeg.status === 0) {
-    result.video = video
-    result.videoMode = 'three captured UI states, encoded as a short review montage'
-  } else result.video = null
+  await writeFile(join(evidence, 'ffmpeg.log'), ffmpeg.stderr ?? '')
+  assert.equal(ffmpeg.status, 0, 'ffmpeg must encode the actual screencast')
+  assert((await stat(video)).size > 0)
+  result.video = video
+  result.videoMode =
+    'actual Page.startScreencast frames; variable durations from Chromium timestamps, not a montage'
   await writeFile(join(evidence, 'result.json'), JSON.stringify(result, null, 2))
 } finally {
   if (child && child.exitCode === null) {
-    child.kill('SIGTERM')
+    process.kill(-child.pid, 'SIGTERM')
     const exited = await Promise.race([
       closed.then(
         () => true,
@@ -159,13 +167,50 @@ try {
       new Promise((resolve) => setTimeout(() => resolve(false), 5000)),
     ])
     if (!exited) {
-      child.kill('SIGKILL')
+      process.kill(-child.pid, 'SIGKILL')
       await closed.catch(() => {})
     }
   }
   try {
     await writeFile(join(evidence, 'electron-smoke.log'), log)
   } finally {
+    if (child?.pid) {
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error
+      }
+    }
     await rm(root, { recursive: true, force: true })
+    const remains = await stat(root).then(
+      () => true,
+      () => false,
+    )
+    let processGroupAlive = false
+    if (child?.pid) {
+      try {
+        process.kill(-child.pid, 0)
+        processGroupAlive = true
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error
+      }
+    }
+    await writeFile(
+      join(evidence, 'cleanup.json'),
+      JSON.stringify(
+        {
+          root,
+          removed: !remains,
+          electronPid: child?.pid,
+          processGroupAlive,
+          retainedEvidence: evidence,
+          providerProcessesStarted: 0,
+        },
+        null,
+        2,
+      ),
+    )
+    assert.equal(remains, false)
+    assert.equal(processGroupAlive, false)
   }
 }
