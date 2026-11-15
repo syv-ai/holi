@@ -773,7 +773,7 @@ describe('execProgram', () => {
       const dir = await mkdtemp(join(tmpdir(), 'holi-exec-error-'))
       const pidFile = join(dir, 'pid')
       const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.send('ready');setInterval(()=>0,1000)`
-      // Trigger overflow only after the descendant exists and has recorded its pid.
+      // Signal readiness only after the descendant exists and has recorded its pid.
       const script = `const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','ignore','ignore','ipc'],windowsHide:true,detached:true});c.once('message',()=>{${failureKind === 'maxBuffer' ? "process.stdout.write('x'.repeat(100000));" : "process.stdout.write('descendant-ready');"}});setInterval(()=>0,1000)`
       const { execProgram } = await import('../src/main/launch')
       let child: ReturnType<typeof execProgram> | undefined
@@ -805,6 +805,7 @@ describe('execProgram', () => {
         })
         if (failureKind === 'stdin error') {
           await descendantReady
+          expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(1)
           child!.stdin!.emit(
             'error',
             Object.assign(new Error('test input failure'), { code: 'EPIPE' }),
