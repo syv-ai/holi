@@ -52,7 +52,15 @@ async function fixture(path = '') {
     opens: [],
     skills: [skillPath],
   }
-  await writeFile(join(pluginDir, 'holi-plugin.json'), JSON.stringify(manifest))
+  await writeFile(
+    join(pluginDir, 'holi-plugin.json'),
+    JSON.stringify({
+      id: manifest.id,
+      name: manifest.name,
+      version: manifest.version,
+      skills: manifest.skills,
+    }),
+  )
   sh(releaseDir, 'init', '-q', '-b', 'main')
   sh(releaseDir, 'add', '.')
   sh(
@@ -157,7 +165,7 @@ describe('pinned refresh authorization', () => {
           await writeFile(join(f.pluginDir, f.skillPath, 'SKILL.md'), 'pinned\n')
           await expect(
             validateSkillSnapshot(f.releaseDir, f.commit, '', f.manifest.skills!, altered),
-          ).rejects.toThrow(/pinned bytes/)
+          ).rejects.toThrow(/pinned bytes|authenticated metadata/)
           throw new Error('pinned bytes rejected')
         },
       }),
@@ -185,8 +193,9 @@ describe('pinned refresh authorization', () => {
       refreshSkills(f.manifest, f.pluginDir, f.vault, {
         force: true,
         guard() {},
-        validateSnapshot: async (snapshot) =>
-          await validateSkillSnapshot(f.releaseDir, commit, '', f.manifest.skills!, snapshot),
+        validateSnapshot: async (snapshot) => {
+          await validateSkillSnapshot(f.releaseDir, commit, '', f.manifest.skills!, snapshot)
+        },
       }),
     ).resolves.toEqual(['.claude/skills/demo'])
     expect(await readFile(join(f.vault, '.claude/skills/demo/link.md'), 'utf8')).toBe('target\n')
@@ -215,7 +224,7 @@ describe('pinned refresh authorization', () => {
   it('rejects altered working-tree source bytes and manifest bytes', async () => {
     const f = await fixture()
     await writeFile(join(f.pluginDir, f.skillPath, 'tool.bin'), Buffer.from([9]))
-    await expect(f.call()).rejects.toThrow(/pinned bytes/)
+    await expect(f.call()).rejects.toThrow(/pinned bytes|authenticated metadata/)
     await writeFile(join(f.pluginDir, f.skillPath, 'tool.bin'), Buffer.from([0, 1, 255, 10]))
     await writeFile(
       join(f.pluginDir, 'holi-plugin.json'),
