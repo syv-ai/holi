@@ -89,6 +89,30 @@ test('reports actual browser Vim mode and configures the active page from the ma
   expect(store.get(vimModesAtom).t1?.mode).toBe('normal')
 })
 
+test('a fresh attachment reconfigures Vim even when document and preference stay the same', async () => {
+  const { store } = show([page()])
+  store.set(vimCodeEditingAtom, true)
+  const mode = {
+    nonce: 'same-document',
+    attachment: 'first-attachment',
+    revision: 1,
+    mode: 'insert' as const,
+  }
+  act(() => store.set(vimModesAtom, { t1: mode }))
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+  act(() =>
+    store.set(vimModesAtom, {
+      t1: { ...mode, attachment: 'second-attachment' },
+    }),
+  )
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(2))
+  expect(
+    send.mock.calls.map(
+      ([, message]) => (message as { payload: { attachment: string } }).payload.attachment,
+    ),
+  ).toEqual(['first-attachment', 'second-attachment'])
+})
+
 test('a page not open yet shows its skeleton', () => {
   show([])
   expect(screen.getByLabelText('Opening the page')).toBeInTheDocument()

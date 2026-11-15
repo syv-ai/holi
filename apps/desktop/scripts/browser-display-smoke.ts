@@ -258,18 +258,32 @@ async function run(): Promise<void> {
         | undefined,
     'production browser vim mode snapshot',
   )
-  for (const listener of [...listeners])
-    listener({
-      remote: 'A',
-      name: 'vim-config',
-      payload: {
-        id: 'same',
-        enabled: true,
-        revision: 1,
-        nonce: vimSnapshot.nonce,
-        attachment: vimSnapshot.attachment,
-      },
-    })
+  const configureVim = (snapshot: typeof vimSnapshot, enabled: boolean, revision: number) => {
+    for (const listener of [...listeners])
+      listener({
+        remote: 'A',
+        name: 'vim-config',
+        payload: {
+          id: 'same',
+          enabled,
+          revision,
+          nonce: snapshot.nonce,
+          attachment: snapshot.attachment,
+        },
+      })
+  }
+  configureVim(vimSnapshot, true, 1)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  configureVim(vimSnapshot, false, 3)
+  configureVim(vimSnapshot, true, 2)
+  await nativePress(a, 'Escape')
+  const staleConfigMode = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    return (event?.payload as { mode?: string } | undefined)?.mode === 'insert' ? event : undefined
+  }, 'stale config leaves browser Vim disabled')
+  assert.equal((staleConfigMode.payload as { mode: string }).mode, 'insert')
+  mark('stale-vim-disable-request-rejected')
+  configureVim(vimSnapshot, true, 4)
   await inPage(a, `document.querySelector('#text').focus()`)
   await waitFor(
     () => sent.findLast((event) => event.remote === 'A' && event.name === 'vim-mode'),
@@ -281,10 +295,39 @@ async function run(): Promise<void> {
     return (event?.payload as { mode?: string } | undefined)?.mode === 'normal' ? event : undefined
   }, 'normal mode after native Escape')
   assert.equal((normalMode.payload as { mode: string }).mode, 'normal')
+  await inPage(
+    a,
+    `document.querySelector('#search').value = 'kept'; document.querySelector('#search').focus()`,
+  )
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'Escape')
+  assert.equal(await inPage<string>(a, `document.querySelector('#search').value`), 'kept')
+  mark('native-normal-escape-preserves-search-value')
+  await inPage(
+    a,
+    `document.querySelector('#lines').value = '\\n  café🙂'; document.querySelector('#lines').focus()`,
+  )
+  await nativePress(a, 'Escape')
+  await inPage(a, `document.querySelector('#lines').setSelectionRange(1, 1)`)
+  await nativePress(a, 'k')
+  assert.equal(await inPage<number>(a, `document.querySelector('#lines').selectionStart`), 0)
+  await nativePress(a, '0')
+  assert.equal(await inPage<number>(a, `document.querySelector('#lines').selectionStart`), 0)
+  mark('native-leading-newline-line-start')
+  await inPage(
+    a,
+    `document.querySelector('#text').setSelectionRange(0, 0); document.querySelector('#text').focus()`,
+  )
+  await nativePress(a, 'Escape')
   await inPage(a, `document.querySelector('#text').setSelectionRange(0, 0)`)
   const beforeNormalText = await inPage<string>(a, `document.querySelector('#text').value`)
   await nativePress(a, 'w')
   assert.equal(await inPage<number>(a, `document.querySelector('#text').selectionStart`), 4)
+  await nativePress(a, 'e')
+  assert.equal(await inPage<number>(a, `document.querySelector('#text').selectionStart`), 6)
+  await nativePress(a, 'e')
+  assert.equal(await inPage<number>(a, `document.querySelector('#text').selectionStart`), 12)
+  await inPage(a, `document.querySelector('#text').setSelectionRange(4, 4)`)
   await nativePress(a, 'x')
   assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), beforeNormalText)
   await nativePress(a, 'i')
@@ -306,6 +349,22 @@ async function run(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 30))
   assert.equal(await inPage<string>(a, `document.querySelector('#text').value`), 'one Xtwo three')
   mark('native-browser-vim-mode-navigation-insertion-undo-redo')
+  place('A', null)
+  place('A', rect)
+  const reattachedVim = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    const snapshot = event?.payload as typeof vimSnapshot | undefined
+    return snapshot && snapshot.attachment !== vimSnapshot.attachment ? snapshot : undefined
+  }, 'fresh attachment Vim snapshot')
+  configureVim(reattachedVim, true, 1)
+  await inPage(a, `document.querySelector('#text').focus()`)
+  await nativePress(a, 'Escape')
+  const reattachedMode = await waitFor(() => {
+    const event = sent.findLast((entry) => entry.remote === 'A' && entry.name === 'vim-mode')
+    return (event?.payload as { mode?: string } | undefined)?.mode === 'normal' ? event : undefined
+  }, 'Vim rearmed after fresh attachment')
+  assert.equal((reattachedMode.payload as { mode: string }).mode, 'normal')
+  mark('vim-rearms-after-native-reattachment')
   nativeKey(a, 'l')
   await tick()
   assert(

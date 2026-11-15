@@ -100,6 +100,10 @@ try {
     'departure-detaches-synchronously',
     'displayed-page-attached-with-loaded-content',
     'native-browser-vim-mode-navigation-insertion-undo-redo',
+    'native-normal-escape-preserves-search-value',
+    'native-leading-newline-line-start',
+    'stale-vim-disable-request-rejected',
+    'vim-rearms-after-native-reattachment',
     'hidden-authorized-page-read-type-and-press-work',
     'duplicate-page-ids-have-distinct-native-views',
     'return-requires-fresh-owner-placement',
@@ -111,7 +115,7 @@ try {
     'pending-reconcile-stop-all-detaches-to-null',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
-  assert(result.checks.length >= 18, 'native smoke produced too few assertions')
+  assert(result.checks.length >= 22, 'native smoke produced too few assertions')
   assert(
     typeof result.electron === 'string' && result.electron.length > 0,
     'missing Electron version',

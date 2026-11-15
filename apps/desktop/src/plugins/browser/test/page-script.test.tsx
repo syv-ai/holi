@@ -147,7 +147,8 @@ test('moves by grapheme, Unicode word, and logical textarea line without editing
   key('w')
   expect(textarea.selectionStart).toBe(9)
   key('e')
-  expect(textarea.selectionStart).toBe(9)
+  expect(textarea.selectionStart).toBe(16)
+  textarea.setSelectionRange(9, 9)
   key('j')
   expect(textarea.selectionStart).toBe(17)
   key('k')
@@ -156,6 +157,84 @@ test('moves by grapheme, Unicode word, and logical textarea line without editing
   expect(textarea.selectionStart).toBe(2)
   expect(holi().vim.mode().mode).toBe('insert')
   expect(textarea.value).toBe('  café🙂 x\nlonger')
+})
+
+test('e advances strictly beyond the caret across Unicode word ends', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = 'cafe\u0301🙂, déjà vu!'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 11, nonce)).toBe(true)
+  const key = () =>
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    )
+  key()
+  textarea.setSelectionRange(0, 0)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(3)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(12)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(15)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(15)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(15)
+})
+
+test('line motions include the empty first line before a leading newline', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = '\n  café\n🙂'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 12, nonce)).toBe(true)
+  const key = (value: string) =>
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+    )
+  key('Escape')
+  textarea.setSelectionRange(1, 1)
+  key('k')
+  expect(textarea.selectionStart).toBe(0)
+  key('0')
+  expect(textarea.selectionStart).toBe(0)
+  key('^')
+  expect(textarea.selectionStart).toBe(0)
+  key('I')
+  expect(textarea.selectionStart).toBe(0)
+  expect(textarea.value).toBe('\n  café\n🙂')
+})
+
+test('normal Escape is consumed so native search inputs do not clear', () => {
+  const search = document.createElement('input')
+  search.type = 'search'
+  search.value = 'query'
+  document.body.append(search)
+  search.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 13, nonce)).toBe(true)
+  const press = () => {
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    search.dispatchEvent(event)
+    return event
+  }
+  expect(press().defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('normal')
+  expect(press().defaultPrevented).toBe(true)
+  expect(search.value).toBe('query')
 })
 
 test('blur, replacement focus, IME and modified shortcuts keep native ownership', () => {

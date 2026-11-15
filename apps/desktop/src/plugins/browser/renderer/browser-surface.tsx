@@ -200,7 +200,7 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
   useEffect(() => {
     if (remote === null || id === undefined || vimMode === undefined) return
     const enabled = vimEnabled && visible && vimPageReady
-    const key = `${vimMode.nonce}:${enabled}`
+    const key = `${remote}:${id}:${vimMode.nonce}:${vimMode.attachment}:${enabled}`
     if (configuredVim.current === key) return
     configuredVim.current = key
     window.holi.plugin.send(BROWSER, {

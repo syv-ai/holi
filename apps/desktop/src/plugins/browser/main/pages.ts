@@ -99,6 +99,8 @@ interface Tab {
   vimNonce: string | null
   vimGeneration: number
   vimRevision: number
+  vimRequestOwner: string | null
+  vimRequestRevision: number
   vimModeSequence: number
   vimPoll: ReturnType<typeof setInterval> | null
   vimLastSnapshot: string | null
@@ -342,6 +344,13 @@ export function createPages(deps: PagesDeps): Pages & {
       requestRevision < 1
     )
       return
+    const owner = `${nonce}:${attachment}`
+    if (tab.vimRequestOwner !== owner) {
+      tab.vimRequestOwner = owner
+      tab.vimRequestRevision = 0
+    }
+    if (requestRevision <= tab.vimRequestRevision) return
+    tab.vimRequestRevision = requestRevision
     const generation = tab.vimGeneration
     const revision = ++tab.vimRevision
     try {
@@ -618,6 +627,8 @@ export function createPages(deps: PagesDeps): Pages & {
       vimNonce: null,
       vimGeneration: 0,
       vimRevision: 0,
+      vimRequestOwner: null,
+      vimRequestRevision: 0,
       vimModeSequence: 0,
       vimPoll: null,
       vimLastSnapshot: null,
