@@ -20,7 +20,12 @@ import {
   sessionTitled,
   type AgentTarget,
 } from './sessions'
-import { activeRemoteAtom, appModeAtom, openSurfaceAtom } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  appModeAtom,
+  openSurfaceAtom,
+} from '@/plugin-api'
 import { newSessionProviderAtom } from './providers'
 import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
 
@@ -109,7 +114,20 @@ export const openConversationTerminalAtom = atom(
  * session has only a generic title, so it can land in a second window; two
  * windows on one session only mirror each other, never wrong, just more.
  */
+const openSessionRequestAtom = atom(0)
+
 export const openSessionAtom = atom(null, async (get, set, id: string): Promise<AgentResult> => {
+  // A later open owns the landing, even when it reuses a terminal immediately.
+  // The active-vault revision also catches A→B→A while an attach is pending.
+  const request = get(openSessionRequestAtom) + 1
+  set(openSessionRequestAtom, request)
+  const remote = get(activeRemoteAtom)
+  const vaultRevision = get(activeRemoteRevisionValueAtom)
+  const isCurrent = () =>
+    get(openSessionRequestAtom) === request &&
+    get(activeRemoteAtom) === remote &&
+    get(activeRemoteRevisionValueAtom) === vaultRevision
+
   const terminals = get(agentTerminalsAtom)
   const sessions = get(agentSessionsAtom)
   const existing =
@@ -119,9 +137,15 @@ export const openSessionAtom = atom(null, async (get, set, id: string): Promise<
     landSession(get, set, id, existing.id)
     return { ok: true }
   }
-  const res = await inVault(get, (remote) =>
-    agentCap.open(remote, { attach: id, ...geometry(get) }),
-  )
+  if (remote === null) return NO_VAULT
+  let res: Awaited<ReturnType<typeof agentCap.open>>
+  try {
+    res = await agentCap.open(remote, { attach: id, ...geometry(get) })
+  } catch (error) {
+    if (!isCurrent()) return { ok: true }
+    throw error
+  }
+  if (!isCurrent()) return { ok: true }
   if (!res.ok) return res
   landSession(get, set, id, res.terminalId)
   return { ok: true }
