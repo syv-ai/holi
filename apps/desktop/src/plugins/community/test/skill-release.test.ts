@@ -1,10 +1,11 @@
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { deflateSync, inflateSync } from 'node:zlib'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SkillSnapshot } from '../main/skill-transaction'
-import { validateSkillSnapshot } from '../main/skill-release'
+import { assertManifestPinned, gitModeMatches, validateSkillSnapshot } from '../main/skill-release'
 import { refreshSkills } from '../main/skills'
 
 const roots: string[] = []
@@ -95,7 +96,7 @@ describe('pinned skill release verification', () => {
       const files = await snapshot(f)
       await expect(
         validateSkillSnapshot(f.release, pin, path, f.skills, files),
-      ).resolves.toBeUndefined()
+      ).resolves.toBeDefined()
       expect(files[0]!.files.map(({ path: name }) => name)).toContain(
         'linked-dir/nested/file-link.bin',
       )
@@ -126,7 +127,7 @@ describe('pinned skill release verification', () => {
     await writeFile(join(f.skill, 'working-tree-only.txt'), 'not in pin')
     await expect(
       validateSkillSnapshot(f.release, original, '', f.skills, files),
-    ).resolves.toBeUndefined()
+    ).resolves.toBeDefined()
     await expect(
       validateSkillSnapshot(f.release, original, '', f.skills, [
         {
@@ -159,5 +160,101 @@ describe('pinned skill release verification', () => {
     await expect(validateSkillSnapshot(f.release, pin, '', f.skills, files)).rejects.toThrow(
       /SKILL.md/,
     )
+  })
+
+  it('rejects a missing promisor blob without executing an ext transport helper', async () => {
+    const f = await fixture()
+    const marker = join(f.release, 'helper-ran')
+    const blob = git(f.release, 'rev-parse', `${f.commit}:skills/demo/SKILL.md`)
+    const object = join(f.release, '.git/objects', blob.slice(0, 2), blob.slice(2))
+    await rm(object)
+    git(f.release, 'config', 'extensions.partialClone', 'origin')
+    git(f.release, 'config', 'remote.origin.promisor', 'true')
+    git(f.release, 'config', 'remote.origin.partialCloneFilter', 'blob:none')
+    git(f.release, 'config', 'remote.origin.url', `ext::touch ${marker}`)
+    git(f.release, 'config', 'protocol.ext.allow', 'always')
+    const started = Date.now()
+    const sourceSnapshot = await snapshot(f)
+    await expect(
+      validateSkillSnapshot(f.release, f.commit, '', f.skills, sourceSnapshot),
+    ).rejects.toThrow()
+    expect(Date.now() - started).toBeLessThan(4_000)
+    await expect(readFile(marker)).rejects.toThrow()
+  })
+
+  it('authenticates commit and every raw tree object before trusting paths', async () => {
+    const f = await fixture()
+    const commitObject = join(f.release, '.git/objects', f.commit.slice(0, 2), f.commit.slice(2))
+    const packedCommit = inflateSync(await readFile(commitObject))
+    await chmod(commitObject, 0o644)
+    const commitBody = packedCommit.subarray(packedCommit.indexOf(0) + 1)
+    const changedCommit = Buffer.from(commitBody.toString().replace('release', 'tamper!'))
+    await writeFile(
+      commitObject,
+      deflateSync(Buffer.concat([Buffer.from(`commit ${changedCommit.length}\0`), changedCommit])),
+    )
+    await expect(validateSkillSnapshot(f.release, f.commit, '', f.skills, [])).rejects.toThrow(
+      /commit/,
+    )
+  })
+
+  it('rejects loose tree tampering under the original object name', async () => {
+    const f = await fixture()
+    const treeOid = git(f.release, 'rev-parse', `${f.commit}:skills/demo`)
+    const treeObject = join(f.release, '.git/objects', treeOid.slice(0, 2), treeOid.slice(2))
+    await chmod(treeObject, 0o644)
+    const packedTree = inflateSync(await readFile(treeObject))
+    const treeBody = packedTree.subarray(packedTree.indexOf(0) + 1)
+    const altered = Buffer.from(treeBody)
+    const blob = git(f.release, 'rev-parse', `${f.commit}:skills/demo/SKILL.md`)
+    const oidBytes = Buffer.from(blob, 'hex')
+    const index = altered.indexOf(oidBytes)
+    expect(index).toBeGreaterThanOrEqual(0)
+    altered[index] = altered[index]! ^ 1
+    await writeFile(
+      treeObject,
+      deflateSync(Buffer.concat([Buffer.from(`tree ${altered.length}\0`), altered])),
+    )
+    await expect(validateSkillSnapshot(f.release, f.commit, '', f.skills, [])).rejects.toThrow(
+      /tree/,
+    )
+  })
+
+  it('accepts equivalent normalized manifests and rejects meaningful differences', async () => {
+    const f = await fixture()
+    const manifest = {
+      id: 'demo',
+      name: 'Demo',
+      version: '1.0.0',
+      skills: f.skills,
+    }
+    await writeFile(join(f.plugin, 'holi-plugin.json'), JSON.stringify(manifest))
+    const pin = await commit(f)
+    const parsed = { skills: f.skills, version: '1.0.0', name: 'Demo', id: 'demo', opens: [] }
+    await expect(assertManifestPinned(f.release, pin, '', parsed)).resolves.toBeUndefined()
+    await expect(
+      assertManifestPinned(f.release, pin, '', { ...parsed, name: 'Other' }),
+    ).rejects.toThrow(/manifest/)
+  })
+
+  it('accepts private read/write modes while enforcing Git executable intent', async () => {
+    const f = await fixture()
+    await writeFile(join(f.skill, 'run.sh'), '#!/bin/sh\ntrue\n')
+    await chmod(join(f.skill, 'binary.bin'), 0o600)
+    await chmod(join(f.skill, 'run.sh'), 0o700)
+    const pin = await commit(f)
+    const files = await snapshot(f)
+    expect(files[0]!.files.find((file) => file.path === 'binary.bin')!.mode & 0o777).toBe(0o600)
+    expect(files[0]!.files.find((file) => file.path === 'run.sh')!.mode & 0o111).not.toBe(0)
+    await expect(validateSkillSnapshot(f.release, pin, '', f.skills, files)).resolves.toBeDefined()
+  })
+
+  it('compares executable intent rather than private permission bits', () => {
+    expect(gitModeMatches('100644', 0o600, 'linux')).toBe(true)
+    expect(gitModeMatches('100755', 0o700, 'linux')).toBe(true)
+    expect(gitModeMatches('100644', 0o755, 'linux')).toBe(false)
+    expect(gitModeMatches('100755', 0o666, 'win32')).toBe(true)
+    expect(gitModeMatches('100644', 0o777, 'win32')).toBe(true)
+    expect(gitModeMatches('120000', 0o777, 'win32')).toBe(false)
   })
 })

@@ -36,7 +36,6 @@ import {
   stringParam,
   toolPath,
   writeAtomic,
-  runGit,
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { Checks, CheckResult } from './checks'
@@ -53,8 +52,11 @@ import {
 import { searchPlugins } from './search'
 import { refreshSkills, seedApps, writeSkills } from './skills'
 import {
+  assertCheckoutIdentity,
   assertManifestPinned,
   assertNoCompetingSkillClaims,
+  canonicalJson,
+  readPinnedSkillSnapshots,
   validateSkillSnapshot,
 } from './skill-release'
 import { COMMUNITY_INFO } from '../info'
@@ -696,21 +698,45 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           const codeReal = await realpath(codeDir).catch(() => null)
           if (rootReal !== expectedRoot || codeReal !== codeDir)
             deny(`${id} release paths are not canonical`)
-          const head = await runGit(expectedRoot, ['rev-parse', 'HEAD']).catch(() => '')
-          const origin = await runGit(expectedRoot, ['remote', 'get-url', 'origin']).catch(() => '')
           const manifest = await readManifest(codeDir, source.path).catch(() => null)
+          try {
+            await assertCheckoutIdentity(
+              expectedRoot,
+              source.commit,
+              deps.git.url(source.repo),
+              deps.signal,
+            )
+          } catch {
+            deny(`${id} release checkout does not match its pin`)
+          }
           if (
-            head !== source.commit ||
-            origin !== deps.git.url(source.repo) ||
             manifest === null ||
-            JSON.stringify(manifest) !== JSON.stringify(install.manifest) ||
-            JSON.stringify(manifest) !== JSON.stringify(manifestFromPin(pin))
+            canonicalJson(manifest) !== canonicalJson(install.manifest) ||
+            canonicalJson(manifest) !== canonicalJson(manifestFromPin(pin))
           )
             deny(`${id} release checkout does not match its pin`)
           try {
-            await assertManifestPinned(expectedRoot, source.commit, source.path, manifest)
+            await assertManifestPinned(
+              expectedRoot,
+              source.commit,
+              source.path,
+              manifest,
+              deps.signal,
+            )
           } catch (error) {
             deny(`${id} manifest does not match pinned Git object: ${String(error)}`)
+          }
+          let expectedSnapshots
+          try {
+            expectedSnapshots = await readPinnedSkillSnapshots(
+              expectedRoot,
+              source.commit,
+              source.path,
+              skills,
+              deps.signal,
+            )
+          } catch (error) {
+            deny(`${id} skills do not match pinned Git objects: ${String(error)}`)
           }
           const guard = async () => {
             ensureLive()
@@ -732,11 +758,11 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             )
             if (
               !parsedPin ||
-              JSON.stringify(parsedPin) !== JSON.stringify(pin) ||
+              canonicalJson(parsedPin) !== canonicalJson(pin) ||
               currentInstall === null ||
               currentInstall.source.kind !== 'release' ||
               JSON.stringify(currentInstall.source) !== JSON.stringify(source) ||
-              JSON.stringify(currentInstall.manifest) !== JSON.stringify(install.manifest) ||
+              canonicalJson(currentInstall.manifest) !== canonicalJson(install.manifest) ||
               !consented ||
               currentInstall.setup !== 'ok' ||
               settings.plugins.vault[id] !== true ||
@@ -746,19 +772,22 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
               deny(`${id} authorization changed during refresh`)
             const nowRoot = await realpath(expectedRoot).catch(() => null)
             const nowDir = await realpath(codeDir).catch(() => null)
-            const nowHead = await runGit(expectedRoot, ['rev-parse', 'HEAD']).catch(() => '')
-            const nowOrigin = await runGit(expectedRoot, ['remote', 'get-url', 'origin']).catch(
-              () => '',
-            )
-            if (
-              nowRoot !== expectedRoot ||
-              nowDir !== codeDir ||
-              nowHead !== source.commit ||
-              nowOrigin !== deps.git.url(source.repo)
-            )
+            if (nowRoot !== expectedRoot || nowDir !== codeDir)
               deny(`${id} release provenance changed during refresh`)
+            await assertCheckoutIdentity(
+              expectedRoot,
+              source.commit,
+              deps.git.url(source.repo),
+              deps.signal,
+            ).catch(() => deny(`${id} release provenance changed during refresh`))
             try {
-              await assertManifestPinned(expectedRoot, source.commit, source.path, install.manifest)
+              await assertManifestPinned(
+                expectedRoot,
+                source.commit,
+                source.path,
+                install.manifest,
+                deps.signal,
+              )
             } catch (error) {
               deny(`${id} manifest provenance changed during refresh: ${String(error)}`)
             }
@@ -770,6 +799,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           return refreshSkills(install.manifest, codeDir, ctx.root, {
             force,
             guard,
+            expectedSnapshots,
             validateSnapshot: async (snapshots) => {
               await guard()
               try {
@@ -779,6 +809,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
                   source.path,
                   skills,
                   snapshots,
+                  deps.signal,
                 )
               } catch (error) {
                 deny(`${id} private snapshot does not match pinned Git objects: ${String(error)}`)
