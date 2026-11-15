@@ -34,6 +34,8 @@
         // Vite's disposable Electron smoke entry is selected by a filesystem path.
         "scripts/windows-agent-smoke.ts",
         "scripts/browser-display-smoke.ts",
+        "scripts/code-captions-smoke-main.ts",
+        "scripts/code-captions-smoke-renderer.tsx",
         // The optional toolbar smoke bundles its HTML and loads these by filesystem path.
         "scripts/browser-display-fixture/index.html",
         "scripts/browser-display-fixture/entry.tsx",

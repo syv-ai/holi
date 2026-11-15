@@ -25,6 +25,7 @@ import {
   type BlockTarget,
 } from './rich-text-block-actions'
 import { RICH_TEXT_BASIC_SLASH_ITEMS } from './rich-text-slash-menu'
+import { addCodeCaption, focusCodeCaption, removeCodeCaption } from './document-figure'
 import { RICH_TEXT_TABLE_SLASH_ITEM } from './rich-text-table'
 import { useShortcutLabel } from '@/composites/shortcut-keys'
 import {
@@ -35,6 +36,7 @@ import {
   Trash2Icon,
   CheckIcon,
   HashIcon,
+  CaptionsIcon,
 } from 'lucide-react'
 import { useCopied } from '../use-copied'
 
@@ -55,6 +57,7 @@ const TURN_INTO = RICH_TEXT_BASIC_SLASH_ITEMS.filter((item) => TURN_INTO_IDS.has
 const BLOCK_TITLES = new Map(
   [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM].map((item) => [item.id, item.title]),
 )
+BLOCK_TITLES.set('documentFigure', 'Code with caption')
 
 const LIST_KINDS: Record<string, string> = {
   bulletList: 'bullet-list',
@@ -187,6 +190,26 @@ export function RichTextBlockMenuItems({
     <>
       <DropdownMenuGroup>
         <DropdownMenuLabel>{BLOCK_TITLES.get(menu.kind) ?? 'Block'}</DropdownMenuLabel>
+        {menu.kind === 'code-block' &&
+        String(editor.state.doc.nodeAt(menu.pos)?.attrs.language ?? '').toLowerCase() !==
+          'mermaid' ? (
+          <DropdownMenuItem onClick={() => addCodeCaption(editor, menu.pos)}>
+            <CaptionsIcon aria-hidden="true" />
+            Add caption
+          </DropdownMenuItem>
+        ) : null}
+        {menu.kind === 'documentFigure' ? (
+          <>
+            <DropdownMenuItem onClick={() => focusCodeCaption(editor, menu.pos)}>
+              <CaptionsIcon aria-hidden="true" />
+              Edit caption
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => removeCodeCaption(editor, menu.pos)}>
+              <CaptionsIcon aria-hidden="true" />
+              Remove caption
+            </DropdownMenuItem>
+          </>
+        ) : null}
         {menu.allowed.length ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
