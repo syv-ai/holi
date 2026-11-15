@@ -155,9 +155,9 @@ describe('pinned refresh authorization', () => {
           altered[0]!.files.find((file) => file.path === 'SKILL.md')!.bytes = Buffer.from('altered')
           await writeFile(join(f.pluginDir, f.skillPath, 'SKILL.md'), 'temporary edit')
           await writeFile(join(f.pluginDir, f.skillPath, 'SKILL.md'), 'pinned\n')
-          expect(() =>
+          await expect(
             validateSkillSnapshot(f.releaseDir, f.commit, '', f.manifest.skills!, altered),
-          ).toThrow(/pinned bytes/)
+          ).rejects.toThrow(/pinned bytes/)
           throw new Error('pinned bytes rejected')
         },
       }),
@@ -185,8 +185,8 @@ describe('pinned refresh authorization', () => {
       refreshSkills(f.manifest, f.pluginDir, f.vault, {
         force: true,
         guard() {},
-        validateSnapshot: (snapshot) =>
-          validateSkillSnapshot(f.releaseDir, commit, '', f.manifest.skills!, snapshot),
+        validateSnapshot: async (snapshot) =>
+          await validateSkillSnapshot(f.releaseDir, commit, '', f.manifest.skills!, snapshot),
       }),
     ).resolves.toEqual(['.claude/skills/demo'])
     expect(await readFile(join(f.vault, '.claude/skills/demo/link.md'), 'utf8')).toBe('target\n')
