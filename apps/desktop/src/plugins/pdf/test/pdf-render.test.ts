@@ -1,10 +1,11 @@
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { execFile as execFileCallback } from 'node:child_process'
-import { promisify } from 'node:util'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { init } from '@embedpdf/pdfium'
+import { PdfiumNative } from '@embedpdf/engines/pdfium'
 import { writeMarkdownCaptionEnvelope } from '@holi/shared'
 import { fontPathArgs, renderPdf } from '../main/render'
 import { commentSafeString } from '../main/mermaid'
@@ -16,12 +17,36 @@ import plainTemplateTyp from '../main/vault/once/.holi/document-templates/plain/
 const DOT_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
-const execFile = promisify(execFileCallback)
 const dirs: string[] = []
 async function work(): Promise<string> {
   const d = await mkdtemp(join(tmpdir(), 'holi-render-'))
   dirs.push(d)
   return d
+}
+
+async function readPdfPages(path: string) {
+  const require = createRequire(__filename)
+  const wasmPath = require.resolve('@embedpdf/pdfium/pdfium.wasm')
+  const wasm = await readFile(wasmPath)
+  const wasmBinary = wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength)
+  const module = await init({ wasmBinary })
+  module.PDFiumExt_Init()
+  const pdfium = new PdfiumNative(module)
+  const content = await readFile(path)
+  const bytes = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength)
+  const document = await pdfium
+    .openDocumentBuffer({ id: 'table-caption-test', content: bytes })
+    .toPromise()
+  try {
+    return await Promise.all(
+      document.pages.map(async (page) => ({
+        width: page.size.width,
+        runs: (await pdfium.getPageTextRuns(document, page).toPromise()).runs,
+      })),
+    )
+  } finally {
+    await pdfium.closeDocument(document).toPromise()
+  }
 }
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
@@ -89,14 +114,7 @@ after diagram`
     ])
     expect(await readFile(notePath, 'utf8')).toBe(original)
   })
-  it.each([
-    ['code', 'image', 'mermaid'],
-    ['code', 'mermaid', 'image'],
-    ['image', 'code', 'mermaid'],
-    ['image', 'mermaid', 'code'],
-    ['mermaid', 'code', 'image'],
-    ['mermaid', 'image', 'code'],
-  ])('preserves image, code, and Mermaid captions in %j order', async (...order) => {
+  it('leaves a nested table envelope byte-for-byte and still converts later captions', async () => {
     const root = await work()
     const templateDir = join(root, 'template')
     await mkdir(templateDir)
@@ -107,18 +125,50 @@ after diagram`
       '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
     )
     await chmod(typstBin, 0o755)
-    const envelopes = {
-      code: writeMarkdownCaptionEnvelope('```js\nconst codeValue = 1\n```', 'Code caption'),
-      image: writeMarkdownCaptionEnvelope('![](missing.png)', 'Image caption'),
-      mermaid: writeMarkdownCaptionEnvelope(
-        '```mermaid\nflowchart LR\n A --> B\n```',
-        'Mermaid caption',
-      ),
-    }
-    const original = (order as string[])
-      .map((kind) => envelopes[kind as keyof typeof envelopes])
-      .join('\n\n')
-    const notePath = join(root, 'ordered.md')
+    const nestedInner = writeMarkdownCaptionEnvelope(
+      '| Inner |\n| --- |\n| value |',
+      'Inner caption',
+    )
+    const nested = `<!-- holi:figure -->\n\nouter body\n\n${nestedInner}\n\n<!-- holi:caption -->\n\nouter caption\n\n<!-- /holi:figure -->`
+    const later = writeMarkdownCaptionEnvelope('| Later |\n| --- |\n| value |', 'Later caption')
+    const notePath = join(root, 'nested.md')
+    await writeFile(notePath, `${nested}\n\n${later}`)
+    const outPath = join(root, 'captured.md')
+    await renderPdf({
+      typstBin,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+      diagrams: async () => [],
+    })
+    const transformed = await readFile(outPath, 'utf8')
+    expect(transformed.slice(0, nested.length)).toBe(nested)
+    expect(transformed).toContain('Later caption')
+    expect(transformed.match(/Later caption/g)).toHaveLength(1)
+    expect(await readFile(notePath, 'utf8')).toBe(`${nested}\n\n${later}`)
+  })
+
+  it('keeps mixed table, image, code, and Mermaid captions in source order', async () => {
+    const root = await work()
+    const templateDir = join(root, 'template')
+    await mkdir(templateDir)
+    await writeFile(join(templateDir, 'template.typ'), '')
+    const typstBin = join(root, 'capture-typst')
+    await writeFile(
+      typstBin,
+      '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
+    )
+    await chmod(typstBin, 0o755)
+    const original = [
+      writeMarkdownCaptionEnvelope('| Item |\n| --- |\n| table |', 'Table caption'),
+      writeMarkdownCaptionEnvelope('![](missing.png)', 'Image caption'),
+      writeMarkdownCaptionEnvelope('```js\nconst code = 1\n```', 'Code caption'),
+      writeMarkdownCaptionEnvelope('```mermaid\nflowchart LR\n A --> B\n```', 'Mermaid caption'),
+    ].join('\n\n')
+    const notePath = join(root, 'mixed.md')
     await writeFile(notePath, original)
     const outPath = join(root, 'captured.md')
     const result = await renderPdf({
@@ -130,66 +180,19 @@ after diagram`
       fields: [],
       meta: {},
       diagrams: async () => [
-        {
-          svg: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="30"><text x="2" y="20">Mermaid figure</text></svg>',
-        },
+        { svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>diagram</text></svg>' },
       ],
     })
     const transformed = await readFile(outPath, 'utf8')
-    for (const caption of ['Code caption', 'Image caption', 'Mermaid caption']) {
-      expect(transformed.match(new RegExp(caption, 'g'))).toHaveLength(1)
-    }
-    expect(transformed).toContain('Mermaid figure')
-    expect(transformed).not.toContain('holi-pdf-')
-    expect(transformed).not.toContain('<!-- holi-pdf')
-    const imageStart = original.indexOf(envelopes.image)
-    const imageLine = original.slice(0, imageStart).split('\n').length + 2
+    const captions = ['Table caption', 'Image caption', 'Code caption', 'Mermaid caption']
+    const positions = captions.map((caption) => transformed.indexOf(caption))
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
+    expect(transformed).toContain('const code = 1')
+    expect(transformed).toContain('diagram')
+    expect(transformed).not.toMatch(/<!--\s*holi-pdf-[a-z0-9]+-(?:image-)?\d+\s*-->/)
     expect(result.warnings).toEqual([
-      `The image on line ${imageLine} is left out: missing.png: no such file in the vault`,
-    ])
-    expect(await readFile(notePath, 'utf8')).toBe(original)
-  })
-
-  it('centers image captions through success, empty-alt fallback, and full-note references', async () => {
-    const root = await work()
-    const templateDir = join(root, 'template')
-    await mkdir(templateDir)
-    await writeFile(join(templateDir, 'template.typ'), '')
-    const typstBin = join(root, 'capture-typst')
-    await writeFile(
-      typstBin,
-      '#!/usr/bin/env node\nconst fs = require("node:fs"); const path = require("node:path"); fs.copyFileSync(path.join(path.dirname(process.argv[3]), "note.md"), process.argv[4]);\n',
-    )
-    await chmod(typstBin, 0o755)
-    const notePath = join(root, 'note.md')
-    await writeFile(join(root, 'image.png'), Buffer.from(DOT_PNG, 'base64'))
-    const missing = writeMarkdownCaptionEnvelope('![](missing.png)', 'empty **caption**')
-    const reference = writeMarkdownCaptionEnvelope(
-      '![Diagram *alt*][photo]',
-      '`#raw-typst malicious`',
-    )
-    const original = `${missing}\n\n${reference}\n\n[photo]: image.png`
-    await writeFile(notePath, original)
-    const outPath = join(root, 'captured.md')
-    const result = await renderPdf({
-      typstBin,
-      vaultRoot: root,
-      templateDir,
-      notePath,
-      outPath,
-      fields: [],
-      meta: {},
-      diagrams: async () => [],
-    })
-    const transformed = await readFile(outPath, 'utf8')
-    expect(transformed.match(/#align\(center\)/g)).toHaveLength(2)
-    expect(transformed.match(/#block\(width: 100%, sticky: true\)/g)).toHaveLength(2)
-    expect(transformed.match(/empty \*\*caption\*\*/g)).toHaveLength(1)
-    expect(transformed.match(/#raw-typst malicious/g)).toHaveLength(1)
-    expect(transformed).toContain('format: "png", alt: "Diagram *alt*"')
-    expect(transformed.indexOf('empty')).toBeLessThan(transformed.indexOf('malicious'))
-    expect(result.warnings).toEqual([
-      'The image on line 3 is left out: missing.png: no such file in the vault',
+      'The image on line 15 is left out: missing.png: no such file in the vault',
     ])
     expect(await readFile(notePath, 'utf8')).toBe(original)
   })
@@ -268,25 +271,203 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
 
-  it.skipIf(!process.env.PDF_PYTHON)(
-    'centers valid-image and empty-alt fallback captions in native PDF coordinates',
-    async () => {
-      const typst = await resolveTypstBin()
-      if (typst === null) return
+  it('renders a breakable native GFM table with one attached caption', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
 
-      const root = await work()
-      const templateDir = join(root, '.holi/document-templates/plain')
-      await mkdir(templateDir, { recursive: true })
-      await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
-      await writeFile(join(root, 'dot.png'), Buffer.from(DOT_PNG, 'base64'))
-      const original = [
-        writeMarkdownCaptionEnvelope('![Dot](dot.png)', 'Valid image caption'),
-        writeMarkdownCaptionEnvelope('![](missing.png)', 'Empty alt fallback caption'),
-      ].join('\n\n')
-      const notePath = join(root, 'coordinates.md')
-      const outPath = join(root, 'coordinates.pdf')
-      await writeFile(notePath, original)
-      const result = await renderPdf({
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(join(templateDir, 'assets'), { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const notePath = join(root, 'table.md')
+    const rows = Array.from(
+      { length: 400 },
+      (_, index) =>
+        `| Row ${String(index + 1).padStart(3, '0')} | ${index === 0 ? '`@@FIG:fake@@ --> #panic("literal")`' : `Value ${index + 1}`} |`,
+    ).join('\n')
+    const original = writeMarkdownCaptionEnvelope(
+      `| Name | Value |\n|:---|---:|\n${rows}`,
+      '**Table caption** with `code` &amp; _formatting_.',
+    )
+    await writeFile(notePath, original)
+    const outPath = join(root, 'table.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
+    expect((await readFile(outPath)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(await readFile(notePath, 'utf8')).toBe(original)
+    const pages = await readPdfPages(outPath)
+    expect(pages.length).toBeGreaterThan(1)
+    const pageText = pages.map(({ runs }) => runs.map((run) => run.text).join(''))
+    const allText = pageText.join('\\n')
+    for (let row = 1; row <= 400; row++) {
+      expect(allText).toContain(`Row ${String(row).padStart(3, '0')}`)
+    }
+    expect(pageText.filter((text) => text.includes('Name')).length).toBeGreaterThan(1)
+    for (const text of pageText.filter((value) => value.includes('Name'))) {
+      expect(text).toMatch(/Row \d{3}/)
+    }
+    expect(allText.match(/Table caption/g)).toHaveLength(1)
+    const finalPage = pages.find(({ runs }) => runs.some((run) => run.text.includes('Row 400')))
+    const captionPage = pages.find(({ runs }) =>
+      runs.some((run) => run.text.includes('Table caption')),
+    )
+    expect(captionPage).toBe(finalPage)
+    const captionRun = captionPage?.runs.find((run) => run.text.includes('Table caption'))
+    const finalRowRun = finalPage?.runs.find((run) => run.text.includes('Value 400'))
+    expect(captionRun).toBeDefined()
+    expect(finalRowRun).toBeDefined()
+    const headerName = pages[0]!.runs.find((run) => run.text.includes('Name'))
+    const headerValue = pages[0]!.runs.find((run) => run.text.includes('Value'))
+    expect(headerName).toBeDefined()
+    expect(headerValue).toBeDefined()
+    const tableCenter =
+      (headerName!.rect.origin.x + headerValue!.rect.origin.x + headerValue!.rect.size.width) / 2
+    expect(
+      Math.abs(captionRun!.rect.origin.x + captionRun!.rect.size.width / 2 - tableCenter),
+    ).toBeLessThan(70)
+    expect(captionRun!.rect.origin.y).toBeGreaterThan(finalRowRun!.rect.origin.y)
+    if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+      await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+      await cp(outPath, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'table-pagination.pdf'))
+      const previewNote = join(root, 'caption-preview.md')
+      const previewPdf = join(root, 'caption-preview.pdf')
+      await writeFile(
+        previewNote,
+        writeMarkdownCaptionEnvelope(
+          '| Name | Value |\n| --- | --- |\n| Alpha | 1 |',
+          'Centered table caption.',
+        ),
+      )
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath: previewNote,
+        outPath: previewPdf,
+        fields: [],
+        meta: {},
+      })
+      await cp(previewPdf, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'table-caption.pdf'))
+    }
+  }, 30_000)
+
+  it('shows a table caption on its own final page before later prose', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const notePath = join(root, 'later-prose.md')
+    const rows = Array.from({ length: 250 }, (_, index) => `| EARLY-${index + 1} | value |`).join(
+      '\n',
+    )
+    const caption = 'Caption before later pages.'
+    await writeFile(
+      notePath,
+      `${writeMarkdownCaptionEnvelope(`| Item | Value |\n| --- | --- |\n${rows}`, caption)}\n\n${Array.from({ length: 140 }, (_, index) => `Later prose paragraph ${index + 1}.`).join('\n\n')}`,
+    )
+    const outPath = join(root, 'later-prose.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
+    const pages = await readPdfPages(outPath)
+    const pageText = pages.map(({ runs }) => runs.map((run) => run.text).join(''))
+    const normalizedText = pageText.map((text) => text.replace(/\s+/g, ' '))
+    if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+      await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+      await cp(
+        outPath,
+        join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'caption-before-later-prose.pdf'),
+      )
+    }
+    expect(normalizedText.join(' ')).toContain('Later prose paragraph 140.')
+    expect(normalizedText.join(' ').match(/Caption before later pages\./g)).toHaveLength(1)
+    const tableEndPage = normalizedText.findIndex((text) => text.includes('EARLY-250'))
+    expect(tableEndPage).toBeGreaterThanOrEqual(0)
+    expect(normalizedText[tableEndPage]).toContain(caption)
+    expect(normalizedText.slice(tableEndPage + 1).join(' ')).toContain('Later prose paragraph')
+  }, 30_000)
+
+  it('keeps a caption on a header-only table', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const notePath = join(root, 'header-only.md')
+    await writeFile(
+      notePath,
+      writeMarkdownCaptionEnvelope('| Header | Value |\n| --- | --- |', 'Header-only caption.'),
+    )
+    const outPath = join(root, 'header-only.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
+    const pages = await readPdfPages(outPath)
+    const normalizedText = pages.map(({ runs }) =>
+      runs
+        .map((run) => run.text)
+        .join('')
+        .replace(/\s+/g, ' '),
+    )
+    expect(normalizedText.join(' ')).toContain('Header-only caption.')
+    expect(normalizedText.filter((text) => text.includes('Header-only caption.'))).toHaveLength(1)
+    const runs = pages.flatMap((page) => page.runs)
+    const header = runs.find((run) => run.text.trim() === 'Header')
+    const value = runs.find((run) => run.text.trim() === 'Value')
+    const captionRuns = runs.filter((run) => /Header-only|caption\./i.test(run.text))
+    expect(header).toBeDefined()
+    expect(value).toBeDefined()
+    expect(captionRuns.length).toBeGreaterThan(0)
+    const tableCenter = (header!.rect.origin.x + value!.rect.origin.x + value!.rect.size.width) / 2
+    const captionLeft = Math.min(...captionRuns.map((run) => run.rect.origin.x))
+    const captionRight = Math.max(
+      ...captionRuns.map((run) => run.rect.origin.x + run.rect.size.width),
+    )
+    expect(Math.abs((captionLeft + captionRight) / 2 - tableCenter)).toBeLessThan(70)
+    expect(Math.min(...captionRuns.map((run) => run.rect.origin.y))).toBeGreaterThan(
+      header!.rect.origin.y,
+    )
+  }, 30_000)
+
+  it('retains wiki images in table-caption fallback and supports text wiki-links', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(join(templateDir, 'assets'), { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    await writeFile(join(root, 'dot.png'), Buffer.from(DOT_PNG, 'base64'))
+
+    const render = async (name: string, markdown: string) => {
+      const notePath = join(root, `${name}.md`)
+      const outPath = join(root, `${name}.pdf`)
+      await writeFile(notePath, markdown)
+      await renderPdf({
         typstBin: typst,
         vaultRoot: root,
         templateDir,
@@ -295,47 +476,317 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
         fields: [],
         meta: {},
       })
-      expect(result.warnings).toHaveLength(1)
-      expect(result.warnings[0]).toMatch(
-        /^The image on line \d+ is left out: missing\.png: no such file in the vault$/,
+      const pdf = await readFile(outPath)
+      expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+      return { pdf, pages: await readPdfPages(outPath), original: await readFile(notePath, 'utf8') }
+    }
+    const imageCount = (pdf: Buffer) =>
+      (pdf.toString('latin1').match(/\/Subtype\s*\/Image\b/g) ?? []).length
+    for (const [name, image] of [
+      ['aliased-wiki-image', '[[dot.png|photo]]'],
+      ['embedded-wiki-image', '![[dot.png|photo]]'],
+    ] as const) {
+      const captionedSource = writeMarkdownCaptionEnvelope(
+        `| Image |\n| --- |\n| ${image} |`,
+        'Image caption.',
       )
-      expect(await readFile(notePath, 'utf8')).toBe(original)
-      if (process.env.PDF_COORDINATE_ARTIFACT_DIR) {
-        await mkdir(process.env.PDF_COORDINATE_ARTIFACT_DIR, { recursive: true })
-        await cp(outPath, join(process.env.PDF_COORDINATE_ARTIFACT_DIR, 'image-caption-layout.pdf'))
-      }
+      const captioned = await render(name, captionedSource)
+      const control = await render(`${name}-control`, `| Image |\n| --- |\n| ${image} |`)
+      expect(imageCount(captioned.pdf)).toBeGreaterThan(0)
+      expect(imageCount(captioned.pdf)).toBe(imageCount(control.pdf))
+      expect(captioned.original).toBe(captionedSource)
+    }
 
-      const { stdout } = await execFile(
-        process.env.PDF_PYTHON!,
-        [
-          '-c',
-          'import fitz, json, sys; d=fitz.open(sys.argv[1]); p=d[0]; spans=[{"text":s["text"],"bbox":s["bbox"]} for b in p.get_text("dict")["blocks"] if "lines" in b for l in b["lines"] for s in l["spans"]]; print(json.dumps({"page": [p.rect.width,p.rect.height], "spans": spans, "images": [i["bbox"] for i in p.get_image_info()]}))',
-          outPath,
-        ],
-        { encoding: 'utf8' },
+    for (const [name, link, visible] of [
+      ['unaliased-text-wiki', '[[notes/plan.md]]', 'plan'],
+      ['aliased-text-wiki', '[[notes/plan.md|Project plan]]', 'Project'],
+    ] as const) {
+      const textWikiSource = writeMarkdownCaptionEnvelope(
+        `| Plan |\n| --- |\n| ${link} |`,
+        'Text wiki-link caption.',
       )
-      const pdf = JSON.parse(stdout) as {
-        page: [number, number]
-        spans: { text: string; bbox: [number, number, number, number] }[]
-        images: [number, number, number, number][]
+      const textWiki = await render(name, textWikiSource)
+      const runs = textWiki.pages.flatMap((page) => page.runs)
+      const linkedText = runs.find((run) => run.text.includes(visible))
+      const caption = runs.find((run) => run.text.includes('Text'))
+      expect(linkedText).toBeDefined()
+      expect(caption).toBeDefined()
+      expect(caption!.rect.origin.y).toBeGreaterThan(linkedText!.rect.origin.y)
+      expect(textWiki.original).toBe(textWikiSource)
+    }
+  }, 30_000)
+
+  it('shows captions for independent tables on their respective final pages', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const notePath = join(root, 'two-tables.md')
+    const table = (prefix: string) => {
+      const rows = Array.from(
+        { length: 220 },
+        (_, index) => `| ${prefix}-${index + 1} | value |`,
+      ).join('\n')
+      return writeMarkdownCaptionEnvelope(
+        `| Item | Value |\n| --- | --- |\n${rows}`,
+        `${prefix} caption.`,
+      )
+    }
+    await writeFile(
+      notePath,
+      `${table('FIRST')}\n\nBridge prose between tables.\n\n${table('SECOND')}`,
+    )
+    const outPath = join(root, 'two-tables.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
+    const pages = await readPdfPages(outPath)
+    const pageText = pages.map(({ runs }) => runs.map((run) => run.text).join(''))
+    const normalizedText = pageText.map((text) => text.replace(/\s+/g, ' '))
+    const allText = normalizedText.join(' ')
+    expect(allText.match(/FIRST caption\./g)).toHaveLength(1)
+    expect(allText.match(/SECOND caption\./g)).toHaveLength(1)
+    const firstEnd = normalizedText.findIndex((text) => text.includes('FIRST-220'))
+    const secondEnd = normalizedText.findIndex((text) => text.includes('SECOND-220'))
+    expect(firstEnd).toBeGreaterThanOrEqual(0)
+    expect(secondEnd).toBeGreaterThan(firstEnd)
+    expect(normalizedText[firstEnd]).toContain('FIRST caption.')
+    expect(normalizedText[secondEnd]).toContain('SECOND caption.')
+    expect(normalizedText.filter((text) => text.includes('FIRST caption.'))).toHaveLength(1)
+    expect(normalizedText.filter((text) => text.includes('SECOND caption.'))).toHaveLength(1)
+    if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+      await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+      await cp(outPath, join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'two-captioned-tables.pdf'))
+    }
+  }, 30_000)
+
+  it('centers every wrapped caption line within a narrow two-column table', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    const notePath = join(root, 'narrow.md')
+    const caption =
+      'A narrow table caption wraps onto several lines; every line must remain centered instead of leaving its final short line against the left edge.'
+    await writeFile(
+      notePath,
+      writeMarkdownCaptionEnvelope('| A | B |\n| --- | --- |\n| x | y |', caption),
+    )
+    const outPath = join(root, 'narrow.pdf')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
+    const pages = await readPdfPages(outPath)
+    if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+      await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+      await cp(
+        outPath,
+        join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'wrapped-caption-centering.pdf'),
+      )
+    }
+    const runs = pages.flatMap((page) => page.runs)
+    const headerA = runs.find((run) => run.text.trim() === 'A')
+    const headerB = runs.find((run) => run.text.trim() === 'B')
+    expect(headerA).toBeDefined()
+    expect(headerB).toBeDefined()
+    const tableCenter =
+      (headerA!.rect.origin.x + headerB!.rect.origin.x + headerB!.rect.size.width) / 2
+    const captionRuns = runs.filter((run) =>
+      /narrow|caption|wraps|onto|several|lines|centered|short|against/.test(run.text),
+    )
+    const lines = new Map<number, typeof captionRuns>()
+    for (const run of captionRuns) {
+      const y = Math.round(run.rect.origin.y)
+      lines.set(y, [...(lines.get(y) ?? []), run])
+    }
+    expect(lines.size).toBeGreaterThan(1)
+    for (const line of lines.values()) {
+      const left = Math.min(...line.map((run) => run.rect.origin.x))
+      const right = Math.max(...line.map((run) => run.rect.origin.x + run.rect.size.width))
+      expect(Math.abs((left + right) / 2 - tableCenter)).toBeLessThan(12)
+    }
+  }, 30_000)
+
+  it.each([31, 32])(
+    'keeps the final table row with its wrapped caption after %i short paragraphs',
+    async (paragraphCount) => {
+      const typst = await resolveTypstBin()
+      if (typst === null) return
+
+      const root = await work()
+      const templateDir = join(root, '.holi/document-templates/plain')
+      await mkdir(templateDir, { recursive: true })
+      await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+      const fillers = Array.from(
+        { length: paragraphCount },
+        (_, index) => `Filler ${index + 1}.`,
+      ).join('\n\n')
+      const notePath = join(root, 'boundary.md')
+      await writeFile(
+        notePath,
+        `${fillers}\n\n${writeMarkdownCaptionEnvelope(
+          '| Item | Value |\n| --- | --- |\n| LAST-ROW | FINAL-VALUE |',
+          'This long ordinary caption wraps across multiple lines and describes the final row of the table in detail for readers.',
+        )}`,
+      )
+      const outPath = join(root, 'boundary.pdf')
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      const pages = await readPdfPages(outPath)
+      if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+        await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+        await cp(
+          outPath,
+          join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, `caption-boundary-${paragraphCount}.pdf`),
+        )
       }
-      const captionBox = (label: string) => {
-        const spans = pdf.spans.filter((span) => span.text.includes(label))
-        expect(spans).toHaveLength(1)
-        return spans[0]!.bbox
-      }
-      expect(pdf.images).toHaveLength(1)
-      const valid = captionBox('Valid image caption')
-      const fallback = captionBox('Empty alt fallback caption')
-      const center = (box: [number, number, number, number]) => (box[0] + box[2]) / 2
-      expect(Math.abs(center(valid) - pdf.page[0] / 2)).toBeLessThan(8)
-      expect(Math.abs(center(fallback) - pdf.page[0] / 2)).toBeLessThan(8)
-      expect(valid[1]).toBeGreaterThan(pdf.images[0]![3])
-      expect(fallback[1]).toBeGreaterThan(valid[3])
-      expect(fallback[3]).toBeLessThan(pdf.page[1])
+      const rowPage = pages.findIndex(({ runs }) =>
+        runs.some((run) => run.text.includes('LAST-ROW')),
+      )
+      const captionPage = pages.findIndex(({ runs }) =>
+        runs.some((run) => run.text.includes('ordinary')),
+      )
+      expect(rowPage).toBeGreaterThanOrEqual(0)
+      expect(captionPage).toBe(rowPage)
+      expect(pages[rowPage]!.runs.some((run) => run.text.includes('Item'))).toBe(true)
+      expect(pages[rowPage]!.runs.some((run) => run.text.includes('FINAL-VALUE'))).toBe(true)
+      expect(pages[rowPage]!.runs.some((run) => run.text.includes('ordinary'))).toBe(true)
+      expect(pages.every(({ runs }) => runs.some((run) => run.text.trim().length > 0))).toBe(true)
     },
-    30_000,
   )
+
+  it('renders table captions through branded and custom scoped templates', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateRoot = join(root, '.holi/document-templates')
+    for (const slug of ['_brand', 'proposal']) {
+      await cp(join(SRC_TEMPLATES, slug), join(templateRoot, slug), { recursive: true })
+    }
+    const notePath = join(root, 'table.md')
+    await writeFile(
+      notePath,
+      writeMarkdownCaptionEnvelope(
+        '| Name | Value |\n|:---|---:|\n| Alpha | 1 |',
+        'Branded caption.',
+      ),
+    )
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir: join(root, '.holi/document-templates/proposal'),
+      notePath,
+      outPath: join(root, 'proposal.pdf'),
+      fields: [],
+      meta: {},
+    })
+    expect((await readFile(join(root, 'proposal.pdf'))).subarray(0, 5).toString('latin1')).toBe(
+      '%PDF-',
+    )
+
+    const custom = join(root, 'custom-template')
+    await mkdir(custom)
+    await writeFile(
+      join(custom, 'template.typ'),
+      '#import "@preview/cmarker:0.1.6"\n#let doc(notePath, meta: (:), assets: "") = cmarker.render(read(notePath), scope: (table: table.with(fill: yellow, inset: 12pt)))\n',
+    )
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir: custom,
+      notePath,
+      outPath: join(root, 'custom.pdf'),
+      fields: [],
+      meta: {},
+    })
+    expect((await readFile(join(root, 'custom.pdf'))).subarray(0, 5).toString('latin1')).toBe(
+      '%PDF-',
+    )
+    if (process.env.HOLI_PDF_TEST_ARTIFACT_DIR) {
+      await mkdir(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, { recursive: true })
+      await cp(
+        join(root, 'custom.pdf'),
+        join(process.env.HOLI_PDF_TEST_ARTIFACT_DIR, 'custom-table-caption-scope.pdf'),
+      )
+    }
+    const customCaptionedPages = await readPdfPages(join(root, 'custom.pdf'))
+    const customCaptionedRuns = customCaptionedPages.flatMap((page) => page.runs)
+    const customAlpha = customCaptionedRuns.find((run) => run.text.trim() === 'Alpha')
+    const customValue = customCaptionedRuns.find((run) => run.text.trim() === '1')
+    const customHeaderValue = customCaptionedRuns.find((run) => run.text.trim() === 'Value')
+    const customCaption = customCaptionedRuns.find((run) => /Branded|caption/.test(run.text))
+    expect(customAlpha).toBeDefined()
+    expect(customValue).toBeDefined()
+    expect(customHeaderValue).toBeDefined()
+    expect(customCaption).toBeDefined()
+    expect(customCaption!.rect.origin.y).toBeGreaterThan(customAlpha!.rect.origin.y)
+
+    const plain = join(root, '.holi/document-templates/plain')
+    await mkdir(plain, { recursive: true })
+    await writeFile(join(plain, 'template.typ'), plainTemplateTyp)
+    const uncaptained = join(root, 'uncaptioned.md')
+    await writeFile(uncaptained, '| Name | Value |\n|:---|---:|\n| Alpha | 1 |')
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir: custom,
+      notePath: uncaptained,
+      outPath: join(root, 'custom-uncaptioned.pdf'),
+      fields: [],
+      meta: {},
+    })
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir: plain,
+      notePath: uncaptained,
+      outPath: join(root, 'plain-uncaptioned.pdf'),
+      fields: [],
+      meta: {},
+    })
+    const customUncaptionedRuns = (
+      await readPdfPages(join(root, 'custom-uncaptioned.pdf'))
+    ).flatMap((page) => page.runs)
+    const plainUncaptionedRuns = (await readPdfPages(join(root, 'plain-uncaptioned.pdf'))).flatMap(
+      (page) => page.runs,
+    )
+    const customAlphaX = customUncaptionedRuns.find((run) => run.text.trim() === 'Alpha')!.rect
+      .origin.x
+    const plainAlphaX = plainUncaptionedRuns.find((run) => run.text.trim() === 'Alpha')!.rect.origin
+      .x
+    expect(customAlpha!.rect.origin.x).toBeCloseTo(customAlphaX, 0)
+    expect(customAlphaX).toBeGreaterThan(plainAlphaX + 5)
+    expect(customValue!.rect.origin.x + customValue!.rect.size.width).toBeCloseTo(
+      customHeaderValue!.rect.origin.x + customHeaderValue!.rect.size.width,
+      0,
+    )
+  }, 30_000)
 
   it('renders one fenced-code caption safely and leaves the source note untouched', async () => {
     const typst = await resolveTypstBin()
