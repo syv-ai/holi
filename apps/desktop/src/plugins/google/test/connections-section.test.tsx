@@ -37,6 +37,8 @@ const connect = vi.fn()
 const awaitConnect = vi.fn()
 const cancelConnect = vi.fn()
 const setAllImages = vi.fn()
+const mailMarkerPreferences = vi.fn()
+const setMailMarkerPreferences = vi.fn()
 const settingsRead = vi.fn()
 let allImages = false
 
@@ -56,6 +58,8 @@ const google: Record<string, (params: unknown) => unknown> = {
     allImages = (p as { enabled: boolean }).enabled
     return result
   },
+  'google.mailMarkerPreferences': (p) => mailMarkerPreferences(p),
+  'google.setMailMarkerPreferences': (p) => setMailMarkerPreferences(p),
   'google.client': () => client(),
   'google.setClient': (p) => setClient(p),
 }
@@ -96,6 +100,8 @@ beforeEach(() => {
   awaitConnect.mockResolvedValue({ kind: 'granted' })
   cancelConnect.mockResolvedValue(undefined)
   setAllImages.mockResolvedValue({ ok: true })
+  mailMarkerPreferences.mockResolvedValue({ enabledOrder: ['yellow-star'] })
+  setMailMarkerPreferences.mockResolvedValue({ ok: true })
   allImages = false
   settingsRead.mockImplementation(async () => ({
     pluginValues: { google: { imageSenders: [], imagesFromAllSenders: allImages } },

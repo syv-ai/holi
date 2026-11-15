@@ -59,6 +59,7 @@ import {
   useSetAllSenderImages,
 } from './mail-images'
 import { Switch } from '@/components/ui/switch'
+import { MailMarkersSettings } from './mail-markers-settings'
 
 /** The flow's transient state. "Connected" is deliberately absent: that is the
  *  shared atom's to know. */
@@ -333,6 +334,13 @@ export function ConnectionsSection({ visible = true }: { visible?: boolean }): R
               </Item>
             ))}
           {connected && <ImageSenders />}
+          {connected && remote !== null && currentSub !== null && (
+            <MailMarkersSettings
+              key={`${remote}:${currentSub}`}
+              vault={remote}
+              accountSub={currentSub}
+            />
+          )}
 
           {/* Accounts connected on this machine that this vault is not using.
               Picking one is a mapping, not a consent round trip, so it is one
