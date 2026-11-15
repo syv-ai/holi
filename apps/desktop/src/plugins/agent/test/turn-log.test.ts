@@ -62,10 +62,23 @@ describe('reading', () => {
     expect(await openTurnLog(root).list()).toEqual([full])
   })
 
-  it('drops one hand-edited record rather than the whole day', async () => {
+  it('drops malformed required or optional fields without losing valid records', async () => {
     await mkdir(join(root, '.holi/state'), { recursive: true })
-    await writeFile(file(), JSON.stringify([record(1), { base: 'x' }, record(2)]), 'utf8')
-    expect(await openTurnLog(root).list()).toEqual([record(1), record(2)])
+    await writeFile(
+      file(),
+      JSON.stringify([
+        record(1),
+        { base: 'x' },
+        { ...record(2), sessionId: 42 },
+        { ...record(3), overlapped: 'yes' },
+        { ...record(4), sessionId: 'session', overlapped: true },
+      ]),
+      'utf8',
+    )
+    expect(await openTurnLog(root).list()).toEqual([
+      record(1),
+      { ...record(4), sessionId: 'session', overlapped: true },
+    ])
   })
 })
 
@@ -140,7 +153,7 @@ describe('appending', () => {
     expect(await log.list()).toEqual([same])
   })
 
-  it('keeps one changed-nothing turn per session, so they cannot push real turns out', async () => {
+  it('keeps one changed-nothing turn per session under concurrent appends', async () => {
     const log = openTurnLog(root)
     const idle = (sessionId: string, n: number) => ({
       base: 'same',
@@ -149,10 +162,10 @@ describe('appending', () => {
       sessionId,
     })
     await log.append({ ...record(1), sessionId: 'a' })
-    await log.append(idle('a', 2))
+    await Promise.all(Array.from({ length: 8 }, (_, n) => log.append(idle('a', n + 2))))
     await log.append(idle('b', 3))
-    await log.append(idle('a', 4))
-    expect(await log.list()).toEqual([idle('a', 4), idle('b', 3), { ...record(1), sessionId: 'a' }])
+    const persisted = await openTurnLog(root).list()
+    expect(persisted).toEqual([idle('b', 3), idle('a', 9), { ...record(1), sessionId: 'a' }])
   })
 
   it('never syncs, because the name says so', () => {

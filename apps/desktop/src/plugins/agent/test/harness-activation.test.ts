@@ -9,7 +9,7 @@ import { createPluginHost } from '../../../main/plugin-host/host'
 import { automationsMain } from '../../automations/main/index'
 import type { RunOptions } from '../main/claude/cli'
 import { PRESETS } from '../main/harness/record'
-import type { StartArgs } from '../main/host/pty'
+import type { AgentExit, StartArgs } from '../main/host/pty'
 import { agentMain } from '../main/index'
 import { openTurnLog } from '../main/host/turn-log'
 
@@ -55,10 +55,16 @@ vi.mock('../main/host/pty', async (original) => {
   return {
     ...pty,
     AgentRuntime: class extends pty.AgentRuntime {
+      private exitCallbacks: Array<(event: AgentExit) => void> = []
       override start(args: StartArgs) {
         adapters.pty.push(args)
       }
-      override async kill() {}
+      override onExit(callback: (event: AgentExit) => void) {
+        this.exitCallbacks.push(callback)
+      }
+      override async kill() {
+        for (const callback of this.exitCallbacks.splice(0)) callback({ exitCode: 0 })
+      }
     },
   }
 })
@@ -183,30 +189,101 @@ const customRow = {
   ]),
 }
 
-it('serves each activated vault turn report from its own persisted log', async () => {
+it('updates real PTY history per activated vault and retains the other partition on stop', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'holi-agent-history-'))
+  const sharedId = 'p0123456789ab'
+  const prior = {
+    id: sharedId,
+    provider: 'pi',
+    name: 'Prior session',
+    state: 'idle',
+    startedAt: 1,
+    conversationId: '123e4567-e89b-42d3-a456-426614174000',
+  }
+  await writeFile(
+    join(userData, 'agent-pty-history.json'),
+    JSON.stringify({ [A]: [prior], [B]: [prior] }),
+  )
+  const { host, enter, call, roots } = await rig(userData)
+  await enter(A)
+  await enter(B)
+  const pi = {
+    ...PRESETS.find((preset) => preset.id === 'pi')!,
+    command: { bin: process.execPath, args: [] },
+  }
+  await call(A, 'agent.harnessSave', { harness: pi })
+  const aStarted = (await call(A, 'agent.start', { provider: 'pi', prompt: 'A work' })) as {
+    ok: boolean
+    sessionId: string
+  }
+  const bStarted = (await call(B, 'agent.start', { provider: 'pi', prompt: 'B work' })) as {
+    ok: boolean
+    sessionId: string
+  }
+  expect(aStarted.ok).toBe(true)
+  expect(bStarted.ok).toBe(true)
+  expect(adapters.pty.slice(-2).map((session) => session.cwd)).toEqual([roots[A], roots[B]])
+
+  await call(A, 'agent.stop', { id: aStarted.sessionId })
+  const historyFile = join(userData, 'agent-pty-history.json')
+  const afterAStops = JSON.parse(await readFile(historyFile, 'utf8')) as Record<string, unknown[]>
+  expect(afterAStops[A]).toHaveLength(2)
+  expect(afterAStops[B]).toEqual([prior])
+  expect(await call(B, 'agent.history')).toEqual([prior])
+
+  await call(B, 'agent.stop', { id: bStarted.sessionId })
+  const afterBothStop = JSON.parse(await readFile(historyFile, 'utf8')) as Record<string, unknown[]>
+  expect(afterBothStop[A]).toHaveLength(2)
+  expect(afterBothStop[B]).toHaveLength(2)
+  expect(afterBothStop[A]?.[1]).toMatchObject({ id: sharedId })
+  expect(afterBothStop[B]?.[1]).toMatchObject({ id: sharedId })
+  await host.stop(A)
+  await host.stop(B)
+  await enter(A)
+  await enter(B)
+  expect(await call(A, 'agent.history')).toEqual(
+    expect.arrayContaining([prior, expect.objectContaining({ id: aStarted.sessionId })]),
+  )
+  expect(await call(B, 'agent.history')).toEqual(
+    expect.arrayContaining([prior, expect.objectContaining({ id: bStarted.sessionId })]),
+  )
+})
+
+it('routes concurrent turn reports through each activated vault and reloads them from disk', async () => {
   const { host, enter, call, roots } = await rig()
   await enter(A)
   await enter(B)
   const sameSession = 'same-session'
-  await Promise.all([
-    openTurnLog(roots[A]).append({
-      base: 'a-base',
-      end: 'a-end',
-      at: '2026-09-09T10:00:00Z',
-      sessionId: sameSession,
-    }),
-    openTurnLog(roots[B]).append({
-      base: 'b-base',
-      end: 'b-end',
-      at: '2026-09-09T10:00:00Z',
-      sessionId: sameSession,
-    }),
-  ])
-  expect(await call(A, 'agent.turns')).toMatchObject([{ base: 'a-base', sessionId: sameSession }])
-  expect(await call(B, 'agent.turns')).toMatchObject([{ base: 'b-base', sessionId: sameSession }])
+  const logs = { [A]: openTurnLog(roots[A]), [B]: openTurnLog(roots[B]) }
+  await Promise.all(
+    Array.from({ length: 12 }, (_, n) =>
+      Promise.all(
+        ([A, B] as const).map((remote) =>
+          logs[remote].append({
+            base: `${remote}-base-${n}`,
+            end: `${remote}-end-${n}`,
+            at: `2026-09-09T10:${String(n).padStart(2, '0')}:00Z`,
+            sessionId: sameSession,
+          }),
+        ),
+      ),
+    ),
+  )
+
+  const aTurns = (await call(A, 'agent.turns')) as { base: string; sessionId: string }[]
+  const bTurns = (await call(B, 'agent.turns')) as { base: string; sessionId: string }[]
+  expect(aTurns.map((turn) => turn.base)).toEqual(
+    Array.from({ length: 12 }, (_, n) => `${A}-base-${n}`).reverse(),
+  )
+  expect(bTurns.map((turn) => turn.base)).toEqual(
+    Array.from({ length: 12 }, (_, n) => `${B}-base-${n}`).reverse(),
+  )
+  expect(aTurns.every((turn) => turn.sessionId === sameSession)).toBe(true)
+  expect(bTurns.every((turn) => turn.sessionId === sameSession)).toBe(true)
   await host.stop(A)
   await enter(A)
-  expect(await call(A, 'agent.turns')).toMatchObject([{ end: 'a-end' }])
+  expect(await call(A, 'agent.turns')).toEqual(aTurns)
+  expect(await call(B, 'agent.turns')).toEqual(bTurns)
 })
 
 it('activates real agents and shares save/remove/reset/reload and remote notifications', async () => {
