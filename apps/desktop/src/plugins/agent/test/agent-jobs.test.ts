@@ -692,16 +692,16 @@ describe('a job in the vault', () => {
   ].join('\n')
   const FOLLOW = [
     event({ type: 'turn.started' }),
-    event({ type: 'turn.completed', usage: { input_tokens: 400, output_tokens: 100 } }),
+    event({ type: 'turn.completed', usage: { input_tokens: 1600, output_tokens: 400 } }),
   ].join('\n')
 
-  async function vaultRig() {
+  async function vaultRig(followUp = FOLLOW) {
     const root = await temp('holi-job-vault-')
     const userData = await temp('holi-job-data-')
     const first = join(userData, 'first.js')
     const next = join(userData, 'next.js')
     await writeFile(first, WRITES)
-    await writeFile(next, FOLLOW)
+    await writeFile(next, followUp)
     const edges: string[] = []
     const jobs = createJobs({
       vault: { remote: 'syv/vault', root },
@@ -714,7 +714,7 @@ describe('a job in the vault', () => {
     return { root, jobs, edges, ...turns(first, next) }
   }
 
-  it('writes only the folders its rules name, through the turn bracket, and counts tokens', async () => {
+  it('writes only named folders and reports the latest cumulative usage total', async () => {
     const { root, jobs, edges, provider, runs } = await vaultRig()
     const started = await jobs.start({
       provider,
@@ -764,10 +764,76 @@ describe('a job in the vault', () => {
       state: 'idle',
       outcome: 'completed',
       model: 'gpt-5',
-      usage: { total: 2000 },
+      usage: { total: 2_000 },
     })
     expect(edges).toEqual([`begin:${id}`, `end:${id}`, `begin:${id}`, `end:${id}`])
     expect(await readFile(join(root, 'tilbud/Q4.md'), 'utf8')).toBe('proposal')
+  })
+
+  it('keeps the last cumulative usage total when a follow-up fails', async () => {
+    const failedFollowUp = [
+      event({ type: 'turn.started' }),
+      event({ type: 'turn.failed', error: { message: 'follow-up failed' } }),
+    ].join('\n')
+    const { jobs, provider, runs } = await vaultRig(failedFollowUp)
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', allow: ['Edit(a/**)'] })
+    const id = (started as { sessionId: string }).sessionId
+    jobs.message(id, 'follow up')
+    await vi.waitFor(() => expect(runs).toHaveLength(2), { timeout: 5_000 })
+    const row = await vi.waitFor(
+      () => {
+        const current = jobs.sessions().find((session) => session.id === id)
+        if (current?.outcome === undefined) throw new Error('still running')
+        return current
+      },
+      { timeout: 5_000 },
+    )
+    expect(row).toMatchObject({
+      outcome: 'failed',
+      error: 'follow-up failed',
+      usage: { total: 1_500 },
+    })
+  })
+
+  it('keeps the known cumulative usage total when a follow-up omits usage', async () => {
+    const noUsageFollowUp = [
+      event({ type: 'turn.started' }),
+      event({ type: 'turn.completed', usage: {} }),
+    ].join('\n')
+    const { jobs, provider, runs } = await vaultRig(noUsageFollowUp)
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', allow: ['Edit(a/**)'] })
+    const id = (started as { sessionId: string }).sessionId
+    jobs.message(id, 'follow up')
+    await vi.waitFor(() => expect(runs).toHaveLength(2), { timeout: 5_000 })
+    const row = await vi.waitFor(
+      () => {
+        const current = jobs.sessions().find((session) => session.id === id)
+        if (current?.outcome === undefined) throw new Error('still running')
+        return current
+      },
+      { timeout: 5_000 },
+    )
+    expect(row).toMatchObject({ outcome: 'completed', usage: { total: 1_500 } })
+  })
+
+  it('keeps the last cumulative usage total when a follow-up is stopped', async () => {
+    const stoppedFollowUp = [event({ type: 'turn.started' }), 'setInterval(() => {}, 1000)'].join(
+      '\n',
+    )
+    const { jobs, provider, runs } = await vaultRig(stoppedFollowUp)
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', allow: ['Edit(a/**)'] })
+    const id = (started as { sessionId: string }).sessionId
+    jobs.message(id, 'follow up')
+    await vi.waitFor(() => expect(runs).toHaveLength(2), { timeout: 5_000 })
+    await vi.waitFor(() =>
+      expect(jobs.sessions().find((session) => session.id === id)?.state).toBe('working'),
+    )
+    await jobs.stop(id)
+    expect(jobs.sessions().find((session) => session.id === id)).toMatchObject({
+      outcome: 'failed',
+      error: 'Stopped.',
+      usage: { total: 1_500 },
+    })
   })
 
   it('is read-only with no folder to write', async () => {

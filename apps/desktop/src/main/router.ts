@@ -42,6 +42,7 @@ import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
 import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
+import { createSubscriptions } from './vault/subscriptions'
 import { fileCards, type FileCard } from './vault/file-cards'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
@@ -137,6 +138,8 @@ export type VaultMembership =
 
 export interface RouterDeps {
   registry: VaultRegistry
+  /** Electron userData for machine-local subscription state. */
+  userData?: string
   /** The shared main-side Holi link validation/opener, used by paste. */
   openPastedHoliLink?: (
     url: string,
@@ -437,6 +440,10 @@ export function createRouter(deps: RouterDeps) {
     })
   const members =
     deps.members ?? createMembersCache((remote) => deps.session.api.collaborators(remote))
+  const subscriptions =
+    deps.userData === undefined
+      ? null
+      : createSubscriptions(join(deps.userData, 'subscriptions.json'))
 
   /**
    * A write must be visible to the very next read.
@@ -2211,6 +2218,50 @@ export function createRouter(deps: RouterDeps) {
     files,
     sync,
     history,
+    subscriptions: t.router({
+      list: t.procedure
+        .input(fields({ remote: 'string', paths: 'string' }))
+        .query(async ({ input }) => {
+          if (subscriptions === null)
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Subscriptions are unavailable.',
+            })
+          const active = activeOrThrow()
+          if (active.remote !== input.remote)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault changed; retry in the active vault.',
+            })
+          const { remote, root } = active
+          let paths: unknown
+          try {
+            paths = JSON.parse(input.paths)
+          } catch {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid subscription paths.' })
+          }
+          if (!Array.isArray(paths) || paths.some((path) => typeof path !== 'string'))
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid subscription paths.' })
+          return subscriptions.list(remote, root, paths)
+        }),
+      set: t.procedure
+        .input(fields({ remote: 'string', path: 'string', enabled: 'boolean' }))
+        .mutation(async ({ input }) => {
+          if (subscriptions === null)
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Subscriptions are unavailable.',
+            })
+          const active = activeOrThrow()
+          if (active.remote !== input.remote)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault changed; retry in the active vault.',
+            })
+          const { remote, root, repo } = active
+          return subscriptions.set(remote, root, input.path, input.enabled, () => repo.head())
+        }),
+    }),
     theme,
     settings,
     ui,

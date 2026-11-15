@@ -19,7 +19,7 @@
  * in a panel beside it, as the person's `propertiesLayout` says; the header's
  * toggle flips it.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import {
@@ -100,6 +100,8 @@ import { useDocumentPosition } from './use-document-position'
 import { useSelectionReport } from './use-selection-report'
 import { DocumentFormatBubble } from './document-format-bubble'
 import { DocumentHeader, type SaveState } from './document-header'
+import { configureRichTextVim, RichTextVim, type RichTextVimMode } from './rich-text-vim'
+import { vimCodeEditingAtom } from '@/state/preferences'
 import { documentTitle, joinDocument, splitDocument } from './markdown'
 import { ErrorState } from '@/composites/empty-state'
 import {
@@ -277,6 +279,11 @@ function DocumentEditor({
   const [deleteTableOpen, setDeleteTableOpen] = useState(false)
   const [fullWidth, setFullWidth] = useState(false)
   const [smallText, setSmallText] = useState(false)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
+  const [vimMode, setVimMode] = useState<RichTextVimMode>('')
+  const vimModeCallback = useRef<(mode: RichTextVimMode) => void>(() => {})
+  vimModeCallback.current = (mode) => setVimMode(mode)
+  const findOpenRef = useRef(false)
   const tableStyle = useAppSetting('tableStyle')
   const propertiesLayout = useAppSetting('propertiesLayout')
   const hasProperties = useHasTaskProperties(path)
@@ -345,6 +352,7 @@ function DocumentEditor({
     if (found) onOpen(found)
   }
 
+  const editorRef = useRef<import('@tiptap/react').Editor | null>(null)
   const mapTargetsRef = useRef<
     (
       _mapping: import('@tiptap/pm/transform').Mapping,
@@ -355,6 +363,13 @@ function DocumentEditor({
 
   const extensions = useMemo(
     () => [
+      RichTextVim.configure({
+        enabled: false,
+        active: true,
+        editable: () => editorRef.current?.isEditable ?? false,
+        onModeChange: (mode) => queueMicrotask(() => vimModeCallback.current(mode)),
+        escapeOwned: () => findOpenRef.current,
+      }),
       Extension.create({
         name: 'saveFreeze',
         onBeforeCreate() {
@@ -429,6 +444,7 @@ function DocumentEditor({
     [extensions],
   )
 
+  editorRef.current = editor
   const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
   const {
@@ -501,16 +517,25 @@ function DocumentEditor({
 
   handlers.current.pressThread = comments.pressThread
 
+  const applyEditorEditability = useCallback(
+    (value: boolean) => {
+      if (!editor || editor.isDestroyed) return
+      editor.setEditable(value)
+      configureRichTextVim(
+        editor.view,
+        store.get(vimCodeEditingAtom),
+        visibleRef.current && focusedRef.current,
+        () => editor.isEditable,
+      )
+    },
+    [editor, store],
+  )
+
   function freezeBatch(value: boolean) {
     batchFreeze.current = value
-    if (editor && !editor.isDestroyed)
-      editor.setEditable(
-        !value &&
-          !lockedRef.current &&
-          visibleRef.current &&
-          !frozen.current &&
-          !doneFreeze.current,
-      )
+    applyEditorEditability(
+      !value && !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
+    )
   }
 
   /** The document as it would be saved. */
@@ -596,7 +621,7 @@ function DocumentEditor({
         undefined,
         (value) => {
           frozen.current = value
-          editor?.setEditable(
+          applyEditorEditability(
             !value &&
               visibleRef.current &&
               !doneFreeze.current &&
@@ -605,7 +630,7 @@ function DocumentEditor({
           )
         },
       ),
-    [editor],
+    [editor, applyEditorEditability],
   )
 
   // Leaving the document writes what is pending, and leaves what it showed
@@ -686,7 +711,7 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(
+    applyEditorEditability(
       !locked &&
         !upgradePending &&
         visible &&
@@ -694,7 +719,7 @@ function DocumentEditor({
         !doneFreeze.current &&
         !batchFreeze.current,
     )
-  }, [editor, locked, upgradePending, visible])
+  }, [applyEditorEditability, editor, locked, upgradePending, visible, focused, vimEnabled])
 
   // A finished edit clears its pill on its own. A finished vault app opens
   // when the document is still the tab in front and was never left while it
@@ -760,6 +785,7 @@ function DocumentEditor({
   }
 
   const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef, focused)
+  findOpenRef.current = find !== null
 
   async function finishTask() {
     if (doneInFlight.current || lockedRef.current || frozen.current || !editor?.isEditable) return
@@ -772,7 +798,7 @@ function DocumentEditor({
     const currentVisit = activity.capture()
     doneInFlight.current = true
     doneFreeze.current = true
-    editor.setEditable(false)
+    applyEditorEditability(false)
     setDonePending(true)
     setDoneError(null)
     try {
@@ -801,7 +827,7 @@ function DocumentEditor({
       doneInFlight.current = false
       if (!editor.isDestroyed) {
         doneFreeze.current = false
-        editor.setEditable(
+        applyEditorEditability(
           !lockedRef.current && activity.displayed && !frozen.current && !batchFreeze.current,
         )
       }
@@ -863,10 +889,9 @@ function DocumentEditor({
         return next
       })
       upgradeInFlight.current = false
-      if (editor && !editor.isDestroyed)
-        editor.setEditable(
-          !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
-        )
+      applyEditorEditability(
+        !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
+      )
     }
   }
   const canStartChat = useAtomValue(canStartConversationAtom)
@@ -906,6 +931,7 @@ function DocumentEditor({
             path={path}
             title={documentTitle(path)}
             saveState={saveState}
+            vimMode={vimMode}
             locked={locked || batchSubmitting}
             taskDone={
               isTaskPath(path)

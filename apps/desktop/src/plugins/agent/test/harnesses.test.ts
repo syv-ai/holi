@@ -14,7 +14,12 @@ import {
   type Harness,
   type HarnessFile,
 } from '../main/harness/record'
-import { createHarnessRegistry, harnessProvider, withPreset } from '../main/harness/registry'
+import {
+  acquireHarnessRegistry,
+  createHarnessRegistry,
+  harnessProvider,
+  withPreset,
+} from '../main/harness/registry'
 import { readSignal, SIGNAL_SCRIPT } from '../main/harness/signal'
 import { agentCapabilities } from '../main/host/capabilities'
 import type { AgentProvider } from '../main/provider'
@@ -195,6 +200,261 @@ async function registry(store = memoryStore(), keepBad?: () => Promise<void>) {
 }
 
 describe('the harness registry', () => {
+  it('shares serialized config and broadcasts changes without sharing provider instances', async () => {
+    const store = memoryStore()
+    const deps = {
+      store,
+      builtIns: {
+        claude: (current: () => Harness) => withPreset(builtIn('claude'), current),
+        codex: (current: () => Harness) => withPreset(builtIn('codex'), current),
+        pi: (current: () => Harness) => withPreset(builtIn('pi'), current),
+      },
+    }
+    const a = await acquireHarnessRegistry('/shared-user-data', deps)
+    const b = await acquireHarnessRegistry('/shared-user-data', deps)
+    const isolated = await acquireHarnessRegistry('/other-user-data', {
+      ...deps,
+      store: memoryStore(),
+    })
+    let noticesA = 0
+    let noticesB = 0
+    const offA = a.subscribe(() => noticesA++)
+    const offB = b.subscribe(() => noticesB++)
+
+    const creates = await Promise.allSettled([
+      a.save(AIDER, true),
+      b.save({ ...AIDER, label: 'Second' }, true),
+    ])
+    expect(creates.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(creates.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(a.get('aider')).toEqual(b.get('aider'))
+    expect(noticesA).toBe(1)
+    expect(noticesB).toBe(1)
+    expect(isolated.get('aider')).toBeUndefined()
+    expect(a.providers()).not.toBe(b.providers())
+
+    await a.save({ ...AIDER, label: 'Updated' }, false)
+    expect(b.get('aider')?.label).toBe('Updated')
+    await b.remove('aider')
+    expect(a.get('aider')).toBeUndefined()
+    offA()
+    offB()
+    await Promise.all([a.dispose(), b.dispose(), isolated.dispose()])
+  })
+
+  it('keeps reacquired owners live across release and activation-failure awaits', async () => {
+    for (const failedActivation of [false, true]) {
+      for (let turns = 0; turns < 12; turns++) {
+        const key = `/release-reacquire-${failedActivation}-${turns}`
+        const deps = {
+          store: memoryStore(),
+          builtIns: {
+            claude: (current: () => Harness) => withPreset(builtIn('claude'), current),
+            codex: (current: () => Harness) => withPreset(builtIn('codex'), current),
+            pi: (current: () => Harness) => withPreset(builtIn('pi'), current),
+          },
+        }
+        const closing = failedActivation
+          ? acquireHarnessRegistry(key, {
+              ...deps,
+              builtIns: {
+                ...deps.builtIns,
+                claude: () => {
+                  throw new Error('provider adapter failed')
+                },
+              },
+            }).then(
+              () => {
+                throw new Error('expected provider adapter failure')
+              },
+              (err: unknown) => {
+                expect(err).toMatchObject({ message: 'provider adapter failed' })
+              },
+            )
+          : (await acquireHarnessRegistry(key, deps)).dispose()
+        for (let turn = 0; turn < turns; turn++) await Promise.resolve()
+        const b = await acquireHarnessRegistry(key, deps)
+        await closing
+        const c = await acquireHarnessRegistry(key, deps)
+        try {
+          await b.save(AIDER, true)
+          expect(c.get('aider'), `failed=${failedActivation}, after ${turns} microtasks`).toEqual(
+            AIDER,
+          )
+        } finally {
+          await Promise.all([b.dispose(), c.dispose()])
+        }
+      }
+    }
+  })
+
+  it('notifies both handles and continues after one handle is disposed', async () => {
+    const store = memoryStore()
+    const a = await acquireHarnessRegistry('/shared-delayed', {
+      store,
+      builtIns: {
+        claude: (current) => withPreset(builtIn('claude'), current),
+        codex: (current) => withPreset(builtIn('codex'), current),
+        pi: (current) => withPreset(builtIn('pi'), current),
+      },
+    })
+    const b = await acquireHarnessRegistry('/shared-delayed', {
+      store,
+      builtIns: {
+        claude: (current) => withPreset(builtIn('claude'), current),
+        codex: (current) => withPreset(builtIn('codex'), current),
+        pi: (current) => withPreset(builtIn('pi'), current),
+      },
+    })
+    let received = 0
+    b.subscribe(() => received++)
+    await a.save(AIDER, true)
+    await a.dispose()
+    await b.reload()
+    expect(b.get('aider')).toEqual(AIDER)
+    expect(received).toBe(2)
+    await b.reset()
+    expect(b.get('aider')).toBeUndefined()
+    await b.dispose()
+  })
+  it('protects an unreadable file until reset', async () => {
+    const store = memoryStore({ version: 1, harnesses: [], unreadable: 'invalid JSON' })
+    const reg = await registry(store)
+    expect(reg.status().unreadable).toBe('invalid JSON')
+    await expect(reg.save(AIDER, true)).rejects.toThrow(/changes nothing/)
+    await reg.reset()
+    expect(reg.status().unreadable).toBeNull()
+    expect(store.now()).toEqual({ version: 1, harnesses: [] })
+  })
+
+  it('does not let a delayed reload replace a newer queued save', async () => {
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const reading = new Promise<void>((resolve) => (entered = resolve))
+    const backing = memoryStore()
+    let reads = 0
+    const store = {
+      read: async () => {
+        reads += 1
+        if (reads === 2) {
+          entered()
+          await gate
+        }
+        return backing.read()
+      },
+      update: backing.update,
+    }
+    const reg = await acquireHarnessRegistry('/delayed-reload', {
+      store,
+      builtIns: {
+        claude: (current) => withPreset(builtIn('claude'), current),
+        codex: (current) => withPreset(builtIn('codex'), current),
+        pi: (current) => withPreset(builtIn('pi'), current),
+      },
+    })
+    const reload = reg.reload()
+    await reading
+    const save = reg.save(AIDER, true)
+    release()
+    await Promise.all([reload, save])
+    expect(reg.get('aider')).toEqual(AIDER)
+    await reg.dispose()
+  })
+
+  it('rejects config operations after disposal while draining admitted writes', async () => {
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const reading = new Promise<void>((resolve) => (entered = resolve))
+    const backing = memoryStore()
+    let updates = 0
+    let reads = 0
+    const store = {
+      read: async () => {
+        reads++
+        if (reads === 2) {
+          entered()
+          await gate
+        }
+        return backing.read()
+      },
+      update: async (change: (file: HarnessFile) => HarnessFile | Promise<HarnessFile>) => {
+        updates++
+        return backing.update(change)
+      },
+    }
+    const key = '/reject-after-dispose'
+    const deps = {
+      store,
+      builtIns: {
+        claude: (current: () => Harness) => withPreset(builtIn('claude'), current),
+        codex: (current: () => Harness) => withPreset(builtIn('codex'), current),
+        pi: (current: () => Harness) => withPreset(builtIn('pi'), current),
+      },
+    }
+    const a = await acquireHarnessRegistry(key, deps)
+    let notices = 0
+    a.subscribe(() => notices++)
+    const blocker = a.reload()
+    await reading
+    const admitted = a.save(AIDER, true)
+    const disposing = a.dispose()
+    const before = { updates, reads, notices }
+    await expect(a.save({ ...AIDER, label: 'Late' }, false)).rejects.toThrow(/disposed/)
+    await expect(a.remove('aider')).rejects.toThrow(/disposed/)
+    await expect(a.reset()).rejects.toThrow(/disposed/)
+    await expect(a.reload()).rejects.toThrow(/disposed/)
+    expect({ updates, reads, notices }).toEqual(before)
+
+    release()
+    await Promise.all([blocker, admitted, disposing])
+    expect(backing.now().harnesses).toEqual([AIDER])
+    const b = await acquireHarnessRegistry(key, deps)
+    try {
+      expect(b.get('aider')).toEqual(AIDER)
+      expect(notices).toBe(0)
+      await b.save({ ...AIDER, label: 'Live owner' }, false)
+      expect(backing.now().harnesses).toEqual([{ ...AIDER, label: 'Live owner' }])
+      expect(b.get('aider')?.label).toBe('Live owner')
+    } finally {
+      await b.dispose()
+    }
+  })
+
+  it('drains admitted writes before releasing the final owner handle', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const backing = memoryStore()
+    const store = {
+      read: backing.read,
+      update: async (change: (file: HarnessFile) => HarnessFile | Promise<HarnessFile>) => {
+        await gate
+        return backing.update(change)
+      },
+    }
+    const deps = {
+      store,
+      builtIns: {
+        claude: (current: () => Harness) => withPreset(builtIn('claude'), current),
+        codex: (current: () => Harness) => withPreset(builtIn('codex'), current),
+        pi: (current: () => Harness) => withPreset(builtIn('pi'), current),
+      },
+    }
+    const a = await acquireHarnessRegistry('/drain-owner', deps)
+    const b = await acquireHarnessRegistry('/drain-owner', deps)
+    const write = a.save(AIDER, true)
+    let disposed = false
+    const dispose = a.dispose().then(() => (disposed = true))
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    release()
+    await Promise.all([write, dispose])
+    expect(disposed).toBe(true)
+    expect(b.get('aider')).toEqual(AIDER)
+    await b.dispose()
+  })
+
   it('lists the presets first, then what was added, and re-reads its file', async () => {
     const store = memoryStore()
     const reg = await registry(store)

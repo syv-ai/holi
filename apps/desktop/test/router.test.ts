@@ -168,6 +168,7 @@ async function rig(
     registry,
     session,
     host,
+    userData: join(base, 'user-data'),
     vaultRoot: join(base, 'Holi'),
     prepareClone: overrides.prepareClone ?? (async () => {}),
     openExternal: async () => {},
@@ -184,6 +185,7 @@ async function rig(
     host,
     session,
     base,
+    userData: join(base, 'user-data'),
     trashItem,
     showItemInFolder,
     capabilities,
@@ -197,6 +199,55 @@ describe('pasted Holi links', () => {
     const url = 'holi://open?valid=true'
     await expect(caller.holiLinks.openPasted({ url })).resolves.toEqual({ ok: true })
     expect(openPastedHoliLink).toHaveBeenCalledWith(url)
+  })
+})
+
+describe('subscriptions IPC', () => {
+  it('captures the active repository and userData before awaiting HEAD', async () => {
+    const { caller, host, registry, base, userData } = await rig()
+    await caller.vaults.open({ remote: REMOTE })
+    const activeA = host.active()!
+    let release!: (sha: string) => void
+    const delayed = new Promise<string>((resolve) => (release = resolve))
+    const capturedHead = vi.fn(() => delayed)
+    activeA.repo.head = capturedHead
+
+    const setting = caller.subscriptions.set({ remote: REMOTE, path: '', enabled: true })
+    await vi.waitFor(() => expect(capturedHead).toHaveBeenCalledOnce())
+
+    const betaRoot = join(base, 'beta-subscriptions')
+    await mkdir(betaRoot, { recursive: true })
+    await seedVault(betaRoot)
+    await registry.add({
+      remote: 'syv-ai/beta-subscriptions',
+      path: betaRoot,
+      name: 'beta-subscriptions',
+      lastOpenedAt: '2026-07-01T00:00:00Z',
+    })
+    await caller.vaults.open({ remote: 'syv-ai/beta-subscriptions' })
+    release('a'.repeat(40))
+    await setting
+
+    const persisted = JSON.parse(await readFile(join(userData, 'subscriptions.json'), 'utf8')) as {
+      remotes: Record<string, { path: string; baseline: string | null }[]>
+    }
+    expect(persisted.remotes[REMOTE]).toEqual([{ path: '', baseline: 'a'.repeat(40) }])
+    expect(persisted.remotes).not.toHaveProperty('syv-ai/beta-subscriptions')
+    expect(host.active()?.remote).toBe('syv-ai/beta-subscriptions')
+  })
+
+  it('rejects a wrong active remote and validates set inputs through the caller', async () => {
+    const { caller } = await rig()
+    await caller.vaults.open({ remote: REMOTE })
+    await expect(
+      caller.subscriptions.set({ remote: 'other/repo', path: '', enabled: true }),
+    ).rejects.toThrow(/vault changed/)
+    await expect(
+      caller.subscriptions.set({ remote: REMOTE, path: '../escape', enabled: true }),
+    ).rejects.toThrow()
+    await expect(caller.subscriptions.list({ remote: REMOTE, paths: '{invalid' })).rejects.toThrow(
+      /invalid subscription paths/i,
+    )
   })
 })
 
