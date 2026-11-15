@@ -31,6 +31,18 @@ describe('taskDoneOp', () => {
     expect(text).toContain('# Pay rent')
   })
 
+  it('does not write a completion after its lease is revoked', async () => {
+    const path = join(root, 'task.call-bank.md')
+    const original = '---\\nstatus: todo\\n---\\n\\n# Call the bank\\n'
+    await writeFile(path, original)
+    await expect(
+      taskDoneOp(root, 'task.call-bank.md', '2026-09-02', () => {
+        throw new Error('revoked')
+      }),
+    ).rejects.toThrow('revoked')
+    expect(await readFile(path, 'utf8')).toBe(original)
+  })
+
   it('finishes a task that does not repeat', async () => {
     await writeFile(join(root, 'task.call-bank.md'), '---\nstatus: todo\n---\n\n# Call the bank\n')
     expect(await taskDoneOp(root, './task.call-bank.md', '2026-09-02')).toEqual({

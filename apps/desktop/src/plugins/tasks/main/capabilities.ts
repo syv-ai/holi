@@ -179,7 +179,7 @@ async function createTaskFile(
       if ((await readFile(absPathFor(ctx.root, twin), 'utf8').catch(() => null)) !== null) {
         return false
       }
-      await writeAtomic(ctx.root, rel, text)
+      await writeAtomic(ctx.root, rel, text, ctx.assertCurrent)
       return true
     })
     if (created) return rel
@@ -353,7 +353,9 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           ctx.bundle !== null
             ? await writableFile(ctx, appTaskPath(rel))
             : await lockPath(ctx.root, rel)
-        const result = await withFileLock(abs, () => taskDoneOp(ctx.root, rel, deps.today()))
+        const result = await withFileLock(abs, () =>
+          taskDoneOp(ctx.root, rel, deps.today(), ctx.assertCurrent),
+        )
         if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
         return result
       },
@@ -399,7 +401,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
         }
         return withFileLock(abs, async () => {
           const next = await patched(ctx.root, await readTask(ctx.root, rel), patch)
-          await writeAtomic(ctx.root, rel, serializeTaskFile(next))
+          await writeAtomic(ctx.root, rel, serializeTaskFile(next), ctx.assertCurrent)
           return next
         })
       },

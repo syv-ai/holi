@@ -546,7 +546,7 @@ export const storeCapabilities = () => ({
       return { ...base, id: id === '' ? undefined : id, value: valueParam(base.p.value) }
     },
     run: (ctx, { bundle, collection, id, value }) =>
-      storePut(ctx.root, bundleOf(ctx, bundle), collection, id, value),
+      storePut(ctx.root, bundleOf(ctx, bundle), collection, id, value, ctx.assertCurrent),
     text: (id) => id,
   }),
 
@@ -559,7 +559,7 @@ export const storeCapabilities = () => ({
       return { ...base, id: stringParam(base.p, 'id') }
     },
     run: (ctx, { bundle, collection, id }) =>
-      storeDelete(ctx.root, bundleOf(ctx, bundle), collection, id),
+      storeDelete(ctx.root, bundleOf(ctx, bundle), collection, id, ctx.assertCurrent),
     text: (deleted) => (deleted ? 'deleted' : 'no such record'),
   }),
 
