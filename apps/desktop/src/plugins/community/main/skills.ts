@@ -54,7 +54,7 @@ export async function refreshSkills(
   vaultRoot: string,
   options: {
     force: boolean
-    guard: () => void
+    guard: () => void | Promise<void>
     validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
   },
 ): Promise<string[]> {
