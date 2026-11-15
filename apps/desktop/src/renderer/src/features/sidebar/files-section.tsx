@@ -288,17 +288,22 @@ export function FilesSection({
       const scope = subscriptionData.scopes.find((entry) => entry.path === path)
       await trpc.subscriptions.set.mutate({ remote, path, enabled: scope?.explicit !== true })
       if (epoch !== activationEpoch.current || !stillCurrent(remote)) return
-      await loadSubscriptions(remote, true)
+      setSubscriptionData((current) =>
+        current?.remote === remote && current.pending === path
+          ? { ...current, pending: null }
+          : current,
+      )
+      await loadSubscriptions(remote)
     } catch (error) {
       if (epoch !== activationEpoch.current || !stillCurrent(remote)) return
       setSubscriptionData((current) =>
-        current === null
-          ? current
-          : {
+        current?.remote === remote && current.pending === path
+          ? {
               ...current,
               pending: null,
               error: error instanceof Error ? error.message : 'Could not save the subscription.',
-            },
+            }
+          : current,
       )
     }
   }
