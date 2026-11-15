@@ -79,8 +79,8 @@
         // they export a component's whole API whether or not Holi uses it yet.
         "src/renderer/src/components/ui/**": ["exports", "types"],
       },
-      // System binaries used by smoke tests and native video capture.
-      "ignoreBinaries": ["pgrep", "ffmpeg"],
+      // System binaries used by smoke tests and native video capture/inspection.
+      "ignoreBinaries": ["pgrep", "ffmpeg", "ffprobe"],
     },
     "apps/mobile": {
       "entry": [
