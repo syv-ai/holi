@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createNativeFieldVimState, handleNativeFieldKey } from '@/lib/native-field-vim'
 
 function key(
-  field: HTMLInputElement,
+  field: HTMLInputElement | HTMLTextAreaElement,
   state: ReturnType<typeof createNativeFieldVimState>,
   value: string,
 ) {
@@ -43,6 +43,84 @@ describe('native field Vim commands', () => {
       expect(state.operator).toBeNull()
     },
   )
+
+  it('deletes only the empty first line when dd starts at offset zero', () => {
+    const field = document.createElement('textarea')
+    field.value = '\nnext line'
+    field.focus()
+    field.setSelectionRange(0, 0)
+    vi.mocked(document.execCommand).mockImplementation((command) => {
+      if (command === 'delete') {
+        field.setRangeText('', field.selectionStart, field.selectionEnd, 'start')
+        return true
+      }
+      return false
+    })
+    const state = createNativeFieldVimState()
+    state.mode = 'normal'
+    key(field, state, 'd')
+    key(field, state, 'd')
+    expect(document.execCommand).toHaveBeenCalledWith('delete')
+    expect(field.value).toBe('next line')
+    expect(state.operator).toBeNull()
+  })
+
+  it('moves backward to the start of punctuation groups without crossing into a word', () => {
+    const field = document.createElement('input')
+    field.value = 'foo, bar foo... bar foo,bar'
+    field.focus()
+    const state = createNativeFieldVimState()
+    state.mode = 'normal'
+    field.setSelectionRange(5, 5)
+    key(field, state, 'b')
+    expect(field.selectionStart).toBe(3)
+    field.setSelectionRange(16, 16)
+    key(field, state, 'b')
+    expect(field.selectionStart).toBe(12)
+    field.setSelectionRange(0, 0)
+    key(field, state, 'b')
+    expect(field.selectionStart).toBe(0)
+  })
+
+  it('does not let a backward delete cross punctuation into the preceding word', () => {
+    const field = document.createElement('input')
+    field.value = 'foo, bar'
+    field.focus()
+    field.setSelectionRange(5, 5)
+    const state = createNativeFieldVimState()
+    state.mode = 'normal'
+    const selection = vi.spyOn(field, 'setSelectionRange')
+    key(field, state, 'd')
+    key(field, state, 'b')
+    expect(selection).toHaveBeenCalledWith(3, 5, 'forward')
+    expect(document.execCommand).toHaveBeenCalledWith('delete')
+    expect(state.operator).toBeNull()
+  })
+
+  it.each([
+    ['d', 'x'],
+    ['c', 'i'],
+    ['y', 'p'],
+    ['y', 'u'],
+    ['c', 'v'],
+  ])('cancels %s before standalone %s without leaving an operator armed', (operator, command) => {
+    const field = document.createElement('input')
+    field.value = 'alpha beta'
+    field.focus()
+    field.setSelectionRange(0, 0)
+    const state = createNativeFieldVimState()
+    state.mode = 'normal'
+    key(field, state, operator)
+    expect(key(field, state, command)).toBe(true)
+    expect(state.operator).toBeNull()
+    expect(state.count).toBe('')
+    expect(state.mode).toBe('normal')
+    expect(document.execCommand).not.toHaveBeenCalled()
+    key(field, state, 'w')
+    expect(field.value).toBe('alpha beta')
+    expect(field.selectionStart).toBe(6)
+    expect(document.execCommand).not.toHaveBeenCalled()
+  })
 
   it('does not turn an incomplete operator into a line deletion on Enter or printable keys', () => {
     const field = document.createElement('input')
