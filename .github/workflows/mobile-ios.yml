@@ -1,0 +1,55 @@
+name: Mobile iOS compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator:
+    name: Unsigned NativeScript simulator
+    # The macos-26 image inventory lists Xcode 26.2 and its iOS 26.2 runtime.
+    # This intentionally does not depend on the Xcode 27 public preview.
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      HOLI_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-2
+      HOLI_IOS_DEVICE_TYPE: com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro
+      HOLI_IOS_ARTIFACTS: /tmp/holi-265-ci
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10.8.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install only mobile and shared dependencies
+        run: pnpm --filter @holi/mobile... install --frozen-lockfile
+      - name: NativeScript Ruby project adapter
+        run: gem install --user-install xcodeproj -v 1.28.1 --no-document
+      - name: Check portable modules and host verifier
+        run: |
+          pnpm --filter @holi/shared typecheck
+          pnpm --filter @holi/shared test
+          pnpm --filter @holi/mobile typecheck
+          pnpm --filter @holi/mobile lint
+          pnpm --filter @holi/mobile test
+      - name: Build, install, launch and verify the actual native runtime
+        run: pnpm --filter @holi/mobile test:ios
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: mobile-ios-compatibility
+          path: /tmp/holi-265-ci
+          if-no-files-found: warn

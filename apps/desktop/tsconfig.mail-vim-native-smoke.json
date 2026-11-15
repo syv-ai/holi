@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src", "scripts/mail-vim-native-smoke.tsx", "scripts/mail-vim-native-smoke-main.ts"]
+}

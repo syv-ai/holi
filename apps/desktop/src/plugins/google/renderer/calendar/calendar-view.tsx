@@ -84,7 +84,13 @@ import { CalendarsMenu } from './calendars-menu'
 import { WEEK_STARTS_ON, hhmm, timeOf } from './calendar-format'
 
 import { CLOCK_FORMATS, ISO_WEEK_LOCALE, useTimeFormat, useWeekNumbers } from './calendar-settings'
-import { EventCard, type EventCardAnchor, type EventDraft, type EventCardState } from './event-card'
+import {
+  EventCard,
+  type EventCardAnchor,
+  type EventDraft,
+  type EventCardState,
+  type MeetingFormDraft,
+} from './event-card'
 import { useWheelSwipe } from './use-wheel-swipe'
 
 type Occurrence = EventCalendarOccurrence<GoogleEventData>
@@ -146,6 +152,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
       pending.current = false
       setSaving(false)
       setCard(null)
+      cardMeetingDraft.current = { guests: '', meet: false }
       setCardAnchor(null)
       setError(null)
     }
@@ -162,6 +169,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
 
   const [card, setCard] = useState<EventCardState | null>(null)
   const cardDraft = useRef<EventDraft | null>(null)
+  const cardMeetingDraft = useRef<MeetingFormDraft>({ guests: '', meet: false })
   const [cardAnchor, setCardAnchor] = useState<EventCardAnchor | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -229,6 +237,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
     (start: Date, allDay = false, end?: Date, anchor?: EventCardAnchor | null) => {
       if (pending.current) return
       cardIdentity.current += 1
+      cardMeetingDraft.current = { guests: '', meet: false }
       setCardAnchor(anchor ? { ...anchor, fallback: newEventTrigger.current } : null)
       setError(null)
       const startDay = localDate(start)
@@ -288,6 +297,10 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
     cardDraft.current = draft
   }, [])
 
+  const updateMeetingDraft = useCallback((draft: MeetingFormDraft) => {
+    cardMeetingDraft.current = draft
+  }, [])
+
   const startEdit = useCallback(() => {
     if (pending.current) return
     setError(null)
@@ -304,7 +317,7 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
   }, [])
 
   const saveDraft = async (draft: EventDraft): Promise<boolean> => {
-    if (!card || pending.current) return false
+    if (!card || card.mode !== 'edit' || pending.current) return false
     const identity = cardIdentity.current
     const title = draft.title.trim()
     if (title === '') {
@@ -322,11 +335,8 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
     setSaving(true)
     try {
       const times = { title, start, end, allDay: draft.allDay }
-      if (card.mode === 'edit' && draft.googleId !== undefined) {
-        await calendar.update(draft.googleId, times)
-      } else {
-        await calendar.create({ ...times, location: draft.location.trim() })
-      }
+      if (draft.googleId === undefined) return false
+      await calendar.update(draft.googleId, times)
       if (identity === cardIdentity.current) {
         setCard(null)
         setCardAnchor(null)
@@ -706,6 +716,10 @@ export function CalendarView({ visible = true }: { visible?: boolean }): React.J
         </EventCalendar>
 
         <EventCard
+          meetingIdentity={remote && currentSub ? { remote, sub: currentSub } : null}
+          onCreated={calendar.reload}
+          meetingDraft={cardMeetingDraft.current}
+          onMeetingDraftChange={updateMeetingDraft}
           state={card === null ? null : { ...card, draft: cardDraft.current ?? card.draft }}
           anchor={visible ? cardAnchor : null}
           error={error}

@@ -53,6 +53,8 @@
         "scripts/terminal-hints-native-smoke.tsx",
         "scripts/pdf-vim-native-smoke-main.ts",
         "scripts/pdf-vim-native-smoke.tsx",
+        "scripts/mail-vim-native-smoke-main.ts",
+        "scripts/mail-vim-native-smoke.tsx",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",
@@ -79,6 +81,18 @@
       },
       // System binaries used by smoke tests and native video capture/inspection.
       "ignoreBinaries": ["pgrep", "ffmpeg", "ffprobe"],
+    },
+    "apps/mobile": {
+      "entry": [
+        "nativescript.config.ts!",
+        "webpack.config.js!",
+        // The native verification driver is also a production check entry.
+        "scripts/ios-simulator.mjs!",
+        "test/*.test.mjs",
+      ],
+      "project": ["app/**/*.ts!", "scripts/*.{mjs,cjs}!", "test/*.test.mjs"],
+      // NativeScript discovers the pinned platform runtime, not a JS import.
+      "ignoreDependencies": ["@nativescript/ios"],
     },
     "packages/shared": {
       "project": ["src/**/*.ts!", "test/**/*.ts"],

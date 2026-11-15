@@ -20,6 +20,7 @@ import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from
 import { createGoogleData, type GoogleData } from './data'
 import { createMailMarkerStore } from './markers'
 import { googleSeed } from './seed'
+import { createMeetingCreation } from './meeting-creation'
 import type { GoogleSession } from './session'
 import { startGoogleTriggers } from './triggers'
 
@@ -137,6 +138,7 @@ export const googleMain: MainPlugin = {
 
     const capabilities = googleCapabilities({
       accounts,
+      meetings: createMeetingCreation({ userData: ctx.userData, accounts }),
       dataFor,
       dataForSession,
       settings: {
