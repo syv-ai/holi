@@ -114,6 +114,7 @@ export interface BlockMenuState {
 /** Where the caret goes when the menu opens: the first text, else the block. */
 export function blockMenuSelection(editor: Editor, target: BlockTarget) {
   const { doc } = editor.state
+  if (target.node.type.name === 'documentFigure') return NodeSelection.create(doc, target.pos)
   const range = blockTextRange(target)
   if (range) return TextSelection.create(doc, range.from)
   if (target.node.isAtom) return NodeSelection.create(doc, target.pos)

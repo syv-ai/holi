@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 
 import { Skeleton } from '@/components/ui/skeleton'
 import { renderMermaid, type MermaidTarget } from '@/lib/mermaid-renderer'
@@ -55,31 +56,35 @@ export function MermaidDiagram({
   const [retry, setRetry] = useState(0)
   const [targets, setTargets] = useState<MermaidTarget[]>([])
   const host = useRef<HTMLDivElement>(null)
+  const activity = useEditorActivity()
+  const activitySnapshot = activity.snapshot()
   const instanceId = `holi-mermaid-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
 
   useEffect(() => {
     let current = true
+    const visitIsCurrent = activity.capture()
     setSvg(null)
     setError(false)
+    if (!activity.displayed || !activity.focused) return
     void renderMermaid(source, theme)
       .then((result) => {
-        if (current) {
+        if (current && visitIsCurrent()) {
           setTargets(result.targets)
           setSvg(result.svg)
         }
       })
       .catch(() => {
         document.getElementById(instanceId)?.remove()
-        if (current) setError(true)
+        if (current && visitIsCurrent()) setError(true)
       })
     return () => {
       current = false
     }
-  }, [instanceId, source, theme, retry])
+  }, [activity, activitySnapshot, instanceId, source, theme, retry])
 
   useEffect(() => {
     const target = host.current
-    if (!target) return
+    if (!target || !activity.displayed || !activity.focused) return
     target.replaceChildren()
     if (!svg) return
     const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
@@ -130,7 +135,7 @@ export function MermaidDiagram({
     target.replaceChildren(document.importNode(root, true))
     const liveRoot = target.querySelector('svg')
     if (liveRoot) onRendered?.(liveRoot, targets)
-  }, [enlarged, instanceId, onRendered, svg, targets])
+  }, [activity, activitySnapshot, enlarged, instanceId, onRendered, svg, targets])
 
   if (error) {
     return (

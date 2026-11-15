@@ -16,9 +16,7 @@ export const AGENT_MARKER = '<!-- holi:agent -->'
 
 /** The extension the editor needs to read and write markdown. */
 function withDocumentFigures(manager: { parse: (source: string) => any }, source: string) {
-  const frames = readMarkdownCodeCaptions(source).filter(
-    (frame) => frame.language.toLowerCase() !== 'mermaid',
-  )
+  const frames = readMarkdownCodeCaptions(source)
   if (!frames.length) return manager.parse(source)
 
   const placeholders = frames.map((_, index) => {

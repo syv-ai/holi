@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -91,7 +102,25 @@ const clipboardScript = join(root, 'clipboard.jxa')
 await writeFile(clipboardScript, clipboardJxa, { mode: 0o600 })
 await mkdir(evidence, { recursive: true })
 await rm(join(evidence, 'frames'), { recursive: true, force: true })
-for (const name of ['result.json', 'electron-smoke.log', 'light.png', 'dark.png'])
+for (const name of [
+  'result.json',
+  'electron-smoke.log',
+  'light.png',
+  'dark.png',
+  'mermaid-light.png',
+  'mermaid-dark.png',
+  'native-ui.pdf',
+  'native-cli.pdf',
+  'pdf-proof.json',
+  'mermaid-ui-valid.pdf',
+  'mermaid-cli-valid.pdf',
+  'mermaid-ui-fallback.pdf',
+  'mermaid-cli-fallback.pdf',
+  'mermaid-pdf-proof.json',
+  'failure.png',
+  'interaction.mp4',
+  'ffmpeg.log',
+])
   await rm(join(evidence, name), { force: true })
 let child
 let closed
@@ -109,6 +138,7 @@ try {
     root: desktop,
     plugins: [react(), tailwindcss()],
     resolve: { alias: { '@': join(desktop, 'src/renderer/src') } },
+    base: './',
     build: {
       outDir: join(root, 'renderer'),
       emptyOutDir: true,
@@ -147,8 +177,10 @@ try {
   )
   await writeFile(
     join(root, 'package.json'),
-    JSON.stringify({ name: 'holi-code-captions-smoke-502', main: 'main.cjs' }),
+    JSON.stringify({ name: 'holi-code-captions-smoke-503', main: 'main.cjs' }),
   )
+  await mkdir(join(root, 'node_modules'), { recursive: true })
+  await symlink(join(desktop, 'node_modules/mermaid'), join(root, 'node_modules/mermaid'))
   await cp(
     join(desktop, 'src/plugins/pdf/main/vault/once/.holi/document-templates/plain'),
     join(root, 'vault/.holi/document-templates/plain'),
@@ -199,7 +231,38 @@ try {
   for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)
   assert.deepEqual(result.rendererErrors, [])
   assert.deepEqual(result.denied, [])
-  for (const file of ['native-ui.pdf', 'native-cli.pdf', 'pdf-proof.json'])
+  const recording = spawnSync(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-framerate',
+      '2',
+      '-i',
+      join(evidence, 'frames/frame-%04d.png'),
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      join(evidence, 'interaction.mp4'),
+    ],
+    { encoding: 'utf8' },
+  )
+  await writeFile(join(evidence, 'ffmpeg.log'), recording.stderr ?? '')
+  assert.equal(recording.status, 0, 'interactive Electron recording must encode')
+  assert((await stat(join(evidence, 'interaction.mp4'))).size > 0)
+  for (const file of [
+    'native-ui.pdf',
+    'native-cli.pdf',
+    'pdf-proof.json',
+    'mermaid-ui-valid.pdf',
+    'mermaid-cli-valid.pdf',
+    'mermaid-ui-fallback.pdf',
+    'mermaid-cli-fallback.pdf',
+    'mermaid-pdf-proof.json',
+  ])
     assert((await stat(join(evidence, file))).size > 0)
 } finally {
   if (child && child.exitCode === null) {

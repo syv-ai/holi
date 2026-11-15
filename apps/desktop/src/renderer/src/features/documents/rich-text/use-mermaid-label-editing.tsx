@@ -28,8 +28,10 @@ export function useMermaidLabelEditing({
   const [draft, setDraft] = useState('')
   const [editError, setEditError] = useState('')
   const session = useRef(0)
+  const lastMappedTransaction = useRef<Transaction | null>(null)
   const context = useRef<{
     node: typeof node
+    position: number
     source: string
     remote: string | null
     theme: string
@@ -77,14 +79,13 @@ export function useMermaidLabelEditing({
     )
       return undefined
     try {
-      const currentPos = currentPosition()
-      return typeof currentPos === 'number' && editor.state.doc.nodeAt(currentPos) === current.node
-        ? currentPos
+      return editor.state.doc.nodeAt(current.position) === current.node
+        ? current.position
         : undefined
     } catch {
       return undefined
     }
-  }, [currentPosition, editor, store, activity])
+  }, [editor, store, activity])
   const finish = useCallback(() => {
     const currentPos = position()
     const target = context.current?.anchor
@@ -119,6 +120,20 @@ export function useMermaidLabelEditing({
     const changed = ({ transaction }: { transaction?: Transaction }) => {
       if (editor.isDestroyed) return
       setEditable(editor.isEditable)
+      if (
+        context.current &&
+        transaction?.docChanged &&
+        lastMappedTransaction.current !== transaction
+      ) {
+        lastMappedTransaction.current = transaction
+        const mapped = transaction.mapping.mapResult(context.current.position, 1)
+        const nodeAtMappedPosition = editor.state.doc.nodeAt(mapped.pos)
+        if (mapped.deleted || nodeAtMappedPosition !== context.current.node) {
+          close()
+          return
+        }
+        context.current.position = mapped.pos
+      }
       if (
         context.current &&
         activity.focused &&
@@ -179,10 +194,18 @@ export function useMermaidLabelEditing({
         element.setAttribute('aria-label', target.label)
         element.setAttribute('data-label-target', '')
         element.addEventListener('click', () => {
-          if (!activity.focused || !editor.isEditable) return
+          const livePosition = currentPosition()
+          if (
+            !activity.focused ||
+            !editor.isEditable ||
+            typeof livePosition !== 'number' ||
+            editor.state.doc.nodeAt(livePosition) !== node
+          )
+            return
           session.current++
           context.current = {
             node,
+            position: livePosition,
             source,
             remote: store.get(activeRemoteAtom),
             theme,
@@ -205,7 +228,7 @@ export function useMermaidLabelEditing({
         })
       })
     },
-    [editing, node, source, store, theme, activity, editor],
+    [editing, node, source, store, theme, activity, editor, currentPosition],
   )
 
   async function apply() {
