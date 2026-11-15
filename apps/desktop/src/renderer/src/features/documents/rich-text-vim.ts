@@ -4,6 +4,7 @@ import type { EditorState } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { undo, redo } from '@tiptap/pm/history'
 import { requestHostHints } from '@/lib/host-hints'
+import { clearExtraSelections } from './multi-cursor'
 
 export type RichTextVimMode = 'normal' | 'insert' | ''
 
@@ -55,7 +56,7 @@ function lineAt(state: EditorState, pos: number) {
     if (node.type.name === 'hardBreak') breaks.push(block.from + offset)
     if (block.node.type.name === 'codeBlock' && node.isText) {
       for (let index = 0; index < (node.text ?? '').length; index++)
-        if (node.text?.[index] === '\\n') breaks.push(block.from + offset + index)
+        if (node.text?.[index] === '\n') breaks.push(block.from + offset + index)
     }
   })
   const before = breaks.filter((at) => at < pos).at(-1)
@@ -69,18 +70,31 @@ function lineAt(state: EditorState, pos: number) {
 
 function graphemeBoundaries(state: EditorState, from: number, to: number) {
   const positions = new Set<number>([from, to])
+  let runText = ''
+  let runStart = 0
+  let runEnd = 0
+  const flushText = () => {
+    if (!runText) return
+    let offset = 0
+    for (const part of segments(runText)) {
+      offset += part.length
+      positions.add(runStart + offset)
+    }
+    runText = ''
+  }
   state.doc.nodesBetween(from, to, (node, pos) => {
     if (node.isText) {
-      let offset = 0
-      for (const part of segments(node.text ?? '')) {
-        offset += part.length
-        positions.add(pos + offset)
-      }
+      if (runText && pos !== runEnd) flushText()
+      if (!runText) runStart = pos
+      runText += node.text ?? ''
+      runEnd = pos + node.nodeSize
     } else if (node.isInline && !node.isText) {
+      flushText()
       positions.add(pos)
       positions.add(pos + node.nodeSize)
     }
   })
+  flushText()
   return [...positions].filter((pos) => pos >= from && pos <= to).sort((a, b) => a - b)
 }
 
@@ -99,7 +113,7 @@ function horizontal(view: EditorView, direction: -1 | 1) {
   const next =
     direction < 0
       ? [...boundaries].reverse().find((at) => at < pos)
-      : boundaries.find((at) => at > pos)
+      : boundaries.find((at) => at > pos && at < line.to)
   if (next !== undefined) select(view, next)
 }
 
@@ -121,14 +135,17 @@ function vertical(view: EditorView, direction: -1 | 1) {
     const index = all.findIndex((block) => block.from === current.block.from)
     const target = all[index + direction]
     if (!target) return
-    targetLine = lineAt(state, target.from)
+    targetLine = lineAt(state, direction < 0 ? target.to : target.from)
   }
   if (!targetLine) return
   const relative = state.selection.head - current.from
   const positions = graphemeBoundaries(state, targetLine.from, targetLine.to)
+  const normalPositions = positions.length > 1 ? positions.slice(0, -1) : positions
   select(
     view,
-    positions.find((at) => at >= targetLine.from + relative) ?? positions.at(-1) ?? targetLine.from,
+    normalPositions.find((at) => at >= targetLine.from + relative) ??
+      normalPositions.at(-1) ??
+      targetLine.from,
   )
 }
 
@@ -154,10 +171,10 @@ function wordMotion(view: EditorView, motion: 'w' | 'b' | 'e') {
   const chars = wordPositions(view.state)
   const pos = view.state.selection.head
   const word = (item: (typeof chars)[number]) => WORD.test(item.value)
+  const current = chars.findIndex((item) => item.from <= pos && pos < item.to)
   let target: number | undefined
   if (motion === 'w') {
-    for (let i = 0; i < chars.length; i++) {
-      if (chars[i]!.from < pos) continue
+    for (let i = Math.max(0, current + 1); i < chars.length; i++) {
       if (word(chars[i]!) && (i === 0 || !word(chars[i - 1]!))) {
         target = chars[i]!.from
         break
@@ -173,8 +190,12 @@ function wordMotion(view: EditorView, motion: 'w' | 'b' | 'e') {
     }
     if (target === undefined) target = chars.find((item) => item.from < pos)?.from
   } else {
-    for (let i = 0; i < chars.length; i++) {
-      if (chars[i]!.from < pos || !word(chars[i]!)) continue
+    const atWordEnd =
+      current >= 0 &&
+      word(chars[current]!) &&
+      (current + 1 === chars.length || !word(chars[current + 1]!))
+    for (let i = Math.max(0, current + (atWordEnd ? 1 : 0)); i < chars.length; i++) {
+      if (!word(chars[i]!)) continue
       if (i + 1 === chars.length || !word(chars[i + 1]!)) {
         target = chars[i]!.from
         break
@@ -192,7 +213,9 @@ function lineMotion(view: EditorView, key: '0' | '^' | '$') {
     key === '0'
       ? line.from
       : key === '$'
-        ? positions.at(-1)!
+        ? positions.length > 1
+          ? positions.at(-2)!
+          : positions.at(-1)!
         : (positions.find(
             (at) =>
               view.state.doc.textBetween(at, positions.find((next) => next > at) ?? at).trim() !==
@@ -204,29 +227,56 @@ function lineMotion(view: EditorView, key: '0' | '^' | '$') {
 function deleteChar(view: EditorView) {
   if (!view.editable) return
   const { state } = view
+  if (!state.selection.empty) {
+    if (state.selection instanceof TextSelection) {
+      view.dispatch(state.tr.deleteSelection())
+      return
+    }
+    const selected = state.selection
+    if ('node' in selected) {
+      view.dispatch(state.tr.delete(selected.from, selected.to))
+      return
+    }
+  }
   const line = lineAt(state, state.selection.head)
   if (!line || state.selection.head >= line.to) return
   const positions = graphemeBoundaries(state, line.from, line.to)
   const from = state.selection.head
   const to = positions.find((at) => at > from)
   if (to === undefined) return
-  const tr = state.tr.delete(from, to)
-  view.dispatch(tr)
+  view.dispatch(state.tr.delete(from, to))
 }
 
 function openLine(view: EditorView, above: boolean, editable: () => boolean) {
   if (!view.editable || !editable()) return
   const line = lineAt(view.state, view.state.selection.head)
   if (!line) return
-  const target = above ? line.block.from : line.block.to
-  select(view, target)
-  view.dispatch(view.state.tr.split(view.state.selection.from))
-  if (above) {
-    const current = view.state.selection.from
-    const previous = blocks(view.state)
-      .filter((block) => block.from < current)
-      .at(-1)
-    if (previous) select(view, previous.from)
+  const { state } = view
+  const code = line.block.node.type.name === 'codeBlock'
+  if (!code && line.from === line.block.from && line.to === line.block.to) {
+    const target = above ? line.block.from : line.block.to
+    select(view, target)
+    view.dispatch(view.state.tr.split(view.state.selection.from))
+    if (above) {
+      const current = view.state.selection.from
+      const previous = blocks(view.state)
+        .filter((block) => block.from < current)
+        .at(-1)
+      if (previous) select(view, previous.from)
+    }
+    setMode(view, 'insert', true)
+    return
+  }
+  const boundary = above ? line.from : line.to
+  if (code) {
+    view.dispatch(state.tr.insertText('\n', boundary))
+    select(view, above ? boundary : boundary + 1)
+  } else {
+    const hardBreak = state.schema.nodes.hardBreak
+    if (!hardBreak) return
+    const separator = hardBreak.create()
+    view.dispatch(state.tr.insert(boundary, separator))
+    select(view, above ? boundary : boundary + separator.nodeSize)
   }
   setMode(view, 'insert', true)
 }
@@ -239,8 +289,11 @@ function insertAt(view: EditorView, where: 'i' | 'a' | 'I' | 'A', editable: () =
     setMode(view, 'insert', true)
     return
   }
-  if (where === 'a') horizontal(view, 1)
-  else if (where === 'I') {
+  if (where === 'a') {
+    const positions = graphemeBoundaries(state, line.from, line.to)
+    const after = positions.find((at) => at > state.selection.head)
+    select(view, after ?? line.to)
+  } else if (where === 'I') {
     const positions = graphemeBoundaries(state, line.from, line.to)
     const first = positions.find((at) => {
       const next = positions.find((candidate) => candidate > at) ?? at
@@ -252,6 +305,9 @@ function insertAt(view: EditorView, where: 'i' | 'a' | 'I' | 'A', editable: () =
 }
 
 function leaveInsert(view: EditorView) {
+  clearExtraSelections(view)
+  const { state } = view
+  if (!state.selection.empty) select(view, state.selection.from)
   const line = lineAt(view.state, view.state.selection.head)
   if (line && view.state.selection.empty && view.state.selection.head > line.from)
     horizontal(view, -1)
@@ -347,7 +403,10 @@ function handleNormal(
     return true
   }
   if (key === 'G') {
-    select(view, view.state.doc.content.size)
+    const last = blocks(view.state).at(-1)
+    const line = last ? lineAt(view.state, last.to) : null
+    const positions = line ? graphemeBoundaries(view.state, line.from, line.to) : []
+    select(view, positions.length > 1 ? positions.at(-2)! : (positions.at(-1) ?? 0))
     event.preventDefault()
     return true
   }

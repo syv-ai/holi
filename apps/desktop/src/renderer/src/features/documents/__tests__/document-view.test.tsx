@@ -190,6 +190,7 @@ beforeEach(() => {
     Promise.resolve(name === 'agent.launch' ? { ok: true, sessionId: 'abc12345' } : { ok: true }),
   )
   store = createStore()
+  store.set(vimCodeEditingAtom, false)
   store.set(activeRemoteAtom, 'syv/vault')
   store.set(vaultSettingsAtom, {
     remote: 'syv/vault',
@@ -267,6 +268,51 @@ test('rich-text Vim preference updates the installed editor without saving navig
   expect(files.get(PATH)).toContain('aXlpha')
   act(() => store.set(vimCodeEditingAtom, false))
   await waitFor(() => expect(box).not.toHaveAttribute('data-vim-mode'))
+})
+
+test('Vim enabled during a buffer freeze activates on thaw without replacing the dirty editor', async () => {
+  open('Original text\n')
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  act(() => editor.commands.insertContent(' local'))
+  const selection = editor.state.selection.from
+  const release = freezeBuffers()
+  try {
+    await waitFor(() => expect(editor.isEditable).toBe(false))
+    act(() => store.set(vimCodeEditingAtom, true))
+    expect(box).not.toHaveAttribute('data-vim-mode')
+    expect((box as WithEditor).editor).toBe(editor)
+  } finally {
+    release()
+  }
+  await waitFor(() => expect(box).toHaveAttribute('data-vim-mode', 'normal'))
+  expect(editor.isEditable).toBe(true)
+  expect(editor.getText()).toContain('localOriginal text')
+  expect(editor.state.selection.from).toBe(selection)
+  act(() => editor.commands.undo())
+  expect(editor.getText()).not.toContain('local')
+})
+
+test('Vim keyboard edits survive a failed autosave and Retry', async () => {
+  write.mockRejectedValueOnce(new Error('disk unavailable'))
+  store.set(vimCodeEditingAtom, true)
+  open('alpha\n')
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  box.focus()
+  act(() => fireEvent.keyDown(box, { key: 'l' }))
+  act(() => fireEvent.keyDown(box, { key: 'i' }))
+  act(() => editor.commands.insertContent('X'))
+  act(() => fireEvent.keyDown(box, { key: 'Escape' }))
+  await waitFor(() => expect(write).toHaveBeenCalledOnce(), { timeout: 3000 })
+  await waitFor(() => expect(screen.getByText('Not saved')).toBeInTheDocument())
+  expect(editor.getText()).toContain('aXlpha')
+  write.mockImplementation(async (input: { path: string; text: string }) => {
+    files.set(input.path, input.text)
+  })
+  await act(async () => flushAllBuffers())
+  await waitFor(() => expect(files.get(PATH)).toContain('aXlpha'), { timeout: 3000 })
+  expect((box as WithEditor).editor).toBe(editor)
 })
 
 test('editing a Mermaid label persists through DocumentView autosave and reopen', async () => {
@@ -1358,6 +1404,40 @@ test('a flush writes a pending edit at once, and a rename after it writes nothin
   await act(() => new Promise((resolve) => setTimeout(resolve, 800)))
   expect(write).toHaveBeenCalledTimes(1)
   expect(files.has(PATH)).toBe(false)
+})
+
+test('Vim-enabled clean external reload replaces the document without replacing its editor', async () => {
+  store.set(vimCodeEditingAtom, true)
+  open('# Plan\\n\\nOriginal\\n')
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  const external = '# Plan\\n\\nExternal clean body\\n'
+  changeOnDisk(external, '2026-10-23T10:00:05Z')
+  await waitFor(() => expect(editor.getMarkdown()).toContain('External clean body'))
+  expect(editor.getMarkdown()).not.toContain('Original')
+  expect((await editorBox()) as WithEditor).toBe(box)
+  expect(box).toHaveAttribute('data-vim-mode', 'normal')
+  expect(write).not.toHaveBeenCalled()
+})
+
+test('Vim-enabled dirty text wins an external reload and remains undoable', async () => {
+  store.set(vimCodeEditingAtom, true)
+  open('# Plan\\n\\nOriginal\\n')
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  box.focus()
+  act(() => fireEvent.keyDown(box, { key: 'l' }))
+  act(() => fireEvent.keyDown(box, { key: 'i' }))
+  act(() => editor.commands.insertContent(' local'))
+  act(() => fireEvent.keyDown(box, { key: 'Escape' }))
+  const external = '# Plan\\n\\nExternal body\\n'
+  changeOnDisk(external, '2026-10-23T10:00:05Z')
+  await act(async () => Promise.resolve())
+  expect(editor.getMarkdown()).toContain('local')
+  expect(editor.getMarkdown()).not.toContain('External body')
+  expect((await editorBox()) as WithEditor).toBe(box)
+  act(() => editor.commands.undo())
+  expect(editor.getMarkdown()).not.toContain('local')
 })
 
 test('a change on disk keeps the caret in its place, and is not undoable', async () => {

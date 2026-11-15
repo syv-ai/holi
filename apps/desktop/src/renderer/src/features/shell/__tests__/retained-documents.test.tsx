@@ -37,6 +37,7 @@ import { documentRunsAtom, documentUpgradesAtom, type AgentRun } from '@/state/d
 import { vaultSettingsAtom } from '@/state/settings'
 import { sessionAtom } from '@/state/session'
 import { pendingHeadingAtom } from '@/state/open-document'
+import { vimCodeEditingAtom } from '@/state/preferences'
 
 Element.prototype.getAnimations ??= () => []
 Range.prototype.getBoundingClientRect ??= () => new DOMRect()
@@ -191,6 +192,7 @@ afterEach(() => {
 
 function fixture(paths = [ONE, TWO], strict = false) {
   const store = createStore()
+  store.set(vimCodeEditingAtom, false)
   store.set(activeRemoteAtom, REMOTE)
   store.set(openedRemoteAtom, REMOTE)
   store.set(vaultsAtom, [{ remote: REMOTE, path: '/vault', name: 'repo', lastOpenedAt: '' }])
@@ -515,6 +517,35 @@ test('displayed unfocused split editors can take focus, edit and find without be
   expect(await screen.findByRole('menu')).toBeInTheDocument()
 })
 
+test('Vim stays isolated between retained editors and resumes on return without stale prefixes', async () => {
+  const store = fixture()
+  store.set(vimCodeEditingAtom, true)
+  const one = await editor()
+  expect(one.view.dom).toHaveAttribute('data-vim-mode', 'normal')
+  act(() => store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, TWO)))
+  const two = await editor(TWO)
+  await act(async () => two.view.focus())
+  expect(two.view.dom).toHaveAttribute('data-vim-mode', 'normal')
+  expect(one.view.dom).not.toHaveAttribute('data-vim-mode')
+  const inactive = new KeyboardEvent('keydown', {
+    key: 'i',
+    bubbles: true,
+    cancelable: true,
+  })
+  act(() => one.view.dom.dispatchEvent(inactive))
+  expect(inactive.defaultPrevented).toBe(false)
+  await act(async () => one.view.focus())
+  fireEvent.keyDown(one.view.dom, { key: 'g' })
+  select(store, TWO)
+  expect(one.view.dom).not.toHaveAttribute('data-vim-mode')
+  select(store, ONE)
+  expect(await editor(ONE)).toBe(one)
+  await waitFor(() => expect(one.view.dom).toHaveAttribute('data-vim-mode', 'normal'))
+  fireEvent.keyDown(one.view.dom, { key: 'x' })
+  expect(one.getText()).toContain('First passage')
+  expect(two.getText()).toContain('First passage')
+})
+
 test('hidden clean reloads preserve history and Updated clears only when displayed', async () => {
   const store = fixture()
   const one = await editor()
@@ -566,12 +597,16 @@ test('tidy-only hidden updates leave the typed whitespace, selection and undo st
   expect(one.getMarkdown()).not.toContain('local ')
 })
 
-test('pending saves serialize; failed destructive close retains the hidden dirty editor and Retry saves it', async () => {
+test('pending Vim saves serialize; failed close retains the hidden dirty editor and Retry saves it', async () => {
   const store = fixture()
+  store.set(vimCodeEditingAtom, true)
   const one = await editor()
   const pending = deferred<{ ok: boolean }>()
   write.mockImplementationOnce(() => pending.promise)
+  await act(async () => one.view.focus())
+  fireEvent.keyDown(one.view.dom, { key: 'i' })
   act(() => one.commands.insertContent('first '))
+  fireEvent.keyDown(one.view.dom, { key: 'Escape' })
   select(store, TWO)
   await editor(TWO)
   await waitFor(() => expect(write).toHaveBeenCalledTimes(1))

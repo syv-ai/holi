@@ -216,6 +216,11 @@ function dropExtras(view: EditorView) {
   view.dispatch(view.state.tr.setMeta(multiCursorKey, EMPTY))
 }
 
+/** Clear occurrence selections when a higher-priority editor mode takes over. */
+export function clearExtraSelections(view: EditorView) {
+  if (extraSelections(view.state).length > 0) dropExtras(view)
+}
+
 const caret = () => {
   const element = document.createElement('span')
   element.className = 'rich-text-extra-caret'
