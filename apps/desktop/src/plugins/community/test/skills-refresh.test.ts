@@ -10,6 +10,8 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import { execFile as execFileCallback } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,6 +19,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { refreshSkills } from '../main/skills'
 import { skillTransactionFs, transactSkillRefresh } from '../main/skill-transaction'
 
+const execFile = promisify(execFileCallback)
 const roots: string[] = []
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'holi-522-skills-'))
@@ -34,6 +37,72 @@ afterEach(async () =>
 )
 
 describe('refreshSkills', () => {
+  it('accepts an ordinary Git for Windows CRLF checkout and publishes authenticated LF bytes', async () => {
+    const f = await fixture()
+    const repository = f.source
+    const skillFile = join(repository, 'skills/demo/SKILL.md')
+    const canonical = Buffer.from('release v1\nsecond line\n')
+    await writeFile(skillFile, canonical)
+    const git = async (...args: string[]) =>
+      execFile('git', args, { cwd: repository, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } })
+    await git('init', '-q')
+    await git('config', 'user.email', 'holi-test@example.invalid')
+    await git('config', 'user.name', 'Holi test')
+    await git('config', 'core.autocrlf', 'true')
+    await git('add', 'skills/demo/SKILL.md')
+    await git('commit', '-qm', 'fixture')
+    await rm(skillFile)
+    await git('checkout', '--', 'skills/demo/SKILL.md')
+    const checkedOut = await readFile(skillFile)
+    expect(checkedOut).toEqual(Buffer.from('release v1\r\nsecond line\r\n'))
+
+    await expect(
+      transactSkillRefresh([{ path: 'skills/demo', name: 'demo' }], repository, f.vault, {
+        force: false,
+        guard() {},
+        expectedSnapshots: [
+          {
+            name: 'demo',
+            directories: [],
+            files: [{ path: 'SKILL.md', bytes: canonical, mode: 0o100644 }],
+          },
+        ],
+      }),
+    ).resolves.toEqual(['.claude/skills/demo'])
+    expect(await readFile(join(f.vault, '.claude/skills/demo/SKILL.md'))).toEqual(canonical)
+    expect(await readFile(skillFile)).toEqual(checkedOut)
+  })
+
+  it('rejects CRLF checkouts with non-checkout edits and unsafe text representations', async () => {
+    const cases = [
+      {
+        actual: Buffer.from('release v1\r\nextra edit\r\n'),
+        expected: Buffer.from('release v1\n'),
+      },
+      { actual: Buffer.from([0x61, 0x00, 0x0d, 0x0a]), expected: Buffer.from([0x61, 0x00, 0x0a]) },
+      { actual: Buffer.from('a\r\nb\rc\r\n'), expected: Buffer.from('a\nb\nc\n') },
+      { actual: Buffer.from([0xff, 0x0d, 0x0a]), expected: Buffer.from([0xff, 0x0a]) },
+    ]
+    for (const { actual, expected } of cases) {
+      const f = await fixture()
+      await writeFile(join(f.source, 'skills/demo/SKILL.md'), actual)
+      await expect(
+        transactSkillRefresh([{ path: 'skills/demo', name: 'demo' }], f.source, f.vault, {
+          force: false,
+          guard() {},
+          expectedSnapshots: [
+            {
+              name: 'demo',
+              directories: [],
+              files: [{ path: 'SKILL.md', bytes: expected, mode: 0o100644 }],
+            },
+          ],
+        }),
+      ).rejects.toThrow('differs from authenticated metadata')
+      await expect(readFile(join(f.vault, '.claude/skills/demo/SKILL.md'))).rejects.toThrow()
+    }
+  })
+
   it('copies absent folders and treats matching contents as a no-op', async () => {
     const f = await fixture()
     expect(

@@ -58,7 +58,11 @@ type Budget = ReturnType<typeof operation>
 const consumeEntry = (budget: Budget, depth: number) => {
   if (depth > MAX_DEPTH || ++budget.entries > MAX_ENTRIES) fail('skill exceeds filesystem limits')
 }
-const readBounded = async (path: string, expectedSize?: number): Promise<Buffer> => {
+const readBounded = async (
+  path: string,
+  expectedSize?: number,
+  maximumSize = expectedSize,
+): Promise<Buffer> => {
   const handle = await open(
     path,
     constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0),
@@ -68,7 +72,9 @@ const readBounded = async (path: string, expectedSize?: number): Promise<Buffer>
     if (
       !info.isFile() ||
       info.size > MAX_BYTES ||
-      (expectedSize !== undefined && info.size !== expectedSize)
+      (expectedSize !== undefined &&
+        info.size !== expectedSize &&
+        (maximumSize === undefined || info.size < expectedSize || info.size > maximumSize))
     )
       fail(`skill file exceeds limits or differs from authenticated metadata: ${path}`)
     const bytes = Buffer.alloc(info.size)
@@ -106,6 +112,30 @@ const treeIdentity = async (root: string): Promise<string[]> => {
   await walk(root)
   return result
 }
+const possibleCrlfSize = (canonical: Buffer): number | undefined => {
+  if (
+    canonical.includes(0) ||
+    canonical.includes(0x0d) ||
+    !Buffer.from(canonical.toString('utf8')).equals(canonical)
+  )
+    return undefined
+  let lineFeeds = 0
+  for (const byte of canonical) if (byte === 0x0a) lineFeeds++
+  return canonical.length + lineFeeds
+}
+
+const isCrlfCheckout = (actual: Buffer, canonical: Buffer): boolean => {
+  const crlfSize = possibleCrlfSize(canonical)
+  if (crlfSize === undefined || actual.length !== crlfSize) return false
+  let actualOffset = 0
+  for (const byte of canonical) {
+    if (byte === 0x0a) {
+      if (actual[actualOffset++] !== 0x0d || actual[actualOffset++] !== 0x0a) return false
+    } else if (actual[actualOffset++] !== byte) return false
+  }
+  return actualOffset === actual.length
+}
+
 const sameSnapshot = (left: SkillSnapshot, right: SkillSnapshot) =>
   left.files.length === right.files.length &&
   left.directories.length === right.directories.length &&
@@ -258,10 +288,23 @@ async function snapshotSource(
       if (++budget.files > MAX_FILES || (budget.bytes += actualStat.size) > MAX_BYTES)
         fail(`skill source exceeds filesystem limits: ${source}`)
       await guard()
-      const bytes = await readBounded(actual, expectedFile?.bytes.length)
-      if (expectedFile && !bytes.equals(expectedFile.bytes))
+      const crlfSize = expectedFile ? possibleCrlfSize(expectedFile.bytes) : undefined
+      const bytes = await readBounded(
+        actual,
+        expectedFile?.bytes.length,
+        crlfSize ?? expectedFile?.bytes.length,
+      )
+      if (
+        expectedFile &&
+        !bytes.equals(expectedFile.bytes) &&
+        !isCrlfCheckout(bytes, expectedFile.bytes)
+      )
         fail(`skill source differs from authenticated metadata: ${source}/${rel}`)
-      files.push({ path: rel, bytes, mode: actualStat.mode & 0o777 })
+      files.push({
+        path: rel,
+        bytes: expectedFile ? Buffer.from(expectedFile.bytes) : bytes,
+        mode: actualStat.mode & 0o777,
+      })
     } else fail(`special file in skill: ${source}/${rel}`)
   }
   const baseStat = await stat(base).catch(() => null)
