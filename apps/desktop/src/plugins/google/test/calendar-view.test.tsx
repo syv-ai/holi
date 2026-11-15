@@ -955,6 +955,32 @@ describe('the calendar view', () => {
     expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('')
   })
 
+  test('a create draft retains guests and Meet through parking without sending', async () => {
+    const user = userEvent.setup()
+    const view = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    await user.type(await screen.findByRole('textbox', { name: 'Title' }), 'Draft event')
+    await user.type(screen.getByRole('textbox', { name: 'Guests' }), 'guest@example.com')
+    await user.click(screen.getByRole('switch', { name: 'Add Google Meet' }))
+    expect(scheduleMock).not.toHaveBeenCalled()
+
+    view.rerender(<CalendarView visible={false} />)
+    view.rerender(<CalendarView visible />)
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Draft event')
+    expect(screen.getByRole('textbox', { name: 'Guests' })).toHaveValue('guest@example.com')
+    expect(screen.getByRole('switch', { name: 'Add Google Meet' })).toBeChecked()
+    expect(scheduleMock).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Create and send invitations' }))
+    await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
+    expect(scheduleMock.mock.calls[0]![0]).toMatchObject({
+      title: 'Draft event',
+      guests: ['guest@example.com'],
+      meet: true,
+    })
+  })
+
   test('an edit draft survives parking and account changes clear it', async () => {
     const user = userEvent.setup()
     const view = render(<CalendarView />)

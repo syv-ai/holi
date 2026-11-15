@@ -101,7 +101,7 @@ export function useMeetingCreation(identity: MeetingIdentity | null, onCreated: 
       const result = await googleCap.checkMeeting(remote, { sub })
       if (!live.current) return
       setOperation(result)
-      if (result) setSubmitted(result.input)
+      setSubmitted(result?.input ?? null)
       if (result?.accepted) onCreatedRef.current()
     } catch (err) {
       if (live.current) setError(messageOf(err, 'Could not check the meeting.'))
