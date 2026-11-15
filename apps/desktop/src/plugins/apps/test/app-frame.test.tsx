@@ -584,6 +584,10 @@ test('command timeout rejects before logging, ignores late success, and releases
     expect.objectContaining({ text: '/format: took longer than 10 s', token: FRAME_TOKEN }),
   )
   expect(frame.isConnected).toBe(true)
+  // The main-process log batch starts flushing after a full second, not before it.
+  await act(async () => vi.advanceTimersByTime(1_001))
+  expect(frame.isConnected).toBe(true)
+  expect(releaseLeaseMock).not.toHaveBeenCalled()
   const callCount = bridgeMock.mock.calls.length
   await act(async () => pendingAuthorization.resolve(true))
   fromFrame({ command: { ok: true, value: { replace: 'late' } } })

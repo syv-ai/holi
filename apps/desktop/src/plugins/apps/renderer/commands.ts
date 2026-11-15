@@ -111,7 +111,8 @@ function runInFrame(
         done()
         return
       }
-      cleanupFallback = setTimeout(done, 1_000)
+      // Main batches log entries for one second; retain authority beyond that flush.
+      cleanupFallback = setTimeout(done, 5_000)
       void appsCap
         .log(remote, {
           bundle,
