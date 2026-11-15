@@ -30,7 +30,7 @@
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { type AppPush, type AppResponse } from '../shared/bridge'
-import { appHost, appName } from '../shared/bundle'
+import { appName, leasedAppHost } from '../shared/bundle'
 import { type AppAffordance } from '../shared/manifest'
 import {
   activeModeAtom,
@@ -73,6 +73,58 @@ function useTopicSignatures(bundle: string): Record<string, string> {
   )
 }
 
+interface FrameLease {
+  token: string
+  nonce: string
+}
+
+/** Each iframe document gets a fresh lease, including late acquisitions. */
+function useFrameLease(
+  remote: string,
+  bundle: string,
+  enabled: boolean,
+): { lease: FrameLease | null; error: boolean; retry: () => void } {
+  const [lease, setLease] = useState<FrameLease | null>(null)
+  const [error, setError] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    if (!enabled) {
+      setLease(null)
+      setError(false)
+      return
+    }
+    let live = true
+    let issued: FrameLease | null = null
+    appsCap.frameLease(remote, { bundle }).then(
+      (value) => {
+        issued = value
+        if (live) {
+          setLease(value)
+          setError(false)
+        } else
+          void appsCap.releaseFrameLease(remote, { bundle, token: value.token }).catch(() => {})
+      },
+      () => {
+        if (live) {
+          setLease(null)
+          setError(true)
+        }
+      },
+    )
+    return () => {
+      live = false
+      if (issued !== null) {
+        void appsCap.releaseFrameLease(remote, { bundle, token: issued.token }).catch(() => {})
+      }
+    }
+  }, [remote, bundle, enabled, attempt])
+  return {
+    lease: enabled ? lease : null,
+    error: enabled && error,
+    retry: () => setAttempt((value) => value + 1),
+  }
+}
+
 /**
  * Take the app's picture for its card once its document has loaded and had
  * a moment to draw, while the browser is idle, and again whenever Refresh
@@ -84,34 +136,124 @@ function usePreviewCapture(
   path: string,
   loaded: string | null,
   visible: boolean,
+  lease: FrameLease | null,
 ): void {
   const remote = useAtomValue(activeRemoteAtom)
   const request = useAtomValue(previewRequestsAtom)[path] ?? 0
   const taken = useSetAtom(previewTakenAtom)
   const completed = useRef<string | null>(null)
-  useEffect(() => {
-    if (!visible || loaded === null || remote === null) return
+  const generation = useRef(0)
+  useLayoutEffect(() => {
+    if (!visible || loaded === null || remote === null || lease === null) return
     const captureKey = JSON.stringify([remote, path, loaded, request])
     if (completed.current === captureKey) return
     let live = true
     let idle: number | null = null
+    let animationFrame: number | null = null
+    let placement: { x: number; y: number; width: number; height: number } | null = null
+    let observer: ResizeObserver | null = null
+    let mutations: MutationObserver | null = null
+    const stopMonitoring = (): void => {
+      observer?.disconnect()
+      mutations?.disconnect()
+      observer = null
+      mutations = null
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame)
+        animationFrame = null
+      }
+      window.removeEventListener('scroll', checkPlacement, true)
+      window.removeEventListener('resize', checkPlacement)
+      document.removeEventListener('visibilitychange', checkPlacement)
+    }
+    const invalidate = (): void => {
+      if (placement === null) return
+      placement = null
+      generation.current += 1
+      window.holi.plugin.send('apps', {
+        remote,
+        name: 'preview-placement',
+        payload: {
+          bundle: path,
+          token: lease.token,
+          nonce: lease.nonce,
+          generation: generation.current,
+          rect: null,
+        },
+      })
+    }
+    const checkPlacement = (): void => {
+      const frame = frameRef.current
+      if (frame === null || placement === null) return
+      const r = frame.getBoundingClientRect()
+      if (
+        !frameIsUnobscured(frame) ||
+        placement.x !== r.left + 2 ||
+        placement.y !== r.top + 2 ||
+        placement.width !== r.width - 4 ||
+        placement.height !== r.height - 4
+      )
+        invalidate()
+    }
     const take = (): void => {
       const frame = frameRef.current
       if (!live || frame === null || !frameIsUnobscured(frame)) return
       const r = frame.getBoundingClientRect()
       // 2px in from each edge, so a pane's separator beside it is not kept.
       const rect = { x: r.left + 2, y: r.top + 2, width: r.width - 4, height: r.height - 4 }
-      appsCap.capturePreview(remote, { bundle: path, rect }).then(
-        (res) => {
-          if (!live || !res.saved) return
+      placement = rect
+      const request = ++generation.current
+      if (animationFrame === null)
+        animationFrame = window.requestAnimationFrame(observePendingPlacement)
+      window.holi.plugin.send('apps', {
+        remote,
+        name: 'preview-placement',
+        payload: {
+          bundle: path,
+          token: lease.token,
+          nonce: lease.nonce,
+          generation: request,
+          rect,
+        },
+      })
+      appsCap
+        .capturePreview(remote, {
+          bundle: path,
+          rect,
+          token: lease.token,
+          nonce: lease.nonce,
+          generation: request,
+        })
+        .then((res) => {
+          checkPlacement()
+          stopMonitoring()
+          if (!live || request !== generation.current || !res.saved) return
           completed.current = captureKey
           taken(path)
-        },
-        (e: unknown) => {
+        })
+        .catch((e: unknown) => {
+          stopMonitoring()
           if (live) console.warn('[apps] preview:', e)
-        },
-      )
+        })
     }
+    const observePendingPlacement = (): void => {
+      checkPlacement()
+      if (live && placement !== null)
+        animationFrame = window.requestAnimationFrame(observePendingPlacement)
+    }
+    observer = new ResizeObserver(checkPlacement)
+    mutations = new MutationObserver(checkPlacement)
+    const frame = frameRef.current
+    if (frame !== null) observer.observe(frame)
+    mutations.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+    })
+    window.addEventListener('scroll', checkPlacement, true)
+    window.addEventListener('resize', checkPlacement)
+    document.addEventListener('visibilitychange', checkPlacement)
     const timer = window.setTimeout(() => {
       idle =
         typeof window.requestIdleCallback === 'function'
@@ -121,10 +263,12 @@ function usePreviewCapture(
     }, PREVIEW_SETTLE_MS)
     return () => {
       live = false
+      invalidate()
+      stopMonitoring()
       window.clearTimeout(timer)
       if (idle !== null) window.cancelIdleCallback(idle)
     }
-  }, [frameRef, path, loaded, remote, request, taken, visible])
+  }, [frameRef, path, loaded, remote, request, taken, visible, lease])
 }
 
 export function AppFrame({
@@ -186,37 +330,70 @@ function AppLoad({
   recheck: () => void
 }): React.JSX.Element {
   const store = useStore()
+  const activeRemote = useAtomValue(activeRemoteAtom)
+  const remoteGeneration = useRef(0)
   const frameRef = useRef<HTMLIFrameElement>(null)
+  const documentLoaded = useRef(false)
   const live = useRef(false)
+  const [ask, setAsk] = useState<{ affordances: AppAffordance[]; codeHash: string } | null>(null)
+  const [gateOpen, setGateOpen] = useState(false)
+  const previewLeaseState = useFrameLease(remote, path, ask !== null)
+  const mainLeaseState = useFrameLease(remote, path, gateOpen)
+  const previewLease = previewLeaseState.lease
+  const mainLease = mainLeaseState.lease
   useLayoutEffect(() => {
     live.current = true
     return () => {
       live.current = false
     }
   }, [])
+  useLayoutEffect(() => {
+    remoteGeneration.current += 1
+  }, [activeRemote])
   const name = appName(path)
   // Every message from the frame we mounted is answered as any frame of
   // this app's code is (`bridge-host.ts`), with the bundle it was mounted
   // with and the vault open now.
   useLayoutEffect(() => {
+    const activation = remoteGeneration.current
     const onMessage = (event: MessageEvent): void => {
       const frame = frameRef.current
-      if (!live.current || frame === null || event.source !== frame.contentWindow) return
+      if (
+        !live.current ||
+        frame === null ||
+        event.source !== frame.contentWindow ||
+        mainLease === null
+      )
+        return
       const target = frame.contentWindow
+      const current = () =>
+        live.current &&
+        remoteGeneration.current === activation &&
+        store.get(activeRemoteAtom) === remote &&
+        frameRef.current === frame &&
+        frame.contentWindow === target
       hostBridgeMessage(event.data, {
         store,
         remote,
         bundle: path,
+        token: mainLease.token,
+        nonce: mainLease.nonce,
+        current,
+        authorize: async () =>
+          current() &&
+          (await appsCap.frameLeaseValid(remote, {
+            bundle: path,
+            token: mainLease.token,
+            nonce: mainLease.nonce,
+          })),
         reply: (response: AppResponse) => {
-          if (live.current && frameRef.current === frame && frame.contentWindow === target) {
-            target?.postMessage(response, '*')
-          }
+          if (current()) target?.postMessage({ ...response, nonce: mainLease.nonce }, '*')
         },
       })
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [store, remote, path])
+  }, [store, remote, path, mainLease])
 
   // Push: post a topic whenever its signature changes, never on mount (the
   // app reads what it needs when it starts). Sent to whatever document the
@@ -231,21 +408,21 @@ function AppLoad({
     const topics = new Set([...Object.keys(previous), ...Object.keys(signatures)])
     for (const topic of topics) {
       if (previous[topic] !== signatures[topic]) {
-        const push: AppPush = { push: topic }
-        target.postMessage(push, '*')
+        if (mainLease !== null) {
+          const push: AppPush = { push: topic, nonce: mainLease.nonce }
+          target.postMessage(push, '*')
+        }
       }
     }
-  }, [signatures])
+  }, [signatures, mainLease])
 
   // The approval gate, asked again on every open and reload, since what was
   // approved lapses with time or with a change to the app's code.
-  const [ask, setAsk] = useState<{ affordances: AppAffordance[]; codeHash: string } | null>(null)
   // Who added the code being approved and who last changed it, so the person
   // can place it.
   const [authorship, setAuthorship] = useState<Authorship>({ added: null, last: null })
   // The app's own words for why it asks, from its manifest.
   const [reasons, setReasons] = useState<Partial<Record<AppAffordance, string>>>({})
-  const [gateOpen, setGateOpen] = useState(false)
   const [error, setError] = useState(false)
   const [expiresAt, setExpiresAt] = useState<number | null>(null)
   const permissionCheck = useRef<'checking' | 'ready' | 'error'>('checking')
@@ -311,7 +488,7 @@ function AppLoad({
   }, [expiresAt, recheck])
 
   const [loaded, setLoaded] = useState<string | null>(null)
-  usePreviewCapture(frameRef, path, gateOpen ? loaded : null, visible)
+  usePreviewCapture(frameRef, path, gateOpen ? loaded : null, visible, mainLease)
 
   const decide = (allow: boolean): void => {
     const shown = ask
@@ -336,12 +513,15 @@ function AppLoad({
     )
   }
 
-  if (error) {
+  if (error || (gateOpen && mainLeaseState.error)) {
     return (
       <EmptyState
         icon={AppWindow}
-        title="Could not check app permissions."
-        action={{ label: 'Retry', onClick: recheck }}
+        title={error ? 'Could not check app permissions.' : 'Could not open this app.'}
+        action={{
+          label: 'Retry',
+          onClick: error ? recheck : mainLeaseState.retry,
+        }}
       />
     )
   }
@@ -350,12 +530,16 @@ function AppLoad({
 
   return (
     <div inert={!visible} aria-hidden={!visible} className="relative flex h-full min-h-0 flex-col">
-      {ask !== null && (
+      {ask !== null && previewLease !== null && (
         // The app as its markup and styles draw it, blurred behind the question:
         // what is being approved, seen. No scripts (`sandbox=""`), so nothing
         // of it runs before the answer, and it takes no pointer or focus.
         <iframe
-          src={`holi-app://${appHost(path)}/index.html?mode=${mode}`}
+          src={
+            previewLease === null
+              ? undefined
+              : `holi-app://${leasedAppHost(path, previewLease.token)}/index.html?mode=${mode}`
+          }
           sandbox=""
           aria-hidden="true"
           tabIndex={-1}
@@ -410,7 +594,7 @@ function AppLoad({
           </CardFooter>
         </Card>
       )}
-      {gateOpen && (
+      {gateOpen && mainLease !== null && (
         <iframe
           // Remounting is the reload: an app holds nothing across one (its origin
           // is opaque, so there is no storage to keep), so a fresh document IS the
@@ -420,7 +604,7 @@ function AppLoad({
           ref={frameRef}
           // The mode in force goes in the URL, since main themes the document and
           // cannot see the renderer. A mode change reloads the frame.
-          src={`holi-app://${appHost(path)}/index.html?mode=${mode}`}
+          src={`holi-app://${leasedAppHost(path, mainLease.token)}/index.html?mode=${mode}`}
           // The frame's accessible name. `title` is the usual attribute for an
           // iframe and is the one the gate bans (it is a browser tooltip on every
           // other element), so the label goes on aria-label.
@@ -436,7 +620,13 @@ function AppLoad({
           // whatever it has as it goes, and an app half-styled for a frame or
           // two reads as a glitch. A reload or a mode change starts it over.
           onLoad={(event) => {
-            if (live.current && event.currentTarget === frameRef.current) setLoaded(path)
+            if (!live.current || event.currentTarget !== frameRef.current) return
+            if (documentLoaded.current) {
+              recheck()
+              return
+            }
+            documentLoaded.current = true
+            setLoaded(path)
           }}
           className={cn(
             'min-h-0 flex-1 border-0',

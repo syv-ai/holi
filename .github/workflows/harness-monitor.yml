@@ -41,6 +41,7 @@ jobs:
     outputs:
       cli: ${{ steps.cli.outputs.result }}
       consumer: ${{ steps.consumer.outputs.result }}
+      producer: ${{ steps.producer.outputs.result }}
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v5
@@ -79,6 +80,19 @@ jobs:
             RESULT="$(node -e 'process.stdout.write(JSON.stringify({outcome:"mismatch",detail:"PiRpcRun consumer fixtures failed; see this compatibility job test output."}))')"
           fi
           echo "result=$(printf '%s' "$RESULT" | base64 -w0)" >> "$GITHUB_OUTPUT"
+      - name: Probe the native JSONL producer through PiRpcRun
+        id: producer
+        run: |
+          node scripts/pi-rpc-producer.mjs "$RUNNER_TEMP/pi-install/node_modules/.bin/pi" "$PI_VERSION" > producer-result.json
+          RESULT="$(cat producer-result.json)"
+          echo "result=$(printf '%s' "$RESULT" | base64 -w0)" >> "$GITHUB_OUTPUT"
+          node -e 'const r=JSON.parse(require("fs").readFileSync("producer-result.json")); if(r.evidence) require("fs").writeFileSync(process.env.RUNNER_TEMP+"/pi-producer-evidence.json", JSON.stringify(r.evidence,null,2))'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pi-producer-evidence
+          path: ${{ runner.temp }}/pi-producer-evidence.json
+          if-no-files-found: warn
       - name: Remove temporary Pi installation
         if: always()
         run: rm -rf "$RUNNER_TEMP/pi-install" "$RUNNER_TEMP/pi-npm-cache"
@@ -181,13 +195,15 @@ jobs:
           MONITOR_REPORT: ${{ needs.discover.outputs.report }}
           PI_CLI_RESULT: ${{ needs.pi-compatibility.outputs.cli }}
           PI_CONSUMER_RESULT: ${{ needs.pi-compatibility.outputs.consumer }}
+          PI_PRODUCER_RESULT: ${{ needs.pi-compatibility.outputs.producer }}
         run: |
           echo "$MONITOR_REPORT" | base64 --decode > report.json
           echo "$PI_CLI_RESULT" | base64 --decode > pi-cli-result.json
           echo "$PI_CONSUMER_RESULT" | base64 --decode > pi-consumer-result.json
+          echo "$PI_PRODUCER_RESULT" | base64 --decode > pi-producer-result.json
           # Only this reporting job receives the issue-write token. Provider code
           # is installed and executed in separate, read-only compatibility jobs.
           node scripts/harness-monitor.mjs merge-codex report.json codex-checks/checks.json > codex-report.json
           node scripts/harness-monitor.mjs merge-claude codex-report.json claude-checks/checks.json > claude-report.json
-          node scripts/harness-monitor.mjs merge-pi claude-report.json pi-cli-result.json pi-consumer-result.json > normalized-report.json
+          node scripts/harness-monitor.mjs merge-pi claude-report.json pi-cli-result.json pi-consumer-result.json pi-producer-result.json > normalized-report.json
           node scripts/harness-monitor.mjs report normalized-report.json

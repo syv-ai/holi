@@ -25,9 +25,6 @@ import {
   shownPath,
   stringParam,
 } from '../../../../main/plugin-api'
-import { JOB_ID } from '../claude/listing'
-import { JOB_SESSION_ID } from '../host/jobs'
-import { PTY_SESSION_ID } from '../host/pty-sessions'
 import type { Inbox, RaiseResult } from './inbox'
 import type { InboxView } from './rules'
 import { appendWorkLog, workLogPath } from './work-log'
@@ -42,6 +39,7 @@ export interface InboxCapabilitiesDeps {
 /** Long enough for a sentence, short enough for a banner. */
 const MAX_TITLE = 120
 const MAX_LINE = 400
+const NOTIFY_SESSION_ID = /^(?:[0-9a-f]{8}|[pj][0-9a-f]{12})$/
 
 function bounded(raw: Record<string, unknown>, key: string, max: number): string {
   const value = stringParam(raw, key).trim()
@@ -76,12 +74,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
         const p = paramsObject(raw)
         const path = optionalStringParam(p, 'path')
         const session = optionalStringParam(p, 'session')
-        if (
-          session !== undefined &&
-          !JOB_ID.test(session) &&
-          !JOB_SESSION_ID.test(session) &&
-          !PTY_SESSION_ID.test(session)
-        ) {
+        if (session !== undefined && !NOTIFY_SESSION_ID.test(session)) {
           throw new CapabilityError('BAD_REQUEST', `not a session id: ${session}`)
         }
         // What the entry opens is shown to the person, so it is held to what

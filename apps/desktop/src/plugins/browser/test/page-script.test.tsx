@@ -13,6 +13,12 @@ interface HoliPage {
   focus(ref: number): boolean
   valueOf(ref: number): string | null
   fill(ref: number, text: string): boolean
+  vim: {
+    documentNonce(): string
+    rearm(): string
+    configure(enabled: boolean, revision: number, nonce: string): boolean
+    mode(): { revision: number; mode: 'insert' | 'normal' }
+  }
 }
 
 const holi = (): HoliPage => (globalThis as unknown as { __holiPage: HoliPage }).__holiPage
@@ -83,6 +89,222 @@ test('a number finds its control until it leaves the page', () => {
   button.remove()
   expect(holi().click(7)).toBe(false)
   expect(holi().point(7)).toBeNull()
+})
+
+test('vim mode uses native selections and blocks unsupported edits synchronously', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = 'one two\n  three'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 1, nonce)).toBe(true)
+  expect(holi().vim.mode()).toEqual({ revision: 1, mode: 'insert' })
+  const key = (value: string, options: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent('keydown', {
+      key: value,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    })
+    textarea.dispatchEvent(event)
+    return event
+  }
+  expect(key('Escape').defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('normal')
+  textarea.setSelectionRange(0, 0)
+  key('w')
+  expect(textarea.selectionStart).toBe(4)
+  const before = textarea.value
+  expect(key('Backspace').defaultPrevented).toBe(true)
+  expect(textarea.value).toBe(before)
+  expect(key('Tab').defaultPrevented).toBe(false)
+  for (const selectionKey of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']) {
+    expect(key(selectionKey, { shiftKey: true }).defaultPrevented).toBe(false)
+  }
+  key('a')
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(key('x').defaultPrevented).toBe(false)
+  expect(holi().vim.configure(false, 2, nonce)).toBe(true)
+  expect(holi().vim.configure(true, 1, nonce)).toBe(false)
+  expect(holi().vim.mode()).toEqual({ revision: 2, mode: 'insert' })
+})
+
+test('moves by grapheme, Unicode word, and logical textarea line without editing', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = '  café🙂 x\nlonger'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 10, nonce)).toBe(true)
+  const key = (value: string) => {
+    const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })
+    textarea.dispatchEvent(event)
+    return event
+  }
+  key('Escape')
+  textarea.setSelectionRange(6, 6)
+  key('l')
+  expect(textarea.selectionStart).toBe(8)
+  key('h')
+  expect(textarea.selectionStart).toBe(6)
+  key('^')
+  expect(textarea.selectionStart).toBe(2)
+  key('w')
+  expect(textarea.selectionStart).toBe(9)
+  key('b')
+  expect(textarea.selectionStart).toBe(2)
+  key('w')
+  expect(textarea.selectionStart).toBe(9)
+  key('e')
+  expect(textarea.selectionStart).toBe(16)
+  textarea.setSelectionRange(9, 9)
+  key('j')
+  expect(textarea.selectionStart).toBe(17)
+  key('k')
+  expect(textarea.selectionStart).toBe(9)
+  key('I')
+  expect(textarea.selectionStart).toBe(2)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(textarea.value).toBe('  café🙂 x\nlonger')
+})
+
+test('e advances strictly beyond the caret across Unicode word ends', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = 'cafe\u0301🙂, déjà vu!'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 11, nonce)).toBe(true)
+  const key = () =>
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    )
+  key()
+  textarea.setSelectionRange(0, 0)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(3)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(12)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(15)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(15)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }),
+  )
+  expect(textarea.selectionStart).toBe(15)
+})
+
+test('line motions include the empty first line before a leading newline', () => {
+  const textarea = document.createElement('textarea')
+  textarea.value = '\n  café\n🙂'
+  document.body.append(textarea)
+  textarea.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 12, nonce)).toBe(true)
+  const key = (value: string) =>
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+    )
+  key('Escape')
+  textarea.setSelectionRange(1, 1)
+  key('k')
+  expect(textarea.selectionStart).toBe(0)
+  key('0')
+  expect(textarea.selectionStart).toBe(0)
+  key('^')
+  expect(textarea.selectionStart).toBe(0)
+  key('I')
+  expect(textarea.selectionStart).toBe(0)
+  expect(textarea.value).toBe('\n  café\n🙂')
+})
+
+test('normal Escape is consumed so native search inputs do not clear', () => {
+  const search = document.createElement('input')
+  search.type = 'search'
+  search.value = 'query'
+  document.body.append(search)
+  search.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 13, nonce)).toBe(true)
+  const press = () => {
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    search.dispatchEvent(event)
+    return event
+  }
+  expect(press().defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('normal')
+  expect(press().defaultPrevented).toBe(true)
+  expect(search.value).toBe('query')
+})
+
+test('blur, replacement focus, IME and modified shortcuts keep native ownership', () => {
+  const first = document.createElement('textarea')
+  const second = document.createElement('textarea')
+  first.value = 'first'
+  second.value = 'second'
+  document.body.append(first, second)
+  first.focus()
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 20, nonce)).toBe(true)
+  const key = (field: HTMLTextAreaElement, value: string, options: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent('keydown', {
+      key: value,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    })
+    field.dispatchEvent(event)
+    return event
+  }
+  key(first, 'Escape')
+  expect(holi().vim.mode().mode).toBe('normal')
+  first.blur()
+  expect(holi().vim.mode().mode).toBe('insert')
+  second.focus()
+  expect(key(second, 'Escape', { isComposing: true }).defaultPrevented).toBe(false)
+  expect(key(second, 'z', { ctrlKey: true }).defaultPrevented).toBe(false)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(holi().vim.configure(false, 21, nonce)).toBe(true)
+  expect(key(second, 'Escape').defaultPrevented).toBe(false)
+})
+
+test('rejects stale document configuration and leaves unsupported fields native', () => {
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 11, 'stale-document')).toBe(false)
+  const password = document.createElement('input')
+  password.type = 'password'
+  document.body.append(password)
+  password.focus()
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  password.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(false)
+  expect(holi().vim.configure(true, 22, nonce)).toBe(true)
+})
+
+test('rearming a surviving document rotates ownership and returns Vim to insert mode', () => {
+  const textarea = document.createElement('textarea')
+  document.body.append(textarea)
+  textarea.focus()
+  const previousNonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 30, previousNonce)).toBe(true)
+  textarea.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  )
+  expect(holi().vim.mode().mode).toBe('normal')
+  const nonce = holi().vim.rearm()
+  expect(nonce).not.toBe(previousNonce)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(holi().vim.configure(false, 31, previousNonce)).toBe(false)
+  expect(holi().vim.configure(true, 31, nonce)).toBe(true)
 })
 
 test('fills a field and picks an option, as typing would', () => {

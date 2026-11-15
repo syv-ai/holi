@@ -33,6 +33,38 @@ describe('vault-files', () => {
     expect(await listFiles(root)).toEqual(['a/b/c.md'])
   })
 
+  it('stops after mkdir when the write lease is revoked and leaves existing content intact', async () => {
+    const root = await scratch()
+    await writeFile(join(root, 'a.md'), 'old')
+    let checks = 0
+    const assertCurrent = () => {
+      checks += 1
+      if (checks === 2) throw new Error('revoked')
+    }
+    await expect(writeAtomic(root, vaultRelPath('a.md'), 'new', assertCurrent)).rejects.toThrow(
+      'revoked',
+    )
+    expect(checks).toBe(2)
+    expect(await readFile(join(root, 'a.md'), 'utf8')).toBe('old')
+    expect(await listFiles(root)).toEqual(['a.md'])
+  })
+
+  it('cleans a temporary write when the lease is revoked after writeFile', async () => {
+    const root = await scratch()
+    await writeFile(join(root, 'a.md'), 'old')
+    let checks = 0
+    const assertCurrent = () => {
+      checks += 1
+      if (checks === 3) throw new Error('revoked')
+    }
+    await expect(writeAtomic(root, vaultRelPath('a.md'), 'new', assertCurrent)).rejects.toThrow(
+      'revoked',
+    )
+    expect(checks).toBe(3)
+    expect(await readFile(join(root, 'a.md'), 'utf8')).toBe('old')
+    expect(await listFiles(root)).toEqual(['a.md'])
+  })
+
   it('toVaultRel maps abs→rel and rejects escapes', async () => {
     const root = await scratch()
     expect(toVaultRel(root, join(root, 'notes/x.md'))).toBe('notes/x.md')

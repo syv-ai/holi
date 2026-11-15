@@ -96,6 +96,73 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
         run: node scripts/check-commit-msg.mjs --message "$TITLE"
 
+  native-codex-exec-producer:
+    name: Native Codex exec producer proof
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Run pinned native producer and host proof
+        env:
+          HOLI_CODEX_EVIDENCE: ${{ runner.temp }}/codex-exec-producer/evidence.json
+        run: node scripts/codex-exec-producer.mjs
+      - name: Upload native producer evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-codex-exec-producer-evidence
+          path: ${{ runner.temp }}/codex-exec-producer/evidence.json
+          if-no-files-found: error
+
+  pi-native-producer:
+    name: Native Pi RPC producer
+    runs-on: ubuntu-24.04
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install repository test dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install isolated exact Pi package without lifecycle scripts
+        env:
+          npm_config_cache: ${{ runner.temp }}/pi-npm-cache
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-install"
+          npm install --prefix "$RUNNER_TEMP/pi-install" --ignore-scripts --no-audit --no-fund '@earendil-works/pi-coding-agent@1.5.2'
+      - name: Run native producer probe
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-native-evidence"
+          node scripts/pi-rpc-producer.mjs "$RUNNER_TEMP/pi-install/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" 1.5.2 > "$RUNNER_TEMP/pi-native-evidence/result.json"
+          node -e 'const r=require(process.env.RUNNER_TEMP+"/pi-native-evidence/result.json"); if(r.outcome!=="pass") { console.error(JSON.stringify(r)); process.exit(1) } if(r.evidence) require("fs").writeFileSync(process.env.RUNNER_TEMP+"/pi-native-evidence/evidence.json",JSON.stringify(r.evidence,null,2))'
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pi-native-producer-evidence
+          path: ${{ runner.temp }}/pi-native-evidence/
+          if-no-files-found: warn
+      - name: Remove temporary Pi installation and npm cache
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/pi-install" "$RUNNER_TEMP/pi-npm-cache"
+
   windows-askpass:
     name: Windows askpass
     runs-on: windows-2025

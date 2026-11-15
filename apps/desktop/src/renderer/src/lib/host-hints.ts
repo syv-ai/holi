@@ -27,9 +27,37 @@ const OVERLAY =
   '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"], [data-slot="hover-card-content"]'
 export const HOST_HINT_REQUEST = 'holi:vim-host-hints'
 
+/** A request-scoped target source. It exists only for the active hint session. */
+export interface HostHintAdapter {
+  discover(): readonly HostHintAdapterTarget[]
+  /** Validate the request lifetime as well as target geometry; called even with no links. */
+  unchanged(targets: readonly HostHintTarget[]): boolean
+  /** Capture the current terminal revision for this hint request. */
+  capture?(): void
+  /** Cancel the owning hint session immediately when its surface changes. */
+  subscribe?(invalidate: () => void): () => void
+  activate(target: HostHintTarget): boolean
+}
+
+interface HostHintAdapterTarget {
+  element: Element
+  label: string
+  x: number
+  y: number
+  token: unknown
+}
+
 /** The editor requests hints without depending on the shell that presents them. */
 export function requestHostHints(source: HTMLElement): void {
-  window.dispatchEvent(new CustomEvent(HOST_HINT_REQUEST, { detail: source }))
+  window.dispatchEvent(new CustomEvent(HOST_HINT_REQUEST, { detail: { source } }))
+}
+
+/** Explicitly request hints for a shell surface, independent of document focus. */
+export function requestAdaptedHostHints(source: HTMLElement, adapter: HostHintAdapter): void {
+  adapter.capture?.()
+  window.dispatchEvent(
+    new CustomEvent(HOST_HINT_REQUEST, { detail: { source, adapter, scoped: true } }),
+  )
 }
 
 export interface HostHintTarget {
@@ -41,10 +69,17 @@ export interface HostHintTarget {
   /** Captured scope: activation cannot follow the person into another surface. */
   root: HTMLElement
   overlay: HTMLElement | null
+  adapter?: HostHintAdapter
+  /** Request lifetime applies to native controls as well as adapted links. */
+  scopeAdapter?: HostHintAdapter
+  token?: unknown
 }
 
 /** Shell chrome and the focused pane, or only the foremost interactive overlay. */
-export function discoverHostHintTargets(root: HTMLElement): HostHintTarget[] {
+export function discoverHostHintTargets(
+  root: HTMLElement,
+  adapter?: HostHintAdapter,
+): HostHintTarget[] {
   const overlay = topOverlay()
   const scope = overlay ?? document.body
   const targets: HostHintTarget[] = []
@@ -54,7 +89,29 @@ export function discoverHostHintTargets(root: HTMLElement): HostHintTarget[] {
     if (!eligible(element)) continue
     const point = hitPoint(element)
     if (point === null) continue
-    targets.push({ element, label: accessibleLabel(element), ...point, key: '', root, overlay })
+    targets.push({
+      element,
+      label: accessibleLabel(element),
+      ...point,
+      key: '',
+      root,
+      overlay,
+      scopeAdapter: adapter,
+    })
+  }
+  if (adapter && !overlay) {
+    for (const target of adapter.discover()) {
+      if (!target.element.isConnected || target.element.closest('[hidden],[inert]')) continue
+      targets.push({
+        ...target,
+        root,
+        overlay,
+        adapter,
+        scopeAdapter: adapter,
+        token: target.token,
+        key: '',
+      })
+    }
   }
   targets.sort((a, b) => a.y - b.y || a.x - b.x)
   return targets.map((target, index) => ({ ...target, key: hintLabel(index, targets.length) }))
@@ -73,29 +130,50 @@ export function hintLabel(index: number, targetCount = index + 1): string {
 }
 
 /** Invalidation and activation share discovery, so neither trusts stale geometry. */
-export function hostHintsUnchanged(targets: readonly HostHintTarget[]): boolean {
-  const first = targets[0]
-  if (!first || !first.root.isConnected) return false
-  const next = discoverHostHintTargets(first.root)
+export function hostHintsUnchanged(
+  targets: readonly HostHintTarget[],
+  requestAdapter?: HostHintAdapter,
+  root = targets[0]?.root,
+): boolean {
+  if (!root?.isConnected) return false
+  const adapter = requestAdapter ?? targets.find((target) => target.adapter)?.adapter
+  const adapted = targets.filter((target) => target.adapter === adapter)
+  if (adapter && !adapter.unchanged(adapted)) return false
+  const ordinary = targets.filter((target) => !target.adapter)
+  const next = discoverHostHintTargets(root, adapter)
+  const ordinaryNext = next.filter((target) => !target.adapter)
+  const adaptedNext = next.filter((target) => target.adapter === adapter)
+  const oldAdapted = targets.filter((target) => target.adapter === adapter)
   return (
-    next.length === targets.length &&
-    next.every((target, i) => {
-      const previous = targets[i]!
-      return (
-        target.element === previous.element &&
-        target.overlay === previous.overlay &&
-        target.label === previous.label &&
-        target.x === previous.x &&
-        target.y === previous.y
-      )
-    })
+    ordinaryNext.length === ordinary.length &&
+    ordinaryNext.every((target, i) => sameTarget(target, ordinary[i]!)) &&
+    adaptedNext.length === oldAdapted.length &&
+    adaptedNext.every((target, i) => sameTarget(target, oldAdapted[i]!))
+  )
+}
+
+function sameTarget(target: HostHintTarget, previous: HostHintTarget): boolean {
+  return (
+    target.element === previous.element &&
+    target.overlay === previous.overlay &&
+    target.label === previous.label &&
+    target.x === previous.x &&
+    target.y === previous.y &&
+    target.token === previous.token
   )
 }
 
 /** Send a mouse press through the control's own handlers and native default action. */
 export function activateHostHint(target: HostHintTarget): boolean {
-  const live = discoverHostHintTargets(target.root).find(
-    ({ element }) => element === target.element,
+  if (target.scopeAdapter && !target.scopeAdapter.unchanged([])) return false
+  if (target.adapter) {
+    const live = discoverHostHintTargets(target.root, target.adapter).find(
+      (candidate) => candidate.adapter === target.adapter && sameTarget(candidate, target),
+    )
+    return live ? target.adapter.activate(live) : false
+  }
+  const live = discoverHostHintTargets(target.root, target.scopeAdapter).find(
+    ({ element, adapter }) => !adapter && element === target.element,
   )
   if (
     !live ||

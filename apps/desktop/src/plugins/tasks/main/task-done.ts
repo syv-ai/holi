@@ -31,6 +31,7 @@ export async function taskDoneOp(
   root: string,
   path: string,
   today: string,
+  assertCurrent?: () => void,
 ): Promise<TaskDoneResult> {
   let rel: VaultRelPath
   try {
@@ -56,7 +57,7 @@ export async function taskDoneOp(
 
   const statuses = await readVaultStatuses(root)
   const completion = completeTask(task, today, completionStatuses(statuses))
-  await writeAtomic(root, rel, serializeTaskFile({ ...task, ...completion }))
+  await writeAtomic(root, rel, serializeTaskFile({ ...task, ...completion }), assertCurrent)
 
   // The result says what happened, finished or rolled forward, in Holi's own
   // words; the file says it in the vault's (`completionStatuses`).

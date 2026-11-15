@@ -24,6 +24,7 @@ import { useShortcutDispatcher, useShortcutHandlers } from '@/hooks/use-shortcut
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { liveShortcutIdsAtom } from '@/state/shortcuts'
 import { HostHintLayer } from '../host-hint-layer'
+import { requestAdaptedHostHints, type HostHintAdapter } from '@/lib/host-hints'
 
 let store: ReturnType<typeof createStore>
 let layout: ReturnType<typeof installHintLayout>
@@ -299,6 +300,104 @@ test('stock Select trigger and option use their existing mouse path', async () =
   await userEvent.keyboard('f')
   await choose('Two')
   expect(select).toHaveBeenCalledExactlyOnceWith('two')
+})
+
+test('request-scoped adapters share the host label namespace and revalidate before activation', async () => {
+  const activate = vi.fn(() => true)
+  let current = true
+  let target = document.createElement('div')
+  const adapter: HostHintAdapter = {
+    discover: () =>
+      current
+        ? [{ element: target, label: 'Wrapped shell link', x: 40, y: 50, token: 'buffer:1' }]
+        : [],
+    unchanged: () => current,
+    activate,
+  }
+  setup(
+    <section data-panel-terminal="shell-one">
+      <Button>Native control</Button>
+      <div className="xterm-screen" />
+    </section>,
+  )
+  const root = document.querySelector<HTMLElement>('[data-panel-terminal]')!
+  target = root.querySelector('.xterm-screen')!
+  screen.getByRole('button', { name: 'Native control' }).focus()
+  act(() => requestAdaptedHostHints(root, adapter))
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual([
+    'Native control',
+    'Wrapped shell link',
+  ])
+  await choose('Wrapped shell link')
+  expect(activate).toHaveBeenCalledTimes(1)
+
+  act(() => requestAdaptedHostHints(root, adapter))
+  current = false
+  const event = new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true })
+  act(() => window.dispatchEvent(event))
+  expect(event.defaultPrevented).toBe(true)
+  expect(activate).toHaveBeenCalledTimes(1)
+  expect(hints()).toHaveLength(0)
+})
+
+test('explicit terminal hints show labels; Ctrl-C cancels without consuming the interrupt', async () => {
+  setup(
+    <div data-panel-terminal="shell-one" className="xterm">
+      <textarea aria-label="Shell" />
+      <div className="xterm-screen" />
+    </div>,
+  )
+  const shell = screen.getByLabelText('Shell')
+  shell.focus()
+  const root = document.querySelector<HTMLElement>('[data-panel-terminal]')!
+  const adapter: HostHintAdapter = {
+    discover: () => [
+      {
+        element: root.querySelector('.xterm-screen')!,
+        label: 'https://example.test',
+        x: 32,
+        y: 40,
+        token: 'terminal:1',
+      },
+    ],
+    unchanged: () => true,
+    activate: vi.fn(() => true),
+  }
+  act(() => requestAdaptedHostHints(root, adapter))
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['https://example.test'])
+  const event = new KeyboardEvent('keydown', {
+    key: 'c',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  })
+  act(() => shell.dispatchEvent(event))
+  expect(event.defaultPrevented).toBe(false)
+  expect(hints()).toHaveLength(0)
+})
+
+test('request-scoped adapter validates its shell lifetime even with no links', async () => {
+  let current = true
+  const adapter: HostHintAdapter = {
+    discover: () => [],
+    unchanged: vi.fn(() => current),
+    activate: vi.fn(() => false),
+  }
+  setup(
+    <section data-panel-terminal="shell-one">
+      <Button>Native control</Button>
+    </section>,
+  )
+  const root = document.querySelector<HTMLElement>('[data-panel-terminal]')!
+  act(() => requestAdaptedHostHints(root, adapter))
+  // A visible native control still shows a label while the adapter has no links.
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['Native control'])
+  current = false
+  const event = new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true })
+  act(() => window.dispatchEvent(event))
+  expect(adapter.unchanged).toHaveBeenCalledWith([])
+  expect(event.defaultPrevented).toBe(true)
+  expect(hints()).toHaveLength(0)
 })
 
 test('nested portalled overlays use their focused top layer and Escape leaves the overlay open', async () => {

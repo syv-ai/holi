@@ -21,9 +21,10 @@ import {
   type CommandOutcome,
 } from '../shared/commands'
 import { APP_MANIFEST_FILE } from '../shared/manifest'
-import { appHost, appName } from '../shared/bundle'
+import { appName, leasedAppHost } from '../shared/bundle'
 import {
   activeModeAtom,
+  activeRemoteAtom,
   snapshotAtom,
   type PluginStore,
   type SlashCommand,
@@ -70,55 +71,160 @@ function runInFrame(
   command: string,
   input: CommandInput,
   inFlight: Set<() => void>,
+  isCurrent: () => boolean,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const frame = document.createElement('iframe')
-    // The same sandbox as the app's tab, less popups: a command has no page
-    // to put a link on.
-    frame.setAttribute('sandbox', 'allow-scripts')
-    frame.setAttribute('aria-hidden', 'true')
-    frame.tabIndex = -1
-    frame.style.display = 'none'
-    const mode = store.get(activeModeAtom)
-    frame.src = `holi-app://${appHost(bundle)}/?${COMMAND_PARAM}=${encodeURIComponent(command)}&mode=${mode}`
-
+    let frame: HTMLIFrameElement | null = null
+    let lease: { token: string; nonce: string } | null = null
+    let settled = false
+    let cleaned = false
+    let handedInput = false
+    let cleanupFallback: ReturnType<typeof setTimeout> | null = null
     const done = (): void => {
+      if (cleaned) return
+      cleaned = true
       clearTimeout(timer)
+      if (cleanupFallback !== null) clearTimeout(cleanupFallback)
       inFlight.delete(cancel)
       window.removeEventListener('message', onMessage)
-      frame.remove()
+      frame?.remove()
+      if (lease !== null) {
+        void appsCap.releaseFrameLease(remote, { bundle, token: lease.token }).catch(() => {})
+        lease = null
+      }
     }
-    const cancel = (): void => {
+    const finish = (value: unknown, error?: Error): void => {
+      if (settled) return
+      settled = true
       done()
-      reject(new Error('the vault was left'))
+      if (error) reject(error)
+      else resolve(value)
     }
-    inFlight.add(cancel)
-    const timer = setTimeout(() => {
-      done()
-      reject(new Error(`took longer than ${COMMAND_TIMEOUT_MS / 1000} s`))
-    }, COMMAND_TIMEOUT_MS)
-
-    const onMessage = (event: MessageEvent): void => {
-      if (event.source !== frame.contentWindow) return
-      const data = event.data as { command?: CommandOutcome } | null
-      if (data !== null && typeof data === 'object' && typeof data.command === 'object') {
-        const outcome = data.command
+    const failWithLog = (error: Error): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      window.removeEventListener('message', onMessage)
+      reject(error)
+      const logLease = lease
+      if (logLease === null || !isCurrent()) {
         done()
-        if (outcome?.ok === true) resolve(outcome.value)
-        else reject(new Error(String(outcome?.error ?? 'the command failed')))
         return
       }
-      hostBridgeMessage(event.data, {
-        store,
-        remote,
-        bundle,
-        reply: (response) => frame.contentWindow?.postMessage(response, '*'),
-      })
+      // Main batches log entries for one second; retain authority beyond that flush.
+      cleanupFallback = setTimeout(done, 5_000)
+      void appsCap
+        .log(remote, {
+          bundle,
+          level: 'error',
+          text: `/${command}: ${error.message}`,
+          token: logLease.token,
+          nonce: logLease.nonce,
+        })
+        .catch(() => {})
+        .finally(done)
     }
+    const cancel = (): void => {
+      if (settled) done()
+      else finish(undefined, new Error('the vault was left'))
+    }
+    const timer = setTimeout(() => {
+      const error = new Error(`took longer than ${COMMAND_TIMEOUT_MS / 1000} s`)
+      if (lease === null || settled || !isCurrent()) {
+        finish(undefined, error)
+        return
+      }
+      failWithLog(error)
+    }, COMMAND_TIMEOUT_MS)
+    const onMessage = (event: MessageEvent): void => {
+      if (frame === null || lease === null || event.source !== frame.contentWindow || !isCurrent())
+        return
+      const data = event.data as {
+        nonce?: unknown
+        ready?: unknown
+        command?: CommandOutcome
+      } | null
+      if (data?.nonce !== lease.nonce) return
+      void appsCap
+        .frameLeaseValid(remote, { bundle, token: lease.token, nonce: lease.nonce })
+        .then((valid) => {
+          if (!valid || settled || !isCurrent() || frame === null || lease === null) return
+          if (data.ready === true && !handedInput) {
+            handedInput = true
+            frame.contentWindow?.postMessage({ run: input, nonce: lease.nonce }, '*')
+            return
+          }
+          if (typeof data.command === 'object') {
+            const outcome = data.command
+            if (outcome?.ok !== true) {
+              const error = new Error(String(outcome?.error ?? 'the command failed'))
+              if (!isCurrent()) {
+                finish(undefined, error)
+                return
+              }
+              failWithLog(error)
+              return
+            }
+            const action = commandActionOf(outcome.value)
+            if (action !== null && 'error' in action) {
+              const error = new Error(action.error)
+              if (!isCurrent()) {
+                finish(undefined, error)
+                return
+              }
+              failWithLog(error)
+              return
+            }
+            finish(action)
+            return
+          }
+          hostBridgeMessage(event.data, {
+            store,
+            remote,
+            bundle,
+            token: lease.token,
+            nonce: lease.nonce,
+            current: () => !settled && isCurrent() && store.get(activeRemoteAtom) === remote,
+            authorize: async () =>
+              !settled &&
+              isCurrent() &&
+              store.get(activeRemoteAtom) === remote &&
+              (await appsCap.frameLeaseValid(remote, {
+                bundle,
+                token: lease!.token,
+                nonce: lease!.nonce,
+              })),
+            reply: (response) => {
+              if (!settled && isCurrent() && store.get(activeRemoteAtom) === remote) {
+                frame?.contentWindow?.postMessage(response, '*')
+              }
+            },
+          })
+        })
+        .catch(() => {})
+    }
+    inFlight.add(cancel)
     window.addEventListener('message', onMessage)
-    // Classic scripts have run by `load`, so the command has registered.
-    frame.addEventListener('load', () => frame.contentWindow?.postMessage({ run: input }, '*'))
-    document.body.append(frame)
+    void appsCap.frameLease(remote, { bundle }).then(
+      (issued) => {
+        if (settled || !isCurrent() || store.get(activeRemoteAtom) !== remote) {
+          void appsCap.releaseFrameLease(remote, { bundle, token: issued.token }).catch(() => {})
+          finish(undefined, new Error('the vault was left'))
+          return
+        }
+        lease = issued
+        frame = document.createElement('iframe')
+        frame.setAttribute('sandbox', 'allow-scripts')
+        frame.setAttribute('aria-hidden', 'true')
+        frame.tabIndex = -1
+        frame.style.display = 'none'
+        const mode = store.get(activeModeAtom)
+        frame.src = `holi-app://${leasedAppHost(bundle, lease.token)}/?${COMMAND_PARAM}=${encodeURIComponent(command)}&mode=${mode}`
+        document.body.append(frame)
+      },
+      (error: unknown) =>
+        finish(undefined, error instanceof Error ? error : new Error(String(error))),
+    )
   })
 }
 
@@ -130,6 +236,7 @@ async function runAppCommand(
   command: AppCommand,
   input: CommandInput,
   inFlight: Set<() => void>,
+  isCurrent: () => boolean = () => true,
 ): Promise<SlashResult> {
   try {
     // The editor does not offer it there; refused here as well, because what
@@ -137,9 +244,16 @@ async function runAppCommand(
     // into the note.
     if (isAppFencedPath(input.path)) throw new Error(`no app may read ${input.path}`)
     if (!isAppWritablePath(input.path)) throw new Error(`no app may write ${input.path}`)
-    const action = commandActionOf(
-      await runInFrame(store, remote, command.bundle, command.name, input, inFlight),
-    )
+    const action = (await runInFrame(
+      store,
+      remote,
+      command.bundle,
+      command.name,
+      input,
+      inFlight,
+      isCurrent,
+    )) as ReturnType<typeof commandActionOf>
+    if (!isCurrent() || store.get(activeRemoteAtom) !== remote) return null
     if (action !== null && 'error' in action) throw new Error(action.error)
     if (action !== null && 'open' in action) {
       openTarget(store, { target: action.open })
@@ -147,9 +261,7 @@ async function runAppCommand(
     }
     return action
   } catch (err) {
-    const text = `/${command.name}: ${(err as Error).message}`
-    console.warn(`[apps] ${text}`)
-    appsCap.log(remote, { bundle: command.bundle, level: 'error', text }).catch(() => {})
+    if (isCurrent()) console.warn(`[apps] /${command.name}: ${(err as Error).message}`)
     throw err
   }
 }
@@ -180,7 +292,8 @@ export function followAppCommands(remote: string, store: PluginStore): () => voi
             // Given the note's text, and may write into it: only in a note an
             // app may both read and write (docs/features/vault-apps.md).
             offeredIn: (path) => !isAppFencedPath(path) && isAppWritablePath(path),
-            run: (input) => runAppCommand(store, remote, command, input, inFlight),
+            run: (input, isCurrent) =>
+              runAppCommand(store, remote, command, input, inFlight, isCurrent),
           })),
         )
       })
