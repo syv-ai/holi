@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { BrowserWindow, protocol, session, webContents } from 'electron'
-import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { BrowserWindow, ipcMain, protocol, session, webContents } from 'electron'
+import { VAULT_SETTING_DEFAULTS, vaultRelPath } from '@holi/shared'
+import { cap } from '../src/main/plugin-api'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
@@ -14,6 +15,7 @@ import { serveScheme } from '../src/main/plugin-host/schemes'
 import { appsMain } from '../src/plugins/apps/main'
 import { appScheme } from '../src/plugins/apps/main/protocol'
 import { appHost, appLeaseFromHost, leasedAppHost } from '../src/plugins/apps/shared/bundle'
+import type { RendererFixtureMarker } from './app-frame-renderer-fixture'
 
 const bundle = 'Same/Tool.app'
 const rootForRemote = (remote: string): string | null =>
@@ -26,6 +28,8 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'holi-app', privileges: appSchem
 
 /** Exercises the production app scheme and lease authority in an actual Electron frame. */
 export async function runAppFrameSmoke(root: string, evidence: string): Promise<string[]> {
+  const fixtureMarker: RendererFixtureMarker | undefined = undefined
+  void fixtureMarker
   const roots = { A: join(root, 'vault-a'), B: join(root, 'vault-b') }
   for (const [owner, vaultRoot] of Object.entries(roots)) {
     mkdirSync(join(vaultRoot, bundle, 'nested'), { recursive: true })
@@ -34,15 +38,20 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     const color = owner === 'A' ? '#b42318' : '#175cd3'
     writeFileSync(
       join(vaultRoot, bundle, 'index.html'),
-      `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><h1 id="owner">owner-${owner}</h1><img id="image" src="./nested/pixel.svg"><script src="/owner.js"></script></body></html>`,
+      `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><h1 id="owner">owner-${owner}</h1><img id="image" src="./nested/pixel.svg"><pre id="bridge-read-result">waiting</pre><script src="/owner.js"></script><script src="/bridge.js"></script></body></html>`,
     )
+    writeFileSync(join(vaultRoot, 'note.md'), `# Vault ${owner} note\nowned-${owner.toLowerCase()}`)
     writeFileSync(
-      join(vaultRoot, bundle, 'owner.js'),
-      `document.body.dataset.owner='${owner}';const image=document.querySelector('#image');image.addEventListener('load',()=>parent.postMessage({kind:'app-smoke',value:{owner:document.body.dataset.owner,text:document.querySelector('#owner').textContent,color:getComputedStyle(document.body).color,image:image.naturalWidth,nonce:document.querySelector('meta[name=holi-app-document-nonce]').content,bridge:typeof window.holi?.docs?.read}},'*'),{once:true});if(image.complete)image.dispatchEvent(new Event('load'))`,
+      join(vaultRoot, bundle, 'bridge.js'),
+      `addEventListener('message',event=>{if(event.data?.kind==='fixture-stale')parent.postMessage({id:'stale-native',method:'docs.read',params:{path:'note.md'},nonce:event.data.nonce},'*');if(event.data?.id==='stale-native')parent.postMessage({kind:'stale-result',value:event.data.value},'*')});window.holi.docs.read('note.md').then(text=>{document.querySelector('#bridge-read-result').textContent=text;parent.postMessage({kind:'bridge-read-result',text,owner:'${owner}',nonce:document.querySelector('meta[name=holi-app-document-nonce]').content},'*')},error=>{document.querySelector('#bridge-read-result').textContent='ERROR '+error})`,
     )
     writeFileSync(
       join(vaultRoot, bundle, 'app.yaml'),
       'commands:\n  smoke: { script: command.js }\n',
+    )
+    writeFileSync(
+      join(vaultRoot, bundle, 'owner.js'),
+      `document.body.dataset.owner='${owner}';const image=document.querySelector('#image');image.addEventListener('load',()=>parent.postMessage({kind:'app-smoke',value:{owner:document.body.dataset.owner,text:document.querySelector('#owner').textContent,color:getComputedStyle(document.body).color,image:image.naturalWidth,nonce:document.querySelector('meta[name=holi-app-document-nonce]').content,bridge:typeof window.holi?.docs?.read}},'*'),{once:true});if(image.complete)image.dispatchEvent(new Event('load'))`,
     )
     writeFileSync(
       join(vaultRoot, bundle, 'command.js'),
@@ -65,8 +74,31 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
   const stopObservingRevocations = appFrames.onRevoke((token) => {
     if (token === observedToken) revokedBeforeSvgScript = true
   })
+  let appCallCount = 0
+  let docsReadCount = 0
+  let captureGate:
+    { entered(): void; wait: Promise<void>; release(): void; used: boolean } | undefined
+  const captureResults: boolean[] = []
+  const waitForCaptureResult = async (after: number, expected: boolean): Promise<void> => {
+    const until = Date.now() + 8_000
+    while (!captureResults.slice(after).includes(expected)) {
+      if (Date.now() >= until) throw new Error(`capture result ${expected} timed out`)
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+  }
   const registry = createCapabilityRegistry()
+  registry.register(['docs'], {
+    'docs.read': cap({
+      doors: ['app'],
+      params: (raw) => ({ path: (raw as { path: string }).path }),
+      run: async (ctx, { path }) => {
+        docsReadCount += 1
+        return readFileSync(join(ctx.root, vaultRelPath(path)), 'utf8')
+      },
+    }),
+  })
   let active: OpenVault | null = null
+  let currentWindow: BrowserWindow
   let host!: ReturnType<typeof createPluginHost>
   const capabilityHost = createCapabilityHost({
     registry,
@@ -82,6 +114,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   })
+  currentWindow = win
   const stopFrameTracking = trackAppFrameDocuments({
     contents: win.webContents,
     window: win,
@@ -102,7 +135,20 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     contentsForId: (id) => webContents.fromId(id),
     windowForContents: (contents) => BrowserWindow.fromWebContents(contents),
   })
-  const events = { send: () => {}, listen: () => () => {}, liveRemote: () => host.displayed() }
+  const inboundPluginEvents = new Set<(message: unknown) => void>()
+  const events = {
+    send: () => {},
+    listen: (_channel: string, handler: (message: unknown) => void) => {
+      inboundPluginEvents.add(handler)
+      return () => inboundPluginEvents.delete(handler)
+    },
+    liveRemote: () => host.displayed(),
+  }
+  const onPluginEvent = (event: Electron.IpcMainEvent, message: unknown) => {
+    if (event.senderFrame !== event.sender.mainFrame) return
+    for (const handler of [...inboundPluginEvents]) handler(message)
+  }
+  ipcMain.on('plugin:apps', onPluginEvent)
   host = createPluginHost({
     plugins: [appsMain],
     registry,
@@ -118,8 +164,8 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     githubToken: () => null,
     frameOrigin: () => () => {},
     notify: () => false,
-    focused: () => win.isFocused(),
-    window: () => win,
+    focused: () => currentWindow.isFocused(),
+    window: () => currentWindow,
     readSettings: async () => ({
       ...VAULT_SETTING_DEFAULTS,
       warnings: [],
@@ -150,6 +196,8 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
   protocol.handle('holi-app', serve)
 
   const checks: string[] = []
+  let frameWindow: BrowserWindow | null = null
+  let stopFrameWindowTracking: (() => void) | null = null
   const mark = (name: string): void => {
     checks.push(name)
     console.log(`PASS ${name}`)
@@ -274,8 +322,229 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
         params: { bundle, token: commandLease.token },
       })
     }
+    active = vault('A')
+    host.setDisplayed(active.remote)
+    await host.reconcile(active, 'open')
+    frameWindow = new BrowserWindow({
+      width: 900,
+      height: 700,
+      show: true,
+      webPreferences: {
+        preload: process.env.HOLI_473_PRELOAD,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    })
+    currentWindow = frameWindow
+    const capturePage = frameWindow.webContents.capturePage.bind(frameWindow.webContents)
+    frameWindow.webContents.capturePage = async (...args) => {
+      const image = await capturePage(...args)
+      const gate = captureGate
+      if (!image.isEmpty() && gate && !gate.used) {
+        gate.used = true
+        gate.entered()
+        await gate.wait
+      }
+      return image
+    }
+    frameWindow.webContents.on('console-message', (details) => {
+      console.log(`APPFRAME RENDERER [${details.level}] ${details.message}`)
+    })
+    frameWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
+      console.log(`APPFRAME LOAD FAILED ${code} ${description} ${url}`)
+    })
+    stopFrameWindowTracking = trackAppFrameDocuments({
+      contents: frameWindow.webContents,
+      window: frameWindow,
+      leases: appFrames,
+      tokenFromUrl: (url) => {
+        try {
+          const parsed = new URL(url)
+          return parsed.protocol === 'holi-app:'
+            ? (appLeaseFromHost(parsed.hostname)?.token ?? null)
+            : null
+        } catch {
+          return null
+        }
+      },
+    })
+    ipcMain.handle('holi:trpc', async (event, op: { path?: string; input?: unknown }) => {
+      if (
+        event.senderFrame !== event.sender.mainFrame ||
+        !event.senderFrame.url.includes('/app-frame-renderer/index.html')
+      )
+        return { ok: false, message: 'untrusted fixture renderer' }
+      if (op.path !== 'cap.run') return { ok: false, message: 'unsupported fixture procedure' }
+      const input = op.input as { remote: string; name: string; paramsJson?: string }
+      try {
+        const params = input.paramsJson === undefined ? {} : JSON.parse(input.paramsJson)
+        const result = await capabilityHost.dispatch({
+          door: 'ui',
+          remote: input.remote,
+          name: input.name,
+          params,
+        })
+        if (input.name === 'apps.call') {
+          appCallCount += 1
+        }
+        if (input.name === 'apps.capturePreview') {
+          captureResults.push((result.value as { saved: boolean }).saved)
+        }
+        return { ok: true, data: result.value }
+      } catch (error) {
+        return { ok: false, message: (error as Error).message }
+      }
+    })
+    const holdNextCapture = () => {
+      let entered!: () => void
+      let release!: () => void
+      const waiting = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const wait = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const gate = { entered: () => entered(), wait, release: () => release(), used: false }
+      captureGate = gate
+      return {
+        waiting,
+        release: () => {
+          captureGate = undefined
+          gate.release()
+        },
+      }
+    }
+    const hiddenResultStart = captureResults.length
+    const hiddenCapture = holdNextCapture()
+    await frameWindow.loadFile(process.env.HOLI_473_RENDERER!)
+    const readA = await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+15000;const poll=()=>{const value=document.querySelector('#bridge-read-result')?.textContent??'';if(value.includes('owned-a'))resolve(value);else if(Date.now()>end)reject(new Error('production AppFrame bridge timed out: '+value+' '+document.body.innerHTML));else setTimeout(poll,50)};poll()})`,
+    )
+    assert.match(readA, /owned-a/)
+    assert.doesNotMatch(readA, /owned-b/)
+    mark('production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-a')
+    const callsAfterARead = appCallCount
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({id:'wrong-source-native',method:'docs.read',params:{path:'note.md'},nonce:window.fixtureNonces?.a},'*')`,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    assert.equal(appCallCount, callsAfterARead)
+    mark('production-app-frame-wrong-source-message-has-no-capability-side-effect')
+    const captureFixture = async (filename: string) => {
+      frameWindow!.webContents.debugger.attach('1.3')
+      try {
+        await frameWindow!.webContents.debugger.sendCommand('Page.enable')
+        const image = (await frameWindow!.webContents.debugger.sendCommand(
+          'Page.captureScreenshot',
+          {
+            captureBeyondViewport: true,
+            fromSurface: true,
+          },
+        )) as { data: string }
+        writeFileSync(join(evidence, filename), Buffer.from(image.data, 'base64'))
+      } finally {
+        frameWindow!.webContents.debugger.detach()
+      }
+    }
+    await captureFixture('app-frame-read-a.png')
+    await hiddenCapture.waiting
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-visible',visible:false},'*')`,
+    )
+    await frameWindow.webContents.executeJavaScript(
+      `new Promise(resolve=>{const end=Date.now()+3000;const poll=()=>{const frame=document.querySelector('iframe');if(frame?.getAttribute('aria-hidden')==='true')resolve(true);else if(Date.now()>end)resolve(false);else setTimeout(poll,20)};poll()})`,
+    )
+    hiddenCapture.release()
+    await waitForCaptureResult(hiddenResultStart, false)
+    assert.equal(captureResults.at(-1), false)
+    mark('production-app-frame-hidden-after-real-capture-rejects-stale-preview')
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-visible',visible:true},'*');window.postMessage({kind:'fixture-reload'},'*')`,
+    )
+    const previewA = await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+12000;const poll=async()=>{try{const result=await window.holi.trpc({path:'cap.run',type:'mutation',input:{remote:'ada/a',name:'apps.preview',paramsJson:${JSON.stringify(JSON.stringify({ bundle }))}}});const data=result.data?.data??result.data;if(data?.dataUrl){resolve(data.dataUrl)}else if(Date.now()>end)reject(new Error('fresh actual preview capture timed out'));else setTimeout(poll,100)}catch(error){reject(error)}};poll()})`,
+    )
+    assert.match(previewA as string, /^data:image\/jpeg;base64,/)
+    assert(captureResults.includes(true), 'real capture capability never saved a current preview')
+    mark('production-app-frame-fresh-visible-capture-saved-native-preview')
+    const reincarnationCapture = holdNextCapture()
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-reload'},'*')`,
+    )
+    await reincarnationCapture.waiting
+    active = vault('B')
+    host.setDisplayed(active.remote)
+    await host.reconcile(active, 'open')
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-vault',remote:'ada/b'},'*')`,
+    )
+    const readB = await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+15000;const poll=()=>{const value=document.querySelector('#bridge-read-result')?.textContent??'';if(value.includes('owned-b'))resolve(value);else if(Date.now()>end)reject(new Error('production AppFrame vault-B bridge timed out: '+value));else setTimeout(poll,50)};poll()})`,
+    )
+    assert.match(readB, /owned-b/)
+    assert.doesNotMatch(readB, /owned-a/)
+    mark('production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-b')
+    const callsAfterBRead = appCallCount
+    await frameWindow.webContents.executeJavaScript(
+      `document.querySelector('iframe').contentWindow.postMessage({kind:'fixture-stale',nonce:window.fixtureNonces?.a},'*')`,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    assert.equal(appCallCount, callsAfterBRead)
+    assert.equal(
+      await frameWindow.webContents.executeJavaScript(
+        `document.querySelector('#stale-result')?.textContent ?? ''`,
+      ),
+      '',
+    )
+    mark('production-app-frame-old-nonce-after-replacement-has-no-side-effect-or-reply')
+    await captureFixture('app-frame-read-b.png')
+    const captureCountBeforeReturn = captureResults.length
+    active = vault('A')
+    host.setDisplayed(active.remote)
+    await host.reconcile(active, 'open')
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-vault',remote:'ada/a'},'*')`,
+    )
+    await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+8000;const poll=()=>{if(document.querySelector('#active-vault')?.textContent==='ada/a')resolve(true);else if(Date.now()>end)reject(new Error('fixture did not return to vault A'));else setTimeout(poll,25)};poll()})`,
+    )
+    reincarnationCapture.release()
+    await waitForCaptureResult(captureCountBeforeReturn, false)
+    mark('production-app-frame-a-to-b-to-a-invalidates-delayed-real-capture')
+    await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+8000;const poll=()=>{if((document.querySelector('#bridge-read-result')?.textContent??'').includes('owned-a'))resolve(true);else if(Date.now()>end)reject(new Error('returned vault A bridge result did not settle'));else setTimeout(poll,25)};poll()})`,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const beforeReplacementReads = docsReadCount
+    await frameWindow.webContents.executeJavaScript(
+      `(()=>{const message=JSON.stringify({id:'replacement-native',method:'docs.read',params:{path:'note.md'},nonce:window.fixtureNonces?.a});const html='<script>addEventListener("message",event=>{if(event.data?.id==="replacement-native")parent.postMessage({kind:"replacement-result",value:event.data.value},"*")});parent.postMessage('+message+',"*")<\\/script>';document.querySelector('iframe').src='data:text/html,'+encodeURIComponent(html)})()`,
+    )
+    await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+8000;const poll=()=>{const frame=document.querySelector('iframe');if(frame?.src.startsWith('holi-app:')&&(document.querySelector('#bridge-read-result')?.textContent??'').includes('owned-a'))resolve(true);else if(Date.now()>end)reject(new Error('AppFrame did not recover after replacement'));else setTimeout(poll,25)};poll()})`,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    assert.equal(
+      docsReadCount - beforeReplacementReads,
+      1,
+      'replacement request must not reach docs.read',
+    )
+    assert.equal(
+      await frameWindow.webContents.executeJavaScript(
+        `document.querySelector('#stale-result')?.textContent ?? ''`,
+      ),
+      '',
+    )
+    mark('production-app-frame-navigation-replacement-cannot-reach-hostbridge')
+    ipcMain.removeHandler('holi:trpc')
+    await host.stopAll()
     return checks
   } finally {
+    ipcMain.removeHandler('holi:trpc')
+    ipcMain.off('plugin:apps', onPluginEvent)
+    inboundPluginEvents.clear()
+    stopFrameWindowTracking?.()
+    frameWindow?.destroy()
     await host.stopAll()
     stopFrameTracking()
     stopObservingRevocations()
