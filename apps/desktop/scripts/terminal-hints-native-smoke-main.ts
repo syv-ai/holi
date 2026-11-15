@@ -145,6 +145,7 @@ ipcMain.handle(
               [...data].some((char) => char.charCodeAt(0) === 3),
             ),
             fixtureProof,
+            outputs: Object.fromEntries(outputs),
             processExited,
             terminalExitCode,
             exits: [...exits],
@@ -169,8 +170,8 @@ function spawnTerminal(id: string) {
     LOGNAME: 'smoke',
     HOST: 'holi-smoke',
     HOSTNAME: 'holi-smoke',
-    PS1: 'holi-smoke% ',
-    PROMPT: 'holi-smoke% ',
+    PS1: 'HOLI_SHELL_READY> ',
+    PROMPT: 'HOLI_SHELL_READY> ',
     HOME: join(root, 'home'),
     ZDOTDIR: join(root, 'zsh'),
     XDG_CONFIG_HOME: join(root, 'home', '.config'),
@@ -200,7 +201,7 @@ function spawnTerminal(id: string) {
     pty.delete(id)
     send('holi-smoke:pty-exit', { remote: 'native-smoke', id, exitCode })
   })
-  const source = `let line='';const id=process.env.HOLI_TERMINAL_ID;process.stdout.write('NATIVE_HINT_FIXTURE\\n'+(id==='native-shell'?'https://example.com/holi-native-hint-proof\\n':'')+'SECOND_LIVE_FIXTURE https://example.com/'+id+'-proof\\n');process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>{for(const c of chunk){if(c==='\\n'||c==='\\r'){const value=line;line='';if(value==='f')process.stdout.write('F_ENTER_PROOF\\n');else if(value==='fixture:output')process.stdout.write('FIXTURE_OUTPUT_PROOF\\n');else if(value==='fixture:control-only')process.stdout.write('\\u001b[3J\\u001b[2J\\u001b[HCONTROL_ONLY_PROOF\\n');else if(value==='fixture:long')process.stdout.write(('SCROLL_FIXTURE\\n').repeat(40)+'https://example.com/'+('wrapped-hint-'.repeat(70))+'end\\n');else if(value==='exit')process.exit(0);else process.stdout.write('INPUT_PROOF:'+value+'\\n')}else line+=c}});process.stdin.resume();process.on('SIGINT',()=>{process.stdout.write('\\u001b[31mSIGINT_PROOF\\n\\u001b[0m');process.exit(130)})`
+  const source = `let line='';const id=process.env.HOLI_TERMINAL_ID;process.stdout.write('NATIVE_HINT_FIXTURE\\n'+(id==='native-shell'?'https://example.com/holi-native-hint-proof\\n':'')+'SECOND_LIVE_FIXTURE https://example.com/'+id+'-proof\\n');process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>{for(const c of chunk){if(c==='\\n'||c==='\\r'){const value=line;line='';if(value==='f')process.stdout.write('F_ENTER_PROOF\\n');else if(value==='fixture:output')process.stdout.write('FIXTURE_OUTPUT_PROOF\\n');else if(value==='fixture:control-only')process.stdout.write('\\u001b[3J\\u001b[2J\\u001b[HCONTROL_ONLY_PROOF\\n');else if(value==='fixture:long')process.stdout.write(('SCROLL_FIXTURE\\n').repeat(40)+'https://example.com/'+('wrapped-hint-'.repeat(70))+'end\\nLONG_FIXTURE_DONE\\n');else if(value==='fixture:quiesce'){process.stdout.write('SILENT_EXIT_READY\\n');process.exit(0)}else if(value==='exit')process.exit(0);else process.stdout.write('INPUT_PROOF:'+value+'\\n')}else line+=c}});process.stdin.resume();process.on('SIGINT',()=>{process.stdout.write('\\u001b[31mSIGINT_PROOF\\n\\u001b[0m')})`
   const fixtureScript = join(root, 'fixture.cjs')
   writeFileSync(fixtureScript, source)
   const command = `HOLI_TERMINAL_ID='${id}' node '${fixtureScript}'\n`
@@ -234,7 +235,7 @@ ipcMain.on('holi-smoke:theme', (_event, theme: 'light' | 'dark') => {
   )
 })
 ipcMain.handle('holi:openExternal', (_event, value: string) => {
-  // The production safe-URL check runs in the renderer before this seam.
+  // Harness-only allowlist; production main/ipc.ts validation is not exercised.
   const parsed = new URL(value)
   if (parsed.protocol !== 'https:' || parsed.hostname !== 'example.com')
     throw new Error('unexpected external URL')

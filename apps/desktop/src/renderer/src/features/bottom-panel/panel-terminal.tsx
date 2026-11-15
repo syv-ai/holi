@@ -193,7 +193,6 @@ export function PanelTerminal({
       void replay.then(() => {
         if (disposed) return
         replayPending = false
-        mount.dataset.terminalReplayReady = 'true'
         terminalHints.invalidate()
       })
     })
@@ -291,11 +290,7 @@ export function PanelTerminal({
       <div className="relative min-h-0 flex-1">
         {/* The gutter is an inset, not padding: xterm measures the box it
             opens in. */}
-        <div
-          ref={mountRef}
-          data-terminal-replay-ready="false"
-          className="text-foreground absolute inset-3"
-        />
+        <div ref={mountRef} className="text-foreground absolute inset-3" />
       </div>
     </div>
   )

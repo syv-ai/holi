@@ -41,7 +41,34 @@ try {
     root: desktop,
     base: './',
     resolve: { alias: { '@': join(desktop, 'src/renderer/src') } },
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      {
+        name: 'terminal-smoke-public-buffer-instrumentation',
+        enforce: 'pre',
+        transform(code, id) {
+          if (!id.endsWith('/features/bottom-panel/panel-terminal.tsx')) return null
+          const instrumented = code
+            .replace(
+              'const adapter: HostHintAdapter = terminalHints.adapter',
+              `const smokeTrackedWrite = (data: string) => terminalHints.write(data).then(() => {
+        const active = term.buffer.active
+        const text = Array.from({ length: active.length }, (_, index) => active.getLine(index)?.translateToString(true) ?? '').join('\\n')
+        const state = (window as any).__holiNativeSmokeTerminalWrites ??= {}
+        const prior = state[id] ?? { count: 0 }
+        state[id] = { count: prior.count + 1, text }
+      })
+      const adapter: HostHintAdapter = terminalHints.adapter`,
+            )
+            .replaceAll('void terminalHints.write(data)', 'void smokeTrackedWrite(data)')
+            .replace('terminalHints.write(text)', 'smokeTrackedWrite(text)')
+          if (instrumented === code)
+            throw new Error('native smoke terminal instrumentation did not match')
+          return { code: instrumented, map: null }
+        },
+      },
+    ],
     build: {
       target: 'chrome140',
       outDir: join(root, 'renderer'),
@@ -175,6 +202,16 @@ try {
     const diagnostics = await evaluate(`document.body.innerText`).catch((error) => String(error))
     throw new Error(`timeout waiting for ${description}; renderer text: ${diagnostics}`)
   }
+  const waitForLiveWrite = async (terminalId, marker, operation, description) => {
+    const before = await evaluate(
+      `window.__holiNativeSmokeTerminalWrites?.[${JSON.stringify(terminalId)}]?.count ?? 0`,
+    )
+    await evaluate(operation)
+    await waitFor(
+      `(()=>{const state=window.__holiNativeSmokeTerminalWrites?.[${JSON.stringify(terminalId)}];return state?.count>${before}&&state.text.includes(${JSON.stringify(marker)})})()`,
+      description,
+    )
+  }
   const waitForScreencastFrame = async (afterFrame) => {
     for (let attempt = 0; attempt < 100 && screencastFrames.length <= afterFrame; attempt++)
       await new Promise((r) => setTimeout(r, 20))
@@ -197,8 +234,8 @@ try {
       code,
       windowsVirtualKeyCode:
         key === 'Enter' ? 13 : key.length === 1 ? key.toUpperCase().charCodeAt(0) : undefined,
-      text: key === 'Enter' ? '\\r' : undefined,
-      unmodifiedText: key === 'Enter' ? '\\r' : undefined,
+      text: key === 'Enter' ? '\\r' : key.length === 1 ? key : undefined,
+      unmodifiedText: key === 'Enter' ? '\\r' : key.length === 1 ? key : undefined,
     })
     await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key, code })
   }
@@ -257,8 +294,8 @@ try {
     'real PTY replay',
   )
   await waitFor(
-    `!!document.querySelector('[data-panel-terminal="native-shell"] [data-terminal-replay-ready="true"]')`,
-    'xterm completed initial replay write',
+    `(()=>{const state=window.__holiNativeSmokeTerminalWrites?.['native-shell'];return state?.count>0&&state.text.includes('NATIVE_HINT_FIXTURE')&&state.text.includes('holi-native-hint-proof')})()`,
+    'public xterm buffer contains parsed initial PTY output',
   )
   await cdp('Page.startScreencast', {
     format: 'png',
@@ -321,6 +358,10 @@ try {
   await waitFor(`!!document.querySelector('[data-host-hints]')`, 'dialog invalidation hint session')
   await evaluate(`window.__holiNativeSmokeSetDialog(true)`)
   await waitFor(`!!document.querySelector('[role="dialog"]')`, 'stock Dialog opened')
+  await waitFor(
+    `document.querySelector('[role="dialog"]')?.contains(document.activeElement)`,
+    'stock Dialog owns focus before shortcut input',
+  )
   await waitFor(`!document.querySelector('[data-host-hints]')`, 'opening Dialog canceled old hints')
   await trustedKey('f')
   await waitFor(
@@ -437,10 +478,14 @@ try {
     `window.holi.trpc({path:'terminal.replay',type:'query',input:{remote:'native-smoke',id:${JSON.stringify(secondTerminalId)}}}).then(r=>r.ok&&r.data.includes('SECOND_LIVE_FIXTURE'))`,
     'second real PTY output',
   )
+  await waitFor(
+    `(()=>{const state=window.__holiNativeSmokeTerminalWrites?.[${JSON.stringify(secondTerminalId)}];return state?.count>0&&state.text.includes('SECOND_LIVE_FIXTURE')&&state.text.includes(${JSON.stringify(secondTerminalId)}+'-proof')})()`,
+    'second terminal public xterm buffer parsed its initial replay',
+  )
   await trustedClick('[aria-label="Terminal"]')
   await waitFor(`!!document.querySelector('[role="listbox"]')`, 'live terminal picker')
   const firstLiveOption = await evaluate(
-    `(()=>{const e=[...document.querySelectorAll('[role="option"]')][0];if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+    `(()=>{const e=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent.includes('native smoke shell'));if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
   )
   await trustedClickAt(firstLiveOption, 'first live terminal option')
   await waitFor(
@@ -459,7 +504,7 @@ try {
   await trustedClick('[aria-label="Terminal"]')
   await waitFor(`!!document.querySelector('[role="listbox"]')`, 'picker opened during first hints')
   const secondOption = await evaluate(
-    `(()=>{const e=[...document.querySelectorAll('[role="option"]')].at(-1);if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+    `(()=>{const e=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent.includes('second live shell'));if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
   )
   await trustedClickAt(secondOption, 'second live terminal option')
   await waitFor(
@@ -488,11 +533,11 @@ try {
   await trustedClick('[aria-label="Terminal"]')
   await waitFor(`!!document.querySelector('[role="listbox"]')`, 'picker return to first terminal')
   const firstOption = await evaluate(
-    `(()=>{const e=[...document.querySelectorAll('[role="option"]')][0];if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+    `(()=>{const e=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent.includes('native smoke shell'));if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
   )
   await trustedClickAt(firstOption, 'first live terminal option')
   await waitFor(
-    `!!document.querySelector('[data-panel-terminal="native-shell"] .xterm-screen')`,
+    `!document.querySelector('[data-panel-terminal="native-shell"]').classList.contains('hidden')`,
     'first shell returned',
   )
   assert.equal(
@@ -503,7 +548,7 @@ try {
   await trustedClick('[aria-label="Terminal"]')
   await waitFor(`!!document.querySelector('[role="listbox"]')`, 'picker returns to second terminal')
   const returnSecondOption = await evaluate(
-    `(()=>{const e=[...document.querySelectorAll('[role="option"]')].at(-1);if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+    `(()=>{const e=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent.includes('second live shell'));if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
   )
   await trustedClickAt(returnSecondOption, 'return to second live terminal')
   await waitFor(
@@ -531,7 +576,7 @@ try {
     'picker returns to first terminal after second input proof',
   )
   const backToFirstOption = await evaluate(
-    `(()=>{const e=[...document.querySelectorAll('[role="option"]')][0];if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+    `(()=>{const e=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent.includes('native smoke shell'));if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
   )
   await trustedClickAt(backToFirstOption, 'return to first shell for remaining native checks')
   await waitFor(
@@ -593,12 +638,11 @@ try {
   )
 
   // Clear the visible URL using real child output, then prove control-only hints also cancel on output.
-  await evaluate(
+  await waitForLiveWrite(
+    'native-shell',
+    'CONTROL_ONLY_PROOF',
     `window.holi.trpc({path:'terminal.write',type:'mutation',input:{remote:'native-smoke',id:'native-shell',data:'fixture:control-only\\n'}})`,
-  )
-  await waitFor(
-    `window.holi.trpc({path:'terminal.replay',type:'query',input:{remote:'native-smoke',id:'native-shell'}}).then(r=>r.ok&&r.data.includes('CONTROL_ONLY_PROOF'))`,
-    'control-only child fixture output',
+    'control-only live output parsed into the public xterm buffer',
   )
   await trustedClick('[aria-label="Show terminal hints"]')
   await waitFor(`!!document.querySelector('[data-host-hints]')`, 'control-only hint session')
@@ -615,22 +659,20 @@ try {
   // The harness-only bounded command traverses IPC to the actual PTY and makes real output.
   await trustedClick('[aria-label="Show terminal hints"]')
   await waitFor(`!!document.querySelector('[data-host-hints]')`, 'output invalidation hint session')
-  await evaluate(
+  await waitForLiveWrite(
+    'native-shell',
+    'FIXTURE_OUTPUT_PROOF',
     `window.holi.trpc({path:'terminal.write',type:'mutation',input:{remote:'native-smoke',id:'native-shell',data:'fixture:output\\n'}})`,
+    'live invalidation output parsed into the public xterm buffer',
   )
   await waitFor(`!document.querySelector('[data-host-hints]')`, 'real PTY output invalidated hints')
-  await waitFor(
-    `window.holi.trpc({path:'terminal.replay',type:'query',input:{remote:'native-smoke',id:'native-shell'}}).then(r=>r.ok&&r.data.includes('FIXTURE_OUTPUT_PROOF'))`,
-    'controlled output observed from real PTY',
-  )
 
   // A long fixture URL starts above the viewport; visible continuation remains a target.
-  await evaluate(
+  await waitForLiveWrite(
+    'native-shell',
+    'LONG_FIXTURE_DONE',
     `window.holi.trpc({path:'terminal.write',type:'mutation',input:{remote:'native-smoke',id:'native-shell',data:'fixture:long\\n'}})`,
-  )
-  await waitFor(
-    `window.holi.trpc({path:'terminal.replay',type:'query',input:{remote:'native-smoke',id:'native-shell'}}).then(r=>r.ok&&r.data.includes('wrapped-hint-'))`,
-    'long URL fixture output',
+    'long URL live write parsed into the public xterm buffer',
   )
   await trustedClick('[aria-label="Show terminal hints"]')
   await waitFor(`!!document.querySelector('[data-host-hints]')`, 'long URL hint session')
@@ -691,12 +733,16 @@ try {
   )
   await trustedTab('Terminal')
   await waitFor(
-    `!!document.querySelector('[data-panel-terminal="native-shell"] .xterm-screen')`,
+    `!document.querySelector('[data-panel-terminal="native-shell"]').classList.contains('hidden')`,
     'vault A xterm restored',
   )
   await waitFor(
     `window.holi.trpc({path:'terminal.replay',type:'query',input:{remote:'native-smoke',id:'native-shell'}}).then(r=>r.ok&&r.data.includes('NATIVE_HINT_FIXTURE'))`,
     'vault A terminal replay restored',
+  )
+  await waitFor(
+    `(()=>{const state=window.__holiNativeSmokeTerminalWrites?.['native-shell'];return state?.text.includes('LONG_FIXTURE_DONE')})()`,
+    'vault A restored public xterm buffer contains the completed replay',
   )
   await trustedClick('[aria-label="Show terminal hints"]')
   await waitFor(`!!document.querySelector('[data-host-hints]')`, 'vault A hints restored')
@@ -704,6 +750,9 @@ try {
   await waitFor(`!document.querySelector('[data-host-hints]')`, 'vault A hint session canceled')
 
   // Real native Control-C must cancel hint mode and deliver byte 0x03 to the PTY.
+  const writesBeforeSigint = await evaluate(
+    `window.__holiNativeSmokeTerminalWrites?.['native-shell']?.count ?? 0`,
+  )
   await trustedClick('[aria-label="Show terminal hints"]')
   await waitFor(`!!document.querySelector('[data-host-hints]')`, 'interrupt hint session')
   await cdp('Input.dispatchKeyEvent', {
@@ -726,6 +775,20 @@ try {
     `window.holi.trpc({path:'terminal.replay',type:'query',input:{remote:'native-smoke',id:'native-shell'}}).then(r=>r.ok&&r.data.includes('SIGINT_PROOF'))`,
     'actual child SIGINT handler',
   )
+  await waitFor(
+    `(()=>{const state=window.__holiNativeSmokeTerminalWrites?.['native-shell'];return state?.count>${writesBeforeSigint}&&state.text.includes('SIGINT_PROOF')})()`,
+    'live SIGINT output parsed into the public xterm buffer',
+  )
+  await waitForLiveWrite(
+    'native-shell',
+    'SILENT_EXIT_READY',
+    `window.holi.trpc({path:'terminal.write',type:'mutation',input:{remote:'native-smoke',id:'native-shell',data:'fixture:quiesce\\n'}})`,
+    'quiescent shell returned to its known prompt in the public xterm buffer',
+  )
+  await waitFor(
+    `(()=>{const state=window.__holiNativeSmokeTerminalWrites?.['native-shell'];return state?.text.includes('SILENT_EXIT_READY')&&state.text.includes('HOLI_SHELL_READY>')})()`,
+    'real PTY shell is idle after the fixture child exited',
+  )
   const proofBeforeQuit = await evaluate(
     `window.holi.trpc({path:'terminal.inputProof',type:'query'}).then(r=>r.data)`,
   )
@@ -737,13 +800,19 @@ try {
     `!!document.querySelector('[data-host-hints]')`,
     'hint session immediately before exit',
   )
-  const exitScrollback = await evaluate(
-    `document.querySelector('[data-panel-terminal="native-shell"] .xterm-screen').textContent`,
+  const exitBuffer = await evaluate(`window.__holiNativeSmokeTerminalWrites?.['native-shell']`)
+  assert(
+    exitBuffer?.text.includes('SIGINT_PROOF'),
+    'public xterm buffer lacks known nonempty SIGINT sentinel',
   )
+  const exitOutputBaseline = proofBeforeQuit.outputs['native-shell']
   await evaluate(
-    `window.holi.trpc({path:'terminal.write',type:'mutation',input:{remote:'native-smoke',id:'native-shell',data:'exit\\n'}})`,
+    `window.holi.trpc({path:'terminal.kill',type:'mutation',input:{remote:'native-smoke',id:'native-shell'}})`,
   )
-  await waitFor(`!document.querySelector('[data-host-hints]')`, 'child exit canceled active hints')
+  await waitFor(
+    `!document.querySelector('[data-host-hints]')`,
+    'silent PTY exit canceled active hints',
+  )
   await waitFor(
     `window.holi.trpc({path:'terminal.inputProof',type:'query'}).then(r=>typeof r.data.terminalExitCode==='number')`,
     'real terminal exit event',
@@ -752,12 +821,21 @@ try {
     `document.querySelector('[aria-label="Terminal"]')?.textContent?.includes('(exited)')`,
     'terminal picker reflects real exit',
   )
-  assert(
-    (await evaluate(
-      `document.querySelector('[data-panel-terminal="native-shell"] .xterm-screen').textContent`,
-    )) === exitScrollback,
-    'exited shell did not preserve its readable scrollback',
+  const exitBufferAfter = await evaluate(`window.__holiNativeSmokeTerminalWrites?.['native-shell']`)
+  assert.equal(
+    exitBufferAfter.count,
+    exitBuffer.count,
+    'silent exit unexpectedly parsed another xterm write',
   )
+  assert.equal(
+    exitBufferAfter.text,
+    exitBuffer.text,
+    'silent exit changed actual public xterm buffer',
+  )
+  const exitOutputAfter = await evaluate(
+    `window.holi.trpc({path:'terminal.inputProof',type:'query'}).then(r=>r.data.outputs['native-shell'])`,
+  )
+  assert.equal(exitOutputAfter, exitOutputBaseline, 'exit delivered child output')
   await evaluate(
     `window.dispatchEvent(new CustomEvent('holi:show-panel-terminal-hints',{detail:{id:'native-shell'}}))`,
   )
@@ -769,7 +847,7 @@ try {
   await trustedClick('[aria-label="Terminal"]')
   await waitFor(`!!document.querySelector('[role="listbox"]')`, 'select second PTY for cleanup')
   const cleanupSecondOption = await evaluate(
-    `(()=>{const e=[...document.querySelectorAll('[role="option"]')].at(-1);if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+    `(()=>{const e=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent.includes('second live shell'));if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
   )
   await trustedClickAt(cleanupSecondOption, 'select second PTY for cleanup')
   await trustedClick('[aria-label="Kill terminal"]')
@@ -857,9 +935,9 @@ try {
       'wrapped-long-url-label-and-activation',
       'trusted-wheel-scroll-cancellation',
       'native-control-c-cancels-and-reaches-child-sigint',
-      'real-terminal-exit-cancels-and-rejects-hints-preserving-scrollback',
+      'silent-real-pty-exit-cancels-and-rejects-hints-with-unchanged-public-buffer',
       'real-pty-exit-and-cleanup',
-      'safe-url-intercepted',
+      'harness-example-com-allowlist-intercepted',
       'trusted-interaction-recording',
     ],
     artifacts: ['dark.png', 'light.png', 'interaction.mp4', 'external-url.txt'],
@@ -868,8 +946,11 @@ try {
     ptyProof,
     isolated: true,
     implementation:
-      'Production renderer, xterm, hint coordinator, URL validation, and real node-pty are used. The runner substitutes bounded harness-only terminal IPC and openExternal interception; this is not a production-router test.',
-    coverageGaps: [],
+      'Production renderer, xterm, hint coordinator, and real node-pty are used. Harness-only terminal IPC and an example.com-only openExternal fixture intercept are substituted; production main IPC routing and URL validation are not exercised.',
+    coverageGaps: [
+      'Production main/ipc.ts holi:openExternal registration and URL validator are not exercised; the native harness replaces that handler with an example.com allowlist.',
+      'Terminal IPC is a bounded harness implementation, not the production router.',
+    ],
   }
   await writeFile(join(evidence, 'result.json'), JSON.stringify(result, null, 2))
   for (const name of result.artifacts)
