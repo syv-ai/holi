@@ -32,11 +32,15 @@ export const openInboxEntryAtom = atom(null, (get, set, entry: InboxEntry): void
     const path = shownPathOrNull(entry.path)
     if (remote !== null && path !== null) set(openPathAtom, path)
   } else if (entry.session !== undefined) {
-    void set(openSessionAtom, entry.session).then((res) => {
-      if (!res.ok) {
-        toast.error('Could not open agent session', { description: res.message })
-      }
-    })
+    void set(openSessionAtom, entry.session)
+      .then((res) => {
+        if (!res.ok) toast.error('Could not open agent session', { description: res.message })
+      })
+      .catch((error: unknown) => {
+        toast.error('Could not open agent session', {
+          description: error instanceof Error ? error.message : String(error),
+        })
+      })
   }
 })
 

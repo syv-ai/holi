@@ -216,6 +216,8 @@ export interface NoteMention extends CommentMention {
 export interface Notice {
   title: string
   body: string
+  /** A plugin-owned event, captured against this live plugin and vault when admitted. */
+  navigate?: { name: string; payload: unknown }
   onClick?: () => void
 }
 

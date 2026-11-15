@@ -132,6 +132,38 @@ test.each([
   expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id })
 })
 
+test('opening a session does not reuse its launched terminal after it shows another session', async () => {
+  const alpha = 'aaaaaaaa'
+  const beta = 'bbbbbbbb'
+  const store = storeWith(
+    [session({ id: alpha }), session({ id: beta, name: 'Beta' })],
+    [terminal('terminal', alpha, 'Beta')],
+  )
+  store.set(viewTerminalsAtom, { [alpha]: 'terminal' })
+  const focused = vi.fn()
+  const unregister = registerSessionTerminal('terminal', { focus: focused, write: () => {} })
+
+  await store.set(openSessionAtom, alpha)
+
+  expect(open).toHaveBeenCalledWith({ attach: alpha, cols: 80, rows: 24 })
+  expect(focused).not.toHaveBeenCalled()
+  expect(store.get(viewTerminalsAtom)).toEqual({ [alpha]: 'opened' })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: alpha })
+  unregister()
+})
+
+test('a missing Codex job is reported when its attach is refused', async () => {
+  const id = 'j0123456789ab'
+  open.mockResolvedValueOnce({ ok: false, message: 'That Codex job has expired.' })
+  const store = storeWith([session({ id, provider: 'codex' })])
+
+  await expect(store.set(openSessionAtom, id)).resolves.toEqual({
+    ok: false,
+    message: 'That Codex job has expired.',
+  })
+  expect(open).toHaveBeenCalledWith({ attach: id, cols: 80, rows: 24 })
+})
+
 test('opening a session with no window attaches a new one', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
   await store.set(openSessionAtom, 'aaaaaaaa')

@@ -38,9 +38,20 @@ function land(set: Setter, terminalId: string): void {
 /** Land session-owned PTYs on the shell's canonical session tab. A surface
  *  tab would mount a second xterm for the same terminal and replace its output
  *  registry handle while the retained session tab was parked. */
+function canonicalTerminalFor(get: Getter, sessionId: string): string | null {
+  const terminalId = get(viewTerminalsAtom)[sessionId]
+  if (terminalId === undefined) return null
+  const terminal = get(agentTerminalsAtom).find((candidate) => candidate.id === terminalId)
+  if (terminal === undefined) return null
+  const titled = sessionTitled(terminal, get(agentSessionsAtom))
+  if (titled !== null) return titled.id === sessionId ? terminalId : null
+  return terminal.launchedFor === sessionId ? terminalId : null
+}
+
 function landSession(get: Getter, set: Setter, sessionId: string, terminalId: string): void {
-  const canonicalTerminal = get(viewTerminalsAtom)[sessionId] ?? terminalId
-  if (get(viewTerminalsAtom)[sessionId] === undefined) {
+  const canonical = canonicalTerminalFor(get, sessionId)
+  const canonicalTerminal = canonical ?? terminalId
+  if (canonical === null) {
     set(viewTerminalsAtom, (terminals) => ({ ...terminals, [sessionId]: canonicalTerminal }))
   }
   set(appModeAtom, 'agents')
@@ -103,7 +114,7 @@ export const openSessionAtom = atom(null, async (get, set, id: string): Promise<
   const sessions = get(agentSessionsAtom)
   const existing =
     terminals.find((t) => sessionTitled(t, sessions)?.id === id) ??
-    terminals.find((t) => t.launchedFor === id)
+    terminals.find((t) => t.launchedFor === id && sessionTitled(t, sessions) === null)
   if (existing !== undefined) {
     landSession(get, set, id, existing.id)
     return { ok: true }
