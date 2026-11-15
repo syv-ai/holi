@@ -340,5 +340,98 @@
     return { top: Math.round(page.scrollTop), atTop: page.scrollTop <= 0, atEnd }
   }
 
-  globalThis.__holiPage = { refs: [null], read, point, click, focus, valueOf, fill, scroll }
+  // Native textarea/input editing stays in this isolated world. The host only
+  // changes the bounded enabled flag; keystrokes are handled synchronously.
+  let vimEnabled = false
+  let vimMode = 'insert'
+  let vimRevision = 0
+  let vimField = null
+  const vimTypes = new Set(['text', 'search', 'url', 'tel'])
+  const vimEligible = (el) =>
+    el instanceof HTMLTextAreaElement ||
+    (el instanceof HTMLInputElement && vimTypes.has(el.type))
+  const eligibleNow = () =>
+    vimEnabled &&
+    vimField !== null &&
+    document.activeElement === vimField &&
+    vimField.isConnected &&
+    !vimField.disabled &&
+    !vimField.readOnly &&
+    vimEligible(vimField) &&
+    vimField.getRootNode() === document
+  const collapse = (el, at) => el.setSelectionRange(at, at)
+  const move = (el, at) => {
+    collapse(el, Math.max(0, Math.min(el.value.length, at)))
+  }
+  const lineStart = (value, at) => value.lastIndexOf('\\n', Math.max(0, at - 1)) + 1
+  const lineEnd = (value, at) => {
+    const end = value.indexOf('\\n', at)
+    return end < 0 ? value.length : end
+  }
+  const onVimKey = (event) => {
+    const target = event.target
+    if (!vimEnabled || !vimEligible(target) || target.disabled || target.readOnly) return
+    if (target.getRootNode() !== document || target.ownerDocument !== document) return
+    if (vimField !== target) {
+      vimField = target
+      vimMode = 'insert'
+    }
+    if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return
+    if (vimMode === 'insert') {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        vimMode = 'normal'
+        return
+      }
+      return
+    }
+    const value = target.value
+    const at = target.selectionStart ?? 0
+    const end = target.selectionEnd ?? at
+    const key = event.key
+    let next = at
+    if (key === 'i') vimMode = 'insert'
+    else if (key === 'a') { move(target, end); vimMode = 'insert' }
+    else if (key === 'I') { move(target, lineStart(value, at)); vimMode = 'insert' }
+    else if (key === 'A') { move(target, lineEnd(value, at)); vimMode = 'insert' }
+    else if (key === 'h') next = Math.max(0, at - 1)
+    else if (key === 'l') next = Math.min(value.length, at + 1)
+    else if (key === '0') next = lineStart(value, at)
+    else if (key === '^') next = lineStart(value, at) + (value.slice(lineStart(value, at), lineEnd(value, at)).match(/^\\s*/)?.[0].length ?? 0)
+    else if (key === '$') next = lineEnd(value, at)
+    else if (key === 'w') { const m = /\\w+|[^\\w\\s]+|\\s+/g; m.lastIndex = at; next = m.exec(value)?.index === at ? m.lastIndex : at }
+    else if (key === 'b') { const before = value.slice(0, at); next = before.search(/\\S+\\s*$/); if (next < 0) next = 0 }
+    else if (key === 'e') { const match = /\\w+|[^\\w\\s]+/g; match.lastIndex = at; const found = match.exec(value); next = found ? found.index + found[0].length - 1 : at }
+    else if (key === 'j' && target instanceof HTMLTextAreaElement) next = Math.min(value.length, lineEnd(value, at) + 1 + Math.max(0, at - lineStart(value, at)))
+    else if (key === 'k' && target instanceof HTMLTextAreaElement) { const start = lineStart(value, at); if (start > 0) next = Math.min(lineStart(value, start - 1) + Math.max(0, at - start), start - 1) }
+    else if (key === 'Escape') return
+    else if (key.length === 1 || ['Backspace', 'Delete', 'Enter', 'Tab'].includes(key)) {
+      event.preventDefault()
+      return
+    } else return
+    event.preventDefault()
+    move(target, next)
+  }
+  document.addEventListener('focusin', (event) => {
+    if (vimEnabled && vimEligible(event.target) && event.target.getRootNode() === document) {
+      vimField = event.target
+      vimMode = 'insert'
+    }
+  }, true)
+  document.addEventListener('focusout', (event) => {
+    if (vimField === event.target) { vimField = null; vimMode = 'insert' }
+  }, true)
+  document.addEventListener('keydown', onVimKey, true)
+  const vim = {
+    configure(enabled, revision) {
+      if (!Number.isSafeInteger(revision) || revision <= vimRevision) return false
+      vimRevision = revision
+      vimEnabled = enabled === true
+      vimMode = 'insert'
+      vimField = null
+      return true
+    },
+    mode() { return { revision: vimRevision, mode: eligibleNow() ? vimMode : 'insert' } },
+  }
+  globalThis.__holiPage = { refs: [null], read, point, click, focus, valueOf, fill, scroll, vim }
 })()
