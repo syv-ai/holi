@@ -151,14 +151,36 @@ export const DocumentFigure = Node.create({
       sourceFenceMatches(rawFence, codeText, language)
         ? rawFence
         : renderSafeFence(language, codeText)
-    const captionMarkdown = helpers
-      .renderChildren(caption)
-      .replace(/\n+$/, '')
-      .replace(/\\\[([^\]]+)\\\]/g, '&#91;$1&#93;')
-      .replace(/(?<!\\)\[([^\]]+)\](?!\()/g, '&#91;$1&#93;')
-    if (!captionMarkdown.trim()) return body
+    const captionForMarkdown = {
+      ...caption,
+      content: caption.content?.map(
+        (part: { marks?: { type: string; attrs?: Record<string, unknown> }[] }) => ({
+          ...part,
+          marks: part.marks?.map((mark) =>
+            mark.type === 'link' && typeof mark.attrs?.href === 'string'
+              ? {
+                  ...mark,
+                  attrs: {
+                    ...mark.attrs,
+                    href: mark.attrs.href.replace(/\[/g, '%5B').replace(/\]/g, '%5D'),
+                  },
+                }
+              : mark,
+          ),
+        }),
+      ),
+    }
+    const renderedCaption = helpers.renderChildren(captionForMarkdown).replace(/\n+$/, '')
+    const escapedCaption = renderedCaption.replace(/(`+)[\s\S]*?\1(?!`)|[^`]+/g, (segment) => {
+      if (segment.startsWith('`')) return segment
+      return segment
+        .replace(/\\\[([^\]]+)\\\]/g, '&#91;$1&#93;')
+        .replace(/(?<!\\)\[([^\]]+)\](?!\()/g, '&#91;$1&#93;')
+    })
+
+    if (!escapedCaption.trim()) return body
     try {
-      return writeMarkdownCaptionEnvelope(body, captionMarkdown)
+      return writeMarkdownCaptionEnvelope(body, escapedCaption)
     } catch {
       // A mark the portable grammar cannot express must not erase the caption.
       const plainText = (caption.content ?? [])

@@ -99,6 +99,67 @@ describe('document code captions', () => {
     expect(reopened.state.doc.firstChild?.lastChild?.textContent).toBe('  [name]')
   })
 
+  it('round-trips brackets and backslashes inside inline code across repeated saves', () => {
+    let instance = open('```ts\nx\n```')
+    expect(addCodeCaption(instance, 0)).toBe(true)
+    const captionStart = 1 + instance.state.doc.firstChild!.firstChild!.nodeSize + 1
+    const text = '[name] \\\\[nested\\\\] &#91;'
+    const code = instance.schema.marks.code
+    expect(code).toBeDefined()
+    instance.view.dispatch(
+      instance.state.tr
+        .insertText(text, captionStart)
+        .addMark(captionStart, captionStart + text.length, code!.create()),
+    )
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const markdown = instance.getMarkdown()
+      expect(markdown).toContain('`[name] \\\\[nested\\\\] &#91;`')
+      instance.destroy()
+      editor = null
+      instance = open(markdown)
+      expect(instance.state.doc.firstChild?.lastChild?.textContent).toBe(text)
+      expect(
+        instance.state.doc.firstChild?.lastChild?.firstChild?.marks.map((mark) => mark.type.name),
+      ).toContain('code')
+    }
+  })
+
+  it('keeps link destinations with brackets and adjacent supported formatting', () => {
+    const instance = open('```ts\nx\n```')
+    expect(addCodeCaption(instance, 0)).toBe(true)
+    const captionStart = 1 + instance.state.doc.firstChild!.firstChild!.nodeSize + 1
+    const text = 'label and bold'
+    const linkMark = instance.schema.marks.link
+    const boldMark = instance.schema.marks.bold
+    expect(linkMark).toBeDefined()
+    expect(boldMark).toBeDefined()
+    const link = linkMark!.create({ href: 'https://example.com/[part]' })
+    const bold = boldMark!.create()
+    instance.view.dispatch(
+      instance.state.tr
+        .insertText(text, captionStart)
+        .addMark(captionStart, captionStart + 5, link)
+        .addMark(captionStart + 10, captionStart + text.length, bold),
+    )
+    let markdown = instance.getMarkdown()
+    expect(markdown).toContain('[label](https://example.com/%5Bpart%5D)')
+    expect(markdown).not.toContain('&#91;')
+    expect(markdown).not.toContain('&#93;')
+    expect(markdown).toContain('**bold**')
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const reopened = open(markdown)
+      expect(reopened.state.doc.firstChild?.lastChild?.textContent).toBe(text)
+      const reopenedCaption = reopened.state.doc.firstChild?.lastChild
+      const reopenedLink = reopenedCaption?.firstChild?.marks.find(
+        (mark) => mark.type.name === 'link',
+      )
+      expect(reopenedLink?.attrs.href).toBe('https://example.com/%5Bpart%5D')
+      markdown = reopened.getMarkdown()
+      expect(markdown).toContain('[label](https://example.com/%5Bpart%5D)')
+      expect(markdown).not.toMatch(/&#(?:91|93);/)
+    }
+  })
+
   it('preserves authored literal entity text over repeated save and reopen cycles', () => {
     let instance = open('```ts\nx\n```')
     expect(addCodeCaption(instance, 0)).toBe(true)
