@@ -59,6 +59,7 @@ async function rig() {
     | 'conflict'
     | 'missing'
     | 'read-error'
+    | 'refused-read-error'
     | 'mismatch'
     | 'refused' = 'normal'
   let postGate: (() => Promise<void>) | null = null
@@ -120,7 +121,7 @@ async function rig() {
       expect(held.attempts).toBeGreaterThan(0)
       if (postGate) await postGate()
       if (mode === 'missing') throw new Error('Synthetic transport timeout')
-      if (mode === 'refused')
+      if (mode === 'refused' || mode === 'refused-read-error')
         return Response.json({ error: { message: 'Invalid location' } }, { status: 400 })
       events.set(String(body!.id), body!)
       if (mode === 'lost' || mode === 'read-error') throw new Error('Synthetic lost response')
@@ -128,7 +129,8 @@ async function rig() {
       if (mode === 'malformed') return new Response('not JSON', { status: 200 })
       return Response.json(response(body!))
     }
-    if (mode === 'read-error') return Response.json({}, { status: 503 })
+    if (mode === 'read-error' || mode === 'refused-read-error')
+      return Response.json({}, { status: 503 })
     const event = events.get(u.pathname.split('/').at(-1)!)
     if (!event) return Response.json({}, { status: 404 })
     if (mode === 'mismatch')
@@ -328,6 +330,67 @@ it('clears a definite first refusal after exact-id 404 so corrected intent can b
   r.mode('normal')
   const corrected = await restarted.submit('owner/repo', { ...input, title: 'Corrected' })
   expect(corrected).toMatchObject({ accepted: true, input: { title: 'Corrected' } })
+  expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(2)
+})
+
+it('persists a first refusal across transient recovery and releases it after restart and exact-id 404', async () => {
+  const r = await rig()
+  r.mode('refused-read-error')
+  await expect(r.run('createMeeting', input)).rejects.toThrow(/Invalid location/)
+  const firstPosts = r.calls.filter((c) => c.method === 'POST')
+  expect(firstPosts).toHaveLength(1)
+  const journal = JSON.parse(
+    await readFile(
+      join(r.userData, 'google-meetings', (await readdir(join(r.userData, 'google-meetings')))[0]!),
+      'utf8',
+    ),
+  ) as MeetingOperation
+  expect(journal).toMatchObject({ refused: true, attempts: 1 })
+
+  const restarted = r.make()
+  r.mode('normal')
+  expect(await restarted.check('owner/repo', input.sub)).toBeNull()
+  expect((await restarted.state('owner/repo', input.sub)).operation).toBeNull()
+  const corrected = await restarted.submit('owner/repo', { ...input, title: 'Corrected' })
+  expect(corrected).toMatchObject({ accepted: true, input: { title: 'Corrected' }, attempts: 1 })
+  expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(2)
+  expect(r.calls.filter((c) => c.method === 'POST')[1]!.body!.id).toBe(
+    input.operation.replaceAll('-', ''),
+  )
+})
+
+it('does not treat a later refusal after uncertain delivery as definitive', async () => {
+  const r = await rig()
+  r.mode('missing')
+  const unresolved = (await r.run('createMeeting', input)) as MeetingOperation
+  r.mode('refused')
+  await r.run('createMeeting', input)
+  const restarted = r.make()
+  expect((await restarted.state('owner/repo', input.sub)).operation).toMatchObject({
+    eventId: unresolved.eventId,
+    attempts: 2,
+  })
+  await expect(restarted.submit('owner/repo', { ...input, title: 'Corrected' })).rejects.toThrow(
+    /unresolved/,
+  )
+  expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(2)
+})
+
+it('clears old refusal evidence before an explicit retry can become uncertain', async () => {
+  const r = await rig()
+  r.mode('refused-read-error')
+  await expect(r.run('createMeeting', input)).rejects.toThrow(/Invalid location/)
+  r.mode('missing')
+  const retried = await r.run('createMeeting', input)
+  expect(retried).toMatchObject({ accepted: false, attempts: 2 })
+  const restarted = r.make()
+  expect((await restarted.state('owner/repo', input.sub)).operation).toMatchObject({
+    accepted: false,
+    attempts: 2,
+  })
+  await expect(restarted.submit('owner/repo', { ...input, title: 'Corrected' })).rejects.toThrow(
+    /unresolved/,
+  )
   expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(2)
 })
 

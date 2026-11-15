@@ -38,6 +38,7 @@ export interface MeetingOperation {
   fingerprint: string
   attempts: number
   accepted: boolean
+  refused?: true
   dismissed?: boolean
   conference: 'none' | 'pending' | 'success' | 'failure'
   htmlLink: string | null
@@ -192,6 +193,7 @@ function accept(op: MeetingOperation, event: CreatedEvent | null): boolean {
   ].sort()
   if (JSON.stringify(guests) !== JSON.stringify(i.guests)) return false
   op.accepted = true
+  delete op.refused
   const safeUrl = (value: string | undefined, host: string) => {
     try {
       const u = new URL(value ?? '')
@@ -276,6 +278,7 @@ export function createMeetingCreation(deps: {
         op.eventId !== input.operation.replaceAll('-', '') ||
         !uuid.test(op.conferenceRequestId) ||
         typeof op.accepted !== 'boolean' ||
+        (op.refused !== undefined && op.refused !== true) ||
         !Number.isSafeInteger(op.attempts) ||
         op.attempts < 1 ||
         (op.dismissed !== undefined && (op.dismissed !== true || !op.accepted))
@@ -348,7 +351,15 @@ export function createMeetingCreation(deps: {
         const api = await boundApi(remote, sub)
         const op = await read(path)
         if (!op || op.dismissed) return null
-        const result = await recover(api, path, op)
+        let missing = false
+        const result = await recover(api, path, op, () => {
+          missing = true
+        })
+        if (result.refused && missing) {
+          await unlink(path)
+          await boundApi(remote, sub)
+          return null
+        }
         await boundApi(remote, sub)
         return result
       })
@@ -373,17 +384,29 @@ export function createMeetingCreation(deps: {
         const api = await boundApi(remote, input.sub)
         let op = await read(path)
         if (op?.dismissed && op.fingerprint !== fingerprint) op = null
-        if (op && (op.fingerprint !== fingerprint || op.input.operation !== input.operation)) {
-          throw new CapabilityError(
-            'BAD_REQUEST',
-            'A submitted meeting is unresolved. Check its status before creating another.',
-          )
-        }
+        let recoveryFound: boolean | null = null
         if (op) {
-          op = await recover(api, path, op)
+          op = await recover(api, path, op, () => {
+            recoveryFound = false
+          })
           if (op.accepted) {
             await boundApi(remote, input.sub)
             return op
+          }
+          if (op.refused && recoveryFound === false) {
+            // A previous first-send refusal plus exact-id 404 proves that this
+            // rejected event was not created. Drop its evidence before any retry.
+            delete op.refused
+            await write(path, op)
+            if (op.fingerprint !== fingerprint || op.input.operation !== input.operation) {
+              await unlink(path)
+              op = null
+            }
+          } else if (op.fingerprint !== fingerprint || op.input.operation !== input.operation) {
+            throw new CapabilityError(
+              'BAD_REQUEST',
+              'A submitted meeting is unresolved. Check its status before creating another.',
+            )
           }
         }
         if (input.meet && !(await supported(api)))
@@ -403,6 +426,9 @@ export function createMeetingCreation(deps: {
           htmlLink: null,
           conferenceUrl: null,
         }
+        // A fresh explicit send supersedes any older refusal evidence. If this
+        // delivery becomes unknown, that evidence must not authorize a later clear.
+        delete op.refused
         op.attempts += 1
         await write(path, op)
         // No token/client can be resolved from a newly linked account.
@@ -422,14 +448,18 @@ export function createMeetingCreation(deps: {
             error instanceof GoogleApiError &&
             error.status >= 400 &&
             error.status < 500 &&
+            error.status !== 401 &&
             error.status !== 408 &&
             error.status !== 409
-          )
+          ) {
             definiteRefusal = error
+            op.refused = true
+            await write(path, op)
+          }
         }
         // Bounded read-only recovery, also covering malformed 2xx responses and
         // asynchronous conference creation. No timer, replay or new event id.
-        let recoveryFound: boolean | null = null
+        recoveryFound = null
         if (!op.accepted || op.conference === 'pending') {
           try {
             await recover(api, path, op, () => {
@@ -439,10 +469,12 @@ export function createMeetingCreation(deps: {
             /* remains recoverable */
           }
         }
-        if (definiteRefusal && !op.accepted && recoveryFound === false) {
-          // recover() returns unresolved only when the exact event id was 404.
-          // Remove only this first, definitively refused attempt; preserve provider cause.
-          await unlink(path)
+        if (definiteRefusal && !op.accepted) {
+          if (recoveryFound === false) {
+            // recover() returns unresolved only when the exact event id was 404.
+            // Remove only this first, definitively refused attempt; preserve provider cause.
+            await unlink(path)
+          }
           throw new CapabilityError('BAD_REQUEST', definiteRefusal.message)
         }
         await boundApi(remote, input.sub)
