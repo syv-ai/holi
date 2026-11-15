@@ -43,6 +43,9 @@
         "scripts/mail-markers-smoke-renderer.tsx",
         // Native IPC smoke is selected by the Node runner's filesystem path.
         "scripts/ipc-sender-native-smoke.ts",
+        // Native Electron smoke: the TS entry and isolated renderer are built by its MJS runner.
+        "scripts/terminal-hints-native-smoke-main.ts",
+        "scripts/terminal-hints-native-smoke.tsx",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",
@@ -67,7 +70,7 @@
         // they export a component's whole API whether or not Holi uses it yet.
         "src/renderer/src/components/ui/**": ["exports", "types"],
       },
-      // System binaries used by a community-plugin test and optional native video capture.
+      // System binaries used by smoke tests and native video capture.
       "ignoreBinaries": ["pgrep", "ffmpeg"],
     },
     "packages/shared": {

@@ -7,6 +7,7 @@ import {
   discoverHostHintTargets,
   HOST_HINT_REQUEST,
   hostHintsUnchanged,
+  type HostHintAdapter,
   type HostHintTarget,
 } from '@/lib/host-hints'
 import { vimCodeEditingAtom } from '@/state/preferences'
@@ -16,6 +17,8 @@ import { useShortcutHandlers } from '@/hooks/use-shortcuts'
 interface HintSession {
   targets: HostHintTarget[]
   prefix: string
+  adapter?: HostHintAdapter
+  root: HTMLElement
 }
 
 /** The shell owns transient input; editors only request it through the library seam. */
@@ -24,21 +27,34 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
   const store = useStore()
   const [session, setSession] = useState<HintSession | null>(null)
   const current = useRef<HintSession | null>(null)
+  const unsubscribe = useRef<(() => void) | null>(null)
   const change = useCallback((next: HintSession | null) => {
+    if (next !== current.current) {
+      unsubscribe.current?.()
+      unsubscribe.current = null
+    }
     current.current = next
+    if (next?.adapter?.subscribe) {
+      unsubscribe.current = next.adapter.subscribe(() => change(null))
+    }
     setSession(next)
   }, [])
   const start = useCallback(
-    (source: Element | null = document.activeElement) => {
+    (
+      source: Element | null = document.activeElement,
+      adapter?: HostHintAdapter,
+      scoped = false,
+    ) => {
       const root =
+        (scoped ? source?.closest<HTMLElement>('[data-panel-terminal]') : null) ??
         source?.closest<HTMLElement>('[data-pane]') ??
         document.querySelector<HTMLElement>('[data-pane-focused]') ??
         [...document.querySelectorAll<HTMLElement>('[data-pane]')].find(
           (pane) => !pane.closest('[inert],[hidden]'),
         ) ??
         document.body
-      const targets = discoverHostHintTargets(root)
-      change(targets.length ? { targets, prefix: '' } : null)
+      const targets = discoverHostHintTargets(root, adapter)
+      change(targets.length ? { targets, prefix: '', adapter, root } : null)
     },
     [change],
   )
@@ -54,11 +70,20 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
     change(null)
     if (!enabled) return
     const cancel = () => change(null)
-    const onRequest = (event: Event) => start((event as CustomEvent<HTMLElement>).detail)
+    const onRequest = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          source?: HTMLElement
+          adapter?: HostHintAdapter
+          scoped?: boolean
+        }>
+      ).detail
+      start(detail?.source ?? null, detail?.adapter, detail?.scoped)
+    }
     const onKey = (event: KeyboardEvent): boolean => {
       const active = current.current
       if (!active) return false
-      if (!hostHintsUnchanged(active.targets)) {
+      if (!hostHintsUnchanged(active.targets, active.adapter, active.root)) {
         cancel()
         return (
           !event.isComposing &&
@@ -136,6 +161,8 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       characterData: true,
     })
     return () => {
+      unsubscribe.current?.()
+      unsubscribe.current = null
       current.current = null
       store.set(hostHintKeyAtom, null)
       observer.disconnect()
