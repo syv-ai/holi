@@ -379,7 +379,7 @@
       Math.max(0, Math.min(el.value.length, at)),
       Math.max(0, Math.min(el.value.length, at)),
     )
-  const lineStart = (value, at) => value.lastIndexOf('\n', Math.max(0, at - 1)) + 1
+  const lineStart = (value, at) => (at === 0 ? 0 : value.lastIndexOf('\n', at - 1) + 1)
   const lineEnd = (value, at) => {
     const end = value.indexOf('\n', at)
     return end < 0 ? value.length : end
@@ -407,10 +407,10 @@
     return current?.index ?? parts.filter((part) => part.index < at).at(-1)?.index ?? 0
   }
   const wordEnd = (value, at) => {
-    const parts = wordSegments(value)
-    const part =
-      parts.find((item) => item.index <= at && item.index + item.segment.length > at) ??
-      parts.find((item) => item.index > at)
+    const part = wordSegments(value).find((item) => {
+      const end = item.index + (boundaries(item.segment).at(-2) ?? 0)
+      return end > at
+    })
     return part ? part.index + (boundaries(part.segment).at(-2) ?? 0) : at
   }
   const verticalMove = (target, at, direction) => {
@@ -483,8 +483,10 @@
       destination = verticalMove(target, at, 'down')
     else if (key === 'k' && target instanceof HTMLTextAreaElement)
       destination = verticalMove(target, at, 'up')
-    else if (key === 'Escape') return
-    else {
+    else if (key === 'Escape') {
+      event.preventDefault()
+      return
+    } else {
       // Normal mode does not let editing or printable keys reach the browser.
       if (
         key.length === 1 ||

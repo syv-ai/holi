@@ -119,7 +119,20 @@ describe('browser page activation', () => {
     pages.place('vim', { x: 0, y: 0, width: 100, height: 100 })
     await new Promise<void>((resolve) => setImmediate(resolve))
     const first = snapshots.at(-1)!
-    await pages.configureVim('vim', true, 1, first.nonce, first.attachment)
+    await pages.configureVim('vim', true, 2, first.nonce, first.attachment)
+    await pages.configureVim('vim', false, 3, first.nonce, first.attachment)
+    const afterDisable = view.webContents.executeJavaScriptInIsolatedWorld.mock.calls.filter(
+      ([, scripts]: [number, { code: string }[]]) =>
+        scripts.at(-1)?.code.includes('__holiPage.vim.configure('),
+    ).length
+    await pages.configureVim('vim', true, 2, first.nonce, first.attachment)
+    await pages.configureVim('vim', true, 3, first.nonce, first.attachment)
+    expect(
+      view.webContents.executeJavaScriptInIsolatedWorld.mock.calls.filter(
+        ([, scripts]: [number, { code: string }[]]) =>
+          scripts.at(-1)?.code.includes('__holiPage.vim.configure('),
+      ),
+    ).toHaveLength(afterDisable)
     pages.place('vim', null)
     pages.place('vim', { x: 0, y: 0, width: 100, height: 100 })
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -133,7 +146,7 @@ describe('browser page activation', () => {
     const beforeStale = configCalls()
     await pages.configureVim('vim', true, 2, first.nonce, first.attachment)
     expect(configCalls()).toBe(beforeStale)
-    await pages.configureVim('vim', true, 3, second.nonce, second.attachment)
+    await pages.configureVim('vim', true, 1, second.nonce, second.attachment)
     expect(configCalls()).toBe(beforeStale + 1)
     pages.dispose()
   })
