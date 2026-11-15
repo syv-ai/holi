@@ -8,8 +8,8 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { lstat, realpath, readdir, readFile, rm } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   isCommunityPluginId,
   isPluginPath,
@@ -31,6 +31,7 @@ import {
   gitignoreWith,
   noParams,
   paramsObject,
+  flagParam,
   readVaultSettings,
   stringParam,
   toolPath,
@@ -44,12 +45,21 @@ import {
   listReleases,
   listVersions,
   newestFirst,
+  readBoundedRegularText,
   readManifest,
   versionsOf,
   type GitAccess,
 } from './fetch'
 import { searchPlugins } from './search'
-import { seedApps, writeSkills } from './skills'
+import { refreshSkills, seedApps, writeSkills } from './skills'
+import {
+  assertCheckoutIdentity,
+  assertManifestPinned,
+  assertNoCompetingSkillClaims,
+  canonicalJson,
+  readPinnedSkillSnapshots,
+  validateSkillSnapshot,
+} from './skill-release'
 import { COMMUNITY_INFO } from '../info'
 import { linkCommands, linkedIn, unlinkCommands, type LinkedCommands } from './commands'
 import { expandCommand, pluginEnv, runSetup } from './setup'
@@ -145,7 +155,9 @@ async function readPins(root: string): Promise<Map<string, PluginPin>> {
   const pins = new Map<string, PluginPin>()
   const dirs = await readdir(join(root, PLUGIN_PINS_DIR)).catch(() => [] as string[])
   for (const id of dirs) {
-    const text = await readFile(join(root, pluginPinPath(id)), 'utf8').catch(() => null)
+    const text = await readBoundedRegularText(join(root, pluginPinPath(id)), 'plugin pin').catch(
+      () => null,
+    )
     if (text === null) continue
     try {
       const parsed = parsePluginPin(JSON.parse(text))
@@ -275,6 +287,16 @@ const pathParam = (raw: unknown): { path: string } => ({
 })
 
 /** The server key: one per vault, plugin and file. */
+function insidePath(root: string, path: string): boolean {
+  const rel = relative(root, path)
+  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+}
+
+function manifestFromPin(pin: PluginPin): PluginManifest {
+  const { repo: _repo, path: _path, commit: _commit, ...manifest } = pin
+  return manifest
+}
+
 const serverKey = (root: string, id: string, path: string) => `${root}\0${id}\0${path}`
 
 const repoParam = (p: Record<string, unknown>): string => {
@@ -607,6 +629,201 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           return deps.store.codeDir(entry.install)
         }),
       text: (dir) => dir,
+    }),
+
+    'community.refresh-skills': cap({
+      doors: ['cli'],
+      cli: {
+        args: ['id'],
+        flags: ['force'],
+        values: [],
+        summary:
+          'refresh skills from this vault’s pinned community-plugin release; --force replaces complete skill folders, including local edits',
+      },
+      params: (raw) => ({
+        id: stringParam(paramsObject(raw), 'id'),
+        force: flagParam(paramsObject(raw), 'force'),
+      }),
+      run: async (ctx, { id, force }) =>
+        admit(async () => {
+          ensureLive()
+          const deny: (message: string) => never = (message) => {
+            throw new CapabilityError('FORBIDDEN', message)
+          }
+          if (!isCommunityPluginId(id, deps.firstPartyIds()))
+            throw new CapabilityError('BAD_REQUEST', `${id} is not a valid community plugin id`)
+          const pinPath = join(ctx.root, pluginPinPath(id))
+          const pinInfo = await lstat(pinPath).catch(() => null)
+          if (
+            !pinInfo?.isFile() ||
+            pinInfo.isSymbolicLink() ||
+            resolve(pinPath) !== pinPath ||
+            (await realpath(pinPath).catch(() => null)) !== pinPath
+          )
+            deny(`${id} has no safe release pin in this vault`)
+          let pin: PluginPin
+          try {
+            const parsed = parsePluginPin(
+              JSON.parse(await readBoundedRegularText(pinPath, 'plugin pin')),
+            )
+            if (!parsed.ok || parsed.value.id !== id) throw new Error('invalid identity')
+            pin = parsed.value
+          } catch {
+            return deny(`${id} has no valid release pin in this vault`)
+          }
+          const install = await deps.store.get(id)
+          if (install === null || install.source.kind !== 'release')
+            deny(`${id} is not an installed release`)
+          const source = install.source
+          if (
+            pin.id !== install.id ||
+            pin.repo !== source.repo ||
+            pin.path !== source.path ||
+            pin.commit !== source.commit
+          )
+            deny(`${id} installed release does not match this vault's complete pin`)
+          if (!(await deps.consent.has(id, source.commit)) || install.setup !== 'ok')
+            deny(`${id} is not consented and setup-ready`)
+          const entries = await pluginEntries(ctx.root, deps)
+          const entry = entries.find(({ row }) => row.id === id)
+          if (entry === undefined || !entry.row.on || entry.row.status !== 'ready')
+            deny(`${id} is disabled or not ready in this vault`)
+          const skills = install.manifest.skills ?? []
+          try {
+            await assertNoCompetingSkillClaims(ctx.root, id, skills)
+          } catch (error) {
+            deny(String(error))
+          }
+          const codeDir = resolve(deps.store.codeDir(install))
+          const expectedRoot = resolve(deps.store.releaseDir(id, source.commit))
+          const expectedDir = resolve(expectedRoot, source.path)
+          if (codeDir !== expectedDir || !insidePath(expectedRoot, codeDir))
+            deny(`${id} source provenance does not match its pinned release`)
+          const rootReal = await realpath(expectedRoot).catch(() => null)
+          const codeReal = await realpath(codeDir).catch(() => null)
+          if (rootReal !== expectedRoot || codeReal !== codeDir)
+            deny(`${id} release paths are not canonical`)
+          const manifest = await readManifest(codeDir, source.path).catch(() => null)
+          try {
+            await assertCheckoutIdentity(
+              expectedRoot,
+              source.commit,
+              deps.git.url(source.repo),
+              deps.signal,
+            )
+          } catch {
+            deny(`${id} release checkout does not match its pin`)
+          }
+          if (
+            manifest === null ||
+            canonicalJson(manifest) !== canonicalJson(install.manifest) ||
+            canonicalJson(manifest) !== canonicalJson(manifestFromPin(pin))
+          )
+            deny(`${id} release checkout does not match its pin`)
+          try {
+            await assertManifestPinned(
+              expectedRoot,
+              source.commit,
+              source.path,
+              manifest,
+              deps.signal,
+            )
+          } catch (error) {
+            deny(`${id} manifest does not match pinned Git object: ${String(error)}`)
+          }
+          let expectedSnapshots
+          try {
+            expectedSnapshots = await readPinnedSkillSnapshots(
+              expectedRoot,
+              source.commit,
+              source.path,
+              skills,
+              deps.signal,
+            )
+          } catch (error) {
+            deny(`${id} skills do not match pinned Git objects: ${String(error)}`)
+          }
+          const guard = async () => {
+            ensureLive()
+            const [currentPin, currentInstall, consented, settings] = await Promise.all([
+              readBoundedRegularText(pinPath, 'plugin pin').catch(() => null),
+              deps.store.get(id),
+              deps.consent.has(id, source.commit),
+              readVaultSettings(ctx.root),
+            ])
+            let parsedPin: PluginPin | null = null
+            try {
+              const parsed = parsePluginPin(JSON.parse(currentPin ?? ''))
+              if (parsed.ok) parsedPin = parsed.value
+            } catch {
+              /* fail closed below */
+            }
+            const currentEntry = (await pluginEntries(ctx.root, deps)).find(
+              ({ row }) => row.id === id,
+            )
+            if (
+              !parsedPin ||
+              canonicalJson(parsedPin) !== canonicalJson(pin) ||
+              currentInstall === null ||
+              currentInstall.source.kind !== 'release' ||
+              JSON.stringify(currentInstall.source) !== JSON.stringify(source) ||
+              canonicalJson(currentInstall.manifest) !== canonicalJson(install.manifest) ||
+              !consented ||
+              currentInstall.setup !== 'ok' ||
+              settings.plugins.vault[id] !== true ||
+              !currentEntry?.row.on ||
+              currentEntry.row.status !== 'ready'
+            )
+              deny(`${id} authorization changed during refresh`)
+            const nowRoot = await realpath(expectedRoot).catch(() => null)
+            const nowDir = await realpath(codeDir).catch(() => null)
+            if (nowRoot !== expectedRoot || nowDir !== codeDir)
+              deny(`${id} release provenance changed during refresh`)
+            await assertCheckoutIdentity(
+              expectedRoot,
+              source.commit,
+              deps.git.url(source.repo),
+              deps.signal,
+            ).catch(() => deny(`${id} release provenance changed during refresh`))
+            try {
+              await assertManifestPinned(
+                expectedRoot,
+                source.commit,
+                source.path,
+                install.manifest,
+                deps.signal,
+              )
+            } catch (error) {
+              deny(`${id} manifest provenance changed during refresh: ${String(error)}`)
+            }
+            await assertNoCompetingSkillClaims(ctx.root, id, skills).catch((error) =>
+              deny(String(error)),
+            )
+            ensureLive()
+          }
+          return refreshSkills(install.manifest, codeDir, ctx.root, {
+            force,
+            guard,
+            expectedSnapshots,
+            validateSnapshot: async (snapshots) => {
+              await guard()
+              try {
+                await validateSkillSnapshot(
+                  expectedRoot,
+                  source.commit,
+                  source.path,
+                  skills,
+                  snapshots,
+                  deps.signal,
+                )
+              } catch (error) {
+                deny(`${id} private snapshot does not match pinned Git objects: ${String(error)}`)
+              }
+              await guard()
+            },
+          })
+        }),
+      text: (paths) => paths.join('\n'),
     }),
 
     // A running plugin's verbs, `holi plugin <id> <verb> …`: read here and

@@ -8,7 +8,8 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { mkdir, mkdtemp, open, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   compareVersions,
@@ -55,12 +56,49 @@ export async function listVersions(repo: string, path: string, git: GitAccess): 
   return versionsOf(await listReleases(repo, git), path)
 }
 
+/** Read an untrusted manifest or pin without following links or blocking on special files. */
+export async function readBoundedRegularText(
+  path: string,
+  label: string,
+  maxBytes = 256 * 1024,
+): Promise<string> {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0),
+  )
+  try {
+    const info = await handle.stat()
+    if (!info.isFile() || info.size > maxBytes)
+      throw new CapabilityError('BAD_REQUEST', `${label} is not a bounded regular file`)
+    const bytes = Buffer.alloc(info.size)
+    let offset = 0
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+      if (!bytesRead) throw new CapabilityError('BAD_REQUEST', `${label} changed while reading`)
+      offset += bytesRead
+    }
+    const after = await handle.stat()
+    if (after.size !== info.size || after.dev !== info.dev || after.ino !== info.ino)
+      throw new CapabilityError('BAD_REQUEST', `${label} changed while reading`)
+    const text = bytes.toString('utf8')
+    if (!Buffer.from(text, 'utf8').equals(bytes))
+      throw new CapabilityError('BAD_REQUEST', `${label} is not valid UTF-8`)
+    return text
+  } finally {
+    await handle.close()
+  }
+}
+
 /** Read and check the manifest in the plugin folder `dir`, which is the
  *  repository's folder `path` (`''` for its root, or for a dev folder). */
 export async function readManifest(dir: string, path = ''): Promise<PluginManifest> {
-  const text = await readFile(join(dir, PLUGIN_MANIFEST_FILE), 'utf8').catch(() => null)
-  if (text === null)
+  let text: string
+  try {
+    text = await readBoundedRegularText(join(dir, PLUGIN_MANIFEST_FILE), PLUGIN_MANIFEST_FILE)
+  } catch (error) {
+    if (error instanceof CapabilityError) throw error
     throw new CapabilityError('BAD_REQUEST', `there is no ${PLUGIN_MANIFEST_FILE} in ${dir}`)
+  }
   let json: unknown
   try {
     json = JSON.parse(text)
