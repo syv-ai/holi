@@ -100,6 +100,32 @@ describe('reference definition normalization', () => {
     expect(readMarkdownReferenceDefinitions(source)).toBe('')
   })
 
+  it('does not promote escaped-angle definitions from code or HTML into caption scope', () => {
+    const source = [
+      writeMarkdownCaptionEnvelope('| A |\n| --- |\n| [hidden] |', 'Caption'),
+      '',
+      '```markdown',
+      String.raw`[hidden]: <https://example.org/a\>b>`,
+      '```',
+      '',
+      '<div>',
+      String.raw`[html-hidden]: <https://example.org/a\>b>`,
+      '</div>',
+    ].join('\n')
+    expect(readMarkdownReferenceDefinitions(source)).toBe('')
+  })
+
+  it('keeps escaped-angle fallbacks in source order and normalizes containers', () => {
+    const source = [
+      String.raw`> [target]: <https://example.org/first\>path>`,
+      '',
+      String.raw`[target]: https://example.org/second`,
+    ].join('\n')
+    expect(readMarkdownReferenceDefinitions(source)).toBe(
+      '\n\n[target]: <https://example.org/first\\>path>\n[target]: https://example.org/second',
+    )
+  })
+
   it('removes container markers, preserves escapes, and keeps duplicate source order', () => {
     const source = String.raw`> [target]:
 >   https://example.org/destination

@@ -490,6 +490,32 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
       destination: 'https://example.com/a>b',
       visible: 'ref',
     },
+    {
+      name: 'escaped angle definitions in fenced code stay inactive',
+      prefix: '',
+      cell: '[hidden]',
+      definition: '```markdown\n' + String.raw`[hidden]: <https://example.org/a\>b>` + '\n```',
+      destination: null,
+      visible: '[hidden]',
+    },
+    {
+      name: 'escaped angle definitions in HTML stay inactive',
+      prefix: '',
+      cell: '[hidden]',
+      definition: '<div>\n' + String.raw`[hidden]: <https://example.org/a\>b>` + '\n</div>',
+      destination: null,
+      visible: '[hidden]',
+    },
+    {
+      name: 'first escaped angle definition keeps duplicate precedence',
+      prefix: '',
+      cell: '[ref]',
+      definition:
+        String.raw`[ref]: <https://example.org/first\>path>` +
+        '\n[ref]: https://example.org/second',
+      destination: 'https://example.org/first>path',
+      visible: 'ref',
+    },
   ])(
     'keeps native captioned-table reference behavior: $name',
     async (fixture) => {
@@ -536,7 +562,7 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
           .map((entry) => entry.split(')')[0]!)
       const ordinaryDestinations = await destinations(ordinaryPdf)
       const captionedDestinations = await destinations(captionedPdf)
-      expect(ordinaryDestinations).toContain(fixture.destination)
+      if (fixture.destination !== null) expect(ordinaryDestinations).toContain(fixture.destination)
       expect(captionedDestinations).toEqual(ordinaryDestinations)
 
       const pages = await readPdfPages(captionedPdf)
