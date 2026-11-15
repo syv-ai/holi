@@ -5,6 +5,7 @@
  */
 import { shownPathOrNull } from '@holi/shared'
 import { atom } from 'jotai'
+import { toast } from 'sonner'
 import {
   activeRemoteAtom,
   openPathAtom,
@@ -32,7 +33,9 @@ export const openInboxEntryAtom = atom(null, (get, set, entry: InboxEntry): void
     if (remote !== null && path !== null) set(openPathAtom, path)
   } else if (entry.session !== undefined) {
     void set(openSessionAtom, entry.session).then((res) => {
-      if (!res.ok) console.warn(`[agent] open ${entry.session} failed: ${res.message}`)
+      if (!res.ok) {
+        toast.error('Could not open agent session', { description: res.message })
+      }
     })
   }
 })
