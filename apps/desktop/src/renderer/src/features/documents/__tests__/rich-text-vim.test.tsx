@@ -1,5 +1,6 @@
 import { Editor, Node } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
+import { TableKit } from '@tiptap/extension-table'
 import { NodeSelection } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MultiCursor, extraSelections } from '../multi-cursor'
@@ -34,6 +35,25 @@ function key(ed: Editor, value: string, options: KeyboardEventInit = {}) {
 }
 
 const text = (ed: Editor) => ed.state.doc.textContent
+
+function openTable() {
+  editor = new Editor({
+    extensions: [
+      StarterKit,
+      TableKit,
+      RichTextVim.configure({ enabled: false, editable: () => editor?.isEditable ?? false }),
+    ],
+    content:
+      '<table><tbody><tr><td><p>one</p></td></tr><tr><td><p>last</p></td></tr></tbody></table>',
+  })
+  configureRichTextVim(editor.view, true, true, () => editor?.isEditable ?? false)
+  let lastCellPos = 0
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'tableCell') lastCellPos = pos
+  })
+  editor.commands.setTextSelection(lastCellPos + 2)
+  return editor
+}
 
 describe('rich-text Vim extension', () => {
   it('routes real ProseMirror motions without document transactions and deletes one grapheme', () => {
@@ -81,6 +101,35 @@ describe('rich-text Vim extension', () => {
     expect(ed.state.selection.head).toBe(7)
     key(ed, 'g')
     expect(ed.state.selection.head).toBe(1)
+  })
+
+  it('consumes Tab navigation in normal mode without changing a table document', () => {
+    const ed = openTable()
+    const before = ed.state.doc
+    let docChanges = 0
+    ed.on('transaction', ({ transaction }) => {
+      if (transaction.docChanged) docChanges += 1
+    })
+
+    for (const options of [{}, { shiftKey: true }]) {
+      const event = key(ed, 'Tab', options)
+      expect(event.defaultPrevented).toBe(true)
+      expect(ed.state.doc.eq(before)).toBe(true)
+    }
+    expect(docChanges).toBe(0)
+    expect(ed.state.doc.firstChild?.childCount).toBe(2)
+  })
+
+  it('keeps native table Tab behavior in insert and off modes', () => {
+    const insert = openTable()
+    key(insert, 'i')
+    key(insert, 'Tab')
+    expect(insert.state.doc.firstChild?.childCount).toBe(3)
+
+    const off = openTable()
+    configureRichTextVim(off.view, false, true, () => true)
+    key(off, 'Tab')
+    expect(off.state.doc.firstChild?.childCount).toBe(3)
   })
 
   it('keeps native Enter and deletion editing in insert and off modes', () => {
@@ -240,6 +289,29 @@ describe('rich-text Vim extension', () => {
     expect(editor.state.selection.head).toBe(5)
     key(editor, 'w')
     expect(editor.state.selection.head).toBe(10)
+  })
+
+  it('anchors forward word motions at empty blocks and document endpoints', () => {
+    const ed = open('<p>alpha</p><p></p><p>beta</p>')
+    const emptyParagraphPos = ed.state.doc.child(0).nodeSize + 1
+    ed.commands.setTextSelection(emptyParagraphPos)
+    key(ed, 'w')
+    expect(ed.state.selection.head).toBe(emptyParagraphPos + 2)
+    key(ed, 'e')
+    expect(ed.state.selection.head).toBe(emptyParagraphPos + 5)
+
+    ed.commands.setTextSelection(1)
+    key(ed, 'w')
+    expect(ed.state.selection.head).toBe(emptyParagraphPos + 2)
+    ed.commands.setTextSelection(1)
+    key(ed, 'e')
+    expect(ed.state.selection.head).toBe(5)
+    ed.commands.setTextSelection(ed.state.doc.content.size - 1)
+    const end = ed.state.selection.head
+    key(ed, 'w')
+    expect(ed.state.selection.head).toBe(end)
+    key(ed, 'e')
+    expect(ed.state.selection.head).toBe(end)
   })
 
   it('advances word motions, targets the last grapheme with $, and navigates code-block lines', () => {

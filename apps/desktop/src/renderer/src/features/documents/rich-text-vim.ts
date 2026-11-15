@@ -169,9 +169,11 @@ function wordMotion(view: EditorView, motion: 'w' | 'b' | 'e') {
   const pos = view.state.selection.head
   const word = (item: (typeof chars)[number]) => WORD.test(item.value)
   const current = chars.findIndex((item) => item.from <= pos && pos < item.to)
+  const firstAtOrAfter = chars.findIndex((item) => item.from >= pos)
   let target: number | undefined
   if (motion === 'w') {
-    for (let i = Math.max(0, current + 1); i < chars.length; i++) {
+    const start = current >= 0 ? current + 1 : firstAtOrAfter < 0 ? chars.length : firstAtOrAfter
+    for (let i = start; i < chars.length; i++) {
       if (word(chars[i]!) && (i === 0 || !word(chars[i - 1]!))) {
         target = chars[i]!.from
         break
@@ -191,7 +193,13 @@ function wordMotion(view: EditorView, motion: 'w' | 'b' | 'e') {
       current >= 0 &&
       word(chars[current]!) &&
       (current + 1 === chars.length || !word(chars[current + 1]!))
-    for (let i = Math.max(0, current + (atWordEnd ? 1 : 0)); i < chars.length; i++) {
+    const start =
+      current >= 0
+        ? current + (atWordEnd ? 1 : 0)
+        : firstAtOrAfter < 0
+          ? chars.length
+          : firstAtOrAfter
+    for (let i = start; i < chars.length; i++) {
       if (!word(chars[i]!)) continue
       if (i + 1 === chars.length || !word(chars[i + 1]!)) {
         target = chars[i]!.from
@@ -360,7 +368,7 @@ function handleNormal(
     view.dispatch(
       view.state.tr.setMeta(KEY, { ...current, prefix: false }).setMeta('addToHistory', false),
     )
-  if (key === 'Enter' || key === 'Backspace' || key === 'Delete') {
+  if (key === 'Tab' || key === 'Enter' || key === 'Backspace' || key === 'Delete') {
     event.preventDefault()
     return true
   }
