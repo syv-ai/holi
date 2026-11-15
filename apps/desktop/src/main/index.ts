@@ -943,6 +943,7 @@ async function main(): Promise<void> {
   })
 
   const router = createRouter({
+    userData: app.getPath('userData'),
     openPastedHoliLink,
     updates: updater,
     activity,

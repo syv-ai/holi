@@ -80,6 +80,7 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
   path: string
   title: string
   saveState: SaveState
+  vimMode?: 'normal' | 'insert' | ''
   taskDone?: { pending: boolean; error: string | null; onDone: () => void }
   /** An agent run is editing the document. */
   locked: boolean
@@ -107,6 +108,7 @@ export function DocumentHeader({
   path,
   title,
   saveState,
+  vimMode = '',
   taskDone,
   locked,
   comments = null,
@@ -144,6 +146,7 @@ export function DocumentHeader({
               <span aria-live="polite" className="shrink-0">
                 {saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}
               </span>
+              {vimMode ? <Badge variant="secondary">Vim {vimMode}</Badge> : null}
             </>
           }
         />
