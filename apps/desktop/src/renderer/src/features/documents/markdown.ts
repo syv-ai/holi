@@ -37,23 +37,35 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
   }
   const parsed = manager.parse(substituted)
   const figures = frames.map((frame) => {
-    const fence = source.slice(frame.body.from, frame.body.to)
-    const codeDocument = manager.parse(fence)
-    const code = codeDocument.content?.find((node: any) => node.type === 'codeBlock')
-    const captionMarkdown = source.slice(frame.caption.from, frame.caption.to)
-    const captionDocument = manager.parse(captionMarkdown)
-    const caption = captionDocument.content?.find((node: any) => node.type === 'paragraph')
-    if (!code || !caption) return null
-    const text = code.content?.map((part: any) => part.text ?? '').join('') ?? ''
-    code.attrs = {
-      ...code.attrs,
-      sourceFence: fence,
-      sourceFenceText: text,
-      sourceFenceLanguage: String(code.attrs?.language ?? ''),
-    }
-    return {
-      type: 'documentFigure',
-      content: [code, { type: 'documentCaption', content: caption.content }],
+    try {
+      const fence = source.slice(frame.body.from, frame.body.to)
+      const openingIndent = /^( {0,3})(?:`{3,}|~{3,})/.exec(fence)?.[1]?.length ?? 0
+      const parserFence =
+        openingIndent === 0
+          ? fence
+          : fence
+              .split('\n')
+              .map((line) => line.replace(new RegExp(`^ {0,${openingIndent}}`), ''))
+              .join('\n')
+      const codeDocument = manager.parse(parserFence)
+      const code = codeDocument.content?.find((node: any) => node.type === 'codeBlock')
+      const captionMarkdown = source.slice(frame.caption.from, frame.caption.to)
+      const captionDocument = manager.parse(captionMarkdown)
+      const caption = captionDocument.content?.find((node: any) => node.type === 'paragraph')
+      if (!code || !caption) return null
+      const text = code.content?.map((part: any) => part.text ?? '').join('') ?? ''
+      code.attrs = {
+        ...code.attrs,
+        sourceFence: fence,
+        sourceFenceText: text,
+        sourceFenceLanguage: String(code.attrs?.language ?? ''),
+      }
+      return {
+        type: 'documentFigure',
+        content: [code, { type: 'documentCaption', content: caption.content }],
+      }
+    } catch {
+      return null
     }
   })
   let index = 0
@@ -64,8 +76,18 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
       node.type === 'htmlBlock' &&
       String(node.attrs?.html).trim() === placeholder
     ) {
-      const figure = figures[index++]
-      return figure ? [figure] : [node]
+      const figure = figures[index]
+      index++
+      if (figure) return [figure]
+      return [
+        {
+          ...node,
+          attrs: {
+            ...node.attrs,
+            html: source.slice(frames[index - 1]!.envelope.from, frames[index - 1]!.envelope.to),
+          },
+        },
+      ]
     }
     return [node]
   })

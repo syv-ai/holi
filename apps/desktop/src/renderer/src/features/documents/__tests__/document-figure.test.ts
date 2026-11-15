@@ -37,6 +37,33 @@ describe('document code captions', () => {
     expect(instance.getMarkdown()).toBe(captioned)
   })
 
+  it('parses indented source fences on open, insertion, and reload without changing their bytes', () => {
+    for (const indent of [' ', '  ', '   ']) {
+      const source = `<!-- holi:figure -->\n\n${indent}~~~typescript extra\n${indent}const value = 1\n${indent}~~~\n\n<!-- holi:caption -->\n\ncaption\n\n<!-- /holi:figure -->`
+      const instance = open(source)
+      expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+      expect(instance.state.doc.firstChild?.firstChild?.textContent).toBe('const value = 1')
+      expect(instance.getMarkdown()).toBe(source)
+      expect(instance.getMarkdown()).not.toContain('holi-private-caption')
+
+      const inserted = open('')
+      inserted.commands.insertContent(source, { contentType: 'markdown' })
+      expect(inserted.state.doc.firstChild?.type.name).toBe('documentFigure')
+
+      const reloaded = open('ordinary')
+      expect(applyReload(reloaded, source)).toBe(true)
+      expect(reloaded.state.doc.firstChild?.type.name).toBe('documentFigure')
+      expect(reloaded.getMarkdown()).toContain(
+        `${indent}~~~typescript extra\n${indent}const value = 1\n${indent}~~~`,
+      )
+      expect(reloaded.getMarkdown()).not.toContain('holi-private-caption')
+      instance.destroy()
+      inserted.destroy()
+      reloaded.destroy()
+      editor = null
+    }
+  })
+
   it('uses the same caption codec for markdown insertion and plain-text paste', () => {
     const inserted = open('')
     inserted.commands.insertContent(captioned, { contentType: 'markdown' })
@@ -124,6 +151,29 @@ describe('document code captions', () => {
     }
   })
 
+  it('round-trips inline code with single and double backtick runs', () => {
+    let instance = open('```ts\nx\n```')
+    expect(addCodeCaption(instance, 0)).toBe(true)
+    const captionStart = 1 + instance.state.doc.firstChild!.firstChild!.nodeSize + 1
+    const text = 'single ` and double `` ticks'
+    const code = instance.schema.marks.code!.create()
+    instance.view.dispatch(
+      instance.state.tr
+        .insertText(text, captionStart)
+        .addMark(captionStart, captionStart + text.length, code),
+    )
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const markdown = instance.getMarkdown()
+      expect(readMarkdownCodeCaptions(markdown)).toHaveLength(1)
+      instance.destroy()
+      editor = null
+      instance = open(markdown)
+      const caption = instance.state.doc.firstChild!.lastChild!
+      expect(caption.textContent).toBe(text)
+      expect(caption.firstChild?.marks.map((mark) => mark.type.name)).toContain('code')
+    }
+  })
+
   it('keeps link destinations with brackets and adjacent supported formatting', () => {
     const instance = open('```ts\nx\n```')
     expect(addCodeCaption(instance, 0)).toBe(true)
@@ -158,6 +208,55 @@ describe('document code captions', () => {
       expect(markdown).toContain('[label](https://example.com/%5Bpart%5D)')
       expect(markdown).not.toMatch(/&#(?:91|93);/)
     }
+  })
+
+  it('round-trips nested linked and unlinked brackets without changing link coverage', () => {
+    let instance = open('```ts\nx\n```')
+    expect(addCodeCaption(instance, 0)).toBe(true)
+    const captionStart = 1 + instance.state.doc.firstChild!.firstChild!.nodeSize + 1
+    const text = 'outer [inner] and [linked [nested]]'
+    const link = instance.schema.marks.link!.create({ href: 'https://example.com/path' })
+    instance.view.dispatch(
+      instance.state.tr
+        .insertText(text, captionStart)
+        .addMark(captionStart + 18, captionStart + text.length, link),
+    )
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const markdown = instance.getMarkdown()
+      expect(readMarkdownCodeCaptions(markdown)).toHaveLength(1)
+      instance.destroy()
+      editor = null
+      instance = open(markdown)
+      const caption = instance.state.doc.firstChild!.lastChild!
+      expect(caption.textContent).toBe(text)
+      expect(caption.childCount).toBe(2)
+      const linked = caption.child(1)
+      expect(linked.text).toBe('[linked [nested]]')
+      expect(linked.marks.map((mark) => mark.type.name)).toContain('link')
+    }
+  })
+
+  it('does not replace bracket tokens inside link destinations', () => {
+    const instance = open('```ts\nx\n```')
+    expect(addCodeCaption(instance, 0)).toBe(true)
+    const captionStart = 1 + instance.state.doc.firstChild!.firstChild!.nodeSize + 1
+    const text = '[label]'
+    const href = 'https://example.com/HOLICAPBRACKET0X'
+    instance.view.dispatch(
+      instance.state.tr
+        .insertText(text, captionStart)
+        .addMark(
+          captionStart,
+          captionStart + text.length,
+          instance.schema.marks.link!.create({ href }),
+        ),
+    )
+    const reopened = open(instance.getMarkdown())
+    const caption = reopened.state.doc.firstChild!.lastChild!
+    expect(caption.textContent).toBe(text)
+    expect(caption.firstChild?.marks.find((mark) => mark.type.name === 'link')?.attrs.href).toBe(
+      href,
+    )
   })
 
   it('preserves authored literal entity text over repeated save and reopen cycles', () => {

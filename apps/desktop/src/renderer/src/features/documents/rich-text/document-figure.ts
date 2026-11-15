@@ -17,8 +17,7 @@ export function sourceFenceMatches(source: string, code: string, language: strin
   if (!match) return false
   const info = opening[3]!.trim().split(/\s+/, 1)[0] ?? ''
   if (info.toLowerCase() !== language.trim().split(/\s+/, 1)[0]?.toLowerCase()) return false
-  const fencedCode = source.slice(opening[0].length, match.index)
-  return fencedCode === code
+  return block.body === code
 }
 
 function renderSafeFence(language: string, code: string): string {
@@ -151,32 +150,52 @@ export const DocumentFigure = Node.create({
       sourceFenceMatches(rawFence, codeText, language)
         ? rawFence
         : renderSafeFence(language, codeText)
+    const replacements = new Map<string, string>()
+    const captionText = (caption.content ?? [])
+      .map((part: { text?: string }) => part.text ?? '')
+      .join('')
+    const captionSource = JSON.stringify(caption)
+    let placeholderIndex = 0
     const captionForMarkdown = {
       ...caption,
       content: caption.content?.map(
-        (part: { marks?: { type: string; attrs?: Record<string, unknown> }[] }) => ({
-          ...part,
-          marks: part.marks?.map((mark) =>
-            mark.type === 'link' && typeof mark.attrs?.href === 'string'
-              ? {
-                  ...mark,
-                  attrs: {
-                    ...mark.attrs,
-                    href: mark.attrs.href.replace(/\[/g, '%5B').replace(/\]/g, '%5D'),
-                  },
-                }
-              : mark,
-          ),
-        }),
+        (part: { text?: string; marks?: { type: string; attrs?: Record<string, unknown> }[] }) => {
+          const marks = part.marks ?? []
+          const isCode = marks.some((mark) => mark.type === 'code')
+          let text = part.text
+          if (text && !isCode) {
+            text = text.replace(/[\[\]]/g, (bracket) => {
+              let placeholder = `HOLICAPBRACKET${placeholderIndex++}X`
+              while (captionText.includes(placeholder) || captionSource.includes(placeholder)) {
+                placeholder = `HOLICAPBRACKET${placeholderIndex++}X`
+              }
+              replacements.set(placeholder, bracket === '[' ? '&#91;' : '&#93;')
+              return placeholder
+            })
+          }
+          return {
+            ...part,
+            ...(text === undefined ? {} : { text }),
+            marks: marks.map((mark) =>
+              mark.type === 'link' && typeof mark.attrs?.href === 'string'
+                ? {
+                    ...mark,
+                    attrs: {
+                      ...mark.attrs,
+                      href: mark.attrs.href.replace(/\[/g, '%5B').replace(/\]/g, '%5D'),
+                    },
+                  }
+                : mark,
+            ),
+          }
+        },
       ),
     }
-    const renderedCaption = helpers.renderChildren(captionForMarkdown).replace(/\n+$/, '')
-    const escapedCaption = renderedCaption.replace(/(`+)[\s\S]*?\1(?!`)|[^`]+/g, (segment) => {
-      if (segment.startsWith('`')) return segment
-      return segment
-        .replace(/\\\[([^\]]+)\\\]/g, '&#91;$1&#93;')
-        .replace(/(?<!\\)\[([^\]]+)\](?!\()/g, '&#91;$1&#93;')
-    })
+    let renderedCaption = helpers.renderChildren(captionForMarkdown).replace(/\n+$/, '')
+    for (const [placeholder, entity] of replacements) {
+      renderedCaption = renderedCaption.replaceAll(placeholder, entity)
+    }
+    const escapedCaption = renderedCaption
 
     if (!escapedCaption.trim()) return body
     try {

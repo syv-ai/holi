@@ -49,7 +49,7 @@ export function isPortableInlineCaption(caption: string): boolean {
   if (/^[ \t]/.test(caption) && !/^(?:&#32;|&#9;)+/.test(caption)) return false
   // Reference definitions and reference links depend on document-wide definitions;
   // extracting them would change their meaning in the surrounding document.
-  const plain = caption.replace(/(`+)(.*?)\1/g, '').replace(/\\([\\[\\]<>!])/g, '')
+  const plain = caption.replace(/(?<!`)(`+)(.*?)\1(?!`)/g, '').replace(/\\([\\[\\]<>!])/g, '')
   if (/!\s*\[/.test(plain)) return false
   if (/^ {0,3}\[[^\]]+\]:/.test(plain)) return false
   if (/\[[^\]]+\](?:\[[^\]]*\])?(?!\s*\()/.test(plain)) return false
@@ -58,7 +58,7 @@ export function isPortableInlineCaption(caption: string): boolean {
   // CommonMark block openers, including empty headings and thematic breaks.
   if (
     /^ {0,3}(?:#{1,6}(?:\s|$)|>|(?:[-*_][ \t]*){3,}[ \t]*$|(?:[-*+]|\d+[.)])(?:[ \t]+|$)|(?:`{3,}|~{3,}))/i.test(
-      caption,
+      caption.replace(/(?<!`)(`+)(.*?)\1(?!`)/g, 'inline'),
     )
   )
     return false
@@ -347,7 +347,7 @@ export function writeMarkdownCaptionEnvelope(body: string, caption: string): str
   if (
     /^(?: {4}| {0,3}\t)/.test(portableCaption) ||
     /^(?: {0,3}(?:#{1,6}(?:\s|$)|>|[-+*](?:\s|$)|\d+[.)](?:\s|$)|`{3,}|~{3,}|<)| {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$)/.test(
-      portableCaption,
+      portableCaption.replace(/(?<!`)(`+)(.*?)\1(?!`)/g, 'inline'),
     )
   ) {
     throw new Error('caption must be one inline Markdown paragraph')
