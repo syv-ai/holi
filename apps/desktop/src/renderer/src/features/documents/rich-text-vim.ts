@@ -360,6 +360,10 @@ function handleNormal(
     view.dispatch(
       view.state.tr.setMeta(KEY, { ...current, prefix: false }).setMeta('addToHistory', false),
     )
+  if (key === 'Enter' || key === 'Backspace' || key === 'Delete') {
+    event.preventDefault()
+    return true
+  }
   if (key === 'g') {
     view.dispatch(
       view.state.tr.setMeta(KEY, { ...current, prefix: true }).setMeta('addToHistory', false),
