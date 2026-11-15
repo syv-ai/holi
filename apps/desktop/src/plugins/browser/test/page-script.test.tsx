@@ -532,6 +532,32 @@ test('plaintext-only shape loss resets normal mode and does not resurrect it', (
   expect(press('x').defaultPrevented).toBe(false)
 })
 
+test.each(['input', 'textarea'] as const)(
+  'class mutations on an owned %s do not reset Vim normal mode',
+  async (tag) => {
+    const field = document.createElement(tag)
+    field.value = 'alpha'
+    document.body.append(field)
+    field.focus()
+    const nonce = holi().vim.documentNonce()
+    holi().vim.configure(true, 47, nonce)
+    const press = (key: string) => {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      field.dispatchEvent(event)
+      return event
+    }
+    press('Escape')
+    expect(holi().vim.mode().mode).toBe('normal')
+    field.classList.add('active')
+    await Promise.resolve()
+    field.setSelectionRange(2, 2)
+    expect(press('h').defaultPrevented).toBe(true)
+    expect(field.selectionStart).toBe(1)
+    expect(field.value).toBe('alpha')
+    expect(holi().vim.mode().mode).toBe('normal')
+  },
+)
+
 test('fills a field and picks an option, as typing would', () => {
   holi().read(12_000)
   const input = vi.fn()

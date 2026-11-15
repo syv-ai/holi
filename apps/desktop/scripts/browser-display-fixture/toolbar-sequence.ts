@@ -234,9 +234,13 @@
   await trustedPress(view, 'q')
   assert(((await text()) as string).includes('q'))
   mark('native-element-replacement-releases-old-field')
+  await focus('plaintext')
+  await trustedPress(view, 'Escape')
+  await badge('normal')
   await field(
     `(() => { const old=document.querySelector('#plaintext'); const clone=old.cloneNode(true); old.replaceWith(clone); clone.focus() })()`,
   )
+  await badge('insert')
   await trustedPress(view, 'Escape')
   await badge('normal')
   await trustedPress(view, 'i')
