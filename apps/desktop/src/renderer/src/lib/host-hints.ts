@@ -50,16 +50,39 @@ export interface HostHintAdapter {
   /** Capture the current terminal revision for this hint request. */
   capture?(): void
   /** Cancel the owning hint session immediately when its surface changes. */
-  subscribe?(invalidate: () => void): () => void
+  subscribe?(invalidate: () => void, routeKey?: (event: KeyboardEvent) => boolean): () => void
+  /** Signal a synchronous ownership transition before a source is removed. */
+  invalidate?(): void
   activate(target: HostHintTarget): boolean
 }
 
-interface HostHintAdapterTarget {
+export interface HostHintAdapterTarget {
   element: Element
   label: string
   x: number
   y: number
   token: unknown
+}
+
+const registeredAdapters = new Map<HTMLElement, HostHintAdapter>()
+
+/** Register an explicitly owned target source for the pane containing `owner`. */
+export function registerHostHintAdapter(owner: HTMLElement, adapter: HostHintAdapter): () => void {
+  registeredAdapters.set(owner, adapter)
+  return () => {
+    adapter.invalidate?.()
+    if (registeredAdapters.get(owner) === adapter) registeredAdapters.delete(owner)
+  }
+}
+
+function adaptersFor(root: HTMLElement): HostHintAdapter[] {
+  return [...registeredAdapters]
+    .filter(([owner]) => owner.isConnected && owner.closest<HTMLElement>('[data-pane]') === root)
+    .map(([, adapter]) => adapter)
+}
+
+export function captureHostHintAdapters(root: HTMLElement): void {
+  for (const adapter of adaptersFor(root)) adapter.capture?.()
 }
 
 /** The editor requests hints without depending on the shell that presents them. */
@@ -131,15 +154,16 @@ export function discoverHostHintTargets(
       if (surface.owner.closest('[data-pane]') !== root) continue
       collect(surface.root, surface.root)
     }
-    if (adapter) {
-      for (const target of adapter.discover()) {
+    const sources = [...new Set([...adaptersFor(root), ...(adapter ? [adapter] : [])])]
+    for (const source of sources) {
+      for (const target of source.discover()) {
         if (!target.element.isConnected || target.element.closest('[hidden],[inert]')) continue
         targets.push({
           ...target,
           root,
           overlay,
-          adapter,
-          scopeAdapter: adapter,
+          adapter: source,
+          scopeAdapter: source,
           token: target.token,
           key: '',
           surface: null,
@@ -170,20 +194,33 @@ export function hostHintsUnchanged(
   root = targets[0]?.root,
 ): boolean {
   if (!root?.isConnected) return false
-  const adapter = requestAdapter ?? targets.find((target) => target.adapter)?.adapter
-  const adapted = targets.filter((target) => target.adapter === adapter)
-  if (adapter && !adapter.unchanged(adapted)) return false
+  const adapters = new Set([
+    ...adaptersFor(root),
+    ...targets.flatMap((target) => (target.adapter ? [target.adapter] : [])),
+    ...(requestAdapter ? [requestAdapter] : []),
+  ])
+  for (const source of adapters) {
+    const adapted = targets.filter((target) => target.adapter === source)
+    if (!source.unchanged(adapted)) return false
+  }
   const ordinary = targets.filter((target) => !target.adapter)
-  const next = discoverHostHintTargets(root, adapter)
+  const next = discoverHostHintTargets(root, requestAdapter)
   const ordinaryNext = next.filter((target) => !target.adapter)
-  const adaptedNext = next.filter((target) => target.adapter === adapter)
-  const oldAdapted = targets.filter((target) => target.adapter === adapter)
-  return (
-    ordinaryNext.length === ordinary.length &&
-    ordinaryNext.every((target, i) => sameTarget(target, ordinary[i]!)) &&
-    adaptedNext.length === oldAdapted.length &&
-    adaptedNext.every((target, i) => sameTarget(target, oldAdapted[i]!))
+  if (
+    ordinaryNext.length !== ordinary.length ||
+    !ordinaryNext.every((target, i) => sameTarget(target, ordinary[i]!))
   )
+    return false
+  for (const source of adapters) {
+    const previous = targets.filter((target) => target.adapter === source)
+    const current = next.filter((target) => target.adapter === source)
+    if (
+      current.length !== previous.length ||
+      !current.every((target, i) => sameTarget(target, previous[i]!))
+    )
+      return false
+  }
+  return true
 }
 
 function sameTarget(target: HostHintTarget, previous: HostHintTarget): boolean {

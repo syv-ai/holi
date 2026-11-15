@@ -746,7 +746,11 @@ export function MailComposer({
           onBlur={() => void save().catch(() => {})}
         />
       ) : (
-        <SandboxedHtml html={html} label="Preview of your message" />
+        <SandboxedHtml
+          html={html}
+          label="Preview of your message"
+          hintScope={`composer:${accountSubRef.current ?? 'no-account'}:active-account:${currentSub ?? 'none'}:draft:${draftRef.current ?? draftId ?? 'new'}:${loads}:${tab}`}
+        />
       )}
 
       {failure !== null && (

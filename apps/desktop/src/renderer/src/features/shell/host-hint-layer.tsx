@@ -7,6 +7,7 @@ import {
   discoverHostHintTargets,
   HOST_HINT_REQUEST,
   HOST_HINT_SURFACE,
+  captureHostHintAdapters,
   hostHintsUnchanged,
   registerHostHintSurface,
   type HostHintAdapter,
@@ -30,17 +31,36 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
   const [session, setSession] = useState<HintSession | null>(null)
   const current = useRef<HintSession | null>(null)
   const unsubscribe = useRef<(() => void) | null>(null)
-  const change = useCallback((next: HintSession | null) => {
-    if (next !== current.current) {
-      unsubscribe.current?.()
-      unsubscribe.current = null
-    }
-    current.current = next
-    if (next?.adapter?.subscribe) {
-      unsubscribe.current = next.adapter.subscribe(() => change(null))
-    }
-    setSession(next)
-  }, [])
+  const change = useCallback(
+    (next: HintSession | null) => {
+      if (next !== current.current) {
+        unsubscribe.current?.()
+        unsubscribe.current = null
+      }
+      current.current = next
+      const sources = new Set([
+        ...(next?.adapter ? [next.adapter] : []),
+        ...(next?.targets.flatMap((target) => (target.adapter ? [target.adapter] : [])) ?? []),
+      ])
+      const disposers = [...sources]
+        .filter((source) => source.subscribe)
+        .map((source) =>
+          source.subscribe!(
+            () => change(null),
+            (event) => {
+              const route = store.get(hostHintKeyAtom)
+              if (!route?.(event)) return false
+              event.preventDefault()
+              event.stopImmediatePropagation()
+              return true
+            },
+          ),
+        )
+      if (disposers.length) unsubscribe.current = () => disposers.forEach((dispose) => dispose())
+      setSession(next)
+    },
+    [store],
+  )
   const start = useCallback(
     (
       source: Element | null = document.activeElement,
@@ -55,6 +75,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
           (pane) => !pane.closest('[inert],[hidden]'),
         ) ??
         document.body
+      if (adapter === undefined) captureHostHintAdapters(root)
       const targets = discoverHostHintTargets(root, adapter)
       change(targets.length ? { targets, prefix: '', adapter, root } : null)
     },

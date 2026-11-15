@@ -1230,6 +1230,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                     key={message.id}
                     message={message}
                     threadUrl={open.webUrl}
+                    hintOwner={`account:${accountSub ?? 'no-account'}:thread:${openId}:view:${JSON.stringify(view)}:query:${submitted}:find:${findOpen}`}
                     // Only the last message opens expanded, as in Gmail, so a
                     // long thread does not bury what is new.
                     initiallyOpen={index === open.messages.length - 1}
@@ -1880,6 +1881,7 @@ function ThreadRow({
 function MessageBlock({
   message,
   threadUrl,
+  hintOwner,
   initiallyOpen,
   position,
   total,
@@ -1887,6 +1889,7 @@ function MessageBlock({
 }: {
   message: ThreadMessage
   threadUrl: string
+  hintOwner: string
   initiallyOpen: boolean
   /** 1-based, as it reads on screen. */
   position: number
@@ -1944,7 +1947,7 @@ function MessageBlock({
       {shown && (
         <div>
           <MessageAddresses message={message} />
-          <MessageBody message={message} />
+          <MessageBody message={message} threadUrl={threadUrl} hintOwner={hintOwner} />
           <Attachments attachments={message.attachments} webUrl={threadUrl} />
         </div>
       )}
@@ -2105,7 +2108,15 @@ function fileSize(bytes: number): string {
  * newsletter, not the whole thread. `SandboxedHtml` holds that and the frame,
  * shared with calendar event descriptions.
  */
-function MessageBody({ message }: { message: ThreadMessage }) {
+function MessageBody({
+  message,
+  threadUrl,
+  hintOwner,
+}: {
+  message: ThreadMessage
+  threadUrl: string
+  hintOwner: string
+}) {
   if (message.html === null) {
     // Marked so in-thread find can reach it: a text-only message publishes no
     // frame to the registry.
@@ -2125,6 +2136,7 @@ function MessageBody({ message }: { message: ThreadMessage }) {
       // The message id is what makes "load images" survive the reader closing;
       // the sender is what makes "always from this sender" possible at all.
       identity={{ key: message.id, sender: message.from.email }}
+      hintScope={`${hintOwner}:url:${threadUrl}:message:${message.id}`}
     />
   )
 }

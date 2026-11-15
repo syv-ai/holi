@@ -76,7 +76,7 @@ try {
   })
   await writeFile(
     join(root, 'renderer', 'index.html'),
-    `<!doctype html><html data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'"><title>Mail Vim native smoke</title><link rel="stylesheet" href="./renderer.css"></head><body><div id="root"></div><script type="module" src="./renderer.js"></script></body></html>`,
+    `<!doctype html><html data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; frame-src 'self'; connect-src 'none'"><title>Mail Vim native smoke</title><link rel="stylesheet" href="./renderer.css"></head><body><div id="root"></div><script type="module" src="./renderer.js"></script></body></html>`,
   )
   await writeFile(
     join(root, 'package.json'),
@@ -87,6 +87,7 @@ try {
     ...process.env,
     HOLI_563_ROOT: root,
     HOLI_563_EVIDENCE: evidence,
+    HOLI_VAULT_ROOT: join(root, 'disposable-vault'),
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
       .join(delimiter),
@@ -459,13 +460,87 @@ try {
     false,
     'confirmation test performed a send, discard, or close action',
   )
+  const composerScreenshot = await cdp('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+  })
+  await writeFile(join(evidence, 'composer.png'), Buffer.from(composerScreenshot.data, 'base64'))
+  await evaluate(`window.__mailVim.hideComposer()`)
+  await until(
+    `document.querySelector('[aria-label="Compose mail"]')===null`,
+    'composer teardown before isolated frame hints',
+  )
+  await click('button')
+  await key('Escape')
+  const framePoint = await evaluate(
+    `(()=>{const f=document.querySelector('iframe[aria-label="Fixture message"]');const p=f.contentDocument.querySelector('p');const a=f.getBoundingClientRect(),b=p.getBoundingClientRect();return{x:a.left+b.left+b.width/2,y:a.top+b.top+b.height/2}})()`,
+  )
+  await cdp('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    ...framePoint,
+    button: 'left',
+    clickCount: 1,
+  })
+  await cdp('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    ...framePoint,
+    button: 'left',
+    clickCount: 1,
+  })
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Expand fixture details"]')!==null&&document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')!==null`,
+    'owned mail-document hints beside host targets',
+  )
+  const hintScreenshot = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
+  await writeFile(
+    join(evidence, 'mail-document-hints.png'),
+    Buffer.from(hintScreenshot.data, 'base64'),
+  )
+  const detailsLabel = await evaluate(
+    `document.querySelector('[data-hint-target="Expand fixture details"]').getAttribute('data-hint-key')`,
+  )
+  for (const character of detailsLabel) await key(character)
+  await until(
+    `document.querySelector('iframe[aria-label="Fixture message"]').contentDocument.querySelector('details').open`,
+    'native details disclosure activation through the host coordinator',
+  )
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints]')!==null`,
+    'mail hint session cancellation test',
+  )
+  await key('Escape')
+  assert.equal(
+    await evaluate(`document.querySelector('[data-host-hints]')===null`),
+    true,
+    'mail frame hint Escape did not cancel',
+  )
+  const cancelledScreenshot = await cdp('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+  })
+  await writeFile(
+    join(evidence, 'mail-document-hints-cancelled.png'),
+    Buffer.from(cancelledScreenshot.data, 'base64'),
+  )
+  await evaluate(`document.documentElement.setAttribute('data-theme','light')`)
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Expand fixture details"]')!==null`,
+    'light-theme owned mail-document hints',
+  )
+  const lightScreenshot = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
+  await writeFile(
+    join(evidence, 'mail-document-hints-light.png'),
+    Buffer.from(lightScreenshot.data, 'base64'),
+  )
+  await key('Escape')
   assert.deepEqual(
     await evaluate(`window.__mailVimErrors||[]`),
     [],
     'renderer errors occurred during native smoke',
   )
-  const screenshot = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
-  await writeFile(join(evidence, 'composer.png'), Buffer.from(screenshot.data, 'base64'))
   const electronVersion = /HOLI_563_ELECTRON=([0-9.]+)/.exec(log)?.[1]
   assert.equal(electronVersion?.split('.')[0], '43', 'smoke must run under Electron 43')
   const result = {
@@ -480,13 +555,20 @@ try {
       'discard-confirmation-cancels-without-discard',
       'insert-mode-f-does-not-open-host-hints',
       'normal-mode-f-opens-production-host-hints-and-escape-cancels',
+      'owned-sandboxed-mail-targets-share-host-label-session-and-escape-cancel',
+      'real-disclosure-activation-preserves-native-details-behavior',
       'normal-enter-does-not-commit-or-send-uncommitted-recipient',
       'cc-bcc-fields-validation-tab-backspace-and-enter',
       'renderer-error-free-and-no-blocked-network-requests',
       'disabled-vim-native-edit-and-blur-refocus-reset',
       'no-unintended-send-discard-close',
     ],
-    captures: ['composer.png'],
+    captures: [
+      'composer.png',
+      'mail-document-hints.png',
+      'mail-document-hints-light.png',
+      'mail-document-hints-cancelled.png',
+    ],
     disposableFiles: [disposableDraft],
     cleanup: { root, removed: true },
     calls: saved,
