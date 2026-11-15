@@ -26,8 +26,9 @@ import {
 } from 'electron'
 import { HOLI_LINK_SCHEME, holiLinkInArgv } from '@holi/shared'
 import { openHoliLink as openCheckedHoliLink } from './holi-link-opener'
-import { requestFlush, type FlushChannel } from './flush'
+import { requestFlush } from './flush'
 import { captureTab } from './tab-capture'
+import { isApplicationSender, unauthorizedApplicationSender } from './application-sender'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createMdxTrustStore } from './mdx-trust'
@@ -62,7 +63,7 @@ import { readVaultSettings } from './vault/settings'
 import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
-import { registerIpc } from './ipc'
+import { registerIpc, listenForPluginMessages, createRendererFlushChannel } from './ipc'
 import { createActivityLog, scrubSecrets } from './activity/log'
 import { logsCapabilities } from './capabilities/logs-caps'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
@@ -100,6 +101,16 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
 let mainWindow: BrowserWindow | null = null
+let mainEntryDocument: string | null = null
+
+const authorizeApplicationSender = (
+  event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
+): boolean =>
+  isApplicationSender(
+    event,
+    mainWindow?.isDestroyed() ? null : (mainWindow?.webContents ?? null),
+    mainEntryDocument,
+  )
 
 // Held at module scope, not inside `main()`: a `Tray` that gets garbage-collected
 // vanishes from the menu bar, so it must outlive the setup closure. It exists
@@ -221,6 +232,8 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  mainEntryDocument = devUrl || pathToFileURL(join(__dirname, '../renderer/index.html')).href
   if (liquid) applyLiquidGlass(win)
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
@@ -244,7 +257,6 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   win.on('show', sendVisibility)
   win.on('hide', sendVisibility)
 
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
     void win.loadURL(devUrl)
   } else {
@@ -359,11 +371,8 @@ async function main(): Promise<void> {
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
     send,
-    listen: (channel, handler) => {
-      const listener = (_e: unknown, message: unknown) => handler(message)
-      ipcMain.on(channel, listener)
-      return () => void ipcMain.removeListener(channel, listener)
-    },
+    listen: (channel, handler) =>
+      listenForPluginMessages(channel, handler, authorizeApplicationSender),
     liveRemote: () => plugins.displayed(),
   }
 
@@ -638,6 +647,7 @@ async function main(): Promise<void> {
   /** Who waits for a window's renderer to take opens (`openReadyIn`). */
   const readyWaiters: { contents: Electron.WebContents; resolve: () => void }[] = []
   ipcMain.on('vault:open-ready', (event) => {
+    if (!authorizeApplicationSender(event)) return
     openTarget = event.sender
     for (const request of heldOpens.splice(0)) event.sender.send('vault:open', request)
     for (const w of readyWaiters.filter((w) => w.contents === event.sender)) {
@@ -759,7 +769,7 @@ async function main(): Promise<void> {
     screenshot: (remote, path) => {
       const run = () => {
         const win = showInActive(remote, path, false)
-        return captureTab(win, path, openReadyIn(win))
+        return captureTab(win, path, openReadyIn(win), authorizeApplicationSender)
       }
       const shot = screenshots.then(run, run)
       screenshots = shot.catch(() => {})
@@ -922,15 +932,12 @@ async function main(): Promise<void> {
   registerIpc({
     router,
     rootFor: (remote) => rootFor(remote),
-    trustedMdxSender: (event) =>
-      mainWindow !== null &&
-      !mainWindow.isDestroyed() &&
-      event.sender === mainWindow.webContents &&
-      event.senderFrame === mainWindow.webContents.mainFrame,
+    authorizeSender: authorizeApplicationSender,
   })
-  ipcMain.handle('window:is-visible', (event) =>
-    mainWindow !== null && event.sender === mainWindow.webContents ? mainWindow.isVisible() : false,
-  )
+  ipcMain.handle('window:is-visible', (event) => {
+    if (!authorizeApplicationSender(event)) throw unauthorizedApplicationSender()
+    return mainWindow!.isVisible()
+  })
 
   const holiCliPath = await installHoliCli(app.getPath('userData'))
   await installNodeFallback(app.getPath('userData'), process.execPath)
@@ -1095,7 +1102,7 @@ async function main(): Promise<void> {
   /** Everything a quit does before the process goes: by ⌘Q, the tray, or an
    *  update's restart. Never throws. */
   async function teardown(): Promise<boolean> {
-    const channel = flushChannel(mainWindow)
+    const channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
     try {
       // Ask before tearing down anything: a failed flush must leave the app
       // usable so the person can correct the problem and retry quit.
@@ -1146,41 +1153,6 @@ async function main(): Promise<void> {
  * at once rather than making the quit sit out the full timeout for a renderer
  * that cannot possibly reply.
  */
-function flushChannel(win: BrowserWindow | null): FlushChannel {
-  const target = win !== null && !win.isDestroyed() ? win : null
-  let requestId: string | undefined
-  let done: ((id: string, error?: string) => void) | undefined
-  return {
-    onDone(cb) {
-      done = cb
-      if (target === null)
-        return () => {
-          done = undefined
-        }
-      const listener = (event: Electron.IpcMainEvent, id: string, error?: string) => {
-        if (
-          event.sender !== target.webContents ||
-          event.senderFrame !== target.webContents.mainFrame
-        )
-          return
-        if (typeof id !== 'string' || (error !== undefined && typeof error !== 'string')) return
-        cb(id, error)
-      }
-      ipcMain.on('vault:flush-done', listener)
-      return () => ipcMain.removeListener('vault:flush-done', listener)
-    },
-    send(id) {
-      requestId = id
-      if (target === null) queueMicrotask(() => done?.(id))
-      else target.webContents.send('vault:flush', { id })
-    },
-    cancel(id = requestId) {
-      if (target !== null && !target.isDestroyed() && id !== undefined) {
-        target.webContents.send('vault:flush-cancel', { id })
-      }
-    },
-  }
-}
 
 // Closing the last window quits, as in any app, except on macOS, where an app
 // stays in the dock. While a plugin works in the background (reminders) Holi
