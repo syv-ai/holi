@@ -120,6 +120,15 @@ try {
   assert(
     result.checks.includes('delayed-native-a-b-a-marker-result-does-not-resurrect-old-annotation'),
   )
+  assert(
+    result.checks.includes(
+      'native-reader-header-retry-recovers-action-reconciliation-in-both-surfaces',
+    ),
+  )
+  assert(result.checks.includes('native-reader-retains-unstar-state-after-refused-gmail-unstar'))
+  assert(
+    result.checks.includes('native-shell-click-during-secondary-refetch-advances-marker-sequence'),
+  )
   for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)
   const frames = await readdir(join(evidence, 'frames'))
   assert(frames.length > 0, 'native frame capture must produce recording frames')
