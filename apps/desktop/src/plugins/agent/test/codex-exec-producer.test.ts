@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, onTestFailed } from 'vitest'
 import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs'
 import { spawnOwnedProgram } from '../../../main/plugin-api'
@@ -40,17 +40,53 @@ function progress(scenario: ScenarioEvidence, stage: Stage) {
   scenario.stage = stage
   persistProof()
 }
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object' && 'message' in error) return String(error.message)
+  return String(error)
+}
 function finishScenario(scenario: ScenarioEvidence, status: Status, error?: unknown) {
   scenario.status = status
-  if (error instanceof Error) {
-    scenario.failure = error.message
-    scenario.failureKind = /timeout|did not settle|not observed/i.test(error.message)
+  if (error !== undefined) {
+    const message = errorMessage(error)
+    scenario.failure = message
+    scenario.failureKind = /timeout|timed out|did not settle|not observed/i.test(message)
       ? 'timeout'
-      : scenario.stage === 'setup'
+      : scenario.stage === 'setup' || scenario.stage === 'native-launch'
         ? 'setup'
         : 'contract'
   }
   persistProof()
+}
+function captureScenarioFailure(title: string, error: unknown) {
+  const names: Record<string, string> = {
+    'consumes the pinned CLI version and native initial-turn events': 'initial-turn',
+    'resumes the native thread and reports the cumulative usage total': 'follow-up',
+    'marks a genuine model error failed, never completed': 'http-400',
+    'stops a stalled native run and drains its state and process': 'stall-stop',
+    'leave drains a stalled native run and clears all job sessions': 'stall-leave',
+  }
+  const scenario = proof.scenarios.find((row) => row.name === names[title])
+  if (
+    !scenario ||
+    (scenario.status !== 'pending' &&
+      !(
+        scenario.status === 'unverified' &&
+        scenario.failure === 'native evidence was not fully captured'
+      ))
+  )
+    return
+  const rawProcesses = Array.isArray(scenario.rawProcesses) ? scenario.rawProcesses : []
+  const credibleEvidence = rawProcesses.length > 0
+  const outputLimited = rawProcesses.some((process) => process.outputLimited === true)
+  const message = errorMessage(error)
+  const isTimeout = /timeout|timed out|did not settle|not observed/i.test(message)
+  const status = isTimeout || outputLimited || !credibleEvidence ? 'unverified' : 'mismatch'
+  const previousFailure = scenario.failure
+  finishScenario(scenario, status, error)
+  if (previousFailure && previousFailure !== 'native evidence was not fully captured') {
+    scenario.failure = `${scenario.failure}; teardown: ${previousFailure}`
+  }
 }
 type Stage = 'setup' | 'native-launch' | 'native-contract' | 'host-lifecycle' | 'cleanup'
 type Status = 'pending' | 'pass' | 'unverified' | 'mismatch'
@@ -458,6 +494,8 @@ async function ended(jobs: ReturnType<typeof createJobs>, id: string) {
 }
 
 afterEach(async () => {
+  // Vitest runs afterEach before onTestFailed. Clean up first; the callback
+  // replaces incomplete-capture fallback evidence with the actual failure.
   for (const jobs of jobsList.splice(0)) await jobs.leave()
   for (const server of servers.splice(0)) {
     server.closeAllConnections()
@@ -474,13 +512,9 @@ afterEach(async () => {
   proof.cleanup.rootsRemoved = rootsRemoved
   for (const scenario of proof.scenarios) {
     if (scenario.status === 'pending') {
-      scenario.status =
-        scenario.stage === 'setup' || scenario.stage === 'native-launch' ? 'unverified' : 'mismatch'
-      scenario.failureKind = scenario.status === 'unverified' ? 'setup' : 'contract'
-      scenario.failure ??=
-        scenario.status === 'unverified'
-          ? 'native evidence was not fully captured'
-          : 'scenario assertion failed before completion'
+      scenario.status = 'unverified'
+      scenario.failureKind = 'setup'
+      scenario.failure ??= 'native evidence was not fully captured'
     }
   }
   proof.cleanup.nativeGroupsDrained = nativePids.every((pid) => {
@@ -498,6 +532,7 @@ if (bin) {
   describe('native Codex exec producer → real jobs host', () => {
     it('consumes the pinned CLI version and native initial-turn events', async () => {
       const scenario = beginScenario('initial-turn')
+      onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
       const f = await fixture()
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
@@ -557,11 +592,15 @@ if (bin) {
         host: f.host,
         brackets: f.brackets,
       })
+      if (process.env.HOLI_CODEX_TEST_FAILURE === 'initial-turn-timeout') {
+        throw new Error('native job timed out')
+      }
       finishScenario(scenario, 'pass')
     }, 35_000)
 
     it('resumes the native thread and reports the cumulative usage total', async () => {
       const scenario = beginScenario('follow-up')
+      onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
       const f = await fixture()
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
@@ -625,6 +664,7 @@ if (bin) {
 
     it('marks a genuine model error failed, never completed', async () => {
       const scenario = beginScenario('http-400')
+      onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
       const f = await fixture('failure')
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
@@ -666,6 +706,7 @@ if (bin) {
 
     it('stops a stalled native run and drains its state and process', async () => {
       const scenario = beginScenario('stall-stop')
+      onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
       const f = await fixture('stall')
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
@@ -715,6 +756,7 @@ if (bin) {
 
     it('leave drains a stalled native run and clears all job sessions', async () => {
       const scenario = beginScenario('stall-leave')
+      onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
       const f = await fixture('stall')
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses

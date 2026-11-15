@@ -132,7 +132,7 @@ async function waitGroupGone(pid, ms = 2_000) {
   return !groupExists(pid)
 }
 
-async function run(command, args, { cwd, env, timeout, deadline }) {
+async function run(command, args, { cwd, env, timeout, deadline, recoveryPackageRoot }) {
   const remaining = Math.min(timeout, deadline - Date.now())
   if (remaining <= 0)
     return {
@@ -151,17 +151,21 @@ async function run(command, args, { cwd, env, timeout, deadline }) {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
-    let stdout = '',
-      stderr = '',
+    let stdout = Buffer.alloc(0),
+      stderr = Buffer.alloc(0),
+      outputBytes = 0,
       outputLimited = false,
       timedOut = false,
-      closed = false,
-      escalator
+      finalized = false,
+      escalator,
+      finalizer
     const append = (stream, chunk) => {
-      const value = chunk.toString()
-      if (stream === 'stdout') stdout += value
-      else stderr += value
-      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > MAX_OUTPUT) {
+      const room = Math.max(0, MAX_OUTPUT - outputBytes)
+      const retained = chunk.subarray(0, room)
+      outputBytes += retained.length
+      if (stream === 'stdout') stdout = Buffer.concat([stdout, retained])
+      else stderr = Buffer.concat([stderr, retained])
+      if (retained.length < chunk.length && !outputLimited) {
         outputLimited = true
         terminate()
       }
@@ -176,24 +180,44 @@ async function run(command, args, { cwd, env, timeout, deadline }) {
     const terminate = () => {
       signal('SIGTERM')
       if (!escalator) escalator = setTimeout(() => signal('SIGKILL'), 500)
+      // A descendant can keep inherited pipes open after the process exits.
+      if (!finalizer) finalizer = setTimeout(() => void finish(null, null, true), 750)
     }
     const timer = setTimeout(() => {
       timedOut = true
       terminate()
     }, remaining)
-    const finish = async (code, signal) => {
-      if (closed) return
-      closed = true
+    const finish = async (code, childSignal, force = false) => {
+      if (finalized) return
+      finalized = true
       clearTimeout(timer)
+      if (finalizer) clearTimeout(finalizer)
+      if (force) {
+        signal('SIGKILL')
+        child.stdout.destroy()
+        child.stderr.destroy()
+      }
       const groupDrained = await cleanupGroup(child.pid)
+      const ownedDrained =
+        recoveryPackageRoot && process.platform !== 'win32'
+          ? await drainOwnedNativeGroups(recoveryPackageRoot, '', cwd)
+          : true
       if (escalator) clearTimeout(escalator)
-      resolveRun({ code, signal, timedOut, outputLimited, stdout, stderr, groupDrained })
+      resolveRun({
+        code,
+        signal: childSignal,
+        timedOut,
+        outputLimited,
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+        groupDrained: groupDrained && ownedDrained,
+      })
     }
     child.once('error', (error) => {
-      stderr += `\n${error.message}`
+      append('stderr', Buffer.from(`\n${error.message}`))
       void finish(null, null)
     })
-    child.once('close', (code, signal) => void finish(code, signal))
+    child.once('close', (code, childSignal) => void finish(code, childSignal))
   })
 }
 
@@ -391,6 +415,7 @@ export async function runProducerProof({
   npm = 'npm',
   pnpm = 'pnpm',
   timeout = TOTAL_TIMEOUT,
+  testEnv = {},
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'holi-codex-exec-proof-'))
   const deadline = Date.now() + timeout
@@ -475,6 +500,7 @@ export async function runProducerProof({
     const version = await run(process.execPath, [bin, '--version'], {
       cwd: root,
       env,
+      recoveryPackageRoot: nativePackageRoot,
       timeout: 15_000,
       deadline,
     })
@@ -513,8 +539,10 @@ export async function runProducerProof({
       ],
       {
         cwd: resolve(import.meta.dirname, '..'),
+        recoveryPackageRoot: nativePackageRoot,
         env: cleanEnvironment(home, {
           ...env,
+          ...testEnv,
           HOLI_CODEX_BIN: bin,
           HOLI_CODEX_PROOF_OUTPUT: proofPath,
           HOLI_CODEX_PROCESS_LEDGER: ledgerPath,
@@ -528,6 +556,7 @@ export async function runProducerProof({
       code: test.code,
       timedOut: test.timedOut,
       outputLimited: test.outputLimited,
+      retainedBytes: Buffer.byteLength(test.stdout) + Buffer.byteLength(test.stderr),
       groupDrained: test.groupDrained,
       stdout: test.stdout.slice(-12000),
       stderr: test.stderr.slice(-8000),
@@ -585,7 +614,16 @@ export async function runProducerProof({
         (scenario?.failureKind === 'setup' || scenario?.stage === 'setup') &&
         !credibleAttempt(scenario),
     )
-    const incomplete = !test.groupDrained || test.timedOut || test.outputLimited
+    const incomplete =
+      !test.groupDrained ||
+      test.timedOut ||
+      test.outputLimited ||
+      scenarios.some(
+        (scenario) =>
+          scenario?.failureKind === 'timeout' ||
+          (Array.isArray(scenario?.rawProcesses) &&
+            scenario.rawProcesses.some((process) => process?.outputLimited === true)),
+      )
     if (incomplete) evidence.classification = 'incomplete-proof'
     else if (nativeContractFailure) evidence.classification = 'observed-contract-error'
     else if (setupFailure && !nativeContractFailure) evidence.classification = 'setup-unavailable'

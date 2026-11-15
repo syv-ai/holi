@@ -275,6 +275,108 @@ test('detached native groups drain after early exit and timeout without killing 
   }
 })
 
+test('a detached package descendant cannot hold runner pipes past its deadline', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-producer-inherited-pipes-'))
+  const pidFile = join(root, 'descendant-pid')
+  try {
+    const npm = await installFixture(root)
+    const pnpm = await pnpmFixture(
+      root,
+      `import { spawn } from 'node:child_process'; import { writeFile } from 'node:fs/promises'; const bin = process.env.HOLI_CODEX_BIN; const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', bin], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }); await writeFile(${JSON.stringify(pidFile)}, String(child.pid)); process.exit(0)`,
+    )
+    const started = Date.now()
+    const result = await runProducerProof({ npm, pnpm, timeout: 3_000 })
+    assert.ok(
+      Date.now() - started < 7_000,
+      'runner finalization must be independent of inherited pipes',
+    )
+    assert.equal(result.evidence.test?.timedOut, true)
+    assert.equal(result.evidence.test?.groupDrained, true)
+    assert.equal(result.evidence.cleanup.processesDrained, true)
+    const pid = Number(await (await import('node:fs/promises')).readFile(pidFile, 'utf8'))
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('timeout scenario evidence remains incomplete instead of a contract mismatch', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-producer-timeout-classification-'))
+  try {
+    const npm = await installFixture(root)
+    const scenarios = [
+      {
+        name: 'initial-turn',
+        stage: 'host-lifecycle',
+        status: 'unverified',
+        failureKind: 'timeout',
+        failure: 'native job did not settle',
+      },
+      ...['follow-up', 'http-400', 'stall-stop', 'stall-leave'].map((name) => ({
+        name,
+        stage: 'setup',
+        status: 'unverified',
+        failureKind: 'setup',
+      })),
+    ]
+    const artifact = {
+      schema: 'holi.codex-exec-producer.v1',
+      package: '@openai/codex',
+      expectedVersion: '0.169.0',
+      version: 'codex-cli 0.169.0',
+      bin: join(root, 'unused'),
+      scenarios,
+    }
+    const pnpm = await pnpmFixture(
+      root,
+      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('1 failed')`,
+    )
+    const result = await runProducerProof({ npm, pnpm })
+    assert.equal(result.evidence.classification, 'incomplete-proof')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('bounded-out raw native evidence stays incomplete despite a mismatch artifact', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-producer-native-output-limit-'))
+  try {
+    const npm = await installFixture(root)
+    const scenarios = [
+      {
+        name: 'initial-turn',
+        stage: 'host-lifecycle',
+        status: 'mismatch',
+        failureKind: 'contract',
+        failure: 'native job timed out',
+        rawProcesses: [{ outputLimited: true }],
+      },
+      ...['follow-up', 'http-400', 'stall-stop', 'stall-leave'].map((name) => ({
+        name,
+        stage: 'setup',
+        status: 'unverified',
+        failureKind: 'setup',
+      })),
+    ]
+    const artifact = {
+      schema: 'holi.codex-exec-producer.v1',
+      package: '@openai/codex',
+      expectedVersion: '0.169.0',
+      version: 'codex-cli 0.169.0',
+      bin: join(root, 'unused'),
+      scenarios,
+    }
+    const pnpm = await pnpmFixture(
+      root,
+      `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('1 failed')`,
+    )
+    const result = await runProducerProof({ npm, pnpm })
+    assert.equal(result.evidence.classification, 'incomplete-proof')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('false ledger ownership cannot signal a process from another root', async () => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-false-ledger-'))
   const pidFile = join(root, 'unrelated-pid')
@@ -321,6 +423,7 @@ test('output cap and deadline are incomplete, and early runner exit drains its c
     const capped = await runProducerProof({ npm, pnpm: noisy, timeout: 8_000 })
     assert.equal(capped.failed, true)
     assert.equal(capped.evidence.classification, 'incomplete-proof')
+    assert.ok(capped.evidence.test.retainedBytes <= 2 * 1024 * 1024)
 
     const child = await pnpmFixture(
       root,
