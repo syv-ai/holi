@@ -16,6 +16,7 @@ const evidence = resolve(
   process.argv.slice(2).find((arg) => arg !== '--') ?? '/tmp/holi-pr512-native',
 )
 let root
+let evidenceReady = false
 let child
 let closed
 let succeeded = false
@@ -24,8 +25,6 @@ let log = ''
 let ws
 let id = 0
 const pending = new Map()
-const screencastFrames = []
-const marks = []
 const frames = []
 const makePdf = () => {
   const stream = [
@@ -34,10 +33,11 @@ const makePdf = () => {
   ].join('\n')
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
     `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
   ]
   let text = '%PDF-1.7\n%\xe2\xe3\xcf\xd3\n'
   const offsets = [0]
@@ -56,6 +56,7 @@ const pdf = makePdf()
 try {
   await mkdir(evidence, { recursive: true })
   assert.deepEqual(await readdir(evidence), [], `refusing to overwrite ${evidence}`)
+  evidenceReady = true
   root = await mkdtemp(join(tmpdir(), 'holi-pr512-native-'))
   await mkdir(join(root, 'vaults', 'synthetic-vault-a', 'docs'), { recursive: true })
   await mkdir(join(root, 'vaults', 'synthetic-vault-b', 'docs'), { recursive: true })
@@ -195,8 +196,6 @@ try {
         }),
       )
     }
-    if (msg.method === 'Target.targetCreated' && msg.params.targetInfo.type === 'page')
-      marks.push(msg.params.targetInfo.targetId)
     if (msg.id) {
       const entry = pending.get(msg.id)
       if (entry) {
@@ -235,7 +234,13 @@ try {
   closeWindow = () => evaluate('window.close()')
   const until = async (expression, description) =>
     wait(async () => evaluate(expression), description)
+  const settle = () =>
+    evaluate(
+      `(async()=>{await Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})));await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))})()`,
+    )
   const key = async (keyName) => {
+    await settle()
+    if (keyName === 'f') await readyPdf()
     const code = keyName.length === 1 ? `Key${keyName.toUpperCase()}` : keyName
     await call('Input.dispatchKeyEvent', {
       type: 'keyDown',
@@ -248,6 +253,7 @@ try {
     await call('Input.dispatchKeyEvent', { type: 'keyUp', key: keyName, code })
   }
   const click = async (selector, shadow = false) => {
+    await settle()
     const rect = await evaluate(
       `(()=>{const e=${shadow ? "document.querySelector('holi-pdf-container')?.shadowRoot?.querySelector(" + JSON.stringify(selector) + ')' : 'document.querySelector(' + JSON.stringify(selector) + ')'};if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
     )
@@ -270,10 +276,19 @@ try {
     `!!document.querySelector('holi-pdf-container')?.shadowRoot?.querySelector('[data-epdf-i$="-toolbar"] button')`,
     'EmbedPDF toolbar ready',
   )
-  await until(
-    `(()=>{const viewer=document.querySelector('[data-pdf-viewer="docs/fixture.pdf"]');const host=viewer?.querySelector('[class*="motion-in-fade"]');const root=viewer?.querySelector('holi-pdf-container')?.shadowRoot;const search=root?.querySelector('[data-epdf-i$="-toolbar"] button[aria-label="Search"]');if(!host||!search)return false;const style=getComputedStyle(host);const rect=search.getBoundingClientRect();return Number(style.opacity)>0.9&&style.visibility==='visible'&&rect.width>0&&rect.height>0})()`,
-    'PDF page reveal completed and real toolbar is interactive',
-  )
+  const readyPdf = () =>
+    until(
+      `(()=>{const viewer=document.querySelector('[data-pane-focused="true"] [data-pdf-viewer]');const host=viewer?.querySelector('[class*="motion-in-fade"]');const root=viewer?.querySelector('holi-pdf-container')?.shadowRoot;const search=root?.querySelector('[data-epdf-i$="-toolbar"] button[aria-label="Search"]');if(!host||!search)return false;const style=getComputedStyle(host);const rect=search.getBoundingClientRect();return Number(style.opacity)>0.9&&style.visibility==='visible'&&rect.width>0&&rect.height>0&&[...root.querySelectorAll('img')].some(i=>i.complete&&i.naturalWidth>0)})()`,
+      'focused PDF page is rendered and its toolbar is interactive',
+    )
+  await readyPdf()
+  await call('Page.startScreencast', {
+    format: 'jpeg',
+    quality: 75,
+    everyNthFrame: 1,
+    maxWidth: 1280,
+    maxHeight: 900,
+  })
   const screenshot = async (name) => {
     const result = await call('Page.captureScreenshot', { format: 'png', fromSurface: true })
     await writeFile(join(evidence, name), Buffer.from(result.data, 'base64'))
@@ -331,9 +346,10 @@ try {
   for (const character of searchHint.key) await key(character)
   const fieldSelector = `document.querySelector('holi-pdf-container').shadowRoot.querySelector('[data-sidebar-id="search-panel"] input[type="text"]')`
   await until(`${fieldSelector}`, 'real PDF Search opened by its native hint label')
+  await click('[data-sidebar-id="search-panel"] input[type="text"]', true)
   await until(
-    `(()=>{let active=document.activeElement;while(active?.shadowRoot?.activeElement)active=active.shadowRoot.activeElement;return active===document.querySelector('holi-pdf-container').shadowRoot.querySelector('[data-sidebar-id="search-panel"] input[type="text"]')})()`,
-    'Search input owns focus after native hint activation',
+    `document.querySelector('holi-pdf-container').shadowRoot.activeElement === ${fieldSelector}`,
+    'native click focuses actual PDF Search input',
   )
   assert.equal(await hintCount(), 0, 'Search hint activation left hint overlay open')
   await key('f')
@@ -369,6 +385,9 @@ try {
   await until(`!!document.querySelector('[data-host-hints]')`, 'occlusion filter session')
   await evaluate(`window.__holiPdfSmoke.setOverlay(true)`)
   await until(`!document.querySelector('[data-host-hints]')`, 'overlay invalidated hints')
+  await key('f')
+  await settle()
+  assert.equal(await hintCount(), 0, 'covered PDF controls leaked through the light-DOM occluder')
   await evaluate(`window.__holiPdfSmoke.setOverlay(false)`)
   await key('f')
   await until(`!!document.querySelector('[data-host-hints]')`, 'light capture hints')
@@ -377,9 +396,37 @@ try {
     `document.documentElement.dataset.theme==='light'`,
     'activeModeAtom switches to light theme',
   )
+  await settle()
   await screenshot('light.png')
   await key('Escape')
   await until(`!document.querySelector('[data-host-hints]')`, 'cancel light capture')
+
+  // Exercise Chromium's state-preserving native move rather than recreating the viewer.
+  await evaluate(
+    `(()=>{const owner=document.querySelector('holi-pdf-container');window.__pdfMove={owner,root:owner.shadowRoot,parent:owner.parentElement};const parking=document.createElement('div');parking.style.height='600px';parking.dataset.smokeParking='';document.querySelector('[data-pane-id="b"]').append(parking);parking.moveBefore(owner,null)})()`,
+  )
+  await settle()
+  assert.equal(
+    await evaluate(
+      `window.__pdfMove.owner.shadowRoot===window.__pdfMove.root && window.__pdfMove.owner.isConnected`,
+    ),
+    true,
+    'native move replaced the PDF shadow root',
+  )
+  await evaluate(
+    `(()=>{const state=window.__pdfMove;state.parent.moveBefore(state.owner,null);document.querySelector('[data-smoke-parking]').remove()})()`,
+  )
+  await readyPdf()
+  await key('f')
+  await until(
+    `!!document.querySelector('[data-host-hints]')`,
+    'retained viewer hints after native move',
+  )
+  assert(
+    (await details()).some((entry) => entry.label === 'Search'),
+    'native move lost owned PDF registration',
+  )
+  await key('Escape')
 
   // Isolation/lifetime checks through actual production PdfViewer instances and the host shell.
   await evaluate(`window.__holiPdfSmoke.remote('synthetic/vault-b')`)
@@ -402,32 +449,53 @@ try {
     'old viewer session active before source replacement',
   )
   const oldLabels = await details()
+  const oldSearch = oldLabels.find((entry) => entry.label === 'Search')
+  assert(oldSearch, 'old PDF Search target missing before replacement')
   await evaluate(`window.__holiPdfSmoke.viewer('docs/replaced.pdf',true,true)`)
   await until(
     `!document.querySelector('[data-host-hints]')`,
     'source replacement invalidates old labels',
   )
   await until(
-    `document.querySelector('[data-pdf-viewer="docs/replaced.pdf"]') && document.querySelector('holi-pdf-container')?.shadowRoot?.querySelector('canvas')`,
+    `document.querySelector('[data-pdf-viewer="docs/replaced.pdf"]') && [...document.querySelector('holi-pdf-container')?.shadowRoot?.querySelectorAll('img')??[]].some(i=>i.complete&&i.naturalWidth>0)`,
     'replacement PDF ready',
   )
+  for (const character of oldSearch.key) await key(character)
+  assert.equal(await hintCount(), 0, 'old hint session survived source replacement')
+  assert.equal(
+    await evaluate(
+      `!!document.querySelector('holi-pdf-container')?.shadowRoot?.querySelector('[data-sidebar-id="search-panel"]')`,
+    ),
+    false,
+    'stale Search label opened replacement Search',
+  )
+  await settle()
   await key('f')
   await until(`!!document.querySelector('[data-host-hints]')`, 'replacement viewer hints')
-  const replacementSearch = (await details()).find((entry) => entry.label.includes('Search'))
-  if (oldLabels[0]) for (const character of oldLabels[0].key) await key(character)
-  assert.equal(await hintCount(), 0, 'stale label activation reached a replacement control')
-  await key('f')
-  await until(`!!document.querySelector('[data-host-hints]')`, 'replacement labels restored')
+  const replacementSearch = (await details()).find((entry) => entry.label === 'Search')
   assert(replacementSearch, 'replacement PDF has no actual Search target')
   await evaluate(`window.__holiPdfSmoke.focusPane('b')`)
   await until(
     `document.querySelector('[data-pane-id="b"]').getAttribute('data-pane-focused')==='true'`,
     'split pane B receives focus',
   )
+  await click('[data-pdf-fixture="b"]')
   await key('f')
   await until(
     `!!document.querySelector('[data-host-hints]')`,
     'inactive pane does not own hints; active split pane does',
+  )
+  assert.equal(
+    (await details()).filter((entry) => entry.label === 'Search').length,
+    1,
+    'split panes duplicated PDF targets',
+  )
+  assert.equal(
+    await evaluate(
+      `Array.from(document.querySelectorAll('[data-host-hints] [data-hint-key]')).every(e=>e.getBoundingClientRect().left>=innerWidth/2)`,
+    ),
+    true,
+    'inactive pane A leaked targets into B hint session',
   )
   await evaluate(`window.__holiPdfSmoke.focusPane('a')`)
   await until(
@@ -448,7 +516,41 @@ try {
     ),
     'synthetic PDF read seam did not run',
   )
-  await evaluate(`document.documentElement.dataset.theme='dark'`)
+  await call('Page.stopScreencast')
+  assert(frames.length > 0, 'no actual interaction frames recorded')
+  const ffmpeg = spawn(
+    'ffmpeg',
+    [
+      '-y',
+      '-loglevel',
+      'error',
+      '-f',
+      'image2pipe',
+      '-framerate',
+      '8',
+      '-vcodec',
+      'mjpeg',
+      '-i',
+      'pipe:0',
+      '-vf',
+      'pad=ceil(iw/2)*2:ceil(ih/2)*2',
+      '-pix_fmt',
+      'yuv420p',
+      join(evidence, 'interaction.mp4'),
+    ],
+    { stdio: ['pipe', 'ignore', 'pipe'] },
+  )
+  let encoderLog = ''
+  ffmpeg.stderr.on('data', (chunk) => {
+    encoderLog += chunk
+  })
+  const encoded = new Promise((resolve, reject) => {
+    ffmpeg.once('error', reject)
+    ffmpeg.once('close', resolve)
+  })
+  ffmpeg.stdin.on('error', () => {})
+  ffmpeg.stdin.end(Buffer.concat(frames))
+  assert.equal(await encoded, 0, `native recording encoding failed: ${encoderLog}`)
   const result = {
     task: 'PR512 PDF Vim native Electron smoke',
     checks: [
@@ -461,8 +563,13 @@ try {
       'light-DOM-occlusion-and-theme-capture',
       'vault-A-B-A-and-viewer-source-replacement',
       'inactive-viewer cancellation',
+      'retained-native-moves-preserve-owned-shadow-root-and-hints',
+      'focused-split-pane-excludes-inactive-viewer-targets',
+      'stale-Search-label-cannot-open-replacement-viewer',
+      'native-interaction-recording',
     ],
-    evidence: ['dark.png', 'light.png', 'fixture.pdf', 'electron.log'],
+    evidence: ['dark.png', 'light.png', 'interaction.mp4', 'fixture.pdf', 'electron.log'],
+    recordedFrames: frames.length,
     synthetic: true,
     networkDenied: true,
     permissionsDenied: true,
@@ -499,12 +606,14 @@ try {
     if (succeeded) assert.equal(child.exitCode, 0, 'Electron did not exit cleanly')
   }
   if (ws?.readyState === WebSocket.OPEN) ws.close()
-  if (evidence) await writeFile(join(evidence, 'electron.log'), log).catch(() => {})
+  if (evidenceReady) await writeFile(join(evidence, 'electron.log'), log).catch(() => {})
   if (root) await rm(root, { recursive: true, force: true })
   const resultPath = join(evidence, 'result.json')
-  const result = await readFile(resultPath, 'utf8')
-    .then(JSON.parse)
-    .catch(() => null)
+  const result = evidenceReady
+    ? await readFile(resultPath, 'utf8')
+        .then(JSON.parse)
+        .catch(() => null)
+    : null
   if (result) {
     result.cleanup = {
       electronExitCode: child?.exitCode ?? null,

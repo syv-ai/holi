@@ -5,6 +5,7 @@ import { PdfViewer } from '../src/plugins/pdf/renderer/pdf-viewer'
 import { HostHintLayer } from '../src/renderer/src/features/shell/host-hint-layer'
 import { useShortcutDispatcher } from '../src/renderer/src/hooks/use-shortcuts'
 import { vimCodeEditingAtom } from '../src/renderer/src/state/preferences'
+import { colorSchemeAtom } from '../src/renderer/src/state/color-scheme'
 import { activeModeAtom, activeRemoteAtom, snapshotAtom } from '../src/renderer/src/plugin-api'
 import { emptyVaultSnapshot } from '@holi/shared'
 import '../src/renderer/src/index.css'
@@ -62,7 +63,11 @@ function Fixture() {
   const setVim = useSetAtom(vimCodeEditingAtom)
   const setRemote = useSetAtom(activeRemoteAtom)
   const remote = useAtomValue(activeRemoteAtom)
-  const setMode = useSetAtom(activeModeAtom)
+  const setMode = useSetAtom(colorSchemeAtom)
+  const mode = useAtomValue(activeModeAtom)
+  useEffect(() => {
+    document.documentElement.dataset.theme = mode
+  }, [mode])
   useShortcutDispatcher()
   useEffect(() => {
     setVim(true)
@@ -116,12 +121,17 @@ function Fixture() {
             Synthetic host action
           </button>
         </div>
-        <div className="min-h-0 flex-1" data-pdf-fixture="a">
+        <div className="flex min-h-0 flex-1 flex-col" data-pdf-fixture="a">
           <PdfViewer path={path} visible={visible} focused={focused} />
         </div>
       </section>
-      <section className="min-w-0 flex-1" data-pane data-pane-focused={!focused} data-pane-id="b">
-        <div className="min-h-0 h-full" data-pdf-fixture="b">
+      <section
+        className="flex min-w-0 flex-1 flex-col"
+        data-pane
+        data-pane-focused={!focused}
+        data-pane-id="b"
+      >
+        <div className="flex min-h-0 flex-1 flex-col" data-pdf-fixture="b">
           <PdfViewer path="docs/fixture.pdf" visible focused={!focused} />
         </div>
       </section>
