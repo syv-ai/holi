@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -71,6 +72,14 @@ describe('refreshSkills', () => {
     await expect(
       refreshSkills(f.manifest, f.source, f.vault, { force: false, guard() {} }),
     ).rejects.toThrow('--force')
+  })
+
+  it('preserves private source permissions without broadening them during staging', async () => {
+    const f = await fixture()
+    const sourceFile = join(f.source, 'skills/demo/SKILL.md')
+    await chmod(sourceFile, 0o600)
+    await refreshSkills(f.manifest, f.source, f.vault, { force: false, guard() {} })
+    expect((await lstat(join(f.vault, '.claude/skills/demo/SKILL.md'))).mode & 0o777).toBe(0o600)
   })
 
   it('preflights every source before publishing any destination', async () => {
@@ -172,6 +181,131 @@ describe('refreshSkills', () => {
     expect(await readFile(join(f.vault, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe('release v1')
   })
 
+  it('rejects publication-stage byte, mode, and shape tampering performed by the guard', async () => {
+    for (const tamper of ['bytes', 'mode', 'shape'] as const) {
+      const f = await fixture()
+      let calls = 0
+      await expect(
+        refreshSkills(f.manifest, f.source, f.vault, {
+          force: false,
+          async guard() {
+            if (++calls !== 3) return
+            const [stage] = await readdir(join(f.vault, '.holi/state'))
+            const staged = join(f.vault, '.holi/state', stage!, 'demo.new')
+            if (tamper === 'bytes') await writeFile(join(staged, 'SKILL.md'), 'tampered')
+            if (tamper === 'mode') await chmod(join(staged, 'SKILL.md'), 0o755)
+            if (tamper === 'shape') await writeFile(join(staged, 'extra.md'), 'undeclared')
+          },
+        }),
+      ).rejects.toThrow('staged skill changed')
+      await expect(readFile(join(f.vault, '.claude/skills/demo/SKILL.md'))).rejects.toThrow()
+    }
+  })
+
+  it('preserves a concurrent target edit and recovery backup when rollback is rejected', async () => {
+    const f = await fixture()
+    const target = join(f.vault, '.claude/skills/demo')
+    await mkdir(target, { recursive: true })
+    await writeFile(join(target, 'SKILL.md'), 'old')
+    await writeFile(join(f.source, 'skills/demo/SKILL.md'), 'new')
+    let calls = 0
+    await expect(
+      refreshSkills(f.manifest, f.source, f.vault, {
+        force: true,
+        async guard() {
+          calls++
+          if ((await readFile(join(target, 'SKILL.md'), 'utf8').catch(() => '')) !== 'new') return
+          await writeFile(join(target, 'user.txt'), 'keep me')
+          throw Error('final guard rejected')
+        },
+      }),
+    ).rejects.toThrow('rollback incomplete')
+    expect(await readFile(join(target, 'user.txt'), 'utf8')).toBe('keep me')
+    const [stage] = await readdir(join(f.vault, '.holi/state'))
+    expect(
+      await readFile(join(f.vault, '.holi/state', stage!, 'demo.original/SKILL.md'), 'utf8'),
+    ).toBe('old')
+  })
+
+  it('never cleans an outside stage alias after the staging parent is replaced during publication', async () => {
+    const f = await fixture()
+    const outside = join(f.vault, '..', 'holi-522-stage-sentinel')
+    await mkdir(outside, { recursive: true })
+    const originalRename = skillTransactionFs.rename
+    const rename = vi.spyOn(skillTransactionFs, 'rename').mockImplementation(async (from, to) => {
+      await originalRename(from, to)
+      if (!String(to).includes('/.claude/skills/')) return
+      const state = join(f.vault, '.holi/state')
+      const stageName = (await readdir(state))[0]!
+      const sentinel = join(outside, stageName)
+      await mkdir(sentinel)
+      await writeFile(join(sentinel, 'sentinel'), 'outside data')
+      await rm(state, { recursive: true, force: true })
+      await symlink(outside, state)
+    })
+    await expect(
+      refreshSkills(f.manifest, f.source, f.vault, { force: false, guard() {} }),
+    ).rejects.toThrow('committed but staging cleanup failed')
+    rename.mockRestore()
+    expect(await readFile(join(outside, (await readdir(outside))[0]!, 'sentinel'), 'utf8')).toBe(
+      'outside data',
+    )
+  })
+
+  it('preserves recovery and outside sentinel when staging ancestry changes during rollback', async () => {
+    const f = await fixture()
+    const target = join(f.vault, '.claude/skills/demo')
+    await mkdir(target, { recursive: true })
+    await writeFile(join(target, 'SKILL.md'), 'old')
+    const outside = join(f.vault, '..', 'holi-522-rollback-sentinel')
+    await mkdir(outside, { recursive: true })
+    await expect(
+      refreshSkills(f.manifest, f.source, f.vault, {
+        force: true,
+        async guard() {
+          if ((await readFile(join(target, 'SKILL.md'), 'utf8').catch(() => '')) !== 'release v1')
+            return
+          const state = join(f.vault, '.holi/state')
+          const [stage] = await readdir(state)
+          const saved = join(f.vault, '.holi/state-recovery')
+          await rename(state, saved)
+          await mkdir(join(outside, stage!))
+          await writeFile(join(outside, stage!, 'sentinel'), 'outside data')
+          await symlink(outside, state)
+          throw Error('final guard rejected')
+        },
+      }),
+    ).rejects.toThrow('rollback incomplete')
+    expect(await readFile(join(target, 'SKILL.md'), 'utf8')).toBe('release v1')
+    const [outsideStage] = await readdir(outside)
+    expect(await readFile(join(outside, outsideStage!, 'sentinel'), 'utf8')).toBe('outside data')
+    const [recoveryStage] = await readdir(join(f.vault, '.holi/state-recovery'))
+    expect(
+      await readFile(
+        join(f.vault, '.holi/state-recovery', recoveryStage!, 'demo.original/SKILL.md'),
+        'utf8',
+      ),
+    ).toBe('old')
+  })
+
+  it('rejects undeclared source files before opening them when authenticated metadata is supplied', async () => {
+    const f = await fixture()
+    await writeFile(join(f.source, 'skills/demo/extra.md'), 'not in git tree')
+    await expect(
+      transactSkillRefresh([{ path: 'skills/demo', name: 'demo' }], f.source, f.vault, {
+        force: false,
+        guard() {},
+        expectedSnapshots: [
+          {
+            name: 'demo',
+            directories: [],
+            files: [{ path: 'SKILL.md', bytes: Buffer.from('release v1'), mode: 0o644 }],
+          },
+        ],
+      }),
+    ).rejects.toThrow('undeclared file')
+  })
+
   it('restores earlier publications when cancellation occurs between folders', async () => {
     const f = await fixture()
     await mkdir(join(f.source, 'skills', 'other'), { recursive: true })
@@ -187,14 +321,20 @@ describe('refreshSkills', () => {
         f.vault,
         {
           force: false,
-          guard() {
-            if (++calls === 3) throw Error('closed')
+          async guard() {
+            calls++
+            if (
+              await readFile(join(f.vault, '.claude/skills/demo/SKILL.md'), 'utf8').catch(
+                () => null,
+              )
+            )
+              throw Error('closed')
           },
         },
       ),
     ).rejects.toThrow('closed')
     await expect(readFile(join(f.vault, '.claude/skills/demo/SKILL.md'))).rejects.toThrow()
-    expect(await readdir(join(f.vault, '.holi/state'))).toEqual([])
+    expect(await readdir(join(f.vault, '.holi/state')).catch(() => [])).toEqual([])
   })
 
   it('restores an existing folder when its first publication rename fails', async () => {
@@ -338,7 +478,8 @@ describe('refreshSkills', () => {
       refreshSkills(f.manifest, f.source, f.vault, {
         force: false,
         async guard() {
-          if (++guardCalls !== 2) return
+          guardCalls++
+          if (!(await readdir(join(f.vault, '.holi/state')).catch(() => [])).length) return
           await rm(join(f.vault, '.claude/skills'), { recursive: true, force: true })
           await symlink(outside, join(f.vault, '.claude/skills'))
         },
@@ -353,11 +494,12 @@ describe('refreshSkills', () => {
       refreshSkills(f.manifest, f.source, f.vault, {
         force: false,
         async guard() {
-          if (++guardCalls !== 3) return
+          guardCalls++
           const state = join(f.vault, '.holi/state')
-          const [stage] = await readdir(state)
-          await rm(join(state, stage!), { recursive: true })
-          await symlink(outside, join(state, stage!))
+          const [stage] = await readdir(state).catch(() => [])
+          if (!stage) return
+          await rm(join(state, stage), { recursive: true })
+          await symlink(outside, join(state, stage))
         },
       }),
     ).rejects.toThrow('unsafe skill staging path')
