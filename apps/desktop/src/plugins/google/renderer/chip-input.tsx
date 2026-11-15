@@ -6,7 +6,7 @@
  */
 import * as React from 'react'
 import { X } from 'lucide-react'
-import { cn } from '@/plugin-api'
+import { cn, useVimField, VimFieldMode } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
 import { InputGroupInput } from '@/components/ui/input-group'
 import type { MailAddress as ChipAddress } from './mail-types'
@@ -19,6 +19,8 @@ export interface ChipInputProps {
   placeholder?: string
   label: string
   disabled?: boolean
+  /** Resets native-field mode when its account, draft or overlay context changes. */
+  vimIdentity?: string
 }
 
 /**
@@ -56,8 +58,10 @@ export function ChipInput({
   placeholder,
   label,
   disabled = false,
+  vimIdentity = label,
 }: ChipInputProps): React.JSX.Element {
   const [text, setText] = React.useState('')
+  const vim = useVimField(vimIdentity, text)
   const [invalid, setInvalid] = React.useState(false)
   const [active, setActive] = React.useState(0)
   const inputId = React.useId()
@@ -190,10 +194,19 @@ export function ChipInput({
             setInvalid(false)
             setActive(0)
           }}
-          onKeyDown={onKeyDown}
+          {...vim.vimFieldProps}
+          onKeyDown={(event) => {
+            vim.vimFieldProps.onKeyDown?.(event)
+            if (event.defaultPrevented || vim.vimFieldMode === 'normal') return
+            onKeyDown(event)
+          }}
           onPaste={onPaste}
-          onBlur={() => commit(text)}
+          onBlur={(event) => {
+            vim.vimFieldProps.onBlur?.(event)
+            commit(text)
+          }}
         />
+        <VimFieldMode mode={vim.vimFieldMode} />
 
         {matches.length > 0 && (
           <ul
