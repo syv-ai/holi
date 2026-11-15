@@ -165,18 +165,24 @@ describe('editing labels in the rendered Mermaid drawing', () => {
     const { e } = await open()
     await labelField()
     let resolve!: (value: ReturnType<typeof drawing>) => void
-    renderDiagram.mockImplementationOnce(() => new Promise((done) => (resolve = done)))
+    renderDiagram.mockImplementation((source: string) =>
+      source.includes('Gamma')
+        ? new Promise((done) => (resolve = done))
+        : Promise.resolve(drawing(source)),
+    )
     const position = blockPosition(e)
     const node = e.state.doc.nodeAt(position)!
     const start = position + 1 + node.textContent.indexOf('Alpha')
     act(() => e.view.dispatch(e.state.tr.insertText('Gamma', start, start + 'Alpha'.length)))
-    await waitFor(() => expect(renderDiagram).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(resolve).toBeTypeOf('function'))
     expect(e.getMarkdown()).toContain('A[Gamma]')
     expect(screen.queryByRole('textbox', { name: 'Alpha' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Edit labels' })).not.toBeInTheDocument()
+    expect(document.querySelector('[data-mermaid-diagram] svg')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Alpha' })).not.toBeInTheDocument()
     await act(async () => resolve(drawing('flowchart LR\nA[Gamma] --> B[Beta]')))
-    await screen.findByRole('button', { name: 'Edit labels' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Gamma' }))
+    await screen.findByRole('textbox', { name: 'Gamma' })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     expect(e.getMarkdown()).toContain('A[Gamma]')
   })
 

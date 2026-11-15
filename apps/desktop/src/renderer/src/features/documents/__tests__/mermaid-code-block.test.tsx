@@ -184,9 +184,9 @@ describe('Mermaid fences in a document editor', () => {
         e.state.tr.replaceWith(0, figure.nodeSize, e.schema.nodeFromJSON(figure.toJSON())),
       ),
     )
-    await waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(2))
     await act(async () => pending[0]!({ svg: '<svg><text>obsolete occurrence</text></svg>' }))
     expect(e.view.dom.textContent).not.toContain('obsolete occurrence')
+    await waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(2))
     await act(async () => pending[1]!({ svg: '<svg><text>current occurrence</text></svg>' }))
     await waitFor(() => expect(e.view.dom.textContent).toContain('current occurrence'))
   })
@@ -200,9 +200,9 @@ describe('Mermaid fences in a document editor', () => {
       e.setEditable(false)
       e.setEditable(true)
     })
-    await waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(2))
     await act(async () => pending[0]!({ svg: '<svg><text>locked drawing</text></svg>' }))
     expect(e.view.dom.textContent).not.toContain('locked drawing')
+    await waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(2))
     await act(async () => pending[1]!({ svg: '<svg><text>unlocked drawing</text></svg>' }))
     await waitFor(() => expect(e.view.dom.textContent).toContain('unlocked drawing'))
   })

@@ -23,6 +23,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const renderGeneration = useRef(0)
   const [renderEpoch, setRenderEpoch] = useState(0)
   const observedEditable = useRef(editor.isEditable)
+  const observedNode = useRef(node)
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const openButton = useRef<HTMLButtonElement>(null)
   const activeMode = useAtomValue(activeModeAtom)
@@ -39,15 +40,18 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   )
   const labels = useMermaidLabelEditing({ node, editor, getPos, theme })
   const renderGenerationAtRender = renderGeneration.current
+  const renderPosition = currentPosition()
+  const renderOwner =
+    typeof renderPosition === 'number' ? editor.state.doc.nodeAt(renderPosition) : null
   const isRenderCurrent = useCallback(() => {
     const position = currentPosition()
     return (
       renderGeneration.current === renderGenerationAtRender &&
       observedEditable.current === editor.isEditable &&
       typeof position === 'number' &&
-      editor.state.doc.nodeAt(position) === node
+      editor.state.doc.nodeAt(position) === renderOwner
     )
-  }, [currentPosition, editor, node, renderGenerationAtRender])
+  }, [currentPosition, editor, renderOwner, renderGenerationAtRender])
   const active = useEditorState({
     editor,
     selector: ({ editor: current }) => {
@@ -72,7 +76,9 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         setRenderEpoch((epoch) => epoch + 1)
       }
       const position = currentPosition()
-      if (typeof position === 'number' && editor.state.doc.nodeAt(position) !== node) {
+      const liveNode = typeof position === 'number' ? editor.state.doc.nodeAt(position) : null
+      if (liveNode !== observedNode.current) {
+        observedNode.current = liveNode ?? node
         renderGeneration.current++
         setRenderEpoch((epoch) => epoch + 1)
       }
