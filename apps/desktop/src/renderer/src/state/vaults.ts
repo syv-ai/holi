@@ -386,6 +386,64 @@ export function subscribeToVault(
         void restoreSelection(store.get(openRequestAtom))
     }
   })
+  const offNavigation = window.holi.vault.onNavigate((request) => {
+    // A click is a document-open intent even when it names the selected vault:
+    // it must supersede a delayed open for another vault just as a fresh note
+    // arrival does. openVaultAtom owns request ordering and flush/recovery.
+    const id = store.get(documentOpenIntentAtom) + 1
+    store.set(documentOpenIntentAtom, id)
+    const revision = store.get(activeRemoteRevisionAtom)
+    const navigate = async (): Promise<void> => {
+      // A ready same-vault notification only needs to dispatch its event. Reopening
+      // would tear down plugin vault state (including retained agent terminals)
+      // before the inbox can focus the existing session. Still advance the intent
+      // above so this notification supersedes older delayed opens.
+      const alreadyReady =
+        store.get(activeRemoteAtom) === request.remote &&
+        store.get(openedRemoteAtom) === request.remote
+      const landed = alreadyReady
+        ? true
+        : await store.set(openVaultAtom, {
+            remote: request.remote,
+            documentIntentId: id,
+          })
+      if (
+        !landed ||
+        store.get(documentOpenIntentAtom) !== id ||
+        store.get(activeRemoteAtom) !== request.remote ||
+        store.get(openedRemoteAtom) !== request.remote
+      )
+        return
+      const events = plugins.find((candidate) => candidate.info.id === request.plugin)?.events
+      const handler =
+        events !== undefined && Object.hasOwn(events, request.name)
+          ? events[request.name]
+          : undefined
+      handler?.({ remote: request.remote, payload: request.payload }, store)
+    }
+    void navigate().catch((error: unknown) => {
+      if (
+        store.get(documentOpenIntentAtom) !== id ||
+        store.get(activeRemoteRevisionAtom) !== revision
+      )
+        return
+      toast.error('Could not open the agent session', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+      void store
+        .set(restoreSelectedVaultAtom, {
+          request: store.get(openRequestAtom),
+          revision,
+          documentIntentId: id,
+        })
+        .catch((restoreError: unknown) => {
+          toast.error('Could not restore the selected vault', {
+            description:
+              restoreError instanceof Error ? restoreError.message : String(restoreError),
+          })
+        })
+    })
+  })
   // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
   // opened the tab first, over `onOpen`, which arrives before this; a file's
   // tab is keyed by its path.
@@ -409,6 +467,7 @@ export function subscribeToVault(
     offHeldBack()
     offCommitted()
     offReminder()
+    offNavigation()
     offLocate()
     offEvents.forEach((off) => off())
   }

@@ -219,7 +219,6 @@ export const agentMain: MainPlugin = {
         store: jsonFileStore(join(ctx.root, INBOX_FILE), parseInbox),
         notify: (notice) => ctx.notify(notice),
         changed: (view) => ctx.emit(ctx.remote, 'inbox', view),
-        open: (entry) => ctx.emit(ctx.remote, 'inbox-open', entry),
       })
       const unproviders = harnesses.subscribe(() => ctx.emit(ctx.remote, 'providers', null))
       ctx.register(AGENT_NAMESPACES, {

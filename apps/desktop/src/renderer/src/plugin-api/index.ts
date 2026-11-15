@@ -62,13 +62,14 @@ export { useNow } from '@/hooks/use-now'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export {
   activeRemoteAtom,
+  /** @public */ activeRemoteRevisionValueAtom,
   historyEpochsAtom,
   snapshotAtom,
   /** @public */ snapshotLoadedAtom,
   syncStateAtom,
   vaultsAtom,
 } from '@/state/vaults'
-export { openDocumentAtom } from '@/state/open-document'
+export { openDocumentAtom, openDocumentRequestAtom } from '@/state/open-document'
 export { openTabAtom } from '@/state/shell-tabs'
 // A sidebar row drags as the tab it opens (docs/features/tabs-panes.md, Drag targets).
 export { useTabDrag } from '@/features/shell/use-tab-drag'

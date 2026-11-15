@@ -43,6 +43,9 @@
         "scripts/browser-display-fixture/toolbar-sequence.ts",
         "scripts/mail-markers-smoke-main.ts",
         "scripts/mail-markers-smoke-renderer.tsx",
+        // Vite's disposable #542 Electron smoke entry is selected by filesystem path.
+        "scripts/agent-inbox-542-smoke-main.ts",
+        "scripts/agent-inbox-542-smoke-renderer.tsx",
         // Native IPC smoke is selected by the Node runner's filesystem path.
         "scripts/ipc-sender-native-smoke.ts",
         // Native Electron smoke: the TS entry and isolated renderer are built by its MJS runner.
