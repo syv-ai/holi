@@ -47,6 +47,8 @@ import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
 import { createAppFrameLeases } from './plugin-host/app-frame-leases'
+import { trackAppFrameDocuments } from './plugin-host/app-frame-navigation'
+import { appLeaseFromHost } from '../plugins/apps/shared/bundle'
 import { createNativeRequestWindows } from './plugin-host/native-request-windows'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
@@ -102,6 +104,7 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
 let mainWindow: BrowserWindow | null = null
+let appFrameLeases: ReturnType<typeof createAppFrameLeases> | null = null
 
 // Held at module scope, not inside `main()`: a `Tray` that gets garbage-collected
 // vanishes from the menu bar, so it must outlive the setup closure. It exists
@@ -223,6 +226,24 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
+  if (appFrameLeases !== null) {
+    const stopTracking = trackAppFrameDocuments({
+      contents: win.webContents,
+      window: win,
+      leases: appFrameLeases,
+      tokenFromUrl: (url) => {
+        try {
+          const parsed = new URL(url)
+          return parsed.protocol === 'holi-app:'
+            ? (appLeaseFromHost(parsed.hostname)?.token ?? null)
+            : null
+        } catch {
+          return null
+        }
+      },
+    })
+    win.webContents.once('destroyed', stopTracking)
+  }
   if (liquid) applyLiquidGlass(win)
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
@@ -372,6 +393,7 @@ async function main(): Promise<void> {
   // lazily.
   const capabilities = createCapabilityRegistry()
   const appFrames = createAppFrameLeases()
+  appFrameLeases = appFrames
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
     registry: capabilities,
@@ -552,6 +574,7 @@ async function main(): Promise<void> {
         runs: async (owner, root) => (await plugins.enabled(root)).has(owner),
         appFrames,
         windowForRequest: windowForAppRequest,
+        frameForRequest: windowForAppRequest.frameForRequest,
       }),
     )
   }

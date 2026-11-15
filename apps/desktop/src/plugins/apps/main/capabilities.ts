@@ -156,6 +156,21 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     params: (raw) => ({ bundle: bundleParam(paramsObject(raw)) }),
     run: async (_ctx, { bundle }) => deps.issueFrameLease(bundle),
   }),
+  'apps.frameLeaseValid': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const p = paramsObject(raw)
+      return {
+        bundle: bundleParam(p),
+        token: stringParam(p, 'token'),
+        nonce: stringParam(p, 'nonce'),
+      }
+    },
+    run: async (ctx, { bundle, token, nonce }) => {
+      const lease = deps.validateFrameLease?.(token, nonce, bundle) ?? null
+      return lease !== null && lease.remote === ctx.remote && lease.root === ctx.root
+    },
+  }),
   'apps.releaseFrameLease': cap({
     doors: ['ui'],
     params: (raw) => {

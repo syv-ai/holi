@@ -234,7 +234,9 @@ export const appScheme: PluginScheme = {
       ctx.appFrames === undefined
     )
       return null
-    const lease = ctx.appFrames.resolve(parsed.token, win)
+    const frame = ctx.frameForRequest?.(request) ?? null
+    if (ctx.frameForRequest !== undefined && frame === null) return null
+    const lease = ctx.appFrames.resolve(parsed.token, win, frame)
     if (lease === null || lease.bundle !== parsed.bundle) return null
     ctx.appFrameLease = lease
     return lease

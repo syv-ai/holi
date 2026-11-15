@@ -7,12 +7,13 @@ import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { createAppFrameLeases } from '../src/main/plugin-host/app-frame-leases'
+import { trackAppFrameDocuments } from '../src/main/plugin-host/app-frame-navigation'
 import { createNativeRequestWindows } from '../src/main/plugin-host/native-request-windows'
 import { createPluginHost, type OpenVault } from '../src/main/plugin-host/host'
 import { serveScheme } from '../src/main/plugin-host/schemes'
 import { appsMain } from '../src/plugins/apps/main'
 import { appScheme } from '../src/plugins/apps/main/protocol'
-import { appHost, leasedAppHost } from '../src/plugins/apps/shared/bundle'
+import { appHost, appLeaseFromHost, leasedAppHost } from '../src/plugins/apps/shared/bundle'
 
 const bundle = 'Same/Tool.app'
 const rootForRemote = (remote: string): string | null =>
@@ -59,6 +60,11 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
   }
 
   const appFrames = createAppFrameLeases()
+  let observedToken: string | null = null
+  let revokedBeforeSvgScript = false
+  const stopObservingRevocations = appFrames.onRevoke((token) => {
+    if (token === observedToken) revokedBeforeSvgScript = true
+  })
   const registry = createCapabilityRegistry()
   let active: OpenVault | null = null
   let host!: ReturnType<typeof createPluginHost>
@@ -75,6 +81,21 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     height: 650,
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  })
+  const stopFrameTracking = trackAppFrameDocuments({
+    contents: win.webContents,
+    window: win,
+    leases: appFrames,
+    tokenFromUrl: (url) => {
+      try {
+        const parsed = new URL(url)
+        return parsed.protocol === 'holi-app:'
+          ? (appLeaseFromHost(parsed.hostname)?.token ?? null)
+          : null
+      } catch {
+        return null
+      }
+    },
   })
   const windowForRequest = createNativeRequestWindows({
     webRequest: session.defaultSession.webRequest,
@@ -123,6 +144,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       runs: async (owner, vaultRoot) => (await host.serving(vaultRoot)).has(owner),
       appFrames,
       windowForRequest,
+      frameForRequest: windowForRequest.frameForRequest,
     },
   )
   protocol.handle('holi-app', serve)
@@ -146,11 +168,13 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
           params: { bundle },
         })
       ).value as { token: string; nonce: string }
+      observedToken = lease.token
+      revokedBeforeSvgScript = false
       await win.loadURL(
         `data:text/html,<!doctype html><div id="result"></div><iframe id="app" sandbox="allow-scripts" style="width:700px;height:450px;border:0"></iframe>`,
       )
       const observedPromise = win.webContents.executeJavaScript(
-        `new Promise((resolve,reject)=>{window.addEventListener('message',e=>{if(e.data?.kind==='app-smoke')resolve(e.data.value)},{once:true});document.querySelector('#app').src='holi-app://${leasedAppHost(bundle, lease.token)}/index.html';setTimeout(()=>reject(new Error('app frame timeout')),10000)})`,
+        `new Promise((resolve,reject)=>{const onMessage=e=>{if(e.data?.kind==='app-smoke'){removeEventListener('message',onMessage);resolve(e.data.value)}};window.addEventListener('message',onMessage);document.querySelector('#app').src='holi-app://${leasedAppHost(bundle, lease.token)}/index.html';setTimeout(()=>reject(new Error('app frame timeout')),10000)})`,
       )
       const observed = await observedPromise
       assert.deepEqual(observed, {
@@ -176,6 +200,29 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       writeFileSync(join(evidence, shot), Buffer.from(capture.data, 'base64'))
       assert(capture.data.length > 0)
       mark(`actual-vault-app-screenshot-${remote.toLowerCase()}`)
+      const replacement = await win.webContents.executeJavaScript(
+        `new Promise(resolve=>{const f=document.querySelector('#app');addEventListener('message',e=>{if(e.data?.kind==='svg-ran')resolve(true)},{once:true});f.src='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"><script>parent.postMessage({kind:"svg-ran"},"*")<\\/script></svg>';setTimeout(()=>resolve(false),5000)})`,
+      )
+      assert.equal(replacement, true)
+      assert.equal(revokedBeforeSvgScript, true)
+      const validAfterSvg = await capabilityHost.dispatch({
+        door: 'ui',
+        remote: active.remote,
+        name: 'apps.frameLeaseValid',
+        params: { bundle, token: lease.token, nonce: lease.nonce },
+      })
+      assert.equal(validAfterSvg.value, false)
+      await assert.rejects(
+        capabilityHost.dispatch({
+          door: 'ui',
+          remote: active.remote,
+          name: 'apps.call',
+          params: { bundle, method: 'store.list', params: { collection: 'smoke' }, ...lease },
+        }),
+      )
+      mark(
+        `native-svg-replacement-revokes-before-subsequent-capability-use-${remote.toLowerCase()}`,
+      )
       const legacy = await serve(new Request(`holi-app://${appHost(bundle)}/index.html`))
       assert.equal(legacy.status, 404)
       mark(`legacy-unleased-app-url-denied-${remote.toLowerCase()}`)
@@ -213,7 +260,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
         })
       ).value as { token: string; nonce: string }
       const commandResult = await win.webContents.executeJavaScript(
-        `new Promise((resolve,reject)=>{const frame=document.querySelector('#app');window.addEventListener('message',e=>{if(e.data?.command)resolve(e.data)},{once:true});frame.onload=()=>frame.contentWindow.postMessage({nonce:'${commandLease.nonce}',run:{text:'command-${remote}'}},'*');frame.src='holi-app://${leasedAppHost(bundle, commandLease.token)}/?command=smoke&mode=dark';setTimeout(()=>reject(new Error('command runner timeout')),10000)})`,
+        `new Promise((resolve,reject)=>{const frame=document.querySelector('#app');const onMessage=e=>{if(e.data?.command){removeEventListener('message',onMessage);resolve(e.data)}};window.addEventListener('message',onMessage);frame.onload=()=>frame.contentWindow.postMessage({nonce:'${commandLease.nonce}',run:{text:'command-${remote}'}},'*');frame.src='holi-app://${leasedAppHost(bundle, commandLease.token)}/?command=smoke&mode=dark';setTimeout(()=>reject(new Error('command runner timeout')),10000)})`,
       )
       assert.deepEqual(commandResult, {
         nonce: commandLease.nonce,
@@ -230,6 +277,8 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     return checks
   } finally {
     await host.stopAll()
+    stopFrameTracking()
+    stopObservingRevocations()
     appFrames.revokeAll()
     win.destroy()
     protocol.unhandle('holi-app')

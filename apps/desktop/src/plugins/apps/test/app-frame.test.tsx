@@ -47,6 +47,7 @@ const { FRAME_TOKEN, FRAME_NONCE } = vi.hoisted(() => ({
   FRAME_NONCE: 'b'.repeat(48),
 }))
 const frameLeaseMock = vi.hoisted(() => vi.fn())
+const frameLeaseValidMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
 const releaseLeaseMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => Promise.resolve(true)))
 
 /** Main's side of the app door, answering the way the registry would. */
@@ -66,6 +67,7 @@ vi.mock('../renderer/apps-cap', () => ({
     grant: (...args: unknown[]) => grantMock(...args),
     capturePreview: (...args: unknown[]) => captureMock(...args),
     frameLease: (...args: unknown[]) => frameLeaseMock(...args),
+    frameLeaseValid: () => frameLeaseValidMock(),
     releaseFrameLease: (...args: unknown[]) => releaseLeaseMock(...args),
     log: () => Promise.resolve(true),
   },
@@ -112,6 +114,7 @@ function withApps(...bundles: string[]) {
 beforeEach(() => {
   vi.clearAllMocks()
   frameLeaseMock.mockReset().mockResolvedValue({ token: FRAME_TOKEN, nonce: FRAME_NONCE })
+  frameLeaseValidMock.mockReset().mockResolvedValue(true)
   releaseLeaseMock.mockReset().mockResolvedValue(true)
   grantsMock.mockReset().mockImplementation(() => Promise.resolve(status()))
   grantMock.mockReset().mockResolvedValue(true)
