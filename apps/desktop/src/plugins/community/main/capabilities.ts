@@ -708,7 +708,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           )
             deny(`${id} release checkout does not match its pin`)
           try {
-            assertManifestPinned(expectedRoot, source.commit, source.path, manifest)
+            await assertManifestPinned(expectedRoot, source.commit, source.path, manifest)
           } catch (error) {
             deny(`${id} manifest does not match pinned Git object: ${String(error)}`)
           }
@@ -758,7 +758,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             )
               deny(`${id} release provenance changed during refresh`)
             try {
-              assertManifestPinned(expectedRoot, source.commit, source.path, install.manifest)
+              await assertManifestPinned(expectedRoot, source.commit, source.path, install.manifest)
             } catch (error) {
               deny(`${id} manifest provenance changed during refresh: ${String(error)}`)
             }
@@ -773,7 +773,13 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             validateSnapshot: async (snapshots) => {
               await guard()
               try {
-                validateSkillSnapshot(expectedRoot, source.commit, source.path, skills, snapshots)
+                await validateSkillSnapshot(
+                  expectedRoot,
+                  source.commit,
+                  source.path,
+                  skills,
+                  snapshots,
+                )
               } catch (error) {
                 deny(`${id} private snapshot does not match pinned Git objects: ${String(error)}`)
               }
