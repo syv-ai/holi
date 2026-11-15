@@ -271,6 +271,53 @@ describe('refreshSkills', () => {
     }
   })
 
+  it('preserves edits that race with the backup rename on an otherwise successful refresh', async () => {
+    const f = await fixture()
+    const target = join(f.vault, '.claude/skills/demo')
+    await mkdir(target, { recursive: true })
+    await writeFile(join(target, 'SKILL.md'), 'old')
+    const originalRename = skillTransactionFs.rename
+    const rename = vi.spyOn(skillTransactionFs, 'rename').mockImplementation(async (from, to) => {
+      if (String(to).endsWith('/demo.original'))
+        await writeFile(join(target, 'SKILL.md'), 'concurrent edit')
+      return originalRename(from, to)
+    })
+    await expect(
+      refreshSkills(f.manifest, f.source, f.vault, { force: true, guard() {} }),
+    ).rejects.toThrow(/recovery data preserved/)
+    rename.mockRestore()
+    const [stage] = await readdir(join(f.vault, '.holi/state'))
+    expect(
+      await readFile(join(f.vault, '.holi/state', stage!, 'demo.original/SKILL.md'), 'utf8'),
+    ).toBe('concurrent edit')
+  })
+
+  it('preserves edits made to an original backup before successful cleanup', async () => {
+    const f = await fixture()
+    const target = join(f.vault, '.claude/skills/demo')
+    await mkdir(target, { recursive: true })
+    await writeFile(join(target, 'SKILL.md'), 'old')
+    let guards = 0
+    await expect(
+      refreshSkills(f.manifest, f.source, f.vault, {
+        force: true,
+        async guard() {
+          if (++guards !== 4) return
+          const [stage] = await readdir(join(f.vault, '.holi/state'))
+          await writeFile(
+            join(f.vault, '.holi/state', stage!, 'demo.original/SKILL.md'),
+            'late edit',
+          )
+        },
+      }),
+    ).rejects.toThrow(/committed but staging cleanup failed/)
+    const [stage] = await readdir(join(f.vault, '.holi/state'))
+    expect(
+      await readFile(join(f.vault, '.holi/state', stage!, 'demo.original/SKILL.md'), 'utf8'),
+    ).toBe('late edit')
+    expect(await readFile(join(target, 'SKILL.md'), 'utf8')).toBe('release v1')
+  })
+
   it('preserves a concurrent target edit and recovery backup when rollback is rejected', async () => {
     const f = await fixture()
     const target = join(f.vault, '.claude/skills/demo')

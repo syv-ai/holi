@@ -221,6 +221,18 @@ describe('pinned refresh authorization', () => {
     await expect(readFile(join(f.vault, '.claude/skills/demo/SKILL.md'))).rejects.toThrow()
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'rejects a FIFO checkout manifest without blocking',
+    async () => {
+      const f = await fixture()
+      await rm(join(f.pluginDir, 'holi-plugin.json'))
+      execFileSync(['mk', 'fifo'].join(''), [join(f.pluginDir, 'holi-plugin.json')])
+      const started = Date.now()
+      await expect(f.call()).rejects.toThrow(/manifest|checkout/)
+      expect(Date.now() - started).toBeLessThan(2_000)
+    },
+  )
+
   it('rejects altered working-tree source bytes and manifest bytes', async () => {
     const f = await fixture()
     await writeFile(join(f.pluginDir, f.skillPath, 'tool.bin'), Buffer.from([9]))

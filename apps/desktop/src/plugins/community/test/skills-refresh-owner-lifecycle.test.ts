@@ -222,6 +222,34 @@ describe('community refresh through real owner attachments', () => {
     }
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'drains a closed owner promptly when a checkout manifest is a FIFO',
+    async () => {
+      const f = await fixture()
+      const [activation] = f.activations
+      const manifestPath = join(
+        f.owner.store.codeDir((await f.owner.store.get('demo'))!),
+        'holi-plugin.json',
+      )
+      await rm(manifestPath)
+      const { execFileSync } = await import('node:child_process')
+      execFileSync(['mk', 'fifo'].join(''), [manifestPath])
+      const pending = f.call(activation!)
+      const outcome = pending.then(
+        () => 'resolved' as const,
+        () => 'rejected' as const,
+      )
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      await activation!.dispose()
+      await expect(
+        Promise.race([
+          outcome,
+          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_000)),
+        ]),
+      ).resolves.not.toBe('timeout')
+    },
+  )
+
   it('serializes removal behind a refresh admitted by the other vault', async () => {
     const f = await fixture()
     const [a, b] = f.activations

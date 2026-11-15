@@ -104,6 +104,20 @@ describe('pinned skill release verification', () => {
     },
   )
 
+  it('authenticates links whose target traverses a contained symlink directory', async () => {
+    const f = await fixture()
+    await mkdir(join(f.plugin, 'shared'), { recursive: true })
+    await writeFile(join(f.plugin, 'shared/ref.md'), 'through alias\n')
+    await symlink('shared', join(f.plugin, 'alias'))
+    await symlink('../../alias/ref.md', join(f.skill, 'alias-ref.md'))
+    const pin = await commit(f)
+    const files = await snapshot(f)
+    await expect(validateSkillSnapshot(f.release, pin, '', f.skills, files)).resolves.toBeDefined()
+    expect(files[0]!.files.find((file) => file.path === 'alias-ref.md')!.bytes.toString()).toBe(
+      'through alias\n',
+    )
+  })
+
   it('rejects cyclic and escaping Git symlinks while preserving the original snapshot proof', async () => {
     const f = await fixture()
     const original = await snapshot(f)
@@ -195,6 +209,53 @@ describe('pinned skill release verification', () => {
     )
     await expect(validateSkillSnapshot(f.release, f.commit, '', f.skills, [])).rejects.toThrow(
       /commit/,
+    )
+  })
+
+  it('budgets authenticated directory-only raw-tree fanout', async () => {
+    const f = await fixture()
+    const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], {
+      cwd: f.release,
+      input: Buffer.from('x'),
+      encoding: 'utf8',
+    }).trim()
+    const childTree = execFileSync('git', ['hash-object', '-t', 'tree', '-w', '--stdin'], {
+      cwd: f.release,
+      input: Buffer.concat([Buffer.from('100644 x'), Buffer.from([0]), Buffer.from(blob, 'hex')]),
+      encoding: 'utf8',
+    }).trim()
+    const oid = Buffer.from(childTree, 'hex')
+    const rows: Buffer[] = []
+    for (let index = 0; index < 10_001; index++)
+      rows.push(
+        Buffer.concat([
+          Buffer.from(`40000 dir-${String(index).padStart(5, '0')}`),
+          Buffer.from([0]),
+          oid,
+        ]),
+      )
+    const tree = execFileSync(
+      'git',
+      ['hash-object', '--literally', '-t', 'tree', '-w', '--stdin'],
+      {
+        cwd: f.release,
+        input: Buffer.concat(rows),
+        encoding: 'utf8',
+      },
+    ).trim()
+    const body = Buffer.from(`tree ${tree}
+author Holi <holi@example.test> 0 +0000
+committer Holi <holi@example.test> 0 +0000
+
+fanout
+`)
+    const commit = execFileSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], {
+      cwd: f.release,
+      input: body,
+      encoding: 'utf8',
+    }).trim()
+    await expect(validateSkillSnapshot(f.release, commit, '', f.skills, [])).rejects.toThrow(
+      /entry limit/,
     )
   })
 
