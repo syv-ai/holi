@@ -18,6 +18,7 @@ for (const name of [
   'browser-before.png',
   'shell-before.png',
   'browser-after.png',
+  'browser-dark.png',
 ])
   await rm(join(evidence, name), { force: true })
 let child
@@ -100,6 +101,12 @@ try {
     'departure-detaches-synchronously',
     'displayed-page-attached-with-loaded-content',
     'native-browser-vim-mode-navigation-insertion-undo-redo',
+    'native-h-l-w-b-e-0-caret-dollar-and-i-a',
+    'native-grapheme-safe-horizontal-motion',
+    'native-j-k-vertical-column',
+    'unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough',
+    'native-ime-composition-in-insert-mode',
+    'preference-disable-reenable-controls-native-vim',
     'native-normal-escape-preserves-search-value',
     'native-leading-newline-line-start',
     'stale-vim-disable-request-rejected',
@@ -115,7 +122,7 @@ try {
     'pending-reconcile-stop-all-detaches-to-null',
   ])
     assert(result.checks.includes(check), `missing native check: ${check}`)
-  assert(result.checks.length >= 22, 'native smoke produced too few assertions')
+  assert(result.checks.length >= 28, 'native smoke produced too few assertions')
   assert(
     typeof result.electron === 'string' && result.electron.length > 0,
     'missing Electron version',
