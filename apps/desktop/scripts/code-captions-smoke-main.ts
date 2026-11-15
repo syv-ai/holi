@@ -341,7 +341,7 @@ async function run() {
     win.webContents.sendInputEvent({ type: 'mouseUp', ...rect, button: 'left', clickCount: 1 })
     await sleep(100)
   }
-  async function menu(label: string) {
+  async function menu(label: string, waitForTextFocus = true) {
     press('/', ['meta'])
     await wait(
       `Array.from(document.querySelectorAll('[role="menuitem"]')).some(e=>e.textContent.trim().startsWith(${JSON.stringify(label)}))`,
@@ -351,10 +351,11 @@ async function run() {
       `document.querySelectorAll('[data-caption-action]').forEach(e=>e.removeAttribute('data-caption-action')); const e=Array.from(document.querySelectorAll('[role="menuitem"]')).find(e=>e.textContent.trim().startsWith(${JSON.stringify(label)})); e.setAttribute('data-caption-action','selected')`,
     )
     await click('[data-caption-action="selected"]')
-    await wait(
-      `!document.querySelector('[role="menu"][data-state="open"]') && document.activeElement?.closest('[role="textbox"]')`,
-      `${label} returned editor focus`,
-    )
+    if (waitForTextFocus)
+      await wait(
+        `!document.querySelector('[role="menu"][data-state="open"]') && document.activeElement?.closest('[role="textbox"]')`,
+        `${label} returned editor focus`,
+      )
   }
   async function dragFigure() {
     const source = await js<{ x: number; y: number }>(
@@ -635,6 +636,10 @@ async function run() {
     )
     await js(`window.captionFixture.select('documentFigure'); return true`)
     await menu('Move Down')
+    await wait(
+      `window.captionFixture.state().markdown.indexOf('holi:figure')>window.captionFixture.state().markdown.indexOf('Before the code.')`,
+      'native move down serialization',
+    )
     assert.equal(
       await js(
         `const m=window.captionFixture.state().markdown; return m.indexOf('holi:figure')>m.indexOf('Before the code.')`,
@@ -771,7 +776,22 @@ async function run() {
     )
     await js('await window.captionFixture.flush(); return true')
     assert((await readFile(note, 'utf8')).includes('A native Mermaid caption'))
-    mark('native-mermaid-caption-authoring-through-real-block-menu')
+    await js(`window.captionFixture.select('documentFigure'); return true`)
+    await js(`window.captionFixture.select('codeBlock'); return true`)
+    await menu('Edit source', false)
+    assert.equal(
+      await js(
+        `return document.querySelector('[data-pane="primary"] [role="textbox"]').editor.state.selection.$from.parent.type.name`,
+      ),
+      'codeBlock',
+    )
+    assert(
+      (await js<string>('return window.captionFixture.state().markdown')).includes(
+        'A native Mermaid caption',
+      ),
+    )
+    press('Escape')
+    mark('native-mermaid-caption-authoring-and-source-target')
     const validFigure = writeMarkdownCaptionEnvelope(mermaidFence, caption)
     const mermaidDocument = `${head}# Mermaid caption\n\n${validFigure}\n`
     await js(`await window.captionFixture.replace(${JSON.stringify(mermaidDocument)}); return true`)
