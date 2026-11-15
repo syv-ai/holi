@@ -115,9 +115,11 @@ function captionComment(body: string, caption: string): string {
   const diagram = /^ {0,3}<!--raw-typst ([\s\S]*?)-->$/.exec(body)?.[1]
   const content =
     diagram === undefined
-      ? `#cmarker.render(${commentSafeString(`${body}\n\n${caption}`)}, raw-typst: false)`
-      : `${diagram} #cmarker.render(${commentSafeString(caption)}, raw-typst: false)`
-  return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(sticky: true)[#align(center)[${content}]]-->`
+      ? `#cmarker.render(${commentSafeString(body)}, raw-typst: false)#v(0.5em)#align(center)[#cmarker.render(${commentSafeString(caption)}, raw-typst: false)]`
+      : `#align(center)[${diagram}#v(0.5em)#cmarker.render(${commentSafeString(caption)}, raw-typst: false)]`
+  // Sticky blocks need an explicit full width for nested alignment to reach their
+  // contents. Keep source rendering outside the caption alignment context.
+  return `<!--raw-typst #import "@preview/cmarker:0.1.6"; #block(sticky: true, width: 100%)[${content}]-->`
 }
 
 export async function renderPdf({

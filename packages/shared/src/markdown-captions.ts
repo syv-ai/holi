@@ -46,7 +46,7 @@ export function readMarkdownCodeCaptions(text: string): MarkdownCodeCaption[] {
 /** Only accept one paragraph of portable inline Markdown, never raw HTML. */
 function isPortableInlineCaption(caption: string): boolean {
   if (!caption.trim() || /[\r\n\u2028\u2029]/.test(caption)) return false
-  if (/^[ \t]/.test(caption)) return false
+  if (/^[ \t]/.test(caption) && !/^(?:&#32;|&#9;)+/.test(caption)) return false
   // Reference definitions and reference links depend on document-wide definitions;
   // extracting them would change their meaning in the surrounding document.
   const plain = caption.replace(/(`+)(.*?)\1/g, '').replace(/\\([\\[\\]<>!])/g, '')
@@ -306,34 +306,39 @@ export function readMarkdownCaptionEnvelopes(text: string): MarkdownCaptionEnvel
 
 /** Serialize one opaque body and one inline caption using canonical framing. */
 export function writeMarkdownCaptionEnvelope(body: string, caption: string): string {
+  if (/^(?: {4}| {0,3}\t)/.test(caption))
+    throw new Error('caption must be one inline Markdown paragraph')
+  const portableCaption = caption.replace(/^[ \t]+/, (leading) =>
+    [...leading].map((char) => (char === '\t' ? '&#9;' : '&#32;')).join(''),
+  )
   if (!body.trim() || !caption.trim())
     throw new Error('caption envelope body and caption must not be empty')
   if (
     body.startsWith('\n') ||
     body.endsWith('\n') ||
-    caption.includes('\n') ||
-    caption.includes('\r')
+    portableCaption.includes('\n') ||
+    portableCaption.includes('\r')
   ) {
     throw new Error('caption envelope content must not have framing or multiline whitespace')
   }
   // Canonical output uses LF. CRLF input remains readable, but the writer does
   // not normalize body text because its source range must preserve exact input.
-  if (body.includes('\r') || caption.includes('\r'))
+  if (body.includes('\r') || portableCaption.includes('\r'))
     throw new Error('caption envelope content must use LF line endings')
   if (
-    /^(?: {4}| {0,3}\t)/.test(caption) ||
+    /^(?: {4}| {0,3}\t)/.test(portableCaption) ||
     /^(?: {0,3}(?:#{1,6}(?:\s|$)|>|[-+*](?:\s|$)|\d+[.)](?:\s|$)|`{3,}|~{3,}|<)| {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$)/.test(
-      caption,
+      portableCaption,
     )
   ) {
     throw new Error('caption must be one inline Markdown paragraph')
   }
-  const serialized = `${FIGURE}\n\n${body}\n\n${CAPTION}\n\n${caption}\n\n${END}`
+  const serialized = `${FIGURE}\n\n${body}\n\n${CAPTION}\n\n${portableCaption}\n\n${END}`
   const [frame] = readMarkdownCaptionEnvelopes(serialized)
   if (
     !frame ||
     serialized.slice(frame.body.from, frame.body.to) !== body ||
-    serialized.slice(frame.caption.from, frame.caption.to) !== caption
+    serialized.slice(frame.caption.from, frame.caption.to) !== portableCaption
   ) {
     throw new Error('caption envelope content must round-trip without swallowing its framing')
   }

@@ -22,6 +22,14 @@ describe('Markdown caption envelopes', () => {
     )
   })
 
+  it('encodes leading whitespace while preserving its portable caption range', () => {
+    const serialized = writeMarkdownCaptionEnvelope('```js\nx\n```', '  name')
+    expect(serialized).toContain('&#32;&#32;name')
+    const [frame] = readMarkdownCodeCaptions(serialized)
+    expect(frame).toBeDefined()
+    expect(serialized.slice(frame!.caption.from, frame!.caption.to)).toBe('&#32;&#32;name')
+  })
+
   it('rejects context-dependent reference definitions and reference links', () => {
     for (const caption of ['[reference]: https://example.com', '[manual][reference]', '[manual]']) {
       const source = writeMarkdownCaptionEnvelope('```js\nx\n```', caption)

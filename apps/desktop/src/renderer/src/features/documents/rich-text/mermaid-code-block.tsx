@@ -15,6 +15,7 @@ import { RenderedMediaLightbox } from './rendered-media-lightbox'
 import { RenderedMediaAction, RenderedMediaToolbar } from './rendered-media-toolbar'
 import { MermaidDiagram } from './mermaid-diagram'
 import { useMermaidLabelEditing } from './use-mermaid-label-editing'
+import { CaptionCodeBlockAttributes, safeCodeFence, sourceFenceMatches } from './document-figure'
 
 function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const activity = useEditorActivity(editor)
@@ -128,6 +129,44 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
 
 /** Code blocks with Mermaid preview while their source is not selected. */
 export const MermaidCodeBlock = CodeBlock.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      ...CaptionCodeBlockAttributes,
+    }
+  },
+
+  parseMarkdown(token, helpers) {
+    const parsed = this.parent?.(token, helpers)
+    if (!parsed) return helpers.createNode('codeBlock', { language: '' }, [])
+    if (Array.isArray(parsed) || 'mark' in parsed) return parsed
+    parsed.attrs = {
+      ...parsed.attrs,
+      sourceFence: token.raw ?? null,
+      sourceFenceText: token.text ?? '',
+      sourceFenceLanguage: String(parsed.attrs?.language ?? ''),
+    }
+    return parsed
+  },
+
+  renderMarkdown(node, helpers, context) {
+    const source = node.attrs?.sourceFence
+    const originalText = node.attrs?.sourceFenceText
+    const text = node.content?.map((part: { text?: string }) => part.text ?? '').join('') ?? ''
+    if (node.attrs?.preserveFence) {
+      const language = String(node.attrs?.language ?? '')
+      if (
+        typeof source === 'string' &&
+        originalText === text &&
+        sourceFenceMatches(source, text, language)
+      ) {
+        return source
+      }
+      return safeCodeFence(language, text)
+    }
+    return this.parent?.(node, helpers, context) ?? ''
+  },
+
   addNodeView() {
     const renderView = ReactNodeViewRenderer(MermaidCodeBlockView, { as: 'pre' })
     return (props) => {
