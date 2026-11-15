@@ -76,7 +76,7 @@ import {
   snapshotLoadedAtom,
   vaultsAtom,
 } from '@/state/vaults'
-import { EllipsisIcon, PlusIcon } from 'lucide-react'
+import { BellIcon, BellDotIcon, BellRingIcon, EllipsisIcon, PlusIcon } from 'lucide-react'
 import { AskNameDialog } from './ask-name-dialog'
 import {
   newActions,
@@ -112,6 +112,15 @@ export function FilesSection({
   const loaded = useAtomValue(snapshotLoadedAtom)
   const order = useAtomValue(treeOrderAtom)
   const setOrder = useSetAtom(setTreeOrderAtom)
+  const subscriptionRequest = useRef(0)
+  const activationEpoch = useRef(0)
+  const [subscriptionData, setSubscriptionData] = useState<{
+    remote: string
+    scopes: { path: string; explicit: boolean; coveredBy: string | null; baseline: string | null }[]
+    error: string | null
+    pending: string | null
+    loading: boolean
+  } | null>(null)
   const folderClaims = useAtomValue(folderClaimsAtom)
   const claims = useAtomValue(claimsAtom)
   const snapshot = useAtomValue(snapshotAtom)
@@ -210,6 +219,94 @@ export function FilesSection({
       mounted.current = false
     }
   }, [])
+
+  const loadSubscriptions = useCallback(
+    async (remote: string, clearPending = false) => {
+      const request = ++subscriptionRequest.current
+      const epoch = activationEpoch.current
+      setSubscriptionData((current) => ({
+        remote,
+        scopes: current?.remote === remote ? current.scopes : [],
+        error: null,
+        pending: current?.remote === remote ? current.pending : null,
+        loading: true,
+      }))
+      const currentRequest = () =>
+        request === subscriptionRequest.current &&
+        epoch === activationEpoch.current &&
+        stillCurrent(remote)
+      try {
+        const scopes = await trpc.subscriptions.list.query({
+          remote,
+          paths: JSON.stringify(['', ...files.dirs]),
+        })
+        if (!currentRequest()) return
+        setSubscriptionData((current) => ({
+          remote,
+          scopes,
+          error: null,
+          pending: clearPending ? null : current?.remote === remote ? current.pending : null,
+          loading: false,
+        }))
+      } catch (error) {
+        if (!currentRequest()) return
+        setSubscriptionData((current) => ({
+          remote,
+          scopes: current?.remote === remote ? current.scopes : [],
+          error: error instanceof Error ? error.message : 'Could not load subscriptions.',
+          pending: clearPending ? null : current?.remote === remote ? current.pending : null,
+          loading: false,
+        }))
+      }
+    },
+    [files.dirs, stillCurrent],
+  )
+
+  useEffect(() => {
+    activationEpoch.current += 1
+    subscriptionRequest.current += 1
+    setSubscriptionData((current) => (current === null ? null : { ...current, pending: null }))
+  }, [files.remote])
+
+  useEffect(() => {
+    if (files.remote === null) {
+      setSubscriptionData(null)
+      return
+    }
+    void loadSubscriptions(files.remote)
+  }, [files.remote, loadSubscriptions])
+
+  async function toggleSubscription(path: string) {
+    subscriptionRequest.current += 1
+    const epoch = activationEpoch.current
+    const remote = files.remote
+    if (remote === null || subscriptionData?.remote !== remote) return
+    setSubscriptionData((current) =>
+      current === null ? current : { ...current, pending: path, error: null },
+    )
+    try {
+      const scope = subscriptionData.scopes.find((entry) => entry.path === path)
+      await trpc.subscriptions.set.mutate({ remote, path, enabled: scope?.explicit !== true })
+      if (epoch !== activationEpoch.current || !stillCurrent(remote)) return
+      setSubscriptionData((current) =>
+        current?.remote === remote && current.pending === path
+          ? { ...current, pending: null }
+          : current,
+      )
+      await loadSubscriptions(remote)
+    } catch (error) {
+      if (epoch !== activationEpoch.current || !stillCurrent(remote)) return
+      setSubscriptionData((current) =>
+        current?.remote === remote && current.pending === path
+          ? {
+              ...current,
+              pending: null,
+              error: error instanceof Error ? error.message : 'Could not save the subscription.',
+            }
+          : current,
+      )
+    }
+  }
 
   // A plugin's folder document (a deck) opens as its surface, and its chevron
   // shows the files inside; an app's bundle is one document and only opens.
@@ -782,6 +879,37 @@ export function FilesSection({
   return (
     <SidebarGroup className="min-h-0 flex-1">
       <SidebarGroupLabel>Files</SidebarGroupLabel>
+      {files.remote !== null && subscriptionData?.remote === files.remote ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SidebarGroupAction
+              className="right-16"
+              aria-label={
+                subscriptionData.scopes.find((scope) => scope.path === '')?.explicit
+                  ? subscriptionData.scopes.find((scope) => scope.path === '')?.baseline === null
+                    ? 'Unsubscribe this vault (starting revision pending)'
+                    : 'Unsubscribe this vault'
+                  : 'Subscribe this vault'
+              }
+              disabled={subscriptionData.pending !== null || subscriptionData.loading}
+              onClick={() => void toggleSubscription('')}
+            >
+              {subscriptionData.scopes.find((scope) => scope.path === '')?.explicit ? (
+                <BellRingIcon aria-hidden="true" />
+              ) : (
+                <BellIcon aria-hidden="true" />
+              )}
+            </SidebarGroupAction>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {subscriptionData.scopes.find((scope) => scope.path === '')?.explicit
+              ? subscriptionData.scopes.find((scope) => scope.path === '')?.baseline === null
+                ? 'Unsubscribe this vault · starting revision pending'
+                : 'Unsubscribe this vault'
+              : 'Subscribe this vault'}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
       {/* What to add sits beside the menu, where the section's actions are,
           made where the ⋯ menu's New items make it. */}
       <DropdownMenu>
@@ -826,6 +954,23 @@ export function FilesSection({
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {subscriptionData?.remote === files.remote && subscriptionData.loading ? (
+        <div className="px-2 py-1 text-xs text-muted-foreground" role="status">
+          Loading subscriptions…
+        </div>
+      ) : null}
+      {subscriptionData?.remote === files.remote && subscriptionData.error !== null ? (
+        <div className="flex items-center gap-2 px-2 py-1 text-xs text-destructive" role="status">
+          <span className="min-w-0 flex-1">{subscriptionData.error}</span>
+          <Button
+            variant="quiet"
+            size="xs"
+            onClick={() => files.remote !== null && void loadSubscriptions(files.remote)}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : null}
       {/* The rows fade out at the tree's foot (the mask below). */}
       <div className="relative flex min-h-24 flex-1 flex-col">
         <ContextMenu>
@@ -950,6 +1095,53 @@ export function FilesSection({
                             <HeldBackMark
                               held={item.isExpanded() ? undefined : heldUnder.get(item.getId())}
                             />
+                            {item.isFolder() && subscriptionData?.remote === files.remote
+                              ? (() => {
+                                  const scope = subscriptionData.scopes.find(
+                                    (entry) => entry.path === item.getId(),
+                                  )
+                                  if (scope === undefined) return null
+                                  const inherited = scope.coveredBy !== null
+                                  const label = scope.explicit
+                                    ? inherited
+                                      ? `Remove explicit subscription for ${item.getItemName()} (still covered by ${scope.coveredBy || 'the vault'})`
+                                      : scope.baseline === null
+                                        ? `Unsubscribe ${item.getItemName()} (starting revision pending)`
+                                        : `Unsubscribe ${item.getItemName()}`
+                                    : inherited
+                                      ? `Subscribe ${item.getItemName()} explicitly (already covered by ${scope.coveredBy || 'the vault'})`
+                                      : `Subscribe ${item.getItemName()}`
+                                  return (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon-xs"
+                                          aria-label={label}
+                                          disabled={
+                                            subscriptionData.pending !== null ||
+                                            subscriptionData.loading
+                                          }
+                                          onClick={(event) => {
+                                            event.preventDefault()
+                                            event.stopPropagation()
+                                            void toggleSubscription(item.getId())
+                                          }}
+                                        >
+                                          {scope.explicit ? (
+                                            <BellRingIcon aria-hidden="true" className="size-3.5" />
+                                          ) : inherited ? (
+                                            <BellDotIcon aria-hidden="true" className="size-3.5" />
+                                          ) : (
+                                            <BellIcon aria-hidden="true" className="size-3.5" />
+                                          )}
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="left">{label}</TooltipContent>
+                                    </Tooltip>
+                                  )
+                                })()
+                              : null}
                           </span>
                         </RowHover>
                       </TreeItemLabel>
