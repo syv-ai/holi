@@ -250,7 +250,7 @@ test('rich-text Vim preference updates the installed editor without saving navig
   const box = await editorBox()
   const editor = (box as WithEditor).editor
   expect(box).toHaveAttribute('data-vim-mode', 'normal')
-  expect(screen.getByText('Vim normal')).toBeInTheDocument()
+  expect(await screen.findByText('Vim normal')).toBeInTheDocument()
   act(() => fireEvent.keyDown(box, { key: 'l' }))
   act(() => fireEvent.keyDown(box, { key: 'i' }))
   expect(box).toHaveAttribute('data-vim-mode', 'insert')
