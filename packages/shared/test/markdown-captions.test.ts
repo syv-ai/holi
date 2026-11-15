@@ -10,6 +10,17 @@ const body =
 const caption = '**A** &amp; _B_'
 
 describe('Markdown caption envelopes', () => {
+  it('keeps image bodies opaque while exposing their source and caption ranges', () => {
+    for (const image of ['![alt](../image.png "title")', '![alt][ref]', '![ref][]', '![ref]']) {
+      const body = image
+      const source = `${writeMarkdownCaptionEnvelope(body, '**Figure caption**')}\n\n[ref]: ../image.png "title"`
+      const [frame] = readMarkdownCaptionEnvelopes(source)
+      expect(source.slice(frame!.body.from, frame!.body.to)).toBe(body)
+      expect(source.slice(frame!.caption.from, frame!.caption.to)).toBe('**Figure caption**')
+      expect(readMarkdownCodeCaptions(source)).toEqual([])
+    }
+  })
+
   it('selects one supported code fence while preserving inline caption bytes', () => {
     const source = writeMarkdownCaptionEnvelope(
       '```mermaid\nx --> y\n```',
