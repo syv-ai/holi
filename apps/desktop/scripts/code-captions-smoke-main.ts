@@ -757,7 +757,22 @@ async function run() {
 
     const caption = 'A portable caption. Pending reload'
     const mermaidSource = `flowchart TD\nA[Mermaid success] --> B[Target]`
-    const validFigure = writeMarkdownCaptionEnvelope(`~~~mermaid\n${mermaidSource}\n~~~`, caption)
+    const mermaidFence = `~~~mermaid\n${mermaidSource}\n~~~`
+    await js(
+      `await window.captionFixture.replace(${JSON.stringify(`${head}# Mermaid caption\n\n${mermaidFence}\n`)}); return true`,
+    )
+    await js(`window.captionFixture.select('codeBlock'); return true`)
+    await menu('Add caption')
+    await wait(`document.querySelector('figcaption')`, 'Mermaid caption authoring')
+    await win.webContents.insertText('A native Mermaid caption')
+    await wait(
+      `window.captionFixture.state().markdown.includes('A native Mermaid caption')`,
+      'edited Mermaid caption',
+    )
+    await js('await window.captionFixture.flush(); return true')
+    assert((await readFile(note, 'utf8')).includes('A native Mermaid caption'))
+    mark('native-mermaid-caption-authoring-through-real-block-menu')
+    const validFigure = writeMarkdownCaptionEnvelope(mermaidFence, caption)
     const mermaidDocument = `${head}# Mermaid caption\n\n${validFigure}\n`
     await js(`await window.captionFixture.replace(${JSON.stringify(mermaidDocument)}); return true`)
     assert.equal(readMarkdownCodeCaptions(await readFile(note, 'utf8')).length, 1)
