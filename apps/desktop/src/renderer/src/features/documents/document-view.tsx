@@ -19,7 +19,7 @@
  * in a panel beside it, as the person's `propertiesLayout` says; the header's
  * toggle flips it.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import {
@@ -517,16 +517,25 @@ function DocumentEditor({
 
   handlers.current.pressThread = comments.pressThread
 
+  const applyEditorEditability = useCallback(
+    (value: boolean) => {
+      if (!editor || editor.isDestroyed) return
+      editor.setEditable(value)
+      configureRichTextVim(
+        editor.view,
+        store.get(vimCodeEditingAtom),
+        visibleRef.current && focusedRef.current,
+        () => editor.isEditable,
+      )
+    },
+    [editor, store],
+  )
+
   function freezeBatch(value: boolean) {
     batchFreeze.current = value
-    if (editor && !editor.isDestroyed)
-      editor.setEditable(
-        !value &&
-          !lockedRef.current &&
-          visibleRef.current &&
-          !frozen.current &&
-          !doneFreeze.current,
-      )
+    applyEditorEditability(
+      !value && !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
+    )
   }
 
   /** The document as it would be saved. */
@@ -612,7 +621,7 @@ function DocumentEditor({
         undefined,
         (value) => {
           frozen.current = value
-          editor?.setEditable(
+          applyEditorEditability(
             !value &&
               visibleRef.current &&
               !doneFreeze.current &&
@@ -621,7 +630,7 @@ function DocumentEditor({
           )
         },
       ),
-    [editor],
+    [editor, applyEditorEditability],
   )
 
   // Leaving the document writes what is pending, and leaves what it showed
@@ -702,7 +711,7 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(
+    applyEditorEditability(
       !locked &&
         !upgradePending &&
         visible &&
@@ -710,7 +719,7 @@ function DocumentEditor({
         !doneFreeze.current &&
         !batchFreeze.current,
     )
-  }, [editor, locked, upgradePending, visible])
+  }, [applyEditorEditability, editor, locked, upgradePending, visible, focused, vimEnabled])
 
   // A finished edit clears its pill on its own. A finished vault app opens
   // when the document is still the tab in front and was never left while it
@@ -775,11 +784,6 @@ function DocumentEditor({
     setLinkOpen(true)
   }
 
-  useEffect(() => {
-    if (!editor || editor.isDestroyed) return
-    configureRichTextVim(editor.view, vimEnabled, visible && focused, () => editor.isEditable)
-  }, [editor, vimEnabled, visible, focused, locked, upgradePending, batchSubmitting])
-
   const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef, focused)
   findOpenRef.current = find !== null
 
@@ -794,7 +798,7 @@ function DocumentEditor({
     const currentVisit = activity.capture()
     doneInFlight.current = true
     doneFreeze.current = true
-    editor.setEditable(false)
+    applyEditorEditability(false)
     setDonePending(true)
     setDoneError(null)
     try {
@@ -823,7 +827,7 @@ function DocumentEditor({
       doneInFlight.current = false
       if (!editor.isDestroyed) {
         doneFreeze.current = false
-        editor.setEditable(
+        applyEditorEditability(
           !lockedRef.current && activity.displayed && !frozen.current && !batchFreeze.current,
         )
       }
@@ -885,10 +889,9 @@ function DocumentEditor({
         return next
       })
       upgradeInFlight.current = false
-      if (editor && !editor.isDestroyed)
-        editor.setEditable(
-          !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
-        )
+      applyEditorEditability(
+        !lockedRef.current && visibleRef.current && !frozen.current && !doneFreeze.current,
+      )
     }
   }
   const canStartChat = useAtomValue(canStartConversationAtom)
