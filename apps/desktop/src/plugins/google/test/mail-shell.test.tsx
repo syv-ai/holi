@@ -21,6 +21,7 @@ const draftBodyMock = vi.fn()
 const markReadMock = vi.fn()
 const starMock = vi.fn()
 const mailMarkersMock = vi.fn()
+const setMailMarkerMock = vi.fn()
 const archiveMock = vi.fn()
 const trashMock = vi.fn()
 const useAccountMock = vi.fn()
@@ -68,6 +69,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   mailMarkerAnnotations: (p) => mailMarkersMock(p),
   mailMarkerPreferences: () => ({ enabledOrder: ['yellow-star'] }),
   setMailMarkerPreferences: () => ({ ok: true }),
+  setMailMarker: (p) => setMailMarkerMock(p),
   archive: (p) => archiveMock(p),
   trash: (p) => trashMock(p),
   imageSenders: () => [],
@@ -169,6 +171,7 @@ beforeEach(() => {
   markReadMock.mockReset().mockResolvedValue({ ok: true })
   starMock.mockReset().mockResolvedValue({ ok: true })
   mailMarkersMock.mockReset().mockResolvedValue({})
+  setMailMarkerMock.mockReset().mockResolvedValue({ ok: true })
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
   useAccountMock.mockReset().mockImplementation(async ({ sub }: { sub: string }) => {
@@ -409,19 +412,22 @@ test('archive takes the thread out at once and offers Undo', async () => {
   )
 })
 
-test('a refused star reverts and says why', async () => {
+test('a refused primary marker reconciles the star and says why', async () => {
   const user = userEvent.setup()
-  starMock.mockRejectedValue(new Error('Insufficient permission'))
+  setMailMarkerMock.mockRejectedValue(new Error('Insufficient permission'))
   render(<MailShell />)
   await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
 
-  await user.click(await screen.findByRole('button', { name: 'Star thread' }))
+  const primary = within(screen.getByRole('toolbar', { name: 'Thread actions' })).getByRole(
+    'button',
+    {
+      name: 'Star thread',
+    },
+  )
+  await user.click(primary)
 
   expect(await screen.findByRole('alert')).toHaveTextContent(/Reconnect Google/)
-  expect(screen.getByRole('button', { name: 'Star thread' })).toHaveAttribute(
-    'aria-pressed',
-    'false',
-  )
+  expect(primary).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('drafts come from Gmail and say so when there are none', async () => {

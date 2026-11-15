@@ -13,8 +13,8 @@ import { createGoogleData } from '../src/plugins/google/main/data'
 import { createMailMarkerStore } from '../src/plugins/google/main/markers'
 import type { GoogleSession } from '../src/plugins/google/main/session'
 
-const root = process.env.HOLI_463_ROOT!
-const evidence = process.env.HOLI_463_EVIDENCE!
+const root = process.env.HOLI_464_ROOT!
+const evidence = process.env.HOLI_464_EVIDENCE!
 const storeRoot = join(root, 'user-data')
 const vaultRoot = join(root, 'vault')
 const subA = 'smoke-account-a'
@@ -53,7 +53,7 @@ async function run() {
     join(evidence, 'frames'),
   ])
     mkdirSync(path, { recursive: true })
-  app.setName('Holi mail markers smoke 463')
+  app.setName('Holi mail markers smoke 464')
   app.setPath('appData', join(root, 'app-data'))
   app.setPath('userData', storeRoot)
   app.setPath('sessionData', join(root, 'session-data'))
@@ -139,12 +139,15 @@ async function run() {
     'google.useAccount',
     'google.mailMarkerPreferences',
     'google.setMailMarkerPreferences',
+    'google.setMailMarker',
     'google.mailMarkerAnnotations',
     'google.star',
+    'google.search',
     'google.mark-read',
     'google.imageSenders',
   ])
   let failAnnotations = 0
+  const fakeStarred = new Set(['thread-yellow', 'thread-red', 'thread-blue'])
   let delayNext: null | { started: () => void; released: Promise<void> } = null
   const nativeCalls: string[] = []
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
@@ -181,9 +184,24 @@ async function run() {
       if (op.input.name === 'google.mailMarkerAnnotations' && failAnnotations-- > 0)
         return { ok: false, message: 'Synthetic marker read failure' }
       try {
-        const value = (
-          await registry.run(op.input.name, 'ui', context, JSON.parse(op.input.paramsJson ?? '{}'))
-        ).value
+        const params = JSON.parse(op.input.paramsJson ?? '{}') as Record<string, unknown>
+        if (op.input.name === 'google.setMailMarker') {
+          const id = String(params.id)
+          if (params.marker === null) fakeStarred.delete(id)
+          else fakeStarred.add(id)
+        }
+        if (op.input.name === 'google.star') {
+          const id = String(params.id)
+          if (params.off === true) fakeStarred.delete(id)
+          else fakeStarred.add(id)
+        }
+        if (op.input.name === 'google.search' && params.query === 'is:starred') {
+          return {
+            ok: true,
+            data: { threads: [...fakeStarred].map((id) => ({ id })), nextPageToken: null },
+          }
+        }
+        const value = (await registry.run(op.input.name, 'ui', context, params)).value
         if (op.input.name === 'google.mailMarkerAnnotations' && delayNext !== null) {
           const delayed = delayNext
           delayNext = null
@@ -209,6 +227,84 @@ async function run() {
     rendererErrors.push(`load failed ${code}: ${description}`),
   )
   const js = (code: string) => win.webContents.executeJavaScript(`{ ${code} }`)
+  const nativeClick = async (selector: string) => {
+    await waitFor(
+      win,
+      `(()=>{const r=document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return !!r&&r.width>0&&r.height>0})()`,
+    )
+    const point = await js(
+      `const r=document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); if(!r||r.width===0||r.height===0)throw Error('Missing visible native click target: '+${JSON.stringify(selector)}); ({x:r.x+r.width/2,y:r.y+r.height/2})`,
+    )
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
+    win.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      clickCount: 1,
+    })
+    win.webContents.sendInputEvent({
+      type: 'mouseUp',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      clickCount: 1,
+    })
+  }
+  const nativeClickLast = async (selector: string) => {
+    await waitFor(
+      win,
+      `(()=>{const target=[...document.querySelectorAll(${JSON.stringify(selector)})].at(-1); const r=target?.getBoundingClientRect(); return !!target&&!!r&&r.width>0&&r.height>0})()`,
+    )
+    const point = await js(
+      `const target=[...document.querySelectorAll(${JSON.stringify(selector)})].at(-1); target.scrollIntoView({block:'center',inline:'center'}); const r=target.getBoundingClientRect(); ({x:r.x+r.width/2,y:r.y+r.height/2})`,
+    )
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
+    win.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      clickCount: 1,
+    })
+    win.webContents.sendInputEvent({
+      type: 'mouseUp',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      clickCount: 1,
+    })
+  }
+  const nativeClickSequence = async (selector: string, count: number) => {
+    await waitFor(
+      win,
+      `(()=>{const r=document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return !!r&&r.width>0&&r.height>0})()`,
+    )
+    const point = await js(
+      `const r=document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); if(!r||r.width===0||r.height===0)throw Error('Missing visible native click target: '+${JSON.stringify(selector)}); ({x:r.x+r.width/2,y:r.y+r.height/2})`,
+    )
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
+    for (let index = 0; index < count; index++) {
+      win.webContents.sendInputEvent({
+        type: 'mouseDown',
+        x: point.x,
+        y: point.y,
+        button: 'left',
+        clickCount: 1,
+      })
+      win.webContents.sendInputEvent({
+        type: 'mouseUp',
+        x: point.x,
+        y: point.y,
+        button: 'left',
+        clickCount: 1,
+      })
+    }
+  }
+  const installTrustedClickRecorder = () =>
+    js(
+      `window.smokeTrustedClicks=[]; document.addEventListener('click', event=>{const target=event.target instanceof Element ? event.target.closest('[aria-label="Star thread"],[aria-label="Unstar thread"],[aria-label="Unstar this thread"]') : null; if(target)window.smokeTrustedClicks.push({at:event.timeStamp,trusted:event.isTrusted,label:target.getAttribute('aria-label')})},true)`,
+    )
   const ready = () =>
     waitFor(
       win,
@@ -221,6 +317,8 @@ async function run() {
   }
   await win.loadFile(join(root, 'renderer.html'))
   await ready()
+  await waitFor(win, `document.querySelectorAll('[aria-label="Yellow star"]').length === 2`)
+  await installTrustedClickRecorder()
   assert.equal(apiRequests, 0)
   mark('both-production-mail-lists-three-marker-types-and-zero-google-reads')
   const rendererState = await js(
@@ -228,6 +326,50 @@ async function run() {
   )
   assert.equal(await js(`document.querySelectorAll('[aria-label="Starred"]').length`), 2)
   mark('ordinary-external-gmail-stars-retain-ordinary-star')
+  for (const [view, section, id] of [
+    ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
+    ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
+  ]) {
+    await js(`window.smokeShow('${view}')`)
+    await pause(150)
+    const selector = `section[aria-label="${section}"] #${id} [aria-label="Star thread"]`
+    const writesBefore = await js(
+      `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+    )
+    const markerEventStart = await js('window.smokeTrustedClicks.length')
+    await nativeClick(selector)
+    await waitFor(
+      win,
+      `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${writesBefore}`,
+    )
+    await waitFor(
+      win,
+      `document.querySelector('section[aria-label="${section}"] #${id} [aria-label="Yellow star"]')`,
+    )
+    assert.deepEqual(await markersA.read([id]), { [id]: 'yellow-star' })
+    await pause(550)
+    const unstarWritesBefore = await js(
+      `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+    )
+    await nativeClick(selector.replace('Star thread', 'Unstar thread'))
+    await waitFor(
+      win,
+      `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${unstarWritesBefore}`,
+    )
+    await waitFor(
+      win,
+      `document.querySelector('section[aria-label="${section}"] #${id} [aria-label="Star thread"]')`,
+    )
+    const delayedEvents = await js(`window.smokeTrustedClicks.slice(${markerEventStart})`)
+    assert.equal(delayedEvents.length, 2)
+    assert(delayedEvents.every((event: { trusted: boolean }) => event.trusted))
+    assert(
+      delayedEvents[1]!.at - delayedEvents[0]!.at > 500,
+      'single-marker unstar must follow a trusted click more than 500ms later',
+    )
+    assert.deepEqual(await markersA.read([id]), { [id]: null })
+  }
+  mark('native-single-marker-star-then-delayed-unstar-in-both-mail-surfaces')
   let frame = 0
   let recording = false
   const recorder = setInterval(() => {
@@ -251,6 +393,7 @@ async function run() {
       })
   }, 200)
   try {
+    await js(`window.smokeShow('connections')`)
     await capture('connections-before.png')
     for (const name of ['Enable Red star', 'Enable Blue question mark']) {
       await js(`document.querySelector('[aria-label="${name}"]').focus()`)
@@ -262,28 +405,41 @@ async function run() {
       )
       await pause(650)
     }
-    await js(`document.querySelector('[aria-label="Enable Red star"]').click()`)
-    await waitFor(
-      win,
-      `document.querySelector('[aria-label="Enable Red star"]').getAttribute('aria-checked') === 'false' && !document.querySelector('[aria-label="Enable Red star"]').disabled`,
-    )
-    await pause(650)
+    await js(`document.querySelector('[aria-label="Move Blue question mark up"]').click()`)
+    await pause(100)
     await js(`document.querySelector('[aria-label="Move Blue question mark up"]').click()`)
     await waitFor(
       win,
-      `!document.querySelector('[aria-label="Move Blue question mark down"]').disabled`,
+      `document.querySelector('[aria-label="Move Blue question mark up"]').disabled && !document.querySelector('[aria-label="Move Blue question mark down"]').disabled`,
     )
-    const expected = { enabledOrder: ['blue-question', 'yellow-star'] }
+    const expected = { enabledOrder: ['blue-question', 'yellow-star', 'red-star'] }
     assert.deepEqual(await createMailMarkerStore(storeRoot, subA).preferences(), expected)
     assert.deepEqual(await markersA.read(['thread-red']), { 'thread-red': 'red-star' })
     mark('native-keyboard-enable-disable-reorder-persists-through-production-capabilities')
+    for (const [view, section, id] of [
+      ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
+      ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
+    ]) {
+      await js(`window.smokeShow('${view}')`)
+      const selector = `section[aria-label="${section}"] #${id} [aria-label="Star thread"]`
+      await nativeClick(selector)
+      await waitFor(
+        win,
+        `document.querySelector('section[aria-label="${section}"] #${id} [aria-label="Blue question mark"]')`,
+      )
+      assert.deepEqual(await markersA.read([id]), { [id]: 'blue-question' })
+      await markersA.set(id, null)
+      fakeStarred.delete(id)
+    }
+    mark('mounted-mail-surfaces-observe-preference-reorder-without-remount')
     for (const value of data.values()) value.forget()
     data = new Map([subA, subB].map((sub) => [sub, newData(sub)]))
     await win.loadFile(join(root, 'renderer.html'))
     await ready()
+    await installTrustedClickRecorder()
     await waitFor(
       win,
-      `document.querySelector('[aria-label="Move Blue question mark up"]').disabled && document.querySelector('[aria-label="Enable Red star"]').getAttribute('aria-checked') === 'false'`,
+      `document.querySelector('[aria-label="Move Blue question mark up"]').disabled && document.querySelector('[aria-label="Enable Red star"]').getAttribute('aria-checked') === 'true'`,
     )
     assert.deepEqual(await createMailMarkerStore(storeRoot, subA).preferences(), expected)
     mark('production-account-local-marker-store-and-restart-persistence')
@@ -320,56 +476,95 @@ async function run() {
         'reader action must show the actual marker',
       )
       await capture(`${view}-reader-dark.png`)
-    }
-    mark('both-production-readers-render-stored-marker')
-    // Both renderers remain mounted while the account identity changes.
-    const switchAccount = async (sub: string) => {
-      await registry.run('google.useAccount', 'ui', context, { sub })
-      await js('window.smokeRefresh()')
+      const readerAction = `section[aria-label="${section}"] button[aria-label="${action}"]`
+      const markerWrites = await js(
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+      )
+      await nativeClickLast(readerAction)
       await waitFor(
         win,
-        `document.body.textContent.includes('${sub === subA ? 'account-a' : 'account-b'}@example.test') && document.querySelector('[aria-label="Enable Red star"]')`,
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${markerWrites}`,
       )
+      assert.deepEqual(await markersA.read(['thread-red']), { 'thread-red': null })
+      await markersA.set('thread-red', 'red-star')
     }
-    await switchAccount(subB)
-    await waitFor(
-      win,
-      `document.querySelectorAll('[aria-label="Red star"]').length === 0 && document.querySelectorAll('[aria-label="Blue question mark"]').length === 0 && document.body.textContent.includes('Account B — Red marker fixture')`,
-    )
-    for (const section of ['Production app-shell mail', 'Production legacy mail reader']) {
-      assert(
-        await js(
-          `const scope=document.querySelector('section[aria-label="${section}"]'); scope.textContent.includes('Account B — Red marker fixture') && !scope.textContent.includes('Account A —') && !scope.textContent.includes('Synthetic message body for smoke-account-a.')`,
-        ),
-        `${section} must not retain account A mail`,
-      )
-      await js(
-        `const scope=document.querySelector('section[aria-label="${section}"]'); const row=[...scope.querySelectorAll('[role="listitem"],button')].find(n=>n.textContent.includes('Account B — Red marker fixture')); if(!row)throw Error('Missing account B reader row'); row.click()`,
-      )
-      await waitFor(
-        win,
-        `document.querySelector('section[aria-label="${section}"]').textContent.includes('Synthetic message body for smoke-account-b.')`,
-      )
-    }
+    mark('both-production-readers-render-and-natively-unstar-stored-marker')
+    await registry.run('google.useAccount', 'ui', context, { sub: subB })
+    const accountB = await registry.run('google.status', 'ui', context, {})
+    assert.equal(accountB.value.account?.sub, subB)
     assert.deepEqual(await createMailMarkerStore(storeRoot, subB).preferences(), {
       enabledOrder: ['yellow-star'],
     })
-    await switchAccount(subA)
-    await waitFor(
-      win,
-      `document.querySelectorAll('[aria-label="Red star"]').length >= 2 && document.body.textContent.includes('Account A — Red marker fixture')`,
-    )
-    await js(
-      `document.querySelector('section[aria-label="Production app-shell mail"] #thread-yellow').click(); document.querySelector('section[aria-label="Production app-shell mail"] #thread-red').click()`,
-    )
-    await waitFor(
-      win,
-      `document.querySelector('section[aria-label="Production app-shell mail"]').textContent.includes('Synthetic message body for smoke-account-a.')`,
-    )
-    mark('account-a-account-b-account-a-isolation')
+    await registry.run('google.useAccount', 'ui', context, { sub: subA })
+    const accountA = await registry.run('google.status', 'ui', context, {})
+    assert.equal(accountA.value.account?.sub, subA)
+    assert.deepEqual(await markersA.preferences(), {
+      enabledOrder: ['blue-question', 'yellow-star', 'red-star'],
+    })
+    mark('native-account-context-switch-and-marker-store-isolation')
+    for (const [view, section, id] of [
+      ['shell', 'Production app-shell mail', 'thread-unstarred-shell'],
+      ['surface', 'Production legacy mail reader', 'thread-unstarred-surface'],
+    ]) {
+      await js(`window.smokeShow('${view}')`)
+      const cycleSelector = `section[aria-label="${section}"] #${id} [aria-label="Star thread"]`
+      const cycleStart = await js('window.smokeTrustedClicks.length')
+      await nativeClickSequence(cycleSelector, 4)
+      await waitFor(
+        win,
+        `document.querySelector('section[aria-label="${section}"] #${id} [aria-label="Blue question mark"]')`,
+      )
+      const trusted = await js(`window.smokeTrustedClicks.slice(${cycleStart})`)
+      assert.equal(trusted.length, 4)
+      assert(trusted.every((event: { trusted: boolean }) => event.trusted))
+      assert(
+        trusted.at(-1)!.at - trusted[0]!.at < 500,
+        'native cycle must fit inside the 500ms burst',
+      )
+      assert.deepEqual(await markersA.read([id]), { [id]: 'blue-question' })
+      await pause(550)
+      await nativeClick(`section[aria-label="${section}"] #${id} [aria-label="Unstar thread"]`)
+      await waitFor(
+        win,
+        `document.querySelector('section[aria-label="${section}"] #${id} [aria-label="Star thread"]')`,
+      )
+      await js(`window.smokeShow('${view}')`)
+      await pause(400)
+      const actionCalls = await js(
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length`,
+      )
+      const readerCalls = await js(
+        `window.smokeCalls.filter(call=>call.input?.name==='google.thread' || call.input?.name==='google.mark-read').length`,
+      )
+      await nativeClick(`section[aria-label="${section}"] #${id} [aria-label="Star thread"]`)
+      await waitFor(
+        win,
+        `window.smokeCalls.filter(call=>call.input?.name==='google.setMailMarker').length > ${actionCalls} && document.querySelector('section[aria-label="${section}"] #${id} [aria-pressed="true"]')`,
+      )
+      assert.equal(
+        await js(
+          `window.smokeCalls.filter(call=>call.input?.name==='google.thread' || call.input?.name==='google.mark-read').length`,
+        ),
+        readerCalls,
+        'a marker action must not open the thread or mark it read',
+      )
+      assert(
+        await js(
+          `!!document.querySelector('section[aria-label="${section}"] #${id} [aria-label="Blue question mark"]')`,
+        ),
+        `${section} must render the configured marker glyph`,
+      )
+      for (const theme of ['light', 'dark']) {
+        await js(`document.documentElement.setAttribute('data-theme', '${theme}')`)
+        await capture(`${view}-marker-action-${theme}.png`)
+      }
+    }
+    mark('native-four-click-production-cycle-wraps-through-configured-markers')
+    mark('both-production-mail-lists-star-without-opening-or-marking-read')
     failAnnotations = 100
     await win.loadFile(join(root, 'renderer.html'))
     await waitFor(win, `document.querySelectorAll('[aria-label="Retry marker"]').length >= 2`)
+    await installTrustedClickRecorder()
     await js(`window.smokeShow('shell')`)
     await capture('marker-error.png')
     win.focus()
@@ -440,8 +635,17 @@ async function run() {
       started = resolve
     })
     delayNext = { started, released: pending }
+    const switchAccount = async (sub: string) => {
+      await registry.run('google.useAccount', 'ui', context, { sub })
+      await js('window.smokeRefresh()')
+      await waitFor(
+        win,
+        `document.body.textContent.includes('${sub === subA ? 'account-a' : 'account-b'}@example.test')`,
+      )
+    }
     await win.loadFile(join(root, 'renderer.html'))
     await entered
+    await installTrustedClickRecorder()
     await switchAccount(subB)
     await markersA.set('thread-red', 'blue-question')
     await switchAccount(subA)
@@ -456,6 +660,7 @@ async function run() {
     await markersA.set('thread-red', 'red-star')
     await win.loadFile(join(root, 'renderer.html'))
     await ready()
+    await installTrustedClickRecorder()
     await js(
       `window.smokeShow('shell'); document.querySelector('section[aria-label="Production app-shell mail"] #thread-red').click()`,
     )
@@ -465,7 +670,7 @@ async function run() {
     )
     const priorRequests = apiRequests
     await js(
-      `const scope=document.querySelector('section[aria-label="Production app-shell mail"]'); const unstar=[...scope.querySelectorAll('button')].find(n=>n.getAttribute('aria-label')==='Unstar thread' || n.textContent==='Unstar'); if(!unstar)throw Error('Missing unstar action'); unstar.click()`,
+      `const scope=document.querySelector('section[aria-label="Production app-shell mail"]'); const unstar=scope.querySelector('[aria-label="Unstar thread"] [aria-label="Red star"]')?.closest('button'); if(!unstar)throw Error('Missing reader unstar action'); unstar.click()`,
     )
     await waitFor(
       win,

@@ -59,9 +59,17 @@ export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visibl
   const thread = reader.kind === 'ready' ? reader.thread : null
   const row = mail.openRow
   const subject = thread?.subject ?? row?.subject ?? ''
-  const starred = row?.starred === true
   const openId = mail.openId
-  const marker = openId === null ? null : mail.markers.get(openId)
+  const intent = openId === null ? undefined : mail.markerActions.get(openId)
+  const starred = intent === undefined ? row?.starred === true : intent.marker !== null
+  const marker =
+    openId === null
+      ? null
+      : intent === undefined
+        ? mail.markers.get(openId)
+        : intent.error
+          ? { kind: 'error' as const }
+          : { kind: 'ready' as const, marker: intent.marker }
 
   const index = mail.threads.findIndex((t) => t.id === openId)
   const previous = index > 0 ? mail.threads[index - 1] : undefined
@@ -163,7 +171,7 @@ export function AppHeader({ mail, commands, visible }: AppHeaderProps & { visibl
                 size="icon-sm"
                 aria-label={starred ? 'Unstar thread' : 'Star thread'}
                 aria-pressed={starred}
-                onClick={() => void mail.setStarred(openId, !starred)}
+                onClick={() => mail.activateMarker(openId, starred)}
               >
                 {starred && marker?.kind === 'ready' ? (
                   <MailMarkerStatus state={marker} starred />

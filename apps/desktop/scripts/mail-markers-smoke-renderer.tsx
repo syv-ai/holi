@@ -80,6 +80,18 @@ const summaries = [
   },
 ]
 summaries.push({ ...summaries[0]!, id: 'thread-ordinary', subject: 'External Gmail star fixture' })
+summaries.push({
+  ...summaries[0]!,
+  id: 'thread-unstarred-shell',
+  subject: 'Unstarred marker fixture',
+  starred: false,
+})
+summaries.push({
+  ...summaries[0]!,
+  id: 'thread-unstarred-surface',
+  subject: 'Unstarred legacy marker fixture',
+  starred: false,
+})
 
 const invoke = async (op: {
   path: string
@@ -102,6 +114,7 @@ const invoke = async (op: {
       'google.useAccount',
       'google.mailMarkerPreferences',
       'google.setMailMarkerPreferences',
+      'google.setMailMarker',
       'google.mailMarkerAnnotations',
       'google.star',
       'google.mark-read',

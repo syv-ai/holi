@@ -104,6 +104,7 @@ import { explainWriteFailure, isDisconnected } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
 import { useGoogleAccount } from './account'
 import { useMailMarkers } from './use-mail-markers'
+import { useMailMarkerActions } from './use-mail-marker-actions'
 import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
 
 interface ThreadSummary {
@@ -268,6 +269,26 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       ...(list.kind === 'ready' ? list.threads.map((thread) => thread.id) : []),
       ...(openId === null ? [] : [openId]),
     ],
+  })
+  const markerActions = useMailMarkerActions({
+    remote,
+    accountSub,
+    activeThreadId: openId,
+    reconcile: (id) => markers.invalidate([id]),
+    onFailure: (cause) => setWriteError(explainWriteFailure(cause)),
+    onChange: (id, state) => {
+      listGeneration.current++
+      setList((previous) =>
+        previous.kind === 'ready'
+          ? {
+              ...previous,
+              threads: previous.threads.map((thread) =>
+                thread.id === id ? { ...thread, starred: state.starred } : thread,
+              ),
+            }
+          : previous,
+      )
+    },
   })
   const openNote = useSetAtom(openDocumentAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
@@ -673,6 +694,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     )
 
   const setStarred = async (id: string, starred: boolean) => {
+    markerActions.invalidate(id)
     const result = await write(
       () => call((r) => googleCap.star(r, { id, off: !starred })),
       (threads) => threads.map((t) => (t.id === id ? { ...t, starred } : t)),
@@ -839,6 +861,17 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
    * fallback for a thread the current list does not contain.
    */
   const openRow = threads.find((thread) => thread.id === openId) ?? openSummary
+  const openIntent = openId === null ? undefined : markerActions.get(openId)
+  const openStarred =
+    openIntent === undefined ? openRow?.starred === true : openIntent.marker !== null
+  const openMarker =
+    openIntent === undefined
+      ? openId === null
+        ? { kind: 'loading' as const }
+        : markers.get(openId)
+      : openIntent.error
+        ? { kind: 'error' as const }
+        : { kind: 'ready' as const, marker: openIntent.marker }
   const renderedComposeIdentity = composeGate.current()?.identity
 
   const closeRenderedComposer = (): void => {
@@ -994,25 +1027,46 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
             )}
             {!showDrafts &&
               list.kind === 'ready' &&
-              list.threads.map((thread) => (
-                <ThreadMenu
-                  key={thread.id}
-                  thread={thread}
-                  actions={threadActions}
-                  onOpen={() => openThread(thread)}
-                >
-                  <ThreadRow
-                    thread={thread}
-                    marker={markers.get(thread.id)}
-                    onRetryMarker={() => markers.invalidate([thread.id])}
-                    active={openId === thread.id}
-                    onOpen={() => openThread(thread)}
-                    selected={live.has(thread.id)}
-                    onToggle={({ extend }) => toggleSelected(thread.id, extend)}
-                    showCheckbox={live.size > 0}
-                  />
-                </ThreadMenu>
-              ))}
+              list.threads.map((thread) => {
+                const intent = markerActions.get(thread.id)
+                const displayed =
+                  intent === undefined ? thread : { ...thread, starred: intent.starred }
+                const marker =
+                  intent === undefined
+                    ? markers.get(thread.id)
+                    : intent.error
+                      ? { kind: 'error' as const }
+                      : { kind: 'ready' as const, marker: intent.marker }
+                return (
+                  <ThreadMenu
+                    key={thread.id}
+                    thread={displayed}
+                    actions={threadActions}
+                    onOpen={() => openThread(displayed)}
+                  >
+                    <ThreadRow
+                      thread={displayed}
+                      marker={marker}
+                      onRetryMarker={() => {
+                        markers.invalidate([thread.id])
+                        void markerActions.retry(thread.id)
+                      }}
+                      onPrimaryMarker={() =>
+                        markerActions.activate(
+                          thread.id,
+                          displayed.starred,
+                          marker.kind === 'ready' ? marker.marker : null,
+                        )
+                      }
+                      active={openId === thread.id}
+                      onOpen={() => openThread(displayed)}
+                      selected={live.has(thread.id)}
+                      onToggle={({ extend }) => toggleSelected(thread.id, extend)}
+                      showCheckbox={live.size > 0}
+                    />
+                  </ThreadMenu>
+                )
+              })}
             {!showDrafts && list.kind === 'ready' && list.nextPageToken !== null && (
               <div className="px-4 py-2">
                 {/* A button, not an infinite scroller: see `loadMore`. */}
@@ -1083,10 +1137,10 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                 <h3 className="min-w-0 flex-1 text-sm font-medium text-pretty break-words">
                   {open.subject}
                 </h3>
-                {markers.get(openId).kind !== 'ready' && (
+                {openMarker.kind !== 'ready' && (
                   <MailMarkerStatus
-                    state={markers.get(openId)}
-                    starred={openRow?.starred === true}
+                    state={openMarker}
+                    starred={openStarred}
                     onRetry={() => markers.invalidate([openId])}
                   />
                 )}
@@ -1152,12 +1206,19 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                   <Trash2 className="size-3.5" />
                 </IconButton>
                 <IconButton
-                  label={openRow?.starred === true ? 'Unstar' : 'Star'}
-                  aria-label={openRow?.starred === true ? 'Unstar this thread' : 'Star this thread'}
-                  onClick={() => void setStarred(open.id, openRow?.starred !== true)}
+                  label={openStarred ? 'Unstar' : 'Star'}
+                  aria-label={openStarred ? 'Unstar this thread' : 'Star this thread'}
+                  onClick={() => {
+                    const status = openMarker
+                    markerActions.activate(
+                      open.id,
+                      openStarred,
+                      status.kind === 'ready' ? status.marker : null,
+                    )
+                  }}
                 >
-                  {openRow?.starred === true && markers.get(openId).kind === 'ready' ? (
-                    <MailMarkerStatus state={markers.get(openId)} starred />
+                  {openStarred && openMarker.kind === 'ready' ? (
+                    <MailMarkerStatus state={openMarker} starred />
                   ) : (
                     <Star className="size-3.5" aria-hidden="true" />
                   )}
@@ -1697,6 +1758,7 @@ function ListFooter({
 /** Coarse on purpose: nobody needs mail sync time to the second. `Date.now()`
  *  is the real clock here, the age of a real sync, not placeholder data. */
 function ago(iso: string): string {
+  // The wall clock labels the last sync's age; it does not schedule or animate rendering.
   const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
   if (seconds < 60) return 'just now'
   const minutes = Math.round(seconds / 60)
@@ -1717,6 +1779,7 @@ function ThreadRow({
   thread,
   marker,
   onRetryMarker,
+  onPrimaryMarker,
   active,
   onOpen,
   selected,
@@ -1726,6 +1789,7 @@ function ThreadRow({
   thread: ThreadSummary
   marker: ReturnType<ReturnType<typeof useMailMarkers>['get']>
   onRetryMarker: () => void
+  onPrimaryMarker: () => void
   active: boolean
   onOpen: () => void
   selected: boolean
@@ -1741,6 +1805,7 @@ function ThreadRow({
 
   return (
     <div
+      id={thread.id}
       className={`motion-respond group/row flex items-stretch border-b border-divider ${
         // The chrome rows' fill scale (docs/ui-system.md, Rules), not
         // `secondary`: a label badge is `secondary`, and on a row of the same
@@ -1866,6 +1931,20 @@ function ThreadRow({
             )}
           </span>
         </span>
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={thread.starred ? 'Unstar thread' : 'Star thread'}
+        aria-pressed={thread.starred}
+        onClick={(event) => {
+          event.stopPropagation()
+          onPrimaryMarker()
+        }}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <Star className="size-3.5" aria-hidden="true" />
       </Button>
     </div>
   )
