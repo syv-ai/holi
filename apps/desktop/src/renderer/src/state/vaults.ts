@@ -393,14 +393,20 @@ export function subscribeToVault(
     const id = store.get(documentOpenIntentAtom) + 1
     store.set(documentOpenIntentAtom, id)
     const revision = store.get(activeRemoteRevisionAtom)
-    let openRequest = store.get(openRequestAtom)
     const navigate = async (): Promise<void> => {
-      const pending = store.set(openVaultAtom, {
-        remote: request.remote,
-        documentIntentId: id,
-      })
-      openRequest = store.get(openRequestAtom)
-      const landed = await pending
+      // A ready same-vault notification only needs to dispatch its event. Reopening
+      // would tear down plugin vault state (including retained agent terminals)
+      // before the inbox can focus the existing session. Still advance the intent
+      // above so this notification supersedes older delayed opens.
+      const alreadyReady =
+        store.get(activeRemoteAtom) === request.remote &&
+        store.get(openedRemoteAtom) === request.remote
+      const landed = alreadyReady
+        ? true
+        : await store.set(openVaultAtom, {
+            remote: request.remote,
+            documentIntentId: id,
+          })
       if (
         !landed ||
         store.get(documentOpenIntentAtom) !== id ||
@@ -426,7 +432,7 @@ export function subscribeToVault(
       })
       void store
         .set(restoreSelectedVaultAtom, {
-          request: openRequest,
+          request: store.get(openRequestAtom),
           revision,
           documentIntentId: id,
         })

@@ -109,7 +109,7 @@ contextBridge.exposeInMainWorld('agent542',{
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   assert.equal(result.electron.split('.')[0], '43')
-  assert.equal(result.checks.length, 18)
+  assert.equal(result.checks.length, 20)
   for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)
   assert.deepEqual(result.networkDenied, [])
   assert.deepEqual(result.rendererErrors, [])

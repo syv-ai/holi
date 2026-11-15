@@ -94,6 +94,34 @@ function observeReady() {
 }
 
 describe('vaults', () => {
+  it('dispatches ready same-vault notification without reopening the plugin vault', async () => {
+    holi = installFakeHoli((op) => (op.path === 'vaults.open' ? snapshot() : undefined))
+    const store = createStore()
+    const handled = atom<string | null>(null)
+    store.set(activeRemoteAtom, 'syv-ai/alpha')
+    store.set(openedRemoteAtom, 'syv-ai/alpha')
+    unsubscribe = subscribeToVault(store, [
+      {
+        info: { id: 'agent', label: 'Agent', default: true },
+        events: {
+          'inbox-open': ({ remote, payload }, eventStore) => {
+            eventStore.set(handled, `${remote}:${(payload as { session: string }).session}`)
+          },
+        },
+      },
+    ])
+
+    holi.pushNavigate({
+      remote: 'syv-ai/alpha',
+      plugin: 'agent',
+      name: 'inbox-open',
+      payload: { session: 'existing-session' },
+    })
+    await vi.waitFor(() => expect(store.get(handled)).toBe('syv-ai/alpha:existing-session'))
+    expect(holi.calls.filter((call) => call.path === 'vaults.open')).toHaveLength(0)
+    expect(store.get(openedRemoteAtom)).toBe('syv-ai/alpha')
+  })
+
   it('switches vaults then invokes the supplied plugin event handler locally', async () => {
     holi = installFakeHoli((op) => (op.path === 'vaults.open' ? snapshot() : undefined))
     const store = createStore()
@@ -146,7 +174,6 @@ describe('vaults', () => {
       payload: { session: 'p0123456789ab' },
     })
     await vi.waitFor(() => expect(error).toHaveBeenCalled())
-
     await vi.waitFor(() => expect(store.get(openedRemoteAtom)).toBe('syv-ai/origin'))
     expect(store.get(activeRemoteAtom)).toBe('syv-ai/origin')
     expect(holi.pluginSent).toEqual([])
@@ -181,7 +208,7 @@ describe('vaults', () => {
     })
     await vi.waitFor(() => expect(store.get(handled)).toBe('syv-ai/origin:p0123456789ab'))
 
-    expect(holi.calls).toEqual([{ path: 'vaults.open', input: { remote: 'syv-ai/origin' } }])
+    expect(holi.calls).toEqual([])
     expect(holi.pluginSent).toEqual([])
   })
 

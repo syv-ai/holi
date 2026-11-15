@@ -388,11 +388,19 @@ async function run() {
   assert.deepEqual(backendSpawns, [])
   mark('all-provider-row-and-closed-tab-matrix-zero-agent-open-and-zero-backend-spawns')
 
-  callbacks.get('Pi review')!()
-  await waitFor(win, `window.smoke542.state().navigationCount === 1`)
-  await assertSession('p0123456789ab', 'terminal-pi-a')
-  assert.equal((await state()).openedRemote, remoteA)
-  mark('same-vault-admitted-host-notice-callback-ipc-onNavigate-inboxEvents-session-focus')
+  for (const row of providers) {
+    const terminalId = terminalsFor(remoteA).find((terminal) => terminal.launchedFor === row.id)!.id
+    const beforeNavigation = (await state()).navigationCount
+    const beforeOpens = opens().length
+    const beforeVaultOpens = operations.filter((op) => op.path === 'vaults.open').length
+    callbacks.get(row.name)!()
+    await waitFor(win, `window.smoke542.state().navigationCount === ${beforeNavigation + 1}`)
+    await assertSession(row.id, terminalId)
+    assert.equal(opens().length, beforeOpens)
+    assert.equal(operations.filter((op) => op.path === 'vaults.open').length, beforeVaultOpens)
+    assert.equal((await state()).openedRemote, remoteA)
+    mark(`${row.provider}:same-vault-admitted-host-notice-callback-retains-terminal-and-focus`)
+  }
 
   await js(`window.smoke542.switchVault('${remoteB}')`)
   await waitFor(
@@ -418,7 +426,7 @@ async function run() {
   callbacks.get('Pi review')!()
   await waitFor(
     win,
-    `window.smoke542.state().navigationCount === 2 && window.smoke542.state().sessions.length === 3`,
+    `window.smoke542.state().navigationCount === ${providers.length + 1} && window.smoke542.state().sessions.length === 3`,
   )
   await assertSession('p0123456789ab', 'terminal-pi-a')
   const afterCross = await state()
