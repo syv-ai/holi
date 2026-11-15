@@ -6,10 +6,10 @@ import { act, render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, vimCodeEditingAtom } from '@/plugin-api'
 import type { PageInfo } from '../shared/page'
 import { BrowserSurface } from '../renderer/browser-surface'
-import { browserEvents, pagesAtom } from '../renderer/state'
+import { browserEvents, pagesAtom, vimModesAtom } from '../renderer/state'
 
 const run = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
@@ -57,6 +57,37 @@ const calls = (name: string) =>
     .map(([c]) => c as { name: string; paramsJson?: string })
     .filter((c) => c.name === name)
     .map((c) => ({ params: c.paramsJson === undefined ? undefined : JSON.parse(c.paramsJson) }))
+
+test('reports actual browser Vim mode and configures the active page from the machine preference', async () => {
+  const { store } = show([page()])
+  store.set(vimCodeEditingAtom, true)
+  act(() =>
+    browserEvents['vim-mode']!(
+      {
+        remote: 'syv/vault',
+        payload: { id: 't1', nonce: 'doc-1', attachment: 'attach-1', revision: 3, mode: 'normal' },
+      },
+      store,
+    ),
+  )
+  expect(screen.getByLabelText('Vim normal mode')).toHaveTextContent('NORMAL')
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith(
+      'browser',
+      expect.objectContaining({
+        remote: 'syv/vault',
+        name: 'vim-config',
+        payload: expect.objectContaining({
+          id: 't1',
+          nonce: 'doc-1',
+          attachment: 'attach-1',
+          enabled: true,
+        }),
+      }),
+    ),
+  )
+  expect(store.get(vimModesAtom).t1?.mode).toBe('normal')
+})
 
 test('a page not open yet shows its skeleton', () => {
   show([])

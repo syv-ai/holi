@@ -340,16 +340,17 @@
     return { top: Math.round(page.scrollTop), atTop: page.scrollTop <= 0, atEnd }
   }
 
-  // Native textarea/input editing stays in this isolated world. The host only
-  // changes the bounded enabled flag; keystrokes are handled synchronously.
+  // Native textarea/input editing stays in this isolated world. The host
+  // configures one specific document and revisions only move forward.
+  const vimNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
   let vimEnabled = false
   let vimMode = 'insert'
   let vimRevision = 0
   let vimField = null
+  let verticalColumn = null
   const vimTypes = new Set(['text', 'search', 'url', 'tel'])
   const vimEligible = (el) =>
-    el instanceof HTMLTextAreaElement ||
-    (el instanceof HTMLInputElement && vimTypes.has(el.type))
+    el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && vimTypes.has(el.type))
   const eligibleNow = () =>
     vimEnabled &&
     vimField !== null &&
@@ -359,14 +360,75 @@
     !vimField.readOnly &&
     vimEligible(vimField) &&
     vimField.getRootNode() === document
-  const collapse = (el, at) => el.setSelectionRange(at, at)
-  const move = (el, at) => {
-    collapse(el, Math.max(0, Math.min(el.value.length, at)))
+  const graphemes = (value) => {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    return [...segmenter.segment(value)].map(({ index, segment }) => ({
+      index,
+      end: index + segment.length,
+      text: segment,
+    }))
   }
-  const lineStart = (value, at) => value.lastIndexOf('\\n', Math.max(0, at - 1)) + 1
+  const boundaries = (value) => [0, ...graphemes(value).map((part) => part.end)]
+  const previous = (value, at) =>
+    boundaries(value)
+      .filter((n) => n < at)
+      .at(-1) ?? 0
+  const next = (value, at) => boundaries(value).find((n) => n > at) ?? value.length
+  const move = (el, at) =>
+    el.setSelectionRange(
+      Math.max(0, Math.min(el.value.length, at)),
+      Math.max(0, Math.min(el.value.length, at)),
+    )
+  const lineStart = (value, at) => value.lastIndexOf('\n', Math.max(0, at - 1)) + 1
   const lineEnd = (value, at) => {
-    const end = value.indexOf('\\n', at)
+    const end = value.indexOf('\n', at)
     return end < 0 ? value.length : end
+  }
+  const firstNonblank = (value, at) => {
+    const start = lineStart(value, at)
+    const line = value.slice(start, lineEnd(value, at))
+    return start + (line.match(/^\s*/u)?.[0].length ?? 0)
+  }
+  const wordSegments = (value) =>
+    [...new Intl.Segmenter(undefined, { granularity: 'word' }).segment(value)].filter(
+      (part) => part.isWordLike,
+    )
+  const wordForward = (value, at) => {
+    const parts = wordSegments(value)
+    const current = parts.find((part) => part.index <= at && part.index + part.segment.length > at)
+    return (
+      parts.find((part) => part.index > at || (current && part.index > current.index))?.index ??
+      value.length
+    )
+  }
+  const wordBackward = (value, at) => {
+    const parts = wordSegments(value)
+    const current = parts.find((part) => part.index < at && part.index + part.segment.length > at)
+    return current?.index ?? parts.filter((part) => part.index < at).at(-1)?.index ?? 0
+  }
+  const wordEnd = (value, at) => {
+    const parts = wordSegments(value)
+    const part =
+      parts.find((item) => item.index <= at && item.index + item.segment.length > at) ??
+      parts.find((item) => item.index > at)
+    return part ? part.index + (boundaries(part.segment).at(-2) ?? 0) : at
+  }
+  const verticalMove = (target, at, direction) => {
+    const value = target.value
+    const start = lineStart(value, at)
+    const column = verticalColumn ?? graphemes(value.slice(start, at)).length
+    let adjacentStart
+    if (direction === 'down') {
+      const end = lineEnd(value, at)
+      if (end === value.length) return at
+      adjacentStart = end + 1
+    } else {
+      if (start === 0) return at
+      adjacentStart = lineStart(value, start - 1)
+    }
+    const end = lineEnd(value, adjacentStart)
+    const stops = boundaries(value.slice(adjacentStart, end))
+    return adjacentStart + (stops[Math.min(column, stops.length - 1)] ?? 0)
   }
   const onVimKey = (event) => {
     const target = event.target
@@ -375,13 +437,21 @@
     if (vimField !== target) {
       vimField = target
       vimMode = 'insert'
+      verticalColumn = null
     }
-    if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return
+    if (
+      event.isComposing ||
+      event.keyCode === 229 ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey
+    )
+      return
     if (vimMode === 'insert') {
       if (event.key === 'Escape') {
         event.preventDefault()
         vimMode = 'normal'
-        return
+        verticalColumn = null
       }
       return
     }
@@ -389,49 +459,117 @@
     const at = target.selectionStart ?? 0
     const end = target.selectionEnd ?? at
     const key = event.key
-    let next = at
-    if (key === 'i') vimMode = 'insert'
-    else if (key === 'a') { move(target, end); vimMode = 'insert' }
-    else if (key === 'I') { move(target, lineStart(value, at)); vimMode = 'insert' }
-    else if (key === 'A') { move(target, lineEnd(value, at)); vimMode = 'insert' }
-    else if (key === 'h') next = Math.max(0, at - 1)
-    else if (key === 'l') next = Math.min(value.length, at + 1)
-    else if (key === '0') next = lineStart(value, at)
-    else if (key === '^') next = lineStart(value, at) + (value.slice(lineStart(value, at), lineEnd(value, at)).match(/^\\s*/)?.[0].length ?? 0)
-    else if (key === '$') next = lineEnd(value, at)
-    else if (key === 'w') { const m = /\\w+|[^\\w\\s]+|\\s+/g; m.lastIndex = at; next = m.exec(value)?.index === at ? m.lastIndex : at }
-    else if (key === 'b') { const before = value.slice(0, at); next = before.search(/\\S+\\s*$/); if (next < 0) next = 0 }
-    else if (key === 'e') { const match = /\\w+|[^\\w\\s]+/g; match.lastIndex = at; const found = match.exec(value); next = found ? found.index + found[0].length - 1 : at }
-    else if (key === 'j' && target instanceof HTMLTextAreaElement) next = Math.min(value.length, lineEnd(value, at) + 1 + Math.max(0, at - lineStart(value, at)))
-    else if (key === 'k' && target instanceof HTMLTextAreaElement) { const start = lineStart(value, at); if (start > 0) next = Math.min(lineStart(value, start - 1) + Math.max(0, at - start), start - 1) }
+    let destination = at
+    let enteringInsert = false
+    if (key === 'i') enteringInsert = true
+    else if (key === 'a') {
+      destination = next(value, end)
+      enteringInsert = true
+    } else if (key === 'I') {
+      destination = firstNonblank(value, at)
+      enteringInsert = true
+    } else if (key === 'A') {
+      destination = lineEnd(value, at)
+      enteringInsert = true
+    } else if (key === 'h') destination = previous(value, at)
+    else if (key === 'l') destination = next(value, at)
+    else if (key === '0') destination = lineStart(value, at)
+    else if (key === '^') destination = firstNonblank(value, at)
+    else if (key === '$') destination = lineEnd(value, at)
+    else if (key === 'w') destination = wordForward(value, at)
+    else if (key === 'b') destination = wordBackward(value, at)
+    else if (key === 'e') destination = wordEnd(value, at)
+    else if (key === 'j' && target instanceof HTMLTextAreaElement)
+      destination = verticalMove(target, at, 'down')
+    else if (key === 'k' && target instanceof HTMLTextAreaElement)
+      destination = verticalMove(target, at, 'up')
     else if (key === 'Escape') return
-    else if (key.length === 1 || ['Backspace', 'Delete', 'Enter', 'Tab'].includes(key)) {
-      event.preventDefault()
+    else {
+      // Normal mode does not let editing or printable keys reach the browser.
+      if (
+        key.length === 1 ||
+        [
+          'Backspace',
+          'Delete',
+          'Enter',
+          'ArrowLeft',
+          'ArrowRight',
+          'ArrowUp',
+          'ArrowDown',
+          'Home',
+          'End',
+        ].includes(key)
+      )
+        event.preventDefault()
       return
-    } else return
-    event.preventDefault()
-    move(target, next)
-  }
-  document.addEventListener('focusin', (event) => {
-    if (vimEnabled && vimEligible(event.target) && event.target.getRootNode() === document) {
-      vimField = event.target
-      vimMode = 'insert'
     }
-  }, true)
-  document.addEventListener('focusout', (event) => {
-    if (vimField === event.target) { vimField = null; vimMode = 'insert' }
-  }, true)
+    event.preventDefault()
+    if (enteringInsert) {
+      move(target, destination)
+      vimMode = 'insert'
+      verticalColumn = null
+      return
+    }
+    move(target, destination)
+    verticalColumn =
+      key === 'j' || key === 'k'
+        ? (verticalColumn ?? graphemes(value.slice(lineStart(value, at), at)).length)
+        : null
+  }
+  document.addEventListener(
+    'focusin',
+    (event) => {
+      if (
+        vimEnabled &&
+        vimEligible(event.target) &&
+        event.target.getRootNode() === document &&
+        !event.target.disabled &&
+        !event.target.readOnly
+      ) {
+        vimField = event.target
+        vimMode = 'insert'
+        verticalColumn = null
+      }
+    },
+    true,
+  )
+  document.addEventListener(
+    'focusout',
+    (event) => {
+      if (vimField === event.target) {
+        vimField = null
+        vimMode = 'insert'
+        verticalColumn = null
+      }
+    },
+    true,
+  )
   document.addEventListener('keydown', onVimKey, true)
   const vim = {
-    configure(enabled, revision) {
-      if (!Number.isSafeInteger(revision) || revision <= vimRevision) return false
+    documentNonce() {
+      return vimNonce
+    },
+    configure(enabled, revision, nonce) {
+      if (
+        nonce !== vimNonce ||
+        typeof enabled !== 'boolean' ||
+        !Number.isSafeInteger(revision) ||
+        revision <= vimRevision
+      )
+        return false
       vimRevision = revision
-      vimEnabled = enabled === true
+      vimEnabled = enabled
       vimMode = 'insert'
       vimField = null
+      verticalColumn = null
       return true
     },
-    mode() { return { revision: vimRevision, mode: eligibleNow() ? vimMode : 'insert' } },
+    reset(revision, nonce) {
+      return this.configure(false, revision, nonce)
+    },
+    mode() {
+      return { revision: vimRevision, mode: eligibleNow() ? vimMode : 'insert' }
+    },
   }
   globalThis.__holiPage = { refs: [null], read, point, click, focus, valueOf, fill, scroll, vim }
 })()
