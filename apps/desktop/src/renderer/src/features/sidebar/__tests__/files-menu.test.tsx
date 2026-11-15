@@ -266,14 +266,24 @@ test('folder subscription actions keep a trailing slot and reveal on pointer or 
   expect(shortLabel.className).toContain('[&:hover_[data-tree-row-action]]:opacity-100')
   expect(shortLabel.className).toContain('[&:focus-within_[data-tree-row-action]]:opacity-100')
   expect(shortLabel.className).toContain(
+    'in-data-[focus=true]:[&_[data-tree-row-action]]:opacity-100',
+  )
+  expect(shortLabel.className).toContain(
     '[@media(hover:none)]:[&_[data-tree-row-action]]:opacity-100',
   )
+  // The action occupies the trailing flex slot beside the truncating name in
+  // both short and long rows; revealing it cannot reflow the name.
+  expect(shortLabel.querySelector('.truncate')?.parentElement).toBe(shortAction.parentElement)
+  expect(longLabel.querySelector('.truncate')?.parentElement).toBe(longAction.parentElement)
   expect(shortAction).toHaveAttribute('aria-label', 'Subscribe kunder')
   expect(longAction).toHaveAttribute('aria-label', 'Subscribe a folder with a much longer name')
 
-  shortAction.focus()
-  expect(document.activeElement).toBe(shortAction)
+  short.focus()
+  expect(document.activeElement).toBe(short)
   const originalName = shortLabel.querySelector('.truncate')?.textContent
+  await userEvent.tab()
+  expect(document.activeElement).toBe(shortAction)
+  expect(shortAction).toHaveAttribute('aria-label', 'Subscribe kunder')
   await userEvent.keyboard('{Enter}')
   expect(await screen.findByRole('button', { name: 'Unsubscribe kunder' })).toBeInTheDocument()
   expect(short.querySelector('.truncate')).toHaveTextContent(originalName!)
