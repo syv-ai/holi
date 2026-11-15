@@ -1151,6 +1151,51 @@ describe('the preview', () => {
   })
 })
 
+describe('Vim in compose fields', () => {
+  it('keeps subject commands out of compose actions and insert-mode keys editable', async () => {
+    const user = setup()
+    const { onClose } = mount({ intent: { kind: 'new' } }, true)
+    const subject = subjectField()
+    await user.click(subject)
+
+    await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+    await user.keyboard('f')
+    expect(subject).toHaveValue('')
+    expect(screen.getByLabelText('Vim normal mode')).toBeInTheDocument()
+    await user.keyboard('if')
+    expect(subject).toHaveValue('f')
+    await user.keyboard('{Escape}')
+    await user.keyboard('f')
+
+    expect(subject).toHaveValue('f')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(discardDraft).not.toHaveBeenCalled()
+  })
+
+  it('does not accept recipient chips or trigger compose actions in normal mode', async () => {
+    const user = setup()
+    const { onClose } = mount(
+      {
+        intent: { kind: 'new' },
+        suggestions: [{ name: 'Bo Berg', email: 'bo@example.com' }],
+      },
+      true,
+    )
+    const to = screen.getByRole('textbox', { name: 'To' })
+    await user.type(to, 'bo@example.com')
+    await user.keyboard('{Escape}{Enter}')
+
+    expect(screen.queryAllByTestId('chip')).toHaveLength(0)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+
+    await user.keyboard('i{Enter}')
+    expect(screen.getByTestId('chip')).toHaveTextContent('bo@example.com')
+  })
+})
+
 describe('Vim in the message body', () => {
   it('reserves mode-row space when focus leaves so action buttons do not move', async () => {
     const user = setup()
