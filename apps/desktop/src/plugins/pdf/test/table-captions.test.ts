@@ -13,6 +13,10 @@ describe('readMarkdownTableCaptions', () => {
 
   it.each([
     '| Name |\n| --- |\n| ![image](x.png) |',
+    '| Name |\n| --- |\n| [[dot.png|photo]] |',
+    '| Name |\n| --- |\n| [[dot.avif|photo]] |',
+    '| Name |\n| --- |\n| ![[dot.svg|diagram]] |',
+    '| Name |\n| --- |\n| ![[dot.jpeg|photo]] |',
     '| Name |\n| --- |\n| [reference][r] |',
     '| Name |\n| --- |\n| <b>raw</b> |',
     '| Name |\n| --- |\n| [^note] |',
@@ -23,8 +27,28 @@ describe('readMarkdownTableCaptions', () => {
     expect(readMarkdownTableCaptions(source)).toEqual([])
   })
 
+  it('accepts unaliased and aliased text wiki-links', () => {
+    for (const link of ['[[notes/plan.md]]', '[[notes/plan.md|Plan]]']) {
+      const source = writeMarkdownCaptionEnvelope(`| A |\n| --- |\n| ${link} |`, 'Caption')
+      expect(readMarkdownTableCaptions(source)).toHaveLength(1)
+    }
+  })
+
+  it('preserves wiki-image syntax inside code cells', () => {
+    const source = writeMarkdownCaptionEnvelope(
+      '| Example |\n| --- |\n| `[[dot.png|photo]]` |',
+      'Caption',
+    )
+    expect(readMarkdownTableCaptions(source)).toHaveLength(1)
+  })
+
   it('rejects a caption with document-wide references', () => {
     const source = writeMarkdownCaptionEnvelope('| A |\n| --- |\n| x |', '[ref][label]')
+    expect(readMarkdownTableCaptions(source)).toEqual([])
+  })
+
+  it('rejects genuine Markdown reference links in table cells', () => {
+    const source = writeMarkdownCaptionEnvelope('| A |\n| --- |\n| [ref][label] |', 'Caption')
     expect(readMarkdownTableCaptions(source)).toEqual([])
   })
 

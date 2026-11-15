@@ -368,7 +368,7 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
     const notePath = join(root, 'header-only.md')
     await writeFile(
       notePath,
-      writeMarkdownCaptionEnvelope('| Header | Value |\\n| --- | --- |', 'Header-only caption.'),
+      writeMarkdownCaptionEnvelope('| Header | Value |\n| --- | --- |', 'Header-only caption.'),
     )
     const outPath = join(root, 'header-only.pdf')
     await renderPdf({
@@ -385,10 +385,89 @@ describeTypst('renderPdf (integration — needs typst; first run fetches cmarker
       runs
         .map((run) => run.text)
         .join('')
-        .replace(/\\s+/g, ' '),
+        .replace(/\s+/g, ' '),
     )
     expect(normalizedText.join(' ')).toContain('Header-only caption.')
     expect(normalizedText.filter((text) => text.includes('Header-only caption.'))).toHaveLength(1)
+    const runs = pages.flatMap((page) => page.runs)
+    const header = runs.find((run) => run.text.trim() === 'Header')
+    const value = runs.find((run) => run.text.trim() === 'Value')
+    const captionRuns = runs.filter((run) => /Header-only|caption\./i.test(run.text))
+    expect(header).toBeDefined()
+    expect(value).toBeDefined()
+    expect(captionRuns.length).toBeGreaterThan(0)
+    const tableCenter = (header!.rect.origin.x + value!.rect.origin.x + value!.rect.size.width) / 2
+    const captionLeft = Math.min(...captionRuns.map((run) => run.rect.origin.x))
+    const captionRight = Math.max(
+      ...captionRuns.map((run) => run.rect.origin.x + run.rect.size.width),
+    )
+    expect(Math.abs((captionLeft + captionRight) / 2 - tableCenter)).toBeLessThan(70)
+    expect(Math.min(...captionRuns.map((run) => run.rect.origin.y))).toBeGreaterThan(
+      header!.rect.origin.y,
+    )
+  }, 30_000)
+
+  it('retains wiki images in table-caption fallback and supports text wiki-links', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(join(templateDir, 'assets'), { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    await writeFile(join(root, 'dot.png'), Buffer.from(DOT_PNG, 'base64'))
+
+    const render = async (name: string, markdown: string) => {
+      const notePath = join(root, `${name}.md`)
+      const outPath = join(root, `${name}.pdf`)
+      await writeFile(notePath, markdown)
+      await renderPdf({
+        typstBin: typst,
+        vaultRoot: root,
+        templateDir,
+        notePath,
+        outPath,
+        fields: [],
+        meta: {},
+      })
+      const pdf = await readFile(outPath)
+      expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+      return { pdf, pages: await readPdfPages(outPath), original: await readFile(notePath, 'utf8') }
+    }
+    const imageCount = (pdf: Buffer) =>
+      (pdf.toString('latin1').match(/\/Subtype\s*\/Image\b/g) ?? []).length
+    for (const [name, image] of [
+      ['aliased-wiki-image', '[[dot.png|photo]]'],
+      ['embedded-wiki-image', '![[dot.png|photo]]'],
+    ] as const) {
+      const captionedSource = writeMarkdownCaptionEnvelope(
+        `| Image |\n| --- |\n| ${image} |`,
+        'Image caption.',
+      )
+      const captioned = await render(name, captionedSource)
+      const control = await render(`${name}-control`, `| Image |\n| --- |\n| ${image} |`)
+      expect(imageCount(captioned.pdf)).toBeGreaterThan(0)
+      expect(imageCount(captioned.pdf)).toBe(imageCount(control.pdf))
+      expect(captioned.original).toBe(captionedSource)
+    }
+
+    for (const [name, link, visible] of [
+      ['unaliased-text-wiki', '[[notes/plan.md]]', 'plan'],
+      ['aliased-text-wiki', '[[notes/plan.md|Project plan]]', 'Project'],
+    ] as const) {
+      const textWikiSource = writeMarkdownCaptionEnvelope(
+        `| Plan |\n| --- |\n| ${link} |`,
+        'Text wiki-link caption.',
+      )
+      const textWiki = await render(name, textWikiSource)
+      const runs = textWiki.pages.flatMap((page) => page.runs)
+      const linkedText = runs.find((run) => run.text.includes(visible))
+      const caption = runs.find((run) => run.text.includes('Text'))
+      expect(linkedText).toBeDefined()
+      expect(caption).toBeDefined()
+      expect(caption!.rect.origin.y).toBeGreaterThan(linkedText!.rect.origin.y)
+      expect(textWiki.original).toBe(textWikiSource)
+    }
   }, 30_000)
 
   it('shows captions for independent tables on their respective final pages', async () => {
