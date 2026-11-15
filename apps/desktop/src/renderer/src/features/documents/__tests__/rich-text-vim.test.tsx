@@ -53,6 +53,50 @@ describe('rich-text Vim extension', () => {
     expect(text(ed)).toBe('afé ')
   })
 
+  it('consumes unsupported normal-mode editing keys without document transactions', () => {
+    const ed = open('<p>word</p>')
+    const before = ed.state.doc
+    let docChanges = 0
+    ed.on('transaction', ({ transaction }) => {
+      if (transaction.docChanged) docChanges += 1
+    })
+
+    for (const [value, options] of [
+      ['Enter', {}],
+      ['Enter', { shiftKey: true }],
+      ['Backspace', {}],
+      ['Delete', {}],
+    ] as const) {
+      const event = key(ed, value, options)
+      expect(event.defaultPrevented).toBe(true)
+      expect(ed.state.doc.eq(before)).toBe(true)
+    }
+    expect(docChanges).toBe(0)
+
+    ed.commands.setContent('<p>one</p><p>two</p>')
+    ed.commands.setTextSelection(7)
+    key(ed, 'g')
+    key(ed, 'Enter')
+    key(ed, 'g')
+    expect(ed.state.selection.head).toBe(7)
+    key(ed, 'g')
+    expect(ed.state.selection.head).toBe(1)
+  })
+
+  it('keeps native Enter and deletion editing in insert and off modes', () => {
+    const insert = open('<p>word</p>')
+    key(insert, 'i')
+    insert.commands.setTextSelection(2)
+    key(insert, 'Enter')
+    expect(insert.state.doc.childCount).toBe(2)
+
+    const off = open('<p>word</p>')
+    configureRichTextVim(off.view, false, true, () => true)
+    off.commands.setTextSelection(2)
+    key(off, 'Enter')
+    expect(off.state.doc.childCount).toBe(2)
+  })
+
   it('enters insert mode, accepts native input, leaves at a normal-mode caret and uses ProseMirror history', () => {
     const ed = open('<p>word</p>')
     ed.commands.setTextSelection(1)
