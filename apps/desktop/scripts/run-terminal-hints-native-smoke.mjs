@@ -363,6 +363,11 @@ try {
     'stock Dialog owns focus before shortcut input',
   )
   await waitFor(`!document.querySelector('[data-host-hints]')`, 'opening Dialog canceled old hints')
+  // Focus arrives before the stock Dialog's entrance animation has settled.
+  // Capture hint geometry only once its actual browser animations finish.
+  await evaluate(`Promise.all(document.getAnimations().filter(animation =>
+    Number.isFinite(animation.effect?.getComputedTiming().endTime)
+  ).map(animation => animation.finished.catch(() => {})))`)
   await trustedKey('f')
   await waitFor(
     `!!document.querySelector('[data-host-hints]')`,
