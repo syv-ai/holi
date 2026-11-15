@@ -18,6 +18,8 @@
     "smoke:terminal-hints:typecheck": "tsc --noEmit --project tsconfig.native-smoke.json",
     "smoke:pdf-vim:native": "node scripts/run-pdf-vim-native-smoke.mjs",
     "smoke:pdf-vim:typecheck": "tsc --noEmit --project tsconfig.pdf-vim-native-smoke.json",
+    "smoke:mail-vim:native": "node scripts/run-mail-vim-native-smoke.mjs",
+    "smoke:mail-vim:typecheck": "tsc --noEmit --project tsconfig.mail-vim-native-smoke.json",
     "package:mac": "electron-vite build && electron-builder --mac --publish never",
     "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\""
   },
