@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createDocumentExtensions } from '../document-extensions'
 import { applyReload } from '../apply-reload'
 import { readMarkdownCodeCaptions } from '@holi/shared'
-import { addCodeCaption, removeCodeCaption } from '../rich-text/document-figure'
+import { addCodeCaption, addImageCaption, removeCodeCaption } from '../rich-text/document-figure'
 
 let editor: Editor | null = null
 afterEach(() => {
@@ -29,6 +29,25 @@ const captioned =
   '<!-- holi:figure -->\n\n~~~typescript extra\nconst value = 1\n~~~\n\n<!-- holi:caption -->\n\nA **portable** caption.\n\n<!-- /holi:figure -->'
 
 describe('document code captions', () => {
+  it('adds and removes a caption with the complete image block', () => {
+    const source = '![A cat](../assets/cat.png "A cat")'
+    const instance = open(source)
+    let imagePos = -1
+    instance.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'image') imagePos = pos
+    })
+    expect(imagePos).toBeGreaterThanOrEqual(0)
+    expect(addImageCaption(instance, imagePos)).toBe(true)
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(instance.getMarkdown()).toContain(source)
+    expect(removeCodeCaption(instance, 0)).toBe(true)
+    let remainingImages = 0
+    instance.state.doc.descendants((node) => {
+      if (node.type.name === 'image') remainingImages++
+    })
+    expect(remainingImages).toBe(1)
+    expect(instance.getMarkdown()).toContain(source)
+  })
   it('parses and serializes a portable code caption without changing its fence', () => {
     expect(readMarkdownCodeCaptions(captioned)).toHaveLength(1)
     const instance = open(captioned)
