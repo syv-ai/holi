@@ -99,7 +99,9 @@ export const agentMain: MainPlugin = {
       )
       const terminals = createAgentTerminals({ emit: ctx.emit })
       const sessionLog = createSessionLog(ctx.log)
-      const liveRemote = (): string | null => ctx.active()?.remote ?? null
+      // Capabilities and provider hooks belong to this activation's vault, not
+      // whichever vault the renderer currently displays.
+      const liveRemote = (): string | null => ctx.remote
 
       // One list for the renderer and the plugins built on the agent: the
       // background sessions Claude Code's supervisor runs, then the ones Holi
@@ -145,6 +147,9 @@ export const agentMain: MainPlugin = {
         turnLogFor: openTurnLog,
         snapshot: worktreeEnd,
       })
+      // Fix the session host to this activation's vault before exposing any
+      // provider hook routes; early hook reports queue against this owner.
+      void started.ensure(ctx)
       // Pi's RPC runs find `pi` and its environment as its terminals do: the
       // preset's program and variables, its arguments being a terminal's alone.
       const piRuns = piCommand({
@@ -238,7 +243,7 @@ export const agentMain: MainPlugin = {
         ...harnessCapabilities({
           registry: harnesses,
           file: harnessFile,
-          root: () => (liveRemote() === ctx.remote ? ctx.root : null),
+          root: () => ctx.root,
           changed: () => ctx.emit(ctx.remote, 'providers', null),
         }),
         ...versionCapabilities({ holi: app.getVersion() }),
@@ -332,7 +337,6 @@ export const agentMain: MainPlugin = {
           detail: `${one ? 'Its' : 'Their'} current turn is cut short.`,
         }
       })
-      void started.ensure(ctx)
       // Expired personal memories and old work-log days go, now and hourly. The
       // running sweep is kept so leaving the vault waits for it to finish.
       let sweeping: Promise<unknown> = Promise.resolve()

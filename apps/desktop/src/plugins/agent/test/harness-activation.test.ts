@@ -7,6 +7,7 @@ import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
 import { createPluginHost } from '../../../main/plugin-host/host'
+import { createBridgeServer } from '../../../main/bridge/server'
 import { automationsMain } from '../../automations/main/index'
 import type { RunOptions } from '../main/claude/cli'
 import { PRESETS } from '../main/harness/record'
@@ -146,6 +147,8 @@ async function rig(
     execFileSync('git', ['-C', root, 'commit', '-qm', 'fixture'])
   }
   const sent: { remote: string; name: string }[] = []
+  const bridge = createBridgeServer({ log: () => {} })
+  await bridge.start()
   let activeRemote: typeof A | typeof B | null = null
   const registry = createCapabilityRegistry()
   const activateAgent = agentMain.activate!
@@ -202,7 +205,11 @@ async function rig(
       const forRemote = adapters.routes.get(remote) ?? new Map<string, BridgeRoute>()
       forRemote.set(path, route)
       adapters.routes.set(remote, forRemote)
-      return () => forRemote.delete(path)
+      const unregister = bridge.route(path, route, remote)
+      return () => {
+        forRemote.delete(path)
+        unregister()
+      }
     },
     binDir: () => userData,
     githubToken: () => null,
@@ -247,8 +254,11 @@ async function rig(
   }
   const call = async (remote: typeof A | typeof B, name: string, params: unknown = {}) =>
     (await capabilities.dispatch({ door: 'ui', remote, name, params })).value
-  stops.push(() => host.stopAll())
-  return { host, enter, call, capabilities, roots, userData, sent, setActive }
+  stops.push(async () => {
+    await host.stopAll()
+    await bridge.stop()
+  })
+  return { host, enter, call, capabilities, roots, userData, sent, setActive, bridge }
 }
 
 const harness = {
@@ -365,6 +375,126 @@ it('serializes overlapping PTY history updates across activations and drains sto
   expect(await call(B, 'agent.history')).toEqual(
     expect.arrayContaining([prior, expect.objectContaining({ id: bStarted.sessionId })]),
   )
+})
+
+it('binds real capability dispatch and HTTP hook reports to activation vaults', async () => {
+  const { host, enter, call, roots, bridge } = await rig()
+  await enter(A)
+  await enter(B)
+  const post = async (remote: string, path: string, query = '', body = '') => {
+    const token = bridge.tokenForVault(remote)
+    const response = await fetch(`http://127.0.0.1:${bridge.port()}${path}?t=${token}${query}`, {
+      method: 'POST',
+      body,
+    })
+    return response
+  }
+  try {
+    host.setDisplayed(B)
+    // Reports can beat the provider's first listing/config read. The host keeps
+    // them for the owner even before its session rows have been seeded.
+    for (const remote of [A, B] as const) {
+      expect(
+        (
+          await post(
+            remote,
+            '/session',
+            '&job=abc12345',
+            JSON.stringify({ socket: '/tmp/holi-test.sock', token: `${remote}-token` }),
+          )
+        ).status,
+      ).toBe(204)
+      expect(
+        (
+          await post(
+            remote,
+            '/statusline',
+            '&job=abc12345',
+            JSON.stringify({ context_window: { used_percentage: remote === A ? 17 : 83 } }),
+          )
+        ).status,
+      ).toBe(204)
+      expect(
+        await call(remote, 'agent.launch', {
+          name: `${remote} owned`,
+          prompt: `${remote} prompt`,
+          model: 'owner-model',
+          allow: ['Read'],
+          deny: ['Bash'],
+          system: `${remote} system`,
+          mcpConfig: join(roots[remote], 'agent-mcp.json'),
+        }),
+      ).toMatchObject({ ok: true, sessionId: 'abc12345' })
+    }
+    const launchCalls = adapters.run.mock.calls.filter(([, args]) => args.includes('--bg'))
+    expect(launchCalls.map(([, , opts]) => opts.cwd)).toEqual([roots[A], roots[B]])
+    expect(launchCalls[0]![1]).toEqual(
+      expect.arrayContaining([
+        '--model',
+        'owner-model',
+        '--allowedTools=Read',
+        '--disallowedTools=Bash',
+        '--append-system-prompt',
+        `${A} system`,
+        `--mcp-config=${join(roots[A], 'agent-mcp.json')}`,
+      ]),
+    )
+    expect(launchCalls[1]![1]).toContain(`${B} system`)
+
+    for (const remote of [A, B] as const) {
+      host.setDisplayed(remote === A ? B : A)
+      expect(
+        (
+          await post(
+            remote,
+            '/session',
+            '&job=abc12345',
+            JSON.stringify({
+              session_id: `${remote}-conversation`,
+              cwd: roots[remote],
+            }),
+          )
+        ).status,
+      ).toBe(204)
+      expect(
+        (
+          await post(
+            remote,
+            '/statusline',
+            '&job=abc12345',
+            JSON.stringify({
+              context_window: { used_percentage: remote === A ? 17 : 83 },
+              model: { display_name: remote },
+            }),
+          )
+        ).status,
+      ).toBe(204)
+      expect((await post(remote, '/turn/start', '&job=abc12345&pid=' + process.pid)).status).toBe(
+        204,
+      )
+      expect((await post(remote, '/turn/end', '&job=abc12345&pending=2')).status).toBe(200)
+    }
+    const turnsA = (await call(A, 'agent.turns')) as { sessionId: string }[]
+    const turnsB = (await call(B, 'agent.turns')) as { sessionId: string }[]
+    expect(turnsA.map((turn) => turn.sessionId)).toContain('abc12345')
+    expect(turnsB.map((turn) => turn.sessionId)).toContain('abc12345')
+    expect(await call(A, 'agent.stop', { id: 'abc12345' })).toMatchObject({ ok: true })
+    host.setDisplayed(B)
+    expect(await call(B, 'agent.stop', { id: 'abc12345' })).toMatchObject({ ok: true })
+    await host.stop(A)
+    expect((await post(A, '/turn/start', '&job=abc12345&pid=' + process.pid)).status).toBe(404)
+    await enter(A)
+    host.setDisplayed(B)
+    expect(
+      await call(A, 'agent.launch', { name: 'A reactivated', prompt: 'A again' }),
+    ).toMatchObject({ ok: true })
+    expect(
+      adapters.run.mock.calls.filter(([, args]) => args.includes('--bg')).at(-1)?.[2].cwd,
+    ).toBe(roots[A])
+    expect((await post(A, '/turn/start', '&job=abc12345&pid=' + process.pid)).status).toBe(204)
+  } finally {
+    await host.stopAll()
+  }
 })
 
 it('persists concurrent provider turn reports through each activated vault route', async () => {
@@ -518,9 +648,23 @@ it('keeps real native provider commands and vault configuration local after a sh
     schedule: schedule.path,
     fingerprint: schedule.fingerprint,
   })
+  const scheduleFile = join(roots[B], schedule.path)
+  const scheduleText = await readFile(scheduleFile, 'utf8')
+  await writeFile(scheduleFile, scheduleText.replace('Scheduled B', 'Changed scheduled B'))
+  await expect(call(B, 'schedules.run', { schedule: schedule.path })).rejects.toThrow()
+  const changedSchedule = (await call(B, 'schedules.list')) as {
+    path: string
+    fingerprint?: string
+  }[]
+  const changed = changedSchedule.find((entry) => entry.path === schedule.path)
+  expect(changed?.fingerprint).toBeTruthy()
+  await call(B, 'schedules.enable', {
+    schedule: schedule.path,
+    fingerprint: changed!.fingerprint,
+  })
   await call(B, 'schedules.run', { schedule: schedule.path })
   const scheduled = adapters.run.mock.calls
-    .filter(([, args]) => args.some((arg) => arg.includes('Scheduled B')))
+    .filter(([, args]) => args.some((arg) => arg.includes('Changed scheduled B')))
     .at(-1)!
   expect(scheduled[2].cwd).toBe(roots[B])
   expect(scheduled[2].env.CLAUDE_CONFIG_DIR).toBe(launches[1]![2].env.CLAUDE_CONFIG_DIR)

@@ -96,9 +96,8 @@ function processAlive(pid: number): boolean {
 }
 
 export interface AgentSessions {
-  /** Attach to the open vault's sessions; until the next `leave`, every verb
-   *  acts in this vault. Without one, finish attaching to the vault already
-   *  given. Cheap when already attached. */
+  /** Attach to this activation's vault; the owner is fixed until `leave`.
+   *  Without one, finish attaching to the vault already given. Cheap when already attached. */
   ensure(vault?: AgentVault): Promise<void>
   /** The vault's live sessions, in listing order. */
   sessions(): SessionSummary[]
@@ -247,6 +246,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
    * arrive before the listing shows the session at all.
    */
   const channels = new Map<string, SessionChannel>()
+  const earlyStatus = new Map<string, unknown>()
+  const earlyChannels = new Map<string, SessionChannel>()
   let listedLive = new Set<string>()
 
   const turnEnds = new Set<(id: string, pending: number | null) => void>()
@@ -284,6 +285,14 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
     log,
   })
+
+  function applyStatus(jobId: string, report: unknown): void {
+    const percent = statusReader?.contextPercent(report) ?? null
+    if (percent === null) contextPercent.delete(jobId)
+    else contextPercent.set(jobId, percent)
+    const model = statusReader?.model(report) ?? null
+    if (model !== null) modelName.set(jobId, model)
+  }
 
   const live = (): ClaudeRow[] => rows.filter((row) => bg.isLive(row))
   const past = (): SessionSummary[] =>
@@ -350,6 +359,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       seeded: false,
     }
     next.unwatch = bg.watch(config.dir, () => void refresh(), log)
+    for (const [id, report] of earlyStatus) applyStatus(id, report)
+    earlyStatus.clear()
+    for (const [id, channel] of earlyChannels) channels.set(id, channel)
+    earlyChannels.clear()
     return next
   }
 
@@ -499,7 +512,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
   const api: AgentSessions = {
     async ensure(vault) {
-      if (vault !== undefined) attached = vault
+      if (vault !== undefined) {
+        if (
+          attached !== null &&
+          (attached.remote !== vault.remote || attached.root !== vault.root)
+        ) {
+          throw new Error('Agent session activation cannot change vault owner.')
+        }
+        attached ??= vault
+      }
       await ensureCurrent()
     },
 
@@ -623,7 +644,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async noteTurn(remote, jobId, active, pending = null, pid) {
-      // A turn in a vault Holi is not showing is not this vault's pause.
+      // The hook can arrive as soon as a provider starts, before the initial
+      // listing/config activation has completed. Its route is vault-scoped.
+      if (attached?.remote !== remote) return null
+      if (current === null) await ensureCurrent()
       if (current?.remote !== remote) return null
       let settled: Promise<string | null> = Promise.resolve(null)
       if (active) unprompted.delete(jobId)
@@ -640,19 +664,23 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     noteStatus(remote, jobId, report) {
-      // Only the vault Holi is showing has rows to put a number on.
-      if (current?.remote !== remote) return
-      const percent = statusReader?.contextPercent(report) ?? null
-      if (percent === null) contextPercent.delete(jobId)
-      else contextPercent.set(jobId, percent)
-      const model = statusReader?.model(report) ?? null
-      if (model !== null) modelName.set(jobId, model)
+      if (attached?.remote !== remote) return
+      if (current === null) {
+        earlyStatus.set(jobId, report)
+        return
+      }
+      if (current.remote !== remote) return
+      applyStatus(jobId, report)
       push()
     },
 
     noteChannel(remote, jobId, channel) {
-      if (current?.remote !== remote) return
-      channels.set(jobId, channel)
+      if (attached?.remote !== remote) return
+      if (current === null) {
+        earlyChannels.set(jobId, channel)
+        return
+      }
+      if (current.remote === remote) channels.set(jobId, channel)
     },
 
     async message(id, text) {
@@ -739,6 +767,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     contextPercent.clear()
     modelName.clear()
     channels.clear()
+    earlyStatus.clear()
+    earlyChannels.clear()
     listedLive = new Set()
     if (idleRecheck !== null) {
       clearTimeout(idleRecheck)
