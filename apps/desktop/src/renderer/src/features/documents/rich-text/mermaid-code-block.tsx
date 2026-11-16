@@ -20,17 +20,38 @@ import { CaptionCodeBlockAttributes, safeCodeFence, sourceFenceMatches } from '.
 function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const activity = useEditorActivity(editor)
   const [editable, setEditable] = useState(() => editor.isEditable)
+  const renderGeneration = useRef(0)
+  const [renderEpoch, setRenderEpoch] = useState(0)
+  const observedEditable = useRef(editor.isEditable)
+  const observedNode = useRef(node)
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const openButton = useRef<HTMLButtonElement>(null)
   const activeMode = useAtomValue(activeModeAtom)
   const theme = activeMode === 'dark' ? 'dark' : 'default'
   const source = node.textContent
-  const isMermaid = String(node.attrs.language ?? '').toLowerCase() === 'mermaid'
+  const isMermaid =
+    String(node.attrs.language ?? '')
+      .trim()
+      .split(/\s+/, 1)[0]
+      ?.toLowerCase() === 'mermaid'
   const currentPosition = useCallback(
     () => (typeof getPos === 'function' ? getPos() : undefined),
     [getPos],
   )
   const labels = useMermaidLabelEditing({ node, editor, getPos, theme })
+  const renderGenerationAtRender = renderGeneration.current
+  const renderPosition = currentPosition()
+  const renderOwner =
+    typeof renderPosition === 'number' ? editor.state.doc.nodeAt(renderPosition) : null
+  const isRenderCurrent = useCallback(() => {
+    const position = currentPosition()
+    return (
+      renderGeneration.current === renderGenerationAtRender &&
+      observedEditable.current === editor.isEditable &&
+      typeof position === 'number' &&
+      editor.state.doc.nodeAt(position) === renderOwner
+    )
+  }, [currentPosition, editor, renderOwner, renderGenerationAtRender])
   const active = useEditorState({
     editor,
     selector: ({ editor: current }) => {
@@ -47,7 +68,22 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   })
 
   useEffect(() => {
-    const changed = () => setEditable(editor.isEditable)
+    const changed = () => {
+      const nextEditable = editor.isEditable
+      if (observedEditable.current !== nextEditable) {
+        observedEditable.current = nextEditable
+        renderGeneration.current++
+        setRenderEpoch((epoch) => epoch + 1)
+      }
+      const position = currentPosition()
+      const liveNode = typeof position === 'number' ? editor.state.doc.nodeAt(position) : null
+      if (liveNode !== observedNode.current) {
+        observedNode.current = liveNode ?? node
+        renderGeneration.current++
+        setRenderEpoch((epoch) => epoch + 1)
+      }
+      setEditable(nextEditable)
+    }
     editor.on('transaction', changed)
     editor.on('update', changed)
     const observer = new MutationObserver(changed)
@@ -57,9 +93,10 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       editor.off('transaction', changed)
       editor.off('update', changed)
     }
-  }, [editor])
+  }, [currentPosition, editor, node])
 
   const showDiagram = isMermaid && !active && source.trim() !== ''
+  const renderVersion = `${renderGeneration.current}:${renderEpoch}:${editable}`
   const editSource = useCallback(() => {
     const position = currentPosition()
     if (activity.focused && typeof position === 'number') {
@@ -97,7 +134,14 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
               </RenderedMediaAction>
             </RenderedMediaToolbar>
             <div onDoubleClick={() => setLightboxOpen(true)}>
-              <MermaidDiagram source={source} theme={theme} onRendered={labels.onRendered} />
+              <MermaidDiagram
+                source={source}
+                theme={theme}
+                onRendered={labels.onRendered}
+                renderTicket={renderVersion}
+                renderContext={`${String(currentPosition())}:${editable}`}
+                isRenderCurrent={isRenderCurrent}
+              />
             </div>
             <RenderedMediaLightbox
               title="Mermaid diagram"
@@ -109,6 +153,9 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
                   source={source}
                   theme={theme}
                   enlarged
+                  renderTicket={renderVersion}
+                  renderContext={`${String(currentPosition())}:${editable}`}
+                  isRenderCurrent={isRenderCurrent}
                   className="flex min-h-24 w-full max-w-full items-center justify-center overflow-auto [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:w-full [&_svg]:max-w-full"
                 />
               }

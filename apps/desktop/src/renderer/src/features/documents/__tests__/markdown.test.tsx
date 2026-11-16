@@ -99,7 +99,8 @@ describe('markdown round trip', () => {
       let saved = source
       for (let cycle = 0; cycle < 3; cycle++) {
         saved = roundTrip(saved)
-        expect(saved).toContain(definition)
+        // Native containers normalize whitespace on otherwise blank lines.
+        expect(saved.replace(/^ +$/gm, '')).toContain(definition)
         expect(editor?.state.doc.firstChild?.type.name).toBe('image')
         expect(editor?.state.doc.firstChild?.attrs.src).toBe('../photo.png')
       }

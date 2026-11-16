@@ -34,6 +34,8 @@ function open(markdown: string): Editor {
 
 const captioned =
   '<!-- holi:figure -->\n\n~~~typescript extra\nconst value = 1\n~~~\n\n<!-- holi:caption -->\n\nA **portable** caption.\n\n<!-- /holi:figure -->'
+const mermaidCaptioned =
+  '<!-- holi:figure -->\n\n~~~mermaid extra-info\nflowchart TD\n  A[Start] --> B[End]\n~~~\n\n<!-- holi:caption -->\n\nA **portable** diagram caption.\n\n<!-- /holi:figure -->'
 
 describe('document code captions', () => {
   it('adds and removes a caption with the complete image block', () => {
@@ -55,6 +57,174 @@ describe('document code captions', () => {
     expect(remainingImages).toBe(1)
     expect(instance.getMarkdown()).toContain(source)
   })
+  it('parses and serializes Mermaid captions without changing their source fence', () => {
+    expect(readMarkdownCodeCaptions(mermaidCaptioned)).toHaveLength(1)
+    const instance = open(mermaidCaptioned)
+    const figure = instance.state.doc.firstChild
+    expect(figure?.type.name).toBe('documentFigure')
+    expect(figure?.firstChild?.attrs.language).toBe('mermaid extra-info')
+    expect(figure?.lastChild?.textContent).toBe('A portable diagram caption.')
+    expect(instance.getMarkdown()).toBe(mermaidCaptioned)
+
+    const code = figure!.firstChild!
+    const captionStart = 1 + code.nodeSize + 1
+    instance.view.dispatch(instance.state.tr.insertText('Edited ', captionStart))
+    expect(instance.getMarkdown()).toContain(
+      '~~~mermaid extra-info\nflowchart TD\n  A[Start] --> B[End]\n~~~',
+    )
+    expect(instance.getMarkdown()).toContain('Edited A **portable** diagram caption.')
+    expect(readMarkdownCodeCaptions(instance.getMarkdown())).toHaveLength(1)
+  })
+
+  it('adds and removes a caption around Mermaid source without changing the fence', () => {
+    const source = '~~~mermaid extra-info\nflowchart TD\nA --> B\n~~~'
+    const instance = open(source)
+    expect(addCodeCaption(instance, 0)).toBe(true)
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(instance.getMarkdown()).toContain(source)
+    expect(removeCodeCaption(instance, 0)).toBe(true)
+    expect(instance.getMarkdown()).toContain(source)
+    expect(readMarkdownCodeCaptions(instance.getMarkdown())).toHaveLength(0)
+  })
+
+  describe('parser-owned image reference source', () => {
+    const frame = (body: string) =>
+      `<!-- holi:figure -->\n\n${body}\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->`
+    const imageSources = (instance: Editor) => {
+      const sources: string[] = []
+      instance.state.doc.descendants((node) => {
+        if (node.type.name === 'image') sources.push(node.attrs.src)
+      })
+      return sources
+    }
+    const hrefs = (instance: Editor) => {
+      const links: string[] = []
+      instance.state.doc.descendants((node) => {
+        for (const mark of node.marks) if (mark.type.name === 'link') links.push(mark.attrs.href)
+      })
+      return links
+    }
+    const roundtrip = (source: string, check: (instance: Editor, saved: string) => void) => {
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const instance = open(source)
+        const saved = instance.getMarkdown().trimEnd()
+        expect(saved).not.toContain('holi-private')
+        check(instance, saved)
+        instance.destroy()
+        source = saved
+      }
+    }
+
+    it.each([
+      '```md\n[ref]: ../photo.png\n```',
+      '<pre>\n[ref]: ../photo.png\n</pre>',
+      '<!--\n[ref]: ../photo.png\n-->',
+    ])('keeps the live definition after identical protected source: %s', (sample) => {
+      roundtrip(
+        `${sample}\n\n${frame('![Photo][ref]')}\n\n[ref]: ../photo.png`,
+        (instance, saved) => {
+          expect(imageSources(instance)).toEqual(['../photo.png'])
+          expect(saved).toContain(sample)
+          expect(saved.match(/\[ref\]:/g)).toHaveLength(2)
+        },
+      )
+    })
+
+    it.each([
+      '[ref]: ../photo.png\nFollowing paragraph.\n\n' + frame('![Photo][ref]'),
+      '![Photo][ref]\n\n[ref]: ../photo.png\nFollowing paragraph.',
+      '[ref]: ../photo.png\n[second]: ../second.png\n\n' + frame('![Photo][ref]'),
+      frame('![Photo][ref]') + '\n\n[ref]: ../photo.png\n[second]: ../second.png',
+    ])('keeps adjacent definitions and prose separate: %s', (source) => {
+      roundtrip(source, (instance, saved) => {
+        expect(imageSources(instance)).toEqual(['../photo.png'])
+        expect(saved).toContain('[ref]: ../photo.png')
+        if (source.includes('[second]')) expect(saved).toContain('[second]: ../second.png')
+        if (source.includes('Following')) expect(saved).toContain('Following paragraph.')
+      })
+    })
+
+    it.each([
+      ['bulletList', '- Important **editable** item\n\n  [ref]: ../photo.png'],
+      ['blockquote', '> Important **editable** quote\n>\n> [ref]: ../photo.png'],
+    ])('keeps reference-bearing %s content native and editable', (kind, container) => {
+      const instance = open(frame('![Photo][ref]') + '\n\n' + container)
+      expect(instance.state.doc.content.content.some((node) => node.type.name === kind)).toBe(true)
+      let edit = -1
+      instance.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === 'editable') edit = pos
+      })
+      expect(edit).toBeGreaterThan(0)
+      instance.view.dispatch(instance.state.tr.insertText('still ', edit))
+      const saved = instance.getMarkdown()
+      expect(saved).toContain('still ')
+      instance.destroy()
+      roundtrip(saved, (reopened) => {
+        expect(reopened.state.doc.content.content.some((node) => node.type.name === kind)).toBe(
+          true,
+        )
+        expect(imageSources(reopened)).toEqual(['../photo.png'])
+      })
+    })
+
+    it.each([false, true])(
+      'keeps first-definition precedence in opaque source, closed=%s',
+      (closed) => {
+        const opaque =
+          '<!-- holi:figure -->\n\nUnsupported body.\n\n[ref]: https://example.com/right' +
+          (closed ? '\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->' : '\n\nAfter.')
+        const source =
+          '[Label][ref]\n\n' +
+          frame('![Photo](../photo.png)') +
+          '\n\n' +
+          opaque +
+          '\n\n[ref]: https://example.com/wrong'
+        roundtrip(source, (instance, saved) => {
+          expect(hrefs(instance)).toEqual(['https://example.com/right'])
+          expect(saved).toContain(opaque)
+          expect(saved.match(/\[ref\]:/g)).toHaveLength(2)
+        })
+      },
+    )
+
+    it.each([false, true])(
+      'binds image ranges after duplicate definitions, captioned=%s',
+      (captioned) => {
+        const body = captioned ? frame('![Photo][ref]') : '![Photo][ref]'
+        const source =
+          '[ref]: ../photo.png\n[ref]: ../wrong.png\n\n' +
+          body +
+          '\n\n[ref]: ../third.png\n\n![Second](../second.png)'
+        roundtrip(source, (instance, saved) => {
+          expect(imageSources(instance)).toEqual(['../photo.png', '../second.png'])
+          expect(saved.match(/\[ref\]:/g)).toHaveLength(3)
+          expect(saved).toContain(body)
+        })
+      },
+    )
+
+    it.each(['pre', 'script', 'style'])(
+      'preserves closing tags in nested protected <%s>',
+      (tag) => {
+        const nested = `<${tag}>\n${frame('![Photo](../protected.png)')}\n</${tag}>`
+        const source =
+          '![First](../first.png)\n\n- Before\n\n' +
+          nested
+            .split('\n')
+            .map((line) => '  ' + line)
+            .join('\n')
+        roundtrip(source, (instance, saved) => {
+          expect(saved).toContain(`</${tag}>`)
+          expect(imageSources(instance)).toEqual(['../first.png'])
+          expect(saved).toContain('../protected.png')
+          expect(
+            instance.state.doc.content.content.some((node) => node.type.name === 'bulletList'),
+          ).toBe(true)
+        })
+      },
+    )
+  })
+
   it('parses and serializes a portable code caption without changing its fence', () => {
     expect(readMarkdownCodeCaptions(captioned)).toHaveLength(1)
     const instance = open(captioned)
@@ -665,14 +835,14 @@ const value = 1
 ~~~`)
   })
 
-  it('parses captions through external reload and preserves unsupported Mermaid framing', () => {
+  it('parses captions through external reload and preserves Mermaid framing', () => {
     const instance = open('A paragraph.')
     expect(applyReload(instance, captioned)).toBe(true)
     expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
     const mermaid =
       '<!-- holi:figure -->\n\n```Mermaid\ngraph TD\n```\n\n<!-- holi:caption -->\n\nDiagram\n\n<!-- /holi:figure -->'
     const mermaidEditor = open(mermaid)
-    expect(mermaidEditor.state.doc.firstChild?.type.name).not.toBe('documentFigure')
+    expect(mermaidEditor.state.doc.firstChild?.type.name).toBe('documentFigure')
     expect(mermaidEditor.getMarkdown()).toContain(mermaid)
   })
 
@@ -735,11 +905,11 @@ const value = 1
     ).toHaveLength(1)
   })
 
-  it('does not author Mermaid captions or turn malformed envelopes into figures', () => {
+  it('authors Mermaid captions and does not turn malformed envelopes into figures', () => {
     const instance = open('```mermaid\ngraph TD\n```')
-    expect(addCodeCaption(instance, 0)).toBe(false)
+    expect(addCodeCaption(instance, 0)).toBe(true)
     const uppercase = open('```MERMAID\ngraph TD\n```')
-    expect(addCodeCaption(uppercase, 0)).toBe(false)
+    expect(addCodeCaption(uppercase, 0)).toBe(true)
     uppercase.destroy()
     instance.destroy()
     editor = null

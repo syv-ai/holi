@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -109,6 +120,7 @@ try {
     root: desktop,
     plugins: [react(), tailwindcss()],
     resolve: { alias: { '@': join(desktop, 'src/renderer/src') } },
+    base: './',
     build: {
       outDir: join(root, 'renderer'),
       emptyOutDir: true,
@@ -149,6 +161,8 @@ try {
     join(root, 'package.json'),
     JSON.stringify({ name: 'holi-image-captions-smoke-535', main: 'main.cjs' }),
   )
+  await mkdir(join(root, 'node_modules'), { recursive: true })
+  await symlink(join(desktop, 'node_modules/mermaid'), join(root, 'node_modules/mermaid'))
   await cp(
     join(desktop, 'src/plugins/pdf/main/vault/once/.holi/document-templates/plain'),
     join(root, 'vault/.holi/document-templates/plain'),
@@ -264,6 +278,11 @@ try {
     'plain-image-cut-clipboard.json',
     'plain-documentFigure-copy-clipboard.json',
     'plain-documentFigure-cut-clipboard.json',
+    'mermaid-ui-valid.pdf',
+    'mermaid-cli-valid.pdf',
+    'mermaid-ui-fallback.pdf',
+    'mermaid-cli-fallback.pdf',
+    'mermaid-pdf-proof.json',
   ])
     assert((await stat(join(evidence, file))).size > 0)
 } finally {

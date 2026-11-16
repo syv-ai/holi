@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
+import { existsSync } from 'node:fs'
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,6 +24,10 @@ async function runVersionCommand(
   cwd: string,
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
+  scheduleDeadline: (callback: () => void, delayMs: number) => () => void = (callback, delayMs) => {
+    const timer = setTimeout(callback, delayMs)
+    return () => clearTimeout(timer)
+  },
 ): Promise<{
   code: number | null
   stdout: string
@@ -70,14 +75,14 @@ async function runVersionCommand(
   }
   child.stdout.setEncoding('utf8').on('data', collect('stdout'))
   child.stderr.setEncoding('utf8').on('data', collect('stderr'))
-  const timer = setTimeout(() => {
+  const cancelDeadline = scheduleDeadline(() => {
     timedOut = true
     stop()
   }, timeoutMs)
   const [code] = await new Promise<[number | null]>((resolve) =>
     child.once('close', (exitCode) => resolve([exitCode])),
   )
-  clearTimeout(timer)
+  cancelDeadline()
   // The root may exit normally while leaving descendants in its detached group.
   stop()
   try {
@@ -111,16 +116,39 @@ it('drains a SIGTERM-resistant descendant when the version check hangs', async (
   const root = await mkdtemp(join(tmpdir(), 'holi-pi-version-hang-'))
   const bin = join(root, 'pi')
   const pidPath = join(root, 'descendant.pid')
+  const readyPath = join(root, 'descendant.ready')
   try {
     await writeFile(
       bin,
-      `#!/usr/bin/env node\nconst { spawn } = require('node:child_process')\nconst fs = require('node:fs')\nconst child = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"], {stdio:'ignore'})\nfs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))\nsetInterval(()=>{},1000)\n`,
+      `#!/usr/bin/env node\nconst { spawn } = require('node:child_process')\nconst fs = require('node:fs')\nsetTimeout(() => {\n  const child = spawn(process.execPath, ['-e', ${JSON.stringify(`const fs=require('node:fs'); process.on('SIGTERM',()=>{}); fs.writeFileSync(${JSON.stringify(readyPath)}, 'ready'); setInterval(()=>{},1000)`)}], {stdio:'ignore'})\n  fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))\n}, 700)\nsetInterval(()=>{},1000)\n`,
     )
     await chmod(bin, 0o755)
-    const result = await runVersionCommand(bin, root, process.env, 500)
-    expect(result.timedOut).toBe(true)
-    const pid = Number(await readFile(pidPath, 'utf8'))
-    expect(() => process.kill(pid, 0)).toThrow()
+    let deadlineMs: number | undefined
+    let fireDeadline: (() => void) | undefined
+    let deadlineFired = false
+    let resultPromise: ReturnType<typeof runVersionCommand> | undefined
+    const scheduleDeadline = (callback: () => void, delayMs: number) => {
+      deadlineMs = delayMs
+      fireDeadline = () => {
+        deadlineFired = true
+        callback()
+      }
+      return () => {}
+    }
+    resultPromise = runVersionCommand(bin, root, process.env, 500, scheduleDeadline)
+    try {
+      await waitFor(() => existsSync(pidPath) && existsSync(readyPath), 10_000)
+      expect(deadlineMs).toBe(500)
+      expect(fireDeadline).toBeDefined()
+      fireDeadline!()
+      const result = await resultPromise
+      expect(result.timedOut).toBe(true)
+      const pid = Number(await readFile(pidPath, 'utf8'))
+      expect(() => process.kill(pid, 0)).toThrow()
+    } finally {
+      if (!deadlineFired) fireDeadline?.()
+      await resultPromise
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -131,10 +159,11 @@ it.each([0, 7])('drains a SIGTERM-resistant descendant after version exit %i', a
   const root = await mkdtemp(join(tmpdir(), 'holi-pi-version-exit-'))
   const bin = join(root, 'pi')
   const pidPath = join(root, 'descendant.pid')
+  const readyPath = join(root, 'descendant.ready')
   try {
     await writeFile(
       bin,
-      `#!/usr/bin/env node\nconst { spawn } = require('node:child_process')\nconst fs = require('node:fs')\nconst child = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"], {stdio:'ignore'})\nfs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))\nconsole.log('version')\nprocess.exit(${exitCode})\n`,
+      `#!/usr/bin/env node\nconst { spawn } = require('node:child_process')\nconst fs = require('node:fs')\nconst child = spawn(process.execPath, ['-e', ${JSON.stringify(`const fs=require('node:fs'); process.on('SIGTERM',()=>{}); fs.writeFileSync(${JSON.stringify(readyPath)}, 'ready'); setInterval(()=>{},1000)`)}], {stdio:'ignore'})\nconst ready = setInterval(() => {\n  if (!fs.existsSync(${JSON.stringify(readyPath)})) return\n  clearInterval(ready)\n  fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))\n  console.log('version')\n  process.exit(${exitCode})\n}, 10)\n`,
     )
     await chmod(bin, 0o755)
     const result = await runVersionCommand(bin, root, process.env, 5_000)

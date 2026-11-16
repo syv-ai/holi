@@ -4,6 +4,8 @@ import {
   hintLabel,
   activateHostHint,
   hostHintsUnchanged,
+  registerHostHintAdapter,
+  captureHostHintAdapters,
   registerHostHintSurface,
 } from '../host-hints'
 import { installHintLayout } from '@/test/host-hint-layout'
@@ -27,6 +29,28 @@ function button(name: string, parent = root) {
   parent.append(element)
   return element
 }
+
+it('invalidates an active session when a new owned adapter is registered', () => {
+  const target = button('Existing target')
+  const targets = discoverHostHintTargets(root)
+  const owner = document.createElement('iframe')
+  root.append(owner)
+  let captured = false
+  const adapter = {
+    capture: () => {
+      captured = true
+    },
+    discover: () => [],
+    unchanged: () => captured,
+    activate: () => false,
+  }
+  const unregister = registerHostHintAdapter(owner, adapter)
+  expect(hostHintsUnchanged(targets)).toBe(false)
+  captureHostHintAdapters(root)
+  expect(hostHintsUnchanged(targets)).toBe(true)
+  unregister()
+  expect(target.isConnected).toBe(true)
+})
 
 it('assigns unique prefix-free labels for thousands of targets', () => {
   for (const count of [1, 26, 27, 52, 800, 3000]) {

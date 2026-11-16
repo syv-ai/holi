@@ -35,6 +35,7 @@ import { installSignalCommand, registerSignalRoute } from './harness/signal'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createFencedSessions } from './host/fenced'
+import { agentScratchRoots } from './host/scratch-roots'
 import { createJobs } from './host/jobs'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
@@ -89,7 +90,13 @@ export const agentMain: MainPlugin = {
           withPreset(piProvider({ resolveBin: bin, env: () => current().env ?? {} }), current),
       },
     })
+    let started: ReturnType<typeof createAgentSessions> | undefined
+    const assertActive = (): void => {
+      if (ctx.activationSignal.aborted)
+        throw new Error(`agent activation for ${ctx.remote} was cancelled`)
+    }
     try {
+      assertActive()
       const providers = (): ReturnType<typeof harnesses.providers> => harnesses.providers()
       const claude = providers().find(hasBackground)!
       // `holi-signal`, the hook command a harness a person added reports
@@ -97,9 +104,12 @@ export const agentMain: MainPlugin = {
       await installSignalCommand(ctx.binDir()).catch((err: unknown) =>
         console.error('[agent] holi-signal:', err),
       )
+      assertActive()
       const terminals = createAgentTerminals({ emit: ctx.emit })
       const sessionLog = createSessionLog(ctx.log)
-      const liveRemote = (): string | null => ctx.active()?.remote ?? null
+      // Capabilities and provider hooks belong to this activation's vault, not
+      // whichever vault the renderer currently displays.
+      const liveRemote = (): string | null => ctx.remote
 
       // One list for the renderer and the plugins built on the agent: the
       // background sessions Claude Code's supervisor runs, then the ones Holi
@@ -120,7 +130,7 @@ export const agentMain: MainPlugin = {
         sessionLog.sessions(all)
       }
 
-      const started = createAgentSessions({
+      const sessions = createAgentSessions({
         emit: (remote, name, payload) => {
           if (name === 'history' && remote === ctx.remote) {
             backgroundPast = payload as SessionSummary[]
@@ -145,6 +155,10 @@ export const agentMain: MainPlugin = {
         turnLogFor: openTurnLog,
         snapshot: worktreeEnd,
       })
+      started = sessions
+      // Fix the session host to this activation's vault before exposing any
+      // provider hook routes; early hook reports queue against this owner.
+      await sessions.ensure(ctx)
       // Pi's RPC runs find `pi` and its environment as its terminals do: the
       // preset's program and variables, its arguments being a terminal's alone.
       const piRuns = piCommand({
@@ -155,7 +169,7 @@ export const agentMain: MainPlugin = {
         bin: piRuns.bin,
         env: piRuns.env,
         binDir: ctx.binDir,
-        bracket: (id, edge) => started.bracket(id, edge),
+        bracket: (id, edge) => sessions.bracket(id, edge),
         changed: () => {
           piSessions = piBackground.sessions()
           pushSessions()
@@ -175,7 +189,7 @@ export const agentMain: MainPlugin = {
         providers,
         terminals,
         // Its turns pause sync and are recorded like a background session's.
-        bracket: (id, edge) => started.bracket(id, edge),
+        bracket: (id, edge) => sessions.bracket(id, edge),
         binDir: ctx.binDir,
         onChange: (list) => {
           own = list
@@ -195,11 +209,14 @@ export const agentMain: MainPlugin = {
       })
       // Prompts run unwatched by a provider without a supervisor: in a scratch
       // folder of their own, or in the vault, whose turns pause sync and are
-      // recorded like a session's.
+      // recorded like a session's. Scratch is private to this canonical vault
+      // context, so startup recovery and leave cannot reach another vault.
+      const vault = { remote: ctx.remote, root: ctx.root }
+      const scratchRoots = await agentScratchRoots(ctx.userData, vault)
       const jobs = createJobs({
-        vault: { remote: ctx.remote, root: ctx.root },
-        scratchRoot: join(ctx.userData, 'agent-jobs'),
-        bracket: (id, edge) => started.bracket(id, edge),
+        vault,
+        scratchRoot: scratchRoots.jobs,
+        bracket: (id, edge) => sessions.bracket(id, edge),
         onChange: (list) => {
           jobRows = list
           pushSessions()
@@ -208,8 +225,8 @@ export const agentMain: MainPlugin = {
       // Sessions Holi runs fenced to a folder of its own, what they wrote
       // copied back as each turn ends.
       const fenced = createFencedSessions({
-        vault: { remote: ctx.remote, root: ctx.root },
-        scratchRoot: join(ctx.userData, 'agent-fenced'),
+        vault,
+        scratchRoot: scratchRoots.fenced,
         own: ptySessions,
         copyBack: jobs.copyBack,
       })
@@ -238,7 +255,7 @@ export const agentMain: MainPlugin = {
         ...harnessCapabilities({
           registry: harnesses,
           file: harnessFile,
-          root: () => (liveRemote() === ctx.remote ? ctx.root : null),
+          root: () => ctx.root,
           changed: () => ctx.emit(ctx.remote, 'providers', null),
         }),
         ...versionCapabilities({ holi: app.getVersion() }),
@@ -284,18 +301,18 @@ export const agentMain: MainPlugin = {
             }
             // The settle commit's tree, for the Stop hook to save as where the
             // turn left the vault.
-            const commit = await started.noteTurn(remote, id, active, pending, pid)
+            const commit = await sessions.noteTurn(remote, id, active, pending, pid)
             if (commit === null) return null
             return runGit(ctx.root, ['rev-parse', '--verify', `${commit}^{tree}`]).catch(() => null)
           },
           // A session's status line: how much of its context is used.
-          onStatus: (remote, id, status) => started.noteStatus(remote, id, status),
+          onStatus: (remote, id, status) => sessions.noteStatus(remote, id, status),
           onConversation: (remote, id, about) => {
             if (remote === ctx.remote) ptySessions.noteConversation(id, about)
           },
           // Where a background session takes messages: its inbox socket, kept
           // in memory.
-          onChannel: (remote, id, channel) => started.noteChannel(remote, id, channel),
+          onChannel: (remote, id, channel) => sessions.noteChannel(remote, id, channel),
         })
       }
       // `holi-signal`, from a session of a harness a person added: whichever
@@ -318,7 +335,7 @@ export const agentMain: MainPlugin = {
       // stop without a question; their conversations stay in the agents list.
       ctx.guardQuit(() => {
         const busy = [
-          ...started.sessions(),
+          ...sessions.sessions(),
           ...piBackground.sessions(),
           ...ptySessions.sessions(),
           ...jobs.sessions(),
@@ -332,7 +349,6 @@ export const agentMain: MainPlugin = {
           detail: `${one ? 'Its' : 'Their'} current turn is cut short.`,
         }
       })
-      void started.ensure(ctx)
       // Expired personal memories and old work-log days go, now and hourly. The
       // running sweep is kept so leaving the vault waits for it to finish.
       let sweeping: Promise<unknown> = Promise.resolve()
@@ -349,7 +365,7 @@ export const agentMain: MainPlugin = {
       // The per-turn hook reads the focused note, and its selected lines, from a
       // file in this clone.
       const unreport = ctx.onReport((report) =>
-        started.setFocus({
+        sessions.setFocus({
           focusedPath: report.focusedPath,
           selection: report.selection,
           openPaths: report.openPaths,
@@ -368,18 +384,46 @@ export const agentMain: MainPlugin = {
         unwatchNeedsYou()
         // A fenced session still starting opens nothing now, or is one the
         // sessions' leave ends.
-        await fenced.closing().catch((err) => console.error('[agent] fenced sessions:', err))
-        await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
-        await piBackground.leave().catch((err) => console.error('[agent] Pi sessions:', err))
-        await fenced.leave().catch((err) => console.error('[agent] fenced sessions:', err))
-        await jobs.leave().catch((err) => console.error('[agent] jobs:', err))
-        await started.leave().catch((err) => console.error('[agent] leave failed:', err))
-        await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
-        await harnesses.dispose()
+        const failures: unknown[] = []
+        for (const cleanup of [
+          () => fenced.closing(),
+          () => ptySessions.leave(),
+          () => piBackground.leave(),
+          () => fenced.leave(),
+          () => jobs.leave(),
+          () => sessions.leave(),
+          () => terminals.closeAll(),
+          () => harnesses.dispose(),
+        ]) {
+          try {
+            await cleanup()
+          } catch (err) {
+            failures.push(err)
+          }
+        }
+        if (failures.length > 0) throw new AggregateError(failures, 'agent teardown failed')
       }
     } catch (err) {
-      await harnesses.dispose()
-      throw err
+      // Revoke capability admission before asynchronous failure cleanup starts.
+      ctx.invalidateActivation()
+      // `ensure` may have attached the vault's config watcher before a later
+      // activation step fails. Join any pending attach and release it before
+      // allowing a retry to create another session host.
+      const failures: unknown[] = [err]
+      try {
+        await started?.leave({ stopSessions: false })
+      } catch (cleanupError) {
+        failures.push(cleanupError)
+      }
+      try {
+        await harnesses.dispose()
+      } catch (cleanupError) {
+        failures.push(cleanupError)
+      }
+      if (failures.length === 1) throw err
+      const failure = new AggregateError(failures, 'agent activation failed')
+      ctx.reportDrainFailure(failure)
+      throw failure
     }
   },
 }

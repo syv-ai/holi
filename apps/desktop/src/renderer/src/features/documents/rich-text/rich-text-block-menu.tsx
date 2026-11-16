@@ -119,6 +119,7 @@ export interface BlockMenuState {
 /** Where the caret goes when the menu opens: the first text, else the block. */
 export function blockMenuSelection(editor: Editor, target: BlockTarget) {
   const { doc } = editor.state
+  if (target.node.type.name === 'documentFigure') return NodeSelection.create(doc, target.pos)
   const range = blockTextRange(target)
   if (range) return TextSelection.create(doc, range.from)
   if (target.node.isAtom) return NodeSelection.create(doc, target.pos)
@@ -201,9 +202,7 @@ export function RichTextBlockMenuItems({
             Add caption
           </DropdownMenuItem>
         ) : null}
-        {menu.kind === 'code-block' &&
-        String(editor.state.doc.nodeAt(menu.pos)?.attrs.language ?? '').toLowerCase() !==
-          'mermaid' ? (
+        {menu.kind === 'code-block' ? (
           <DropdownMenuItem onClick={() => addCodeCaption(editor, menu.pos)}>
             <CaptionsIcon aria-hidden="true" />
             Add caption
