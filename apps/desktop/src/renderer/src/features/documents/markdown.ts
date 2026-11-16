@@ -33,9 +33,13 @@ function markdownImageFromSource(body: string, source: string) {
 }
 
 function preserveReferenceDefinitions(parsed: any, source: string) {
+  const opaqueRanges = unhandledCaptionRanges(source, [], protectedMarkdownRanges(source))
   let offset = 0
   for (const token of marked.lexer(source)) {
-    if (token.type === 'def') {
+    if (
+      token.type === 'def' &&
+      !opaqueRanges.some((range) => offset >= range.from && offset < range.to)
+    ) {
       const end = offset + token.raw.length
       const definition = source.slice(offset, end).replace(/\r?\n$/, '')
       parsed.content ??= []
@@ -128,6 +132,9 @@ function unhandledCaptionRanges(
 
 /** The extension the editor needs to read and write markdown. */
 function withDocumentFigures(manager: { parse: (source: string) => any }, source: string) {
+  // Marked's token.raw offsets index its LF-normalized input. Normalize before
+  // deriving any ranges so CRLF and mixed-newline documents use the same offsets.
+  source = source.replace(/\r\n?/g, '\n')
   const protectedRanges = protectedMarkdownRanges(source)
   const codeFrames = readMarkdownCodeCaptions(source).filter(
     (frame) =>

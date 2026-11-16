@@ -5,7 +5,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createDocumentExtensions } from '../document-extensions'
 import { applyReload } from '../apply-reload'
 import { readMarkdownCodeCaptions } from '@holi/shared'
-import { addCodeCaption, addImageCaption, removeCodeCaption } from '../rich-text/document-figure'
+import {
+  addCodeCaption,
+  addImageCaption,
+  removeCodeCaption,
+  renderImageMarkdown,
+} from '../rich-text/document-figure'
 import { blockTargetAtPos, duplicateBlock } from '../rich-text/rich-text-block-actions'
 
 let editor: Editor | null = null
@@ -936,5 +941,15 @@ const value = 1
     expect(reparsed.getMarkdown()).not.toContain('const value = 1')
     expect(readMarkdownCodeCaptions(reparsed.getMarkdown())).toHaveLength(1)
     reparsed.destroy()
+  })
+})
+
+describe('image markdown destinations', () => {
+  it('delimits valid destinations with spaces and encodes angle delimiters', () => {
+    expect(renderImageMarkdown({ src: 'assets/my image (draft).png', alt: 'chart' })).toBe(
+      '![chart](<assets/my image (draft).png>)',
+    )
+    expect(renderImageMarkdown({ src: 'assets/a<b>.png' })).toBe('![](<assets/a%3Cb%3E.png>)')
+    expect(renderImageMarkdown({ src: 'assets/chart.png' })).toBe('![](assets/chart.png)')
   })
 })

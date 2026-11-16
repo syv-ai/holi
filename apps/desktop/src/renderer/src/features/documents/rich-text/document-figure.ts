@@ -103,10 +103,10 @@ export function renderImageMarkdown(attrs: {
     .replaceAll('\\', '\\\\')
     .replaceAll('[', '\\[')
     .replaceAll(']', '\\]')
-  const src = String(attrs.src ?? '')
-    .replaceAll('\\', '\\\\')
-    .replaceAll('(', '\\(')
-    .replaceAll(')', '\\)')
+  const rawSrc = String(attrs.src ?? '')
+  const src = /[\s<>]/.test(rawSrc)
+    ? `<${rawSrc.replaceAll('\\', '\\\\').replaceAll('<', '%3C').replaceAll('>', '%3E')}>`
+    : rawSrc.replaceAll('\\', '\\\\').replaceAll('(', '\\(').replaceAll(')', '\\)')
   const title =
     typeof attrs.title === 'string' && attrs.title
       ? ` "${attrs.title.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
@@ -290,9 +290,20 @@ export const DocumentFigure = Node.create({
             })
             // References belong to the source document, not the clipboard.
             // Materialize visible image attrs while retaining caption marks.
+            const flattenOpenFigures = (node: any): any[] =>
+              node.type === 'documentFigure' && (slice.openStart > 0 || slice.openEnd > 0)
+                ? (node.content ?? []).flatMap(flattenOpenFigures)
+                : [
+                    {
+                      ...portable(node),
+                      ...(node.content
+                        ? { content: node.content.flatMap(flattenOpenFigures) }
+                        : {}),
+                    },
+                  ]
             return editor.markdown.serialize({
               type: 'doc',
-              content: slice.content.toJSON().map(portable),
+              content: slice.content.toJSON().flatMap(flattenOpenFigures),
             })
           },
           handleDOMEvents: {
