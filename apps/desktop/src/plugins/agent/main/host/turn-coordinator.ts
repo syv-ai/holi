@@ -89,6 +89,8 @@ export interface TurnCoordinator {
   /** The session died. It leaves the set at once and records nothing: a turn
    *  killed part-way has no end of its own. */
   forget(sessionId: string): void
+  /** Wait for turn records and settle commits already entered by this vault. */
+  drain(): Promise<void>
   /** The sessions currently mid-turn. A snapshot; mutating it changes nothing. */
   readonly working: ReadonlySet<string>
 }
@@ -123,6 +125,16 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
   /** Record writes, one at a time: each append reads and rewrites the whole
    *  log, so two at once would lose one. */
   let writing: Promise<void> = Promise.resolve()
+  let writeFailure: unknown
+  const pending = new Set<Promise<unknown>>()
+  function track<T>(promise: Promise<T>): Promise<T> {
+    pending.add(promise)
+    void promise.then(
+      () => pending.delete(promise),
+      () => pending.delete(promise),
+    )
+    return promise
+  }
 
   function write(vault: TurnVault, records: TurnRecord[]): Promise<void> {
     const turnLog = deps.turnLogFor?.(vault.root)
@@ -130,7 +142,9 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     const next = writing.then(async () => {
       for (const record of records) await turnLog.append(record)
     })
-    writing = next.catch(() => {})
+    writing = next.catch((err: unknown) => {
+      writeFailure = err
+    })
     return next
   }
 
@@ -224,7 +238,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     const vault = deps.vault()
     if (record && turns.size > 0 && deps.snapshot !== undefined) {
       if (vault !== null) {
-        void recordNow(vault, turn).catch((err: unknown) =>
+        void track(recordNow(vault, turn)).catch((err: unknown) =>
           log(`turn record failed: ${String(err)}`),
         )
       }
@@ -243,7 +257,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       // The vault the turns ran in, held: a commit in a vault left meanwhile
       // throws rather than landing in the next one.
       if (batch.length > 0 && vault !== null) {
-        settled = settleBatch(vault, batch).catch((err: unknown) => {
+        settled = track(settleBatch(vault, batch)).catch((err: unknown) => {
           log(`turn record failed: ${String(err)}`)
           return null
         })
@@ -290,7 +304,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       if (wasEmpty && vault !== null) release = vault.pauseSync('the assistant is working')
       turn.safety = setTimeout(() => {
         log(`session ${sessionId} released by the ${turnSafetyMs}ms safety cap`)
-        void leave(sessionId, true)
+        void track(leave(sessionId, true))
       }, turnSafetyMs)
       deps.onChange?.()
     },
@@ -314,11 +328,18 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       }
       if (at - turn.idleSince < idleConfirmMs) return
       log(`session ${sessionId} released by a confirmed idle`)
-      void leave(sessionId, true)
+      void track(leave(sessionId, true))
     },
 
     forget(sessionId) {
-      void leave(sessionId, false)
+      void track(leave(sessionId, false))
+    },
+
+    async drain() {
+      while (pending.size > 0) await Promise.allSettled([...pending])
+      await writing
+      if (writeFailure !== undefined)
+        throw new Error(`Could not save agent turn history: ${String(writeFailure)}`)
     },
 
     get working() {

@@ -365,7 +365,7 @@ it('keeps live job and fenced data planes independent through another vault star
     await settle(B, bJob)
     await settle(B, bFence)
     expect(await readFile(join(roots[A], 'job.md'), 'utf8')).toBe(`${A}:job:finished`)
-    expect(await readFile(join(roots[A], 'fenced.md'), 'utf8')).toBe(`${A}:fenced:started`)
+    await expect(access(join(roots[A], 'fenced.md'))).rejects.toMatchObject({ code: 'ENOENT' })
     await removed(join(b.jobs, `${bJob.sessionId}.pid`))
     expect(children).toHaveLength(4)
   } finally {

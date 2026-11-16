@@ -223,13 +223,15 @@ describe('agent terminals', () => {
     expect(terminals.paste(id, 'x')).toBe(false)
   })
 
-  it('closes a terminal even when its client never reports the exit', async () => {
-    const { terminals, sent } = setup()
+  it('reports an unconfirmed exit instead of fabricating terminal closure', async () => {
+    const { terminals, spawns, sent } = setup()
     const res = terminals.open(on())
     const id = res.ok ? res.id : ''
-    await terminals.close(id)
+    await expect(terminals.close(id)).rejects.toThrow(/did not report process exit/)
+    expect(terminals.list()).toHaveLength(1)
+    expect(sent.some(([c, p]) => c === 'pty-exit' && (p as { id: string }).id === id)).toBe(false)
+    spawns[0]!.pty.exit(-1)
     expect(terminals.list()).toEqual([])
-    expect(sent.some(([c, p]) => c === 'pty-exit' && (p as { id: string }).id === id)).toBe(true)
   })
 
   it('refuses without a binary', () => {
