@@ -2764,40 +2764,95 @@ test('hides a persisted annotation when Gmail reports the thread unstarred', asy
   expect(screen.queryByLabelText('Starred')).toBeNull()
 })
 
-test('refresh and Gmail star writes invalidate the visible thread marker', async () => {
-  // Extra page reads must not star the thread before the write happens.
-  let starred = false
-  currentAnnotations = { t1: 'red-star' }
-  threadMock.mockImplementation(async () => page([summary({ starred })]))
-  mailMarkersMock.mockImplementation(async () => ({ ...currentAnnotations }))
-  const writeMarker = setMailMarkerMock.getMockImplementation()!
-  setMailMarkerMock.mockImplementation((raw) => {
-    starred = (raw as { marker: string | null }).marker !== null
-    return writeMarker(raw)
-  })
-  const user = userEvent.setup()
-  render(<MailView />)
+test.each([0, 1_001])(
+  'refresh and Gmail star writes invalidate the visible thread marker after %i ms',
+  async (elapsed) => {
+    // Extra page reads must not star the thread before the write happens.
+    let starred = false
+    currentAnnotations = { t1: 'red-star' }
+    threadMock.mockImplementation(async () => page([summary({ starred })]))
+    mailMarkersMock.mockImplementation(async () => ({ ...currentAnnotations }))
+    const writeMarker = setMailMarkerMock.getMockImplementation()!
+    setMailMarkerMock.mockImplementation((raw) => {
+      starred = (raw as { marker: string | null }).marker !== null
+      return writeMarker(raw)
+    })
+    const user = userEvent.setup()
+    render(<MailView />)
 
-  await screen.findByRole('button', { name: /Q2 budget/i })
-  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
-  expect(screen.queryByLabelText('Red star')).toBeNull()
-  await user.click(screen.getByRole('button', { name: /Q2 budget/i }))
-  await user.click(await screen.findByRole('button', { name: 'Star this thread' }))
-  await waitFor(() =>
-    expect(setMailMarkerMock).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 't1', marker: 'yellow-star' }),
-    ),
-  )
-  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+    const row = await screen.findByRole('button', { name: /Q2 budget/i })
+    await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+    expect(screen.queryByLabelText('Red star')).toBeNull()
+    await user.click(row)
+    const star = await screen.findByRole('button', { name: 'Star this thread' })
 
-  const readsBeforeRefresh = mailMarkersMock.mock.calls.length
-  mailMarkersMock.mockResolvedValueOnce({ t1: 'blue-question' })
-  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
-  await waitFor(() => expect(mailMarkersMock.mock.calls.length).toBeGreaterThan(readsBeforeRefresh))
-  // An older annotation refresh cannot undo the newest explicit marker intent.
-  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
-  expect(screen.queryByLabelText('Blue question mark')).toBeNull()
-})
+    // Capture an annotation read BEFORE the write. Returning an old value from a
+    // new, post-write read only tests the temporary optimistic overlay's lifetime.
+    let finishStaleRead!: (value: Record<string, string>) => void
+    mailMarkersMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishStaleRead = resolve
+        }),
+    )
+    await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+    await waitFor(() => expect(finishStaleRead).toBeDefined())
+
+    vi.useFakeTimers()
+    try {
+      await act(async () => fireEvent.click(star))
+      expect(setMailMarkerMock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 't1', marker: 'yellow-star' }),
+      )
+      expect(currentAnnotations).toEqual({ t1: 'yellow-star' })
+      // Advance past settlement without relying on the speed of userEvent/CI.
+      await act(async () => vi.advanceTimersByTimeAsync(elapsed))
+      await act(async () => finishStaleRead({ t1: 'blue-question' }))
+      expect(
+        within(screen.getByRole('button', { name: /Q2 budget/i })).getByLabelText('Yellow star'),
+      ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('button', { name: 'Unstar this thread' })).getByLabelText(
+          'Yellow star',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.queryByLabelText('Blue question mark')).toBeNull()
+
+      // A fresh read uses the persisted write, also after the overlay expires.
+      const readsBeforeRefresh = mailMarkersMock.mock.calls.length
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Refresh mail' })))
+      expect(mailMarkersMock.mock.calls.length).toBeGreaterThan(readsBeforeRefresh)
+      expect(
+        within(screen.getByRole('button', { name: /Q2 budget/i })).getByLabelText('Yellow star'),
+      ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('button', { name: 'Unstar this thread' })).getByLabelText(
+          'Yellow star',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.queryByLabelText('Blue question mark')).toBeNull()
+
+      // Once settled, a genuinely newer annotation must still be observable.
+      await act(async () => vi.advanceTimersByTimeAsync(1_001))
+      currentAnnotations = { t1: 'blue-question' }
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Refresh mail' })))
+      expect(
+        within(screen.getByRole('button', { name: /Q2 budget/i })).getByLabelText(
+          'Blue question mark',
+        ),
+      ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('button', { name: 'Unstar this thread' })).getByLabelText(
+          'Blue question mark',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.queryByLabelText('Yellow star')).toBeNull()
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  },
+)
 
 test('reader Retry settles a failed marker reconciliation', async () => {
   const user = userEvent.setup()
