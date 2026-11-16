@@ -27,6 +27,7 @@ interface SmokeControls {
   context(account: string, draft: string): void
   vim(enabled: boolean): void
   hideComposer(): void
+  reader(visible: boolean, account: string, view: string, vault: string): void
   state(): unknown
 }
 let controls: SmokeControls | null = null
@@ -34,6 +35,7 @@ let controls: SmokeControls | null = null
   context: (account, draft) => controls?.context(account, draft),
   vim: (enabled) => controls?.vim(enabled),
   hideComposer: () => controls?.hideComposer(),
+  reader: (visible, account, view, vault) => controls?.reader(visible, account, view, vault),
   state: () => controls?.state(),
 }
 
@@ -41,6 +43,10 @@ function Fixture() {
   const [account, setAccount] = useState('fixture-account-a')
   const [draft, setDraft] = useState('new')
   const [showComposer, setShowComposer] = useState(true)
+  const [readerVisible, setReaderVisible] = useState(true)
+  const [readerView, setReaderView] = useState('thread-a')
+  const [vault, setVault] = useState('synthetic/mail-vim-vault')
+  const setActiveRemote = useSetAtom(activeRemoteAtom)
   const setVim = useSetAtom(vimCodeEditingAtom)
   useShortcutDispatcher()
   useEffect(() => {
@@ -54,12 +60,19 @@ function Fixture() {
       },
       vim: setVim,
       hideComposer: () => setShowComposer(false),
-      state: () => ({ account, draft }),
+      reader: (visible, nextAccount, view, nextVault) => {
+        setReaderVisible(visible)
+        setAccount(nextAccount)
+        setReaderView(view)
+        setVault(nextVault)
+        setActiveRemote(nextVault)
+      },
+      state: () => ({ account, draft, readerVisible, readerView, vault }),
     }
     return () => {
       controls = null
     }
-  }, [account, draft, setVim])
+  }, [account, draft, readerVisible, readerView, vault, setActiveRemote, setVim])
   const ref = (handle: MailComposerHandle | null) => {
     ;(window as unknown as { __mailVimFlush?: () => Promise<boolean> }).__mailVimFlush = handle
       ? () => handle.prepareToLeave()
@@ -75,38 +88,46 @@ function Fixture() {
         <button type="button" data-smoke-host-action="">
           Host action
         </button>
-        <MailReader
-          mail={
-            {
-              reader: {
-                kind: 'ready',
-                thread: {
-                  id: 'fixture-thread',
-                  subject: 'Fixture message',
-                  webUrl: 'https://example.test/thread',
-                  messages: [
-                    {
-                      id: 'fixture-message',
-                      from: { name: 'Fixture', email: 'fixture@example.test' },
-                      to: [],
-                      cc: [],
-                      bcc: [],
-                      date: '2026-11-15T12:00:00.000Z',
-                      body: 'Fixture message text',
-                      html: '<p>Fixture message text</p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><p><a href="https://example.test/">Fixture external link</a></p>',
-                      attachments: [{ filename: 'fixture.txt', mimeType: 'text/plain', size: 128 }],
-                    },
-                  ],
+        <section
+          hidden={!readerVisible}
+          data-testid="reader-retained"
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <MailReader
+            mail={
+              {
+                reader: {
+                  kind: 'ready',
+                  thread: {
+                    id: 'fixture-thread',
+                    subject: 'Fixture message',
+                    webUrl: 'https://example.test/thread',
+                    messages: [
+                      {
+                        id: 'fixture-message',
+                        from: { name: 'Fixture', email: 'fixture@example.test' },
+                        to: [],
+                        cc: [],
+                        bcc: [],
+                        date: '2026-11-15T12:00:00.000Z',
+                        body: 'Fixture message text',
+                        html: '<p>Fixture message text</p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><p><a href="https://example.test/">Fixture external link</a></p>',
+                        attachments: [
+                          { filename: 'fixture.txt', mimeType: 'text/plain', size: 128 },
+                        ],
+                      },
+                    ],
+                  },
                 },
-              },
-              reloadThread: async () => {},
-            } as unknown as MailState
-          }
-          composer={null}
-          onCompose={() => {}}
-          visible
-          accountSub={account}
-        />
+                reloadThread: async () => {},
+              } as unknown as MailState
+            }
+            composer={null}
+            onCompose={() => {}}
+            visible={readerVisible}
+            accountSub={account}
+          />
+        </section>
         {showComposer && (
           <MailComposer
             ref={ref}
@@ -123,7 +144,7 @@ function Fixture() {
             onClose={() => calls.push({ op: 'close-callback', account })}
           />
         )}
-        <HostHintLayer scopeKey={`${account}:${draft}`} />
+        <HostHintLayer scopeKey={`${vault}:${account}:${readerView}:${readerVisible}:${draft}`} />
       </main>
     </TooltipProvider>
   )

@@ -338,17 +338,6 @@ function HtmlFrame({
 
     // Published last: the document is written and wired by this point, so a
     // searcher that reads the registry never gets a half-built page.
-    const hintAdapter = mailHints
-      ? createMailHintAdapter({
-          frame: frame!,
-          generation: () => generation.current,
-          scope: () => scopeRef.current,
-        })
-      : null
-    const unregisterHints =
-      frame === null || hintAdapter === null
-        ? undefined
-        : registerHostHintAdapter(frame, hintAdapter)
     const unregister = registerAs === null ? undefined : registerMailFrame(registerAs, document_)
 
     return () => {
@@ -357,9 +346,22 @@ function HtmlFrame({
       document_.removeEventListener('keydown', onFrameKeyDown)
       observer.disconnect()
       unregister?.()
-      unregisterHints?.()
     }
-  }, [html, css, palette, allowRemoteContent, registerAs, hintScope, mailHints])
+  }, [html, css, palette, allowRemoteContent, registerAs, mailHints])
+
+  // Hint ownership changes much more often than the framed document (for
+  // example, when a retained reader is hidden). Revoke old targets in layout
+  // cleanup and register against the same document without rewriting it.
+  useLayoutEffect(() => {
+    const frame = ref.current
+    if (!mailHints || frame === null) return
+    const adapter = createMailHintAdapter({
+      frame,
+      generation: () => generation.current,
+      scope: () => scopeRef.current,
+    })
+    return registerHostHintAdapter(frame, adapter)
+  }, [hintScope, mailHints])
 
   return (
     <iframe
