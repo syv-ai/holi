@@ -20,7 +20,7 @@ import { AGENT_MARKER, DocumentMarkdown } from './markdown'
 import { MultiCursor } from './multi-cursor'
 import { WikiLink } from './wiki-link'
 import { MermaidCodeBlock } from './rich-text/mermaid-code-block'
-import { DocumentCaption, DocumentFigure } from './rich-text/document-figure'
+import { DocumentCaption, DocumentFigure, renderImageMarkdown } from './rich-text/document-figure'
 
 /** An image at its natural size up to the column's width, never scaled up.
  *  Its height is capped at 70% of the window but never below the column's
@@ -50,6 +50,11 @@ const DocumentImage = Image.extend<{ folder: string }>({
         parseHTML: () => null,
         renderHTML: () => ({}),
       },
+      sourceMarkdownImageAttrs: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: () => ({}),
+      },
     }
   },
   addNodeView() {
@@ -64,6 +69,17 @@ const DocumentImage = Image.extend<{ folder: string }>({
         src: displaySrc(String(HTMLAttributes.src ?? ''), this.options.folder),
       }),
     ]
+  },
+  renderMarkdown(node) {
+    const source = node.attrs?.sourceMarkdown
+    const sourceAttrs = node.attrs?.sourceMarkdownImageAttrs
+    const currentAttrs = JSON.stringify([
+      node.attrs?.src ?? '',
+      node.attrs?.alt ?? null,
+      node.attrs?.title ?? null,
+    ])
+    if (typeof source === 'string' && sourceAttrs === currentAttrs) return source
+    return renderImageMarkdown(node.attrs ?? {})
   },
 })
 

@@ -84,15 +84,15 @@ const evidence = resolve(process.argv[2] ?? '/tmp/holi-535/native')
 const typst = process.env.HOLI_535_TYPST ?? process.argv[3]
 assert(typst, 'Provide a Typst executable as argument 3 or HOLI_535_TYPST')
 await access(typst)
+await assert.rejects(access(evidence), {
+  code: 'ENOENT',
+})
+await mkdir(evidence, { mode: 0o700 })
 const root = await mkdtemp(join(tmpdir(), 'holi-535-native-'))
 await chmod(root, 0o700)
 const clipboardBackup = join(root, 'clipboard-snapshot.json')
 const clipboardScript = join(root, 'clipboard.jxa')
 await writeFile(clipboardScript, clipboardJxa, { mode: 0o600 })
-await mkdir(evidence, { recursive: true })
-await rm(join(evidence, 'frames'), { recursive: true, force: true })
-for (const name of ['result.json', 'electron-smoke.log', 'light.png', 'dark.png'])
-  await rm(join(evidence, name), { force: true })
 let child
 let closed
 let log = ''
