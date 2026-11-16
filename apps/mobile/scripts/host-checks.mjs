@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
 
-export function validateReport(report, { runId, launchedAt, now, osVersion }) {
+export function validateReport(report, { runId, launchedAt, now, osVersion, storageRoot }) {
   assert.equal(report.schemaVersion, 1)
   assert.equal(report.runId, runId, 'Stale or unrelated simulator report')
   assert.equal(report.platform, 'ios')
@@ -35,10 +35,13 @@ export function validateReport(report, { runId, launchedAt, now, osVersion }) {
     'Native storage evidence is missing or failed',
   )
   assert.ok(['winner A', 'winner B'].includes(report.storage.finalBytes))
-  assert.ok(
-    typeof report.storageRoot === 'string' &&
-      report.storageRoot.includes(`/Documents/holi-storage-check-${runId}-`),
+  assert.equal(typeof report.storageRoot, 'string', 'Storage path is missing')
+  assert.equal(
+    report.storageRoot,
+    `${storageRoot}/holi-storage-check-${runId}-${report.storageRoot.split('-').at(-1)}`,
+    'Storage path is outside the owned Documents run namespace',
   )
+  assert.match(report.storageRoot.split('/').at(-1), /^holi-storage-check-.+-\d+$/)
 }
 
 export function validateSharedGraph(graph) {

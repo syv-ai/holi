@@ -4,7 +4,13 @@ import { runVaultFormatCorpus } from '@holi/shared/vault-format'
 import { runCommand, validateReport, validateSharedGraph } from '../scripts/host-checks.mjs'
 
 const corpus = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
-const context = { runId: 'fresh', launchedAt: 100, now: 200, osVersion: '26.2' }
+const context = {
+  runId: 'fresh',
+  launchedAt: 100,
+  now: 200,
+  osVersion: '26.2',
+  storageRoot: '/sandbox/Documents',
+}
 const report = {
   schemaVersion: 1,
   runId: 'fresh',
@@ -37,6 +43,18 @@ test('host accepts only fresh complete native evidence for every bundled case', 
 })
 
 for (const [name, mutate] of [
+  [
+    'traversal storage root',
+    (value) => {
+      value.storageRoot = '/sandbox/Documents/../Library/private'
+    },
+  ],
+  [
+    'outside container storage root',
+    (value) => {
+      value.storageRoot = '/sandbox-other/Documents/holi-storage-check-fresh-110'
+    },
+  ],
   [
     'stale run',
     (value) => {

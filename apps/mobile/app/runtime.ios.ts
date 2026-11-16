@@ -16,12 +16,18 @@ export async function checkCompatibility(): Promise<string> {
   const startedAt = Date.now()
   const runId = NSProcessInfo.processInfo.environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
   let status: string
+  let phase = 'format-corpus'
+  let operation = 'runVaultFormatCorpus'
+  let storageRoot: string | undefined
+  let secondRoot: string | undefined
   let evidence: Record<string, unknown>
   try {
     const corpus = runVaultFormatCorpus(nativeUtf8)
     const documents = knownFolders.documents().path
-    const storageRoot = `${documents}/holi-storage-check-${runId}-${startedAt}`
-    const secondRoot = `${documents}/holi-storage-other-${runId}-${startedAt}`
+    storageRoot = `${documents}/holi-storage-check-${runId}-${startedAt}`
+    secondRoot = `${documents}/holi-storage-other-${runId}-${startedAt}`
+    phase = 'create-storage-fixtures'
+    operation = 'createDirectory'
     for (const root of [storageRoot, secondRoot]) {
       const error = new interop.Reference<NSError>()
       const created =
@@ -34,6 +40,8 @@ export async function checkCompatibility(): Promise<string> {
       if (error.value || !created)
         throw new Error(error.value?.localizedDescription ?? 'Could not create storage test root')
     }
+    phase = 'shared-storage-scenarios'
+    operation = 'runVaultStorageCheck'
     const storage = await runVaultStorageCheck(nativeFiles, storageRoot, secondRoot)
     const linkError = new interop.Reference<NSError>()
     const linkPath = `${storageRoot}/symlinked-vault`
@@ -56,11 +64,18 @@ export async function checkCompatibility(): Promise<string> {
     }
     if (!symlinkRejected) throw new Error('Native storage followed a symlink')
     storage.symlinkRejected = symlinkRejected
+    phase = 'symlink-rejection'
+    operation = 'createAndReadSymlinkFixture'
     status = `${corpus.passed}/${corpus.total} format cases and storage passed; ${corpus.failed} failed`
     evidence = { corpus, storage, storageRoot }
   } catch (error) {
-    status = `Compatibility failed: ${String(error)}`
-    evidence = { error: String(error) }
+    status = `Compatibility failed during ${phase}/${operation}: ${String(error)}`
+    evidence = {
+      error: String(error),
+      failure: { phase, operation },
+      ...(storageRoot ? { storageRoot } : {}),
+      ...(secondRoot ? { secondRoot } : {}),
+    }
   }
   const report = {
     schemaVersion: 1,

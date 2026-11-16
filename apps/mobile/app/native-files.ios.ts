@@ -1,3 +1,4 @@
+import { isInIgnoredDir, isLocalOnlyPath, isSecretPath } from '@holi/shared/mobile-path-safety'
 import type { Entry, NativeFiles } from './native-files'
 
 function checkError(error: interop.Reference<NSError>): void {
@@ -111,6 +112,9 @@ export const nativeFiles: NativeFiles = {
       checkError(error)
       for (const name of Array.from(names ?? [])) {
         const rel = prefix ? `${prefix}/${name}` : name
+        // Excluded directories are pruned before metadata reads or recursion.
+        if (isInIgnoredDir(rel) || isLocalOnlyPath(rel) || isSecretPath(rel)) continue
+        if (rel.split('/').some((part: string) => part.startsWith('.holi-storage-'))) continue
         const unchecked = `${directory}/${name}`
         if (attrs(unchecked)?.objectForKey(NSFileType) === NSFileTypeSymbolicLink) continue
         const target = checkedPath(root, rel, false, true)
@@ -147,17 +151,49 @@ export const nativeFiles: NativeFiles = {
       (before.length !== expected.length || before.some((byte, index) => byte !== expected[index]))
     )
       throw new Error('Stale bytes')
-    const error = new interop.Reference<NSError>()
-    const ok = toData(bytes).writeToURLOptionsError(
-      NSURL.fileURLWithPath(target),
-      1 as NSDataWritingOptions,
-      error,
-    )
-    checkError(error)
-    if (!ok) throw new Error('Atomic Foundation replacement failed')
-    const handle = NSFileHandle.fileHandleForWritingAtPath(target)
-    if (!handle) throw new Error('Could not synchronize replacement')
-    handle.synchronizeFile()
-    handle.closeFile()
+    const staging = `${target.substring(0, target.lastIndexOf('/'))}/.holi-storage-stage-${NSUUID.UUID().UUIDString}.tmp`
+    const manager = NSFileManager.defaultManager
+    let stageOwned = false
+    try {
+      if (!manager.createFileAtPathContentsAttributes(staging, toData(bytes), null))
+        throw new Error('Could not create owned staging file')
+      stageOwned = true
+      const handle = NSFileHandle.fileHandleForWritingAtPath(staging)
+      if (!handle) throw new Error('Could not open staging file')
+      let closeError: unknown
+      try {
+        const syncError = new interop.Reference<NSError>()
+        if (!handle.synchronizeAndReturnError(syncError)) checkError(syncError)
+        checkError(syncError)
+      } finally {
+        try {
+          const error = new interop.Reference<NSError>()
+          if (!handle.closeAndReturnError(error)) checkError(error)
+          checkError(error)
+        } catch (error) {
+          closeError = error
+        }
+      }
+      if (closeError) throw closeError
+      const error = new interop.Reference<NSError>()
+      const replaced =
+        manager.replaceItemAtURLWithItemAtURLBackupItemNameOptionsResultingItemURLError(
+          NSURL.fileURLWithPath(target),
+          NSURL.fileURLWithPath(staging),
+          null,
+          0 as NSFileManagerItemReplacementOptions,
+          null,
+          error,
+        )
+      checkError(error)
+      if (!replaced) throw new Error('Atomic staging publish failed')
+      stageOwned = false
+    } finally {
+      if (stageOwned) {
+        const error = new interop.Reference<NSError>()
+        manager.removeItemAtPathError(staging, error)
+        checkError(error)
+      }
+    }
   },
 }

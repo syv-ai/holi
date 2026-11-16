@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -97,7 +97,8 @@ try {
   await simctl('status_bar', simulator, 'override', '--time', '9:41')
   await simctl('install', simulator, app)
   const container = await simctl('get_app_container', simulator, bundleId, 'data')
-  const reportPath = join(container, 'Documents/vault-format-report.json')
+  const canonicalContainer = await realpath(container)
+  const reportPath = join(canonicalContainer, 'Documents/vault-format-report.json')
   await rm(reportPath, { force: true })
   const launchedAt = Date.now()
   const launch = await command('xcrun', ['simctl', 'launch', simulator, bundleId], {
@@ -118,12 +119,19 @@ try {
     await sleep(250, undefined, { signal: controller.signal })
   }
   assert.ok(report, 'Timed out waiting for a complete sandbox report')
+  const expectedStorageParent = join(canonicalContainer, 'Documents')
+  validateReport(report, {
+    runId,
+    launchedAt,
+    now: Date.now(),
+    osVersion: runtime.version,
+    storageRoot: expectedStorageParent,
+  })
   await writeFile(join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
   // Let the native view arrive, and catch a crash immediately after writing evidence.
   await sleep(2_000, undefined, { signal: controller.signal })
   process.kill(pid, 0)
   await simctl('io', simulator, 'screenshot', join(artifacts, 'status.png'))
-  validateReport(report, { runId, launchedAt, now: Date.now(), osVersion: runtime.version })
   const durableNote = join(report.storageRoot, 'same/note.md')
   const beforeRestart = await readFile(durableNote)
   await simctl('terminate', simulator, bundleId)
@@ -164,6 +172,7 @@ try {
     launchedAt: restartedAt,
     now: Date.now(),
     osVersion: runtime.version,
+    storageRoot: expectedStorageParent,
   })
   console.log(
     `iOS ${runtime.version}: ${report.corpus.passed}/${report.corpus.total} format cases and storage passed across same-container restart. Evidence: ${artifacts}`,
