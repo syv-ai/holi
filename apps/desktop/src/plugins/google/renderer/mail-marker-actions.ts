@@ -155,13 +155,13 @@ export class MailMarkerActions {
               const actual = await this.deps.reconcile(intent.owner, id, true)
               if (!this.isCurrent(intent) || !this.latest(intent)) continue
               this.intended.delete(id)
+              if (this.lastActivation?.id === id) this.lastActivation = null
               this.deps.changed(id, actual, false)
               this.deps.settled?.(id)
-              this.lastActivation = null
             } catch {
               if (this.isCurrent(intent) && this.latest(intent)) {
+                if (this.lastActivation?.id === id) this.lastActivation = null
                 this.deps.changed(id, { marker: intent.marker, starred: intent.starred }, true)
-                this.lastActivation = null
               }
             }
           }

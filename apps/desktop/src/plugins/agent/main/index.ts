@@ -35,6 +35,7 @@ import { installSignalCommand, registerSignalRoute } from './harness/signal'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createFencedSessions } from './host/fenced'
+import { agentScratchRoots } from './host/scratch-roots'
 import { createJobs } from './host/jobs'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
@@ -208,10 +209,13 @@ export const agentMain: MainPlugin = {
       })
       // Prompts run unwatched by a provider without a supervisor: in a scratch
       // folder of their own, or in the vault, whose turns pause sync and are
-      // recorded like a session's.
+      // recorded like a session's. Scratch is private to this canonical vault
+      // context, so startup recovery and leave cannot reach another vault.
+      const vault = { remote: ctx.remote, root: ctx.root }
+      const scratchRoots = await agentScratchRoots(ctx.userData, vault)
       const jobs = createJobs({
-        vault: { remote: ctx.remote, root: ctx.root },
-        scratchRoot: join(ctx.userData, 'agent-jobs'),
+        vault,
+        scratchRoot: scratchRoots.jobs,
         bracket: (id, edge) => sessions.bracket(id, edge),
         onChange: (list) => {
           jobRows = list
@@ -221,8 +225,8 @@ export const agentMain: MainPlugin = {
       // Sessions Holi runs fenced to a folder of its own, what they wrote
       // copied back as each turn ends.
       const fenced = createFencedSessions({
-        vault: { remote: ctx.remote, root: ctx.root },
-        scratchRoot: join(ctx.userData, 'agent-fenced'),
+        vault,
+        scratchRoot: scratchRoots.fenced,
         own: ptySessions,
         copyBack: jobs.copyBack,
       })
