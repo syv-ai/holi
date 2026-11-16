@@ -10,7 +10,7 @@
  * test this file's idea of git rather than git. Two of the cases here exist
  * *because* git surprised us — see `--numstat` below.
  */
-import { rm, writeFile } from 'node:fs/promises'
+import { chmod, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
@@ -80,6 +80,37 @@ describe('rangeFiles()', () => {
     expect(files).toEqual([{ path: 'gone.md', status: 'D', added: 0, removed: 1 }])
   })
 
+  it('keeps rename counts consistent when repository config disables rename detection', async () => {
+    const { dir, repo } = await repoAt()
+    await commitFile(dir, 'before.md', 'one\ntwo\nthree\n')
+    await commitFile(dir, 'exact-before.md', 'same\ncontent\n')
+    const base = (await repo.head())!
+    await plainGit(dir, ['mv', 'before.md', 'after.md'])
+    await plainGit(dir, ['mv', 'exact-before.md', 'exact-after.md'])
+    await writeFile(join(dir, 'after.md'), 'one\ntwo\nCHANGED\n')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['config', 'diff.renames', 'false'])
+    await plainGit(dir, ['commit', '-m', 'rename and edit'])
+    const files = await repo.rangeFiles(base, (await repo.head())!)
+    expect(files).toHaveLength(2)
+    expect(files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'after.md',
+          status: expect.stringMatching(/^R/),
+          added: 1,
+          removed: 1,
+        }),
+        expect.objectContaining({
+          path: 'exact-after.md',
+          status: expect.stringMatching(/^R/),
+          added: 0,
+          removed: 0,
+        }),
+      ]),
+    )
+  })
+
   it('reports a rename once, at its new path', async () => {
     // `--name-status -z` spends THREE fields on a rename (`R100`, old, new)
     // where everything else spends two. Parsed as two, the next file's status
@@ -93,7 +124,7 @@ describe('rangeFiles()', () => {
     expect(files).toHaveLength(1)
     expect(files[0]!.path).toBe('after.md')
     // `R100` for an exact rename; the number is the similarity score.
-    expect(files[0]!.status.startsWith('R')).toBe(true)
+    expect(files[0]).toMatchObject({ status: expect.stringMatching(/^R/), added: 0, removed: 0 })
   })
 
   it('handles several files in one range, and keeps their counts apart', async () => {
@@ -122,6 +153,97 @@ describe('rangeFiles()', () => {
     const { repo } = await repoAt()
     const sha = (await repo.head())!
     expect(await repo.rangeFiles(sha, sha)).toEqual([])
+  })
+
+  it('fails honestly when a consumed historical read exceeds its output budget', async () => {
+    const { dir, repo } = await repoAt()
+    const base = (await repo.head())!
+    for (let i = 0; i < 150; i++)
+      await writeFile(join(dir, `large-${i.toString().padStart(3, '0')}.md`), 'x\n')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'many files'])
+    await expect(
+      repo.rangeFiles(base, (await repo.head())!, { maxBuffer: 1024, timeout: 10_000 }),
+    ).rejects.toThrow(/output resource limit/)
+  })
+
+  it('counts decoded Unicode stdout and stderr against the combined byte budget', async () => {
+    const { dir } = await repoAt()
+    const wrapper = join(dir, 'unicode-git-wrapper.cjs')
+    await writeFile(
+      wrapper,
+      `#!/usr/bin/env node\nif (process.argv[2] === 'diff') { process.stdout.write('é'.repeat(400)); process.stderr.write('é'.repeat(400)); } else { const { spawnSync } = require('node:child_process'); const r = spawnSync('git', process.argv.slice(2), { cwd: process.cwd(), encoding: 'utf8' }); process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); process.exit(r.status || 0); }\n`,
+      { mode: 0o700 },
+    )
+    const repo = openRepo(dir, { gitPath: wrapper })
+    const sha = (await openRepo(dir).head())!
+    await expect(repo.rangeFiles(sha, sha, { maxBuffer: 1024, timeout: 10_000 })).rejects.toThrow(
+      /output resource limit/,
+    )
+  })
+
+  it('keeps tabs and further tabs in literal filenames', async () => {
+    const { dir, repo } = await repoAt()
+    const base = (await repo.head())!
+    await writeFile(join(dir, 'literal\tname\t.md'), 'one\ntwo\n')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'tabbed path'])
+    expect(await repo.rangeFiles(base, (await repo.head())!)).toEqual([
+      { path: 'literal\tname\t.md', status: 'A', added: 2, removed: 0 },
+    ])
+  })
+
+  it('rejects revision expressions and non-commit/tree objects', async () => {
+    const { dir, repo } = await repoAt()
+    const sha = (await repo.head())!
+    expect(await repo.rangeFiles(`${sha}^`, sha)).toEqual([])
+    expect(await repo.rangeFiles('--output=/tmp/out', sha)).toEqual([])
+  })
+
+  it('keeps generic history revisions while fencing option injection in show', async () => {
+    const { dir, repo } = await repoAt()
+    const before = (await repo.head())!
+    await commitFile(dir, 'README.md', '# changed\n')
+    const end = (await repo.head())!
+    expect(await repo.show(`${end}^`, 'README.md')).toBe('# Vault\n')
+    const outside = join(dir, 'must-not-be-created')
+    await expect(repo.show(`--output=${outside}`, 'README.md')).rejects.toThrow()
+    await expect(readFile(outside, 'utf8')).rejects.toThrow()
+    expect(await repo.show(before, 'README.md')).toBe('# Vault\n')
+  })
+
+  it('kills a SIGTERM-resistant historical read at its deadline and reaps it', async () => {
+    const { dir } = await repoAt()
+    const wrapper = join(dir, 'git-wrapper.cjs')
+    const pidFile = join(dir, 'child.pid')
+    await writeFile(
+      wrapper,
+      `#!/usr/bin/env node\nconst { spawnSync } = require('node:child_process');\nconst fs = require('node:fs');\nif (process.argv[2] === 'diff') { fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); if (process.env.HOLI_TEST_RESIST === '1') process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); } else { const r = spawnSync('git', process.argv.slice(2), { cwd: process.cwd(), encoding: 'utf8' }); process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); process.exit(r.status || 0); }\n`,
+      { mode: 0o700 },
+    )
+    await chmod(wrapper, 0o700)
+    const repo = openRepo(dir, { gitPath: wrapper, env: { HOLI_TEST_RESIST: '1' } })
+    const base = (await openRepo(dir).head())!
+    const end = (await openRepo(dir).head())!
+    await expect(
+      repo.rangeFiles(base, end, { maxBuffer: 1024 * 1024, timeout: 1000 }),
+    ).rejects.toThrow(/time resource limit/)
+    const pid = Number(await readFile(pidFile, 'utf8'))
+    expect(() => process.kill(pid, 0)).toThrow()
+
+    const ordinaryPidFile = join(dir, 'ordinary-child.pid')
+    const ordinaryWrapper = join(dir, 'ordinary-git-wrapper.cjs')
+    await writeFile(
+      ordinaryWrapper,
+      `#!/usr/bin/env node\nconst { spawnSync } = require('node:child_process');\nconst fs = require('node:fs');\nif (process.argv[2] === 'diff') { fs.writeFileSync(${JSON.stringify(ordinaryPidFile)}, String(process.pid)); setInterval(() => {}, 1000); } else { const r = spawnSync('git', process.argv.slice(2), { cwd: process.cwd(), encoding: 'utf8' }); process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); process.exit(r.status || 0); }\n`,
+      { mode: 0o700 },
+    )
+    const ordinaryRepo = openRepo(dir, { gitPath: ordinaryWrapper })
+    await expect(
+      ordinaryRepo.rangeFiles(base, end, { maxBuffer: 1024 * 1024, timeout: 1000 }),
+    ).rejects.toThrow(/time resource limit/)
+    const ordinaryPid = Number(await readFile(ordinaryPidFile, 'utf8'))
+    expect(() => process.kill(ordinaryPid, 0)).toThrow()
   })
 
   it('is empty when a sha is unreachable, because a dropped range is not an error', async () => {
