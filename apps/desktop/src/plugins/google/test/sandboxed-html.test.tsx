@@ -276,6 +276,43 @@ test('a deferred preference write cannot publish after switching A-B-A', async (
   )
 })
 
+test('only explicitly opted-in mail frames forward keys and preserve repeat metadata', async () => {
+  const calendar = render(<SandboxedHtml html="<p>calendar description</p>" label="Event" />)
+  const calendarFrame = await initialFrame(calendar.container)
+  const calendarKey = new KeyboardEvent('keydown', {
+    key: 'f',
+    bubbles: true,
+    cancelable: true,
+    repeat: true,
+    shiftKey: true,
+  })
+  calendarFrame.contentDocument!.body.dispatchEvent(calendarKey)
+  expect(calendarKey.defaultPrevented).toBe(false)
+  calendar.unmount()
+
+  const mail = render(
+    <SandboxedHtml html="<p>message</p>" label="Message" hintScope="thread-a" mailHints />,
+  )
+  const mailFrame = await initialFrame(mail.container)
+  const dispatch = vi.spyOn(mailFrame, 'dispatchEvent').mockReturnValue(true)
+  const key = new KeyboardEvent('keydown', {
+    key: 'F',
+    bubbles: true,
+    cancelable: true,
+    repeat: true,
+    shiftKey: true,
+  })
+  mailFrame.contentDocument!.body.dispatchEvent(key)
+  expect(dispatch).toHaveBeenCalledOnce()
+  expect(dispatch.mock.calls[0]?.[0]).toMatchObject({ repeat: true, shiftKey: true, key: 'F' })
+  expect(key.defaultPrevented).toBe(false)
+
+  dispatch.mockReturnValue(false)
+  const consumed = new KeyboardEvent('keydown', { key: 'f', bubbles: true, cancelable: true })
+  mailFrame.contentDocument!.body.dispatchEvent(consumed)
+  expect(consumed.defaultPrevented).toBe(true)
+})
+
 test('does not churn the frame when nothing about the policy changed', async () => {
   const props = { html: '<p>just a sentence</p>', label: 'Message', identity }
   const view = render(<SandboxedHtml {...props} />)

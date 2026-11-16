@@ -1,4 +1,9 @@
-import type { HostHintAdapter, HostHintAdapterTarget, HostHintTarget } from '@/plugin-api'
+import {
+  hostHintElementEligible,
+  type HostHintAdapter,
+  type HostHintAdapterTarget,
+  type HostHintTarget,
+} from '@/plugin-api'
 
 interface MailHintScope {
   frame: HTMLIFrameElement
@@ -25,6 +30,20 @@ export function createMailHintAdapter({
       return null
     }
   }
+  const frameHostVisible = () => {
+    for (let current: Element | null = frame; current; current = current.parentElement) {
+      const style = current.ownerDocument.defaultView?.getComputedStyle(current)
+      if (
+        current.matches('[hidden],[inert],[aria-hidden="true"],[aria-disabled="true"]') ||
+        style?.display === 'none' ||
+        style?.visibility === 'hidden' ||
+        style?.visibility === 'collapse' ||
+        style?.opacity === '0'
+      )
+        return false
+    }
+    return true
+  }
   const current = () => {
     const document = liveDocument()
     return (
@@ -34,23 +53,17 @@ export function createMailHintAdapter({
       generation() === captured.generation &&
       scope() === captured.scope &&
       frame.isConnected &&
-      !frame.closest('[hidden],[inert]')
+      !frame.closest('[hidden],[inert],[aria-hidden="true"],[aria-disabled="true"]') &&
+      frameHostVisible()
     )
   }
   const visibleElements = (document: Document) =>
     [...document.querySelectorAll('a[href], summary')].filter((element) => {
-      if (element.closest('[hidden],[inert],[aria-hidden="true"]')) return false
+      if (!hostHintElementEligible(element)) return false
       if (element.tagName === 'SUMMARY' && element.closest('details') === null) return false
       if (element.tagName === 'A' && element.getAttribute('href') === null) return false
-      const rect = element.getBoundingClientRect()
       const style = document.defaultView?.getComputedStyle(element)
-      return (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        style?.visibility !== 'hidden' &&
-        style?.display !== 'none' &&
-        style?.pointerEvents !== 'none'
-      )
+      return style?.pointerEvents !== 'none'
     })
   const discover = (): readonly HostHintAdapterTarget[] => {
     if (!current() || captured === null) return []
@@ -58,27 +71,52 @@ export function createMailHintAdapter({
     const bounds = frame.getBoundingClientRect()
     const view = document.defaultView
     if (!view) return []
-    const clipLeft = Math.max(0, bounds.left)
-    const clipTop = Math.max(0, bounds.top)
-    const clipRight = Math.min(window.innerWidth, bounds.right)
-    const clipBottom = Math.min(window.innerHeight, bounds.bottom)
+    const clip = { left: 0, top: 0, right: frame.clientWidth, bottom: frame.clientHeight }
+    for (let ancestor = frame.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      const style = window.getComputedStyle(ancestor)
+      if (
+        !/(auto|scroll|hidden|clip)/.test(`${style.overflow} ${style.overflowX} ${style.overflowY}`)
+      )
+        continue
+      const rect = ancestor.getBoundingClientRect()
+      clip.left = Math.max(clip.left, rect.left - bounds.left)
+      clip.top = Math.max(clip.top, rect.top - bounds.top)
+      clip.right = Math.min(clip.right, rect.right - bounds.left)
+      clip.bottom = Math.min(clip.bottom, rect.bottom - bounds.top)
+    }
+    const clipLeft = Math.max(0, bounds.left + clip.left)
+    const clipTop = Math.max(0, bounds.top + clip.top)
+    const clipRight = Math.min(window.innerWidth, bounds.left + clip.right)
+    const clipBottom = Math.min(window.innerHeight, bounds.top + clip.bottom)
     if (clipRight <= clipLeft || clipBottom <= clipTop) return []
     const candidates = visibleElements(document)
     return candidates.flatMap((element) => {
       const rect = element.getBoundingClientRect()
-      const left = Math.max(rect.left, 0, clipLeft - bounds.left)
-      const right = Math.min(rect.right, frame.clientWidth, clipRight - bounds.left)
-      const top = Math.max(rect.top, 0, clipTop - bounds.top)
-      const bottom = Math.min(rect.bottom, frame.clientHeight, clipBottom - bounds.top)
+      const left = Math.max(rect.left, clip.left)
+      const right = Math.min(rect.right, clip.right)
+      const top = Math.max(rect.top, clip.top)
+      const bottom = Math.min(rect.bottom, clip.bottom)
       if (right <= left || bottom <= top) return []
-      const localX = (left + right) / 2
-      const localY = (top + bottom) / 2
-      const x = bounds.left + localX
-      const y = bounds.top + localY
-      const frameHit = document.elementFromPoint(localX, localY)
-      if (!frameHit || (frameHit !== element && !element.contains(frameHit))) return []
-      const hostHit = window.document.elementFromPoint(x, y)
-      if (hostHit !== frame) return []
+      const insetX = Math.min(2, (right - left) / 4)
+      const insetY = Math.min(2, (bottom - top) / 4)
+      const points = [
+        [(left + right) / 2, (top + bottom) / 2],
+        [left + insetX, top + insetY],
+        [right - insetX, top + insetY],
+        [left + insetX, bottom - insetY],
+        [right - insetX, bottom - insetY],
+      ]
+      const point = points.find(([localX, localY]) => {
+        const frameHit = document.elementFromPoint(localX!, localY!)
+        if (!frameHit || (frameHit !== element && !element.contains(frameHit))) return false
+        return (
+          window.document.elementFromPoint(bounds.left + localX!, bounds.top + localY!) === frame
+        )
+      })
+      if (!point) return []
+      const [localX, localY] = point
+      const x = bounds.left + localX!
+      const y = bounds.top + localY!
       const label =
         element.getAttribute('aria-label')?.trim() ||
         element.getAttribute('title')?.trim() ||

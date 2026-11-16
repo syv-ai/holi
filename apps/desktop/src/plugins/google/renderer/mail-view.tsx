@@ -2137,6 +2137,7 @@ function MessageBody({
       // the sender is what makes "always from this sender" possible at all.
       identity={{ key: message.id, sender: message.from.email }}
       hintScope={`${hintOwner}:url:${threadUrl}:message:${message.id}`}
+      mailHints
     />
   )
 }

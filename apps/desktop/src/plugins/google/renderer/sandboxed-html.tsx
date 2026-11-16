@@ -49,6 +49,8 @@ interface SandboxedHtmlProps {
   identity?: RemoteContentIdentity
   /** Mail-only ownership context, such as the thread or draft and view instance. */
   hintScope?: string
+  /** Explicitly opts a mail-owned frame into scoped Vim hints and key forwarding. */
+  mailHints?: boolean
 }
 
 const NO_IDENTITY: RemoteContentIdentity = { key: null, sender: null }
@@ -69,6 +71,7 @@ export function SandboxedHtml({
   label,
   identity = NO_IDENTITY,
   hintScope = '',
+  mailHints = false,
 }: SandboxedHtmlProps): React.JSX.Element {
   const remote = useRemoteContent(identity)
   const activeRemote = useAtomValue(activeRemoteAtom)
@@ -184,6 +187,7 @@ export function SandboxedHtml({
         label={label}
         registerAs={identity.key}
         hintScope={`${activeRemote ?? 'no-vault'}:${activeRemoteRevision}:${identity.key ?? 'anonymous'}:${hintScope}`}
+        mailHints={mailHints}
       />
     </>
   )
@@ -205,6 +209,7 @@ interface HtmlFrameProps {
    */
   registerAs: string | null
   hintScope: string
+  mailHints: boolean
 }
 
 /**
@@ -223,6 +228,7 @@ function HtmlFrame({
   label,
   registerAs,
   hintScope,
+  mailHints,
 }: HtmlFrameProps): React.JSX.Element {
   const ref = useRef<HTMLIFrameElement>(null)
   const generation = useRef(0)
@@ -294,7 +300,7 @@ function HtmlFrame({
      * ⌘F means.
      */
     const onFrameKeyDown = (event: KeyboardEvent) => {
-      if (matchHotkey(event, '⌘F')) {
+      if (mailHints && matchHotkey(event, '⌘F')) {
         event.preventDefault()
         frame?.dispatchEvent(
           new KeyboardEvent('keydown', {
@@ -308,7 +314,8 @@ function HtmlFrame({
       }
       const target = event.target
       if (
-        event.key !== 'f' ||
+        !mailHints ||
+        event.key.toLowerCase() !== 'f' ||
         event.isComposing ||
         event.ctrlKey ||
         event.metaKey ||
@@ -317,19 +324,31 @@ function HtmlFrame({
           target.closest('input,textarea,select,[contenteditable]') !== null)
       )
         return
-      event.preventDefault()
-      frame?.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true }))
+      const forwarded = new KeyboardEvent('keydown', {
+        key: event.key,
+        code: event.code,
+        repeat: event.repeat,
+        shiftKey: event.shiftKey,
+        bubbles: true,
+        cancelable: true,
+      })
+      if (frame?.dispatchEvent(forwarded) === false) event.preventDefault()
     }
     document_.addEventListener('keydown', onFrameKeyDown)
 
     // Published last: the document is written and wired by this point, so a
     // searcher that reads the registry never gets a half-built page.
-    const hintAdapter = createMailHintAdapter({
-      frame: frame!,
-      generation: () => generation.current,
-      scope: () => scopeRef.current,
-    })
-    const unregisterHints = frame === null ? undefined : registerHostHintAdapter(frame, hintAdapter)
+    const hintAdapter = mailHints
+      ? createMailHintAdapter({
+          frame: frame!,
+          generation: () => generation.current,
+          scope: () => scopeRef.current,
+        })
+      : null
+    const unregisterHints =
+      frame === null || hintAdapter === null
+        ? undefined
+        : registerHostHintAdapter(frame, hintAdapter)
     const unregister = registerAs === null ? undefined : registerMailFrame(registerAs, document_)
 
     return () => {
@@ -340,7 +359,7 @@ function HtmlFrame({
       unregister?.()
       unregisterHints?.()
     }
-  }, [html, css, palette, allowRemoteContent, registerAs, hintScope])
+  }, [html, css, palette, allowRemoteContent, registerAs, hintScope, mailHints])
 
   return (
     <iframe

@@ -82,6 +82,16 @@ describe('mail document Vim hints', () => {
     expect(click).toHaveBeenCalledOnce()
   })
 
+  it('rejects rewritten documents and stale A-B-A ownership generations', () => {
+    const original = scopedTargets()
+    document_.open()
+    document_.write(
+      '<!doctype html><html><body><a href="https://example.test/new">Rewritten</a></body></html>',
+    )
+    document_.close()
+    expect(adapter.unchanged(original)).toBe(false)
+  })
+
   it('rejects stale ownership, A-B-A visits, and removed frame targets', () => {
     const original = scopedTargets()
     scope = 'vault-b:account-b:thread-a:message-a'
@@ -128,6 +138,46 @@ describe('mail document Vim hints', () => {
     )
     expect(route).toHaveBeenCalledOnce()
     dispose()
+  })
+
+  it('excludes zero-opacity and disabled descendants using host eligibility rules', () => {
+    const link = document_.querySelector('a')!
+    const hidden = document_.createElement('div')
+    hidden.style.opacity = '0'
+    hidden.append(link.cloneNode(true))
+    document_.body.append(hidden)
+    const disabled = document_.createElement('fieldset')
+    disabled.disabled = true
+    disabled.append(link.cloneNode(true))
+    document_.body.append(disabled)
+    const ariaDisabled = document_.createElement('div')
+    ariaDisabled.setAttribute('aria-disabled', 'true')
+    ariaDisabled.append(link.cloneNode(true))
+    document_.body.append(ariaDisabled)
+    expect(adapter.discover()).toHaveLength(1)
+  })
+
+  it('hides targets when the owned host frame is transparent or clipped from view', () => {
+    frame.style.opacity = '0'
+    expect(adapter.discover()).toHaveLength(0)
+    frame.style.opacity = ''
+    frame.style.display = 'none'
+    expect(adapter.discover()).toHaveLength(0)
+  })
+
+  it('uses a visible edge when a target center is covered', () => {
+    const link = document_.querySelector('a')!
+    vi.spyOn(link, 'getBoundingClientRect').mockReturnValue(new DOMRect(10, 10, 80, 20))
+    const calls: [number, number][] = []
+    Object.defineProperty(document_, 'elementFromPoint', {
+      configurable: true,
+      value: (x: number, y: number) => {
+        calls.push([x, y])
+        return x < 20 ? link : document_.createElement('div')
+      },
+    })
+    expect(adapter.discover()).toHaveLength(1)
+    expect(calls.length).toBeGreaterThan(1)
   })
 
   it('rejects frame removal and geometry hidden by host overlays', () => {

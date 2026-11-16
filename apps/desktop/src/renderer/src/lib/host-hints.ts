@@ -81,8 +81,10 @@ function adaptersFor(root: HTMLElement): HostHintAdapter[] {
     .map(([, adapter]) => adapter)
 }
 
-export function captureHostHintAdapters(root: HTMLElement): void {
-  for (const adapter of adaptersFor(root)) adapter.capture?.()
+export function captureHostHintAdapters(root: HTMLElement): HostHintAdapter[] {
+  const adapters = adaptersFor(root)
+  for (const adapter of adapters) adapter.capture?.()
+  return adapters
 }
 
 /** The editor requests hints without depending on the shell that presents them. */
@@ -305,17 +307,28 @@ function accessibleLabel(element: Element): string {
   )
 }
 
-function eligible(element: Element): boolean {
-  if (element.matches(':disabled,[disabled],[data-disabled]')) return false
+export function hostHintElementEligible(element: Element): boolean {
   for (let current: Element | null = element; current; current = composedParent(current)) {
     if (
       current.matches(
-        '[inert],[hidden],[aria-hidden="true"],[aria-disabled="true"],.xterm,iframe,webview',
+        ':disabled,[disabled],[data-disabled],[inert],[hidden],[aria-hidden="true"],[aria-disabled="true"],.xterm,iframe,webview',
       )
+    )
+      return false
+    const style = current.ownerDocument.defaultView?.getComputedStyle(current)
+    if (
+      style?.display === 'none' ||
+      style?.visibility === 'hidden' ||
+      style?.visibility === 'collapse' ||
+      style?.opacity === '0'
     )
       return false
   }
   return true
+}
+
+function eligible(element: Element): boolean {
+  return hostHintElementEligible(element)
 }
 
 function composedParent(element: Element): Element | null {
