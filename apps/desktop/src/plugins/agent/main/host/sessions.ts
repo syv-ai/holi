@@ -62,9 +62,9 @@ export interface AgentSessionsDeps {
   /** Tell the plugins built on the agent, in main: the session list as it is
    *  pushed (`sessions`) and each turn's end (`turn-end`). */
   publish?(name: string, payload: unknown): void
-  /** The provider whose supervisor runs these sessions. */
   /** Revokes PTY/session admission when this vault activation is invalidated. */
   activationSignal?: AbortSignal
+  /** The provider whose supervisor runs these sessions. */
   provider: Pick<
     BackgroundProvider,
     'id' | 'notInstalled' | 'configure' | 'terminal' | 'firstSpawn' | 'capabilities'
@@ -180,9 +180,9 @@ export interface AgentSessions {
    * session's. `forget` is its process gone mid-turn: nothing recorded. The
    * listing never names such an id, so its reconcile leaves these alone.
    */
-  bracket(id: string, edge: 'begin' | 'end' | 'forget'): void
+  bracket(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<string | null>
   /** Let go of the vault: optionally stop its live sessions, close every
-   *  terminal, stop watching its config directory. Bounded; never rejects. */
+   *  terminal, stop watching its config directory. Bounded; reports unconfirmed drains. */
   leave(opts?: { stopSessions?: boolean }): Promise<void>
 }
 
@@ -737,8 +737,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         return
       }
       bracketed.delete(id)
-      if (edge === 'end') coordinator.end(id)
-      else coordinator.forget(id)
+      if (edge === 'end') return coordinator.end(id)
+      coordinator.forget(id)
     },
 
     async leave({ stopSessions = true } = {}) {

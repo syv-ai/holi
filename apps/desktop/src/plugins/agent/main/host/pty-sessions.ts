@@ -209,6 +209,23 @@ export function nameOf(text: string): string | null {
 
 export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-pty] ${msg}`))
+  const DRAIN_CAP_MS = 5_000
+  const bounded = async <T>(work: Promise<T>, label: string): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`${label} did not finish before teardown timed out.`)),
+            DRAIN_CAP_MS,
+          )
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
   const sessions = new Map<string, Session>()
   const finishedFences = new Map<
     string,
@@ -226,26 +243,48 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const pastStore = deps.past ?? memoryPast
   let pastQueue: Promise<unknown> = Promise.resolve()
   let pastFailure: unknown
+  const failedPast = new Set<(rows: SessionSummary[]) => SessionSummary[]>()
   const changePast = (change: (rows: SessionSummary[]) => SessionSummary[]): Promise<void> => {
     const next = pastQueue.then(async () => {
       const rows = change(await pastStore.read())
       await pastStore.write(rows)
-      pastFailure = undefined
       deps.onPast?.(rows)
     })
     pastQueue = next.catch((err: unknown) => {
       pastFailure = err
+      failedPast.add(change)
       log(`closed sessions: ${String(err)}`)
     })
     return next
   }
+  async function retryPastFailures(): Promise<void> {
+    for (const change of [...failedPast]) {
+      const retry = pastQueue.then(async () => {
+        const rows = change(await pastStore.read())
+        await pastStore.write(rows)
+        deps.onPast?.(rows)
+      })
+      pastQueue = retry.catch((err: unknown) => {
+        pastFailure = err
+        log(`closed sessions retry: ${String(err)}`)
+      })
+      await retry
+      failedPast.delete(change)
+    }
+    if (failedPast.size === 0) pastFailure = undefined
+  }
+
   const reopening = new Set<string>()
   const finalizing = new Set<Promise<unknown>>()
+  const finalizerFailures = new Set<unknown>()
   const trackFinalizer = <T>(promise: Promise<T>): Promise<T> => {
     finalizing.add(promise)
     void promise.then(
       () => finalizing.delete(promise),
-      () => finalizing.delete(promise),
+      (err: unknown) => {
+        finalizerFailures.add(err)
+        finalizing.delete(promise)
+      },
     )
     return promise
   }
@@ -584,6 +623,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       return (await api.past()).some((p) => p.id === id)
     },
     async reopen(id, size) {
+      if (left) return { ok: false, message: 'That vault has been left.' }
       if (sessions.has(id) || reopening.has(id)) {
         return { ok: false, message: 'That session is open already.' }
       }
@@ -630,6 +670,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
 
     start(providerId, args) {
       if (left) return Promise.resolve({ ok: false, message: 'That vault has been left.' })
+      if (left) return Promise.resolve({ ok: false, message: 'That vault has been left.' })
       if (args.login !== true) return track(startNow(providerId, args))
       // One sign-in at a time: a second ask gets the terminal of the first,
       // the one still starting included.
@@ -656,7 +697,11 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       if (s === undefined) return gone
       await deps.terminals.close(s.terminalId)
       while (finalizing.size > 0) await Promise.all([...finalizing])
-      await pastQueue
+      await bounded(
+        pastQueue.then(() => undefined),
+        'PTY history persistence',
+      )
+      await retryPastFailures()
       if (pastFailure !== undefined)
         throw new Error(`Could not save agent session history: ${String(pastFailure)}`)
       // A fenced terminal's exit handler owns finalization: its session must
@@ -717,10 +762,32 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       // A sign-in may still be configuring its CLI or reading its first-spawn
       // notice. Drain it before closing sessions so it cannot open a terminal
       // into the vault after leave has returned.
-      while (starting.size > 0) await Promise.allSettled([...starting])
-      await Promise.all([...signingIn.values()])
-      await Promise.all([...sessions.values()].map((s) => deps.terminals.close(s.terminalId)))
-      while (finalizing.size > 0) await Promise.allSettled([...finalizing])
+      const starts = Promise.allSettled([...starting])
+      const signIns = Promise.allSettled([...signingIn.values()])
+      const closes = Promise.allSettled(
+        [...sessions.values()].map((s) => deps.terminals.close(s.terminalId)),
+      )
+      const errors: unknown[] = []
+      const boundedWork: Array<[Promise<unknown>, string]> = [
+        [starts, 'PTY session starts'],
+        [signIns, 'PTY sign-ins'],
+        [closes, 'PTY close'],
+      ]
+      for (const [work, label] of boundedWork) {
+        try {
+          await bounded(work, label)
+        } catch (err) {
+          errors.push(err)
+        }
+      }
+      while (finalizing.size > 0) {
+        try {
+          await bounded(Promise.allSettled([...finalizing]), 'PTY finalization')
+        } catch (err) {
+          errors.push(err)
+          break
+        }
+      }
       // Pi's PTY is its conversation, so an intentional vault teardown is a
       // close just like Stop. Include sessions whose process exited earlier:
       // their retained terminal and conversation are still open until teardown.
@@ -740,14 +807,24 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         }
         s.signals.dispose()
       }
-      await pastQueue
+      try {
+        await bounded(
+          pastQueue.then(() => undefined),
+          'PTY history persistence',
+        )
+        await retryPastFailures()
+      } catch (err) {
+        errors.push(err)
+      }
       const historyFailure = pastFailure
+      if (historyFailure !== undefined)
+        errors.push(new Error(`Could not save agent session history: ${String(historyFailure)}`))
+      errors.push(...finalizerFailures)
+      if (errors.length > 0) throw new AggregateError(errors, 'PTY sessions did not drain.')
       sessions.clear()
       for (const { timer } of finishedFences.values()) if (timer) clearTimeout(timer)
       finishedFences.clear()
       push()
-      if (historyFailure !== undefined)
-        throw new Error(`Could not save agent session history: ${String(historyFailure)}`)
     },
   }
   return api

@@ -138,7 +138,7 @@ export interface JobsDeps {
   onChange(list: SessionSummary[]): void
   /** The vault's turn bracket, for a job in the vault: sync pauses and the
    *  turn is recorded. */
-  bracket?(id: string, edge: 'begin' | 'end' | 'forget'): void
+  bracket?(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<unknown>
   spawn?: SpawnJob
   probePid?: (pid: number) => PidState
   /** A live process's command line, or null: the sweep's check that a pid
@@ -212,6 +212,10 @@ interface Job {
   child: ChildProcess | null
   /** A turn is under way: running, or its writes being copied back. */
   busy: boolean
+  /** Admission is revoked before asynchronous retirement begins. */
+  retiring?: boolean
+  copyController?: AbortController
+  finalizing?: boolean
   outcome?: 'completed' | 'failed'
   /** Why it failed, or what a completed turn left out. */
   message?: string
@@ -583,6 +587,7 @@ export function createJobs(deps: JobsDeps): Jobs {
     // Set first: a copy back under way reads it, after the process is gone.
     job.stopped ??= why
     job.queue = []
+    job.copyController?.abort()
     if (job.child !== null) signal(job, 'SIGTERM')
     const timer = setTimeout(() => signal(job, 'SIGKILL'), killGraceMs)
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined
@@ -606,7 +611,16 @@ export function createJobs(deps: JobsDeps): Jobs {
   function killGroup(job: Job): void {
     // The Windows ownership helper closes only after its Job Object is empty.
     // POSIX still needs the group sweep after the root closes.
-    if (process.platform !== 'win32' && job.child) void killChildTree(job.child, 'SIGKILL')
+    if (process.platform !== 'win32' && job.child) {
+      try {
+        killChildTree(job.child, 'SIGKILL')
+      } catch (err) {
+        job.finalizationError = new AggregateError(
+          [job.finalizationError, err].filter(Boolean),
+          `Could not kill job ${job.id}.`,
+        )
+      }
+    }
   }
 
   /** Move the current file aside atomically, then publish the replacement
@@ -778,9 +792,12 @@ export function createJobs(deps: JobsDeps): Jobs {
 
   /** The job leaves the list, and its agent's state goes with it. */
   async function drop(job: Job): Promise<void> {
+    job.retiring = true
+    job.queue = []
+    clearTimeout(job.dropTimer)
     await job.pidWrite
     await rm(job.state, { recursive: true, force: true })
-    jobs.delete(job.id)
+    if (jobs.get(job.id) === job) jobs.delete(job.id)
   }
 
   /** The job's turn ended: its outcome stands until a follow-up starts
@@ -813,14 +830,16 @@ export function createJobs(deps: JobsDeps): Jobs {
     }
     job.busy = false
     clearTimeout(job.dropTimer)
-    job.dropTimer = setTimeout(() => {
-      if (jobs.get(job.id) === job) {
-        void drop(job).then(push, (err: unknown) =>
-          log(`${job.id}: could not clean up: ${String(err)}`),
-        )
-      }
-    }, keepMs)
-    job.dropTimer.unref?.()
+    if (job.finalizationError === undefined) {
+      job.dropTimer = setTimeout(() => {
+        if (jobs.get(job.id) === job) {
+          void drop(job).then(push, (err: unknown) =>
+            log(`${job.id}: could not clean up: ${String(err)}`),
+          )
+        }
+      }, keepMs)
+      job.dropTimer.unref?.()
+    }
     push()
   }
 
@@ -865,7 +884,11 @@ export function createJobs(deps: JobsDeps): Jobs {
       void job.pidWrite.catch(() => {})
     }
     clearTimeout(job.dropTimer)
-    if (job.place !== null) deps.bracket?.(id, 'begin')
+    if (job.place !== null) {
+      void Promise.resolve(deps.bracket?.(id, 'begin')).catch((err) => {
+        job.finalizationError = new Error(`Could not begin job turn: ${String(err)}`)
+      })
+    }
 
     let completed = false
     let failure: string | null = null
@@ -893,7 +916,15 @@ export function createJobs(deps: JobsDeps): Jobs {
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString('utf8')).slice(-4_000)
     })
-    const tooLong = setTimeout(() => void kill(job, 'The job ran too long and was stopped.'), maxMs)
+    const tooLong = setTimeout(() => {
+      const pending = kill(job, 'The job ran too long and was stopped.')
+      void pending.catch((err: unknown) => {
+        job.finalizationError = new AggregateError(
+          [job.finalizationError, err].filter(Boolean),
+          `Could not stop job ${job.id}.`,
+        )
+      })
+    }, maxMs)
     tooLong.unref?.()
 
     let settled = false
@@ -904,7 +935,28 @@ export function createJobs(deps: JobsDeps): Jobs {
       // Whatever it left running dies with it, before anything is read.
       killGroup(job)
       if (jobs.get(id) !== job) {
-        if (job.place !== null) deps.bracket?.(id, 'forget')
+        if (job.place !== null) {
+          try {
+            await deps.bracket?.(id, 'forget')
+          } catch (err) {
+            job.finalizationError = new Error(`Could not close job turn: ${String(err)}`)
+          }
+        }
+        const cleanup = await Promise.allSettled([
+          Promise.resolve().then(() => provider.release?.(job.state)),
+          rm(pidFile(id), { force: true }),
+          rm(job.state, { recursive: true, force: true }),
+          ...(job.dir === null ? [] : [rm(job.dir, { recursive: true, force: true })]),
+        ])
+        const cleanupErrors = cleanup.flatMap((result) =>
+          result.status === 'rejected' ? [result.reason] : [],
+        )
+        if (cleanupErrors.length > 0) {
+          job.finalizationError = new AggregateError(
+            [job.finalizationError, ...cleanupErrors].filter(Boolean),
+            `Could not clean up job ${id}.`,
+          )
+        }
         exitedResolve()
         return
       }
@@ -930,7 +982,13 @@ export function createJobs(deps: JobsDeps): Jobs {
         outcome = 'completed'
         if (job.dir !== null) {
           try {
-            const { written, skipped } = await copyBack(job, job.dir, write, job.made)
+            job.copyController = new AbortController()
+            const { written, skipped } = await copyBack(
+              { ...job, signal: job.copyController.signal },
+              job.dir,
+              write,
+              job.made,
+            )
             log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
             why = leftOutMessage(skipped) ?? why
           } catch (err) {
@@ -953,13 +1011,28 @@ export function createJobs(deps: JobsDeps): Jobs {
             : `${provider.label} exited with code ${code ?? '?'}${lastLine(stderr) === '' ? '.' : `: ${lastLine(stderr)}`}`)
         log(`${id}: failed: ${why}`)
       }
+      job.finalizing = true
       await finish(job, outcome, why)
       // The outcome is on the row before the bracket's end is told, so
-      // whoever hears the turn end reads it idle.
-      if (job.place !== null) deps.bracket?.(id, 'end')
-      // A stopped job takes nothing more, whatever came in while it stopped.
-      if (job.stopped === undefined && job.finalizationError === undefined && job.queue.length > 0)
-        void followUp(job)
+      // whoever hears the turn end reads it idle. Admission stays closed
+      // until that persistence has settled.
+      if (job.place !== null) {
+        try {
+          await deps.bracket?.(id, 'end')
+        } catch (err) {
+          job.finalizationError = new Error(`Could not finalize job turn: ${String(err)}`)
+        }
+      }
+      job.finalizing = false
+      // A stopped or failed job takes nothing more, whatever was queued.
+      if (
+        !closing &&
+        !job.retiring &&
+        job.stopped === undefined &&
+        job.finalizationError === undefined &&
+        job.queue.length > 0
+      )
+        followUp(job)
       exitedResolve()
     }
     // `close` waits for the output to be read to its end; `error` is a
@@ -976,7 +1049,15 @@ export function createJobs(deps: JobsDeps): Jobs {
   /** Send what is queued as one turn on the job's thread. */
   function followUp(job: Job): void {
     const place = job.place
-    if (place === null || job.thread === undefined || job.queue.length === 0) return
+    if (
+      closing ||
+      job.retiring ||
+      job.stopped !== undefined ||
+      place === null ||
+      job.thread === undefined ||
+      job.queue.length === 0
+    )
+      return
     delete job.stopped
     job.busy = true
     const text = job.queue.join('\n\n')
@@ -1047,6 +1128,13 @@ export function createJobs(deps: JobsDeps): Jobs {
     () => {
       closing = true
       generation += 1
+      for (const job of jobs.values()) {
+        job.queue = []
+        const pending = kill(job, 'Stopped.')
+        void pending.catch((err: unknown) => {
+          job.finalizationError = new Error(String(err))
+        })
+      }
     },
     { once: true },
   )
@@ -1168,7 +1256,8 @@ export function createJobs(deps: JobsDeps): Jobs {
 
     message(id, text) {
       const job = jobs.get(id)
-      if (job === undefined) throw new CapabilityError('UNAVAILABLE', 'That job has ended.')
+      if (job === undefined || job.retiring || job.finalizing || closing)
+        throw new CapabilityError('UNAVAILABLE', 'That job has ended.')
       if (job.place === null) {
         throw new CapabilityError(
           'UNAVAILABLE',
@@ -1212,15 +1301,19 @@ export function createJobs(deps: JobsDeps): Jobs {
       generation += 1
       await Promise.allSettled([...starting])
       const all = [...jobs.values()]
+      for (const job of all) {
+        job.retiring = true
+        job.queue = []
+      }
       const results = await Promise.allSettled(all.map((job) => kill(job, 'Stopped.')))
       const failures = results.flatMap((result) =>
         result.status === 'rejected' ? [result.reason] : [],
       )
       for (const job of all) clearTimeout(job.dropTimer)
-      jobs.clear()
       if (failures.length > 0) {
         throw new AggregateError(failures, 'One or more agent jobs did not drain.')
       }
+      await Promise.all(all.map((job) => drop(job)))
       await rm(deps.scratchRoot, { recursive: true, force: true })
       push()
     },

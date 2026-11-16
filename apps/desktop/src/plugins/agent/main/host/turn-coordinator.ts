@@ -127,11 +127,15 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
   let writing: Promise<void> = Promise.resolve()
   let writeFailure: unknown
   const pending = new Set<Promise<unknown>>()
+  const finalizationFailures = new Set<unknown>()
   function track<T>(promise: Promise<T>): Promise<T> {
     pending.add(promise)
     void promise.then(
       () => pending.delete(promise),
-      () => pending.delete(promise),
+      (err: unknown) => {
+        finalizationFailures.add(err)
+        pending.delete(promise)
+      },
     )
     return promise
   }
@@ -172,9 +176,8 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
    * Take the settle commit and write the batch's records against it. Answers
    * the commit when one landed.
    *
-   * Never awaited by the sync resume, with rejections swallowed: a failed
-   * record must never disturb the resume, and only the Stop hook that emptied
-   * the set waits for the answer.
+   * Never awaited by the sync resume: a failed record must not disturb the
+   * resume, but the coordinator retains it for its drain.
    */
   async function settleBatch(vault: TurnVault, batch: Turn[]): Promise<string | null> {
     const turnLogFor = deps.turnLogFor
@@ -218,7 +221,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
         sessionId: turn.sessionId,
         overlapped: turn.overlapped,
       })),
-    ).catch((err: unknown) => log(`turn record failed: ${String(err)}`))
+    )
     return commit
   }
 
@@ -338,8 +341,11 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     async drain() {
       while (pending.size > 0) await Promise.allSettled([...pending])
       await writing
-      if (writeFailure !== undefined)
-        throw new Error(`Could not save agent turn history: ${String(writeFailure)}`)
+      if (writeFailure !== undefined || finalizationFailures.size > 0)
+        throw new AggregateError(
+          [...(writeFailure === undefined ? [] : [writeFailure]), ...finalizationFailures],
+          'Could not finalize agent turn history.',
+        )
     },
 
     get working() {

@@ -75,6 +75,24 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   const finalizers = new Set<Promise<unknown>>()
   const active = new Set<string>()
   const cancellations = new Set<AbortController>()
+  const drainErrors = new Set<unknown>()
+  const DRAIN_CAP_MS = 5_000
+  const bounded = async <T>(work: Promise<T>, label: string): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`${label} did not finish before teardown timed out.`)),
+            DRAIN_CAP_MS,
+          )
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
   // Folders a crash left behind. Their processes died with Holi's PTYs.
   const swept = rm(deps.scratchRoot, { recursive: true, force: true })
 
@@ -87,6 +105,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     () => {
       closing = true
       generation += 1
+      for (const controller of cancellations) controller.abort()
     },
     { once: true },
   )
@@ -154,7 +173,13 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
       })
       chain = next
       copies.add(next)
-      void next.finally(() => copies.delete(next))
+      void next.then(
+        () => copies.delete(next),
+        (err: unknown) => {
+          drainErrors.add(err)
+          copies.delete(next)
+        },
+      )
       return next
     }
 
@@ -178,10 +203,14 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
                 await provider.release?.(state)
                 return result
               } catch (err) {
-                return { error: `Could not release agent state: ${String(err)}` }
+                drainErrors.add(err)
+                throw new Error(`Could not release agent state: ${String(err)}`)
               }
             })
-            .finally(drop)
+            .then(async (result) => {
+              await drop()
+              return result
+            })
           finalizers.add(finalizer)
           void finalizer.then(
             () => finalizers.delete(finalizer),
@@ -215,13 +244,15 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
       closing = true
       generation += 1
       for (const controller of cancellations) controller.abort()
-      await Promise.allSettled([...starting])
+      await bounded(Promise.allSettled([...starting]), 'Fenced session starts')
     },
 
     async leave() {
-      await Promise.all([...copies])
-      await Promise.all([...finalizers])
+      const work = Promise.allSettled([...copies, ...finalizers])
+      await bounded(work, 'Fenced session finalization')
       if (active.size > 0) throw new Error(`Fenced PTYs did not exit: ${[...active].join(', ')}`)
+      if (drainErrors.size > 0)
+        throw new AggregateError([...drainErrors], 'Fenced session cleanup did not complete.')
       await rm(deps.scratchRoot, { recursive: true, force: true })
     },
   }
