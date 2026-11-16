@@ -25,17 +25,11 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import {
-  isLocalOnlyPath,
-  isMachineStatePath,
-  isSecretPath,
-  merge3,
-  vaultRelPath,
-  type VaultRelPath,
-} from '@holi/shared'
+import { shownPathOrNull, merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
+  GitHistoricalPathMissingError,
   noParams,
   optionalStringParam,
   paramsObject,
@@ -153,7 +147,7 @@ const MAX_MESSAGE = 100_000
 const TURN_READ_BUDGET = { maxBuffer: 4 * 1024 * 1024, timeout: 10_000 }
 
 function turnPathAllowed(path: string): boolean {
-  return !isLocalOnlyPath(path) && !isMachineStatePath(path) && !isSecretPath(path)
+  return shownPathOrNull(path) !== null
 }
 
 /** An optional whole number, such as a terminal's columns. */
@@ -189,7 +183,14 @@ const idParams = (raw: unknown): { id: string } => ({ id: stringParam(paramsObje
 
 const rangeParams = (raw: unknown): { base: string; end: string } => {
   const p = paramsObject(raw)
-  return { base: stringParam(p, 'base'), end: stringParam(p, 'end') }
+  const endpoint = (key: 'base' | 'end'): string => {
+    const value = stringParam(p, key)
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) {
+      throw new CapabilityError('BAD_REQUEST', `${key} must be a full Git object id`)
+    }
+    return value
+  }
+  return { base: endpoint('base'), end: endpoint('end') }
 }
 
 /** The most paths a job's scope names. */
@@ -864,12 +865,12 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (!turnPathAllowed(rel))
           throw new CapabilityError('BAD_REQUEST', 'This path is not available in turn history.')
         const before = await repo.show(base, rel, TURN_READ_BUDGET).catch((error: unknown) => {
-          if (error instanceof Error && /resource limit|time limit/.test(error.message)) throw error
-          return ''
+          if (error instanceof GitHistoricalPathMissingError) return ''
+          throw error
         })
         const after = await repo.show(end, rel, TURN_READ_BUDGET).catch((error: unknown) => {
-          if (error instanceof Error && /resource limit|time limit/.test(error.message)) throw error
-          return ''
+          if (error instanceof GitHistoricalPathMissingError) return ''
+          throw error
         })
         return { before, after }
       },

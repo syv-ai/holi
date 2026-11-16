@@ -8,7 +8,7 @@
  * that does not exist answers `''` rather than throwing, and a path outside
  * the vault is refused.
  */
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import { agentCapabilities } from '../main/host/capabilities'
@@ -81,6 +81,95 @@ describe('agent.turnFiles', () => {
     ])
   })
 
+  it('uses the shared shown-path fence and keeps valid local/agent files visible', async () => {
+    const { run, root } = await rig()
+    const repo = openRepo(root)
+    const base = (await repo.head())!
+    for (const [path, value] of [
+      ['USER.local.md', 'user-local'],
+      ['.holi/memory/private.md', 'agent-memory'],
+      ['.holi/State/token', 'machine-state'],
+      ['.holi/STATE/token', 'mixed-case-state'],
+    ] as const) {
+      const abs = join(root, path)
+      await mkdir(join(abs, '..'), { recursive: true })
+      await writeFile(abs, value)
+    }
+    await plainGit(root, ['add', '-f', '-A'])
+    await plainGit(root, ['commit', '-m', 'add private and visible paths'])
+    const end = (await repo.head())!
+    expect((await run('agent.turnFiles', { base, end })).map((file) => file.path)).toEqual([
+      '.holi/memory/private.md',
+      'USER.local.md',
+    ])
+    await expect(run('agent.turnDiff', { base, end, path: '.holi/STATE/token' })).rejects.toThrow()
+  })
+
+  it('does not cross-read a second vault with the same path', async () => {
+    const first = await rig()
+    const second = await rig()
+    const firstRepo = openRepo(first.root)
+    const secondRepo = openRepo(second.root)
+    const firstBase = (await firstRepo.head())!
+    const secondBase = (await secondRepo.head())!
+    await commitFile(first.root, 'same.md', 'first vault secret\n')
+    await commitFile(second.root, 'same.md', 'second vault secret\n')
+    const firstEnd = (await firstRepo.head())!
+    const secondEnd = (await secondRepo.head())!
+    expect(
+      await first.run('agent.turnDiff', { base: firstBase, end: firstEnd, path: 'same.md' }),
+    ).toEqual({
+      before: '',
+      after: 'first vault secret\n',
+    })
+    expect(
+      await second.run('agent.turnDiff', { base: secondBase, end: secondEnd, path: 'same.md' }),
+    ).toEqual({
+      before: '',
+      after: 'second vault secret\n',
+    })
+  })
+
+  it('refuses a rename whose old endpoint is a secret path', async () => {
+    const { run, root } = await rig()
+    const repo = openRepo(root)
+    await writeFile(join(root, '.env'), 'secret contents')
+    await plainGit(root, ['add', '-f', '.env'])
+    await plainGit(root, ['commit', '-m', 'secret'])
+    const base = (await repo.head())!
+    await plainGit(root, ['mv', '.env', 'ordinary.md'])
+    await plainGit(root, ['commit', '-m', 'rename'])
+    const end = (await repo.head())!
+    expect(await run('agent.turnFiles', { base, end })).toEqual([])
+  })
+
+  it('accepts full commit and tree ids but refuses blobs and revision expressions', async () => {
+    const { run, root } = await rig()
+    const repo = openRepo(root)
+    const commit = (await repo.head())!
+    const tree = (await plainGit(root, ['rev-parse', 'HEAD^{tree}'])).trim()
+    expect(await run('agent.turnFiles', { base: commit, end: tree })).toEqual([])
+    expect(await run('agent.turnDiff', { base: tree, end: tree, path: 'README.md' })).toEqual({
+      before: '# Vault\n',
+      after: '# Vault\n',
+    })
+    await writeFile(join(root, 'blob-source'), 'blob')
+    const blob = (await plainGit(root, ['hash-object', '-w', 'blob-source'])).trim()
+    await expect(run('agent.turnFiles', { base: blob, end: commit })).resolves.toEqual([])
+    await expect(run('agent.turnFiles', { base: `${commit}^`, end: commit })).rejects.toThrow(
+      /object id/,
+    )
+  })
+
+  it('refuses non-object-id range arguments before invoking git', async () => {
+    const { run, root } = await rig()
+    const end = (await openRepo(root).head())!
+    await expect(run('agent.turnFiles', { base: `${end}^`, end })).rejects.toThrow(/object id/)
+    await expect(
+      run('agent.turnDiff', { base: '--output=/tmp/out', end, path: 'note.md' }),
+    ).rejects.toThrow(/object id/)
+  })
+
   it('is empty for a range whose shas are gone, rather than an error', async () => {
     // A turn record outlives the commits it names. The panel says "this turn's
     // history is gone"; it must not be handed a throw.
@@ -101,6 +190,23 @@ describe('agent.turnDiff', () => {
     expect(await run('agent.turnDiff', { base, end, path: 'note.md' })).toEqual({
       before: 'one\ntwo\n',
       after: 'one\nCHANGED\n',
+    })
+  })
+
+  it('keeps ordinary filenames resembling resource errors as normal adds', async () => {
+    const { run, root } = await rig()
+    const repo = openRepo(root)
+    const base = (await repo.head())!
+    await commitFile(root, 'time limit.md', 'time text\n')
+    await commitFile(root, 'resource limit.md', 'resource text\n')
+    const end = (await repo.head())!
+    expect(await run('agent.turnDiff', { base, end, path: 'time limit.md' })).toEqual({
+      before: '',
+      after: 'time text\n',
+    })
+    expect(await run('agent.turnDiff', { base, end, path: 'resource limit.md' })).toEqual({
+      before: '',
+      after: 'resource text\n',
     })
   })
 
