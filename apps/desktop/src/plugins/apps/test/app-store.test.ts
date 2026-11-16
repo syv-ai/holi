@@ -23,9 +23,20 @@ registry.register(
     appDoor: () => {
       throw new Error('no app door in this test')
     },
-    grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => true },
-    previews: { read: async () => null, save: async () => {}, forget: async () => {} },
+    grants: {
+      status: async () => ({ codeHash: '', affordances: [], expiresAt: null }),
+      grant: async () => true,
+    },
+    previewPlacements: new Map(),
+    previews: {
+      read: async () => null,
+      revision: () => 0,
+      save: async () => true,
+      forget: async () => {},
+    },
     capture: async () => null,
+    issueFrameLease: () => ({ token: '', nonce: '' }),
+    releaseFrameLease: () => true,
   }),
 )
 // `docs.read`, for the refusal of records read as files.

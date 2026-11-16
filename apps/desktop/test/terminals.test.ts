@@ -11,7 +11,6 @@ import {
   type TerminalEvent,
   type TerminalsDeps,
 } from '../src/main/terminal/terminals'
-import { delimiter } from 'node:path'
 
 class FakePty implements PtyProcess {
   static nextPid = 1000
@@ -102,7 +101,7 @@ describe('terminals', () => {
     expect(pty.opts.env).toMatchObject({
       TERM: 'xterm-256color',
       HOME: '/home/me',
-      PATH: `/app/bin${delimiter}/usr/bin`,
+      PATH: '/app/bin:/usr/bin',
     })
     expect(pty.opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
   })
