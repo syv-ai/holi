@@ -3,8 +3,59 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import test from 'node:test'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { encodeScreencast } from './native-smoke-recording.mjs'
+import { rowSnapshotExpression } from './native-smoke-row-snapshot.mjs'
 import { assertExclusiveRowHover, assertStableRowBoxes } from './native-smoke-row-assertions.mjs'
+
+test('snapshots folder and file rows through one path-parameterized browser expression', () => {
+  for (const path of ['nested', 'notes/brief.md']) {
+    const expectedSelector = `[role="treeitem"][aria-label=${JSON.stringify(path)}]`
+    const calls = []
+    const box = { x: 10, y: 20, width: 30, height: 12, right: 40, bottom: 32 }
+    const action = {
+      getBoundingClientRect: () => box,
+      getAttribute: (name) => (name === 'aria-label' ? `Subscribe ${path}` : null),
+      querySelector: () => ({ getAttribute: () => 'lucide-bell' }),
+      matches: (selector) => selector === ':hover',
+    }
+    const name = {
+      getBoundingClientRect: () => box,
+      scrollWidth: 30,
+      clientWidth: 30,
+      matches: () => true,
+    }
+    const label = {
+      getBoundingClientRect: () => box,
+      matches: (selector) => selector === ':hover',
+      querySelector: (selector) =>
+        selector === ':scope > span > .truncate' || selector === '.truncate' ? name : action,
+    }
+    const row = {
+      querySelector: (selector) => (selector === '[data-slot="tree-item-label"]' ? label : null),
+      getBoundingClientRect: () => box,
+    }
+    const result = runInNewContext(rowSnapshotExpression(path), {
+      document: {
+        querySelector: (selector) => {
+          calls.push(selector)
+          return selector === expectedSelector ? row : null
+        },
+        querySelectorAll: () => [action],
+        activeElement: row,
+      },
+      getComputedStyle: () => ({ opacity: '0', boxShadow: 'none' }),
+    })
+    assert.deepEqual(calls, [expectedSelector])
+    assert.equal(result.path, path)
+    assert.deepEqual(Object.keys(result.boxes), ['row', 'label', 'name', 'bell'])
+    assert.deepEqual(JSON.parse(JSON.stringify(result.boxes.bell)), box)
+    assert.equal(result.nameHover, true)
+    assert.equal(result.bellHover, true)
+    assert.equal(result.rowFocused, true)
+    assert.equal(result.nameTruncated, false)
+  }
+})
 
 test('checks stable geometry across row interaction states', () => {
   const boxes = Object.fromEntries(
