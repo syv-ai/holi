@@ -115,6 +115,8 @@ export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath' | 'env'> {
    * a path list (`check-ignore`): thousands of paths as arguments hit `E2BIG`.
    */
   input?: string
+  /** Limits for historical reads consumed by an agent turn; absent for ordinary git work. */
+  executionBudget?: { maxBuffer: number; timeout: number }
 }
 
 export interface RepoStatus {
@@ -210,7 +212,11 @@ export interface GitRepo {
    *  **Empty on failure, never a throw.** A turn record outlives the commits it
    *  names — a reset, a re-clone — and a range whose shas are gone is a turn
    *  whose history is gone, which the caller reports rather than crashes on. */
-  rangeFiles(from: string, to: string): Promise<RangeFile[]>
+  rangeFiles(
+    from: string,
+    to: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<RangeFile[]>
   /** The vault's history — which IS git history (`features/history.md`).
    * `path` follows a file through renames; a `folder` is every commit under it,
    * which `--follow` (one file only) cannot walk. */
@@ -219,7 +225,11 @@ export interface GitRepo {
    * (`features/history.md`). Rejects when `path` is absent at `sha` —
    * e.g. a commit from before the file was renamed (`show` reads the given name,
    * it does not `--follow`). */
-  show(sha: string, path: string): Promise<string>
+  show(
+    sha: string,
+    path: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<string>
   /** One commit's exact metadata and churn, even when it is outside a recent
    * history listing. Null when the object is unavailable. */
   commit(sha: string): Promise<Commit | null>
@@ -422,12 +432,22 @@ async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<G
       args,
       {
         cwd,
-        maxBuffer: MAX_BUFFER,
+        maxBuffer: opts.executionBudget?.maxBuffer ?? MAX_BUFFER,
+        ...(opts.executionBudget === undefined ? {} : { timeout: opts.executionBudget.timeout }),
         env,
       },
       (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
           return reject(new GitMissingError(gitPath))
+        }
+        if (err && opts.executionBudget !== undefined) {
+          const code = (err as NodeJS.ErrnoException).code
+          if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+            return reject(new Error('Historical Git output exceeded its resource limit.'))
+          }
+          if (code === 'ETIMEDOUT') {
+            return reject(new Error('Historical Git read exceeded its time limit.'))
+          }
         }
         const code = err ? ((err as { code?: number }).code ?? 1) : 0
         resolve({ ok: !err, code, stdout: String(stdout), stderr: String(stderr) })
@@ -721,8 +741,13 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   /** A file's content at a commit. Unlike `runGit`, this must **not** trim:
    * restore writes the result back verbatim, and a stripped trailing newline is
    * a real edit. Rejects (a `GitError`) when the path does not exist at `sha`. */
-  async function show(sha: string, path: string): Promise<string> {
-    const res = await tryGit(root, ['show', `${sha}:${path}`], opts)
+  async function show(
+    sha: string,
+    path: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<string> {
+    const readOpts = { ...opts, ...(executionBudget === undefined ? {} : { executionBudget }) }
+    const res = await tryGit(root, ['show', `${sha}:${path}`], readOpts)
     if (!res.ok) {
       throw new GitError(
         `git show ${sha}:${path} failed (${res.code}): ${res.stderr.split('\n')[0] ?? ''}`,
@@ -842,13 +867,25 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * `git diff` silently drops the counts (the last flag wins), so this joins two
    * results on the path.
    */
-  async function rangeFiles(from: string, to: string): Promise<RangeFile[]> {
+  async function rangeFiles(
+    from: string,
+    to: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<RangeFile[]> {
     const range = `${from}..${to}`
-    const stat = await tryGit(root, ['diff', '--numstat', '-z', '--no-color', range], opts)
+    const readOpts = { ...opts, ...(executionBudget === undefined ? {} : { executionBudget }) }
+    const stat = await tryGit(root, ['diff', '--numstat', '-z', '--no-color', range], readOpts)
     const names = await tryGit(
       root,
-      ['diff', '--name-status', '-z', '--no-color', '-M', range],
-      opts,
+      [
+        'diff',
+        '--name-status',
+        '-z',
+        '--no-color',
+        ...(executionBudget === undefined ? ['-M'] : ['--no-renames']),
+        range,
+      ],
+      readOpts,
     )
     if (!stat.ok || !names.ok) return []
 

@@ -25,7 +25,14 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import { merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
+import {
+  isLocalOnlyPath,
+  isMachineStatePath,
+  isSecretPath,
+  merge3,
+  vaultRelPath,
+  type VaultRelPath,
+} from '@holi/shared'
 import {
   cap,
   CapabilityError,
@@ -143,6 +150,11 @@ const notOpen = { ok: false as const, message: VAULT_NOT_OPEN }
 /** Far under Claude Code's own cap of about a million characters: a message
  *  is a note to a session, not a document. */
 const MAX_MESSAGE = 100_000
+const TURN_READ_BUDGET = { maxBuffer: 4 * 1024 * 1024, timeout: 10_000 }
+
+function turnPathAllowed(path: string): boolean {
+  return !isLocalOnlyPath(path) && !isMachineStatePath(path) && !isSecretPath(path)
+}
 
 /** An optional whole number, such as a terminal's columns. */
 function countParam(raw: Record<string, unknown>, key: string): number | undefined {
@@ -830,7 +842,10 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     'agent.turnFiles': cap({
       doors: ['ui'],
       params: rangeParams,
-      run: (ctx, { base, end }): Promise<RangeFile[]> => ctx.core.repo().rangeFiles(base, end),
+      run: async (ctx, { base, end }): Promise<RangeFile[]> =>
+        (await ctx.core.repo().rangeFiles(base, end, TURN_READ_BUDGET)).filter((file) =>
+          turnPathAllowed(file.path),
+        ),
     }),
 
     /** One file's before and after across the turn. Either side is `''` when
@@ -846,8 +861,16 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, { base, end, path }): Promise<{ before: string; after: string }> => {
         const repo = ctx.core.repo()
         const rel = relPath(path)
-        const before = await repo.show(base, rel).catch(() => '')
-        const after = await repo.show(end, rel).catch(() => '')
+        if (!turnPathAllowed(rel))
+          throw new CapabilityError('BAD_REQUEST', 'This path is not available in turn history.')
+        const before = await repo.show(base, rel, TURN_READ_BUDGET).catch((error: unknown) => {
+          if (error instanceof Error && /resource limit|time limit/.test(error.message)) throw error
+          return ''
+        })
+        const after = await repo.show(end, rel, TURN_READ_BUDGET).catch((error: unknown) => {
+          if (error instanceof Error && /resource limit|time limit/.test(error.message)) throw error
+          return ''
+        })
         return { before, after }
       },
     }),
