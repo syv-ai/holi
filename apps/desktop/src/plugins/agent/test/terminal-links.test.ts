@@ -77,6 +77,16 @@ describe('vault paths in a terminal on Windows', () => {
     ])
   })
 
+  it("links a path under a profile folder that holds a space in Git Bash's /c/ spelling", () => {
+    const root = 'C:\\Users\\Ada Lovelace\\Holi\\syv\\vault'
+    expect(vaultLinks('Read /c/Users/Ada Lovelace/Holi/syv/vault/notes/a.md', has, root)).toEqual([
+      { path: 'notes/a.md', start: 5, end: 52 },
+    ])
+    // Another drive, or a sibling folder of the clone, is still no file of the vault.
+    expect(paths('Read /d/Users/Ada Lovelace/Holi/syv/vault/notes/a.md', root)).toEqual([])
+    expect(paths('Read /c/Users/Ada Lovelace/Holi/syv/other/notes/a.md', root)).toEqual([])
+  })
+
   it('keeps each link where it is in the line', () => {
     expect(vaultLinks('see src\\a.ts now', has, WIN_ROOT)).toEqual([
       { path: 'src/a.ts', start: 4, end: 12 },

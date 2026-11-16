@@ -24,8 +24,8 @@ const CANDIDATE = /(?:\.{0,2}\/)?(?:[\w@.+-]+\/)*[\w@.+-]+\.[A-Za-z0-9]{1,10}/g
 const WINDOWS_CANDIDATE =
   /(?:[A-Za-z]:[\\/]|\/[A-Za-z]\/|\.{0,2}[\\/])?(?:[\w@.+-]+[\\/])*[\w@.+-]+\.[A-Za-z0-9]{1,10}/g
 
-/** A clone on a drive: the vault's own path says it is Windows, since this
- *  renderer has no other way to know where its main process runs. */
+/** A clone on a drive: the vault's own path says it is Windows, since a plugin's
+ *  renderer is given no platform by `@/plugin-api`. */
 const WINDOWS_ROOT = /^[A-Za-z]:[\\/]/
 
 /** Git Bash's `/c/Users` as `C:/Users`. */
@@ -51,10 +51,13 @@ export function vaultLinks(
   // no path-shaped word does: find it by the clone's name, then the rest after it.
   const rooted: { 0: string; index: number }[] = []
   if (windows && clone !== null) {
-    const top = clone
-      .replace(/\/+$/, '')
-      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      .replaceAll('/', '[\\\\/]')
+    // In the clone's own spelling and in Git Bash's (`/c/Users/…` for `C:/Users/…`).
+    const spelled = (path: string) =>
+      path
+        .replace(/\/+$/, '')
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        .replaceAll('/', '[\\\\/]')
+    const top = `(?:${spelled(clone)}|${spelled(`/${clone[0]}${clone.slice(2)}`)})`
     const tail = '[\\\\/](?:[\\w@.+-]+[\\\\/])*[\\w@.+-]+\\.[A-Za-z0-9]{1,10}'
     rooted.push(...line.matchAll(new RegExp(top + tail, 'gi')))
   }
