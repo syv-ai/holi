@@ -353,6 +353,55 @@ function HtmlFrame({
     }
   }, [frame, html, css, palette, allowRemoteContent, registerAs, mailHints])
 
+  // A hidden retained reader keeps its document, but Chromium clears that
+  // frame's active Selection when the parent becomes display:none. Remember the
+  // current Range while visible and restore it when the same document returns.
+  useLayoutEffect(() => {
+    const currentFrame = frame
+    const document_ = currentFrame?.contentDocument
+    if (currentFrame == null || document_ == null) return
+
+    let savedRange: Range | null = null
+    const visible = () =>
+      currentFrame.isConnected &&
+      currentFrame.closest('[hidden],[inert],[aria-hidden="true"]') === null
+    let wasVisible = visible()
+    const rememberSelection = () => {
+      if (!visible()) return
+      const selection = document_.getSelection()
+      savedRange = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null
+    }
+    const restoreSelection = () => {
+      const isVisible = visible()
+      if (!wasVisible && isVisible && savedRange?.startContainer.isConnected) {
+        const range = savedRange
+        requestAnimationFrame(() => {
+          if (
+            !visible() ||
+            currentFrame.contentDocument !== document_ ||
+            !range.startContainer.isConnected
+          )
+            return
+          const selection = document_.getSelection()
+          selection?.removeAllRanges()
+          selection?.addRange(range)
+        })
+      }
+      wasVisible = isVisible
+    }
+    const observer = new MutationObserver(restoreSelection)
+    observer.observe(currentFrame.ownerDocument.documentElement, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['hidden', 'inert', 'aria-hidden'],
+    })
+    document_.addEventListener('selectionchange', rememberSelection)
+    return () => {
+      observer.disconnect()
+      document_.removeEventListener('selectionchange', rememberSelection)
+    }
+  }, [frame])
+
   // Hint ownership changes much more often than the framed document (for
   // example, when a retained reader is hidden). Revoke old targets in layout
   // cleanup and register against the same document without rewriting it.
