@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
+import { isInIgnoredDir, isLocalOnlyPath, isSecretPath } from '@holi/shared/mobile-path-safety'
 import type { Entry, NativeFiles } from '../app/native-files'
 
 async function safe(root: string, relativePath: string, allowMissingLeaf = false): Promise<string> {
@@ -39,9 +40,10 @@ export const nodeFiles: NativeFiles = {
     const walk = async (dir: string) => {
       for (const name of await readdir(dir)) {
         const absolute = join(dir, name)
+        const rel = relative(root, absolute).split(sep).join('/')
+        if (isInIgnoredDir(rel) || isLocalOnlyPath(rel) || isSecretPath(rel)) continue
         const info = await lstat(absolute)
         if (info.isSymbolicLink()) continue
-        const rel = relative(root, absolute).split(sep).join('/')
         result.push({ path: rel, kind: info.isDirectory() ? 'directory' : 'file' })
         if (info.isDirectory()) await walk(absolute)
       }
@@ -54,14 +56,25 @@ export const nodeFiles: NativeFiles = {
   },
   async create(root, path, bytes) {
     const target = await safe(root, path, true)
-    await writeFile(target, bytes, { flag: 'wx' })
+    const handle = await (await import('node:fs/promises')).open(target, 'wx')
+    let owned = true
+    try {
+      await handle.writeFile(bytes)
+      await handle.sync()
+    } catch (error) {
+      if (owned) await rm(target, { force: true })
+      throw error
+    } finally {
+      await handle.close()
+      owned = false
+    }
   },
   async publish(root, path, bytes, expected) {
     const target = await safe(root, path)
     const before = await readFile(target)
     if (expected && !Buffer.from(before).equals(Buffer.from(expected)))
       throw new Error('Stale bytes')
-    const temporary = join(dirname(target), `.holi-storage-${randomUUID()}.tmp`)
+    const temporary = join(dirname(target), `.holi-storage-stage-${randomUUID()}.tmp`)
     try {
       await writeFile(temporary, bytes, { flag: 'wx' })
       const current = await readFile(target)
