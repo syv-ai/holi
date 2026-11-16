@@ -3,6 +3,7 @@ import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { afterEach, expect, it } from 'vitest'
 
 import { createDocumentExtensions } from '../document-extensions'
+import { displaySrc } from '../media-src'
 import { addImageCaption, removeCodeCaption } from '../rich-text/document-figure'
 
 const editors: Editor[] = []
@@ -192,3 +193,61 @@ it('materializes clipboard references before colliding destination definitions c
   paste(target, clipboard['text/html']!, clipboard['text/plain']!)
   expect(images(target).map((image) => image.src)).toContain('../assets/photo.png')
 })
+
+it.each(['photo+one.png', 'photo&one.png', 'photo#one.png', 'photo?one.png', 'photo%20one.png'])(
+  'keeps the actual displayed asset URL after HTML clipboard rebasing: %s',
+  (name) => {
+    const src = `../assets/${name}`
+    const source = open(figure(`![Photo](${src})`))
+    const clipboard = copy(source, 'figure')
+    const target = open('', 'notes/deep')
+    paste(target, clipboard['text/html']!, clipboard['text/plain']!)
+    const before = displaySrc(images(source)[0]!.src, 'notes')
+    const after = displaySrc(images(target)[0]!.src, 'notes/deep')
+    expect(after).toBe(before)
+    const reopened = open(target.getMarkdown(), 'notes/deep')
+    expect(displaySrc(images(reopened)[0]!.src, 'notes/deep')).toBe(before)
+  },
+)
+
+it.each(['bad%', 'bad%2', 'bad%GG', 'bad%C3%28'])(
+  'falls back to visible src during actual pasteHTML with malformed provenance: %s',
+  (source) => {
+    const target = open('')
+    const html = `<figure data-holi-code-figure><img src="https://example.com/visible.png" data-holi-source-src="${source}" data-holi-source-folder="notes" alt="Photo"><figcaption>Caption</figcaption></figure>`
+    expect(() => target.view.pasteHTML(html, new Event('paste') as ClipboardEvent)).not.toThrow()
+    expect(images(target)).toEqual([
+      { src: 'https://example.com/visible.png', alt: 'Photo', title: null },
+    ])
+    expect(target.state.doc.firstChild?.lastChild?.textContent).toBe('Caption')
+    expect(images(open(target.getMarkdown()))).toEqual(images(target))
+  },
+)
+
+it.each([false, true])(
+  'preserves nested opaque ranges and every trailing sibling, closed=%s',
+  (closed) => {
+    const opaque =
+      '<!-- holi:figure -->\n\nOuter.\n\n' +
+      figure('Unsupported inner body.', 'Inner caption') +
+      '\n\nOuter tail.\n\n[ref]: ../assets/right.png' +
+      (closed ? '\n\n<!-- /holi:figure -->' : '')
+    const siblings =
+      '\n\nAfter important prose.\n\n![Trailing][ref]\n\n' +
+      figure('![Valid](../assets/valid.png)', 'Valid caption') +
+      '\n\n[ref]: ../assets/wrong.png\n\nEnd.'
+    const original = 'Before.\n\n' + opaque + siblings
+    let source = original
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const editor = open(source)
+      source = editor.getMarkdown().trimEnd()
+      expect(source).toBe(original)
+      expect(source).not.toContain('holi-private')
+      if (closed)
+        expect(images(editor).map((image) => image.src)).toEqual([
+          '../assets/right.png',
+          '../assets/valid.png',
+        ])
+    }
+  },
+)

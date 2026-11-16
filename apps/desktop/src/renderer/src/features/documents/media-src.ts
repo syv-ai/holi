@@ -46,7 +46,7 @@ export function displaySrc(src: string, folder: string): string {
   const resolved: string[] = []
   for (const part of parts) {
     if (part === '..') resolved.pop()
-    else resolved.push(decodeURI(part))
+    else resolved.push(decodeURIComponent(part))
   }
   return vaultAssetUrl(resolved.join('/'))
 }
