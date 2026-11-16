@@ -22,16 +22,26 @@ vi.mock('electron', () => ({
   },
 }))
 
-it.each(['stop', 'stopAll', 'settings', 'snapshot'] as const)(
+it.each(['stop', 'stopAll', 'settings', 'snapshot', 'joined-stop', 'joined-settings'] as const)(
   'accepts only final renderer audio through production dispatch while the real transcribe disposer waits on %s',
   async (method) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const dir = await mkdtemp(join(tmpdir(), 'holi-573-repair3-meeting-'))
+    const joined = method === 'joined-stop' || method === 'joined-settings'
+    const dir = await mkdtemp(
+      join(tmpdir(), joined ? 'holi-573-racefix-meeting-' : 'holi-573-repair3-meeting-'),
+    )
     const root = join(dir, 'vault')
     await mkdir(join(root, '.holi/settings'), { recursive: true })
     const settings = join(root, '.holi/settings/plugins.yaml')
     await writeFile(settings, 'plugins:\n  transcribe: true\n')
     const registry = createCapabilityRegistry()
+    let holdHandoff = false
+    let disposing = false
+    let stopDelivered = false
+    let handoffEntered!: () => void
+    let releaseHandoff!: () => void
+    const enteredHandoff = new Promise<void>((resolve) => (handoffEntered = resolve))
+    const handoffGate = new Promise<void>((resolve) => (releaseHandoff = resolve))
     let captureStop!: () => void
     const requestedStop = new Promise<void>((resolve) => {
       captureStop = resolve
@@ -64,16 +74,37 @@ it.each(['stop', 'stopAll', 'settings', 'snapshot'] as const)(
       commitNow: async () => null,
       repo: { head: async () => 'head' },
     }
+    const transcribe: MainPlugin = joined
+      ? {
+          ...transcribeMain,
+          async activate(ctx) {
+            const dispose = await transcribeMain.activate!(ctx)
+            return () => {
+              disposing = true
+              return dispose()
+            }
+          },
+        }
+      : transcribeMain
     const host = createPluginHost({
-      plugins: [agent, tasks, transcribeMain],
+      plugins: [agent, tasks, transcribe],
       registry,
       userData: dir,
       coreSeeds: [],
       active: () => vault,
-      rootFor: async () => root,
+      rootFor: async () => {
+        if (holdHandoff && disposing) {
+          handoffEntered()
+          await handoffGate
+        }
+        return root
+      },
       events: {
         send: (_channel, event) => {
-          if (event.name === 'stop-recording') captureStop()
+          if (event.name === 'stop-recording') {
+            stopDelivered = true
+            captureStop()
+          }
         },
         listen: () => () => {},
         liveRemote: () => vault.remote,
@@ -107,16 +138,26 @@ it.each(['stop', 'stopAll', 'settings', 'snapshot'] as const)(
     const call = async (name: string, params: unknown = {}) =>
       (await capabilities.dispatch({ door: 'ui', remote: vault.remote, name, params })).value
     let stopping: Promise<void> | undefined
+    const joining: Promise<void>[] = []
     let meetingId: string | undefined
     try {
       await host.reconcile(vault, 'open')
       expect(host.failures(vault.remote)).toEqual({})
       meetingId = ((await call('meeting.start', { title: 'Final audio' })) as { meetingId: string })
         .meetingId
-      if (method === 'settings' || method === 'snapshot') {
+      holdHandoff = joined
+      if (method === 'settings' || method === 'snapshot' || method === 'joined-settings') {
         await writeFile(settings, 'plugins:\n  transcribe: false\n')
-        stopping = host.reconcile(vault, method)
-      } else stopping = method === 'stop' ? host.stop(vault.remote) : host.stopAll()
+        stopping = host.reconcile(vault, method === 'snapshot' ? 'snapshot' : 'settings')
+      } else
+        stopping =
+          method === 'stop' || method === 'joined-stop' ? host.stop(vault.remote) : host.stopAll()
+      if (joined) {
+        await enteredHandoff
+        joining.push(host.stopAll(), host.stop(vault.remote), host.stopAll())
+        releaseHandoff()
+        await vi.waitFor(() => expect(stopDelivered).toBe(true))
+      }
       let drained = false
       void stopping.then(() => {
         drained = true
@@ -132,6 +173,7 @@ it.each(['stop', 'stopAll', 'settings', 'snapshot'] as const)(
       expect(drained).toBe(false)
       await call('meeting.stop', { meetingId })
       await stopping
+      await Promise.all(joining)
       expect(drained).toBe(true)
       const stored = JSON.parse(
         await readFile(join(dir, 'meetings', meetingId, 'state.json'), 'utf8'),
@@ -147,8 +189,10 @@ it.each(['stop', 'stopAll', 'settings', 'snapshot'] as const)(
     } finally {
       // If an assertion fails, release the real recording drain without waiting
       // for its production deadline; no recording or timer outlives this test.
+      releaseHandoff()
       await vi.advanceTimersByTimeAsync(15_000)
       await stopping?.catch(() => {})
+      await Promise.allSettled(joining)
       await host.stopAll()
       vi.clearAllTimers()
       vi.useRealTimers()

@@ -482,6 +482,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       phase: 'active',
       events: events(id, remote, root, () => lease.phase !== 'closed'),
       cancel: () => {
+        // Cancellation revokes ordinary work once. A later stop must not
+        // discard completion output queued by the already draining disposer.
+        if (controller.signal.aborted) return
         if (state.leases.has(lease)) state.invalidated.add(id)
         controller.abort()
         lease.events.cancelPending()
@@ -1024,7 +1027,14 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         (s !== null && state.invalidated.has(id))
       ) {
         if (s !== null) await stopOne(s, state)
-        if (state.stopPromise === null && state.teardownFailure === null) state.parked = false
+        // Another reconcile may have cancelled established dependencies while
+        // this startup yielded. Their disposers still own finalization authority.
+        if (
+          state.stopPromise === null &&
+          state.teardownFailure === null &&
+          state.invalidated.size === 0
+        )
+          state.parked = false
         return
       }
       if (s !== null) {
@@ -1069,8 +1079,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       const state = runsByRemote.get(vault.remote) ?? makeRun(vault)
       runsByRemote.set(vault.remote, state)
       state.vault = vault
+      const scheduledGeneration = state.generation
       if (why === 'settings' || why === 'snapshot') {
         const configured = (await read(vault.root)).running
+        if (runsByRemote.get(vault.remote) !== state || state.generation !== scheduledGeneration)
+          return
         const unavailable = new Set(
           [...state.leases]
             .filter((lease) => !configured.has(lease.pluginId))
@@ -1081,7 +1094,6 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           if (unavailable.has(lease.pluginId)) lease.cancel()
         }
       }
-      const scheduledGeneration = state.generation
       return queued(state, () => reconcileNow(vault, why, scheduledGeneration))
     },
 
@@ -1114,6 +1126,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     async stopAll() {
       const entries = [...runsByRemote.entries()]
       for (const [remote, state] of entries) {
+        // Join an existing teardown without changing its generation or queues.
+        // Still revoke every new lifetime before awaiting any disposer.
+        if (state.stopPromise !== null || state.teardownFailure !== null) continue
         appFrames.revokeActivation(remote, state.generation)
         state.generation += 1
         state.parked = true
