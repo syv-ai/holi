@@ -35,22 +35,24 @@ export function MailMarkerStatus({
   onRetry?: () => void
   className?: string
 }) {
+  if (state.kind === 'error')
+    return (
+      <span role="status" className={`inline-flex items-center gap-1 ${className ?? ''}`}>
+        {starred && (
+          <Star
+            className="size-3.5 shrink-0 fill-amber-400 text-amber-400 dark:fill-amber-500 dark:text-amber-500"
+            role="img"
+            aria-label="Starred"
+          />
+        )}
+        <span className="text-destructive text-xs">Marker unavailable</span>
+        {onRetry !== undefined && <MailMarkerRetry onRetry={onRetry} />}
+      </span>
+    )
   if (!starred) return null
   if (state.kind === 'loading')
     return (
       <Skeleton className={`size-3.5 shrink-0 ${className ?? ''}`} aria-label="Loading marker" />
-    )
-  if (state.kind === 'error')
-    return (
-      <span role="status" className={`inline-flex items-center gap-1 ${className ?? ''}`}>
-        <Star
-          className="size-3.5 shrink-0 fill-amber-400 text-amber-400 dark:fill-amber-500 dark:text-amber-500"
-          role="img"
-          aria-label="Starred"
-        />
-        <span className="text-destructive text-xs">Marker unavailable</span>
-        {onRetry !== undefined && <MailMarkerRetry onRetry={onRetry} />}
-      </span>
     )
   if (state.marker !== null)
     return (
