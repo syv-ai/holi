@@ -69,4 +69,21 @@ describe('markdown round trip', () => {
       '| Name | Role |\n| ---- | ---- |\n| Ada  | Lead |',
     )
   })
+
+  it('keeps reference definitions intact across CRLF and mixed newlines', () => {
+    const source =
+      '---\r\ntitle: Kept\r\n---\r\n\r\n![Alt][chart]\r\n\r\n<!-- holi:figure -->\n![Fig](images/a.png)\n<!-- /holi:figure -->\r\n\r\n[chart]: images/chart.png \"chart title\"\r\n'
+    const { head, body } = splitDocument(source)
+    expect(head).toBe('---\ntitle: Kept\n---\n\n')
+    const saved = roundTrip(body)
+    expect(saved).toContain('[chart]: images/chart.png \"chart title\"')
+    expect(saved).toContain('<!-- holi:figure -->')
+    expect(saved).toContain('images/a.png')
+  })
+
+  it('does not duplicate definitions retained inside malformed envelopes on repeated saves', () => {
+    let saved = '<!-- holi:figure -->\n![Alt][x]\n\n[x]: images/x.png\n'
+    for (let cycle = 0; cycle < 3; cycle++) saved = roundTrip(saved)
+    expect(saved.split('[x]: images/x.png')).toHaveLength(2)
+  })
 })
