@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createManagedCommitProvenance } from '../src/main/managed-commit-provenance'
 import { openRepo } from '../src/main/git'
@@ -84,6 +84,105 @@ describe('managed commit provenance', () => {
     }
     expect(afterRelogin.records).toHaveLength(1)
   })
+
+  it('keeps restored identical commits writable across vaults and recorder restarts', async () => {
+    const remote = await makeRemote()
+    const root = await makeClone(remote)
+    await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])
+    const file = await stateFile()
+    const recorderFor = (remote: string) =>
+      createManagedCommitProvenance({
+        file,
+        remote,
+        identity: () => ({ accountId: 31, generation: 4 }),
+        subscribed: async () => true,
+        subscribedNow: () => true,
+      })
+    const recorder = recorderFor('owner/repo')
+    // Back up the lifetime marker too, before either identical commit exists.
+    expect(await recorder.begin(root)).not.toBeNull()
+    const backup = join(dirname(file), 'backup')
+    await cp(root, backup, { recursive: true })
+    const originalInode = (await stat(join(root, '.git'))).ino
+    const deps = {
+      commitProvenance: recorder,
+      env: {
+        GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z',
+        GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z',
+      },
+    }
+    await writeFile(join(root, 'note.md'), 'same managed edit\n')
+    const first = await openRepo(root, deps).commitAll('same managed operation', ['note.md'])
+    expect(first).toMatch(/^[0-9a-f]{40}$/)
+    // Retain the original directory so the filesystem cannot recycle its inode.
+    await rename(root, join(dirname(file), 'old-root'))
+    await cp(backup, root, { recursive: true })
+    expect((await stat(join(root, '.git'))).ino).not.toBe(originalInode)
+    await writeFile(join(root, 'note.md'), 'same managed edit\n')
+    const second = await openRepo(root, deps).commitAll('same managed operation', ['note.md'])
+    expect(second).toBe(first)
+    const restored = JSON.parse(await readFile(file, 'utf8')).records
+    expect(restored).toHaveLength(2)
+    expect(restored[1]).toEqual({
+      ...restored[0],
+      inode: (await stat(join(root, '.git'))).ino,
+    })
+
+    const otherRoot = await makeClone(remote, 'other')
+    await plainGit(otherRoot, ['remote', 'set-url', 'origin', 'https://github.com/other/vault.git'])
+    await writeFile(join(otherRoot, 'other.md'), 'another vault\n')
+    const other = await openRepo(otherRoot, {
+      commitProvenance: recorderFor('other/vault'),
+    }).commitAll('another vault', ['other.md'])
+    expect(other).toMatch(/^[0-9a-f]{40}$/)
+    expect(JSON.parse(await readFile(file, 'utf8')).records).toHaveLength(3)
+
+    const restarted = recorderFor('owner/repo')
+    await expect(
+      restarted.record(await restarted.begin(root), root, second),
+    ).resolves.toBeUndefined()
+    expect(JSON.parse(await readFile(file, 'utf8')).records).toHaveLength(3)
+    await writeFile(join(otherRoot, 'other.md'), 'after restart\n')
+    const afterRestart = await openRepo(otherRoot, {
+      commitProvenance: recorderFor('other/vault'),
+    }).commitAll('after restart', ['other.md'])
+    expect(afterRestart).toMatch(/^[0-9a-f]{40}$/)
+    expect(JSON.parse(await readFile(file, 'utf8')).records).toEqual([
+      ...restored,
+      expect.objectContaining({ remote: 'other/vault', oid: other }),
+      expect.objectContaining({ remote: 'other/vault', oid: afterRestart }),
+    ])
+  })
+
+  it.each(['device', 'inode'] as const)(
+    'keeps a different %s distinct during validation and insertion',
+    async (field) => {
+      const root = await makeClone(await makeRemote())
+      await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])
+      const file = await stateFile()
+      const args = {
+        file,
+        remote: 'owner/repo',
+        identity: () => ({ accountId: 31, generation: 4 }),
+        subscribed: async () => true,
+        subscribedNow: () => true,
+      }
+      const recorder = createManagedCommitProvenance(args)
+      await writeFile(join(root, 'note.md'), 'managed edit\n')
+      const oid = await openRepo(root, { commitProvenance: recorder }).commitAll('managed', [
+        'note.md',
+      ])
+      const saved = JSON.parse(await readFile(file, 'utf8'))
+      const original = saved.records[0]
+      const different = { ...original, [field]: original[field] + 1, accountId: 99 }
+      await writeFile(file, JSON.stringify({ version: 1, records: [different] }))
+      await recorder.record(await recorder.begin(root), root, oid)
+      expect(JSON.parse(await readFile(file, 'utf8')).records).toEqual([different, original])
+      const restarted = createManagedCommitProvenance(args)
+      await restarted.record(await restarted.begin(root), root, oid)
+      expect(JSON.parse(await readFile(file, 'utf8')).records).toEqual([different, original])
+    },
+  )
 
   it('rejects corrupt state rather than treating it as trusted empty history', async () => {
     const file = await stateFile()
@@ -278,32 +377,44 @@ describe('managed commit provenance', () => {
     expect(await recorder.begin(root)).toBeNull()
   })
 
-  it('rejects duplicate records in persisted state instead of picking a winner', async () => {
-    const root = await makeClone(await makeRemote())
-    await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])
-    const file = await stateFile()
-    const recorder = createManagedCommitProvenance({
-      file,
-      remote: 'owner/repo',
-      identity: () => ({ accountId: 19, generation: 0 }),
-      subscribed: async () => true,
-      subscribedNow: () => true,
-    })
-    await writeFile(join(root, 'entry.md'), 'entry\n')
-    const oid = await openRepo(root, {
-      commitProvenance: {
-        begin: (path) => recorder.begin(path),
-        record: (capture, path, sha) => recorder.record(capture, path, sha),
-      },
-    }).commitAll('entry', ['entry.md'])
-    const saved = JSON.parse(await readFile(file, 'utf8')) as { records: unknown[] }
-    await writeFile(
-      file,
-      JSON.stringify({ version: 1, records: [...saved.records, ...saved.records] }),
-    )
-    await expect(recorder.record(await recorder.begin(root), root, 'b'.repeat(40))).rejects.toThrow(
-      /duplicate/i,
-    )
-    expect(oid).toMatch(/^[0-9a-f]{40}$/)
-  })
+  it.each(['same owner', 'different owner', 'conflict tombstone'])(
+    'rejects duplicate records with %s instead of picking a winner',
+    async (duplicate) => {
+      const root = await makeClone(await makeRemote())
+      await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])
+      const file = await stateFile()
+      const recorder = createManagedCommitProvenance({
+        file,
+        remote: 'owner/repo',
+        identity: () => ({ accountId: 19, generation: 0 }),
+        subscribed: async () => true,
+        subscribedNow: () => true,
+      })
+      await writeFile(join(root, 'entry.md'), 'entry\n')
+      const oid = await openRepo(root, {
+        commitProvenance: {
+          begin: (path) => recorder.begin(path),
+          record: (capture, path, sha) => recorder.record(capture, path, sha),
+        },
+      }).commitAll('entry', ['entry.md'])
+      const saved = JSON.parse(await readFile(file, 'utf8')) as {
+        records: Array<Record<string, unknown>>
+      }
+      const repeated = { ...saved.records[0] }
+      if (duplicate === 'different owner') repeated.accountId = 20
+      if (duplicate === 'conflict tombstone') {
+        delete repeated.accountId
+        delete repeated.generation
+        repeated.conflicted = true
+      }
+      const corruptText = JSON.stringify({ version: 1, records: [...saved.records, repeated] })
+      await writeFile(file, corruptText)
+      await expect(
+        recorder.record(await recorder.begin(root), root, 'b'.repeat(40)),
+      ).rejects.toThrow(/duplicate/i)
+      expect(oid).toMatch(/^[0-9a-f]{40}$/)
+      expect(await readFile(file, 'utf8')).toBe(corruptText)
+      await expect(readFile(`${file}.tmp`)).rejects.toMatchObject({ code: 'ENOENT' })
+    },
+  )
 })

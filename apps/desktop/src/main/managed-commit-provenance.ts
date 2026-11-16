@@ -34,6 +34,18 @@ export interface CommitIdentity {
 
 const empty = (): ProvenanceFile => ({ version: 1, records: [] })
 
+function provenanceKey(key: ProvenanceKey): string {
+  return JSON.stringify([
+    key.remote,
+    key.root,
+    key.gitDir,
+    key.device,
+    key.inode,
+    key.lifetime,
+    key.oid,
+  ])
+}
+
 function parse(raw: unknown, text: string | null): ProvenanceFile {
   if (text === null) return empty()
   if (
@@ -47,7 +59,7 @@ function parse(raw: unknown, text: string | null): ProvenanceFile {
   const records = (raw as { records: unknown[] }).records
   if (!records.every(isRecord))
     throw new Error('Managed commit provenance is invalid; it was not changed.')
-  const keys = records.map((r) => `${r.remote}\0${r.root}\0${r.gitDir}\0${r.lifetime}\0${r.oid}`)
+  const keys = records.map(provenanceKey)
   if (new Set(keys).size !== keys.length)
     throw new Error('Duplicate managed commit provenance; it was not changed.')
   return { version: 1, records }
@@ -241,15 +253,8 @@ export function createManagedCommitProvenance(args: {
         return
       await store.update(
         (state) => {
-          const existing = state.records.find(
-            (r) =>
-              r.remote === remote &&
-              r.root === now.root &&
-              r.gitDir === now.gitDir &&
-              r.inode === now.inode &&
-              r.lifetime === now.lifetime &&
-              r.oid === oid,
-          )
+          const key = provenanceKey({ remote, ...now, oid })
+          const existing = state.records.find((record) => provenanceKey(record) === key)
           if (existing) {
             if (existing.conflicted) return state
             if (
