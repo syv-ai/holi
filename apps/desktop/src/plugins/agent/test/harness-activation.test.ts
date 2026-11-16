@@ -246,7 +246,8 @@ async function rig(
     rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
     active: () => null,
     core: noCoreServices,
-    pluginEnabled: async (plugin, root) => (await host.serving(root)).has(plugin),
+    pluginEnabled: async (plugin, root, allowDrain) =>
+      (await host.serving(root, allowDrain)).has(plugin),
     claims: (root) => host.scanClaimsFor(root),
   })
   const enter = (remote: typeof A | typeof B) => {
@@ -296,6 +297,24 @@ const customRow = {
     expect.objectContaining({ harness: expect.objectContaining({ id: harness.id }) }),
   ]),
 }
+
+it('refuses real agent capability dispatch as soon as its lifetime is stopped', async () => {
+  const entered = deferred()
+  const release = deferred()
+  const { host, enter, capabilities } = await rig(undefined, {
+    entered: entered.resolve,
+    wait: release.promise,
+  })
+  await enter(A)
+
+  const stopping = host.stop(A)
+  await entered.promise
+  await expect(
+    capabilities.dispatch({ door: 'ui', remote: A, name: 'agent.sessions', params: {} }),
+  ).rejects.toThrow('no such method: agent.sessions')
+  release.resolve()
+  await stopping
+})
 
 it('serializes overlapping PTY history updates across activations and drains stop A', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'holi-agent-history-'))
@@ -934,7 +953,7 @@ it('rejects late UI config dispatch after A releases ownership but before unregi
       ['agent.harnessReset', {}],
       ['agent.harnesses', {}],
     ] as const) {
-      await expect(call(A, name, params)).rejects.toThrow(/disposed/)
+      await expect(call(A, name, params)).rejects.toThrow(/disposed|no such method/)
     }
     expect(await readFile(join(userData, 'agent-harnesses.json'), 'utf8')).toBe(disk)
     expect(sent.filter((event) => event.name === 'providers')).toHaveLength(bNotices)

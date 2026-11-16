@@ -148,7 +148,8 @@ function rig(
       opts.roots?.[remote] ?? (remote === (opts.remote ?? 'o/r') ? root : null),
     active: () => null,
     core: noCoreServices,
-    pluginEnabled: async (plugin, at) => (await host.serving(at)).has(plugin),
+    pluginEnabled: async (plugin, at, allowDrain) =>
+      (await host.serving(at, allowDrain)).has(plugin),
     claims: (at) => host.scanClaimsFor(at),
   })
   const ping = (at: string) => {
@@ -1420,7 +1421,7 @@ describe('the lifecycle', () => {
     const stopped = reconcile('settings')
     await left
     await vi.waitFor(() => expect(sent.map((s) => s.event.name)).toEqual(['stop-recording']))
-    expect((await ping(root)).value).toBe('pong')
+    await expect(ping(root)).rejects.toThrow('no such method: fake.ping')
 
     finish()
     await stopped
@@ -1755,6 +1756,58 @@ describe('an owned prefix', () => {
 })
 
 describe('activation cancellation and teardown failures', () => {
+  it('aborts a settings-disabled activation before its queued cleanup can begin', async () => {
+    let context: PluginCtx | undefined
+    let entered!: () => void
+    let release!: () => void
+    const active = new Promise<void>((resolve) => (entered = resolve))
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      async activate(ctx) {
+        context = ctx
+        entered()
+        await held
+        return () => {}
+      },
+    }
+    const root = await tempDir()
+    const { host } = rig({ plugins: [plugin] })
+    const opening = host.reconcile(openVault('A', root), 'open')
+    await active
+    await writeVaultSettings(root, { committed: { plugins: { fake: false } } })
+    const disabling = host.reconcile(openVault('A', root), 'settings')
+    await vi.waitFor(() => expect(context!.activationSignal.aborted).toBe(true))
+    release()
+    await Promise.all([opening, disabling])
+    await expect(host.reconcile(openVault('A', root), 'open')).resolves.toBeUndefined()
+  })
+
+  it('latches failed cleanup when activation itself rejects', async () => {
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        ctx.register(['fake'], {})
+        throw new Error('activation failed')
+      },
+    }
+    const root = await tempDir()
+    const registry = createCapabilityRegistry()
+    vi.spyOn(registry, 'register').mockReturnValue(() => {
+      throw new Error('registration cleanup failed')
+    })
+    const { host } = rig({ plugins: [plugin], registry })
+    const activation = host.reconcile(openVault('A', root), 'open')
+    await expect(activation).rejects.toMatchObject({
+      message: 'plugin fake activation cleanup failed',
+      errors: [
+        expect.objectContaining({ message: 'activation failed' }),
+        expect.objectContaining({ message: 'registration cleanup failed' }),
+      ],
+    })
+    await expect(host.stop('A')).rejects.toThrow('plugin fake activation cleanup failed')
+  })
+
   it('aborts synchronously, joins repeated stop, and blocks replacement after failed cleanup', async () => {
     const contexts: PluginCtx[] = []
     let starts = 0
@@ -1776,13 +1829,22 @@ describe('activation cancellation and teardown failures', () => {
     await enter(openVault('A', root))
     const first = host.stop('A')
     expect(contexts[0]!.activationSignal.aborted).toBe(true)
-    const firstResult = first.then(() => null, (err: unknown) => err)
+    const firstResult = first.then(
+      () => null,
+      (err: unknown) => err,
+    )
     const second = host.stop('A')
-    const secondResult = second.then(() => null, (err: unknown) => err)
+    const secondResult = second.then(
+      () => null,
+      (err: unknown) => err,
+    )
     release()
     expect(await firstResult).toBeInstanceOf(AggregateError)
     expect(await secondResult).toBeInstanceOf(AggregateError)
-    await expect(host.reconcile(openVault('A', root), 'open')).rejects.toThrow('cleanup failed')
+    await expect(host.reconcile(openVault('A', root), 'open')).rejects.toMatchObject({
+      message: 'plugin fake teardown failed',
+      errors: [expect.objectContaining({ message: 'cleanup failed' })],
+    })
     expect(starts).toBe(1)
   })
 })

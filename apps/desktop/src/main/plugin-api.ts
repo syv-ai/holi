@@ -126,6 +126,8 @@ export interface PluginScheme {
 export interface PluginCtx extends LiveVault, SchemeContext {
   /** Aborted synchronously when this activation is stopped or invalidated. */
   activationSignal: AbortSignal
+  /** Revoke this activation before awaiting failed-start cleanup. */
+  invalidateActivation(): void
   /** The renderer's displayed vault, independent of plugin lifetimes. */
   displayed(): string | null
   /** Capture whether this activation's vault is the current presentation. */

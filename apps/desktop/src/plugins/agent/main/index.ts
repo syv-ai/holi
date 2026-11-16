@@ -400,6 +400,8 @@ export const agentMain: MainPlugin = {
         if (failures.length > 0) throw new AggregateError(failures, 'agent teardown failed')
       }
     } catch (err) {
+      // Revoke capability admission before asynchronous failure cleanup starts.
+      ctx.invalidateActivation()
       // `ensure` may have attached the vault's config watcher before a later
       // activation step fails. Join any pending attach and release it before
       // allowing a retry to create another session host.
