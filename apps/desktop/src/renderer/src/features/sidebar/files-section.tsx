@@ -1145,8 +1145,8 @@ export function FilesSection({
                                         <Button
                                           variant="ghost"
                                           size="icon-xs"
-                                          className="ms-auto"
-                                          data-tree-row-action=""
+                                          className={item.isFolder() ? 'ms-auto' : undefined}
+                                          data-tree-row-action={item.isFolder() ? '' : undefined}
                                           aria-label={label}
                                           disabled={
                                             subscriptionData.pending !== null ||

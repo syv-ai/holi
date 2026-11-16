@@ -313,7 +313,11 @@ test('individual file subscription controls persist the file scope without subsc
       enabled: true,
     }),
   )
-  expect(await screen.findByRole('button', { name: 'Unsubscribe brief.md' })).toBeInTheDocument()
+  const fileControlAfterSubscribe = await screen.findByRole('button', {
+    name: 'Unsubscribe brief.md',
+  })
+  expect(fileControlAfterSubscribe).not.toHaveAttribute('data-tree-row-action')
+  expect(fileControlAfterSubscribe).not.toHaveClass('ms-auto')
   expect(screen.getByRole('button', { name: 'Subscribe kunder' })).toBeInTheDocument()
 })
 
