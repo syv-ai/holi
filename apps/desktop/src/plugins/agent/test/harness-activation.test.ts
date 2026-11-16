@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -435,6 +435,7 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
     const listingEntered = deferred()
     const releaseListing = deferred()
     let gated = false
+    let listingStatusB: 'busy' | 'idle' = 'busy'
     adapters.run.mockImplementation(async (_bin, args, opts) => {
       if (args.includes('--bg')) return 'backgrounded · abc12345 · Bound run'
       if (args[0] === 'agents') {
@@ -451,7 +452,7 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
             sessionId: '123e4567-e89b-42d3-a456-426614174000',
             cwd: opts.cwd,
             pid: process.pid,
-            status: 'idle',
+            status: opts.cwd === roots[B] ? listingStatusB : 'idle',
           },
         ])
       }
@@ -678,6 +679,41 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
         .filter(([, args]) => args[0] === 'agents')
         .map(([, , opts]) => opts.cwd),
     ).toContain(roots[A])
+
+    // Keep B busy through the cross-vault assertions above so the real idle
+    // recheck cannot release its turn during teardown. Then explicitly end it
+    // and wait for the B-owned record before exercising the actual recheck.
+    const baseB = execFileSync('git', ['-C', roots[B], 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    const settledB = await post(B, '/turn/end', '&job=abc12345')
+    expect(settledB.status).toBe(200)
+    const bTurns = async () =>
+      (await call(B, 'agent.turns')) as { sessionId: string; base: string }[]
+    await vi.waitFor(async () => {
+      expect((await bTurns()).find((turn) => turn.sessionId === 'abc12345')).toMatchObject({
+        base: baseB,
+      })
+    })
+
+    // A second turn is intentionally left to the listing's idle confirmation.
+    // This crosses the production 1.1s recheck interval and waits on the
+    // persisted record rather than sleeping or relying on host.stopAll.
+    listingStatusB = 'idle'
+    expect(
+      (await post(B, '/turn/start', `&job=abc12345&pid=${process.pid}`, JSON.stringify(channelB)))
+        .status,
+    ).toBe(204)
+    await writeFile(join(roots[B], 'idle-recheck.txt'), 'completed turn')
+    execFileSync('git', ['-C', roots[B], 'add', 'idle-recheck.txt'])
+    execFileSync('git', ['-C', roots[B], 'commit', '-qm', 'fixture turn work'])
+    await call(B, 'agent.sessions')
+    await vi.waitFor(
+      async () => {
+        expect((await bTurns()).filter((turn) => turn.sessionId === 'abc12345')).toHaveLength(2)
+      },
+      { timeout: 5_000, interval: 25 },
+    )
   } finally {
     await host.stopAll()
     await Promise.all(
@@ -686,6 +722,7 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
       }),
     )
     await Promise.all(inboxSockets.map((socket) => rm(socket, { force: true })))
+    await Promise.all(inboxSockets.map((socket) => expect(access(socket)).rejects.toThrow()))
   }
 })
 
