@@ -956,39 +956,92 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   async function commitWithProvenance(args: string[]): Promise<string> {
-    const ticket = await Promise.resolve(deps.commitProvenance?.begin(root)).catch((error) => {
-      console.error('[git] commit provenance capture failed:', error)
-      return null
+    const recorder = deps.commitProvenance
+    let ticket: unknown = null
+    if (recorder !== undefined) {
+      try {
+        ticket = await recorder.begin(root)
+      } catch (error) {
+        console.error('[git] commit provenance capture failed:', error)
+      }
+    }
+    let marker: string | null = null
+    let before: string[] | null = null
+    let beforeHead: string | null = null
+    if (recorder !== undefined && ticket !== null) {
+      marker = `holi-managed-commit:${randomUUID()}`
+      try {
+        if (!(await tryGit(root, ['rev-parse', '--verify', 'MERGE_HEAD'], opts)).ok) {
+          const head = await tryGit(root, ['rev-parse', '--verify', 'HEAD'], opts)
+          beforeHead = head.ok ? head.stdout.trim() : null
+          before = (await runGit(root, ['reflog', 'show', '--format=%H%x00%gs', 'HEAD'], opts))
+            .split('\n')
+            .filter(Boolean)
+        }
+      } catch (error) {
+        console.error('[git] commit reflog anchor unavailable:', error)
+      }
+    }
+    await runGit(root, args, {
+      ...opts,
+      ...(marker === null ? {} : { env: { ...opts.env, GIT_REFLOG_ACTION: marker } }),
     })
-    const marker = `holi-managed-commit:${randomUUID()}`
-    await runGit(root, args, { ...opts, env: { ...opts.env, GIT_REFLOG_ACTION: marker } })
     let exactOid: string | null = null
-    try {
-      const reflog = await runGit(
-        root,
-        ['reflog', 'show', '--format=%H%x00%gs', '-n', '32', 'HEAD'],
-        opts,
-      )
-      const matches = reflog.split('\n').flatMap((line) => {
-        const [oid, action] = line.split('\0')
-        return action?.startsWith(`${marker}:`) &&
-          oid &&
-          /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid)
-          ? [oid]
-          : []
-      })
-      if (matches.length === 1) exactOid = matches[0]!
-    } catch (error) {
-      console.error('[git] commit reflog evidence unavailable:', error)
+    if (marker !== null && before !== null) {
+      try {
+        const after = (await runGit(root, ['reflog', 'show', '--format=%H%x00%gs', 'HEAD'], opts))
+          .split('\n')
+          .filter(Boolean)
+        let anchor = before.length === 0 ? after.length : -1
+        for (let i = 0; before.length > 0 && i + before.length <= after.length; i++) {
+          if (before.every((entry, j) => after[i + j] === entry)) {
+            if (anchor !== -1) throw new Error('Ambiguous reflog anchor')
+            anchor = i
+          }
+        }
+        if (anchor === 0) throw new Error('Commit reflog interval is empty')
+        if (anchor > 0) {
+          const interval = after.slice(0, anchor)
+          const marked = interval.flatMap((line) => {
+            const [oid, action] = line.split('\0')
+            return action?.startsWith(`${marker}:`) &&
+              oid &&
+              /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid)
+              ? [oid]
+              : []
+          })
+          if (marked.length === 1 && interval.length === 1) {
+            const oid = marked[0]!
+            const object = await runGit(root, ['cat-file', '-p', oid], opts)
+            const lines = object.split('\n')
+            if (lines[0] !== undefined && /^tree (?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(lines[0])) {
+              const parents = lines.filter((line) => line.startsWith('parent '))
+              const parentOid = parents[0]?.slice('parent '.length) ?? null
+              if (
+                parents.length <= 1 &&
+                parentOid === beforeHead &&
+                !(await tryGit(root, ['rev-parse', '--verify', 'MERGE_HEAD'], opts)).ok
+              ) {
+                const type = await runGit(root, ['cat-file', '-t', oid], opts)
+                if (type === 'commit') exactOid = oid
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[git] commit reflog evidence unavailable:', error)
+      }
+      if (recorder !== undefined) {
+        try {
+          await recorder.record(ticket, root, exactOid)
+        } catch (error) {
+          console.error('[git] commit provenance write failed:', error)
+        }
+      }
     }
-    if (ticket !== null && deps.commitProvenance !== undefined) {
-      await deps.commitProvenance
-        .record(ticket, root, exactOid)
-        .catch((error) => console.error('[git] commit provenance write failed:', error))
-    }
-    // Preserve the legacy return contract when exact invocation evidence is absent;
-    // that fallback is never passed to the recorder.
-    return exactOid ?? runGit(root, ['rev-parse', 'HEAD'], opts)
+    // Preserve the historical API: return the current HEAD after hooks, even
+    // when exact invocation evidence is unavailable. Only exactOid is recorded.
+    return runGit(root, ['rev-parse', 'HEAD'], opts)
   }
 
   async function commitAll(message: string, paths: string[]): Promise<string | null> {

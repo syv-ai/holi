@@ -24,7 +24,8 @@
  * writes. A cache is safe where reads are hot (the registry is read by every
  * path-taking procedure).
  */
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { renameSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 interface FileState {
@@ -50,7 +51,10 @@ export interface JsonFileStore<T> {
    *  update. Resolves to what was written; a `change` that throws writes nothing.
    *  `change` returns a new value rather than editing `current`, which may be
    *  the cached one. */
-  update(change: (current: T) => T | Promise<T>): Promise<T>
+  update(
+    change: (current: T) => T | Promise<T>,
+    stillOwned?: () => boolean | Promise<boolean>,
+  ): Promise<T>
 }
 
 export function jsonFileStore<T>(
@@ -83,25 +87,33 @@ export function jsonFileStore<T>(
     return value
   }
 
-  const write = async (value: T): Promise<void> => {
+  const write = async (value: T, stillOwned?: () => boolean | Promise<boolean>): Promise<void> => {
     await mkdir(dirname(filename), { recursive: true })
     const temporary = `${filename}.tmp`
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
-      encoding: 'utf8',
-      ...(options.mode === undefined ? {} : { mode: options.mode }),
-    })
-    if (options.mode !== undefined) await chmod(temporary, options.mode)
-    await rename(temporary, filename)
+    try {
+      await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+        encoding: 'utf8',
+        ...(options.mode === undefined ? {} : { mode: options.mode }),
+      })
+      if (options.mode !== undefined) await chmod(temporary, options.mode)
+      if (stillOwned === undefined) await rename(temporary, filename)
+      else {
+        if (!(await stillOwned())) throw new Error('Update ownership changed')
+        renameSync(temporary, filename)
+      }
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined)
+    }
     state.writes += 1
     if (options.cache === true) cached = { value, writes: state.writes }
   }
 
   return {
     read,
-    update(change) {
+    update(change, stillOwned) {
       const run = async (): Promise<T> => {
         const next = await change(await read())
-        await write(next)
+        await write(next, stillOwned)
         return next
       }
       const done = state.tail.then(run, run)
