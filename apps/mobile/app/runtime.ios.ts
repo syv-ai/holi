@@ -61,8 +61,51 @@ export async function checkCompatibility(): Promise<string> {
     phase = 'shared-storage-scenarios'
     operation = 'runVaultStorageCheck'
     const storage = await runVaultStorageCheck(nativeFiles, storageRoot, secondRoot)
+    phase = 'native-filename-spellings'
+    operation = 'verifyNativeFilenameSpellings'
+    const filenameCases = [
+      { root: storageRoot, name: 'Native-Café.md', alternate: 'Native-Café.md' },
+      { root: secondRoot, name: 'Native-Cafe\u0301.md', alternate: 'Native-Cafe\u0301.md' },
+    ]
+    const initial = nativeUtf8('native filename bytes')
+    const updated = nativeUtf8('updated native filename bytes')
+    const initialData =
+      NSString.stringWithString('native filename bytes').dataUsingEncoding(NSUTF8StringEncoding)
+    if (!initialData) throw new Error('Could not encode native filename fixture')
+    for (const item of filenameCases) {
+      if (
+        !manager.createFileAtPathContentsAttributes(`${item.root}/${item.name}`, initialData, null)
+      )
+        throw new Error(`Could not create independent native fixture: ${item.name}`)
+      const original = await nativeFiles.read(item.root, item.alternate)
+      if (
+        original.length !== initial.length ||
+        original.some((byte, index) => byte !== initial[index])
+      )
+        throw new Error(`Alternate filename spelling could not read native fixture: ${item.name}`)
+      await nativeFiles.publish(item.root, item.name, updated, initial)
+      const afterSave = await nativeFiles.read(item.root, item.alternate)
+      if (
+        afterSave.length !== updated.length ||
+        afterSave.some((byte, index) => byte !== updated[index])
+      )
+        throw new Error(
+          `Alternate filename spelling could not read saved native fixture: ${item.name}`,
+        )
+      const listed = await nativeFiles.list(item.root)
+      const normalized = (value: string) =>
+        String(NSString.stringWithString(value).decomposedStringWithCanonicalMapping)
+      if (listed.filter((entry) => normalized(entry.path) === normalized(item.name)).length !== 1)
+        throw new Error(`Native filename was not listed exactly once: ${item.name}`)
+    }
     status = `${corpus.passed}/${corpus.total} format cases and storage passed; ${corpus.failed} failed`
-    evidence = { corpus, storage, storageRoot }
+    evidence = {
+      corpus,
+      storage,
+      nativeFilenameSpellings: true,
+      nativeFilenameRoots: filenameCases.map(({ root, name }) => ({ root, name })),
+      storageRoot,
+    }
   } catch (error) {
     status = `Compatibility failed during ${phase}/${operation}: ${String(error)}`
     evidence = {

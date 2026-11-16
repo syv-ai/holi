@@ -4,6 +4,10 @@ import type { Entry, NativeFiles } from './native-files'
 function checkError(error: interop.Reference<NSError>): void {
   if (error.value) throw new Error(error.value.localizedDescription)
 }
+function normalizedName(value: string): string {
+  return String(NSString.stringWithString(value).decomposedStringWithCanonicalMapping)
+}
+
 function filePath(root: string, relative: string): string {
   if (
     !root.startsWith('/') ||
@@ -32,9 +36,7 @@ function checkedPath(
   let current = root
   const pieces = relative.split('/')
   for (let index = 0; index < pieces.length; index++) {
-    const piece = pieces[index]
-    // iOS exposes canonical filenames in NFD; reject aliases before Foundation resolves them.
-    if (piece !== piece?.normalize('NFD')) throw new Error('Filesystem spelling alias rejected')
+    const piece = pieces[index] ?? ''
     current = `${current}/${piece}`
     const info = attrs(current)
     if (!info) {
@@ -64,8 +66,14 @@ function checkedPath(
       const parent = index === 0 ? root : current.substring(0, current.lastIndexOf('/'))
       const siblings = NSFileManager.defaultManager.contentsOfDirectoryAtPathError(parent, error)
       checkError(error)
-      if (!siblings || !Array.from(siblings).some((name) => String(name) === piece))
-        throw new Error('Case alias rejected')
+      if (
+        !siblings ||
+        !Array.from(siblings).some((name) => {
+          const sibling = String(name)
+          return sibling === piece || normalizedName(sibling) === normalizedName(piece)
+        })
+      )
+        throw new Error('Filesystem spelling alias rejected')
     }
   }
   return filePath(root, relative)

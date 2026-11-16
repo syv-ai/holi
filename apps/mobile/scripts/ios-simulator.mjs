@@ -129,6 +129,7 @@ try {
     osVersion: runtime.version,
     storageRoot: expectedStorageParent,
   })
+  assert.equal(report.nativeFilenameSpellings, true)
   // Let the native view arrive, and catch a crash immediately after writing evidence.
   await sleep(2_000, undefined, { signal: controller.signal })
   process.kill(pid, 0)

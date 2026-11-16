@@ -15,20 +15,22 @@ export async function runVaultStorageCheck(adapter: NativeFiles, root: string, s
   const original = bytes('\uFEFF---\r\nunknown: [keep]\r\n---\r\nCafe\u0301\n')
   const created = await first.create('same/note.md', original)
   const other = await second.create('same/note.md', bytes('other vault'))
-  // iOS filesystems expose canonical filenames in NFD; only that exact spelling is valid.
-  await first.create('Cafe\u0301.md', bytes('unicode spelling'))
+  // Foundation exposes directory names in NFD even when callers use NFC.
+  await first.create('Café.md', bytes('unicode spelling'))
+  if (text((await first.read('Cafe\u0301.md')).bytes) !== 'unicode spelling')
+    throw new Error('NFD filename spelling was not readable')
+  const decomposed = await second.create('Cafe\u0301.md', bytes('decomposed spelling'))
+  if (text((await second.read('Café.md')).bytes) !== 'decomposed spelling')
+    throw new Error('NFC filename spelling was not readable')
+  await second.save('Cafe\u0301.md', bytes('decomposed saved'), decomposed.revision)
+  if (text((await second.read('Café.md')).bytes) !== 'decomposed saved')
+    throw new Error('Unicode spelling save changed the file identity')
   if (text((await first.read(created.path)).bytes) !== text(original))
     throw new Error('Byte preservation failed')
   if (text((await second.read(other.path)).bytes) !== 'other vault')
     throw new Error('Vault roots collided')
 
-  for (const path of [
-    '../escape.md',
-    'same/../../escape.md',
-    'same/NOTE.md',
-    'same/note.MD',
-    'Caf\u00e9.md',
-  ]) {
+  for (const path of ['../escape.md', 'same/../../escape.md', 'same/NOTE.md', 'same/note.MD']) {
     let rejected = false
     try {
       await first.read(path)
@@ -37,7 +39,7 @@ export async function runVaultStorageCheck(adapter: NativeFiles, root: string, s
     }
     if (!rejected) throw new Error(`Unsafe or aliased read accepted: ${path}`)
   }
-  for (const path of ['same/note.md', 'same/NOTE.md', 'Café.md']) {
+  for (const path of ['same/note.md', 'same/NOTE.md', 'Cafe\u0301.md']) {
     let rejected = false
     try {
       await first.create(path, bytes('collision'))
