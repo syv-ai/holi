@@ -25,10 +25,11 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import { merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
+import { shownPathOrNull, merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
+  GitHistoricalPathMissingError,
   noParams,
   optionalStringParam,
   paramsObject,
@@ -143,6 +144,11 @@ const notOpen = { ok: false as const, message: VAULT_NOT_OPEN }
 /** Far under Claude Code's own cap of about a million characters: a message
  *  is a note to a session, not a document. */
 const MAX_MESSAGE = 100_000
+const TURN_READ_BUDGET = { maxBuffer: 4 * 1024 * 1024, timeout: 10_000 }
+
+function turnPathAllowed(path: string): boolean {
+  return shownPathOrNull(path) !== null
+}
 
 /** An optional whole number, such as a terminal's columns. */
 function countParam(raw: Record<string, unknown>, key: string): number | undefined {
@@ -177,7 +183,14 @@ const idParams = (raw: unknown): { id: string } => ({ id: stringParam(paramsObje
 
 const rangeParams = (raw: unknown): { base: string; end: string } => {
   const p = paramsObject(raw)
-  return { base: stringParam(p, 'base'), end: stringParam(p, 'end') }
+  const endpoint = (key: 'base' | 'end'): string => {
+    const value = stringParam(p, key)
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) {
+      throw new CapabilityError('BAD_REQUEST', `${key} must be a full Git object id`)
+    }
+    return value
+  }
+  return { base: endpoint('base'), end: endpoint('end') }
 }
 
 /** The most paths a job's scope names. */
@@ -830,7 +843,10 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     'agent.turnFiles': cap({
       doors: ['ui'],
       params: rangeParams,
-      run: (ctx, { base, end }): Promise<RangeFile[]> => ctx.core.repo().rangeFiles(base, end),
+      run: async (ctx, { base, end }): Promise<RangeFile[]> =>
+        (await ctx.core.repo().rangeFiles(base, end, TURN_READ_BUDGET)).filter((file) =>
+          turnPathAllowed(file.path),
+        ),
     }),
 
     /** One file's before and after across the turn. Either side is `''` when
@@ -846,8 +862,16 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, { base, end, path }): Promise<{ before: string; after: string }> => {
         const repo = ctx.core.repo()
         const rel = relPath(path)
-        const before = await repo.show(base, rel).catch(() => '')
-        const after = await repo.show(end, rel).catch(() => '')
+        if (!turnPathAllowed(rel))
+          throw new CapabilityError('BAD_REQUEST', 'This path is not available in turn history.')
+        const before = await repo.show(base, rel, TURN_READ_BUDGET).catch((error: unknown) => {
+          if (error instanceof GitHistoricalPathMissingError) return ''
+          throw error
+        })
+        const after = await repo.show(end, rel, TURN_READ_BUDGET).catch((error: unknown) => {
+          if (error instanceof GitHistoricalPathMissingError) return ''
+          throw error
+        })
         return { before, after }
       },
     }),
