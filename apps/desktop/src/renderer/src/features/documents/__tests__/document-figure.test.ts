@@ -953,3 +953,62 @@ describe('image markdown destinations', () => {
     expect(renderImageMarkdown({ src: 'assets/chart.png' })).toBe('![](assets/chart.png)')
   })
 })
+
+describe('figure clipboard markdown', () => {
+  it('keeps partial caption text, marks, and following paragraphs', () => {
+    const instance = open(
+      '<!-- holi:figure -->\n\n![first](first.png)\n\n<!-- holi:caption -->\n\nA **bold** caption.\n\n<!-- /holi:figure -->\n\nFollowing paragraph.',
+    )
+    let captionPos = -1
+    instance.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'documentCaption') captionPos = pos
+    })
+    const start = captionPos + 1 + 'A '.length
+    const end = instance.state.doc.content.size
+    const clipboard = instance.view.serializeForClipboard(instance.state.doc.slice(start, end))
+
+    expect(clipboard.text).toContain('**bold** caption.')
+    expect(clipboard.text).toContain('Following paragraph.')
+    expect(clipboard.text).not.toContain('holi:figure')
+  })
+
+  it('copies complete images with spaced paths as portable markdown and reopens them', () => {
+    const source =
+      '<!-- holi:figure -->\n\n![Photo](<assets/my photo (draft).png> "Title")\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->'
+    const instance = open(source)
+    const figure = instance.state.doc.firstChild!
+    const clipboard = instance.view.serializeForClipboard(
+      instance.state.doc.slice(0, figure.nodeSize),
+    )
+
+    expect(clipboard.text).toContain('![Photo](<assets/my photo (draft).png> "Title")')
+    expect(clipboard.text).not.toContain('data-holi-')
+    const reopened = open(clipboard.text)
+    expect(reopened.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(reopened.state.doc.firstChild?.firstChild?.attrs).toMatchObject({
+      src: 'assets/my photo (draft).png',
+      alt: 'Photo',
+      title: 'Title',
+    })
+  })
+
+  it('keeps complete figures whole in a mixed slice with a partial figure edge', () => {
+    const instance = open(
+      '<!-- holi:figure -->\n\n![first](first.png)\n\n<!-- holi:caption -->\n\nFirst caption.\n\n<!-- /holi:figure -->\n\n<!-- holi:figure -->\n\n![second](second.png)\n\n<!-- holi:caption -->\n\nSecond **bold** caption.\n\n<!-- /holi:figure -->',
+    )
+    const figures: Array<{ pos: number; nodeSize: number }> = []
+    let captionPos = -1
+    instance.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'documentFigure') figures.push({ pos, nodeSize: node.nodeSize })
+      if (node.type.name === 'documentCaption' && captionPos < 0) captionPos = pos
+    })
+    const from = captionPos + 1 + 'First '.length
+    const to = figures[1]!.pos + figures[1]!.nodeSize
+    const clipboard = instance.view.serializeForClipboard(instance.state.doc.slice(from, to))
+
+    expect(clipboard.text).toContain('caption.')
+    expect(clipboard.text).toContain('<!-- holi:figure -->')
+    expect(clipboard.text).toContain('![second](second.png)')
+    expect(clipboard.text).toContain('Second **bold** caption.')
+  })
+})

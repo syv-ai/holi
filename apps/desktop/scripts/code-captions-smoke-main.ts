@@ -1657,14 +1657,22 @@ async function run() {
         src: '../../assets/smoke.png',
         expected: 'assets/smoke.png',
       },
+      {
+        name: 'spaced-image-path',
+        source: 'Root-spaced-source.md',
+        target: 'notes/deep/Spaced-target.md',
+        src: 'assets/smoke photo.png',
+        expected: '../../assets/smoke photo.png',
+      },
     ]
+    await copyFile(join(vault, 'assets/smoke.png'), join(vault, 'assets/smoke photo.png'))
     await mkdir(join(vault, 'notes/deep'), { recursive: true })
     for (const transfer of transfers) {
       await js('await window.captionFixture.flush(); return true')
-      await writeFile(
-        join(vault, transfer.source),
-        frame(`![Smoke photo](${transfer.src} "Photo title")`),
-      )
+      const imageMarkdown = /\s/.test(transfer.src)
+        ? `![Smoke photo](<${transfer.src}> "Photo title")`
+        : `![Smoke photo](${transfer.src} "Photo title")`
+      await writeFile(join(vault, transfer.source), frame(imageMarkdown))
       await writeFile(join(vault, transfer.target), '')
       await js(
         `await window.captionFixture.openPaths(${JSON.stringify(transfer.source)}, ${JSON.stringify(transfer.target)}); window.captionFixture.split(true); window.captionFixture.rightFocused(false); return true`,
@@ -1693,7 +1701,10 @@ async function run() {
       )
       await js('await window.captionFixture.flush(); return true')
       const saved = await readFile(join(vault, transfer.target), 'utf8')
-      assert(saved.includes(`![Smoke photo](${transfer.expected} "Photo title")`))
+      const expectedImageMarkdown = /\s/.test(transfer.expected)
+        ? `![Smoke photo](<${transfer.expected}> "Photo title")`
+        : `![Smoke photo](${transfer.expected} "Photo title")`
+      assert(saved.includes(expectedImageMarkdown))
       assert(!saved.includes('holi-vault:'))
       await js(
         `await window.captionFixture.openPaths(${JSON.stringify(transfer.target)}, 'notes/Clipboard.md'); window.captionFixture.split(false); window.captionFixture.rightFocused(false); return true`,
