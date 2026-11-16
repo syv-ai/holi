@@ -94,13 +94,7 @@ export const DocumentFigure = Node.create({
               view.dispatch(view.state.tr.insertText(markdown.replace(/\r?\n/g, ' ')))
               return true
             }
-            if (
-              !editor.isEditable ||
-              !markdown ||
-              !readMarkdownCodeCaptions(markdown).some(
-                (caption) => caption.language.toLowerCase() !== 'mermaid',
-              )
-            )
+            if (!editor.isEditable || !markdown || !readMarkdownCodeCaptions(markdown).length)
               return false
             const manager = editor.markdown
             if (!manager) return false
@@ -223,8 +217,7 @@ export function addCodeCaption(editor: Editor, pos: number): boolean {
   if (!editor.isEditable) return false
   if (pos < 0 || pos > editor.state.doc.content.size) return false
   const node = editor.state.doc.nodeAt(pos)
-  if (!node || node.type.name !== 'codeBlock' || node.attrs.language?.toLowerCase() === 'mermaid')
-    return false
+  if (!node || node.type.name !== 'codeBlock') return false
   const paragraph = editor.schema.nodes.documentCaption?.create()
   if (!paragraph) return false
   const code = node.type.create({ ...node.attrs, preserveFence: true }, node.content, node.marks)

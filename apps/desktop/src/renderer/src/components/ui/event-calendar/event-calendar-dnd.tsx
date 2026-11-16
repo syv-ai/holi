@@ -85,15 +85,18 @@ function wasRecentDrag(): boolean {
  * click-to-edit is unaffected (only grid slot-clicks check it).
  */
 let lastChipPressAt = 0
-function markChipPress(): void {
+function markChipPress(owner: object): void {
   lastChipPressAt = performance.now()
-  window.addEventListener(
-    "pointerup",
-    () => {
-      lastChipPressAt = performance.now()
-    },
-    { once: true, capture: true }
-  )
+  const cleanup = () => {
+    unregisterGestureCancel(owner, cleanup)
+    window.removeEventListener("pointerup", onRelease, true)
+  }
+  const onRelease = () => {
+    lastChipPressAt = performance.now()
+    cleanup()
+  }
+  registerGestureCancel(owner, cleanup)
+  window.addEventListener("pointerup", onRelease, { once: true, capture: true })
 }
 function wasRecentChipPress(): boolean {
   return performance.now() - lastChipPressAt < 300

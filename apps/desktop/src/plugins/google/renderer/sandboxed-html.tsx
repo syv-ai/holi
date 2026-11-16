@@ -13,7 +13,7 @@
  * The `mail-` modules are not mail-specific and are deliberately not renamed,
  * so the security-relevant code and its test suites stay put.
  */
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useAtomValue } from 'jotai'
 import { ImageOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -27,7 +27,14 @@ import {
 import { sanitizeMailHtml } from './mail-html'
 import { useRemoteContent, type RemoteContentIdentity } from './mail-images'
 import { registerMailFrame } from './mail-frames'
-import { activeRemoteAtom, matchHotkey, openExternal } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  matchHotkey,
+  openExternal,
+  registerHostHintAdapter,
+} from '@/plugin-api'
+import { createMailHintAdapter } from './mail-hints'
 
 interface SandboxedHtmlProps {
   /** Raw and untrusted. Sanitizing happens **here**; a caller must not pre-sanitize. */
@@ -40,6 +47,10 @@ interface SandboxedHtmlProps {
    * the choice lives and dies with this component.
    */
   identity?: RemoteContentIdentity
+  /** Mail-only ownership context, such as the thread or draft and view instance. */
+  hintScope?: string
+  /** Explicitly opts a mail-owned frame into scoped Vim hints and key forwarding. */
+  mailHints?: boolean
 }
 
 const NO_IDENTITY: RemoteContentIdentity = { key: null, sender: null }
@@ -59,9 +70,12 @@ export function SandboxedHtml({
   html,
   label,
   identity = NO_IDENTITY,
+  hintScope = '',
+  mailHints = false,
 }: SandboxedHtmlProps): React.JSX.Element {
   const remote = useRemoteContent(identity)
   const activeRemote = useAtomValue(activeRemoteAtom)
+  const activeRemoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
   /** The unblock for a block with nothing to remember it by. */
   const [localAllowance, setLocalAllowance] = useState<{
     remote: string | null
@@ -172,6 +186,8 @@ export function SandboxedHtml({
         allowRemoteContent={allowRemoteContent}
         label={label}
         registerAs={identity.key}
+        hintScope={`${activeRemote ?? 'no-vault'}:${activeRemoteRevision}:${identity.key ?? 'anonymous'}:${hintScope}`}
+        mailHints={mailHints}
       />
     </>
   )
@@ -192,6 +208,8 @@ interface HtmlFrameProps {
    * such as a calendar event description.
    */
   registerAs: string | null
+  hintScope: string
+  mailHints: boolean
 }
 
 /**
@@ -209,17 +227,30 @@ function HtmlFrame({
   allowRemoteContent,
   label,
   registerAs,
+  hintScope,
+  mailHints,
 }: HtmlFrameProps): React.JSX.Element {
   const ref = useRef<HTMLIFrameElement>(null)
+  const [frame, setFrame] = useState<HTMLIFrameElement | null>(null)
+  const generation = useRef(0)
+  const scopeRef = useRef(hintScope)
+  if (scopeRef.current !== hintScope) {
+    scopeRef.current = hintScope
+    generation.current += 1
+  }
   const [height, setHeight] = useState(0)
+  const setFrameRef = useCallback((element: HTMLIFrameElement | null) => {
+    ref.current = element
+    setFrame(element)
+  }, [])
 
   // Layout, not passive: the frame has no height until it is measured, so an
   // ordinary effect would paint every block at zero height first and snap.
   useLayoutEffect(() => {
-    const frame = ref.current
     const document_ = frame?.contentDocument
     if (document_ == null) return
 
+    generation.current += 1
     document_.open()
     document_.write(mailFrameDocument({ html, css, palette, allowRemoteContent }))
     document_.close()
@@ -273,16 +304,39 @@ function HtmlFrame({
      * ⌘F means.
      */
     const onFrameKeyDown = (event: KeyboardEvent) => {
-      if (!matchHotkey(event, '⌘F')) return
-      event.preventDefault()
-      frame?.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: event.key,
-          metaKey: event.metaKey,
-          ctrlKey: event.ctrlKey,
-          bubbles: true,
-        }),
+      if (mailHints && matchHotkey(event, '⌘F')) {
+        event.preventDefault()
+        frame?.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: event.key,
+            metaKey: event.metaKey,
+            ctrlKey: event.ctrlKey,
+            bubbles: true,
+          }),
+        )
+        return
+      }
+      const target = event.target
+      if (
+        !mailHints ||
+        event.key.toLowerCase() !== 'f' ||
+        event.isComposing ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        (target instanceof document_.defaultView!.Element &&
+          target.closest('input,textarea,select,[contenteditable]') !== null)
       )
+        return
+      const forwarded = new KeyboardEvent('keydown', {
+        key: event.key,
+        code: event.code,
+        repeat: event.repeat,
+        shiftKey: event.shiftKey,
+        bubbles: true,
+        cancelable: true,
+      })
+      if (frame?.dispatchEvent(forwarded) === false) event.preventDefault()
     }
     document_.addEventListener('keydown', onFrameKeyDown)
 
@@ -297,11 +351,73 @@ function HtmlFrame({
       observer.disconnect()
       unregister?.()
     }
-  }, [html, css, palette, allowRemoteContent, registerAs])
+  }, [frame, html, css, palette, allowRemoteContent, registerAs, mailHints])
+
+  // A hidden retained reader keeps its document, but Chromium clears that
+  // frame's active Selection when the parent becomes display:none. Remember the
+  // current Range while visible and restore it when the same document returns.
+  useLayoutEffect(() => {
+    const currentFrame = frame
+    const document_ = currentFrame?.contentDocument
+    if (currentFrame == null || document_ == null) return
+
+    let savedRange: Range | null = null
+    const visible = () =>
+      currentFrame.isConnected &&
+      currentFrame.closest('[hidden],[inert],[aria-hidden="true"]') === null
+    let wasVisible = visible()
+    const rememberSelection = () => {
+      if (!visible()) return
+      const selection = document_.getSelection()
+      savedRange = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null
+    }
+    const restoreSelection = () => {
+      const isVisible = visible()
+      if (!wasVisible && isVisible && savedRange?.startContainer.isConnected) {
+        const range = savedRange
+        requestAnimationFrame(() => {
+          if (
+            !visible() ||
+            currentFrame.contentDocument !== document_ ||
+            !range.startContainer.isConnected
+          )
+            return
+          const selection = document_.getSelection()
+          selection?.removeAllRanges()
+          selection?.addRange(range)
+        })
+      }
+      wasVisible = isVisible
+    }
+    const observer = new MutationObserver(restoreSelection)
+    observer.observe(currentFrame.ownerDocument.documentElement, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['hidden', 'inert', 'aria-hidden'],
+    })
+    document_.addEventListener('selectionchange', rememberSelection)
+    return () => {
+      observer.disconnect()
+      document_.removeEventListener('selectionchange', rememberSelection)
+    }
+  }, [frame])
+
+  // Hint ownership changes much more often than the framed document (for
+  // example, when a retained reader is hidden). Revoke old targets in layout
+  // cleanup and register against the same document without rewriting it.
+  useLayoutEffect(() => {
+    if (!mailHints || frame === null) return
+    const adapter = createMailHintAdapter({
+      frame,
+      generation: () => generation.current,
+      scope: () => scopeRef.current,
+    })
+    return registerHostHintAdapter(frame, adapter)
+  }, [frame, hintScope, mailHints])
 
   return (
     <iframe
-      ref={ref}
+      ref={setFrameRef}
       /**
        * **A fresh element when the policy widens, or the images never load.**
        *

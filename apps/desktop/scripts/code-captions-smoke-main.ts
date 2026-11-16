@@ -19,6 +19,7 @@ import { noCoreServices } from '../src/main/capabilities/services'
 import { createBridgeServer } from '../src/main/bridge/server'
 import { installHoliCli } from '../src/main/bridge/cli'
 import { publishCliEndpoint } from '../src/main/bridge/cli-endpoint'
+import { createMermaidWindow } from '../src/plugins/pdf/main/mermaid-window'
 import {
   pdfCapabilities,
   PDF_NAMESPACES,
@@ -50,7 +51,10 @@ const mark = (name: string) => {
   console.log(`PASS ${name}`)
 }
 
-async function inspectPdf(file: string) {
+async function inspectPdf(
+  file: string,
+  expected = { caption: 'A portable caption. Pending reload', source: 'const value = 1' },
+) {
   const require = createRequire(join(process.env.HOLI_502_DESKTOP!, 'package.json'))
   const wasm = await readFile(require.resolve('@embedpdf/pdfium/pdfium.wasm'))
   const module = await init({
@@ -83,13 +87,16 @@ async function inspectPdf(file: string) {
       .toPromise()
     const text = slices.join('')
     const textGlyphs = slices.flatMap((part, index) => part.split('').map(() => glyphs[index]!))
-    assert.match(text.replace(/\s+/g, ' '), /A portable caption\. Pending reload/)
-    assert.match(text.replace(/\s+/g, ' '), /const value = 1/)
+    assert(
+      text.replace(/\s+/g, ' ').includes(expected.caption),
+      `missing PDF caption: ${expected.caption}`,
+    )
+    assert(text.includes(expected.source), `missing PDF source or fallback: ${expected.source}`)
     assert(!text.includes('holi:figure') && !text.includes('holi:caption'))
-    const at = text.indexOf('A portable caption.')
+    const at = text.indexOf(expected.caption)
     assert(at >= 0)
     const caption = textGlyphs
-      .slice(at, at + 'A portable caption. Pending reload'.length)
+      .slice(at, at + expected.caption.length)
       .filter((g) => g.size.width > 0 && !g.isEmpty)
     assert(caption.length > 10)
     const left = Math.min(...caption.map((g) => g.origin.x))
@@ -143,14 +150,13 @@ async function run() {
       throw new Error('No GitHub access in caption acceptance')
     },
   })
+  const mermaid = createMermaidWindow()
   const capabilities = createCapabilityRegistry()
   capabilities.register(
     PDF_NAMESPACES,
     pdfCapabilities({
       typst: async () => typst,
-      diagrams: async () => {
-        throw new Error('Ordinary-code fixture must not draw Mermaid')
-      },
+      diagrams: (sources) => mermaid.draw(sources),
       signatures: {
         read: async () => [],
         write: async () => {},
@@ -307,8 +313,8 @@ async function run() {
   )
   const js = <T = unknown>(code: string): Promise<T> =>
     win.webContents.executeJavaScript(`(async()=>{${code}})()`)
-  async function wait(code: string, label: string) {
-    const until = Date.now() + 15000
+  async function wait(code: string, label: string, timeout = 15000) {
+    const until = Date.now() + timeout
     while (Date.now() < until) {
       if (await js(`try{return Boolean(${code})}catch{return false}`)) return
       await sleep(50)
@@ -321,6 +327,54 @@ async function run() {
     })) as { data: string }
     await writeFile(join(evidence, name), Buffer.from(shot.data, 'base64'))
     captures.push(name)
+  }
+  async function convertAndInspectPdf(options: {
+    uiPdf: string
+    cliOutput: string
+    uiEvidence: string
+    cliEvidence: string
+    expected: { caption: string; source: string }
+    warnings: number
+  }) {
+    await wait(
+      `document.querySelector('[data-convert-confirm]:not([disabled])')`,
+      'production PDF confirmation',
+      45000,
+    )
+    await js(
+      `const button=document.querySelector('[data-convert-confirm]'); if(button.disabled)throw Error('PDF convert button stayed disabled'); button.click(); return true`,
+    )
+    if (options.warnings) {
+      await wait(
+        `document.querySelector('[role="dialog"]')?.innerText.includes('shows as code')`,
+        'PDF fallback warning',
+        45000,
+      )
+      await js(`document.querySelector('[data-convert-done]')?.click(); return true`)
+      await wait(`!document.querySelector('[role="dialog"]')`, 'fallback PDF conversion')
+    } else {
+      await wait(
+        `!document.querySelector('[role="dialog"]') || document.querySelector('[role="dialog"]')?.innerText.includes('The PDF is made')`,
+        'PDF conversion',
+        45000,
+      )
+      if (await js(`Boolean(document.querySelector('[role="dialog"]'))`))
+        await js(
+          `Array.from(document.querySelectorAll('[role="dialog"] button')).find(e=>e.textContent.trim()==='Done')?.click(); return true`,
+        )
+    }
+    const ui = await inspectPdf(options.uiPdf, options.expected)
+    await copyFile(options.uiPdf, join(evidence, options.uiEvidence))
+    const result = await exec(
+      cli,
+      ['pdf', 'render', path, 'plain', '--out', options.cliOutput, '--json'],
+      { cwd: vault, env: { ...process.env, CLAUDE_JOB_DIR: '' } },
+    )
+    assert.equal(JSON.parse(result.stdout).warnings.length, options.warnings)
+    const cliPdf = join(vault, options.cliOutput)
+    const cliProof = await inspectPdf(cliPdf, options.expected)
+    await copyFile(cliPdf, join(evidence, options.cliEvidence))
+    return { ui, cli: cliProof }
   }
   function press(keyCode: string, modifiers: ('meta' | 'control' | 'shift' | 'alt')[] = []) {
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
@@ -335,20 +389,25 @@ async function run() {
     win.webContents.sendInputEvent({ type: 'mouseUp', ...rect, button: 'left', clickCount: 1 })
     await sleep(100)
   }
-  async function menu(label: string) {
+  async function menu(label: string, waitForTextFocus = true) {
     press('/', ['meta'])
     await wait(
       `Array.from(document.querySelectorAll('[role="menuitem"]')).some(e=>e.textContent.trim().startsWith(${JSON.stringify(label)}))`,
       label,
     )
+    const enabled = await js(
+      `const e=Array.from(document.querySelectorAll('[role="menuitem"]')).find(e=>e.textContent.trim().startsWith(${JSON.stringify(label)})); return Boolean(e && e.getAttribute('aria-disabled') !== 'true' && !e.hasAttribute('disabled'))`,
+    )
+    assert(enabled, `${label} must be enabled for the selected block`)
     await js(
       `document.querySelectorAll('[data-caption-action]').forEach(e=>e.removeAttribute('data-caption-action')); const e=Array.from(document.querySelectorAll('[role="menuitem"]')).find(e=>e.textContent.trim().startsWith(${JSON.stringify(label)})); e.setAttribute('data-caption-action','selected')`,
     )
-    await click('[data-caption-action="selected"]')
-    await wait(
-      `!document.querySelector('[role="menu"][data-state="open"]') && document.activeElement?.closest('[role="textbox"]')`,
-      `${label} returned editor focus`,
-    )
+    await js(`document.querySelector('[data-caption-action="selected"]')?.click(); return true`)
+    if (waitForTextFocus)
+      await wait(
+        `!document.querySelector('[role="menu"][data-state="open"]') && document.activeElement?.closest('[role="textbox"]')`,
+        `${label} returned editor focus`,
+      )
   }
   async function dragFigure() {
     const source = await js<{ x: number; y: number }>(
@@ -434,21 +493,6 @@ async function run() {
     await win.webContents.debugger.sendCommand('Page.enable')
     await wait(`window.captionFixture?.state()?.json`, 'production DocumentView')
     mark('production-document-view-with-real-router-filesystem')
-    videoTimer = setInterval(() => {
-      if (frameNumber >= 30) return
-      const number = frameNumber++
-      videoFrames.push(
-        (async () => {
-          const frame = (await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
-            fromSurface: true,
-          })) as { data: string }
-          await writeFile(
-            join(evidence, 'frames', `frame-${String(number).padStart(4, '0')}.png`),
-            Buffer.from(frame.data, 'base64'),
-          )
-        })(),
-      )
-    }, 200)
     await js(`window.captionFixture.select('codeBlock'); return true`)
     await menu('Add caption')
     await wait(`document.querySelector('figcaption')`, 'native caption')
@@ -621,14 +665,24 @@ async function run() {
     mark('whole-figure-duplicate-and-native-undo')
     await js(`window.captionFixture.select('documentFigure'); return true`)
     await menu('Move Up')
-    assert.equal(
-      await js(
-        `const m=window.captionFixture.state().markdown; return m.indexOf('holi:figure')<m.indexOf('Before the code.')`,
-      ),
-      true,
+    await wait(
+      `window.captionFixture.state().markdown.indexOf('holi:figure')<window.captionFixture.state().markdown.indexOf('Before the code.')`,
+      'whole-figure move up serialization',
     )
     await js(`window.captionFixture.select('documentFigure'); return true`)
+    await wait(
+      `window.captionFixture.state().selection.type==='node'`,
+      'whole figure selected before move down',
+    )
+    await js(
+      `document.querySelector('[data-pane="primary"] [role="textbox"]').editor.commands.focus(); return true`,
+    )
     await menu('Move Down')
+    await wait(
+      `window.captionFixture.state().markdown.indexOf('holi:figure')>window.captionFixture.state().markdown.indexOf('Before the code.')`,
+      'native move down serialization',
+      15000,
+    )
     assert.equal(
       await js(
         `const m=window.captionFixture.state().markdown; return m.indexOf('holi:figure')>m.indexOf('Before the code.')`,
@@ -723,31 +777,390 @@ async function run() {
       'production ConvertToPdf dialog',
     )
     await capture('caption-convert.png')
-    await click('[data-convert-confirm]')
-    await wait(`!document.querySelector('[role="dialog"]')`, 'actual UI PDF capability')
-    const uiPdf = join(vault, 'notes/Code-caption.pdf')
-    await copyFile(uiPdf, join(evidence, 'native-ui.pdf'))
-    const ui = await inspectPdf(uiPdf)
+    const ordinaryProof = await convertAndInspectPdf({
+      uiPdf: join(vault, 'notes/Code-caption.pdf'),
+      cliOutput: 'notes/cli.pdf',
+      uiEvidence: 'native-ui.pdf',
+      cliEvidence: 'native-cli.pdf',
+      expected: { caption: 'A portable caption. Pending reload', source: 'const value = 1' },
+      warnings: 0,
+    })
     mark('production-convert-ui-through-real-typst-and-centered-output')
-    const result = await exec(
-      cli,
-      ['pdf', 'render', path, 'plain', '--out', 'notes/cli.pdf', '--json'],
-      { cwd: vault, env: { ...process.env, CLAUDE_JOB_DIR: '' } },
-    )
-    const receipt = JSON.parse(result.stdout)
-    assert.equal(receipt.warnings.length, 0)
-    const cliPdf = join(vault, 'notes/cli.pdf')
-    const cliProof = await inspectPdf(cliPdf)
-    await copyFile(cliPdf, join(evidence, 'native-cli.pdf'))
     assert.equal(await readFile(note, 'utf8'), beforePdf)
     assert(calls.some((c) => c.door === 'ui' && c.name === 'pdf.render'))
     assert(calls.some((c) => c.door === 'cli' && c.name === 'pdf.render'))
-    await writeFile(
-      join(evidence, 'pdf-proof.json'),
-      JSON.stringify({ ui, cli: cliProof }, null, 2),
-    )
+    await writeFile(join(evidence, 'pdf-proof.json'), JSON.stringify(ordinaryProof, null, 2))
     await writeFile(join(evidence, 'editor-saved.md.txt'), beforePdf)
     mark('actual-holi-cli-through-private-bridge-and-real-pdf-capability')
+
+    const mermaidCaption = 'A native Mermaid caption'
+    const mermaidSource = `flowchart TD\nA[Alpha] --> B[Target]`
+    const mermaidFence = `~~~mermaid\n${mermaidSource}\n~~~`
+    const editedMermaidFence = [
+      `${String.fromCharCode(96).repeat(3)} mermaid`,
+      'flowchart TD',
+      'A[Gamma] --> B[Target]',
+      String.fromCharCode(96).repeat(3),
+    ].join('\n')
+    await js(
+      `await window.captionFixture.replace(${JSON.stringify(`${head}# Mermaid caption\n\n${mermaidFence}\n`)}); return true`,
+    )
+    videoTimer = setInterval(() => {
+      if (frameNumber >= 60) return
+      const number = frameNumber++
+      videoFrames.push(
+        (async () => {
+          const frame = (await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
+            fromSurface: true,
+          })) as { data: string }
+          await writeFile(
+            join(evidence, 'frames', `frame-${String(number).padStart(4, '0')}.png`),
+            Buffer.from(frame.data, 'base64'),
+          )
+        })(),
+      )
+    }, 200)
+    await js(`window.captionFixture.select('codeBlock'); return true`)
+    await menu('Add caption')
+    await wait(`document.querySelector('figcaption')`, 'Mermaid caption authoring')
+    await win.webContents.insertText(mermaidCaption)
+    await sleep(350)
+    await wait(
+      `window.captionFixture.state().markdown.includes('A native Mermaid caption') && document.querySelector('figure [data-mermaid-diagram] svg')`,
+      'edited Mermaid caption keeps its rendered diagram',
+    )
+    await js('await window.captionFixture.flush(); return true')
+    assert((await readFile(note, 'utf8')).includes(mermaidCaption))
+    await js(
+      `Array.from(document.querySelectorAll('button')).find(e=>e.textContent.trim()==='Edit labels')?.click(); return true`,
+    )
+    const label = await js<{ x: number; y: number }>(
+      `const e=Array.from(document.querySelectorAll('[role="button"]')).find(e=>e.getAttribute('aria-label')==='Alpha' || e.textContent.trim()==='Alpha'); if(!e)throw Error('Rendered Mermaid Alpha label missing'); e.setAttribute('data-caption-action','label'); const r=e.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}`,
+    )
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...label })
+    win.webContents.sendInputEvent({ type: 'mouseDown', ...label, button: 'left', clickCount: 1 })
+    win.webContents.sendInputEvent({ type: 'mouseUp', ...label, button: 'left', clickCount: 1 })
+    await wait(`document.querySelector('input[aria-invalid]')`, 'Mermaid label editor')
+    await sleep(350)
+    await click('input[aria-invalid]')
+    win.webContents.selectAll()
+    await win.webContents.insertText('Gamma')
+    await sleep(350)
+    await js(
+      `Array.from(document.querySelectorAll('button')).find(e=>e.textContent.trim()==='Apply')?.click(); return true`,
+    )
+    await wait(
+      `window.captionFixture.state().markdown.includes('A[Gamma] --> B[Target]')`,
+      'Mermaid label edit redraw',
+    )
+    await sleep(350)
+    await wait(
+      `document.querySelector('figure [data-mermaid-diagram] svg')`,
+      'Mermaid SVG redraw after label edit',
+    )
+    assert(
+      (await js<string>('return window.captionFixture.state().markdown')).includes(mermaidCaption),
+      'caption survives a rendered Mermaid label redraw',
+    )
+    press('z', ['meta'])
+    await wait(
+      `window.captionFixture.state().markdown.includes('A[Alpha] --> B[Target]')`,
+      'Mermaid label undo',
+    )
+    assert(
+      (await js<string>('return window.captionFixture.state().markdown')).includes(mermaidCaption),
+      'label undo retains the edited caption',
+    )
+    press('z', ['meta', 'shift'])
+    await wait(
+      `window.captionFixture.state().markdown.includes('A[Gamma] --> B[Target]')`,
+      'Mermaid label redo',
+    )
+    await wait(
+      `document.querySelector('figure [data-mermaid-diagram] svg')`,
+      'Mermaid SVG redraw after label redo',
+    )
+    await sleep(350)
+    mark('native-mermaid-label-edit-undo-keeps-caption')
+    await js(
+      `Array.from(document.querySelectorAll('button')).find(e=>e.textContent.trim()==='Edit source')?.click(); return true`,
+    )
+    await wait(
+      `document.querySelector('[data-pane="primary"] [role="textbox"]').editor.state.selection.$from.parent.type.name==='codeBlock'`,
+      'nested Mermaid Edit source action',
+    )
+    assert.equal(
+      await js(
+        `return document.querySelector('[data-pane="primary"] [role="textbox"]').editor.state.selection.$from.parent.type.name`,
+      ),
+      'codeBlock',
+    )
+    assert(
+      (await js<string>('return window.captionFixture.state().markdown')).includes(
+        'A native Mermaid caption',
+      ),
+    )
+    press('Escape')
+    await js(`window.captionFixture.select('documentCaption'); return true`)
+    await wait(
+      `document.querySelector('figure [data-mermaid-diagram] svg')`,
+      'rendered Mermaid preview after nested source edit',
+    )
+    mark('native-mermaid-caption-authoring-and-source-target')
+
+    await js(`window.captionFixture.select('documentCaption', 'primary', true); return true`)
+    await js('await window.captionFixture.flush(); return true')
+    let mermaidSaved = await readFile(note, 'utf8')
+    await writeFile(join(evidence, 'mermaid-authored.md.txt'), mermaidSaved)
+    assert(mermaidSaved.startsWith(head), 'Mermaid must preserve exact frontmatter and its comment')
+    assert(mermaidSaved.includes(editedMermaidFence), 'Mermaid must preserve its exact code fence')
+    assert.equal(readMarkdownCodeCaptions(mermaidSaved).length, 1)
+    const mermaidAnchor = await js<{
+      anchor: { quote: string }
+      lines: { startLine: number; endLine: number }
+    }>('return await window.captionFixture.anchor()')
+    assert(mermaidAnchor.anchor.quote.includes(mermaidCaption))
+    assert(
+      mermaidSaved
+        .split('\n')
+        .slice(mermaidAnchor.lines.startLine - 1, mermaidAnchor.lines.endLine)
+        .join('\n')
+        .includes(mermaidCaption),
+      'Mermaid caption comment and file-line anchors must map to its saved Markdown',
+    )
+    mark('mermaid-comment-and-file-line-anchors')
+
+    press('f', ['meta'])
+    await wait(`document.querySelector('input[aria-label="Find"]')`, 'Mermaid native find')
+    await click('input[aria-label="Find"]')
+    win.webContents.selectAll()
+    await win.webContents.insertText(mermaidCaption)
+    await wait(
+      `document.querySelector('[role="search"]').textContent.includes('1 of 1')`,
+      'Mermaid caption find mapping',
+    )
+    await click('[aria-label="Show replace"]')
+    await click('input[aria-label="Replace"]')
+    await win.webContents.insertText('Mermaid verified caption')
+    press('Enter')
+    await wait(
+      `window.captionFixture.state().markdown.includes('Mermaid verified caption')`,
+      'Mermaid native caption replacement',
+    )
+    press('Escape')
+    await sleep(100)
+    press('z', ['meta'])
+    await wait(
+      `window.captionFixture.state().markdown.includes(${JSON.stringify(mermaidCaption)})`,
+      'Mermaid caption replacement undo',
+    )
+    mark('mermaid-native-find-replace-and-undo')
+
+    await js(`window.captionFixture.select('documentFigure'); return true`)
+    win.focus()
+    win.webContents.copy()
+    for (let attempt = 0; attempt < 100 && !clipboard.readHTML().includes('figcaption'); attempt++)
+      await sleep(50)
+    assert(clipboard.readHTML().includes('figcaption'))
+    assert(clipboard.readHTML().includes(mermaidCaption))
+    await js(
+      'window.captionFixture.split(true); window.captionFixture.rightFocused(true); return true',
+    )
+    await wait(`window.captionFixture.state('secondary').editable`, 'Mermaid secondary view')
+    await js(
+      `const e=document.querySelector('[data-pane="secondary"] [role="textbox"]').editor; e.commands.focus('end'); return true`,
+    )
+    await wait(`document.activeElement?.closest('[data-pane="secondary"]')`, 'Mermaid paste focus')
+    win.webContents.paste()
+    await wait(
+      `window.captionFixture.state('secondary').markdown.includes(${JSON.stringify(mermaidCaption)}) && window.captionFixture.state('secondary').markdown.includes('A[Gamma] --> B[Target]')`,
+      'Mermaid native HTML paste',
+    )
+    assert(
+      (await js(
+        `return window.captionFixture.state('secondary').json.content.filter(n=>n.type==='documentFigure').length`,
+      )) >= 1,
+      'Mermaid HTML paste must produce a captioned figure in the receiver',
+    )
+    mark('mermaid-html-clipboard-between-production-split-views')
+
+    const mermaidIdentity = await js<number>('return window.captionFixture.state().identity')
+    await js('window.captionFixture.hide(true); return true')
+    await wait(`!window.captionFixture.state().editable`, 'hidden retained Mermaid view')
+    assert.equal(await js('return window.captionFixture.state().identity'), mermaidIdentity)
+    assert.equal(
+      await js(`return document.querySelectorAll('[data-mermaid-diagram] svg').length`),
+      1,
+      'hidden retained Mermaid split must keep exactly its retained preview without duplicates',
+    )
+    await js(
+      'window.captionFixture.hide(false); window.captionFixture.rightFocused(false); return true',
+    )
+    await wait('window.captionFixture.state().editable', 'unfocused retained Mermaid view')
+    await wait(
+      `document.querySelector('[data-pane="primary"] figure [data-mermaid-diagram] svg')`,
+      'Mermaid preview after retained split returns',
+    )
+    assert.equal(
+      await js(`return document.querySelectorAll('[data-mermaid-diagram] svg').length`),
+      2,
+      'unfocused retained split must render exactly one Mermaid SVG per production view',
+    )
+    assert.equal(
+      await js(
+        `return document.querySelectorAll('[data-pane="primary"] figure [data-mermaid-diagram] svg').length`,
+      ),
+      1,
+    )
+    assert.equal(
+      await js(
+        `return document.querySelectorAll('[data-pane="secondary"] figure [data-mermaid-diagram] svg').length`,
+      ),
+      1,
+    )
+    await js('window.captionFixture.rightFocused(true); return true')
+    await wait(`window.captionFixture.state('secondary').editable`, 'focused Mermaid split')
+    await js(
+      'window.captionFixture.rightFocused(false); window.captionFixture.split(false); return true',
+    )
+    await wait(
+      `document.querySelector('[data-pane="primary"] figure [data-mermaid-diagram] svg')`,
+      'Mermaid preview after split closes',
+    )
+    assert.equal(
+      await js(`return document.querySelectorAll('[data-mermaid-diagram] svg').length`),
+      1,
+      'closed split must not leave stale Mermaid SVGs',
+    )
+    assert.equal(await js(`return document.querySelectorAll('[data-radix-portal]').length`), 0)
+    mark('mermaid-hidden-focused-unfocused-splits-cleanup')
+
+    await js(
+      'await window.captionFixture.flush(); await window.captionFixture.reopen(); return true',
+    )
+    await wait(
+      `window.captionFixture.state().markdown.includes(${JSON.stringify(mermaidCaption)}) && window.captionFixture.state().markdown.includes('A[Gamma] --> B[Target]')`,
+      'Mermaid production file reopen',
+    )
+    mermaidSaved = await readFile(note, 'utf8')
+    assert(mermaidSaved.startsWith(head))
+    assert(mermaidSaved.includes(editedMermaidFence))
+    mark('mermaid-filesystem-reopen-preserves-frontmatter-and-fence')
+
+    mermaidSaved = mermaidSaved.replace(mermaidCaption, 'A changed Mermaid caption')
+    await writeFile(note, mermaidSaved)
+    await js('window.captionFixture.reload(); return true')
+    await wait(
+      `window.captionFixture.state().markdown.includes('A changed Mermaid caption')`,
+      'Mermaid external caption change reload',
+    )
+    assert(
+      (await readFile(note, 'utf8')).startsWith(head) &&
+        (await readFile(note, 'utf8')).includes(editedMermaidFence),
+    )
+    await js(`window.captionFixture.select('documentFigure'); return true`)
+    await wait(
+      `window.captionFixture.state().selection.type==='node'`,
+      'reloaded Mermaid figure selection',
+    )
+    const mermaidFigurePoint = await js<{ x: number; y: number }>(
+      `const r=document.querySelector('[data-pane="primary"] figure').getBoundingClientRect(); return {x:r.x+12,y:r.y+12}`,
+    )
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...mermaidFigurePoint })
+    await wait(
+      `document.querySelector('[aria-label="Block actions"]')?.closest('[data-visible]')`,
+      'reloaded Mermaid block actions',
+    )
+    await menu('Remove caption')
+    assert.equal(
+      await js(
+        `return window.captionFixture.state().json.content.filter(n=>n.type==='documentFigure').length`,
+      ),
+      0,
+    )
+    assert(
+      (await js<string>('return window.captionFixture.state().markdown')).includes(
+        editedMermaidFence,
+      ),
+      'removing a Mermaid caption must retain the exact source fence',
+    )
+    await js(`window.captionFixture.select('codeBlock'); return true`)
+    await menu('Add caption')
+    await wait(`document.querySelector('figcaption')`, 'Mermaid caption re-add')
+    await win.webContents.insertText(mermaidCaption)
+    await js('await window.captionFixture.flush(); return true')
+    await wait(
+      `window.captionFixture.state().markdown.includes(${JSON.stringify(mermaidCaption)})`,
+      'Mermaid re-added caption flush',
+    )
+    mermaidSaved = await readFile(note, 'utf8')
+    assert(mermaidSaved.startsWith(head))
+    assert(mermaidSaved.includes(editedMermaidFence))
+    assert.equal(readMarkdownCodeCaptions(mermaidSaved).length, 1)
+    mark('mermaid-reload-change-remove-and-readd-caption')
+
+    clearInterval(videoTimer)
+    await Promise.all(videoFrames)
+    await js('await window.captionFixture.flush(); return true')
+    assert.equal(readMarkdownCodeCaptions(await readFile(note, 'utf8')).length, 1)
+    assert((await readFile(note, 'utf8')).includes(mermaidCaption))
+    await js(`window.captionFixture.theme('light'); return true`)
+    await sleep(300)
+    await capture('mermaid-light.png')
+    await js(`window.captionFixture.theme('dark'); return true`)
+    await sleep(300)
+    await capture('mermaid-dark.png')
+    await js(`window.captionFixture.theme('light'); return true`)
+    const validDialog = await js(
+      `Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Convert to PDF').click(); return true`,
+    )
+    assert(validDialog)
+    const validProof = await convertAndInspectPdf({
+      uiPdf: join(vault, 'notes/Code-caption 2.pdf'),
+      cliOutput: 'notes/mermaid-cli.pdf',
+      uiEvidence: 'mermaid-ui-valid.pdf',
+      cliEvidence: 'mermaid-cli-valid.pdf',
+      expected: { caption: mermaidCaption, source: 'Gamma' },
+      warnings: 0,
+    })
+    const validUi = validProof.ui
+    const validCli = validProof.cli
+    mark('production-mermaid-renderer-caption-in-ui-and-cli-pdfs')
+
+    const invalidSource = 'not a Mermaid diagram'
+    const fallbackCaption = 'An edited fallback caption'
+    await js(
+      `await window.captionFixture.replace(${JSON.stringify(`${head}# Mermaid fallback\n\n~~~mermaid\n${invalidSource}\n~~~\n`)}); return true`,
+    )
+    await js(`window.captionFixture.select('codeBlock'); return true`)
+    await menu('Add caption')
+    await wait(`document.querySelector('figcaption')`, 'fallback caption authoring')
+    await win.webContents.insertText(fallbackCaption)
+    await js('await window.captionFixture.flush(); return true')
+    assert((await readFile(note, 'utf8')).includes(fallbackCaption))
+    await js(
+      `Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Convert to PDF').click(); return true`,
+    )
+    const fallbackProof = await convertAndInspectPdf({
+      uiPdf: join(vault, 'notes/Code-caption 3.pdf'),
+      cliOutput: 'notes/mermaid-fallback-cli.pdf',
+      uiEvidence: 'mermaid-ui-fallback.pdf',
+      cliEvidence: 'mermaid-cli-fallback.pdf',
+      expected: { caption: fallbackCaption, source: invalidSource },
+      warnings: 1,
+    })
+    const fallbackUi = fallbackProof.ui
+    const fallbackCli = fallbackProof.cli
+    await writeFile(
+      join(evidence, 'mermaid-pdf-proof.json'),
+      JSON.stringify(
+        { valid: { ui: validUi, cli: validCli }, fallback: { ui: fallbackUi, cli: fallbackCli } },
+        null,
+        2,
+      ),
+    )
+    mark('mermaid-caption-source-fallback-in-ui-and-cli-pdfs')
+
     assert.deepEqual(denied, [])
     assert.deepEqual(await js('return window.captionFixture.errors'), [])
     assert.deepEqual(rendererErrors, [])
@@ -777,6 +1190,7 @@ async function run() {
     )
     ipcMain.removeHandler('holi-caption-fixture')
     if (!win.isDestroyed()) win.destroy()
+    mermaid.close()
     await bridge.stop()
     await endpoint.dispose()
   }
