@@ -1,6 +1,7 @@
 import { Node, mergeAttributes, type Editor } from '@tiptap/react'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { NodeSelection, Plugin } from '@tiptap/pm/state'
+import type { EditorView } from '@tiptap/pm/view'
 import {
   fencedBlocks,
   readMarkdownCaptionEnvelopes,
@@ -113,6 +114,30 @@ export function renderImageMarkdown(attrs: {
   return `![${alt}](${src}${title})`
 }
 
+function copyContainingFigure(view: EditorView, event: ClipboardEvent, cut: boolean): boolean {
+  const { selection } = view.state
+  if (!(selection instanceof NodeSelection) || selection.node.type.name !== 'image') return false
+  let figurePos: number | null = null
+  for (let depth = selection.$from.depth; depth > 0; depth--) {
+    if (selection.$from.node(depth).type.name === 'documentFigure') {
+      figurePos = selection.$from.before(depth)
+      break
+    }
+  }
+  if (figurePos === null) return false
+  const figureSelection = NodeSelection.create(view.state.doc, figurePos)
+  view.dispatch(view.state.tr.setSelection(figureSelection))
+  const clipboard = event.clipboardData
+  if (!clipboard) return false
+  const { dom, text } = view.serializeForClipboard(figureSelection.content())
+  event.preventDefault()
+  clipboard.clearData()
+  clipboard.setData('text/html', dom.innerHTML)
+  clipboard.setData('text/plain', text)
+  if (cut) view.dispatch(view.state.tr.deleteSelection().setMeta('uiEvent', 'cut'))
+  return true
+}
+
 function renderSafeFence(language: string, code: string): string {
   const delimiter = language.includes('`') ? '~' : '`'
   const longestRun = Math.max(
@@ -148,7 +173,7 @@ export const DocumentCaption = Node.create({
   },
 })
 
-/** A non-atomic code figure: the existing code block followed by an editable caption. */
+/** A non-atomic figure: an existing code block or image followed by an editable caption. */
 export const DocumentFigure = Node.create({
   name: 'documentFigure',
   group: 'block',
@@ -160,7 +185,11 @@ export const DocumentFigure = Node.create({
 
   addAttributes() {
     return {
-      sourceBody: { default: null },
+      sourceBody: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: () => ({}),
+      },
       sourceImageAttrs: {
         default: null,
         parseHTML: (element: HTMLElement) => {
@@ -252,6 +281,12 @@ export const DocumentFigure = Node.create({
               }
               return false
             },
+            copy(view, event) {
+              return copyContainingFigure(view, event, false)
+            },
+            cut(view, event) {
+              return copyContainingFigure(view, event, true)
+            },
           },
           handlePaste(view, event) {
             const markdown = event.clipboardData?.getData('text/plain')
@@ -342,7 +377,7 @@ export const DocumentFigure = Node.create({
   },
 })
 
-/** Preserve the original fence byte-for-byte while the code itself is unchanged. */
+/** Wrap a standalone image and preserve its source spelling while its attributes are unchanged. */
 export function addImageCaption(editor: Editor, pos: number): boolean {
   if (!editor.isEditable || pos < 0 || pos >= editor.state.doc.content.size) return false
   const node = editor.state.doc.nodeAt(pos)
@@ -356,18 +391,20 @@ export function addImageCaption(editor: Editor, pos: number): boolean {
   const image = editor.schema.nodes.image?.create(node.attrs, node.content, node.marks)
   const source = node.attrs.src
   if (!caption || !image || typeof source !== 'string' || !source) return false
+  const sourceAttrs = JSON.stringify([
+    node.attrs.src ?? '',
+    node.attrs.alt ?? null,
+    node.attrs.title ?? null,
+  ])
   const body =
-    typeof node.attrs.sourceMarkdown === 'string'
+    typeof node.attrs.sourceMarkdown === 'string' &&
+    node.attrs.sourceMarkdownImageAttrs === sourceAttrs
       ? node.attrs.sourceMarkdown
       : renderImageMarkdown(node.attrs)
   const figure = editor.schema.nodes.documentFigure?.create(
     {
       sourceBody: body,
-      sourceImageAttrs: JSON.stringify([
-        node.attrs.src ?? '',
-        node.attrs.alt ?? null,
-        node.attrs.title ?? null,
-      ]),
+      sourceImageAttrs: sourceAttrs,
     },
     [image, caption],
   )
@@ -415,7 +452,19 @@ export function removeCodeCaption(editor: Editor, pos: number): boolean {
   const replacement =
     child.type.name === 'codeBlock'
       ? child.type.create({ ...child.attrs, preserveFence: true }, child.content, child.marks)
-      : child
+      : child.type.name === 'image' &&
+          typeof node.attrs.sourceBody === 'string' &&
+          typeof node.attrs.sourceImageAttrs === 'string'
+        ? child.type.create(
+            {
+              ...child.attrs,
+              sourceMarkdown: node.attrs.sourceBody,
+              sourceMarkdownImageAttrs: node.attrs.sourceImageAttrs,
+            },
+            child.content,
+            child.marks,
+          )
+        : child
   editor.view.dispatch(editor.state.tr.replaceWith(pos, pos + node.nodeSize, replacement))
   return true
 }

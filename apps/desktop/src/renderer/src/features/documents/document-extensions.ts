@@ -10,7 +10,7 @@ import Image from '@tiptap/extension-image'
 import { createElement } from 'react'
 import { mergeAttributes, Node, ReactNodeViewRenderer } from '@tiptap/react'
 import { DocumentImageView } from './rich-text/document-image-view'
-import { displaySrc } from './media-src'
+import { displaySrc, portableImageSrc } from './media-src'
 
 import { createRichTextExtensions } from '@/features/documents/rich-text/rich-text-extensions'
 
@@ -41,8 +41,11 @@ const DocumentImage = Image.extend<{ folder: string }>({
         ...sourceAttribute,
         parseHTML: (element: HTMLElement) => {
           const source = element.getAttribute('data-holi-source-src')
+          const sourceFolder = element.getAttribute('data-holi-source-folder')
           const visible = element.getAttribute('src') ?? ''
-          return source && displaySrc(source, folder) === visible ? source : visible
+          if (!source || !sourceFolder || displaySrc(source, sourceFolder) !== visible)
+            return visible
+          return portableImageSrc(source, sourceFolder, folder)
         },
       },
       sourceMarkdown: {
@@ -66,6 +69,7 @@ const DocumentImage = Image.extend<{ folder: string }>({
       'img',
       mergeAttributes(HTMLAttributes, {
         'data-holi-source-src': String(HTMLAttributes.src ?? ''),
+        'data-holi-source-folder': this.options.folder,
         src: displaySrc(String(HTMLAttributes.src ?? ''), this.options.folder),
       }),
     ]

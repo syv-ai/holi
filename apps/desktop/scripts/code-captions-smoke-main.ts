@@ -380,6 +380,12 @@ async function run() {
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
   }
+  async function setRightFocus(focused: boolean) {
+    await js(`window.captionFixture.rightFocused(${focused}); return true`)
+    if (focused)
+      await wait(`window.captionFixture.state('secondary').editable`, 'secondary focus owns editor')
+    else await wait(`window.captionFixture.state('primary').editable`, 'primary focus owns editor')
+  }
   async function click(selector: string) {
     const rect = await js<{ x: number; y: number }>(
       `const e=document.querySelector(${JSON.stringify(selector)}); if(!e)throw Error('Missing '+${JSON.stringify(selector)}); const r=e.getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}`,
@@ -550,7 +556,7 @@ async function run() {
     await wait(`window.captionFixture?.state()?.json`, 'production DocumentView')
     mark('production-document-view-with-real-router-filesystem')
     videoTimer = setInterval(() => {
-      if (frameNumber >= 300 || videoCapturePending) return
+      if (frameNumber >= 1500 || videoCapturePending) return
       videoCapturePending = true
       const number = frameNumber++
       videoFrames.push(
@@ -697,10 +703,9 @@ async function run() {
     assert(codeHtml.includes('<figcaption>') && codeHtml.includes('portable'))
     clipboard.writeHTML(codeHtml)
     await writeFile(join(evidence, 'code-clipboard.html.txt'), codeHtml)
-    await js(
-      'window.captionFixture.split(true); window.captionFixture.rightFocused(true); return true',
-    )
-    await wait(`window.captionFixture.state('secondary').editable`, 'second production view')
+    await js('window.captionFixture.split(true); return true')
+    await wait(`window.captionFixture.state('secondary')`, 'second production view')
+    await setRightFocus(true)
     await js(
       `const e=document.querySelector('[data-pane="secondary"] [role="textbox"]').editor; e.commands.focus('end'); return true`,
     )
@@ -738,10 +743,9 @@ async function run() {
     const before = await js<number>('return window.captionFixture.state().identity')
     await js('window.captionFixture.hide(true); return true')
     await wait(`!window.captionFixture.state().editable`, 'hidden retained read-only')
-    await js(
-      'window.captionFixture.hide(false); window.captionFixture.rightFocused(false); return true',
-    )
+    await js('window.captionFixture.hide(false); return true')
     await wait('window.captionFixture.state().editable', 'return to retained view')
+    await setRightFocus(false)
     assert.equal(await js('return window.captionFixture.state().identity'), before)
     mark('hidden-retained-view-keeps-editor-and-split-ownership')
     await js('window.captionFixture.locked(true); return true')
@@ -976,14 +980,16 @@ async function run() {
     press('Escape')
     mark('native-image-caption-find-maps-to-source')
     const imageIdentity = await js<number>('return window.captionFixture.state().identity')
-    await js(
-      'window.captionFixture.split(true); window.captionFixture.rightFocused(true); window.captionFixture.rightFocused(false); window.captionFixture.hide(true); return true',
-    )
+    await js('window.captionFixture.split(true); return true')
+    await wait(`window.captionFixture.state('secondary')`, 'image focus split view')
+    await setRightFocus(true)
+    await setRightFocus(false)
+    await js('window.captionFixture.hide(true); return true')
     await wait(`!window.captionFixture.state().editable`, 'hide retained image view')
-    await js(
-      'window.captionFixture.hide(false); window.captionFixture.rightFocused(true); window.captionFixture.rightFocused(false); return true',
-    )
+    await js('window.captionFixture.hide(false); return true')
     await wait(`window.captionFixture.state().editable`, 'restore retained image editor')
+    await setRightFocus(true)
+    await setRightFocus(false)
     assert.equal(await js('return window.captionFixture.state().identity'), imageIdentity)
     assert(
       (await js<string>('return window.captionFixture.state().markdown')).includes(
@@ -1020,22 +1026,51 @@ async function run() {
     assert.equal(imageSelection.type, 'node')
     assert.equal(imageSelection.node, 'image')
     await capture('image-native-selection.png')
-    await js(`window.captionFixture.select('documentFigure', 'primary'); return true`)
-    const imageHtml = await js<string>('return window.captionFixture.htmlSelection()')
+    await click('button[aria-label="Select Smoke photo"]')
+    const imageSelectionForCopy = await js<{ type: string; node: string }>(
+      `const s=document.querySelector('[data-pane="primary"] [role="textbox"]').editor.state.selection;return {type:s.toJSON().type,node:s.node?.type.name}`,
+    )
+    assert.equal(imageSelectionForCopy.node, 'image')
+    await js(
+      `window.__copyEvents=[];document.addEventListener('copy',e=>window.__copyEvents.push({types:[...(e.clipboardData?.types??[])],prevented:e.defaultPrevented,selection:document.querySelector('[data-pane="primary"] [role="textbox"]').editor.state.selection.node?.type.name}))`,
+    )
+    await js(
+      `document.querySelector('[data-pane="primary"] [role="textbox"]').editor.view.focus(); return true`,
+    )
+    press('c', ['meta'])
+    win.webContents.copy()
+    await wait(
+      `document.querySelector('[data-pane="primary"] [role="textbox"]').editor.state.selection.node?.type.name==='documentFigure'`,
+      'direct image selection expands to containing figure for copy',
+    )
+    await sleep(500)
+    const imageHtml = clipboard.readHTML()
+    const imagePlain = clipboard.readText()
+    await writeFile(
+      join(evidence, 'native-image-copy-debug.json'),
+      JSON.stringify(
+        { events: await js('return window.__copyEvents'), html: imageHtml, plain: imagePlain },
+        null,
+        2,
+      ),
+    )
+    assert(
+      imageHtml.includes('figcaption') ||
+        imagePlain.includes('Caption') ||
+        imagePlain.includes('portable'),
+      'native image copy must put its caption on the OS clipboard',
+    )
     assert(imageHtml.includes('<figcaption>') && imageHtml.includes('Smoke photo'))
     assert(imageHtml.includes('portable'))
-    clipboard.writeHTML(imageHtml)
+    assert(imagePlain.includes('Caption') || imagePlain.includes('portable'))
     await writeFile(join(evidence, 'image-clipboard.html.txt'), imageHtml)
-    mark('native-image-selection-and-production-html-clipboard-paste-source')
+    await writeFile(join(evidence, 'image-clipboard.txt'), imagePlain)
+    mark('native-direct-image-copy-carries-figure-caption-in-os-clipboard')
+    await js('window.captionFixture.split(true); return true')
+    await wait(`window.captionFixture.state('secondary')`, 'image clipboard split receiver')
+    await setRightFocus(true)
     await js(
-      'window.captionFixture.split(true); window.captionFixture.rightFocused(true); return true',
-    )
-    await wait(
-      `window.captionFixture.state('secondary').editable`,
-      'image clipboard split receiver',
-    )
-    await js(
-      `const e=document.querySelector('[data-pane="secondary"] [role="textbox"]').editor;e.commands.setContent({type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Clipboard receiver.'}]}]});e.commands.focus('end');return true`,
+      `const e=document.querySelector('[data-pane="secondary"] [role="textbox"]').editor;e.commands.setContent({type:'doc',content:[]});e.commands.focus('end');return true`,
     )
     await wait(
       `document.activeElement?.closest('[data-pane="secondary"]')`,
@@ -1063,8 +1098,48 @@ async function run() {
     assert.equal(pastedCaptions.length, 1, 'image paste must not emit caption as a second block')
     assert.deepEqual(pastedImages, ['../assets/smoke.png'])
     assert.equal((imagePaste.markdown.match(/<!-- holi:figure -->/g) ?? []).length, 1)
-    mark('native-image-html-paste-keeps-image-and-caption-as-one-block')
-    await js('window.captionFixture.rightFocused(false); return true')
+    await js('await window.captionFixture.flush(); return true')
+    const nativePastedSaved = await readFile(note, 'utf8')
+    assert(nativePastedSaved.includes('Image **portable** caption.'))
+    assert(nativePastedSaved.includes('![Smoke photo](../assets/smoke.png "Photo title")'))
+    await js('await window.captionFixture.reopen(); return true')
+    await wait(
+      `window.captionFixture.state('secondary').json.content.some(n=>n.type==='documentFigure')`,
+      'native pasted figure filesystem reopen',
+    )
+    await wait(`window.captionFixture.state('primary')`, 'primary editor remount after reopen')
+    await setRightFocus(false)
+    await js(`window.captionFixture.select('image', 'primary'); return true`)
+    win.webContents.cut()
+    await wait(
+      `!window.captionFixture.state('primary').json.content.some(n=>n.type==='documentFigure')`,
+      'native direct image cut removes image and caption together',
+    )
+    press('z', ['meta'])
+    await wait(
+      `window.captionFixture.state('primary').json.content.some(n=>n.type==='documentFigure')`,
+      'native direct image cut undo restores whole figure',
+    )
+    assert(
+      (await js<string>('return window.captionFixture.state().markdown')).includes(
+        'Image **portable** caption.',
+      ),
+    )
+    mark('native-direct-image-cut-and-undo-operate-on-whole-figure')
+    await js(`window.captionFixture.select('documentFigure', 'primary'); return true`)
+    await menu('Remove caption')
+    assert.equal(
+      await js(
+        `return window.captionFixture.state().json.content.some(n=>n.type==='documentFigure')`,
+      ),
+      false,
+    )
+    press('z', ['meta'])
+    await wait(
+      `window.captionFixture.state().json.content.some(n=>n.type==='documentFigure')`,
+      'image caption removal undo restores figure',
+    )
+    mark('native-image-caption-remove-undo-restores-image-and-caption')
     await js(`window.captionFixture.select('documentFigure', 'primary'); return true`)
     await menu('Duplicate')
     await wait(
@@ -1118,9 +1193,6 @@ async function run() {
     mark('native-image-double-click-opens-loaded-lightbox')
     press('Escape')
     await wait(`!document.querySelector('[role="dialog"]')`, 'close image double-click lightbox')
-    clearInterval(videoTimer)
-    videoTimer = undefined
-    await Promise.all(videoFrames)
     await dragImageDirect()
     await capture('image-direct-drag-result.png')
     mark('native-direct-image-drag-moves-whole-figure-and-undo-restores-it')
@@ -1142,6 +1214,9 @@ async function run() {
     await capture('image-caption-dark.png')
     await sleep(300)
     await capture('caption-dark.png')
+    clearInterval(videoTimer)
+    videoTimer = undefined
+    await Promise.all(videoFrames)
     await js('await window.captionFixture.flush(); return true')
     const beforePdf = await readFile(note, 'utf8')
     await writeFile(join(evidence, 'editor-saved.md.txt'), beforePdf)

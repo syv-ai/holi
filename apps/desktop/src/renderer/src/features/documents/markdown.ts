@@ -8,6 +8,7 @@
  * normalised the first time it is edited here, never on open alone.
  */
 import { Markdown } from '@tiptap/markdown'
+import { marked } from 'marked'
 import {
   isPortableInlineCaption,
   readMarkdownCaptionEnvelopes,
@@ -24,15 +25,38 @@ function markdownImageFromSource(
   manager: { parse: (source: string) => any },
 ) {
   try {
-    const document = manager.parse(`${body}\n\n${source}`)
-    const first = document.content?.[0]
-    const image =
-      first?.type === 'image'
-        ? first
-        : first?.type === 'paragraph' && first.content?.length === 1
-          ? first.content[0]
-          : null
-    if (image?.type === 'image') return image
+    const tokens = marked.lexer(body).filter((token) => token.type !== 'space')
+    const paragraph = tokens.length === 1 && tokens[0]?.type === 'paragraph' ? tokens[0] : null
+    if (
+      paragraph?.type === 'paragraph' &&
+      paragraph.tokens?.length === 1 &&
+      paragraph.tokens[0]?.type === 'image'
+    ) {
+      const sourceTokens = marked.lexer(`${body}\n\n${source}`)
+      const imageToken = sourceTokens
+        .filter((token) => token.type === 'paragraph')
+        .flatMap((token: any) => token.tokens ?? [])
+        .find((token: any) => token.type === 'image' && token.raw.trim() === body.trim())
+      if (imageToken?.href) {
+        return {
+          type: 'image',
+          attrs: {
+            src: imageToken.href,
+            alt: imageToken.text,
+            title: imageToken.title ?? null,
+          },
+        }
+      }
+      const document = manager.parse(`${body}\n\n${source}`)
+      const first = document.content?.[0]
+      const image =
+        first?.type === 'image'
+          ? first
+          : first?.type === 'paragraph' && first.content?.length === 1
+            ? first.content[0]
+            : null
+      if (image?.type === 'image') return image
+    }
   } catch {
     // Reference syntax below also covers markdown parsers without reference support.
   }
@@ -40,21 +64,16 @@ function markdownImageFromSource(
   if (!match) return null
   const alt = match[1]!.replace(/\\([\\[\]])/g, '$1')
   const reference = (match[2] || match[1]!).trim().replace(/\s+/g, ' ').toLowerCase()
-  const definition = source
-    .split(/\r?\n/)
-    .map((line) =>
-      /^ {0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))(?:\s+(?:"([^"]*)"|'([^']*)'|\(([^)]*)\)))?\s*$/.exec(
-        line,
-      ),
-    )
-    .find((entry) => entry?.[1]?.trim().replace(/\s+/g, ' ').toLowerCase() === reference)
-  if (!definition) return null
+  const definition = marked
+    .lexer(source)
+    .find((token: any) => token.type === 'def' && token.tag === reference)
+  if (!definition || definition.type !== 'def') return null
   return {
     type: 'image',
     attrs: {
-      src: definition[2] ?? definition[3],
+      src: definition.href,
       alt,
-      title: definition[4] ?? definition[5] ?? definition[6] ?? null,
+      title: definition.title ?? null,
     },
   }
 }
@@ -98,19 +117,31 @@ function expandReferenceImages(source: string, manager: { parse: (source: string
 }
 
 function preserveReferenceDefinitions(parsed: any, source: string) {
-  const definitions = source.split(/\r?\n/).filter((line) => /^ {0,3}\[[^\]]+\]:/.test(line))
-  const existing = new Set(
-    (parsed.content ?? [])
-      .filter((node: any) => node.type === 'htmlBlock')
-      .map((node: any) => String(node.attrs?.html ?? '').trim()),
-  )
-  for (const definition of definitions) {
-    if (!existing.has(definition.trim())) {
+  let offset = 0
+  for (const token of marked.lexer(source)) {
+    if (token.type === 'def') {
+      const end = offset + token.raw.length
+      const definition = source.slice(offset, end).replace(/\r?\n$/, '')
       parsed.content ??= []
       parsed.content.push({ type: 'htmlBlock', attrs: { html: definition } })
     }
+    offset += token.raw.length
   }
   return parsed
+}
+
+function protectedMarkdownRanges(source: string) {
+  const ranges: Array<{ from: number; to: number }> = []
+  let offset = 0
+  for (const token of marked.lexer(source)) {
+    if (
+      token.type === 'code' ||
+      (token.type === 'html' && !/^<!--\s*\/?holi:(?:figure|caption)\s*-->$/.test(token.raw.trim()))
+    )
+      ranges.push({ from: offset, to: offset + token.raw.length })
+    offset += token.raw.length
+  }
+  return ranges
 }
 
 function hasStandaloneImageSource(source: string) {
@@ -165,18 +196,8 @@ function annotateStandaloneImageSources(
           ? node.content[0]
           : null
     if (!image) return node
-    const signature = JSON.stringify([
-      image.attrs?.src ?? '',
-      image.attrs?.alt ?? null,
-      image.attrs?.title ?? null,
-    ])
     const index = available.findIndex(
-      ({ image }) =>
-        JSON.stringify([
-          image.attrs?.src ?? '',
-          image.attrs?.alt ?? null,
-          image.attrs?.title ?? null,
-        ]) === signature,
+      (candidate) => (candidate.image.attrs?.alt ?? null) === (image.attrs?.alt ?? null),
     )
     if (index < 0) return node
     const [candidate] = available.splice(index, 1)
@@ -191,6 +212,9 @@ function annotateStandaloneImageSources(
         ? {
             attrs: {
               ...node.attrs,
+              src: candidate!.image.attrs?.src,
+              alt: candidate!.image.attrs?.alt,
+              title: candidate!.image.attrs?.title,
               sourceMarkdown: candidate!.body,
               sourceMarkdownImageAttrs,
             },
@@ -201,6 +225,9 @@ function annotateStandaloneImageSources(
                 ...node.content[0],
                 attrs: {
                   ...image.attrs,
+                  src: candidate!.image.attrs?.src,
+                  alt: candidate!.image.attrs?.alt,
+                  title: candidate!.image.attrs?.title,
                   sourceMarkdown: candidate!.body,
                   sourceMarkdownImageAttrs,
                 },
@@ -212,15 +239,22 @@ function annotateStandaloneImageSources(
   return preserveReferenceDefinitions(parsed, source)
 }
 
-function unhandledCaptionRanges(source: string, supported: Array<{ from: number; to: number }>) {
+function unhandledCaptionRanges(
+  source: string,
+  supported: Array<{ from: number; to: number }>,
+  protectedRanges: Array<{ from: number; to: number }>,
+) {
   const lines = source.split(/\r?\n/)
   const ranges: Array<{ from: number; to: number }> = []
   const open: number[] = []
   let offset = 0
   let fence: { marker: string; length: number } | null = null
   for (const line of lines) {
+    const protectedLine = protectedRanges.some((range) => offset >= range.from && offset < range.to)
     const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line)
-    if (fence) {
+    if (protectedLine) {
+      // Marked owns code and raw HTML blocks; caption markers there are data.
+    } else if (fence) {
       if (fenceMatch?.[1]?.[0] === fence.marker && fenceMatch[1].length >= fence.length)
         fence = null
     } else if (fenceMatch) {
@@ -243,11 +277,22 @@ function unhandledCaptionRanges(source: string, supported: Array<{ from: number;
 
 /** The extension the editor needs to read and write markdown. */
 function withDocumentFigures(manager: { parse: (source: string) => any }, source: string) {
+  const protectedRanges = protectedMarkdownRanges(source)
   const codeFrames = readMarkdownCodeCaptions(source).filter(
-    (frame) => frame.language.toLowerCase() !== 'mermaid',
+    (frame) =>
+      frame.language.toLowerCase() !== 'mermaid' &&
+      !protectedRanges.some(
+        (range) => frame.envelope.from >= range.from && frame.envelope.from < range.to,
+      ),
   )
   const codeRanges = new Set(codeFrames.map((frame) => frame.envelope.from))
   const imageFrames = readMarkdownCaptionEnvelopes(source).flatMap((frame) => {
+    if (
+      protectedRanges.some(
+        (range) => frame.envelope.from >= range.from && frame.envelope.from < range.to,
+      )
+    )
+      return []
     if (codeRanges.has(frame.envelope.from)) return []
     const body = source.slice(frame.body.from, frame.body.to)
     const caption = source.slice(frame.caption.from, frame.caption.to)
@@ -257,6 +302,15 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
       // images can resolve definitions anywhere in the document.
       const image = markdownImageFromSource(body, source, manager)
       if (!image || typeof image.attrs?.src !== 'string' || !image.attrs.src) return []
+      image.attrs = {
+        ...image.attrs,
+        sourceMarkdown: body,
+        sourceMarkdownImageAttrs: JSON.stringify([
+          image.attrs.src ?? '',
+          image.attrs.alt ?? null,
+          image.attrs.title ?? null,
+        ]),
+      }
       return [{ ...frame, image }]
     } catch {
       return []
@@ -268,6 +322,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
   const opaqueRanges = unhandledCaptionRanges(
     source,
     frames.map((frame) => frame.envelope),
+    protectedRanges,
   )
   if (!frames.length && !opaqueRanges.length)
     return annotateStandaloneImageSources(
@@ -358,15 +413,22 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
     placeholders.map((placeholder, index) => [placeholder, items[index]!]),
   )
   parsed.content = (parsed.content ?? []).flatMap((node: any) => {
-    const item =
-      node.type === 'htmlBlock' ? byPlaceholder.get(String(node.attrs?.html).trim()) : undefined
-    if (!item) return [node]
-    if (item.frameIndex !== null) {
-      const figure = figures[item.frameIndex]
-      if (figure) return [figure]
-      return [{ ...node, attrs: { ...node.attrs, html: source.slice(item.from, item.to) } }]
+    if (node.type !== 'htmlBlock') return [node]
+    const html = String(node.attrs?.html ?? '').trim()
+    const item = byPlaceholder.get(html)
+    if (item) {
+      if (item.frameIndex !== null) {
+        const figure = figures[item.frameIndex]
+        if (figure) return [figure]
+        return [{ ...node, attrs: { ...node.attrs, html: source.slice(item.from, item.to) } }]
+      }
+      return [{ ...node, attrs: { ...node.attrs, html: item.raw } }]
     }
-    return [{ ...node, attrs: { ...node.attrs, html: item.raw } }]
+    let restored = String(node.attrs?.html ?? '')
+    for (const [placeholder, range] of byPlaceholder)
+      if (restored.includes(placeholder))
+        restored = restored.replaceAll(placeholder, source.slice(range.from, range.to))
+    return [{ ...node, attrs: { ...node.attrs, html: restored } }]
   })
   return annotateStandaloneImageSources(parsed, source, manager)
 }
