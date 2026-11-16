@@ -11,6 +11,7 @@ import {
   SearchIcon,
   SquarePenIcon,
   SquarePlusIcon,
+  StarIcon,
   XIcon,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -140,12 +141,14 @@ function MailItem({
   onClick,
   marker,
   onRetryMarker,
+  onPrimaryMarker,
 }: {
   thread: ThreadSummary
   isSelected: boolean
   onClick: () => void
   marker: MarkerState
   onRetryMarker: () => void
+  onPrimaryMarker: () => void
 }) {
   const chip = categoryChip(thread.category)
   return (
@@ -186,7 +189,27 @@ function MailItem({
 
           {/* Timestamp + icons */}
           <div className="flex shrink-0 items-center gap-1">
-            <MailMarkerStatus state={marker} starred={thread.starred} onRetry={onRetryMarker} />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={thread.starred ? 'Unstar thread' : 'Star thread'}
+              aria-pressed={thread.starred}
+              onClick={(event) => {
+                event.stopPropagation()
+                onPrimaryMarker()
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              {thread.starred && marker.kind === 'ready' ? (
+                <MailMarkerStatus state={marker} starred />
+              ) : (
+                <StarIcon aria-hidden="true" />
+              )}
+            </Button>
+            {marker.kind === 'error' && (
+              <MailMarkerStatus state={marker} starred={thread.starred} onRetry={onRetryMarker} />
+            )}
             {thread.hasDraft && (
               <FilePenIcon
                 className="text-muted-foreground/50 size-3"
@@ -504,16 +527,30 @@ export function MailList({
     return (
       <>
         <div role="list" aria-label={title}>
-          {list.threads.map((thread) => (
-            <MailItem
-              key={thread.id}
-              thread={thread}
-              isSelected={mail.openId === thread.id}
-              marker={mail.markers.get(thread.id)}
-              onRetryMarker={() => mail.markers.invalidate([thread.id])}
-              onClick={() => mail.openThread(thread)}
-            />
-          ))}
+          {list.threads.map((thread) => {
+            const intent = mail.markerActions.get(thread.id)
+            const displayed = intent === undefined ? thread : { ...thread, starred: intent.starred }
+            const marker =
+              intent === undefined
+                ? mail.markers.get(thread.id)
+                : intent.error
+                  ? { kind: 'error' as const }
+                  : { kind: 'ready' as const, marker: intent.marker }
+            return (
+              <MailItem
+                key={thread.id}
+                thread={displayed}
+                isSelected={mail.openId === thread.id}
+                marker={marker}
+                onRetryMarker={() => {
+                  mail.markers.invalidate([thread.id])
+                  void mail.retryMarker(thread.id)
+                }}
+                onClick={() => mail.openThread(thread)}
+                onPrimaryMarker={() => mail.activateMarker(thread.id, displayed.starred)}
+              />
+            )
+          })}
         </div>
         {list.nextPageToken !== null && (
           <div className="flex justify-center px-3 py-3">

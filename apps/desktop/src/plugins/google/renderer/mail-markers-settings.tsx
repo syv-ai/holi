@@ -10,6 +10,7 @@ import {
   type MailMarkerPreferences,
 } from '../shared/mail-markers'
 import { googleCap } from './google-cap'
+import { publishMailMarkerPreferences } from './use-mail-marker-actions'
 
 const LABELS: Record<MailMarker, string> = {
   'yellow-star': 'Yellow star',
@@ -83,7 +84,9 @@ export function MailMarkersSettings({
         preferences: next,
       })
       if (!owns(attempt)) return
-      setPreferences(normalizeMailMarkerPreferences(next))
+      const normalized = normalizeMailMarkerPreferences(next)
+      setPreferences(normalized)
+      publishMailMarkerPreferences(vault, accountSub, normalized)
       savedRetry.current = null
     } catch (cause) {
       if (!owns(attempt)) return

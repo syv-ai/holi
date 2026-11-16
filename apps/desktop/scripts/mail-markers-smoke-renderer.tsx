@@ -12,6 +12,11 @@ import { ConnectionsSection } from '../src/plugins/google/renderer/connections-s
 import { MailView } from '../src/plugins/google/renderer/mail-view'
 import { MailShell } from '../src/plugins/google/renderer/mail/mail-shell'
 import '../src/renderer/src/index.css'
+import defaultThemeCss from '../src/main/vault/seed/vault/once/.holi/settings/theme.css?raw'
+
+const defaultTheme = document.createElement('style')
+defaultTheme.textContent = defaultThemeCss
+document.head.append(defaultTheme)
 
 const store = createStore()
 store.set(activeRemoteAtom, 'smoke/vault')
@@ -80,6 +85,18 @@ const summaries = [
   },
 ]
 summaries.push({ ...summaries[0]!, id: 'thread-ordinary', subject: 'External Gmail star fixture' })
+summaries.push({
+  ...summaries[0]!,
+  id: 'thread-unstarred-shell',
+  subject: 'Unstarred marker fixture',
+  starred: false,
+})
+summaries.push({
+  ...summaries[0]!,
+  id: 'thread-unstarred-surface',
+  subject: 'Unstarred legacy marker fixture',
+  starred: false,
+})
 
 const invoke = async (op: {
   path: string
@@ -102,6 +119,7 @@ const invoke = async (op: {
       'google.useAccount',
       'google.mailMarkerPreferences',
       'google.setMailMarkerPreferences',
+      'google.setMailMarker',
       'google.mailMarkerAnnotations',
       'google.star',
       'google.mark-read',
@@ -115,6 +133,10 @@ const invoke = async (op: {
       fixtureAccount = result.data.account.sub
     return result
   }
+  if (name === 'google.search' && params.query === 'is:starred')
+    return (
+      window as unknown as { markerSmoke: { run: (op: unknown) => Promise<unknown> } }
+    ).markerSmoke.run(op)
   const value =
     name === 'google.search'
       ? {

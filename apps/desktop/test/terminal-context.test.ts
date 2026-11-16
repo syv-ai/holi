@@ -144,15 +144,29 @@ describe.skipIf(process.platform === 'win32')('shell integration', () => {
       await writeFile(join(home, '.zprofile'), 'echo MINE_PROFILE\n')
       await writeFile(join(home, '.zshrc'), "echo MINE_RC\nPROMPT='mine> '\n")
       await writeFile(join(home, '.zlogin'), 'echo MINE_LOGIN\n')
-      const run = exec('/bin/zsh', ['-l', '-i'], {
-        cwd: home,
-        env: {
-          PATH: process.env.PATH ?? '/usr/bin:/bin',
-          HOME: home,
-          HOLI_USER_ZDOTDIR: home,
-          ZDOTDIR: join(shim, 'zsh'),
+      // A test worker launched from tmux has a controlling terminal even though
+      // execFile pipes stdin. Interactive zsh reads /dev/tty instead of that
+      // pipe unless it starts a new session.
+      const run = exec(
+        '/usr/bin/perl',
+        [
+          '-MPOSIX',
+          '-e',
+          'POSIX::setsid() >= 0 or die "setsid: $!"; exec @ARGV or die "exec: $!";',
+          '/bin/zsh',
+          '-l',
+          '-i',
+        ],
+        {
+          cwd: home,
+          env: {
+            PATH: process.env.PATH ?? '/usr/bin:/bin',
+            HOME: home,
+            HOLI_USER_ZDOTDIR: home,
+            ZDOTDIR: join(shim, 'zsh'),
+          },
         },
-      })
+      )
       run.child.stdin!.end('cd "a b/é"\necho "Z=${ZDOTDIR-unset} H=$HISTFILE"\nexit\n')
       const { stdout, stderr } = await run
       const out = stdout + stderr
