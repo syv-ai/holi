@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
-import { readMarkdownCodeCaptions, writeMarkdownCaptionEnvelope } from '@holi/shared'
+import { readMarkdownCodeCaptions } from '@holi/shared'
 import { init } from '@embedpdf/pdfium'
 import { PdfiumNative } from '@embedpdf/engines/pdfium'
 import { createRouter, type RouterDeps } from '../src/main/router'
@@ -796,6 +796,12 @@ async function run() {
     const mermaidCaption = 'A native Mermaid caption'
     const mermaidSource = `flowchart TD\nA[Alpha] --> B[Target]`
     const mermaidFence = `~~~mermaid\n${mermaidSource}\n~~~`
+    const editedMermaidFence = [
+      `${String.fromCharCode(96).repeat(3)} mermaid`,
+      'flowchart TD',
+      'A[Gamma] --> B[Target]',
+      String.fromCharCode(96).repeat(3),
+    ].join('\n')
     await js(
       `await window.captionFixture.replace(${JSON.stringify(`${head}# Mermaid caption\n\n${mermaidFence}\n`)}); return true`,
     )
@@ -901,6 +907,198 @@ async function run() {
       'rendered Mermaid preview after nested source edit',
     )
     mark('native-mermaid-caption-authoring-and-source-target')
+
+    await js(`window.captionFixture.select('documentCaption', 'primary', true); return true`)
+    await js('await window.captionFixture.flush(); return true')
+    let mermaidSaved = await readFile(note, 'utf8')
+    await writeFile(join(evidence, 'mermaid-authored.md.txt'), mermaidSaved)
+    assert(mermaidSaved.startsWith(head), 'Mermaid must preserve exact frontmatter and its comment')
+    assert(mermaidSaved.includes(editedMermaidFence), 'Mermaid must preserve its exact code fence')
+    assert.equal(readMarkdownCodeCaptions(mermaidSaved).length, 1)
+    const mermaidAnchor = await js<{
+      anchor: { quote: string }
+      lines: { startLine: number; endLine: number }
+    }>('return await window.captionFixture.anchor()')
+    assert(mermaidAnchor.anchor.quote.includes(mermaidCaption))
+    assert(
+      mermaidSaved
+        .split('\n')
+        .slice(mermaidAnchor.lines.startLine - 1, mermaidAnchor.lines.endLine)
+        .join('\n')
+        .includes(mermaidCaption),
+      'Mermaid caption comment and file-line anchors must map to its saved Markdown',
+    )
+    mark('mermaid-comment-and-file-line-anchors')
+
+    press('f', ['meta'])
+    await wait(`document.querySelector('input[aria-label="Find"]')`, 'Mermaid native find')
+    await click('input[aria-label="Find"]')
+    win.webContents.selectAll()
+    await win.webContents.insertText(mermaidCaption)
+    await wait(
+      `document.querySelector('[role="search"]').textContent.includes('1 of 1')`,
+      'Mermaid caption find mapping',
+    )
+    await click('[aria-label="Show replace"]')
+    await click('input[aria-label="Replace"]')
+    await win.webContents.insertText('Mermaid verified caption')
+    press('Enter')
+    await wait(
+      `window.captionFixture.state().markdown.includes('Mermaid verified caption')`,
+      'Mermaid native caption replacement',
+    )
+    press('Escape')
+    await sleep(100)
+    press('z', ['meta'])
+    await wait(
+      `window.captionFixture.state().markdown.includes(${JSON.stringify(mermaidCaption)})`,
+      'Mermaid caption replacement undo',
+    )
+    mark('mermaid-native-find-replace-and-undo')
+
+    await js(`window.captionFixture.select('documentFigure'); return true`)
+    win.focus()
+    win.webContents.copy()
+    for (let attempt = 0; attempt < 100 && !clipboard.readHTML().includes('figcaption'); attempt++)
+      await sleep(50)
+    assert(clipboard.readHTML().includes('figcaption'))
+    assert(clipboard.readHTML().includes(mermaidCaption))
+    await js(
+      'window.captionFixture.split(true); window.captionFixture.rightFocused(true); return true',
+    )
+    await wait(`window.captionFixture.state('secondary').editable`, 'Mermaid secondary view')
+    await js(
+      `const e=document.querySelector('[data-pane="secondary"] [role="textbox"]').editor; e.commands.focus('end'); return true`,
+    )
+    await wait(`document.activeElement?.closest('[data-pane="secondary"]')`, 'Mermaid paste focus')
+    win.webContents.paste()
+    await wait(
+      `window.captionFixture.state('secondary').markdown.includes(${JSON.stringify(mermaidCaption)}) && window.captionFixture.state('secondary').markdown.includes('A[Gamma] --> B[Target]')`,
+      'Mermaid native HTML paste',
+    )
+    assert(
+      (await js(
+        `return window.captionFixture.state('secondary').json.content.filter(n=>n.type==='documentFigure').length`,
+      )) >= 1,
+      'Mermaid HTML paste must produce a captioned figure in the receiver',
+    )
+    mark('mermaid-html-clipboard-between-production-split-views')
+
+    const mermaidIdentity = await js<number>('return window.captionFixture.state().identity')
+    await js('window.captionFixture.hide(true); return true')
+    await wait(`!window.captionFixture.state().editable`, 'hidden retained Mermaid view')
+    assert.equal(await js('return window.captionFixture.state().identity'), mermaidIdentity)
+    assert.equal(
+      await js(`return document.querySelectorAll('[data-mermaid-diagram] svg').length`),
+      1,
+      'hidden retained Mermaid split must keep exactly its retained preview without duplicates',
+    )
+    await js(
+      'window.captionFixture.hide(false); window.captionFixture.rightFocused(false); return true',
+    )
+    await wait('window.captionFixture.state().editable', 'unfocused retained Mermaid view')
+    await wait(
+      `document.querySelector('[data-pane="primary"] figure [data-mermaid-diagram] svg')`,
+      'Mermaid preview after retained split returns',
+    )
+    assert.equal(
+      await js(`return document.querySelectorAll('[data-mermaid-diagram] svg').length`),
+      2,
+      'unfocused retained split must render exactly one Mermaid SVG per production view',
+    )
+    assert.equal(
+      await js(
+        `return document.querySelectorAll('[data-pane="primary"] figure [data-mermaid-diagram] svg').length`,
+      ),
+      1,
+    )
+    assert.equal(
+      await js(
+        `return document.querySelectorAll('[data-pane="secondary"] figure [data-mermaid-diagram] svg').length`,
+      ),
+      1,
+    )
+    await js('window.captionFixture.rightFocused(true); return true')
+    await wait(`window.captionFixture.state('secondary').editable`, 'focused Mermaid split')
+    await js(
+      'window.captionFixture.rightFocused(false); window.captionFixture.split(false); return true',
+    )
+    await wait(
+      `document.querySelector('[data-pane="primary"] figure [data-mermaid-diagram] svg')`,
+      'Mermaid preview after split closes',
+    )
+    assert.equal(
+      await js(`return document.querySelectorAll('[data-mermaid-diagram] svg').length`),
+      1,
+      'closed split must not leave stale Mermaid SVGs',
+    )
+    assert.equal(await js(`return document.querySelectorAll('[data-radix-portal]').length`), 0)
+    mark('mermaid-hidden-focused-unfocused-splits-cleanup')
+
+    await js(
+      'await window.captionFixture.flush(); await window.captionFixture.reopen(); return true',
+    )
+    await wait(
+      `window.captionFixture.state().markdown.includes(${JSON.stringify(mermaidCaption)}) && window.captionFixture.state().markdown.includes('A[Gamma] --> B[Target]')`,
+      'Mermaid production file reopen',
+    )
+    mermaidSaved = await readFile(note, 'utf8')
+    assert(mermaidSaved.startsWith(head))
+    assert(mermaidSaved.includes(editedMermaidFence))
+    mark('mermaid-filesystem-reopen-preserves-frontmatter-and-fence')
+
+    mermaidSaved = mermaidSaved.replace(mermaidCaption, 'A changed Mermaid caption')
+    await writeFile(note, mermaidSaved)
+    await js('window.captionFixture.reload(); return true')
+    await wait(
+      `window.captionFixture.state().markdown.includes('A changed Mermaid caption')`,
+      'Mermaid external caption change reload',
+    )
+    assert(
+      (await readFile(note, 'utf8')).startsWith(head) &&
+        (await readFile(note, 'utf8')).includes(editedMermaidFence),
+    )
+    await js(`window.captionFixture.select('documentFigure'); return true`)
+    await wait(
+      `window.captionFixture.state().selection.type==='node'`,
+      'reloaded Mermaid figure selection',
+    )
+    const mermaidFigurePoint = await js<{ x: number; y: number }>(
+      `const r=document.querySelector('[data-pane="primary"] figure').getBoundingClientRect(); return {x:r.x+12,y:r.y+12}`,
+    )
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...mermaidFigurePoint })
+    await wait(
+      `document.querySelector('[aria-label="Block actions"]')?.closest('[data-visible]')`,
+      'reloaded Mermaid block actions',
+    )
+    await menu('Remove caption')
+    assert.equal(
+      await js(
+        `return window.captionFixture.state().json.content.filter(n=>n.type==='documentFigure').length`,
+      ),
+      0,
+    )
+    assert(
+      (await js<string>('return window.captionFixture.state().markdown')).includes(
+        editedMermaidFence,
+      ),
+      'removing a Mermaid caption must retain the exact source fence',
+    )
+    await js(`window.captionFixture.select('codeBlock'); return true`)
+    await menu('Add caption')
+    await wait(`document.querySelector('figcaption')`, 'Mermaid caption re-add')
+    await win.webContents.insertText(mermaidCaption)
+    await js('await window.captionFixture.flush(); return true')
+    await wait(
+      `window.captionFixture.state().markdown.includes(${JSON.stringify(mermaidCaption)})`,
+      'Mermaid re-added caption flush',
+    )
+    mermaidSaved = await readFile(note, 'utf8')
+    assert(mermaidSaved.startsWith(head))
+    assert(mermaidSaved.includes(editedMermaidFence))
+    assert.equal(readMarkdownCodeCaptions(mermaidSaved).length, 1)
+    mark('mermaid-reload-change-remove-and-readd-caption')
+
     clearInterval(videoTimer)
     await Promise.all(videoFrames)
     await js('await window.captionFixture.flush(); return true')
