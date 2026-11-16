@@ -20,6 +20,16 @@ let ws
 let nextId = 0
 const pending = new Map()
 let successResult
+function signalOwnedElectron(signal) {
+  if (!child?.pid) return
+  try {
+    if (process.platform === 'win32') child.kill(signal)
+    else process.kill(-child.pid, signal)
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error
+  }
+}
+
 try {
   await mkdir(evidence, { recursive: true })
   for (const name of ['result.json', 'electron-smoke.log', 'composer.png'])
@@ -39,7 +49,7 @@ try {
           if (id.endsWith('/src/plugins/google/renderer/account.ts'))
             return `export function useGoogleAccount(){return {currentSub:'fixture-account-a',account:{sub:'fixture-account-a'},loading:false,readError:false,missingScopes:[],needsReconnect:false,accounts:[],refresh:()=>{},refreshAndWait:async()=>{}}}`
           if (id.endsWith('/src/plugins/google/renderer/google-cap.ts'))
-            return `const calls=()=>window.__mailVimCalls; export const googleCap={draftBody:async(_remote,{id})=>({to:[],cc:[],bcc:[],subject:'Draft '+id,text:'',html:null,markdown:'',foreign:false,threadId:null}),saveDraft:async(_remote,input)=>{calls().push({op:'saveDraft',account:input.expectedAccountSub,payload:input.mail});return{id:'synthetic-draft'}},send:async()=>{calls().push({op:'send-rejected'});throw new Error('Native smoke blocks sending')},discardDraft:async(_remote,input)=>{calls().push({op:'discardDraft',account:input.expectedAccountSub});return{} }}`
+            return `const calls=()=>window.__mailVimCalls; const policy=()=>window.__mailVimPolicy; export const googleCap={draftBody:async(_remote,{id})=>({to:[],cc:[],bcc:[],subject:'Draft '+id,text:'',html:null,markdown:'',foreign:false,threadId:null}),saveDraft:async(_remote,input)=>{calls().push({op:'saveDraft',account:input.expectedAccountSub,payload:input.mail});return{id:'synthetic-draft'}},send:async()=>{calls().push({op:'send-rejected'});throw new Error('Native smoke blocks sending')},discardDraft:async(_remote,input)=>{calls().push({op:'discardDraft',account:input.expectedAccountSub});return{}},allowImagesFrom:async(_remote,{sender})=>{policy().senders=[...new Set([...policy().senders,sender])];calls().push({op:'allowImagesFrom',account:_remote,payload:sender});return{}},forgetImageSenders:async(_remote)=>{policy().senders=[];calls().push({op:'forgetImageSenders',account:_remote});return{}},setImagesFromAllSenders:async(_remote,{enabled})=>{policy().allSenders=enabled;return{}}}`
           return null
         },
       },
@@ -76,7 +86,7 @@ try {
   })
   await writeFile(
     join(root, 'renderer', 'index.html'),
-    `<!doctype html><html data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'"><title>Mail Vim native smoke</title><link rel="stylesheet" href="./renderer.css"></head><body><div id="root"></div><script type="module" src="./renderer.js"></script></body></html>`,
+    `<!doctype html><html data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; frame-src 'self'; connect-src 'none'"><title>Mail Vim native smoke</title><link rel="stylesheet" href="./renderer.css"></head><body><div id="root"></div><script type="module" src="./renderer.js"></script></body></html>`,
   )
   await writeFile(
     join(root, 'package.json'),
@@ -87,6 +97,7 @@ try {
     ...process.env,
     HOLI_563_ROOT: root,
     HOLI_563_EVIDENCE: evidence,
+    HOLI_VAULT_ROOT: join(root, 'disposable-vault'),
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
       .join(delimiter),
@@ -95,6 +106,7 @@ try {
   child = spawn(electron, [root, '--remote-debugging-port=0'], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
   })
   child.stdout.on('data', (chunk) => {
     log += chunk
@@ -118,7 +130,7 @@ try {
       await new Promise((r) => setTimeout(r, 100))
     }
     throw new Error(
-      `Timed out waiting for ${label}: ${await evaluate(`JSON.stringify({body:document.body.innerText,inputs:[...document.querySelectorAll('input')].map(e=>({label:e.getAttribute('aria-label'),value:e.value})),errors:window.__mailVimErrors})`).catch((error) => String(error))}`,
+      `Timed out waiting for ${label}: ${await evaluate(`JSON.stringify({body:document.body.innerText,inputs:[...document.querySelectorAll('input')].map(e=>({label:e.getAttribute('aria-label'),value:e.value})),errors:window.__mailVimErrors,active:document.activeElement?.outerHTML?.slice(0,240),viewport:{width:innerWidth,height:innerHeight,scale:devicePixelRatio},frames:[...document.querySelectorAll('iframe')].map(f=>({label:f.getAttribute('aria-label'),connected:f.isConnected,hidden:f.closest('[hidden]')!==null,rect:(()=>{const r=f.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height}})(),innerWidth:f.contentWindow?.innerWidth,details:f.contentDocument?.querySelector('details')?.open,links:[...f.contentDocument?.querySelectorAll('a')||[]].map(a=>{const r=a.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,scrollY:f.contentWindow.scrollY}})})),hints:[...document.querySelectorAll('[data-host-hints] [data-hint-target]')].map(e=>e.getAttribute('data-hint-target'))})`).catch((error) => String(error))}`,
     )
   }
   const portMatch = await wait(() => {
@@ -139,12 +151,26 @@ try {
       message.error ? p.reject(new Error(message.error.message)) : p.resolve(message.result)
     }
   })
-  const call = (method, params = {}) =>
+  const sendDevToolsCommand = (method, params = {}, sessionId) =>
     new Promise((resolve, reject) => {
       const id = ++nextId
-      pending.set(id, { resolve, reject })
-      ws.send(JSON.stringify({ id, method, params }))
+      const timeout = setTimeout(() => {
+        pending.delete(id)
+        reject(new Error(`DevTools command timed out: ${method}`))
+      }, 20000)
+      pending.set(id, {
+        resolve: (result) => {
+          clearTimeout(timeout)
+          resolve(result)
+        },
+        reject: (error) => {
+          clearTimeout(timeout)
+          reject(error)
+        },
+      })
+      ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
     })
+  const call = (method, params = {}) => sendDevToolsCommand(method, params)
   const target = await wait(
     async () =>
       (await (await fetch(`http://127.0.0.1:${portMatch}/json/list`)).json()).find(
@@ -153,12 +179,7 @@ try {
     'renderer target',
   )
   const { sessionId } = await call('Target.attachToTarget', { targetId: target.id, flatten: true })
-  const cdp = (method, params = {}) =>
-    new Promise((resolve, reject) => {
-      const id = ++nextId
-      pending.set(id, { resolve, reject })
-      ws.send(JSON.stringify({ id, sessionId, method, params }))
-    })
+  const cdp = (method, params = {}) => sendDevToolsCommand(method, params, sessionId)
   await cdp('Runtime.enable')
   const evaluate = async (expression) => {
     const result = await cdp('Runtime.evaluate', {
@@ -170,6 +191,10 @@ try {
     return result.result.value
   }
   const until = (expression, label) => wait(() => evaluate(expression), label)
+  const focusNativeWindow = async () => {
+    await evaluate(`console.log('HOLI_MAIL_SMOKE_FOCUS')`)
+    await wait(() => /HOLI_MAIL_SMOKE_FOCUS_DONE:true/.test(log), 'native Electron window focus')
+  }
   const key = async (keyName, modifiers = 0) => {
     const code = keyName.length === 1 ? `Key${keyName.toUpperCase()}` : keyName
     const text = keyName.length === 1 ? keyName : undefined
@@ -190,6 +215,24 @@ try {
       `(()=>{const e=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()===${JSON.stringify(text)});if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
     )
     assert(rect, `missing button ${text}`)
+    await cdp('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      ...rect,
+      button: 'left',
+      clickCount: 1,
+    })
+    await cdp('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      ...rect,
+      button: 'left',
+      clickCount: 1,
+    })
+  }
+  const clickButtonContaining = async (text) => {
+    const rect = await evaluate(
+      `(()=>{const e=[...document.querySelectorAll('button')].find(e=>e.textContent.includes(${JSON.stringify(text)}));if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+    )
+    assert(rect, `missing button containing ${text}`)
     await cdp('Input.dispatchMouseEvent', {
       type: 'mousePressed',
       ...rect,
@@ -441,7 +484,13 @@ try {
   )
   assert.equal(
     await evaluate(`JSON.stringify(window.__mailVim.state())`),
-    JSON.stringify({ account: 'fixture-account-b', draft: 'replacement' }),
+    JSON.stringify({
+      account: 'fixture-account-b',
+      draft: 'replacement',
+      readerVisible: true,
+      readerView: 'thread-a',
+      vault: 'synthetic/mail-vim-vault',
+    }),
     'fixture context did not update without remounting the composer',
   )
   assert.equal(
@@ -459,18 +508,592 @@ try {
     false,
     'confirmation test performed a send, discard, or close action',
   )
+  const composerScreenshot = await cdp('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+  })
+  await writeFile(join(evidence, 'composer.png'), Buffer.from(composerScreenshot.data, 'base64'))
+  await evaluate(`window.__mailVim.hideComposer()`)
+  await until(
+    `document.querySelector('[aria-label="Compose mail"]')===null`,
+    'composer teardown before isolated frame hints',
+  )
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `window.__mailVim.state().account==='fixture-account-a'`,
+    'reader fixture context reset',
+  )
+  await click('button')
+  await key('Escape')
+  const framePoint = await evaluate(
+    `(()=>{const f=document.querySelector('iframe[aria-label="Message from Fixture"]');const p=f.contentDocument.querySelector('p');const a=f.getBoundingClientRect(),b=p.getBoundingClientRect();return{x:a.left+b.left+b.width/2,y:a.top+b.top+b.height/2}})()`,
+  )
+  await cdp('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    ...framePoint,
+    button: 'left',
+    clickCount: 1,
+  })
+  await cdp('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    ...framePoint,
+    button: 'left',
+    clickCount: 1,
+  })
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Expand fixture details"]')!==null&&document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')!==null`,
+    'owned mail-document hints beside host targets',
+  )
+  const hintScreenshot = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
+  await writeFile(
+    join(evidence, 'mail-document-hints.png'),
+    Buffer.from(hintScreenshot.data, 'base64'),
+  )
+  const externalLinkLabel = await evaluate(
+    `document.querySelector('[data-hint-target="Fixture external link"]').getAttribute('data-hint-key')`,
+  )
+  for (const character of externalLinkLabel) await key(character)
+  await until(
+    `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/')`,
+    'mail link routed through the host external-link bridge',
+  )
+  await evaluate(`window.__mailVim.reorderedTargets(true)`)
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelectorAll('a').length===2`,
+    'CSS multi-column mail targets rendered',
+  )
+  await evaluate(
+    `(()=>{const document_=document.querySelector('iframe[aria-label="Message from Fixture"]').contentDocument;document_.body.style.cssText='position:relative;height:100px;column-count:2;column-gap:20px';const anchors=[...document_.querySelectorAll('a')];anchors[0].style.cssText='position:absolute;top:60px;left:12px';anchors[1].style.cssText='position:absolute;top:0;left:12px'})()`,
+  )
+  const reorderedFramePoint = await evaluate(
+    `(()=>{const f=document.querySelector('iframe[aria-label="Message from Fixture"]');const p=f.contentDocument.querySelector('p');const a=f.getBoundingClientRect(),b=p.getBoundingClientRect();return{x:a.left+b.left+b.width/2,y:a.top+b.top+b.height/2}})()`,
+  )
+  await cdp('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    ...reorderedFramePoint,
+    button: 'left',
+    clickCount: 1,
+  })
+  await cdp('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    ...reorderedFramePoint,
+    button: 'left',
+    clickCount: 1,
+  })
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Reordered second target"]')!==null`,
+    'multi-column mail hints survive coordinator ordering',
+  )
+  const reordered = await evaluate(
+    `(()=>{const frame=document.querySelector('iframe[aria-label="Message from Fixture"]');const anchors=[...frame.contentDocument.querySelectorAll('a')];const hints=[...document.querySelectorAll('[data-host-hints] [data-hint-target]')];return{dom:anchors.map(a=>a.textContent),hintOrder:hints.map(h=>h.getAttribute('data-hint-target')).filter(label=>anchors.some(a=>a.textContent===label)),key:hints.find(h=>h.getAttribute('data-hint-target')==='Reordered second target')?.getAttribute('data-hint-key')}})()`,
+  )
+  assert.deepEqual(reordered.dom, ['Reordered first target', 'Reordered second target'])
+  assert.notDeepEqual(
+    reordered.hintOrder.slice(0, 2),
+    reordered.dom,
+    'fixture must reorder by geometry',
+  )
+  for (const character of reordered.key) await key(character)
+  await until(
+    `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/reordered-second')`,
+    'reordered native keyboard target reaches its correct bridge',
+  )
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/reordered-second').length`,
+    ),
+    1,
+    'reordered target increments the correct bridge counter once',
+  )
+  assert.equal(
+    await evaluate(`window.__mailVimTrusted.length>0 && window.__mailVimTrusted.every(Boolean)`),
+    true,
+    'reordered hint was activated by trusted native keyboard input',
+  )
+  await evaluate(`window.__mailVim.reorderedTargets(false)`)
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/'`,
+    'restore original mail fixture after reordered-target acceptance',
+  )
+  await clickButtonContaining('fixture.txt')
+  await until(
+    `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/thread')`,
+    'mail attachment action opens its provider thread through the host bridge',
+  )
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.some(c=>c.op==='mark-read'||c.op==='send'||c.op==='discardDraft')`,
+    ),
+    false,
+    'mail hint/attachment path caused an unrelated thread or draft side effect',
+  )
+  await key('Escape')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Expand fixture details"]')!==null`,
+    'mail detail hints remain available after safe link and attachment actions',
+  )
+  const detailsLabel = await evaluate(
+    `document.querySelector('[data-hint-target="Expand fixture details"]').getAttribute('data-hint-key')`,
+  )
+  for (const character of detailsLabel) await key(character)
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]').contentDocument.querySelector('details').open`,
+    'native details disclosure activation through the host coordinator',
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'native disclosure activation completes the consumed hint session',
+  )
+  const retainedState = await evaluate(
+    `(()=>{window.__mailRetainedFrame=document.querySelector('iframe[aria-label="Message from Fixture"]');window.__mailRetainedFrame.contentWindow.focus();const document_=window.__mailRetainedFrame.contentDocument;const paragraph=document_.querySelector('details p');const range=document_.createRange();range.selectNodeContents(paragraph);const selection=document_.getSelection();selection.removeAllRanges();selection.addRange(range);return selection.toString()})()`,
+  )
+  assert.equal(retainedState, 'Only static fixture content.')
+  assert.equal(
+    await evaluate(`window.__mailRetainedFrame.contentDocument.querySelector('details').open`),
+    true,
+    'disclosure stays open before retained hide',
+  )
+  const startNativeSession = async (label) => {
+    await focusNativeWindow()
+    await click('button')
+    await key('f')
+    const targetKey = await wait(
+      () =>
+        evaluate(
+          `document.querySelector('[data-host-hints] [data-hint-target="${label}"]')?.getAttribute('data-hint-key')`,
+        ),
+      `${label} native target in active session before ${label} transition`,
+    )
+    assert(targetKey, `active native hint session owns exact ${label} target`)
+    assert.equal(await evaluate(`document.querySelector('[data-host-hints]')!==null`), true)
+    assert.equal(
+      await evaluate(
+        `document.querySelector('[data-host-hints] [data-hint-target="${label}"]')!==null`,
+      ),
+      true,
+    )
+    return targetKey
+  }
+  const assertStaleKeyNoAction = async (staleKey, before, description) => {
+    for (const character of staleKey) await key(character)
+    assert.equal(
+      await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`),
+      before,
+      description,
+    )
+  }
+
+  // Retained same-document hide is intentionally isolated from context replacement.
+  const hideKey = await startNativeSession('Fixture external link')
+  await evaluate(
+    `window.__mailVim.reader(false,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'active hint session cancelled by hide',
+  )
+  assert.equal(
+    await evaluate(
+      `document.querySelector('iframe[aria-label="Message from Fixture"]')===window.__mailRetainedFrame`,
+    ),
+    true,
+  )
+  assert.equal(
+    await evaluate(`window.__mailRetainedFrame.contentDocument.querySelector('details').open`),
+    true,
+  )
+  const hideCalls = await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`)
+  await assertStaleKeyNoAction(hideKey, hideCalls, 'hidden reader accepted stale native key')
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `window.__mailRetainedFrame.contentDocument.getSelection().toString()==='Only static fixture content.'`,
+    'same-document hide restores selection',
+  )
+
+  // Account, vault and thread changes each get a fresh independently active session.
+  const accountKey = await startNativeSession('Fixture external link')
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-b','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'account transition cancels active native hint session',
+  )
+  const accountCalls = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal').length`,
+  )
+  await assertStaleKeyNoAction(accountKey, accountCalls, 'account transition accepted stale A key')
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/fixture-account-b/thread-a/link'`,
+    'reader document reflects account B URL',
+  )
+  const aCallsBeforeB = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-a').length`,
+  )
+  await click('button')
+  await key('f')
+  const bTarget = await wait(
+    () =>
+      evaluate(
+        `document.querySelector('[data-host-hints] [data-hint-target*="fixture-account-b"]')?.getAttribute('data-hint-key')`,
+      ),
+    'fresh B native target',
+  )
+  assert(bTarget, 'B context exposes its own exact native link target')
+  const bLink = await evaluate(
+    `document.querySelector('[data-host-hints] [data-hint-key="${bTarget}"]').getAttribute('data-hint-target')`,
+  )
+  for (const character of bTarget) await key(character)
+  const bCall = await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').at(-1)`)
+  assert.equal(bCall.account, 'fixture-account-b', 'B target uses live B account binding')
+  assert.equal(bCall.vault, 'synthetic/mail-vim-vault')
+  assert.equal(bCall.view, 'thread-a')
+  assert.equal(bCall.payload, 'https://example.test/fixture-account-b/thread-a/link')
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-b'&&c.payload==='https://example.test/fixture-account-b/thread-a/link').length`,
+    ),
+    1,
+    'B URL/context counter increments once',
+  )
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-a').length`,
+    ),
+    aCallsBeforeB,
+    'B target does not increment A transport counter',
+  )
+  assert(bLink.includes('fixture-account-b'))
+
+  const returnKey = await startNativeSession(bLink)
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'A-B-A return cancels B session',
+  )
+  const returnCalls = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal').length`,
+  )
+  await assertStaleKeyNoAction(
+    returnKey,
+    returnCalls,
+    'A-B-A old B label activated after return to A',
+  )
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/'`,
+    'reader document returns to A URL',
+  )
+
+  const vaultKey = await startNativeSession('Fixture external link')
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/other-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'vault transition cancels active native hint session',
+  )
+  const vaultCalls = await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`)
+  await assertStaleKeyNoAction(vaultKey, vaultCalls, 'vault transition accepted stale native key')
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/fixture-account-a/thread-a/link'`,
+    'reader document reflects new vault context',
+  )
+
+  const viewKey = await startNativeSession(
+    'Fixture message fixture-account-a synthetic/other-vault thread-a external link',
+  )
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-b','synthetic/other-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'thread transition cancels active native hint session',
+  )
+  const viewCalls = await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`)
+  await assertStaleKeyNoAction(viewKey, viewCalls, 'thread transition accepted stale native key')
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/fixture-account-a/thread-b/link'`,
+    'reader view changes rendered document identity',
+  )
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/'`,
+    'reader restored to original synthetic context',
+  )
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-key]')!==null`,
+    'current A ownership discovers fresh native targets',
+  )
+  const currentLinkKey = await evaluate(
+    `document.querySelector('[data-hint-target="Fixture external link"]')?.getAttribute('data-hint-key')`,
+  )
+  assert(currentLinkKey, 'fresh current-A mail link target is explicitly selected')
+  const linkCallsBeforeInvalidation = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-a'&&c.payload==='https://example.test/').length`,
+  )
+  const widthBeforeZoom = await evaluate('window.innerWidth')
+  await evaluate(`console.log('HOLI_MAIL_SMOKE_ZOOM:1.2')`)
+  await until(
+    `window.innerWidth!==${widthBeforeZoom} && document.querySelector('[data-host-hints]')===null`,
+    'native webContents zoom invalidates active mail hints',
+  )
+  for (const character of currentLinkKey) await key(character)
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+    ),
+    linkCallsBeforeInvalidation,
+    'resized viewport accepted a stale mail hint',
+  )
+  await evaluate(`console.log('HOLI_MAIL_SMOKE_ZOOM:1')`)
+  await until(`window.innerWidth===${widthBeforeZoom}`, 'native webContents zoom reset')
+  await evaluate(
+    `new Promise(resolve=>{let frames=0;const settle=()=>{if(++frames===3)resolve(true);else requestAnimationFrame(settle)};requestAnimationFrame(settle)})`,
+  )
+  await focusNativeWindow()
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-key]')!==null`,
+    'fresh targets after viewport reset',
+  )
+  const overlayStaleKey = await evaluate(
+    `document.querySelector('[data-hint-key]').getAttribute('data-hint-key')`,
+  )
+  await evaluate(
+    `window.__mailSmokeOverlay=document.createElement('div');Object.assign(window.__mailSmokeOverlay.style,{position:'fixed',inset:'0',zIndex:'9999',background:'transparent'});document.body.append(window.__mailSmokeOverlay)`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'covering overlay invalidates native hints',
+  )
+  const callsBeforeOverlayKey = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal').length`,
+  )
+  for (const character of overlayStaleKey) await key(character)
+  assert.equal(
+    await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`),
+    callsBeforeOverlayKey,
+    'a covered native target still activated',
+  )
+  await evaluate(`window.__mailSmokeOverlay.remove()`)
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-key]')!==null`,
+    'fresh targets after overlay removal',
+  )
+  const freshLinkKey = await evaluate(
+    `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')?.getAttribute('data-hint-key')`,
+  )
+  assert(freshLinkKey, 'viewport reset exposes the exact current native mail link target')
+  const freshLinkCallsBefore = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+  )
+  for (const character of freshLinkKey) await key(character)
+  await until(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length===${freshLinkCallsBefore + 1}`,
+    'current A ownership activates the exact native mail link through the bridge once',
+  )
+  const activatedMailCall = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').at(-1)`,
+  )
+  assert.equal(
+    activatedMailCall.account,
+    'fixture-account-a',
+    'mail target uses its live account binding',
+  )
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-a'&&c.payload==='https://example.test/').length`,
+    ),
+    freshLinkCallsBefore + 1,
+    'exact mail target increments the correctly bound bridge counter exactly once',
+  )
+  await click('button')
+  await key('f')
+  const blockedConsentLinkKey = await wait(
+    () =>
+      evaluate(
+        `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')?.getAttribute('data-hint-key')`,
+      ),
+    'blocked-image frame exact mail link before consent rewrite',
+  )
+  await evaluate(
+    `(()=>{window.__blockedConsentFrame=document.querySelector('iframe[aria-label="Message from Fixture"]');return true})()`,
+  )
+  assert(blockedConsentLinkKey, 'blocked-image frame still exposes its exact native mail link')
+  const linksBeforeConsentRewrite = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+  )
+  await clickButtonContaining('Always from this sender')
+  await until(
+    `(()=>{const current=document.querySelector('iframe[aria-label="Message from Fixture"]');return current&&current!==window.__blockedConsentFrame&&current.contentDocument.querySelector('img')?.getAttribute('src')==='https://images.example.test/fixture.png'})()`,
+    'native sender consent rebuilds the mail frame with its image allowed',
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'consent rewrite revokes old mail targets',
+  )
+  for (const character of blockedConsentLinkKey) await key(character)
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+    ),
+    linksBeforeConsentRewrite,
+    'pre-consent native link key cannot activate after iframe replacement',
+  )
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')!==null`,
+    'consent replacement registers the actual new mail iframe adapter',
+  )
+  const consentFreshLinkKey = await evaluate(
+    `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]').getAttribute('data-hint-key')`,
+  )
+  for (const character of consentFreshLinkKey) await key(character)
+  await until(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length===${linksBeforeConsentRewrite + 1}`,
+    'consent replacement exact mail target activates through current bridge',
+  )
+  await click('button')
+  await key('f')
+  const consentLinkKey = await wait(
+    () =>
+      evaluate(
+        `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')?.getAttribute('data-hint-key')`,
+      ),
+    'exact mail target before consent revocation',
+  )
+  await evaluate(
+    `(()=>{window.__consentFrame=document.querySelector('iframe[aria-label="Message from Fixture"]');return true})()`,
+  )
+  assert(consentLinkKey, 'allowed-image frame retains exact mail link target')
+  const linksBeforeConsentRevoke = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+  )
+  await clickButtonContaining('Revoke image consent')
+  await until(
+    `(()=>{const current=document.querySelector('iframe[aria-label="Message from Fixture"]');return current&&current!==window.__consentFrame&&!current.contentDocument.querySelector('img')?.hasAttribute('src')})()`,
+    'revoking sender consent rebuilds the mail frame with remote image blocked',
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'consent revocation removes old mail targets',
+  )
+  for (const character of consentLinkKey) await key(character)
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+    ),
+    linksBeforeConsentRevoke,
+    'pre-revocation native link key cannot activate after iframe replacement',
+  )
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')!==null`,
+    'revoked-consent replacement registers fresh native mail targets',
+  )
+  const revokedFreshLinkKey = await evaluate(
+    `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]').getAttribute('data-hint-key')`,
+  )
+  for (const character of revokedFreshLinkKey) await key(character)
+  await until(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length===${linksBeforeConsentRevoke + 1}`,
+    'revoked-consent replacement exact mail target activates through current bridge',
+  )
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')!==null`,
+    'link target available before native removal',
+  )
+  const removedLinkKey = await evaluate(
+    `document.querySelector('[data-hint-target="Fixture external link"]').getAttribute('data-hint-key')`,
+  )
+  const linksBeforeRemoval = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+  )
+  await evaluate(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]').contentDocument.querySelector('a[href="https://example.test/"]').remove()`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'removed native link invalidates hints',
+  )
+  for (const character of removedLinkKey) await key(character)
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+    ),
+    linksBeforeRemoval,
+    'a removed native target still opened the external link',
+  )
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints]')!==null`,
+    'mail hint session cancellation test',
+  )
+  await key('Escape')
+  assert.equal(
+    await evaluate(`document.querySelector('[data-host-hints]')===null`),
+    true,
+    'mail frame hint Escape did not cancel',
+  )
+  const cancelledScreenshot = await cdp('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+  })
+  await writeFile(
+    join(evidence, 'mail-document-hints-cancelled.png'),
+    Buffer.from(cancelledScreenshot.data, 'base64'),
+  )
+  await evaluate(`document.documentElement.setAttribute('data-theme','light')`)
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Expand fixture details"]')!==null`,
+    'light-theme owned mail-document hints',
+  )
+  const lightScreenshot = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
+  await writeFile(
+    join(evidence, 'mail-document-hints-light.png'),
+    Buffer.from(lightScreenshot.data, 'base64'),
+  )
+  await key('Escape')
   assert.deepEqual(
     await evaluate(`window.__mailVimErrors||[]`),
     [],
     'renderer errors occurred during native smoke',
   )
-  const screenshot = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
-  await writeFile(join(evidence, 'composer.png'), Buffer.from(screenshot.data, 'base64'))
   const electronVersion = /HOLI_563_ELECTRON=([0-9.]+)/.exec(log)?.[1]
   assert.equal(electronVersion?.split('.')[0], '43', 'smoke must run under Electron 43')
+  const allCalls = await evaluate(`JSON.stringify(window.__mailVimCalls)`).then(JSON.parse)
   const result = {
     ok: true,
     electron: electronVersion,
+    readerTransitionScenarios: [
+      'retained-reader-hide',
+      'account-a-to-b',
+      'account-b-to-a-return',
+      'vault-change',
+      'thread-view-change',
+    ],
+    independentlyStartedReaderHintSessions: 5,
     checks: [
       'trusted-native-keyboard-and-mouse',
       'recipient-chip-and-payload-persistence',
@@ -480,19 +1103,38 @@ try {
       'discard-confirmation-cancels-without-discard',
       'insert-mode-f-does-not-open-host-hints',
       'normal-mode-f-opens-production-host-hints-and-escape-cancels',
+      'owned-sandboxed-mail-targets-share-host-label-session-and-escape-cancel',
+      'mail-reader-external-link-uses-host-bridge',
+      'multi-column-screen-reordered-mail-target-uses-trusted-keyboard-and-correct-bridge-counter',
+      'attachment-action-opens-provider-thread-without-mark-read-or-draft-side-effects',
+      'real-disclosure-activation-preserves-native-details-behavior',
+      'retained-reader-hide-revokes-hints-and-restores-disclosure-and-selection',
+      'account-transition-starts-independent-active-session-and-rejects-stale-A-key',
+      'account-B-link-action-increments-only-live-B-url-and-context-counter',
+      'A-B-A-return-revokes-old-B-session-and-rejects-its-label',
+      'vault-transition-starts-independent-active-session-and-rejects-stale-key',
+      'thread-view-transition-starts-independent-active-session-and-rejects-stale-key',
+      'viewport-zoom-revokes-stale-native-targets-before-current-operation',
+      'covering-overlay-and-target-removal-revoke-native-actions',
+      'remote-image-consent-grant-and-revoke-rewrite-and-reregister-native-mail-targets',
       'normal-enter-does-not-commit-or-send-uncommitted-recipient',
       'cc-bcc-fields-validation-tab-backspace-and-enter',
       'renderer-error-free-and-no-blocked-network-requests',
       'disabled-vim-native-edit-and-blur-refocus-reset',
       'no-unintended-send-discard-close',
     ],
-    captures: ['composer.png'],
+    captures: [
+      'composer.png',
+      'mail-document-hints.png',
+      'mail-document-hints-light.png',
+      'mail-document-hints-cancelled.png',
+    ],
     disposableFiles: [disposableDraft],
     cleanup: { root, removed: true },
-    calls: saved,
+    calls: allCalls,
   }
   assert((await stat(join(evidence, 'composer.png'))).size > 0)
-  child.kill('SIGTERM')
+  signalOwnedElectron('SIGTERM')
   const code = await Promise.race([
     closed,
     new Promise((_, reject) =>
@@ -511,9 +1153,12 @@ try {
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close()
   if (child && child.exitCode === null) {
-    child.kill('SIGTERM')
+    signalOwnedElectron('SIGTERM')
     await Promise.race([closed, new Promise((r) => setTimeout(r, 3000))])
-    if (child.exitCode === null) child.kill('SIGKILL')
+    if (child.exitCode === null) {
+      signalOwnedElectron('SIGKILL')
+      await Promise.race([closed, new Promise((r) => setTimeout(r, 3000))])
+    }
   }
   await writeFile(join(evidence, 'electron-smoke.log'), log)
   await rm(root, { recursive: true, force: true })
