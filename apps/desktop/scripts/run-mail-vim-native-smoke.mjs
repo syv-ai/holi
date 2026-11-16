@@ -560,6 +560,65 @@ try {
     `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/')`,
     'mail link routed through the host external-link bridge',
   )
+  await evaluate(`window.__mailVim.reorderedTargets(true)`)
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelectorAll('a').length===2`,
+    'CSS multi-column mail targets rendered',
+  )
+  await evaluate(
+    `(()=>{const document_=document.querySelector('iframe[aria-label="Message from Fixture"]').contentDocument;document_.body.style.cssText='position:relative;height:100px;column-count:2;column-gap:20px';const anchors=[...document_.querySelectorAll('a')];anchors[0].style.cssText='position:absolute;top:60px;left:12px';anchors[1].style.cssText='position:absolute;top:0;left:12px'})()`,
+  )
+  const reorderedFramePoint = await evaluate(
+    `(()=>{const f=document.querySelector('iframe[aria-label="Message from Fixture"]');const p=f.contentDocument.querySelector('p');const a=f.getBoundingClientRect(),b=p.getBoundingClientRect();return{x:a.left+b.left+b.width/2,y:a.top+b.top+b.height/2}})()`,
+  )
+  await cdp('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    ...reorderedFramePoint,
+    button: 'left',
+    clickCount: 1,
+  })
+  await cdp('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    ...reorderedFramePoint,
+    button: 'left',
+    clickCount: 1,
+  })
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Reordered second target"]')!==null`,
+    'multi-column mail hints survive coordinator ordering',
+  )
+  const reordered = await evaluate(
+    `(()=>{const frame=document.querySelector('iframe[aria-label="Message from Fixture"]');const anchors=[...frame.contentDocument.querySelectorAll('a')];const hints=[...document.querySelectorAll('[data-host-hints] [data-hint-target]')];return{dom:anchors.map(a=>a.textContent),hintOrder:hints.map(h=>h.getAttribute('data-hint-target')).filter(label=>anchors.some(a=>a.textContent===label)),key:hints.find(h=>h.getAttribute('data-hint-target')==='Reordered second target')?.getAttribute('data-hint-key')}})()`,
+  )
+  assert.deepEqual(reordered.dom, ['Reordered first target', 'Reordered second target'])
+  assert.notDeepEqual(
+    reordered.hintOrder.slice(0, 2),
+    reordered.dom,
+    'fixture must reorder by geometry',
+  )
+  for (const character of reordered.key) await key(character)
+  await until(
+    `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/reordered-second')`,
+    'reordered native keyboard target reaches its correct bridge',
+  )
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/reordered-second').length`,
+    ),
+    1,
+    'reordered target increments the correct bridge counter once',
+  )
+  assert.equal(
+    await evaluate(`window.__mailVimTrusted.length>0 && window.__mailVimTrusted.every(Boolean)`),
+    true,
+    'reordered hint was activated by trusted native keyboard input',
+  )
+  await evaluate(`window.__mailVim.reorderedTargets(false)`)
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/'`,
+    'restore original mail fixture after reordered-target acceptance',
+  )
   await clickButtonContaining('fixture.txt')
   await until(
     `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/thread')`,
@@ -1046,6 +1105,7 @@ try {
       'normal-mode-f-opens-production-host-hints-and-escape-cancels',
       'owned-sandboxed-mail-targets-share-host-label-session-and-escape-cancel',
       'mail-reader-external-link-uses-host-bridge',
+      'multi-column-screen-reordered-mail-target-uses-trusted-keyboard-and-correct-bridge-counter',
       'attachment-action-opens-provider-thread-without-mark-read-or-draft-side-effects',
       'real-disclosure-activation-preserves-native-details-behavior',
       'retained-reader-hide-revokes-hints-and-restores-disclosure-and-selection',
