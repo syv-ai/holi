@@ -101,6 +101,8 @@ export interface PluginHostDeps {
     name: string,
     params: unknown,
     beforeInvoke?: (target: { remote: string; root: string }) => Promise<void>,
+    /** Main-only disposer authority, separate from ordinary target validation. */
+    finalization?: (target: { remote: string; root: string }) => Promise<void>,
   ) => Promise<unknown>
   /** The activity log (`activity/log.ts`), for `ctx.log` and for a plugin
    *  that would not start. Absent, as in most tests, lines are dropped. */
@@ -127,7 +129,7 @@ export interface PluginHost {
    * the second its disposer could neither tell its renderer nor hear back
    * (a meeting's last audio, docs/features/meetings.md).
    */
-  serving(root: string): Promise<ReadonlySet<string>>
+  serving(root: string, allowDrain?: boolean): Promise<ReadonlySet<string>>
   /** What the scanner claims in the vault at `root`: its enabled plugins'.
    *  Cached for the open vault, like `enabled`. */
   scanClaimsFor(root: string): Promise<ScanClaim[]>
@@ -185,12 +187,19 @@ export interface PluginHost {
 interface Started {
   id: string
   dispose: Disposer
-  lease: { phase: 'active' | 'draining' | 'closed'; events: ReturnType<typeof pluginEvents> }
+  lease: {
+    pluginId: string
+    phase: 'active' | 'draining' | 'closed'
+    established: boolean
+    events: ReturnType<typeof pluginEvents>
+    cancel: () => void
+  }
   establish(): void
   closeEvents(): void
   /** What it registered through its context and has not undone yet,
    *  undone after its disposer. */
   undos: Set<() => void>
+  cancel: () => void
 }
 
 export function createPluginHost(deps: PluginHostDeps): PluginHost {
@@ -205,11 +214,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     failed: Map<string, string>
     lastWant: string
     queue: Promise<void>
+    /** Temporary disposal parking; it does not end a lifetime. */
     parked: boolean
+    /** Set by stop, cleared only by a queued explicit open after cleanup. */
+    closed: boolean
     generation: number
+    /** Supersedes configuration work synchronously, before settings reads. */
+    configuration: number
     holds: { reasons: Map<symbol, string> } | null
     stopping: Map<string, boolean>
+    invalidated: Set<string>
     leases: Set<Started['lease']>
+    stopPromise: Promise<void> | null
+    teardownFailure: unknown
   }
   const runsByRemote = new Map<string, VaultRun>()
   const makeRun = (vault: OpenVault): VaultRun => ({
@@ -219,10 +236,15 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     lastWant: '',
     queue: Promise.resolve(),
     parked: false,
+    closed: false,
     generation: 0,
+    configuration: 0,
     holds: null,
     stopping: new Map(),
+    invalidated: new Set(),
     leases: new Set(),
+    stopPromise: null,
+    teardownFailure: null,
   })
   let displayed: string | null = null
   let displayEpoch = 0
@@ -296,9 +318,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     return cache.get(root) ?? (await read(root)).running
   }
 
-  async function serving(root: string): Promise<ReadonlySet<string>> {
+  async function serving(root: string, allowDrain = true): Promise<ReadonlySet<string>> {
     const on = await enabled(root)
     const state = [...runsByRemote.values()].find((run) => run.vault.root === root)
+    if (!allowDrain) {
+      if (state === undefined) return on
+      return new Set([...on].filter((id) => !state.invalidated.has(id)))
+    }
     const going = [
       ...(state?.started.map((s) => s.id) ?? []),
       ...(state === undefined ? [] : [...state.stopping.keys()]),
@@ -453,18 +479,30 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     state: VaultRun,
   ): Promise<Started | null> {
     const id = plugin.info.id
+    state.invalidated.delete(id)
     const activation = state.generation
-    let established = false
     let eventsLive = true
     const { remote, root } = vault
+    const controller = new AbortController()
     const lease: Started['lease'] = {
+      pluginId: id,
       phase: 'active',
+      established: false,
       events: events(id, remote, root, () => lease.phase !== 'closed'),
+      cancel: () => {
+        // Cancellation revokes ordinary work once. A later stop must not
+        // discard completion output queued by the already draining disposer.
+        if (controller.signal.aborted) return
+        if (state.leases.has(lease)) state.invalidated.add(id)
+        controller.abort()
+        lease.events.cancelPending()
+      },
     }
     state.leases.add(lease)
     const eventBus = lease.events
-    const valid = (): boolean => lease.phase === 'active' && state.generation === activation
-    const draining = (): boolean => lease.phase === 'draining' && established
+    const valid = (): boolean =>
+      lease.phase === 'active' && state.generation === activation && !controller.signal.aborted
+    const draining = (): boolean => lease.phase === 'draining' && lease.established
     const finalizing = (): boolean => {
       const operation = finalizationOperations.getStore()
       return (
@@ -477,8 +515,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         state.leases.has(operation.ownerLease) &&
         state.parked &&
         runsByRemote.get(remote) === state &&
-        established &&
-        lease.phase === 'active'
+        lease.established &&
+        (lease.phase === 'active' || (operation.ownerLease === lease && lease.phase === 'draining'))
       )
     }
     const undos = new Set<() => void>()
@@ -493,6 +531,12 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       return once
     }
     const ctx: PluginCtx = {
+      activationSignal: controller.signal,
+      invalidateActivation: lease.cancel,
+      reportDrainFailure: (failure) => {
+        lease.cancel()
+        state.teardownFailure ??= failure
+      },
       remote,
       root,
       userData: deps.userData,
@@ -514,7 +558,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       active: () => vault,
       register: (namespaces, table) => {
         if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
-        return keep(deps.registry.register(namespaces, table, id, remote))
+        return keep(
+          deps.registry.register(namespaces, table, id, remote, {
+            active: valid,
+            draining,
+            finalizing,
+          }),
+        )
       },
       emit: (at, name, payload, guard) => {
         if (valid() || draining()) eventBus.emit(at, name, payload, guard)
@@ -615,27 +665,28 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
               ? { remote, root, state, ownerLease: lease, active: true }
               : null
         const invoke = () =>
-          deps.call!(remote, name, params, async (target) => {
-            if (
-              !eventsLive ||
-              target.remote !== remote ||
-              target.root !== root ||
-              (operation !== null
-                ? !operation.active ||
-                  operation.remote !== remote ||
-                  operation.root !== root ||
-                  operation.state !== state ||
-                  operation.ownerLease.phase !== 'draining' ||
-                  !state.leases.has(operation.ownerLease) ||
-                  !state.parked ||
-                  runsByRemote.get(remote) !== state ||
-                  !(draining() || finalizing())
-                : admittedDuringDrain
-                  ? !draining()
-                  : !valid())
-            )
-              throw new Error(`${remote} plugin context is no longer active`)
-          })
+          deps.call!(remote, name, params, validate, admittedDuringDrain ? validate : undefined)
+        const validate = async (target: { remote: string; root: string }): Promise<void> => {
+          if (
+            !eventsLive ||
+            target.remote !== remote ||
+            target.root !== root ||
+            (operation !== null
+              ? !operation.active ||
+                operation.remote !== remote ||
+                operation.root !== root ||
+                operation.state !== state ||
+                operation.ownerLease.phase !== 'draining' ||
+                !state.leases.has(operation.ownerLease) ||
+                !state.parked ||
+                runsByRemote.get(remote) !== state ||
+                !(draining() || finalizing())
+              : admittedDuringDrain
+                ? !draining()
+                : !valid())
+          )
+            throw new Error(`${remote} plugin context is no longer active`)
+        }
         if (operation === null) return invoke()
         try {
           return await finalizationOperations.run(operation, invoke)
@@ -678,7 +729,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         const guarded = (payload: unknown): void => {
           // Providers remain available to fresh disposer work while their
           // dependants drain, but a stopping listener cannot restart work.
-          if (valid() || (state.parked && lease.phase === 'active' && established)) handler(payload)
+          if (valid() || (state.parked && lease.phase === 'active' && lease.established))
+            handler(payload)
         }
         set.add(guarded)
         return keep(() => void set.delete(guarded))
@@ -782,12 +834,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         dispose: () => {},
         lease,
         establish: () => {
-          established = true
+          lease.established = true
         },
         closeEvents: () => {
           eventsLive = false
         },
         undos,
+        cancel: lease.cancel,
       }
     try {
       const dispose = await plugin.activate(ctx)
@@ -796,16 +849,17 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         dispose,
         lease,
         establish: () => {
-          established = true
+          lease.established = true
         },
         closeEvents: () => {
           eventsLive = false
         },
         undos,
+        cancel: lease.cancel,
       }
     } catch (err) {
+      lease.cancel()
       lease.phase = 'closed'
-      eventBus.cancelPending()
       state.leases.delete(lease)
       eventsLive = false
       console.error(`[plugins] ${id} did not start:`, err)
@@ -818,7 +872,16 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         remote,
         plugin: id,
       })
-      undoAll(id, undos)
+      const cleanupFailures = undoAll(id, undos)
+      if (cleanupFailures.length > 0) {
+        const failure = new AggregateError(
+          [err, ...cleanupFailures],
+          `plugin ${id} activation cleanup failed`,
+        )
+        state.teardownFailure ??= failure
+        throw failure
+      }
+      if (state.teardownFailure !== null) throw state.teardownFailure
       return null
     }
   }
@@ -832,43 +895,68 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     }
   }
 
-  function undoAll(id: string, undos: ReadonlySet<() => void>): void {
+  function undoAll(id: string, undos: ReadonlySet<() => void>): unknown[] {
+    const failures: unknown[] = []
     for (const undo of [...undos].reverse()) {
       try {
         undo()
       } catch (err) {
+        failures.push(err)
         console.error(`[plugins] ${id} undo failed:`, err)
       }
     }
+    return failures
   }
 
   /** Its disposer, then what it registered. It is served until both are done. */
   async function stopOne(s: Started, state: VaultRun): Promise<void> {
     state.stopping.set(s.id, true)
-    s.lease.events.cancelPending()
+    s.lease.cancel()
     s.lease.phase = 'draining'
+    const failures: unknown[] = []
     try {
-      await Promise.resolve()
-        .then(s.dispose)
-        .catch((err) => console.error(`[plugins] ${s.id} stop failed:`, err))
-      await s.lease.events.drain()
+      try {
+        await Promise.resolve().then(s.dispose)
+      } catch (err) {
+        failures.push(err)
+        console.error(`[plugins] ${s.id} stop failed:`, err)
+      }
+      try {
+        await s.lease.events.drain()
+      } catch (err) {
+        failures.push(err)
+      }
     } finally {
       s.lease.phase = 'closed'
       s.lease.events.cancelPending()
       s.closeEvents()
-      undoAll(s.id, s.undos)
+      failures.push(...undoAll(s.id, s.undos))
       state.leases.delete(s.lease)
       state.stopping.delete(s.id)
     }
+    if (failures.length > 0) {
+      const failure = new AggregateError(failures, `plugin ${s.id} teardown failed`)
+      state.teardownFailure ??= failure
+      throw failure
+    }
+    state.invalidated.delete(s.id)
   }
 
   async function stopNow(remote: string, state: VaultRun): Promise<void> {
+    if (state.teardownFailure !== null) throw state.teardownFailure
     state.parked = true
     state.failed.clear()
     state.lastWant = ''
+    const failures: unknown[] = []
     for (const s of [...state.started].reverse()) {
       state.started = state.started.filter((x) => x !== s)
-      await stopOne(s, state)
+      try {
+        await stopOne(s, state)
+      } catch (err) {
+        failures.push(err)
+        // Keep providers alive when a dependent's cleanup cannot be proven.
+        break
+      }
     }
     for (const entry of reportListeners) if (entry.remote === remote) reportListeners.delete(entry)
     for (const entry of mentionListeners)
@@ -879,12 +967,16 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     for (const key of heard.keys()) if (key.startsWith(`${remote}/`)) heard.delete(key)
     snapshots.delete(remote)
     state.holds = null
+    if (failures.length > 0)
+      throw new AggregateError(failures, `plugins in ${remote} failed to stop`)
+    if (state.teardownFailure !== null) throw state.teardownFailure
   }
 
   async function reconcileNow(
     vault: OpenVault,
     why: 'open' | 'settings' | 'snapshot',
     scheduledGeneration: number,
+    configuration: number,
   ): Promise<void> {
     const { remote, root } = vault
     let state = runsByRemote.get(remote)
@@ -894,12 +986,22 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     } else {
       state.vault = vault
     }
-    if (state.generation !== scheduledGeneration) return
-    if (why === 'open') state.parked = false
-    else if (state.parked) return
+    if (state.generation !== scheduledGeneration || state.configuration !== configuration) return
+    if (state.teardownFailure !== null) throw state.teardownFailure
+    if (why === 'open') {
+      // This job is behind the prior stop in the remote's queue. Only an
+      // explicit open can begin a new lifetime after cleanup is proven.
+      state.closed = false
+      state.parked = false
+    } else if (state.closed) return
     const activation = state.generation
     const want = (await read(root)).running
-    if (runsByRemote.get(remote) !== state || state.generation !== activation || state.parked)
+    if (
+      runsByRemote.get(remote) !== state ||
+      state.generation !== activation ||
+      state.configuration !== configuration ||
+      state.closed
+    )
       return
     const wantKey = [...want].sort().join(' ')
     if (why !== 'snapshot' || wantKey !== state.lastWant) {
@@ -908,10 +1010,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     }
     state.lastWant = wantKey
     for (const s of [...state.started].reverse()) {
-      if (want.has(s.id)) continue
+      if (want.has(s.id) && !state.invalidated.has(s.id)) continue
       state.started = state.started.filter((x) => x !== s)
       await stopOne(s, state)
     }
+    if (state.closed || state.configuration !== configuration || state.generation !== activation)
+      return
+    state.parked = false
     const isStarted = (id: string): boolean => state.started.some((s) => s.id === id)
     const joining = startOrder(want).filter(
       (p) => !isStarted(p.info.id) && !state.failed.has(p.info.id),
@@ -923,7 +1028,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       )
     }
     for (const plugin of joining) {
-      if (runsByRemote.get(remote) !== state || state.generation !== activation || state.parked)
+      if (
+        runsByRemote.get(remote) !== state ||
+        state.generation !== activation ||
+        state.configuration !== configuration ||
+        state.closed ||
+        state.parked
+      )
         return
       const id = plugin.info.id
       const down = (plugin.info.requires ?? []).filter((r) => !isStarted(r))
@@ -932,8 +1043,23 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         continue
       }
       const s = await start(plugin, vault, state)
-      if (runsByRemote.get(remote) !== state || state.generation !== activation || state.parked) {
+      if (
+        runsByRemote.get(remote) !== state ||
+        state.generation !== activation ||
+        state.configuration !== configuration ||
+        state.closed ||
+        state.parked ||
+        (s !== null && state.invalidated.has(id))
+      ) {
         if (s !== null) await stopOne(s, state)
+        // Another reconcile may have cancelled established dependencies while
+        // this startup yielded. Their disposers still own finalization authority.
+        if (
+          state.stopPromise === null &&
+          state.teardownFailure === null &&
+          state.invalidated.size === 0
+        )
+          state.parked = false
         return
       }
       if (s !== null) {
@@ -949,6 +1075,21 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       console.error(`[plugins] ${state.vault.remote} reconcile failed:`, err),
     )
     return run
+  }
+
+  /** Revoke ordinary authority even if cleanup already failed. Cancellation
+   * is idempotent: providers and an existing disposer's final output remain
+   * available through their narrow finalization authority, not ordinary calls. */
+  function revoke(remote: string, state: VaultRun): void {
+    if (!state.closed) {
+      appFrames.revokeActivation(remote, state.generation)
+      state.generation += 1
+      state.closed = true
+      cacheVersions.set(state.vault.root, (cacheVersions.get(state.vault.root) ?? 0) + 1)
+      cache.delete(state.vault.root)
+    }
+    state.parked = true
+    for (const lease of state.leases) lease.cancel()
   }
 
   return {
@@ -974,41 +1115,90 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       return ensureSeeded(root, ...(await seeding(root)).seedArgs)
     },
 
-    reconcile: (vault, why) => {
+    reconcile: async (vault, why) => {
       const state = runsByRemote.get(vault.remote) ?? makeRun(vault)
       runsByRemote.set(vault.remote, state)
       state.vault = vault
+      if (why !== 'open' && state.closed) return
       const scheduledGeneration = state.generation
-      return queued(state, () => reconcileNow(vault, why, scheduledGeneration))
+      // Admission, not the queued read, supersedes old joining work. Pending
+      // startups cannot keep ordinary authority while the new read is blocked.
+      const configuration = ++state.configuration
+      // A superseded read must not overwrite dispatch's current enablement.
+      forget(vault.remote)
+      for (const lease of state.leases) {
+        if (!lease.established) lease.cancel()
+      }
+      if (why === 'settings' || why === 'snapshot') {
+        const configured = (await read(vault.root)).running
+        if (
+          runsByRemote.get(vault.remote) !== state ||
+          state.generation !== scheduledGeneration ||
+          state.configuration !== configuration ||
+          state.closed
+        )
+          return
+        const unavailable = new Set(
+          [...state.leases]
+            .filter((lease) => !configured.has(lease.pluginId))
+            .map((lease) => lease.pluginId),
+        )
+        if (unavailable.size > 0) state.parked = true
+        for (const lease of state.leases) {
+          if (unavailable.has(lease.pluginId)) lease.cancel()
+        }
+      }
+      return queued(state, () => reconcileNow(vault, why, scheduledGeneration, configuration))
     },
 
     async stop(remote) {
       const state = runsByRemote.get(remote)
       if (state === undefined) return
-      appFrames.revokeActivation(remote, state.generation)
-      state.generation += 1
-      state.parked = true
-      for (const lease of state.leases) lease.events.cancelPending()
-      cacheVersions.set(state.vault.root, (cacheVersions.get(state.vault.root) ?? 0) + 1)
-      cache.delete(state.vault.root)
-      await queued(state, () => stopNow(remote, state))
-      forget(remote)
+      revoke(remote, state)
+      if (state.teardownFailure !== null) throw state.teardownFailure
+      if (state.stopPromise !== null) return state.stopPromise
+      const stopping = queued(state, () => stopNow(remote, state)).catch((err) => {
+        state.teardownFailure ??= err
+        throw err
+      })
+      state.stopPromise = stopping
+      try {
+        await stopping
+        forget(remote)
+      } finally {
+        if (state.teardownFailure === null) state.stopPromise = null
+      }
     },
 
     async stopAll() {
       const entries = [...runsByRemote.entries()]
       for (const [remote, state] of entries) {
-        appFrames.revokeActivation(remote, state.generation)
-        state.generation += 1
-        state.parked = true
-        for (const lease of state.leases) lease.events.cancelPending()
-        cacheVersions.set(state.vault.root, (cacheVersions.get(state.vault.root) ?? 0) + 1)
-        cache.delete(state.vault.root)
+        // Repeated stops join cleanup, but sticky failure must never leave
+        // a retained provider's ordinary activation authority alive.
+        revoke(remote, state)
       }
-      await Promise.all(
-        entries.map(([remote, state]) => queued(state, () => stopNow(remote, state))),
+      const results = await Promise.allSettled(
+        entries.map(async ([remote, state]) => {
+          if (state.teardownFailure !== null) throw state.teardownFailure
+          if (state.stopPromise !== null) return state.stopPromise
+          const stopping = queued(state, () => stopNow(remote, state)).catch((err) => {
+            state.teardownFailure ??= err
+            throw err
+          })
+          state.stopPromise = stopping
+          try {
+            await stopping
+          } finally {
+            if (state.teardownFailure === null) state.stopPromise = null
+          }
+        }),
       )
       cache.clear()
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : [],
+      )
+      if (failures.length > 0)
+        throw new AggregateError(failures, 'one or more plugin lifetimes failed to stop')
     },
 
     displayed: () => displayed,

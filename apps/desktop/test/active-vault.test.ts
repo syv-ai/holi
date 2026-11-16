@@ -2488,19 +2488,28 @@ describe('VaultHost', () => {
     expect(leftFrom).toEqual(['syv-ai/a', 'syv-ai/b'])
   })
 
-  it('switches vaults even when the leave hook throws', async () => {
+  it('keeps the active vault and runtime when leave cleanup fails, then allows retry', async () => {
     const { registry } = await twoVaults()
+    let fail = true
     const h = createVaultHost({
       claims: CLAIMS,
       registry,
       onSnapshot: () => {},
       onSyncState: () => {},
-      onLeave: () => Promise.reject(new Error('the PTY would not die')),
+      onLeave: async () => {
+        if (fail) throw new Error('the PTY would not die')
+      },
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
     })
     hosts.push(h)
 
-    await h.open('syv-ai/a')
+    const a = await h.open('syv-ai/a')
+    await expect(h.open('syv-ai/b')).rejects.toThrow('the PTY would not die')
+    expect(h.active()).toBe(a)
+    expect(h.get('syv-ai/a')).toBe(a)
+    expect(h.get('syv-ai/b')).toBeNull()
+
+    fail = false
     await h.open('syv-ai/b')
     expect(h.active()?.remote).toBe('syv-ai/b')
   })
