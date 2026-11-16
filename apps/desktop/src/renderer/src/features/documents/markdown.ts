@@ -19,101 +19,17 @@ import {
  *  comment, so it is invisible anywhere else the file is read. */
 export const AGENT_MARKER = '<!-- holi:agent -->'
 
-function markdownImageFromSource(
-  body: string,
-  source: string,
-  manager: { parse: (source: string) => any },
-) {
-  try {
-    const tokens = marked.lexer(body).filter((token) => token.type !== 'space')
-    const paragraph = tokens.length === 1 && tokens[0]?.type === 'paragraph' ? tokens[0] : null
-    if (
-      paragraph?.type === 'paragraph' &&
-      paragraph.tokens?.length === 1 &&
-      paragraph.tokens[0]?.type === 'image'
-    ) {
-      const sourceTokens = marked.lexer(`${body}\n\n${source}`)
-      const imageToken = sourceTokens
-        .filter((token) => token.type === 'paragraph')
-        .flatMap((token: any) => token.tokens ?? [])
-        .find((token: any) => token.type === 'image' && token.raw.trim() === body.trim())
-      if (imageToken?.href) {
-        return {
-          type: 'image',
-          attrs: {
-            src: imageToken.href,
-            alt: imageToken.text,
-            title: imageToken.title ?? null,
-          },
-        }
-      }
-      const document = manager.parse(`${body}\n\n${source}`)
-      const first = document.content?.[0]
-      const image =
-        first?.type === 'image'
-          ? first
-          : first?.type === 'paragraph' && first.content?.length === 1
-            ? first.content[0]
-            : null
-      if (image?.type === 'image') return image
-    }
-  } catch {
-    // Reference syntax below also covers markdown parsers without reference support.
-  }
-  const match = /^ {0,3}!\[([^\]]*)\](?:\[([^\]]*)\])?$/.exec(body)
-  if (!match) return null
-  const alt = match[1]!.replace(/\\([\\[\]])/g, '$1')
-  const reference = (match[2] || match[1]!).trim().replace(/\s+/g, ' ').toLowerCase()
-  const definition = marked
-    .lexer(source)
-    .find((token: any) => token.type === 'def' && token.tag === reference)
-  if (!definition || definition.type !== 'def') return null
+function markdownImageFromSource(body: string, source: string) {
+  // Lex in document context: Marked resolves full, collapsed and shortcut
+  // references, escapes and multiline definitions without scanning example text.
+  const paragraph = marked.lexer(`${body}\n\n${source}`)[0]
+  if (paragraph?.type !== 'paragraph') return null
+  const image = paragraph.tokens?.find((token) => token.type === 'image')
+  if (image?.type !== 'image' || image.raw.trim() !== body.trim()) return null
   return {
     type: 'image',
-    attrs: {
-      src: definition.href,
-      alt,
-      title: definition.title ?? null,
-    },
+    attrs: { src: image.href, alt: image.text, title: image.title ?? null },
   }
-}
-
-function expandReferenceImages(source: string, manager: { parse: (source: string) => any }) {
-  const replacements: Array<{ from: number; to: number; text: string }> = []
-  let fence: { marker: string; length: number } | null = null
-  let offset = 0
-  for (const line of source.split(/\r?\n/)) {
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line)
-    if (fence) {
-      if (fenceMatch?.[1]?.[0] === fence.marker && fenceMatch[1].length >= fence.length)
-        fence = null
-    } else if (fenceMatch) {
-      fence = { marker: fenceMatch[1]![0]!, length: fenceMatch[1]!.length }
-    } else if (/^ {0,3}!\[[^\n]*\](?:\[[^\n]*\])?\s*$/.test(line)) {
-      const body = line.trim()
-      const image = markdownImageFromSource(body, source, manager)
-      if (image?.attrs?.src && !body.includes('(')) {
-        const alt = String(image.attrs.alt ?? '').replace(/([\\\\[\\]])/g, '\\\\$1')
-        const target = String(image.attrs.src).replace(/[\\\\()]/g, '\\\\$&')
-        const title = image.attrs.title
-          ? ` \"${String(image.attrs.title).replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\\"')}\"`
-          : ''
-        replacements.push({
-          from: offset,
-          to: offset + line.length,
-          text: `![${alt}](${target}${title})`,
-        })
-      }
-    }
-    const afterLine = offset + line.length
-    offset =
-      afterLine +
-      (source.startsWith('\r\n', afterLine) ? 2 : source.startsWith('\n', afterLine) ? 1 : 0)
-  }
-  let result = source
-  for (const replacement of replacements.reverse())
-    result = result.slice(0, replacement.from) + replacement.text + result.slice(replacement.to)
-  return result
 }
 
 function preserveReferenceDefinitions(parsed: any, source: string) {
@@ -144,99 +60,34 @@ function protectedMarkdownRanges(source: string) {
   return ranges
 }
 
-function hasStandaloneImageSource(source: string) {
-  let fence: { marker: string; length: number } | null = null
-  for (const line of source.split(/\r?\n/)) {
-    const match = /^ {0,3}(`{3,}|~{3,})/.exec(line)
-    if (fence) {
-      if (match?.[1]?.[0] === fence.marker && match[1].length >= fence.length) fence = null
-    } else if (match) {
-      fence = { marker: match[1]![0]!, length: match[1]!.length }
-    } else if (/^ {0,3}!\[[^\n]*\](?:\([^\n]*\)|\[[^\n]*\]|[ \t*]*)$/.test(line)) {
-      return true
-    }
+/** Marked's top-level raw ranges bind each image to its own source block.
+ * Figures and opaque envelopes consume their ranges before standalone images. */
+function standaloneImageBlocks(source: string, consumed: Array<{ from: number; to: number }>) {
+  const images: Array<{ from: number; to: number; node: any }> = []
+  let offset = 0
+  for (const token of marked.lexer(source)) {
+    const from = offset
+    offset += token.raw.length
+    if (consumed.some((range) => from >= range.from && from < range.to)) continue
+    if (token.type !== 'paragraph') continue
+    const image = token.tokens?.find((part) => part.type === 'image')
+    if (image?.type !== 'image' || token.raw.trim() !== image.raw.trim()) continue
+    const body = token.raw.trimEnd()
+    const attrs = { src: image.href, alt: image.text, title: image.title ?? null }
+    images.push({
+      from,
+      to: from + body.length,
+      node: {
+        type: 'image',
+        attrs: {
+          ...attrs,
+          sourceMarkdown: body,
+          sourceMarkdownImageAttrs: JSON.stringify([attrs.src, attrs.alt, attrs.title]),
+        },
+      },
+    })
   }
-  return false
-}
-
-function annotateStandaloneImageSources(
-  parsed: any,
-  source: string,
-  manager: { parse: (source: string) => any },
-) {
-  let fence: { marker: string; length: number } | null = null
-  const candidates: Array<{ body: string; image: any }> = []
-  for (const line of source.split(/\r?\n/)) {
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line)
-    if (fence) {
-      if (fenceMatch?.[1]?.[0] === fence.marker && fenceMatch[1].length >= fence.length)
-        fence = null
-      continue
-    }
-    if (fenceMatch) {
-      fence = { marker: fenceMatch[1]![0]!, length: fenceMatch[1]!.length }
-      continue
-    }
-    if (!/^ {0,3}!\[[^\n]*\](?:\([^\n]*\)|\[[^\n]*\]|[ \t*]*)$/.test(line)) continue
-    try {
-      const image = markdownImageFromSource(line, source, manager)
-      if (image) candidates.push({ body: line, image })
-    } catch {
-      // An unsupported image form remains an ordinary markdown block.
-    }
-  }
-  const available = [...candidates]
-  parsed.content = (parsed.content ?? []).map((node: any) => {
-    const image =
-      node.type === 'image'
-        ? node
-        : node.type === 'paragraph' &&
-            node.content?.length === 1 &&
-            node.content[0]?.type === 'image'
-          ? node.content[0]
-          : null
-    if (!image) return node
-    const index = available.findIndex(
-      (candidate) => (candidate.image.attrs?.alt ?? null) === (image.attrs?.alt ?? null),
-    )
-    if (index < 0) return node
-    const [candidate] = available.splice(index, 1)
-    const sourceMarkdownImageAttrs = JSON.stringify([
-      candidate!.image.attrs?.src ?? '',
-      candidate!.image.attrs?.alt ?? null,
-      candidate!.image.attrs?.title ?? null,
-    ])
-    return {
-      ...node,
-      ...(node.type === 'image'
-        ? {
-            attrs: {
-              ...node.attrs,
-              src: candidate!.image.attrs?.src,
-              alt: candidate!.image.attrs?.alt,
-              title: candidate!.image.attrs?.title,
-              sourceMarkdown: candidate!.body,
-              sourceMarkdownImageAttrs,
-            },
-          }
-        : {
-            content: [
-              {
-                ...node.content[0],
-                attrs: {
-                  ...image.attrs,
-                  src: candidate!.image.attrs?.src,
-                  alt: candidate!.image.attrs?.alt,
-                  title: candidate!.image.attrs?.title,
-                  sourceMarkdown: candidate!.body,
-                  sourceMarkdownImageAttrs,
-                },
-              },
-            ],
-          }),
-    }
-  })
-  return preserveReferenceDefinitions(parsed, source)
+  return images
 }
 
 function unhandledCaptionRanges(
@@ -300,18 +151,25 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
     try {
       // Parse in document context so shortcut, collapsed, and full reference
       // images can resolve definitions anywhere in the document.
-      const image = markdownImageFromSource(body, source, manager)
+      const image = markdownImageFromSource(body, source)
       if (!image || typeof image.attrs?.src !== 'string' || !image.attrs.src) return []
-      image.attrs = {
-        ...image.attrs,
-        sourceMarkdown: body,
-        sourceMarkdownImageAttrs: JSON.stringify([
-          image.attrs.src ?? '',
-          image.attrs.alt ?? null,
-          image.attrs.title ?? null,
-        ]),
-      }
-      return [{ ...frame, image }]
+      return [
+        {
+          ...frame,
+          image: {
+            ...image,
+            attrs: {
+              ...image.attrs,
+              sourceMarkdown: body,
+              sourceMarkdownImageAttrs: JSON.stringify([
+                image.attrs.src ?? '',
+                image.attrs.alt ?? null,
+                image.attrs.title ?? null,
+              ]),
+            },
+          },
+        },
+      ]
     } catch {
       return []
     }
@@ -324,26 +182,25 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
     frames.map((frame) => frame.envelope),
     protectedRanges,
   )
-  if (!frames.length && !opaqueRanges.length)
-    return annotateStandaloneImageSources(
-      manager.parse(expandReferenceImages(source, manager)),
-      source,
-      manager,
-    )
-
+  const standaloneImages = standaloneImageBlocks(source, [
+    ...frames.map((frame) => frame.envelope),
+    ...opaqueRanges,
+  ])
   const items = [
     ...frames.map((frame, frameIndex) => ({
       from: frame.envelope.from,
       to: frame.envelope.to,
       frameIndex,
-      raw: null as string | null,
+      node: null as any,
     })),
     ...opaqueRanges.map((range) => ({
       ...range,
       frameIndex: null as number | null,
-      raw: source.slice(range.from, range.to),
+      node: { type: 'htmlBlock', attrs: { html: source.slice(range.from, range.to) } },
     })),
+    ...standaloneImages.map((image) => ({ ...image, frameIndex: null as number | null })),
   ].sort((left, right) => left.from - right.from)
+  if (!items.length) return preserveReferenceDefinitions(manager.parse(source), source)
   const placeholders = items.map((_, index) => {
     let token = `<!-- holi-private-caption-${index} -->`
     let suffix = 0
@@ -355,7 +212,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
     const item = items[index]!
     substituted = substituted.slice(0, item.from) + placeholders[index] + substituted.slice(item.to)
   }
-  const parsed = manager.parse(expandReferenceImages(substituted, manager))
+  const parsed = manager.parse(substituted)
   const figures = frames.map((frame) => {
     try {
       const imageFrame = imageFrames.find(
@@ -422,7 +279,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
         if (figure) return [figure]
         return [{ ...node, attrs: { ...node.attrs, html: source.slice(item.from, item.to) } }]
       }
-      return [{ ...node, attrs: { ...node.attrs, html: item.raw } }]
+      return [item.node]
     }
     let restored = String(node.attrs?.html ?? '')
     for (const [placeholder, range] of byPlaceholder)
@@ -430,7 +287,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
         restored = restored.replaceAll(placeholder, source.slice(range.from, range.to))
     return [{ ...node, attrs: { ...node.attrs, html: restored } }]
   })
-  return annotateStandaloneImageSources(parsed, source, manager)
+  return preserveReferenceDefinitions(parsed, source)
 }
 
 export const DocumentMarkdown = Markdown.extend({
@@ -443,7 +300,7 @@ export const DocumentMarkdown = Markdown.extend({
     manager.parse = (source: string) => withDocumentFigures({ parse }, source)
     if (
       this.editor.options.contentType === 'markdown' &&
-      (readMarkdownCaptionEnvelopes(initial).length || hasStandaloneImageSource(initial))
+      (readMarkdownCaptionEnvelopes(initial).length || standaloneImageBlocks(initial, []).length)
     ) {
       this.editor.options.content = withDocumentFigures({ parse }, initial)
       this.editor.options.contentType = 'json'

@@ -43,7 +43,7 @@ const DocumentImage = Image.extend<{ folder: string }>({
           const source = element.getAttribute('data-holi-source-src')
           const sourceFolder = element.getAttribute('data-holi-source-folder')
           const visible = element.getAttribute('src') ?? ''
-          if (!source || !sourceFolder || displaySrc(source, sourceFolder) !== visible)
+          if (!source || sourceFolder === null || displaySrc(source, sourceFolder) !== visible)
             return visible
           return portableImageSrc(source, sourceFolder, folder)
         },
