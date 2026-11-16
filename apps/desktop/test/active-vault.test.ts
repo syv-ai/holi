@@ -28,6 +28,8 @@ import {
   type VaultHost,
 } from '../src/main/vault/active-vault'
 import { VaultRegistry } from '../src/main/vault/registry'
+import { createSubscriptions } from '../src/main/vault/subscriptions'
+import { createManagedCommitProvenance } from '../src/main/managed-commit-provenance'
 import { cleanupFixtures, makeClone, makeRemote, plainGit, tmp } from './helpers/git-fixtures'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -143,17 +145,26 @@ describe('ActiveVault — snapshot', () => {
   it('records the real autosave and held-back override paths', async () => {
     const origin = await makeRemote()
     const dir = await makeClone(origin)
+    await plainGit(dir, ['remote', 'set-url', 'origin', 'https://github.com/syv-ai/notes.git'])
     await sleep(QUIESCE)
-    const recorded: Array<string | null> = []
+    const state = join(await tmp('holi-active-provenance-'), 'records.json')
+    const subscriptions = createSubscriptions(
+      join(await tmp('holi-active-subscriptions-'), 'subscriptions.json'),
+    )
+    await subscriptions.set('syv-ai/notes', dir, '', true, () => openRepo(dir).head())
+    const provenance = createManagedCommitProvenance({
+      file: state,
+      remote: 'syv-ai/notes',
+      identity: () => ({ accountId: 31, generation: 2 }),
+      subscribed: () => subscriptions.hasExplicit('syv-ai/notes'),
+    })
     const active = await openActiveVault({
       claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: openRepo(dir, {
         commitProvenance: {
-          begin: () => ({ accountId: 31, generation: 2 }),
-          record: async (_ticket, _root, oid) => {
-            recorded.push(oid)
-          },
+          begin: (root) => provenance.begin(root),
+          record: (ticket, root, oid) => provenance.record(ticket, root, oid),
         },
       }),
       onSnapshot: () => {},
@@ -170,8 +181,11 @@ describe('ActiveVault — snapshot', () => {
 
     await writeFile(join(dir, 'autosave.md'), 'autosaved\n')
     await active.commitNow()
-    expect(recorded).toHaveLength(1)
-    expect(recorded[0]).toMatch(/^[0-9a-f]{40}$/)
+    const savedAutosave = JSON.parse(await readFile(state, 'utf8')) as {
+      records: Array<{ oid: string }>
+    }
+    expect(savedAutosave.records).toHaveLength(1)
+    expect(savedAutosave.records[0]?.oid).toMatch(/^[0-9a-f]{40}$/)
 
     await writeFile(join(dir, 'large.bin'), Buffer.alloc(10 * 1024 * 1024 + 1))
     await active.commitNow()
@@ -179,8 +193,11 @@ describe('ActiveVault — snapshot', () => {
       active.heldBack().some((file) => file.path === 'large.bin'),
     )
     await active.commitHeldBack('large.bin')
-    expect(recorded).toHaveLength(2)
-    expect(recorded[1]).toMatch(/^[0-9a-f]{40}$/)
+    const savedOverride = JSON.parse(await readFile(state, 'utf8')) as {
+      records: Array<{ oid: string }>
+    }
+    expect(savedOverride.records).toHaveLength(2)
+    expect(savedOverride.records[1]?.oid).toMatch(/^[0-9a-f]{40}$/)
   })
 
   it('drains a failed held-back override before commitNow returns', async () => {

@@ -237,7 +237,7 @@ describe('commitAll', () => {
     expect(records[1]).toEqual({ root: dir, oid: noVerifySha })
   })
 
-  it('leaves provenance unknown when a hook creates another commit with the marker', async () => {
+  it('leaves provenance unknown when marker-inheriting hook commits exceed the reflog window', async () => {
     const dir = await makeClone(await makeRemote())
     const records: Array<string | null> = []
     const repo = openRepo(dir, {
@@ -253,7 +253,7 @@ describe('commitAll', () => {
     const hook = join(hooks, 'post-commit')
     await writeFile(
       hook,
-      '#!/bin/sh\nif [ ! -f .git/hook-fired ]; then touch .git/hook-fired; git -c user.name=hook -c user.email=hook@localhost commit --allow-empty -m hook; fi\n',
+      '#!/bin/sh\nif [ ! -f .git/hook-fired ]; then touch .git/hook-fired; for i in $(seq 1 40); do git -c core.hooksPath=/dev/null -c user.name=hook -c user.email=hook@localhost commit --allow-empty -m hook-$i || exit 1; done; fi\n',
     )
     const { chmod } = await import('node:fs/promises')
     await chmod(hook, 0o755)
