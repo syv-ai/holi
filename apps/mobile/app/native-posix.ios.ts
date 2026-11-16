@@ -2,7 +2,7 @@ function data(bytes: Uint8Array): NSData {
   return NSData.dataWithBytesLength(bytes, bytes.length)
 }
 
-export function nativePath(value: string): NSData {
+function nativePath(value: string): NSData {
   return data(
     new Uint8Array(Array.from(unescape(encodeURIComponent(value)), (char) => char.charCodeAt(0))),
   )

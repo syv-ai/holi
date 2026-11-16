@@ -3,24 +3,42 @@ import { test } from 'vitest'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
 import { runCommand, validateReport, validateSharedGraph } from '../scripts/host-checks.mjs'
 
+import { storageFaultPhases, storageFixturePaths } from '../app/vault-storage-check'
+
+const runId = '11111111-1111-1111-1111-111111111111'
 const corpus = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
 const context = {
-  runId: 'fresh',
+  runId,
   launchedAt: 100,
   now: 200,
   osVersion: '26.2',
   storageRoot: '/sandbox/Documents',
 }
+const rawNames = ['Café.md', 'Cafe\u0301.md'].map((name, index) => ({
+  root: `/sandbox/Documents/holi-raw-${runId}-${index}`,
+  name,
+  names: [name],
+  aliasRejected: true,
+  originalText: 'raw native fixture',
+  saved: 'updated raw native fixture',
+}))
 const report = {
-  schemaVersion: 1,
-  runId: 'fresh',
+  schemaVersion: 2,
+  phase: 'normal',
+  rawNames,
+  nativeFilenameRoots: rawNames,
+  nativeFilenameSpellings: true,
+  runId,
   platform: 'ios',
   osVersion: '26.2',
   startedAt: 110,
   finishedAt: 120,
   corpus,
   storage: {
-    schemaVersion: 2,
+    schemaVersion: 3,
+    faultPhases: [...storageFaultPhases],
+    faultOperations: 10,
+    fixturesPreserved: [...storageFixturePaths],
     passed: 1,
     total: 1,
     failed: 0,
@@ -33,7 +51,7 @@ const report = {
     symlinkRejected: true,
     finalBytes: 'winner A',
   },
-  storageRoot: '/sandbox/Documents/holi-storage-check-fresh-110',
+  storageRoot: `/sandbox/Documents/holi-storage-check-${runId}`,
 }
 
 test('host accepts only fresh complete native evidence for every bundled case', () => {
@@ -43,6 +61,42 @@ test('host accepts only fresh complete native evidence for every bundled case', 
 })
 
 for (const [name, mutate] of [
+  [
+    'wrong phase',
+    (value) => {
+      value.phase = 'recovery'
+    },
+  ],
+  [
+    'missing fault cases',
+    (value) => {
+      value.storage.faultOperations = 0
+    },
+  ],
+  [
+    'missing planted fixtures',
+    (value) => {
+      value.storage.fixturesPreserved.pop()
+    },
+  ],
+  [
+    'missing native Unicode proof',
+    (value) => {
+      delete value.rawNames
+    },
+  ],
+  [
+    'wrong raw root',
+    (value) => {
+      value.rawNames[0].root = '/outside'
+    },
+  ],
+  [
+    'Unicode spelling mismatch',
+    (value) => {
+      value.rawNames[0].names = ['Cafe\u0301.md']
+    },
+  ],
   [
     'traversal storage root',
     (value) => {
@@ -94,7 +148,7 @@ for (const [name, mutate] of [
   [
     'unsupported schema',
     (value) => {
-      value.schemaVersion = 2
+      value.schemaVersion = 3
     },
   ],
   [

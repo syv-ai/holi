@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { runVaultStorageCheck } from '../app/vault-storage-check'
 import { createVaultStorage } from '../app/vault-storage'
 import { createNodeFiles, nodeFiles } from './native-files-node'
+import { captureStorageEvidence } from '../scripts/storage-evidence.mjs'
 
 const runId = randomUUID()
 const suiteRoot = `/tmp/holi-588-suite-${runId}`
@@ -17,7 +18,9 @@ async function root() {
   roots.push(path)
   return path
 }
-afterEach(async () => {
+afterEach(async ({ task }) => {
+  if (task.result?.state === 'fail')
+    await captureStorageEvidence([...roots], join(evidenceRoot, `failed-${Date.now()}.json`))
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })))
   await rm(suiteRoot, { recursive: true, force: true })
 })

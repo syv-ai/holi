@@ -2,9 +2,21 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
+import { basename, dirname, join } from 'node:path'
+import { storageFaultPhases, storageFixturePaths } from '../app/vault-storage-check.ts'
+import {
+  interruptionBefore,
+  interruptionAfter,
+  interruptionArtifacts,
+  stagingDirectory,
+  stageNamePattern,
+} from '../app/storage-staging.ts'
 
-export function validateReport(report, { runId, launchedAt, now, osVersion, storageRoot }) {
-  assert.equal(report.schemaVersion, 1)
+export function validateReport(report, context) {
+  const { runId, launchedAt, now, osVersion, storageRoot, phase = 'normal' } = context
+  assert.match(runId, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i)
+  assert.equal(report.schemaVersion, 2)
+  assert.equal(report.phase, phase)
   assert.equal(report.runId, runId, 'Stale or unrelated simulator report')
   assert.equal(report.platform, 'ios')
   assert.equal(report.osVersion, osVersion)
@@ -14,12 +26,29 @@ export function validateReport(report, { runId, launchedAt, now, osVersion, stor
   assert.equal(report.error, undefined, `Native corpus error: ${report.error}`)
   const reference = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
   assert.ok(reference.total > 0)
-  assert.equal(reference.failed, 0, 'The canonical corpus has incorrect expectations')
+  assert.equal(reference.failed, 0)
   assert.deepEqual(report.corpus, reference, 'Native report is partial, mismatched or failed')
+  if (phase === 'recovery') {
+    assert.deepEqual(report.recovery, {
+      root: join(storageRoot, `holi-storage-interruption-${runId}`),
+      before: interruptionBefore,
+      after: interruptionAfter,
+      normalBytes: context.normalBytes,
+      ownedStageRemoved: true,
+      unownedPreserved: interruptionArtifacts.map(([name]) => name),
+      rawNamesPreserved: ['Café.md', 'Cafe\u0301.md'],
+    })
+    assert.ok(['winner A', 'winner B'].includes(context.normalBytes))
+    return
+  }
+  assert.equal(phase, 'normal')
   assert.deepEqual(
     report.storage,
     {
-      schemaVersion: 2,
+      schemaVersion: 3,
+      faultPhases: [...storageFaultPhases],
+      faultOperations: 10,
+      fixturesPreserved: [...storageFixturePaths],
       passed: 1,
       total: 1,
       failed: 0,
@@ -35,17 +64,39 @@ export function validateReport(report, { runId, launchedAt, now, osVersion, stor
     'Native storage evidence is missing or failed',
   )
   assert.ok(['winner A', 'winner B'].includes(report.storage.finalBytes))
-  assert.equal(typeof report.storageRoot, 'string', 'Storage path is missing')
-  assert.equal(
-    report.storageRoot,
-    `${storageRoot}/holi-storage-check-${runId}-${report.startedAt}`,
-    'Storage path is outside the exact owned Documents run root',
+  assert.equal(report.storageRoot, join(storageRoot, `holi-storage-check-${runId}`))
+  const names = ['Café.md', 'Cafe\u0301.md'].map((name, index) => ({
+    root: join(storageRoot, `holi-raw-${runId}-${index}`),
+    name,
+    names: [name],
+    aliasRejected: true,
+    originalText: 'raw native fixture',
+    saved: 'updated raw native fixture',
+  }))
+  assert.equal(report.nativeFilenameSpellings, true)
+  assert.deepEqual(report.rawNames, names)
+  assert.deepEqual(report.nativeFilenameRoots, names)
+}
+
+export function validateCheckpoint(marker, { runId, pid, launchedAt, now, documents, library }) {
+  assert.equal(marker.schemaVersion, 1)
+  assert.equal(marker.phase, 'staged')
+  assert.equal(marker.runId, runId)
+  assert.equal(marker.pid, pid)
+  assert.ok(Number.isSafeInteger(pid) && pid > 0)
+  assert.ok(Number.isSafeInteger(marker.startedAt) && marker.startedAt >= launchedAt)
+  assert.ok(
+    Number.isSafeInteger(marker.readyAt) &&
+      marker.readyAt >= marker.startedAt &&
+      marker.readyAt <= now &&
+      now - marker.readyAt < 60_000,
   )
-  assert.equal(
-    report.storageRoot.split('/').length,
-    storageRoot.split('/').length + 1,
-    'Storage root must be one direct child of the owned Documents directory',
-  )
+  const root = join(documents, `holi-storage-interruption-${runId}`)
+  assert.equal(marker.root, root)
+  assert.equal(marker.relative, 'durable.md')
+  assert.equal(typeof marker.stage, 'string')
+  assert.equal(dirname(marker.stage), stagingDirectory(library, root))
+  assert.match(basename(marker.stage), stageNamePattern)
 }
 
 export function validateSharedGraph(graph) {

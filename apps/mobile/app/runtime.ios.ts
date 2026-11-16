@@ -4,6 +4,7 @@ import { createNativeFiles, nativeFiles } from './native-files.ios'
 import { runVaultStorageCheck } from './vault-storage-check'
 import { nativeIO } from './native-posix.ios'
 import { createVaultStorage } from './vault-storage'
+import { runRestartPhase } from './storage-restart.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -16,6 +17,26 @@ function nativeUtf8(text: string): Uint8Array {
 export async function checkCompatibility(): Promise<string> {
   const startedAt = Date.now()
   const runId = NSProcessInfo.processInfo.environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
+  const launchPhase =
+    NSProcessInfo.processInfo.environment.objectForKey('HOLI_STORAGE_PHASE') ?? 'normal'
+  const persist = (value: Record<string, unknown>) =>
+    File.fromPath(
+      path.join(knownFolders.documents().path, 'vault-format-report.json'),
+    ).writeTextSync(
+      JSON.stringify({
+        schemaVersion: 2,
+        runId,
+        phase: launchPhase,
+        platform: 'ios',
+        osVersion: Device.osVersion,
+        startedAt,
+        finishedAt: Date.now(),
+        ...value,
+      }),
+      (error) => {
+        if (error) throw error
+      },
+    )
   let status: string
   let phase = 'format-corpus'
   let operation = 'runVaultFormatCorpus'
@@ -24,7 +45,18 @@ export async function checkCompatibility(): Promise<string> {
   let evidence: Record<string, unknown>
   let rawNames: unknown
   try {
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
+      throw new Error('Invalid compatibility run identity')
+    if (!['normal', 'stage', 'recovery'].includes(launchPhase))
+      throw new Error('Invalid storage phase')
     const corpus = runVaultFormatCorpus(nativeUtf8)
+    if (launchPhase === 'stage' || launchPhase === 'recovery') {
+      phase = launchPhase
+      operation = 'runRestartPhase'
+      const recovery = await runRestartPhase(launchPhase, runId, startedAt)
+      persist({ corpus, recovery })
+      return 'Interrupted save recovery passed'
+    }
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
@@ -70,8 +102,8 @@ export async function checkCompatibility(): Promise<string> {
         }
       }),
     )
-    storageRoot = `${documents}/holi-storage-check-${runId}-${startedAt}`
-    secondRoot = `${documents}/holi-storage-other-${runId}-${startedAt}`
+    storageRoot = `${documents}/holi-storage-check-${runId}`
+    secondRoot = `${documents}/holi-storage-other-${runId}`
     phase = 'create-storage-fixtures'
     operation = 'createDirectory'
     for (const root of [storageRoot, secondRoot]) {
@@ -129,22 +161,6 @@ export async function checkCompatibility(): Promise<string> {
       ...(secondRoot ? { secondRoot } : {}),
     }
   }
-  const report = {
-    schemaVersion: 1,
-    runId,
-    platform: 'ios',
-    osVersion: Device.osVersion,
-    startedAt,
-    finishedAt: Date.now(),
-    rawNames,
-    ...evidence,
-  }
-  // The driver reads only this app's fresh simulator sandbox, never a checkout path.
-  File.fromPath(path.join(knownFolders.documents().path, 'vault-format-report.json')).writeTextSync(
-    JSON.stringify(report),
-    (error) => {
-      if (error) throw error
-    },
-  )
+  persist({ rawNames, ...evidence })
   return status
 }

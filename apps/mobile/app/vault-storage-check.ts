@@ -1,6 +1,25 @@
 import { createVaultStorage } from './vault-storage'
 import type { NativeFiles } from './native-files'
 
+export const storageFaultPhases = [
+  'stage-open',
+  'stage-write',
+  'stage-sync',
+  'stage-close',
+  'publish',
+] as const
+export const storageFixturePaths = [
+  '.git/ignored.md',
+  'private.local.md',
+  '.env',
+  '.secrets/key',
+  '.holi-storage-unowned.tmp',
+  'unowned.md',
+  '.holi-storage-stage-00000000-0000-0000-0000-000000000000.tmp',
+  '.holi-storage-stage-00000000-0000-0000-0000-000000000000.tmp.owner',
+  '.holi-storage-stage-FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF.tmp.owner',
+] as const
+
 const bytes = (value: string) =>
   new Uint8Array(
     Array.from(unescape(encodeURIComponent(value)), (character) => character.charCodeAt(0)),
@@ -12,7 +31,7 @@ export async function runVaultStorageCheck(
   adapter: NativeFiles,
   root: string,
   secondRoot: string,
-  faultAdapter?: (
+  faultAdapter: (
     phase: 'stage-open' | 'stage-write' | 'stage-sync' | 'stage-close' | 'publish',
   ) => NativeFiles,
 ) {
@@ -98,66 +117,17 @@ export async function runVaultStorageCheck(
   }
   if (!staleRejected) throw new Error('Stale revision was accepted')
 
-  for (const path of [
-    'private.local.md',
-    '.env',
-    '.secrets/key',
-    '.git/config',
-    '.holi-storage-unowned.tmp',
-  ]) {
-    try {
-      await first.create(path, bytes('private'))
-    } catch {
-      // The storage policy may reject creation before listing.
-    }
-    if ((await first.list()).includes(path as never)) throw new Error(`Unsafe path listed: ${path}`)
-  }
-  // Plant real adversarial files before listing; rejected storage creates are not fixtures.
-  for (const path of [
-    '.git/ignored.md',
-    'private.local.md',
-    '.env',
-    '.secrets/key',
-    '.holi-storage-unowned.tmp',
-    'unowned.md',
-    'mismatched.md.holi-sidecar',
-    'malformed.md.holi-meta',
-  ]) {
-    try {
-      await adapter.create(await adapter.canonicalRoot(root), path, bytes(`fixture:${path}`))
-    } catch {
-      // Some adapters prohibit fixture placement at the filesystem seam.
-    }
-  }
+  // Bypass publishability policy only to plant real files at the filesystem seam.
+  for (const path of storageFixturePaths)
+    await adapter.create(await adapter.canonicalRoot(root), path, bytes(`fixture:${path}`))
   const listed = await first.list()
   for (const excludedPath of ['.git/ignored.md', 'private.local.md', '.env', '.secrets/key'])
     if (listed.includes(excludedPath as never))
       throw new Error(`Excluded fixture listed: ${excludedPath}`)
   if (!listed.includes('same/note.md' as never)) throw new Error('Publishable note missing')
-  if (
-    text(await adapter.read(await adapter.canonicalRoot(root), 'unowned.md')) !==
-    'fixture:unowned.md'
-  )
-    throw new Error('Unowned fixture bytes changed')
-  if (
-    text(await adapter.read(await adapter.canonicalRoot(root), 'mismatched.md.holi-sidecar')) !==
-    'fixture:mismatched.md.holi-sidecar'
-  )
-    throw new Error('Mismatched sidecar fixture bytes changed')
-  if (
-    text(await adapter.read(await adapter.canonicalRoot(root), 'malformed.md.holi-meta')) !==
-    'fixture:malformed.md.holi-meta'
-  )
-    throw new Error('Malformed sidecar fixture bytes changed')
-
-  if (faultAdapter) {
-    for (const phase of [
-      'stage-open',
-      'stage-write',
-      'stage-sync',
-      'stage-close',
-      'publish',
-    ] as const) {
+  let faultOperations = 0
+  {
+    for (const phase of storageFaultPhases) {
       const base = createVaultStorage(adapter, { remote: 'holi/fault-base', root })
       const failing = createVaultStorage(faultAdapter(phase), { remote: 'holi/fault', root })
       const before = bytes('durable previous bytes')
@@ -181,10 +151,17 @@ export async function runVaultStorageCheck(
         throw new Error(`Save fault ${phase} changed durable bytes`)
       if ((await base.list()).includes(`failed-create-${phase}.md` as never))
         throw new Error(`Create fault ${phase} published a note`)
+      faultOperations += 2
     }
   }
+  for (const path of storageFixturePaths)
+    if (text(await adapter.read(await adapter.canonicalRoot(root), path)) !== `fixture:${path}`)
+      throw new Error(`Adversarial fixture changed: ${path}`)
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
+    faultPhases: [...storageFaultPhases],
+    faultOperations,
+    fixturesPreserved: [...storageFixturePaths],
     passed: 1,
     total: 1,
     failed: 0,

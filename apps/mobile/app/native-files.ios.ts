@@ -1,6 +1,7 @@
 import { knownFolders } from '@nativescript/core'
 import { isInIgnoredDir, isLocalOnlyPath, isSecretPath } from '@holi/shared/mobile-path-safety'
-import { nativeIO, nativePath } from './native-posix.ios'
+import { nativeIO } from './native-posix.ios'
+import { stagingDirectory, stageNamePattern } from './storage-staging'
 import type { Entry, NativeFiles } from './native-files'
 
 type Fault = 'stage-open' | 'stage-write' | 'stage-sync' | 'stage-close' | 'publish'
@@ -69,16 +70,13 @@ function privateStages(root: string): string {
   if (stageRoot === root || stageRoot.startsWith(`${root}/`) || root.startsWith(`${stageRoot}/`))
     throw new Error('Vault overlaps private storage')
   directory(stageRoot)
-  const encoded = new Uint8Array(interop.bufferFromData(nativePath(root)))
-  const key = Array.from(encoded, (byte) => byte.toString(16).padStart(2, '0')).join('')
-  for (let index = 0; index < key.length; index += 64) {
-    stageRoot += `/${key.slice(index, index + 64)}`
+  const target = stagingDirectory(library, root)
+  for (const segment of target.slice(stageRoot.length + 1).split('/')) {
+    stageRoot += `/${segment}`
     directory(stageRoot)
   }
   return stageRoot
 }
-
-const stagePattern = /^stage-[A-F0-9-]{36}\.tmp$/
 
 /** The store serializes operations per canonical root, including first-use recovery. */
 export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
@@ -88,7 +86,7 @@ export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
     if (previous) return previous
     const path = privateStages(root)
     for (const name of nativeIO.names(path)) {
-      if (!stagePattern.test(name)) continue
+      if (!stageNamePattern.test(name)) continue
       const candidate = `${path}/${name}`
       if (nativeIO.kind(candidate) === 'regular') nativeIO.removeFile(candidate)
     }
