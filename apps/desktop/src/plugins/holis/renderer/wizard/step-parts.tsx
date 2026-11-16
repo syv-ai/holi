@@ -90,7 +90,7 @@ export function Fact({
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium">{title}</span>
-            {file !== undefined && <Badge variant="outline">{file}</Badge>}
+            {file !== undefined && <Badge variant="secondary">{file}</Badge>}
           </div>
           <p className="text-xs text-pretty text-muted-foreground">{children}</p>
         </div>

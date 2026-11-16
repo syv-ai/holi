@@ -61,6 +61,12 @@ const onFlushCancelled = pushChannel<{ id: string }>('vault:flush-cancel')
 const onOpen = pushChannel<{ remote: string; path: string; heading?: string; focus?: boolean }>(
   'vault:open',
 )
+const onNavigate = pushChannel<{
+  remote: string
+  plugin: string
+  name: string
+  payload: unknown
+}>('vault:navigate')
 
 /** Main's other question, for `holi docs screenshot`: where on the page a
  * path's tab is, once it has finished drawing. Answered with `located`, by
@@ -121,6 +127,7 @@ contextBridge.exposeInMainWorld('holi', {
     onFlushCancelled,
     flushDone: (id: string, error?: string) => ipcRenderer.send('vault:flush-done', id, error),
     onOpen,
+    onNavigate,
     openReady: () => ipcRenderer.send('vault:open-ready'),
     onLocate,
     located: (answer: unknown) => ipcRenderer.send('vault:located', answer),

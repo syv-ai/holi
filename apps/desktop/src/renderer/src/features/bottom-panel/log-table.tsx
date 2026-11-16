@@ -40,13 +40,13 @@ const LEVEL_LOOK: Record<
   LogLevel,
   {
     label: string
-    variant: 'invert-light' | 'info-light' | 'warning-light' | 'destructive-light'
+    variant: 'invert' | 'info' | 'warning' | 'destructive'
   }
 > = {
-  debug: { label: 'Debug', variant: 'invert-light' },
-  info: { label: 'Info', variant: 'info-light' },
-  warn: { label: 'Warning', variant: 'warning-light' },
-  error: { label: 'Error', variant: 'destructive-light' },
+  debug: { label: 'Debug', variant: 'invert' },
+  info: { label: 'Info', variant: 'info' },
+  warn: { label: 'Warning', variant: 'warning' },
+  error: { label: 'Error', variant: 'destructive' },
 }
 
 /** A line's level, for a cell, a filter value or a picker row. */

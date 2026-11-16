@@ -57,7 +57,6 @@ import {
   activeRemoteAtom,
   cn,
   matchHotkey,
-  openDialogAtom,
   openSettingsSectionAtom,
   openDocumentAtom,
   useAgentService,
@@ -83,8 +82,8 @@ import { EmptyState, LoadingRows } from '@/composites/empty-state'
 import { IconButton } from '@/composites/icon-button'
 import { PaneToolbar } from '@/composites/pane-toolbar'
 import { SandboxedHtml } from './sandboxed-html'
-import { ComposeMailDialog } from './compose-mail-dialog'
-import { MailComposer } from './mail-composer'
+import { MailComposer, type MailComposerHandle } from './mail-composer'
+import { ComposeSessionGate } from './compose-session'
 import { DraftsList, type DraftSummary } from './drafts-list'
 import { ThreadMenu, type ThreadActions } from './thread-menu'
 import { SelectionBar } from './selection-bar'
@@ -103,6 +102,10 @@ import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from '.
 import { googleCap } from './google-cap'
 import { explainWriteFailure, isDisconnected } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
+import { useGoogleAccount } from './account'
+import { useMailMarkers } from './use-mail-markers'
+import { useMailMarkerActions } from './use-mail-marker-actions'
+import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
 
 interface ThreadSummary {
   id: string
@@ -171,6 +174,11 @@ type ListState =
   | { kind: 'error'; message: string }
 
 export function MailView() {
+  const { currentSub } = useGoogleAccount()
+  return <MailViewAccount key={currentSub ?? 'disconnected'} accountSub={currentSub} />
+}
+
+function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   const [query, setQuery] = useState('')
   /** The query actually fetched, separate from the input so typing does not
    *  fire a request per keystroke against a rate-limited API. */
@@ -226,12 +234,15 @@ export function MailView() {
   const listGeneration = useRef(0)
   /** The inline composer's intent, or `null` when it is closed. */
   const [composing, setComposing] = useState<ComposeIntent | null>(null)
+  const composerRef = useRef<MailComposerHandle | null>(null)
+  const composeGate = useRef(new ComposeSessionGate()).current
   /**
    * Bumped on every open, so React remounts the composer rather than reusing
    * it: `composeFrom` runs once, on mount, so Reply then Forward would keep the
    * first intent's draft state.
    */
   const [composeKey, setComposeKey] = useState(0)
+  const composeRequest = useRef(0)
   /** Every address the account may send from, so reply-all excludes all of
    *  them. `[]` until it resolves; the cost of being early is copying the user
    *  on their own reply, which they can see and remove. */
@@ -241,6 +252,8 @@ export function MailView() {
   /** The Gmail draft the composer is continuing, if any. */
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
+  const remoteRef = useRef(remote)
+  remoteRef.current = remote
   /** Offered only in a vault that runs tasks. */
   const canLinkToTask = useHasCapability(TASKS_CREATE) && remote !== null
   /** One of Google's calls, for the open vault; refused with none open. */
@@ -249,8 +262,35 @@ export function MailView() {
       remote === null ? Promise.reject(new Error('No vault is open.')) : work(remote),
     [remote],
   )
+  const markers = useMailMarkers({
+    remote,
+    accountSub,
+    ids: [
+      ...(list.kind === 'ready' ? list.threads.map((thread) => thread.id) : []),
+      ...(openId === null ? [] : [openId]),
+    ],
+  })
+  const markerActions = useMailMarkerActions({
+    remote,
+    accountSub,
+    activeThreadId: openId,
+    reconcile: (id) => markers.invalidate([id]),
+    onFailure: (cause) => setWriteError(explainWriteFailure(cause)),
+    onChange: (id, state) => {
+      listGeneration.current++
+      setList((previous) =>
+        previous.kind === 'ready'
+          ? {
+              ...previous,
+              threads: previous.threads.map((thread) =>
+                thread.id === id ? { ...thread, starred: state.starred } : thread,
+              ),
+            }
+          : previous,
+      )
+    },
+  })
   const openNote = useSetAtom(openDocumentAtom)
-  const openDialog = useSetAtom(openDialogAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   /** Where Google is connected: the Connections section of Settings. */
   const openConnections = () => openSettingsSection('connections')
@@ -279,6 +319,22 @@ export function MailView() {
     const res = await agent.ask({ text, target })
     if (!res.ok && target !== 'new') await agent.ask({ text, target: 'new' })
   }
+
+  useEffect(() => {
+    composeGate.invalidate()
+    setComposing(null)
+    composerRef.current = null
+    setContinuing(undefined)
+    composeRequest.current++
+  }, [remote, composeGate])
+
+  useEffect(
+    () => () => {
+      composeRequest.current++
+      composeGate.invalidate()
+    },
+    [composeGate],
+  )
 
   const showDrafts = view.kind === 'drafts'
   const searching = submitted !== ''
@@ -384,13 +440,35 @@ export function MailView() {
     return inbound ?? thread.messages[thread.messages.length - 1]!
   }
 
+  const transitionCompose = (action: () => void, clearComposition = false): Promise<boolean> => {
+    const request = ++composeRequest.current
+    const originRemote = remoteRef.current
+    return composeGate.leave(
+      () => {
+        if (clearComposition) {
+          composerRef.current = null
+          setComposing(null)
+          setContinuing(undefined)
+          setDraftsGeneration((generation) => generation + 1)
+        }
+        action()
+      },
+      () => request === composeRequest.current && originRemote === store.get(activeRemoteAtom),
+    )
+  }
+
   const startCompose = (all: boolean): void => {
     if (open === null) return
     const parent = replyTarget(open)
     if (parent === null) return
-    setComposeKey((key) => key + 1)
-    setContinuing(undefined)
-    setComposing({ kind: 'reply', threadId: open.id, subject: open.subject, parent, all })
+    const intent = { kind: 'reply' as const, threadId: open.id, subject: open.subject, parent, all }
+    transitionCompose(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setComposeKey((key) => key + 1)
+      setContinuing(undefined)
+      setComposing(intent)
+    })
   }
 
   /**
@@ -401,21 +479,27 @@ export function MailView() {
    * intent that also computed them would flicker when overwritten.
    */
   const continueDraft = (draft: DraftSummary): void => {
-    setComposeKey((key) => key + 1)
-    setContinuing(draft.draftId)
-    setComposing({ kind: 'new' })
-    // The draft composer renders in the reader pane only with nothing open.
-    // With a thread open it would land off-screen at the foot of that thread.
-    setOpenId(null)
+    transitionCompose(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setComposeKey((key) => key + 1)
+      setContinuing(draft.draftId)
+      setComposing({ kind: 'new' })
+    })
   }
 
   const startForward = (): void => {
     if (open === null) return
     const parent = replyTarget(open)
     if (parent === null) return
-    setComposeKey((key) => key + 1)
-    setContinuing(undefined)
-    setComposing({ kind: 'forward', threadId: open.id, subject: open.subject, parent })
+    const intent = { kind: 'forward' as const, threadId: open.id, subject: open.subject, parent }
+    transitionCompose(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setComposeKey((key) => key + 1)
+      setContinuing(undefined)
+      setComposing(intent)
+    })
   }
 
   /**
@@ -426,38 +510,67 @@ export function MailView() {
    */
   const openThreadDraft = (): void => {
     if (open === null) return
+    const request = ++composeRequest.current
+    const threadId = open.id
+    const originRemote = remoteRef.current
     void call((r) => googleCap.drafts(r))
       .then((drafts) => {
-        const mine = drafts.filter((draft) => draft.threadId === open.id)
+        if (
+          request !== composeRequest.current ||
+          originRemote !== remoteRef.current ||
+          openId !== threadId
+        )
+          return
+        const mine = drafts.filter((draft) => draft.threadId === threadId)
         // Newest by date: `listDrafts` makes no ordering promise.
         const newest = mine.sort((a, b) => a.date.localeCompare(b.date)).pop()
         if (newest !== undefined) continueDraft(newest)
       })
-      .catch(() => setWriteError('Could not open that draft.'))
+      .catch(() => {
+        if (
+          request === composeRequest.current &&
+          originRemote === store.get(activeRemoteAtom) &&
+          openId === threadId
+        )
+          setWriteError('Could not open that draft.')
+      })
   }
 
-  /** Both exits from the composer refresh the Drafts list. */
-  const closeComposer = (): void => {
+  /** An acknowledged send/discard belongs only to the composition that started it. */
+  const finishComposer = (identity: object, sent = false): void => {
+    if (
+      composeGate.current()?.identity !== identity ||
+      remoteRef.current !== store.get(activeRemoteAtom)
+    )
+      return
+
+    composeRequest.current++
+    composeGate.invalidate()
+    composerRef.current = null
     setComposing(null)
     setContinuing(undefined)
     setDraftsGeneration((generation) => generation + 1)
+
+    if (!sent || open === null || composing === null || composing.kind === 'new') return
+    const threadId = open.id
+    const originRemote = remoteRef.current
+    void call((r) => googleCap.thread(r, { id: threadId }))
+      .then((thread) => {
+        if (originRemote === store.get(activeRemoteAtom) && remoteRef.current === originRemote)
+          setOpen(thread)
+      })
+      .catch(() => undefined)
+    load()
   }
 
-  /**
-   * After a send: close the composer, refetch the open thread and the list.
-   */
-  const onComposerSent = (): void => {
-    const intent = composing
-    closeComposer()
-    if (open === null || intent === null || intent.kind === 'new') return
-
-    void call((r) => googleCap.thread(r, { id: open.id }))
-      .then(setOpen)
-      .catch(() => {
-        // The send succeeded; only the refetch failed. Leave the thread as it
-        // was rather than invent a message we cannot confirm arrived.
-      })
-    load()
+  /** Explicit close still passes through the save-before-leave gate. */
+  const closeComposer = (): void => {
+    transitionCompose(() => {
+      composerRef.current = null
+      setComposing(null)
+      setContinuing(undefined)
+      setDraftsGeneration((generation) => generation + 1)
+    })
   }
 
   /**
@@ -499,27 +612,30 @@ export function MailView() {
    * the unsubscribe link come from the list response and are not refetched.
    */
   const openThread = (thread: ThreadSummary) => {
-    // A find bar left open would count matches in the previous thread.
-    setFindOpen(false)
-    setOpenId(thread.id)
-    setOpenSummary(thread)
-    setOpen(null)
-    setMeeting(null)
-    void call((r) => googleCap.thread(r, { id: thread.id }))
-      .then(setOpen)
-      .catch(() => setOpenId(null))
-    // Only for a thread the list already says holds an `.ics`, to avoid two
-    // requests per open. A failure is swallowed deliberately: the badge still
-    // says this is a meeting, and a convenience lookup does not merit a banner.
-    if (thread.hasInvite) {
-      void call((r) => googleCap.meeting(r, { id: thread.id }))
-        .then((found) => {
-          if (found !== null) setMeeting({ ...found, threadId: thread.id })
-        })
-        .catch(() => undefined)
-    }
-    // Only when there is something to change: the API is rate limited.
-    if (thread.unread) void setRead(thread.id, true)
+    void transitionCompose(() => {
+      composerRef.current = null
+      // A find bar left open would count matches in the previous thread.
+      setFindOpen(false)
+      setOpenId(thread.id)
+      setOpenSummary(thread)
+      setOpen(null)
+      setMeeting(null)
+      void call((r) => googleCap.thread(r, { id: thread.id }))
+        .then(setOpen)
+        .catch(() => setOpenId(null))
+      // Only for a thread the list already says holds an `.ics`, to avoid two
+      // requests per open. A failure is swallowed deliberately: the badge still
+      // says this is a meeting, and a convenience lookup does not merit a banner.
+      if (thread.hasInvite) {
+        void call((r) => googleCap.meeting(r, { id: thread.id }))
+          .then((found) => {
+            if (found !== null) setMeeting({ ...found, threadId: thread.id })
+          })
+          .catch(() => undefined)
+      }
+      // Only when there is something to change: the API is rate limited.
+      if (thread.unread) void setRead(thread.id, true)
+    }, true)
   }
 
   /**
@@ -577,11 +693,15 @@ export function MailView() {
       (threads) => threads.map((t) => (t.id === id ? { ...t, unread: !read } : t)),
     )
 
-  const setStarred = (id: string, starred: boolean) =>
-    write(
+  const setStarred = async (id: string, starred: boolean) => {
+    markerActions.invalidate(id)
+    const result = await write(
       () => call((r) => googleCap.star(r, { id, off: !starred })),
       (threads) => threads.map((t) => (t.id === id ? { ...t, starred } : t)),
     )
+    markers.invalidate([id])
+    return result
+  }
 
   /**
    * Archive and trash, which both take the thread out of the list.
@@ -589,7 +709,15 @@ export function MailView() {
    * The reader closes with it, so `openSummary` does not go on rendering a
    * thread the list no longer holds.
    */
-  const removeThread = (id: string, mutate: () => Promise<unknown>) => {
+  const removeThread = async (id: string, mutate: () => Promise<unknown>): Promise<boolean> => {
+    if (composing !== null && openId === id) {
+      const left = await transitionCompose(() => {
+        composerRef.current = null
+        setComposing(null)
+        setContinuing(undefined)
+      })
+      if (!left) return false
+    }
     if (openId === id) {
       setOpen(null)
       setOpenId(null)
@@ -733,6 +861,27 @@ export function MailView() {
    * fallback for a thread the current list does not contain.
    */
   const openRow = threads.find((thread) => thread.id === openId) ?? openSummary
+  const openIntent = openId === null ? undefined : markerActions.get(openId)
+  const openStarred = openIntent === undefined ? openRow?.starred === true : openIntent.starred
+  const openMarker =
+    openIntent === undefined
+      ? openId === null
+        ? { kind: 'loading' as const }
+        : markers.get(openId)
+      : openIntent.error
+        ? { kind: 'error' as const }
+        : { kind: 'ready' as const, marker: openIntent.marker }
+  const renderedComposeIdentity = composeGate.current()?.identity
+
+  const closeRenderedComposer = (): void => {
+    if (
+      renderedComposeIdentity === undefined ||
+      composeGate.current()?.identity !== renderedComposeIdentity ||
+      remoteRef.current !== store.get(activeRemoteAtom)
+    )
+      return
+    closeComposer()
+  }
 
   /**
    * ⌘F, scoped to this pane.
@@ -766,7 +915,11 @@ export function MailView() {
   return (
     <ResizablePanelGroup
       orientation="horizontal"
-      className="h-full min-h-0"
+      className={cn(
+        'h-full min-h-0',
+        composing !== null &&
+          '@container/mail @max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden',
+      )}
       defaultLayout={layout.defaultLayout}
       onLayoutChanged={layout.onLayoutChanged}
       onKeyDown={onKeyDown}
@@ -787,31 +940,31 @@ export function MailView() {
             <MailToolbar
               query={query}
               onQueryChange={setQuery}
-              onSubmit={setSubmitted}
+              onSubmit={(next) => void transitionCompose(() => setSubmitted(next), true)}
               searchOpen={searchOpen}
               onSearchOpenChange={setSearchOpen}
               people={threads}
               contacts={contacts}
               view={view}
-              onViewChange={setView}
+              onViewChange={(next) => void transitionCompose(() => setView(next), true)}
               searching={searching}
               unreadOnly={unreadOnly}
-              onUnreadChange={setUnreadOnly}
+              onUnreadChange={(next) => void transitionCompose(() => setUnreadOnly(next), true)}
               unreadCount={viewUnread(view, counts?.unread ?? null, categoryCounts)}
               inboxUnread={counts?.unread ?? null}
               categoryCounts={categoryCounts}
               onCategoryMenuOpen={loadCategoryCounts}
-              onCompose={() =>
-                // A dialog, where a reply is inline: a fresh message has no
-                // thread to keep in view. Closing is safe: the composer saves
-                // on unmount and the Drafts view finds it again.
-                openDialog({
-                  id: 'plugin',
-                  size: 'lg',
-                  render: (close) => <ComposeMailDialog onClose={close} />,
+              onCompose={() => {
+                transitionCompose(() => {
+                  composerRef.current = null
+                  composeGate.begin()
+                  setComposeKey((key) => key + 1)
+                  setContinuing(undefined)
+                  setComposing({ kind: 'new' })
                 })
-              }
+              }}
               onRefresh={() => {
+                markers.invalidate()
                 load()
                 loadCounts()
                 // Only if already loaded: refresh must not be what first spends
@@ -873,23 +1026,46 @@ export function MailView() {
             )}
             {!showDrafts &&
               list.kind === 'ready' &&
-              list.threads.map((thread) => (
-                <ThreadMenu
-                  key={thread.id}
-                  thread={thread}
-                  actions={threadActions}
-                  onOpen={() => openThread(thread)}
-                >
-                  <ThreadRow
-                    thread={thread}
-                    active={openId === thread.id}
-                    onOpen={() => openThread(thread)}
-                    selected={live.has(thread.id)}
-                    onToggle={({ extend }) => toggleSelected(thread.id, extend)}
-                    showCheckbox={live.size > 0}
-                  />
-                </ThreadMenu>
-              ))}
+              list.threads.map((thread) => {
+                const intent = markerActions.get(thread.id)
+                const displayed =
+                  intent === undefined ? thread : { ...thread, starred: intent.starred }
+                const marker =
+                  intent === undefined
+                    ? markers.get(thread.id)
+                    : intent.error
+                      ? { kind: 'error' as const }
+                      : { kind: 'ready' as const, marker: intent.marker }
+                return (
+                  <ThreadMenu
+                    key={thread.id}
+                    thread={displayed}
+                    actions={threadActions}
+                    onOpen={() => openThread(displayed)}
+                  >
+                    <ThreadRow
+                      thread={displayed}
+                      marker={marker}
+                      onRetryMarker={() => {
+                        markers.invalidate([thread.id])
+                        void markerActions.retry(thread.id)
+                      }}
+                      onPrimaryMarker={() =>
+                        markerActions.activate(
+                          thread.id,
+                          displayed.starred,
+                          marker.kind === 'ready' ? marker.marker : null,
+                        )
+                      }
+                      active={openId === thread.id}
+                      onOpen={() => openThread(displayed)}
+                      selected={live.has(thread.id)}
+                      onToggle={({ extend }) => toggleSelected(thread.id, extend)}
+                      showCheckbox={live.size > 0}
+                    />
+                  </ThreadMenu>
+                )
+              })}
             {!showDrafts && list.kind === 'ready' && list.nextPageToken !== null && (
               <div className="px-4 py-2">
                 {/* A button, not an infinite scroller: see `loadMore`. */}
@@ -916,24 +1092,35 @@ export function MailView() {
       </ResizablePanel>
 
       {/* The divider IS the handle, so the list has no border of its own. */}
-      <ResizableHandle />
+      <ResizableHandle className={composing !== null ? '@max-[40rem]/mail:hidden' : undefined} />
 
       {/* The reader */}
       <ResizablePanel id="mail-reader" minSize={280}>
         <div className="flex h-full min-h-0 min-w-0 flex-col" data-mail-pane="reader">
           {/* A draft opened from the Drafts list has no thread behind it, so
               it goes in the reader pane. */}
-          {composing !== null && openId === null ? (
+          {composing?.kind === 'new' ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4">
               <MailComposer
+                ref={(handle) => {
+                  const session = composeGate.current()
+                  if (session !== null) composeGate.attach(session.identity, handle)
+                  composerRef.current = handle
+                }}
                 key={composeKey}
                 intent={composing}
                 draftId={continuing}
                 sendAs={sendAs}
                 suggestions={contacts}
-                onSent={onComposerSent}
-                onDiscarded={closeComposer}
-                onClose={closeComposer}
+                onSent={() => {
+                  if (renderedComposeIdentity !== undefined)
+                    finishComposer(renderedComposeIdentity, true)
+                }}
+                onDiscarded={() => {
+                  if (renderedComposeIdentity !== undefined) finishComposer(renderedComposeIdentity)
+                }}
+                onClose={closeRenderedComposer}
+                bare
               />
             </div>
           ) : openId === null ? (
@@ -945,9 +1132,21 @@ export function MailView() {
               {/* The subject on its own row, wrapping: it is the one place a
                   subject the list truncated can be read in full, and a pane at
                   its 280px floor still has room for it. */}
-              <h3 className="px-4 pt-3 text-sm font-medium text-pretty break-words">
-                {open.subject}
-              </h3>
+              <div className="flex items-start gap-2 px-4 pt-3">
+                <h3 className="min-w-0 flex-1 text-sm font-medium text-pretty break-words">
+                  {open.subject}
+                </h3>
+                {openMarker.kind !== 'ready' && (
+                  <MailMarkerStatus
+                    state={openMarker}
+                    starred={openStarred}
+                    onRetry={() => {
+                      markers.invalidate([openId])
+                      void markerActions.retry(openId)
+                    }}
+                  />
+                )}
+              </div>
               <PaneToolbar>
                 {/* First, as the only time-sensitive action. The link is NOT
                     parsed out of the invite: main matched its `UID` to the
@@ -1009,16 +1208,22 @@ export function MailView() {
                   <Trash2 className="size-3.5" />
                 </IconButton>
                 <IconButton
-                  label={openRow?.starred === true ? 'Unstar' : 'Star'}
-                  aria-label={openRow?.starred === true ? 'Unstar this thread' : 'Star this thread'}
-                  onClick={() => void setStarred(open.id, openRow?.starred !== true)}
+                  label={openStarred ? 'Unstar' : 'Star'}
+                  aria-label={openStarred ? 'Unstar this thread' : 'Star this thread'}
+                  onClick={() => {
+                    const status = openMarker
+                    markerActions.activate(
+                      open.id,
+                      openStarred,
+                      status.kind === 'ready' ? status.marker : null,
+                    )
+                  }}
                 >
-                  <Star
-                    className={cn(
-                      'size-3.5',
-                      openRow?.starred === true ? 'fill-current' : undefined,
-                    )}
-                  />
+                  {openStarred && openMarker.kind === 'ready' ? (
+                    <MailMarkerStatus state={openMarker} starred />
+                  ) : (
+                    <Star className="size-3.5" aria-hidden="true" />
+                  )}
                 </IconButton>
                 {/* Everything less frequent, in one menu, so the row fits a
                     reader at its narrowest instead of clipping off the pane. */}
@@ -1088,6 +1293,7 @@ export function MailView() {
                     key={message.id}
                     message={message}
                     threadUrl={open.webUrl}
+                    hintOwner={`account:${accountSub ?? 'no-account'}:thread:${openId}:view:${JSON.stringify(view)}:query:${submitted}:find:${findOpen}`}
                     // Only the last message opens expanded, as in Gmail, so a
                     // long thread does not bury what is new.
                     initiallyOpen={index === open.messages.length - 1}
@@ -1101,14 +1307,26 @@ export function MailView() {
                     so the message being answered stays on screen. */}
                 {composing !== null && (
                   <MailComposer
+                    ref={(handle) => {
+                      const session = composeGate.current()
+                      if (session !== null) composeGate.attach(session.identity, handle)
+                      composerRef.current = handle
+                    }}
                     key={composeKey}
                     intent={composing}
                     draftId={continuing}
                     sendAs={sendAs}
                     suggestions={contacts}
-                    onSent={onComposerSent}
-                    onDiscarded={closeComposer}
-                    onClose={closeComposer}
+                    onSent={() => {
+                      if (renderedComposeIdentity !== undefined)
+                        finishComposer(renderedComposeIdentity, true)
+                    }}
+                    onDiscarded={() => {
+                      if (renderedComposeIdentity !== undefined)
+                        finishComposer(renderedComposeIdentity)
+                    }}
+                    onClose={closeRenderedComposer}
+                    bare
                   />
                 )}
               </div>
@@ -1543,6 +1761,7 @@ function ListFooter({
 /** Coarse on purpose: nobody needs mail sync time to the second. `Date.now()`
  *  is the real clock here, the age of a real sync, not placeholder data. */
 function ago(iso: string): string {
+  // The wall clock labels the last sync's age; it does not schedule or animate rendering.
   const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
   if (seconds < 60) return 'just now'
   const minutes = Math.round(seconds / 60)
@@ -1561,6 +1780,9 @@ function ago(iso: string): string {
  */
 function ThreadRow({
   thread,
+  marker,
+  onRetryMarker,
+  onPrimaryMarker,
   active,
   onOpen,
   selected,
@@ -1568,6 +1790,9 @@ function ThreadRow({
   showCheckbox,
 }: {
   thread: ThreadSummary
+  marker: ReturnType<ReturnType<typeof useMailMarkers>['get']>
+  onRetryMarker: () => void
+  onPrimaryMarker: () => void
   active: boolean
   onOpen: () => void
   selected: boolean
@@ -1583,6 +1808,7 @@ function ThreadRow({
 
   return (
     <div
+      id={thread.id}
       className={`motion-respond group/row flex items-stretch border-b border-divider ${
         // The chrome rows' fill scale (docs/ui-system.md, Rules), not
         // `secondary`: a label badge is `secondary`, and on a row of the same
@@ -1610,6 +1836,7 @@ function ThreadRow({
           }}
         />
       </div>
+      {marker.kind === 'error' && <MailMarkerRetry onRetry={onRetryMarker} />}
       <Button
         variant="ghost"
         size="row"
@@ -1646,11 +1873,11 @@ function ThreadRow({
               </span>
               {/* These three stay on the sender's line: they are things *you*
                   did, where the rail holds what the thread is. */}
-              {thread.starred && (
-                <span role="img" aria-label="Starred" className="flex shrink-0 self-center">
-                  <Star className="size-3.5 text-muted-foreground" />
-                </span>
-              )}
+              <MailMarkerStatus
+                state={marker}
+                starred={thread.starred}
+                className="shrink-0 self-center"
+              />
               {/* "You started replying and stopped". */}
               {thread.hasDraft && (
                 <span role="img" aria-label="Unsent draft" className="flex shrink-0 self-center">
@@ -1675,7 +1902,7 @@ function ThreadRow({
               <span className="mt-1.5 flex flex-wrap gap-1 pl-3.5">
                 {/* Outlined, where a user label is filled: the tab is Gmail's
                     classification, not a label the reader chose. */}
-                {categoryLabel !== null && <Badge variant="outline">{categoryLabel}</Badge>}
+                {categoryLabel !== null && <Badge variant="secondary">{categoryLabel}</Badge>}
                 {thread.labels.map((label) => (
                   <Badge key={label} variant="secondary">
                     {label}
@@ -1708,6 +1935,20 @@ function ThreadRow({
           </span>
         </span>
       </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={thread.starred ? 'Unstar thread' : 'Star thread'}
+        aria-pressed={thread.starred}
+        onClick={(event) => {
+          event.stopPropagation()
+          onPrimaryMarker()
+        }}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <Star className="size-3.5" aria-hidden="true" />
+      </Button>
     </div>
   )
 }
@@ -1721,6 +1962,7 @@ function ThreadRow({
 function MessageBlock({
   message,
   threadUrl,
+  hintOwner,
   initiallyOpen,
   position,
   total,
@@ -1728,6 +1970,7 @@ function MessageBlock({
 }: {
   message: ThreadMessage
   threadUrl: string
+  hintOwner: string
   initiallyOpen: boolean
   /** 1-based, as it reads on screen. */
   position: number
@@ -1785,7 +2028,7 @@ function MessageBlock({
       {shown && (
         <div>
           <MessageAddresses message={message} />
-          <MessageBody message={message} />
+          <MessageBody message={message} threadUrl={threadUrl} hintOwner={hintOwner} />
           <Attachments attachments={message.attachments} webUrl={threadUrl} />
         </div>
       )}
@@ -1946,7 +2189,15 @@ function fileSize(bytes: number): string {
  * newsletter, not the whole thread. `SandboxedHtml` holds that and the frame,
  * shared with calendar event descriptions.
  */
-function MessageBody({ message }: { message: ThreadMessage }) {
+function MessageBody({
+  message,
+  threadUrl,
+  hintOwner,
+}: {
+  message: ThreadMessage
+  threadUrl: string
+  hintOwner: string
+}) {
   if (message.html === null) {
     // Marked so in-thread find can reach it: a text-only message publishes no
     // frame to the registry.
@@ -1966,6 +2217,8 @@ function MessageBody({ message }: { message: ThreadMessage }) {
       // The message id is what makes "load images" survive the reader closing;
       // the sender is what makes "always from this sender" possible at all.
       identity={{ key: message.id, sender: message.from.email }}
+      hintScope={`${hintOwner}:url:${threadUrl}:message:${message.id}`}
+      mailHints
     />
   )
 }

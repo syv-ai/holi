@@ -9,6 +9,7 @@
  * which stays for as long as the meeting records.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useState } from 'react'
 import { Circle, SquareArrowOutUpRight } from 'lucide-react'
 import { agentSessionRowsAtom, cn, showAgentSessionAtom } from '@/plugin-api'
 import { Badge } from '@/components/ui/badge'
@@ -25,6 +26,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ChunkInfo, ChunkState, MeetingState, ScribeState } from '../shared/meeting'
 import { useAgentName } from './agent-name'
+import { useMeetingsDisplayed } from './displayed'
 import { SCRIBE_NAME, SCRIBE_TITLE } from './names'
 import { recorderAtom } from './recorder'
 import { scribeStateOf, unsupportedReason } from './scribe-ready'
@@ -79,6 +81,11 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 /** The chip, its details, and the problem badges beside it. */
 export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX.Element {
   const show = useSetAtom(showAgentSessionAtom)
+  const displayed = useMeetingsDisplayed()
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  useEffect(() => {
+    if (!displayed) setDetailsOpen(false)
+  }, [displayed])
   const rec = useAtomValue(recorderAtom)
   const agent = useAgentName()
   const { waiting, failed, lag, scribe, live, state } = useHealth(meeting)
@@ -106,7 +113,10 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
 
   return (
     <div aria-label="Meeting health" className="flex min-w-0 items-center gap-1">
-      <Popover>
+      <Popover
+        open={displayed && detailsOpen}
+        onOpenChange={(next) => setDetailsOpen(displayed && next)}
+      >
         <PopoverTrigger asChild>
           <Button variant="ghost" size="xs">
             {state === 'starting' || state === 'working' ? (
@@ -151,16 +161,14 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
           )}
         </PopoverContent>
       </Popover>
-      {meeting.blocked === 'no-key' && (
-        <Badge variant="warning-light">Transcription needs a key</Badge>
-      )}
+      {meeting.blocked === 'no-key' && <Badge variant="warning">Transcription needs a key</Badge>}
       {meeting.blocked === 'bad-key' && (
-        <Badge variant="destructive-light">Transcription key refused</Badge>
+        <Badge variant="destructive">Transcription key refused</Badge>
       )}
       {failed.length > 0 && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Badge variant="destructive-light" tabIndex={0}>
+            <Badge variant="destructive" tabIndex={0}>
               {failed.length} not transcribed
             </Badge>
           </TooltipTrigger>
@@ -169,10 +177,8 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
           </TooltipContent>
         </Tooltip>
       )}
-      {meeting.scribeUnreachable === true && (
-        <Badge variant="warning-light">Topics unreachable</Badge>
-      )}
-      {unsupported && <Badge variant="warning-light">No topics with this agent</Badge>}
+      {meeting.scribeUnreachable === true && <Badge variant="warning">Topics unreachable</Badge>}
+      {unsupported && <Badge variant="warning">No topics with this agent</Badge>}
     </div>
   )
 }

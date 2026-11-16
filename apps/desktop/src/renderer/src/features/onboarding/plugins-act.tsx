@@ -55,7 +55,7 @@ export function PluginsAct({ plugins, onChange }: Props) {
             title={info.label}
             badge={
               !info.default && (
-                <Badge variant="outline" radius="full">
+                <Badge variant="secondary" radius="full">
                   Optional
                 </Badge>
               )

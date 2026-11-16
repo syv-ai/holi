@@ -80,6 +80,7 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
   path: string
   title: string
   saveState: SaveState
+  vimMode?: 'normal' | 'insert' | ''
   taskDone?: { pending: boolean; error: string | null; onDone: () => void }
   /** An agent run is editing the document. */
   locked: boolean
@@ -97,6 +98,7 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
     sidebar: boolean
     onSidebarChange: (sidebar: boolean) => void
   } | null
+  visible?: boolean
   compact?: boolean
 }
 
@@ -106,11 +108,13 @@ export function DocumentHeader({
   path,
   title,
   saveState,
+  vimMode = '',
   taskDone,
   locked,
   comments = null,
   properties = null,
   compact = false,
+  visible = true,
   ...actions
 }: DocumentHeaderProps) {
   const state = useRichTextState(editor)
@@ -126,7 +130,7 @@ export function DocumentHeader({
           title={title}
           badge={
             locked ? (
-              <Badge variant="outline" className="shrink-0 font-normal">
+              <Badge variant="secondary" className="shrink-0 font-normal">
                 Locked
               </Badge>
             ) : undefined
@@ -142,12 +146,13 @@ export function DocumentHeader({
               <span aria-live="polite" className="shrink-0">
                 {saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}
               </span>
+              {vimMode ? <Badge variant="secondary">Vim {vimMode}</Badge> : null}
             </>
           }
         />
 
         <Contributors path={path} />
-        <FileHistoryButton path={path} />
+        <FileHistoryButton path={path} visible={visible} />
         {comments ? (
           <Toggle
             size="sm"

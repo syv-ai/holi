@@ -28,13 +28,13 @@ They are not part of shadcn's base theme. Installing `@reui/badge`, `@reui/alert
 
 - Meaning (a state, emphasis, a surface, text) takes semantic tokens, through the Badge or Alert variant that already carries them.
 - Identity (a chart series, a tag color, a team, an avatar) may use raw palette: ReUI's own lint keeps it on purpose. Always hand-pair it for dark, as in `text-violet-600 dark:text-violet-400`.
-- **Incorrect:** `<span className="text-green-600">Active</span>` (raw palette for a state). **Correct:** `<Badge variant="success-light">Active</Badge>`.
+- **Incorrect:** `<span className="text-green-600">Active</span>` (raw palette for a state). **Correct:** `<Badge variant="success">Active</Badge>` (readable solid state fill and neutral foreground).
 
 ## State recipes
 
-- State badge: `<Badge variant="success-light">` from `@/components/reui/badge` (`@reui/badge`; shadcn's `components/ui/badge` has no `-light` variants or `size`), also `info-light`, `warning-light`, `destructive-light`, and `primary-light` for brand or pending. Neutral badge: `variant="outline"`. A solid `<Badge variant="success">` (white text) only when the user asks for a solid fill.
-- Inline status text: `text-success-foreground dark:text-success`, the pair the ReUI Badge uses.
-- Tinted surface: `border-success/15 bg-success/10 text-success-foreground dark:border-success/25 dark:bg-success/15 dark:text-success` (the Badge's `success-light` recipe).
+- State badge: use readable solid semantic variants (`success`, `info`, `warning`, `destructive`) from `@/components/ui/badge`. Neutral badge: `variant="secondary"`. Badges have no border and never pair same-hue text and background.
+- Solid state badge text uses the neutral `badge-solid-foreground` token, verified to meet 4.5:1 against each state fill in both default themes.
+- Inline status text and Alerts keep their own semantic foreground tokens; do not change Alert behavior to alter badge contrast.
 - A message block: `<Alert variant="success">` from `@/components/reui/alert` (`@reui/alert`), also `info`, `warning` and `destructive`.
 - Never `text-success` or `text-warning` as body text in light mode, and never `text-<state>-foreground` on a solid `bg-<state>` fill.
 

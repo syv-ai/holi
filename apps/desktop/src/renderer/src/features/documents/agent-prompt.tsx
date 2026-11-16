@@ -3,6 +3,7 @@
  * line (Space) or over a selection, and the status pill that says what a run is doing, with Stop.
  */
 import { useState } from 'react'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ArrowUpIcon, SparklesIcon, SquareIcon, XIcon } from 'lucide-react'
 
@@ -21,6 +22,8 @@ import { claudeFirstRunAtom } from '@/state/claude-first-run'
 import { useAgentLabel, type AgentRun } from '@/state/document-runs'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /** Where the person types what the agent should do: on the line they opened
  *  it from, or for a selection from the format bubble's Ask AI. Enter sends,
@@ -31,9 +34,13 @@ export function AgentPrompt({
   placeholder = 'Draft an introduction, turn the list into a table…',
   onSubmit,
   onCancel,
+  value,
+  onValueChange,
 }: {
   /** Written in already, for the person to send or change: an app
    *  command's instruction. */
+  value?: string
+  onValueChange?: (value: string) => void
   initial?: string
   /** What the agent is asked to do, above the field after "Ask <agent> to"
    *  ("Ask AI to" until the agent's name is known). */
@@ -42,11 +49,15 @@ export function AgentPrompt({
   onSubmit: (request: string) => void
   onCancel: () => void
 }) {
-  const [text, setText] = useState(initial)
+  const activity = useEditorActivity()
+  const [local, setLocal] = useState(initial)
+  const text = value ?? local
+  const vim = useVimField('document-agent-prompt', text)
+  const setText = onValueChange ?? setLocal
   const agent = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const send = () => {
     const request = text.trim()
-    if (request !== '') onSubmit(request)
+    if (activity.focused && request !== '') onSubmit(request)
   }
 
   return (
@@ -59,13 +70,16 @@ export function AgentPrompt({
         </InputGroupText>
       </InputGroupAddon>
       <InputGroupTextarea
-        autoFocus
+        autoFocus={activity.focused}
         rows={1}
         value={text}
         aria-label="What should the agent do?"
         placeholder={placeholder}
         onChange={(event) => setText(event.target.value)}
+        {...vim.vimFieldProps}
         onKeyDown={(event) => {
+          vim.vimFieldProps.onKeyDown?.(event)
+          if (event.defaultPrevented || event.nativeEvent.isComposing) return
           if (event.key === 'Escape') {
             event.preventDefault()
             onCancel()
@@ -77,6 +91,7 @@ export function AgentPrompt({
         className="min-h-0 text-sm"
       />
       <InputGroupAddon align="block-end" className="justify-between">
+        <VimFieldMode mode={vim.vimFieldMode} />
         <InputGroupText className="text-xs">
           <Kbd>Esc</Kbd> to close
         </InputGroupText>

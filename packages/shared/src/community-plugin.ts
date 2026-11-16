@@ -126,6 +126,17 @@ export interface PluginManifest {
    *  what to tell the person when it fails ("Switch on Let other agents
    *  control Dash in Dash"). A failing check does not stop the plugin. */
   check?: PluginCheck
+  /** Verbs reached through Holi's own command, `holi plugin <id> <verb>`:
+   *  `run` is an argv run in the plugin's folder with `{vault}` its one
+   *  placeholder, handed the verb and every word after it as typed. */
+  cli?: PluginCli
+}
+
+export interface PluginCli {
+  run: string[]
+  /** Each verb's name and its one line for `holi plugin <id>`. Its flags are
+   *  the plugin's own: Holi reads none of them. */
+  verbs: Record<string, string>
 }
 
 export interface PluginCheck {
@@ -135,6 +146,14 @@ export interface PluginCheck {
 
 /** The longest a check's hint may be: one short line in a settings row. */
 export const CHECK_HINT_MAX = 200
+
+/** A verb of `holi plugin <id>`: lowercase words joined by hyphens, never
+ *  starting with `-`, so it cannot be read as an option. */
+const VERB_NAME = /^[a-z][a-z0-9-]*$/
+
+/** One line of text for a settings row or a usage line, at most `max`. */
+const isOneLine = (text: unknown, max: number): text is string =>
+  typeof text === 'string' && text.trim() !== '' && !/\p{Cc}/u.test(text) && text.length <= max
 
 /** Where a vault links its running plugins' commands, on the agent's `PATH`:
  *  machine state, and `.local.` so it never syncs, since each link points at
@@ -240,6 +259,7 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     apps,
     bin,
     check,
+    cli,
   } = json
   const opens = json.opens ?? []
 
@@ -277,7 +297,13 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     problems.push(
       'apps must be a list of folders inside the plugin ending in .app, like apps/Notes.app',
     )
-  if (!opensSomething && apps === undefined && skills === undefined && bin === undefined)
+  if (
+    !opensSomething &&
+    apps === undefined &&
+    skills === undefined &&
+    bin === undefined &&
+    cli === undefined
+  )
     problems.push(
       'the plugin must do something: list opens, give a folder, or ship apps, skills or commands',
     )
@@ -319,14 +345,32 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
       // A check runs for the plugin, not for a file or a server: only
       // `{vault}` has a value then.
       problems.push(...commandProblems('check.run', check.run, [], ['{vault}']))
-      const hint = check.hint
-      if (
-        typeof hint !== 'string' ||
-        hint.trim() === '' ||
-        /\p{Cc}/u.test(hint) ||
-        hint.length > CHECK_HINT_MAX
-      )
+      if (!isOneLine(check.hint, CHECK_HINT_MAX))
         problems.push(`check.hint must be one line of text, at most ${CHECK_HINT_MAX} characters`)
+    }
+  }
+
+  if (cli !== undefined) {
+    if (!isRecord(cli))
+      problems.push(
+        'cli must be an object, like {"run": ["node", "bin/cli.mjs"], "verbs": {"book": "Book a room"}}',
+      )
+    else {
+      problems.push(...commandProblems('cli.run', cli.run, [], ['{vault}']))
+      const verbs = cli.verbs
+      if (!isRecord(verbs) || Object.keys(verbs).length === 0)
+        problems.push(
+          'cli.verbs must map verb names to one line each, like {"book": "Book a room"}',
+        )
+      else
+        for (const [verb, summary] of Object.entries(verbs)) {
+          if (!VERB_NAME.test(verb))
+            problems.push(`cli.verbs: "${verb}" is not a verb (lowercase words joined by -)`)
+          if (!isOneLine(summary, CHECK_HINT_MAX))
+            problems.push(
+              `cli.verbs: ${verb} must say what it does in one line, at most ${CHECK_HINT_MAX} characters`,
+            )
+        }
     }
   }
 
@@ -348,6 +392,13 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
   if (check !== undefined) {
     const c = check as { run: string[]; hint: string }
     manifest.check = { run: [...c.run], hint: c.hint.trim() }
+  }
+  if (cli !== undefined) {
+    const c = cli as { run: string[]; verbs: Record<string, string> }
+    manifest.cli = {
+      run: [...c.run],
+      verbs: Object.fromEntries(Object.entries(c.verbs).map(([v, s]) => [v, s.trim()])),
+    }
   }
   if (folder !== undefined) {
     const f = folder as { suffix: string; entry: string }

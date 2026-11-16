@@ -130,7 +130,7 @@ function Habits({ holi }: { holi: HoliSummary }): React.JSX.Element {
                   .join(' · ')}
             </span>
           </span>
-          <Badge variant={h.status === 'on' ? 'primary-light' : 'outline'}>
+          <Badge variant={h.status === 'on' ? 'default' : 'secondary'}>
             {h.status === 'on'
               ? 'Active'
               : h.status === 'changed'

@@ -130,7 +130,13 @@ function useRowActions(
     onRename,
     onDelete,
     onClose,
-  }: { onRename: () => void; onDelete: () => void; onClose?: () => void },
+    onOpenTerminal,
+  }: {
+    onRename: () => void
+    onDelete: () => void
+    onClose?: () => void
+    onOpenTerminal: (open: () => void) => void
+  },
 ): MenuAction[] {
   const live = useAtomValue(agentSessionsAtom)
   const abilities = useAtomValue(rowAbilitiesAtom)
@@ -186,21 +192,21 @@ function useRowActions(
       kind: 'item',
       label: 'Open in terminal',
       icon: icon(SquareTerminalIcon),
-      run: () => void attach(jobId),
+      run: () => onOpenTerminal(() => void attach(jobId)),
     })
   } else if (!piRpc && conversationId !== undefined) {
     place.push({
       kind: 'item',
       label: 'Open in terminal',
       icon: icon(SquareTerminalIcon),
-      run: () => void openFork(conversationId),
+      run: () => onOpenTerminal(() => void openFork(conversationId)),
     })
   } else if (isLive && jobId !== undefined && !piRpc) {
     place.push({
       kind: 'item',
       label: 'Open in terminal',
       icon: icon(SquareTerminalIcon),
-      run: () => void attach(jobId),
+      run: () => onOpenTerminal(() => void attach(jobId)),
     })
   }
 
@@ -342,18 +348,27 @@ export function CardWithMenu({
   // A Rename picked in a menu opens the field once the menu has closed, so
   // the menu handing focus back does not blur it shut again.
   const renameNext = useRef(false)
+  const terminalNext = useRef(false)
   const actions = useRowActions(row, {
     onRename: () => {
       renameNext.current = true
     },
     onDelete,
     onClose,
+    onOpenTerminal: (open) => {
+      terminalNext.current = true
+      open()
+    },
   })
   const closeAutoFocus = (event: Event) => {
-    if (!renameNext.current) return
-    renameNext.current = false
-    event.preventDefault()
-    onRename()
+    if (renameNext.current) {
+      renameNext.current = false
+      event.preventDefault()
+      onRename()
+    } else if (terminalNext.current) {
+      terminalNext.current = false
+      event.preventDefault()
+    }
   }
   if (renaming) return <RenameField row={row} onDone={onRenamed} />
   if (actions.length === 0) return <>{children}</>
@@ -365,7 +380,10 @@ export function CardWithMenu({
           className="w-52"
           onCloseAutoFocus={(e) => {
             if (renameNext.current) closeAutoFocus(e)
-            else e.preventDefault()
+            else {
+              terminalNext.current = false
+              e.preventDefault()
+            }
           }}
         >
           <ContextMenuActions actions={actions} />

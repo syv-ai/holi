@@ -75,6 +75,7 @@ export const THEME_COLOR_TOKENS = [
   'accent-foreground',
   'destructive',
   'destructive-foreground',
+  'destructive-solid-foreground',
   'border',
   // The chrome hairline (pane splits, panel-header rules), as opposed to
   // `border`, which is the edge of an object (card, chip, popover). Defaults to
@@ -380,7 +381,7 @@ export const THEME_TOKEN_GROUPS: readonly ThemeTokenGroup[] = [
   {
     title: 'Warnings',
     blurb: 'Destructive actions, and anything that has gone wrong.',
-    tokens: ['destructive', 'destructive-foreground'],
+    tokens: ['destructive', 'destructive-foreground', 'destructive-solid-foreground'],
   },
   {
     title: 'Edges',
@@ -450,6 +451,7 @@ export const THEME_TOKEN_ROLES: Readonly<Record<string, string>> = Object.freeze
   'accent-foreground': 'Text on hover',
   destructive: 'Danger',
   'destructive-foreground': 'Text on danger',
+  'destructive-solid-foreground': 'Neutral text on a solid danger fill',
   border: 'Edge of an object',
   divider: 'Seam between panes',
   'drawer-edge': 'Sidebar edge',

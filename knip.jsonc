@@ -31,6 +31,35 @@
         // Loaded with `new Worker(new URL(...))`, which the import graph cannot see.
         "src/**/*.worker.ts!",
         "scripts/*.{mjs,cjs,mts}",
+        // Vite's disposable Electron smoke entry is selected by a filesystem path.
+        "scripts/windows-agent-smoke.ts",
+        "scripts/browser-display-smoke.ts",
+        "scripts/code-captions-smoke-main.ts",
+        "scripts/code-captions-smoke-renderer.tsx",
+        // The optional toolbar smoke bundles its HTML and loads these by filesystem path.
+        "scripts/browser-display-fixture/index.html",
+        "scripts/browser-display-fixture/entry.tsx",
+        "scripts/browser-display-fixture/preload.cjs",
+        "scripts/browser-display-fixture/toolbar-sequence.ts",
+        "scripts/mail-markers-smoke-main.ts",
+        "scripts/mail-markers-smoke-renderer.tsx",
+        // Native file-subscription smoke entries are built by the disposable MJS runner.
+        "scripts/files-subscriptions-smoke-main.ts",
+        "scripts/files-subscriptions-smoke-renderer.tsx",
+        // Vite's disposable #542 Electron smoke entry is selected by filesystem path.
+        "scripts/agent-inbox-542-smoke-main.ts",
+        "scripts/agent-inbox-542-smoke-renderer.tsx",
+        // Native IPC smoke is selected by the Node runner's filesystem path.
+        "scripts/ipc-sender-native-smoke.ts",
+        // Native Electron smoke: the TS entry and isolated renderer are built by its MJS runner.
+        "scripts/terminal-hints-native-smoke-main.ts",
+        "scripts/terminal-hints-native-smoke.tsx",
+        "scripts/pdf-vim-native-smoke-main.ts",
+        "scripts/pdf-vim-native-smoke.tsx",
+        "scripts/mail-vim-native-smoke-main.ts",
+        "scripts/mail-vim-native-smoke.tsx",
+        "scripts/folder-subscriptions-native-smoke-main.ts",
+        "scripts/folder-subscriptions-native-smoke.tsx",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",
@@ -55,8 +84,20 @@
         // they export a component's whole API whether or not Holi uses it yet.
         "src/renderer/src/components/ui/**": ["exports", "types"],
       },
-      // A system binary one community-plugin test shells out to.
-      "ignoreBinaries": ["pgrep"],
+      // System binaries used by smoke tests and native video capture/inspection.
+      "ignoreBinaries": ["pgrep", "ffmpeg", "ffprobe"],
+    },
+    "apps/mobile": {
+      "entry": [
+        "nativescript.config.ts!",
+        "webpack.config.js!",
+        // The native verification driver is also a production check entry.
+        "scripts/ios-simulator.mjs!",
+        "test/*.test.mjs",
+      ],
+      "project": ["app/**/*.ts!", "scripts/*.{mjs,cjs}!", "test/*.test.mjs"],
+      // NativeScript discovers the pinned platform runtime, not a JS import.
+      "ignoreDependencies": ["@nativescript/ios"],
     },
     "packages/shared": {
       "project": ["src/**/*.ts!", "test/**/*.ts"],

@@ -4,6 +4,7 @@
  * docs/features/note-comments.md), sent with ⌘Enter or its button.
  */
 import { useId, useRef, useState } from 'react'
+import { useEditorActivity } from '@/hooks/use-editor-activity'
 import { useAtomValue } from 'jotai'
 
 import { Button } from '@/components/ui/button'
@@ -12,6 +13,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/cn'
 import { memberLoginsAtom } from '@/state/members'
 import { PersonAvatar } from '@/composites/person-avatar'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /** The `@word` the caret is at the end of, or null. */
 function mentionAt(text: string, caret: number): { start: number; query: string } | null {
@@ -38,8 +41,11 @@ export function CommentField({
   onSubmit: (body: string) => Promise<void>
   onCancel?: () => void
 }) {
+  const activity = useEditorActivity()
   const members = useAtomValue(memberLoginsAtom)
   const [text, setText] = useState('')
+  const vim = useVimField('comment-field', text)
+  const [focused, setFocused] = useState(false)
   const [caret, setCaret] = useState(0)
   const [picked, setPicked] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -53,7 +59,7 @@ export function CommentField({
       : members
           .filter((login) => login.toLowerCase().startsWith(mention.query))
           .slice(0, MAX_SUGGESTIONS)
-  const open = suggestions.length > 0
+  const open = activity.focused && focused && suggestions.length > 0
   const current = Math.min(picked, suggestions.length - 1)
 
   const complete = (login: string) => {
@@ -63,7 +69,9 @@ export function CommentField({
     setText(next)
     setCaret(at)
     setPicked(0)
+    const current = activity.capture()
     requestAnimationFrame(() => {
+      if (!current()) return
       box.current?.focus()
       box.current?.setSelectionRange(at, at)
     })
@@ -92,7 +100,7 @@ export function CommentField({
             ref={box}
             aria-label={label}
             placeholder={placeholder}
-            autoFocus={autoFocus}
+            autoFocus={autoFocus && activity.focused}
             value={text}
             disabled={busy}
 
@@ -101,6 +109,15 @@ export function CommentField({
             aria-expanded={open}
             aria-controls={open ? listId : undefined}
             aria-activedescendant={open ? `${listId}-${current}` : undefined}
+            {...vim.vimFieldProps}
+            onFocus={(event) => {
+              vim.vimFieldProps.onFocus?.(event)
+              setFocused(true)
+            }}
+            onBlur={(event) => {
+              vim.vimFieldProps.onBlur?.(event)
+              setFocused(false)
+            }}
             onChange={(event) => {
               setText(event.target.value)
               setCaret(event.target.selectionStart)
@@ -108,6 +125,8 @@ export function CommentField({
             }}
             onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={(event) => {
+              vim.vimFieldProps.onKeyDown?.(event)
+              if (event.defaultPrevented || event.nativeEvent.isComposing) return
               if (open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
                 event.preventDefault()
                 const step = event.key === 'ArrowDown' ? 1 : -1
@@ -130,6 +149,7 @@ export function CommentField({
             }}
           />
         </PopoverAnchor>
+        <VimFieldMode mode={vim.vimFieldMode} />
         <PopoverContent
           align="start"
           className="w-56"

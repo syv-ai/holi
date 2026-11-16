@@ -83,6 +83,17 @@ describe('ignoredPaths', () => {
     expect(await ignoredPaths(repo, ['USER.md'])).toEqual([])
   })
 
+  it('matches literal brackets beside a tracked pathspec lookalike', async () => {
+    await write('.gitignore', '*.bin\n')
+    await write('literal[1].bin', 'private\n')
+    await write('literal1.bin', 'public\n')
+    await plainGit(repo, ['add', '-f', 'literal1.bin'])
+    await plainGit(repo, ['commit', '-m', 'track lookalike'])
+
+    expect(await ignoredPaths(repo, ['literal[1].bin', 'literal1.bin'])).toEqual(['literal[1].bin'])
+    expect((await scanVault(repo, [])).ignored).toContain('literal[1].bin')
+  })
+
   it('survives a path with spaces and non-ASCII', async () => {
     // `-z` in both directions, or git quotes and escapes these and every path
     // downstream is one that does not exist.

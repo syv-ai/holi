@@ -50,6 +50,10 @@ function thread(id: string, overrides: Partial<MailThreadSummary> = {}): MailThr
     labels: [],
     unsubscribeUrl: null,
     hasInvite: false,
+    replied: false,
+    lastReplyAt: null,
+    addressedAs: null,
+    automated: false,
     ...overrides,
   }
 }
@@ -178,6 +182,15 @@ describe('GoogleCache', () => {
     reopened.ensureShape()
     expect(reopened.historyId('in:inbox|primary')).toBe('9001')
     reopened.close()
+  })
+
+  it('retire is terminal and never recreates a deleted account cache', () => {
+    cache.ensureShape()
+    cache.writeThreads('in:inbox|primary', [thread('t1')])
+    cache.retire()
+    expect(existsSync(path)).toBe(false)
+    expect(() => cache.ensureShape()).toThrow(/closed/)
+    expect(existsSync(path)).toBe(false)
   })
 
   it('destroy leaves no file behind', () => {

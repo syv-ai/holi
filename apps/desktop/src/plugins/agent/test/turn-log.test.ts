@@ -8,8 +8,30 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openTurnLog, TURNS_FILE } from '../main/host/turn-log'
+
+const renameFailure = vi.hoisted(() => ({
+  destination: null as string | null,
+  entered: null as (() => void) | null,
+  wait: null as Promise<void> | null,
+}))
+
+vi.mock('node:fs/promises', async (original) => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return {
+    ...fs,
+    rename: async (...args: Parameters<typeof fs.rename>) => {
+      if (args[1] === renameFailure.destination) {
+        renameFailure.entered?.()
+        await renameFailure.wait
+        renameFailure.destination = null
+        throw Object.assign(new Error('synthetic rename failure'), { code: 'EIO' })
+      }
+      return fs.rename(...args)
+    },
+  }
+})
 
 let root: string
 const dirs: string[] = []
@@ -17,6 +39,9 @@ const dirs: string[] = []
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'holi-turnlog-'))
   dirs.push(root)
+  renameFailure.destination = null
+  renameFailure.entered = null
+  renameFailure.wait = null
 })
 
 afterEach(async () => {
@@ -62,10 +87,32 @@ describe('reading', () => {
     expect(await openTurnLog(root).list()).toEqual([full])
   })
 
-  it('drops one hand-edited record rather than the whole day', async () => {
+  it('filters only missing required fields and preserves historical optional values', async () => {
     await mkdir(join(root, '.holi/state'), { recursive: true })
-    await writeFile(file(), JSON.stringify([record(1), { base: 'x' }, record(2)]), 'utf8')
-    expect(await openTurnLog(root).list()).toEqual([record(1), record(2)])
+    const legacyExtras = { ...record(2), sessionId: 42, overlapped: 'yes', custom: { note: true } }
+    await writeFile(
+      file(),
+      JSON.stringify([
+        record(1),
+        { base: 'x' },
+        legacyExtras,
+        { ...record(4), sessionId: 'session', overlapped: true },
+      ]),
+      'utf8',
+    )
+    const log = openTurnLog(root)
+    expect(await log.list()).toEqual([
+      record(1),
+      legacyExtras,
+      { ...record(4), sessionId: 'session', overlapped: true },
+    ])
+    await log.append(record(5))
+    expect(await openTurnLog(root).list()).toEqual([
+      record(5),
+      record(1),
+      legacyExtras,
+      { ...record(4), sessionId: 'session', overlapped: true },
+    ])
   })
 })
 
@@ -83,11 +130,56 @@ describe('appending', () => {
     expect(JSON.parse(await readFile(file(), 'utf8'))).toHaveLength(1)
   })
 
+  it('serializes concurrent appends across handles and equivalent path spellings', async () => {
+    const left = openTurnLog(root)
+    const right = openTurnLog(join(root, '.'))
+    await Promise.all(
+      Array.from({ length: 20 }, (_, n) => (n % 2 ? left : right).append(record(n))),
+    )
+    const list = await left.list()
+    expect(list).toHaveLength(20)
+    expect(new Set(list.map((item) => item.base)).size).toBe(20)
+  })
+
+  it('keeps independent vaults with the same session id isolated', async () => {
+    const otherRoot = await mkdtemp(join(tmpdir(), 'holi-turnlog-other-'))
+    dirs.push(otherRoot)
+    const first = openTurnLog(root)
+    const second = openTurnLog(otherRoot)
+    await Promise.all([
+      first.append({ ...record(1), sessionId: 'same' }),
+      second.append({ ...record(2), sessionId: 'same' }),
+    ])
+    expect(await first.list()).toEqual([{ ...record(1), sessionId: 'same' }])
+    expect(await second.list()).toEqual([{ ...record(2), sessionId: 'same' }])
+  })
+
   it('puts the newest first', async () => {
     const log = openTurnLog(root)
     await log.append(record(1))
     await log.append(record(2))
     expect(await log.list()).toEqual([record(2), record(1)])
+  })
+
+  it('recovers the queued append after a rename failure without replacing the original', async () => {
+    const log = openTurnLog(root)
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await writeFile(file(), JSON.stringify([record(0)]), 'utf8')
+    let entered!: () => void
+    const renameEntered = new Promise<void>((resolve) => (entered = resolve))
+    let release!: () => void
+    const releaseRename = new Promise<void>((resolve) => (release = resolve))
+    renameFailure.destination = file()
+    renameFailure.entered = entered
+    renameFailure.wait = releaseRename
+    const failed = log.append(record(1))
+    await renameEntered
+    const queued = log.append(record(2))
+    release()
+    await expect(failed).rejects.toThrow('synthetic rename failure')
+    await queued
+    expect(await openTurnLog(root).list()).toEqual([record(2), record(0)])
+    expect(JSON.parse(await readFile(file(), 'utf8'))).toEqual([record(2), record(0)])
   })
 
   it('caps at fifty', async () => {
@@ -107,7 +199,7 @@ describe('appending', () => {
     expect(await log.list()).toEqual([same])
   })
 
-  it('keeps one changed-nothing turn per session, so they cannot push real turns out', async () => {
+  it('keeps one changed-nothing turn per session under concurrent appends', async () => {
     const log = openTurnLog(root)
     const idle = (sessionId: string, n: number) => ({
       base: 'same',
@@ -116,10 +208,10 @@ describe('appending', () => {
       sessionId,
     })
     await log.append({ ...record(1), sessionId: 'a' })
-    await log.append(idle('a', 2))
+    await Promise.all(Array.from({ length: 8 }, (_, n) => log.append(idle('a', n + 2))))
     await log.append(idle('b', 3))
-    await log.append(idle('a', 4))
-    expect(await log.list()).toEqual([idle('a', 4), idle('b', 3), { ...record(1), sessionId: 'a' }])
+    const persisted = await openTurnLog(root).list()
+    expect(persisted).toEqual([idle('b', 3), idle('a', 9), { ...record(1), sessionId: 'a' }])
   })
 
   it('never syncs, because the name says so', () => {

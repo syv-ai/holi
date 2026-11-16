@@ -406,11 +406,11 @@ const [value, setValue] = useState<DateSelectorValue | undefined>()
 **Shape:**
 
 ```tsx
-<Badge variant="success-light">Success</Badge>
-<Badge variant="outline">Draft</Badge>
+<Badge variant="success">Success</Badge>
+<Badge variant="secondary">Draft</Badge>
 ```
 
-**Gotcha:** shadcn-compatible. Rich `variant` set (solid, `-outline`, `-light` per color), `size` `xs..xl` (keep the default), `radius` `default | full`. Like `alert`, the color variants rely on ReUI extended tokens. Prefer `Badge` variants over raw color classes: `<tone>-light` for a state, `outline` for a neutral label; an omitted `variant` is the solid primary fill.
+**Gotcha:** shadcn-compatible. `variant` uses the installed solid semantic set; `size` `xs..xl` (keep the default), `radius` `default | full`. State variants use readable neutral foregrounds; neutral labels use `secondary`. Badges are borderless and never use same-hue text and background; an omitted `variant` is the solid primary fill.
 
 ## color-picker
 

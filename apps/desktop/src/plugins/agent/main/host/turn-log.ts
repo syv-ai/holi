@@ -15,8 +15,8 @@
  *
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { jsonFileStore } from '../../../../main/plugin-api'
 
 /** Machine state, with the rest of it under `state/`. Gitignored by the
  *  `.local.` marker.
@@ -67,34 +67,28 @@ function isRecord(value: unknown): value is TurnRecord {
 }
 
 export function openTurnLog(vaultRoot: string): TurnLog {
-  const path = join(vaultRoot, TURNS_FILE)
+  const store = jsonFileStore<TurnRecord[]>(join(vaultRoot, TURNS_FILE), (raw) => {
+    // Entry by entry rather than all-or-nothing: one hand-edited record should
+    // not lose the rest of the day.
+    return Array.isArray(raw) ? raw.filter(isRecord).slice(0, CAP) : []
+  })
 
   const list = async (): Promise<TurnRecord[]> => {
-    let raw: string
     try {
-      raw = await readFile(path, 'utf8')
+      return await store.read()
     } catch {
-      return []
-    }
-    try {
-      const parsed: unknown = JSON.parse(raw)
-      // Entry by entry rather than all-or-nothing: one hand-edited record should
-      // not lose the rest of the day.
-      return Array.isArray(parsed) ? parsed.filter(isRecord).slice(0, CAP) : []
-    } catch {
+      // A broken log must never break a turn; preserve the historical read contract.
       return []
     }
   }
 
   const append = async (record: TurnRecord): Promise<void> => {
-    const noChange = (r: TurnRecord): boolean =>
-      r.base === r.end && r.sessionId !== undefined && r.sessionId === record.sessionId
-    let previous = await list()
-    if (noChange(record)) previous = previous.filter((r) => !noChange(r))
-    const next = [record, ...previous].slice(0, CAP)
-    // A freshly cloned vault may have no `.holi/` yet.
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+    await store.update((previous) => {
+      const noChange = (r: TurnRecord): boolean =>
+        r.base === r.end && r.sessionId !== undefined && r.sessionId === record.sessionId
+      const retained = noChange(record) ? previous.filter((r) => !noChange(r)) : previous
+      return [record, ...retained].slice(0, CAP)
+    })
   }
 
   return { list, append }

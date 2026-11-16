@@ -4,15 +4,22 @@
  * stays dismissed across a restart and a newer pin, until the plugin is ready
  * there.
  */
-import { render, screen } from '@/test/render'
+import { act, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom } from '@/plugin-api'
 import { communityRenderer } from '../renderer/index'
-import { rowsAtom, type PluginRow } from '../renderer/state'
+import { rowsAtom, updatesAtom, type PluginRow } from '../renderer/state'
 
 const Notice = communityRenderer.sidebarSection!
+const update = vi.hoisted(() => vi.fn())
+const install = vi.hoisted(() => vi.fn())
+vi.mock('../renderer/install-flow', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../renderer/install-flow')>()),
+  installAndAsk: install,
+  updatePlugin: update,
+}))
 
 const row = (
   id: string,
@@ -33,6 +40,7 @@ const row = (
   serve: null,
   apps: [],
   bin: [],
+  cli: null,
   commandsNote: null,
   check: null,
 })
@@ -50,6 +58,75 @@ function open(remote: string, rows: readonly PluginRow[]) {
 }
 
 afterEach(() => localStorage.clear())
+
+test('the initiating update shows a spinner, blocks duplicates and restores after resolution', async () => {
+  let resolve!: (value: null) => void
+  update.mockReturnValueOnce(new Promise<null>((done) => (resolve = done)))
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  store.set(rowsAtom, { remote: 'ada/notes', rows: [row('dash', 'Dash', '1.0.0', 'ready')] })
+  store.set(updatesAtom, { dash: '2.0.0' })
+  render(
+    <Provider store={store}>
+      <Notice />
+    </Provider>,
+  )
+  const button = screen.getByRole('button', { name: 'Update…' })
+  await userEvent.click(button)
+  expect(button).toBeDisabled()
+  expect(button.querySelector('[data-slot="spinner"]')).not.toBeNull()
+  await userEvent.click(button)
+  expect(update).toHaveBeenCalledTimes(1)
+  resolve(null)
+  await waitForEnabled(button)
+})
+
+async function waitForEnabled(button: HTMLElement) {
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(button).toBeEnabled()
+}
+
+test('install spins only its own action until consent handoff resolves', async () => {
+  let resolve!: (value: null) => void
+  install.mockReturnValueOnce(new Promise<null>((done) => (resolve = done)))
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  store.set(rowsAtom, { remote: 'ada/notes', rows: [row('dash', 'Dash')] })
+  render(
+    <Provider store={store}>
+      <Notice />
+    </Provider>,
+  )
+  const button = screen.getByRole('button', { name: 'Install…' })
+  await userEvent.click(button)
+  expect(button).toBeDisabled()
+  expect(button.querySelector('[data-slot="spinner"]')).not.toBeNull()
+  await userEvent.click(button)
+  expect(install).toHaveBeenCalledTimes(1)
+  await act(async () => resolve(null))
+  expect(button).toBeEnabled()
+})
+
+test('a rejected update restores its action button and shows the existing error', async () => {
+  let reject!: (reason: Error) => void
+  update.mockReturnValueOnce(new Promise<null>((_resolve, fail) => (reject = fail)))
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  store.set(rowsAtom, { remote: 'ada/notes', rows: [row('dash', 'Dash', '1.0.0', 'ready')] })
+  store.set(updatesAtom, { dash: '2.0.0' })
+  render(
+    <Provider store={store}>
+      <Notice />
+    </Provider>,
+  )
+  const button = screen.getByRole('button', { name: 'Update…' })
+  await userEvent.click(button)
+  await act(async () => reject(new Error('download failed')))
+  expect(button).toBeEnabled()
+  expect(screen.getByRole('alert')).toHaveTextContent('download failed')
+})
 
 test('a dismissed notice stays gone for that vault and plugin only', async () => {
   const first = open('ada/notes', [row('dash', 'Dash'), row('deck', 'Deck')])

@@ -1,8 +1,13 @@
-@import 'tailwindcss';
+@import 'tailwindcss' theme(static);
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
 @source '../../plugins';
+
+@theme inline {
+  --color-badge-solid-foreground: var(--badge-solid-foreground);
+  --color-destructive-solid-foreground: var(--destructive-solid-foreground);
+}
 
 /* Dark follows the `data-theme` stamp on <html> (`state/color-scheme.ts`). */
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
@@ -27,6 +32,7 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-solid-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -55,6 +61,7 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-solid-foreground: oklch(0.1 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -75,6 +82,7 @@
   --success-foreground: var(--color-emerald-900);
   --info: var(--color-violet-500);
   --info-foreground: var(--color-violet-900);
+  --badge-solid-foreground: var(--color-zinc-950);
   --focus: var(--color-blue-500);
   --focus-foreground: var(--color-blue-900);
   --warning: var(--color-yellow-500);
@@ -237,6 +245,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-solid-foreground: var(--destructive-solid-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -526,6 +535,13 @@
 @utility motion-in-rise {
   animation: motion-in-rise var(--motion-arrive) var(--ease-settle) both;
 }
+/* A view paged sideways comes in from the side it was paged towards. */
+@utility motion-in-from-end {
+  animation: motion-in-from-end var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-from-start {
+  animation: motion-in-from-start var(--motion-arrive) var(--ease-settle) both;
+}
 
 /* Acknowledging an act the user committed: one beat, once (`hooks/use-ack.ts`
    adds the class and removes it when the animation ends). */
@@ -581,6 +597,18 @@
   from {
     opacity: 0;
     transform: translateY(6px);
+  }
+}
+@keyframes motion-in-from-end {
+  from {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+}
+@keyframes motion-in-from-start {
+  from {
+    opacity: 0;
+    transform: translateX(-1.5rem);
   }
 }
 @keyframes motion-ack-bloom {
@@ -650,7 +678,9 @@
   .motion-out-origin {
     animation-duration: 1ms;
   }
-  .motion-in-rise {
+  .motion-in-rise,
+  .motion-in-from-end,
+  .motion-in-from-start {
     animation-name: motion-in-fade;
   }
 }

@@ -9,7 +9,8 @@
  * import anywhere on this path stops the window opening at all.
  */
 import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
-import { stat } from 'node:fs/promises'
+import { createOpenIntentQueue, type OpenIntent } from './open-intents'
+import { realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   app,
@@ -20,16 +21,19 @@ import {
   nativeImage,
   net,
   protocol,
+  webContents,
   session as electronSession,
   shell,
   type Tray,
 } from 'electron'
-import { HOLI_LINK_SCHEME, holiLinkInArgv, parseHoliLink } from '@holi/shared'
-import { exactPath } from '@holi/shared/path-safety-node'
-import { requestFlush, type FlushChannel } from './flush'
+import { HOLI_LINK_SCHEME, holiLinkInArgv } from '@holi/shared'
+import { openHoliLink as openCheckedHoliLink } from './holi-link-opener'
+import { requestFlush } from './flush'
 import { captureTab } from './tab-capture'
+import { isApplicationSender, unauthorizedApplicationSender } from './application-sender'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
+import { createMdxTrustStore } from './mdx-trust'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
 import { installNodeFallback } from './bridge/node-fallback'
@@ -45,6 +49,10 @@ import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
+import { createAppFrameLeases } from './plugin-host/app-frame-leases'
+import { trackAppFrameDocuments } from './plugin-host/app-frame-navigation'
+import { appLeaseFromHost } from '../plugins/apps/shared/bundle'
+import { createNativeRequestWindows } from './plugin-host/native-request-windows'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
@@ -61,8 +69,9 @@ import { readVaultSettings } from './vault/settings'
 import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
-import { registerIpc } from './ipc'
+import { registerIpc, listenForPluginMessages, createRendererFlushChannel } from './ipc'
 import { createActivityLog, scrubSecrets } from './activity/log'
+import { logsCapabilities } from './capabilities/logs-caps'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
 import { createTerminals } from './terminal/terminals'
 import { pathToFileURL } from 'node:url'
@@ -70,6 +79,9 @@ import { guardNavigation } from './window-guard'
 import { createRouter } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
+import { prepareManagedClone } from './vault/prepare-clone'
+import { createSelectedRuntimeGate } from './vault/selected-runtime'
+import { drainShutdown, settleVaultForQuit } from './shutdown'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
 import { showNotification, type NativeNotice } from './notifications'
@@ -78,13 +90,16 @@ import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
+import { createFrameOrigins } from './frame-origins'
+import { publishCliEndpoint, type CliEndpoint } from './bridge/cli-endpoint'
+import { createCliTargetResolver } from './bridge/cli-target'
 
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
 
 /** The origins plugins frame right now (`PluginCtx.frameOrigin`), which the
  *  window guard confines; live, as their servers start and stop. */
-const FRAME_ORIGINS = new Set<string>()
+const { origins: FRAME_ORIGINS, acquire: acquireFrameOrigin } = createFrameOrigins()
 
 /** What seeds every vault, core first: its `.gitignore` is written before
  *  any file that could be committed. Enabled plugins' seeds follow. */
@@ -93,6 +108,17 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
 let mainWindow: BrowserWindow | null = null
+let appFrameLeases: ReturnType<typeof createAppFrameLeases> | null = null
+let mainEntryDocument: string | null = null
+
+const authorizeApplicationSender = (
+  event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
+): boolean =>
+  isApplicationSender(
+    event,
+    mainWindow?.isDestroyed() ? null : (mainWindow?.webContents ?? null),
+    mainEntryDocument,
+  )
 
 // Held at module scope, not inside `main()`: a `Tray` that gets garbage-collected
 // vanishes from the menu bar, so it must outlive the setup closure. It exists
@@ -133,10 +159,15 @@ interface OpenRequest {
  * The renderer that said it can take an open (`vault:open-ready`, sent once its
  * vault has landed), or null while none has: a fresh window's page has not
  * loaded, or is still opening its vault, whose landing would bury the tab.
- * Opens asked for meanwhile wait in `heldOpens`.
+ * Opens asked for meanwhile wait in the shared open-intent queue.
  */
 let openTarget: Electron.WebContents | null = null
-const heldOpens: OpenRequest[] = []
+const heldOpenIntents = createOpenIntentQueue()
+
+function sendOpenIntent(contents: Electron.WebContents, intent: OpenIntent): void {
+  const { channel, ...request } = intent
+  contents.send(channel, request)
+}
 
 /**
  * Holi links (docs/features/holi-links.md), clicked anywhere on this machine.
@@ -214,6 +245,28 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  // Pin authorization to the intended application document, never to a URL
+  // supplied by an IPC sender.
+  mainEntryDocument = devUrl || pathToFileURL(join(__dirname, '../renderer/index.html')).href
+  if (appFrameLeases !== null) {
+    const stopTracking = trackAppFrameDocuments({
+      contents: win.webContents,
+      window: win,
+      leases: appFrameLeases,
+      tokenFromUrl: (url) => {
+        try {
+          const parsed = new URL(url)
+          return parsed.protocol === 'holi-app:'
+            ? (appLeaseFromHost(parsed.hostname)?.token ?? null)
+            : null
+        } catch {
+          return null
+        }
+      },
+    })
+    win.webContents.once('destroyed', stopTracking)
+  }
   if (liquid) applyLiquidGlass(win)
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
@@ -237,7 +290,6 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   win.on('show', sendVisibility)
   win.on('hide', sendVisibility)
 
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
     void win.loadURL(devUrl)
   } else {
@@ -287,6 +339,8 @@ async function main(): Promise<void> {
 
   // After whenReady: the keychain is not available before it.
   const session = await createSession()
+  // One app-owned handle; never construct a separate trust store per renderer request.
+  const mdxTrust = createMdxTrustStore(join(app.getPath('userData'), 'mdx-trust.json'))
   const userDataDir = app.getPath('userData')
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
@@ -297,7 +351,7 @@ async function main(): Promise<void> {
   // happened before the panel was ever opened.
   const activity = createActivityLog({ onEntry: (entry) => send('activity:entry', entry) })
   pushLog = (entry) => send('logs:entry', entry)
-  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started` })
+  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started`, global: true })
   // The bottom panel's shells. `binDir` is read lazily: the `holi` command is
   // installed below, long before anyone opens a terminal.
   const terminals = createTerminals({
@@ -306,6 +360,8 @@ async function main(): Promise<void> {
   })
 
   const bridgeEnv = createBridgeEnv()
+  /** Runtime plugin work starts only after the router's seed/open/reconcile sequence. */
+  const pluginReady = new WeakSet<object>()
   /** remote → the undo of what the open vault's env file carries. */
   const vaultEnv = new Map<string, () => void>()
   /**
@@ -348,18 +404,17 @@ async function main(): Promise<void> {
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
     send,
-    listen: (channel, handler) => {
-      const listener = (_e: unknown, message: unknown) => handler(message)
-      ipcMain.on(channel, listener)
-      return () => void ipcMain.removeListener(channel, listener)
-    },
-    liveRemote: () => host.active()?.remote ?? null,
+    listen: (channel, handler) =>
+      listenForPluginMessages(channel, handler, authorizeApplicationSender),
+    liveRemote: () => plugins.displayed(),
   }
 
   // Every capability, from every door. Created ahead of the vault host so
   // the plugin host can register into it; `host` and `rootFor` are read
   // lazily.
   const capabilities = createCapabilityRegistry()
+  const appFrames = createAppFrameLeases()
+  appFrameLeases = appFrames
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
     registry: capabilities,
@@ -370,25 +425,39 @@ async function main(): Promise<void> {
     rootFor: (remote) => rootFor(remote),
     events: eventsDeps,
     // `capabilityHost` is built below, long before any vault opens.
-    openAppDoor: (opener) => capabilityHost.openAppDoor(opener),
+    openAppDoor: (opener, remote) => capabilityHost.openAppDoor(opener, remote),
+    appFrames,
     // The bridge and the `holi` command exist before any vault can open.
-    route: (path, route) => bridge.route(path, route),
+    route: (path, route, remote) => bridge.route(path, route, remote),
     binDir: () => binDir,
     githubToken: () => session.token(),
-    frameOrigin: (origin) => {
-      FRAME_ORIGINS.add(origin)
-      return () => void FRAME_ORIGINS.delete(origin)
-    },
+    frameOrigin: acquireFrameOrigin,
     // One plugin's main side calling another's, at the UI door its renderer
     // would use. `capabilityHost` is built below, before any vault opens.
-    call: async (remote, name, params) =>
-      (await capabilityHost.dispatch({ door: 'ui', remote, name, params })).value,
+    call: async (remote, name, params, beforeInvoke, finalization) =>
+      (
+        await capabilityHost.dispatch(
+          { door: 'ui', remote, name, params, beforeInvoke },
+          finalization,
+        )
+      ).value,
     activity: activity.write,
     // A plugin's notification is the reminders' kind, kept off a Holi that
     // has focus. A click brings the window forward before the plugin acts.
     focused: () => BrowserWindow.getFocusedWindow() !== null,
     window: () => (mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow),
     notify: notifyUnfocused,
+    navigate: (plugin, remote, name, payload) => {
+      const request = { remote, plugin, name, payload }
+      const win = openWindow()
+      heldOpenIntents.send(
+        { channel: 'vault:navigate', ...request },
+        win !== null && openTarget === win.webContents && !win.isDestroyed(),
+        (intent) => {
+          if (win !== null) sendOpenIntent(win.webContents, intent)
+        },
+      )
+    },
     background: {
       registered: async () =>
         (await registry.list()).map((e) => ({ remote: e.remote, root: e.path })),
@@ -418,36 +487,56 @@ async function main(): Promise<void> {
     // PATH has settled. This promise is started at launch; the window is not
     // held behind it.
     beforeOpen: () => loginPath,
+    prepareClone: async (remote) => {
+      const entry = (await registry.list()).find((candidate) => candidate.remote === remote)
+      if (!entry) throw new Error(`no such vault: ${remote}`)
+      await prepareManagedClone(entry.path)
+    },
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },
     claims: (root) => plugins.scanClaimsFor(root),
-    onSnapshot: (snapshot) => {
+    onSnapshot: (remote, snapshot) => {
+      const runtime = gate.capture(remote)
+      if (runtime === null) return
       send('vault:snapshot', snapshot)
+      // Host startup snapshots arrive before the router has seeded and
+      // reconciled plugins. The router's `opened` callback supplies the initial
+      // snapshot after that sequence; later snapshots handle hand edits.
+      if (!pluginReady.has(runtime)) return
       // A hand edit to the settings files arrives this way too: what runs
       // follows it now, not at the next open. When it changed which plugins
       // claim files, that scan used the old claims: scan again with the new
       // ones.
-      plugins.invalidate()
-      void plugins.reconcile('snapshot')
-      const active = host.active()
-      if (active === null) return
-      // What the started plugins read off the files: file triggers, tasks'
-      // due moments.
-      plugins.snapshot(active.remote, snapshot)
-      void plugins.scanClaimsFor(active.root).then((claims) => {
-        const now = new Set(claims.map((c) => c.plugin))
-        const was = Object.keys(snapshot.claimed)
-        if (was.length !== now.size || was.some((id) => !now.has(id))) {
-          void active.refresh().catch((err) => console.error('[vault] rescan:', err))
-        }
-      })
+      plugins.invalidate(remote)
+      const active = runtime
+      void plugins
+        .reconcile(active, 'snapshot')
+        .then(async () => {
+          if (!gate.isCurrent(remote, active)) return
+          // What the started plugins read off the files: file triggers, tasks'
+          // due moments. A delayed reconcile from the former selection must not
+          // feed its snapshot into whichever vault became selected meanwhile.
+          plugins.snapshot(remote, snapshot)
+          const claims = await plugins.scanClaimsFor(active.root)
+          if (!gate.isCurrent(remote, active)) return
+          const now = new Set(claims.map((c) => c.plugin))
+          const was = Object.keys(snapshot.claimed)
+          if (was.length !== now.size || was.some((id) => !now.has(id))) {
+            void active.refresh().catch((err) => console.error('[vault] rescan:', err))
+          }
+        })
+        .catch((err) => console.error('[plugins] snapshot reconcile failed:', err))
     },
-    onSyncState: (state) => send('vault:sync', state),
+    onSyncState: (remote, state) => gate.run(remote, () => send('vault:sync', state)),
     // Sync that keeps failing says so outside Holi too; inside, the activity
     // log's error line marks the Output (docs/features/vaults-sync.md).
     onSyncFailing: (remote, text) =>
-      void notifyUnfocused({ title: `${remote}: sync is failing`, body: scrubSecrets(text) }),
+      gate.run(
+        remote,
+        () =>
+          void notifyUnfocused({ title: `${remote}: sync is failing`, body: scrubSecrets(text) }),
+      ),
     // How everything inside the vault reaches us: its `bridge.local.env`,
     // with what each part of Holi contributes while the vault is open. Made
     // at open, so the file names this run's ports, which move on restart.
@@ -465,32 +554,50 @@ async function main(): Promise<void> {
     },
     // The large-file gate's held-back set (empty clears the callout). Pushed
     // every commit tick and once at open, so a vault switch resets it.
-    onHeldBack: (files) => send('vault:heldback', files),
-    onCommitted: (paths) => send('vault:committed', paths),
+    onHeldBack: (remote, files) => gate.run(remote, () => send('vault:heldback', files)),
+    onCommitted: (remote, paths) => gate.run(remote, () => send('vault:committed', paths)),
     activity: activity.write,
     // A merge (a pull, or a reconcile landing) is the only way a teammate's
     // comment arrives, so it is where a mention of the person signed in is
     // found and handed to the plugins
     // (the agent's inbox). Best-effort: a mention missed is still in the panel.
     onPulled: ({ remote, root }, { from, to }) => {
+      const runtime = gate.capture(remote)
       const login = session.viewer?.login
-      if (!login) return
+      if (!runtime || !login) return
       void pulledMentions(root, from, to, login)
-        .then((found) =>
+        .then((found) => {
+          if (!gate.isCurrent(remote, runtime)) return
           plugins.mentioned(
             remote,
             found.map(({ notePath, mention }) => ({ notePath, ...mention })),
-          ),
-        )
+          )
+        })
         .catch((err) => console.error('[comments] mentions after pull:', err))
     },
     // What plugins run in the vault stops here, the only place that still
     // holds the vault they ran in. The panel's shells were started in its
     // clone too, and stop with it.
-    onLeave: async () => {
-      await terminals.closeAll().catch((err) => console.error('[terminal] close failed:', err))
-      await plugins.stop()
+    onLeave: async (remote) => {
+      await plugins.stop(remote)
+      await terminals.closeRemote(remote)
+      if (plugins.displayed() === remote) plugins.setDisplayed(null)
     },
+  })
+
+  const gate = createSelectedRuntimeGate({
+    selected: () => host.active(),
+    get: (remote) => host.get(remote),
+  })
+
+  // Electron 43's protocol Request has no `webContentsId`. Capture the native
+  // requester in webRequest before Chromium hands the URL to protocol.handle.
+  // Ambiguous concurrent identical URLs fail closed instead of selecting a
+  // window by guesswork.
+  const windowForAppRequest = createNativeRequestWindows({
+    webRequest: electronSession.defaultSession.webRequest,
+    contentsForId: (id) => webContents.fromId(id),
+    windowForContents: (contents) => BrowserWindow.fromWebContents(contents),
   })
 
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
@@ -500,6 +607,9 @@ async function main(): Promise<void> {
       serveScheme(entry, {
         active: () => host.active(),
         runs: async (owner, root) => (await plugins.enabled(root)).has(owner),
+        appFrames,
+        windowForRequest: windowForAppRequest,
+        frameForRequest: windowForAppRequest.frameForRequest,
       }),
     )
   }
@@ -593,15 +703,21 @@ async function main(): Promise<void> {
       if (win.isMinimized()) win.restore()
       win.showInactive()
     }
-    if (openTarget !== null && !openTarget.isDestroyed()) openTarget.send('vault:open', request)
-    else heldOpens.push(request)
+    heldOpenIntents.send(
+      { channel: 'vault:open', ...request },
+      openTarget !== null && !openTarget.isDestroyed(),
+      (intent) => {
+        if (openTarget !== null) sendOpenIntent(openTarget, intent)
+      },
+    )
     return win
   }
   /** Who waits for a window's renderer to take opens (`openReadyIn`). */
   const readyWaiters: { contents: Electron.WebContents; resolve: () => void }[] = []
   ipcMain.on('vault:open-ready', (event) => {
+    if (!authorizeApplicationSender(event)) return
     openTarget = event.sender
-    for (const request of heldOpens.splice(0)) event.sender.send('vault:open', request)
+    heldOpenIntents.drain((intent) => sendOpenIntent(event.sender, intent))
     for (const w of readyWaiters.filter((w) => w.contents === event.sender)) {
       readyWaiters.splice(readyWaiters.indexOf(w), 1)
       w.resolve()
@@ -628,48 +744,28 @@ async function main(): Promise<void> {
    * file one that is in it. Anything else is said in a dialog and opens
    * nothing. A link only ever opens a tab: it runs nothing.
    */
+  const checkAndOpenHoliLink = (url: string) =>
+    openCheckedHoliLink(url, {
+      vaults: () => registry.list(),
+      showPath: (remote, path, options) => showPath(remote, path, options),
+    })
   const openHoliLink = async (url: string): Promise<void> => {
+    const result = await checkAndOpenHoliLink(url)
+    if (result.ok) return
     // A sheet on a minimised or tray-hidden window is a dialog nobody sees, so
-    // the window comes forward first, as it does for a link that opens; with
-    // no window at all the dialog stands alone.
-    const tell = (message: string, detail: string): void => {
-      const options = { type: 'info' as const, message, detail, buttons: ['OK'] }
-      const win = mainWindow
-      if (win === null || win.isDestroyed()) return void dialog.showMessageBox(options)
-      bringForward(win)
-      void dialog.showMessageBox(win, options)
+    // bring the window forward first; with no window the dialog stands alone.
+    const options = {
+      type: 'info' as const,
+      message: result.message,
+      detail: result.detail,
+      buttons: ['OK'],
     }
-    const parsed = parseHoliLink(url)
-    if (!parsed.ok) return tell('This link cannot be opened.', parsed.reason)
-    const { remote, path, heading } = parsed.link
-    // GitHub names are case-insensitive, so a link typed or pasted with
-    // another case still names the vault.
-    const entry = (await registry.list()).find(
-      (e) => e.remote.toLowerCase() === remote.toLowerCase(),
-    )
-    if (entry === undefined) {
-      return tell(
-        `${remote} is not on this computer.`,
-        'Add the vault with Add vault… in the vault menu, then open the link again.',
-      )
-    }
-    // `exactPath` refuses a name that reaches outside the clone through a link
-    // or a case alias, so what is shown is what was named.
-    const abs = await exactPath(entry.path, path)
-    const isFile =
-      abs !== null &&
-      (await stat(abs).then(
-        (s) => s.isFile(),
-        () => false,
-      ))
-    if (!isFile) {
-      return tell(
-        `${path} is not in ${remote}.`,
-        'It may have been moved or deleted, or it has not synced to this computer yet.',
-      )
-    }
-    showPath(entry.remote, path, { heading })
+    const win = mainWindow
+    if (win === null || win.isDestroyed()) return void dialog.showMessageBox(options)
+    bringForward(win)
+    void dialog.showMessageBox(win, options)
   }
+  const openPastedHoliLink = (url: string) => checkAndOpenHoliLink(url)
 
   /** `holi docs open` and `holi docs screenshot` show a path only in the vault
    *  Holi has open (`requireOpen`), asked again here since a switch can land
@@ -710,6 +806,8 @@ async function main(): Promise<void> {
   const updateSkillsOnOpen = (remote: string): void => {
     const vault = host.active()
     if (vault === null || vault.remote !== remote) return
+    pluginReady.add(vault)
+    plugins.snapshot(remote, vault.snapshot())
     const stillOpen = (): boolean => host.active() === vault
     void updateOnOpen({
       root: vault.root,
@@ -739,7 +837,7 @@ async function main(): Promise<void> {
     screenshot: (remote, path) => {
       const run = () => {
         const win = showInActive(remote, path, false)
-        return captureTab(win, path, openReadyIn(win))
+        return captureTab(win, path, openReadyIn(win), authorizeApplicationSender)
       }
       const shot = screenshots.then(run, run)
       screenshots = shot.catch(() => {})
@@ -769,6 +867,7 @@ async function main(): Promise<void> {
     },
   })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
+  capabilities.register(['logs'], logsCapabilities(activity))
   // Comment threads on notes, for the agent: written as the signed-in person.
   capabilities.register(
     COMMENT_NAMESPACES,
@@ -787,7 +886,8 @@ async function main(): Promise<void> {
     }),
     // A plugin being turned off keeps its capabilities until its disposer is
     // done, so what it finishes on the way out still reaches it.
-    pluginEnabled: async (plugin, root) => (await plugins.serving(root)).has(plugin),
+    pluginEnabled: async (plugin, root, allowDrain) =>
+      (await plugins.serving(root, allowDrain)).has(plugin),
     claims: (root) => plugins.scanClaimsFor(root),
   })
   const dispatch = capabilityHost.dispatch
@@ -814,12 +914,14 @@ async function main(): Promise<void> {
           status.lastError !== null
             ? {
                 channel: 'app',
+                global: true,
                 level: 'warn',
                 message: 'Update check failed',
                 detail: status.lastError,
               }
             : {
                 channel: 'app',
+                global: true,
                 message:
                   status.state === 'ready'
                     ? `Holi ${status.availableVersion ?? ''} is ready to install`
@@ -858,6 +960,8 @@ async function main(): Promise<void> {
   })
 
   const router = createRouter({
+    userData: app.getPath('userData'),
+    openPastedHoliLink,
     updates: updater,
     activity,
     logs: appLog,
@@ -879,6 +983,7 @@ async function main(): Promise<void> {
     },
     registry,
     session,
+    mdxTrust,
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {
@@ -894,18 +999,49 @@ async function main(): Promise<void> {
     },
   })
 
-  registerIpc({ router, rootFor: (remote) => rootFor(remote) })
-  ipcMain.handle('window:is-visible', (event) =>
-    mainWindow !== null && event.sender === mainWindow.webContents ? mainWindow.isVisible() : false,
-  )
+  registerIpc({
+    router,
+    rootFor: (remote) => rootFor(remote),
+    authorizeSender: authorizeApplicationSender,
+  })
+  ipcMain.handle('window:is-visible', (event) => {
+    if (!authorizeApplicationSender(event)) throw unauthorizedApplicationSender()
+    return mainWindow!.isVisible()
+  })
 
   const holiCliPath = await installHoliCli(app.getPath('userData'))
   await installNodeFallback(app.getPath('userData'), process.execPath)
 
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
+  const targetResolver = createCliTargetResolver(registry, async (remote, root) => {
+    const active = host.active()
+    if (active?.remote !== remote) return false
+    const path = await realpath(active.root).catch(() => null)
+    return host.active() === active && path === root
+  })
+  let cliEndpoint: CliEndpoint | null = null
   const bridge = createBridgeServer({
-    cli: { dispatch, commands: () => capabilities.commands(), rootFor },
+    cli: {
+      dispatch,
+      commands: (remote) =>
+        remote === undefined ? capabilities.commands() : capabilities.commands(remote),
+      rootFor,
+      machine: {
+        token: () => cliEndpoint?.token ?? '',
+        listVaults: () => targetResolver.list(),
+        resolveTarget: async (selector, cwd) => {
+          const target = await targetResolver.resolve(selector, cwd)
+          return target === null
+            ? null
+            : {
+                remote: target.entry.remote,
+                root: target.entry.path,
+                live: target.live,
+              }
+        },
+      },
+    },
   })
   registerGitRoutes(bridge, {
     rootFor,
@@ -918,6 +1054,14 @@ async function main(): Promise<void> {
       dispatch({ door: 'ui', remote, name: 'agent.message', params: { session: job, text } }),
   })
   await bridge.start()
+  try {
+    const port = bridge.port()
+    if (port === null) throw new Error('CLI bridge did not bind a port')
+    cliEndpoint = await publishCliEndpoint(join(app.getPath('userData'), 'cli-endpoint.json'), port)
+  } catch (error) {
+    await bridge.stop().catch(() => {})
+    throw error
+  }
   const binDir = dirname(holiCliPath)
 
   // Opened at login, Holi starts out of sight: the window loads (so the
@@ -1028,7 +1172,7 @@ async function main(): Promise<void> {
   /** Everything a quit does before the process goes: by ⌘Q, the tray, or an
    *  update's restart. Never throws. */
   async function teardown(): Promise<boolean> {
-    const channel = flushChannel(mainWindow)
+    const channel = createRendererFlushChannel(mainWindow, authorizeApplicationSender)
     try {
       // Ask before tearing down anything: a failed flush must leave the app
       // usable so the person can correct the problem and retry quit.
@@ -1037,74 +1181,29 @@ async function main(): Promise<void> {
         console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
         return false
       }
-      updater.dispose()
       // Stop the work across vaults and in the active vault only after dirty
-      // buffers are safe on disk.
-      await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
-      await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
-      await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
-      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
-      // Quit is a leave point: commit the flushed buffer, then get it
-      // off-machine before the window closes. Best-effort with a 1s budget:
-      // an unreachable remote must not hang quit, and the next launch drains
-      // what did not make it out. Order is flush -> commit -> push -> close.
-      const vault = host.active()
-      if (vault !== null) {
-        await vault.commitNow().catch((err) => console.error('[quit] commit failed:', err))
-        await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, 1_000))])
-      }
-      // `close()` commits the open vault again (a clean no-op) before letting
-      // go of it.
-      await host.close()
+      // buffers are safe on disk. A failed drain keeps quit cancellable and
+      // leaves the updater and vault infrastructure available for a retry.
+      await drainShutdown({
+        stopBackground: () => plugins.stopBackground(),
+        stopPlugins: () => plugins.stopAll(),
+        closeTerminals: () => terminals.closeAll(),
+        disposeUpdater: () => updater.dispose(),
+        settleVault: () => settleVaultForQuit(host.active()),
+        closeVaults: () => host.closeAll(),
+        closeBridge: async () => {
+          const endpoint = cliEndpoint
+          await endpoint?.dispose()
+          cliEndpoint = null
+          await bridge.stop()
+        },
+      })
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
       channel.cancel?.()
       return false
     }
     return true
-  }
-}
-
-/**
- * `requestFlush`'s channel, over the one window.
- *
- * A window that is gone or destroyed has no buffer left to lose, so it answers
- * at once rather than making the quit sit out the full timeout for a renderer
- * that cannot possibly reply.
- */
-function flushChannel(win: BrowserWindow | null): FlushChannel {
-  const target = win !== null && !win.isDestroyed() ? win : null
-  let requestId: string | undefined
-  let done: ((id: string, error?: string) => void) | undefined
-  return {
-    onDone(cb) {
-      done = cb
-      if (target === null)
-        return () => {
-          done = undefined
-        }
-      const listener = (event: Electron.IpcMainEvent, id: string, error?: string) => {
-        if (
-          event.sender !== target.webContents ||
-          event.senderFrame !== target.webContents.mainFrame
-        )
-          return
-        if (typeof id !== 'string' || (error !== undefined && typeof error !== 'string')) return
-        cb(id, error)
-      }
-      ipcMain.on('vault:flush-done', listener)
-      return () => ipcMain.removeListener('vault:flush-done', listener)
-    },
-    send(id) {
-      requestId = id
-      if (target === null) queueMicrotask(() => done?.(id))
-      else target.webContents.send('vault:flush', { id })
-    },
-    cancel(id = requestId) {
-      if (target !== null && !target.isDestroyed() && id !== undefined) {
-        target.webContents.send('vault:flush-cancel', { id })
-      }
-    },
   }
 }
 

@@ -25,7 +25,7 @@ const WINDOW = { timeMin: '2026-08-04T00:00:00Z', timeMax: '2026-08-11T00:00:00Z
  * a key is asserting the key's *format*, which is nobody's contract, instead of
  * "the thing the cache wrote under is the thing this reads back".
  */
-const INBOX_KEY = threadsCacheKey({})
+const INBOX_KEY = `${threadsCacheKey({})}|identity:unknown`
 
 let dir: string
 let path: string
@@ -97,6 +97,36 @@ afterEach(async () => {
 })
 
 describe('createGoogleData', () => {
+  it('does not return or cache an agenda response after the account is retired', async () => {
+    let release!: (response: Response) => void
+    let started!: () => void
+    const waiting = new Promise<Response>((resolve) => (release = resolve))
+    const requestStarted = new Promise<void>((resolve) => (started = resolve))
+    const fetchImpl = (async (url: string) => {
+      if (url.startsWith(CAL_LIST))
+        return Response.json({ items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] })
+      started()
+      return waiting
+    }) as typeof globalThis.fetch
+    const retiredCache = openGoogleCache(join(dir, 'retired.db'))
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache: retiredCache,
+    })
+    subject.ensureShape()
+    const result = subject.agenda(WINDOW, {})
+    await requestStarted
+    subject.forget()
+    release({
+      ok: true,
+      status: 200,
+      json: async () => ({ items: [] }),
+      text: async () => '{"items":[]}',
+    } as Response)
+    await expect(result).rejects.toThrow(/no longer connected/)
+    expect(existsSync(join(dir, 'retired.db'))).toBe(false)
+  })
+
   it('disconnect deletes the cached mail', async () => {
     await data.threads({})
     await data.agenda(WINDOW, {})
@@ -107,6 +137,54 @@ describe('createGoogleData', () => {
     // The one that matters. Disconnect revokes the grant and clears the
     // keychain; leaving a readable inbox on disk would make the button a lie.
     expect(existsSync(path)).toBe(false)
+  })
+
+  it('reclassifies cached mail when send-as identity lookup recovers', async () => {
+    let identitiesAvailable = false
+    let threadFetches = 0
+    const fetchImpl = vi.fn(async (url: string) => {
+      const path_ = new URL(url).pathname
+      if (path_.includes('/threads/t1')) threadFetches++
+      const body = path_.endsWith('/settings/sendAs')
+        ? identitiesAvailable
+          ? { sendAs: [{ sendAsEmail: 'me@example.com' }] }
+          : null
+        : path_.endsWith('/labels')
+          ? { labels: [] }
+          : path_.endsWith('/profile')
+            ? { historyId: '1' }
+            : path_.endsWith('/threads')
+              ? { threads: [{ id: 't1' }] }
+              : path_.includes('/threads/')
+                ? {
+                    id: 't1',
+                    messages: [
+                      {
+                        id: 'm1',
+                        internalDate: '1000',
+                        labelIds: ['INBOX'],
+                        payload: { headers: [{ name: 'To', value: 'me@example.com' }] },
+                      },
+                    ],
+                  }
+                : {}
+      return {
+        ok: identitiesAvailable || !path_.endsWith('/settings/sendAs'),
+        status: identitiesAvailable || !path_.endsWith('/settings/sendAs') ? 200 : 503,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }
+    }) as unknown as typeof globalThis.fetch
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache,
+    })
+    subject.ensureShape()
+
+    expect((await subject.threads({})).threads[0]!.addressedAs).toBe('unknown')
+    identitiesAvailable = true
+    expect((await subject.threads({})).threads[0]!.addressedAs).toBe('to')
+    expect(threadFetches).toBe(2)
   })
 
   it('a cached agenda is served before Google answers', async () => {
@@ -129,6 +207,38 @@ describe('createGoogleData', () => {
     // A colleague switched on since the cache was written is a different
     // question, and the old answer does not contain their events.
     expect(data.cachedAgenda(WINDOW, { jane: true })).toBeNull()
+  })
+
+  it('uses the current account session after reconnect while retaining its cache', async () => {
+    let session: { accessToken: string } = { accessToken: 'before-reconnect' }
+    const authorization: string[] = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      authorization.push(new Headers(init?.headers).get('authorization') ?? '')
+      const path_ = new URL(url).pathname
+      const body = path_.endsWith('/calendarList')
+        ? { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] }
+        : { items: [] }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }
+    }) as unknown as typeof globalThis.fetch
+    const cached = createGoogleData({
+      // Mirrors the per-account cache's lookup: retain the account identity,
+      // but resolve its replaceable session whenever a request is created.
+      api: () => new GoogleApi({ accessToken: async () => session.accessToken, fetch: fetchImpl }),
+      cache,
+    })
+    cached.ensureShape()
+
+    await cached.agenda(WINDOW, {})
+    session = { accessToken: 'after-reconnect' }
+    await cached.agenda({ timeMin: '2026-08-11T00:00:00Z', timeMax: '2026-08-18T00:00:00Z' }, {})
+
+    expect(authorization).toContain('Bearer before-reconnect')
+    expect(authorization).toContain('Bearer after-reconnect')
   })
 
   it('serves the second mail load from the cache, for one request', async () => {
@@ -222,15 +332,15 @@ describe('createGoogleData', () => {
       expect(theirs.calls()).toBe(2) // and asked for itself, not served mine
     })
 
-    it('is dropped on disconnect', async () => {
+    it('does not serve contacts from a retired account handle', async () => {
       const { data: subject, calls } = peopleApi()
       subject.ensureShape()
       await subject.contacts()
 
       subject.forget()
-      await subject.contacts()
 
-      expect(calls()).toBe(4)
+      await expect(subject.contacts()).rejects.toThrow('no longer connected')
+      expect(calls()).toBe(2)
     })
   })
 })
@@ -654,5 +764,68 @@ describe('forwarded attachments', () => {
     await subject.saveDraft({ mail: MAIL, forwardOf: { messageId: 'src-2' } })
 
     expect(urls.filter((url) => url.includes('/attachments/a0')).length).toBeGreaterThan(1)
+  })
+})
+
+describe('retired grant reads and write receipts', () => {
+  it('rejects an alias response that completes after retiring its account', async () => {
+    let release!: (response: Response) => void
+    let entered!: () => void
+    const started = new Promise<void>((done) => (entered = done))
+    const waiting = new Promise<Response>((done) => (release = done))
+    const subject = createGoogleData({
+      cache,
+      api: () =>
+        new GoogleApi({
+          accessToken: async () => 'old-grant',
+          fetch: async () => {
+            entered()
+            return waiting
+          },
+        }),
+    })
+    const pending = subject.sendAs()
+    const rejected = expect(pending).rejects.toThrow(/no longer connected/)
+    await started
+    subject.forget()
+    release(Response.json({ sendAs: [{ sendAsEmail: 'old@example.test' }] }))
+    await rejected
+    await expect(subject.sendAs()).rejects.toThrow(/no longer connected/)
+  })
+
+  it('preserves a completed send receipt when removal retires its cache during the request', async () => {
+    let release!: (response: Response) => void
+    let entered!: () => void
+    const started = new Promise<void>((done) => (entered = done))
+    const waiting = new Promise<Response>((done) => (release = done))
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      entered()
+      return waiting
+    })
+    const subject = createGoogleData({
+      cache,
+      api: () =>
+        new GoogleApi({
+          accessToken: async () => 'old-grant',
+          fetch: fetcher,
+        }),
+    })
+    const pending = subject.sendMail({
+      draftId: 'draft',
+      threadId: 'thread',
+      mail: { to: ['someone@example.test'], subject: 'hello', body: 'hello' },
+    })
+    await started
+    subject.forget()
+    release(Response.json({ id: 'sent-id' }))
+    await expect(pending).resolves.toEqual({ id: 'sent-id' })
+    expect(existsSync(path)).toBe(false)
+    await expect(
+      subject.sendMail({
+        draftId: 'draft',
+        mail: { to: ['someone@example.test'], subject: 'hello', body: 'hello' },
+      }),
+    ).rejects.toThrow(/no longer connected/)
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 })

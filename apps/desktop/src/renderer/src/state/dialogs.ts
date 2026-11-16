@@ -36,6 +36,16 @@ export const closeDialogAtom = atom(null, (_get, set) => {
   set(activeDialogAtom, null)
 })
 
+/** Close a plugin dialog only if it is still the one its owner opened. */
+export const closePluginDialogAtom = atom(
+  null,
+  (get, set, render: (close: () => void) => ReactNode) => {
+    if (get(activeDialogAtom)?.id === 'plugin' && get(activeDialogAtom)?.render === render) {
+      set(activeDialogAtom, null)
+    }
+  },
+)
+
 export const openDialogAtom = atom(null, (_get, set, dialog: ActiveDialog) => {
   set(activeDialogAtom, dialog)
 })

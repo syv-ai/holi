@@ -29,6 +29,16 @@ const unsupported = (): MermaidLabelAnalysis => ({
 const startId = (char: string | undefined) => !!char && /[A-Za-z_]/.test(char)
 const idChar = (char: string | undefined) => !!char && /[A-Za-z0-9_-]/.test(char)
 const directions = new Set(['TB', 'TD', 'BT', 'RL', 'LR'])
+const shapeDelimiters = [
+  ['[[', ']]'],
+  ['((', '))'],
+  ['([', '])'],
+  ['[(', ')]'],
+  ['{{', '}}'],
+  ['[', ']'],
+  ['(', ')'],
+  ['{', '}'],
+] as const
 const namedEntities: Record<string, string> = {
   amp: '&',
   quot: '"',
@@ -126,18 +136,31 @@ export function analyseMermaidLabels(source: string): MermaidLabelAnalysis {
       const id = readWord()
       if (!id) return unsupported()
       skipSpace()
-      if (source[i] === '[') {
+      const shape = shapeDelimiters.find(([open]) => source.startsWith(open, i))
+      if (shape) {
         if (declared.has(id)) return unsupported()
-        i++
+        const [open, close] = shape
+        i += open.length
         skipSpace()
         const quoted = source[i] === '"'
         if (quoted) i++
         const from = i
-        while (i < source.length && (quoted ? source[i] !== '"' : source[i] !== ']')) {
+        while (i < source.length && (quoted ? source[i] !== '"' : !source.startsWith(close, i))) {
           const c = source[i]!
           if (c === '\n' || c === '\r' || /[\u0000-\u001f\u007f]/.test(c) || c === '<' || c === '>')
             return unsupported()
-          if (!quoted && (c === '[' || c === '"' || c === '\\')) return unsupported()
+          if (
+            !quoted &&
+            (c === '[' ||
+              c === ']' ||
+              c === '(' ||
+              c === ')' ||
+              c === '{' ||
+              c === '}' ||
+              c === '"' ||
+              c === '\\')
+          )
+            return unsupported()
           i++
         }
         if (i >= source.length) return unsupported()
@@ -147,9 +170,9 @@ export function analyseMermaidLabels(source: string): MermaidLabelAnalysis {
         if (quoted) {
           i++
           skipSpace()
-          if (source[i] !== ']') return unsupported()
+          if (!source.startsWith(close, i)) return unsupported()
         } else if (raw.trim() !== raw) return unsupported()
-        i++
+        i += close.length
         labels.push({ id, label: decodeMermaidLabel(raw), from, to })
         declared.add(id)
       }

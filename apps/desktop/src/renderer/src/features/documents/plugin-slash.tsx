@@ -7,6 +7,7 @@ import { SquareSlashIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import type { RichTextSlashItem } from '@/features/documents/rich-text/rich-text-slash-menu'
+import { editorActivity } from '@/hooks/use-editor-activity'
 import type { SlashCommand } from '@/plugin-api/types'
 
 /**
@@ -33,20 +34,26 @@ export function pluginSlashItem(
     run: (editor, range) => {
       // The line as it was before the command was typed into it.
       const line = lineWithout(editor, range)
+      const currentVisit = editorActivity(editor).capture()
       editor.chain().focus().deleteRange(range).run()
       const at = range.from
-      command.run({ text: '', line, path }).then(
+      command.run({ text: '', line, path }, currentVisit).then(
         (result) => {
-          if (result === null || editor.isDestroyed) return
-          if ('agent' in result) return ask(at, result.agent)
+          if (!currentVisit() || result === null || editor.isDestroyed) return
+          if ('agent' in result) {
+            if (currentVisit()) ask(at, result.agent)
+            return
+          }
           const written = 'replace' in result ? result.replace : result.insert
           if (written === '') return
-          editor.chain().focus().insertContentAt(at, asContent(editor, written)).run()
+          editor.commands.insertContentAt(at, asContent(editor, written))
         },
-        () =>
+        () => {
+          if (!currentVisit() || editor.isDestroyed) return
           toast.error(`/${command.name} did not run`, {
             description: command.meta ? `${command.meta}’s log says why.` : undefined,
-          }),
+          })
+        },
       )
     },
   }

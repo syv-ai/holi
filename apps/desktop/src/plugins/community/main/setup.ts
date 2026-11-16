@@ -10,7 +10,7 @@
 import { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { killChildTree, spawnProgram, toolPath, withPath } from '../../../main/plugin-api'
+import { killChildTree, spawnOwnedProgram, toolPath, withPath } from '../../../main/plugin-api'
 
 /** What a command's `{file}`, `{vault}` and `{port}` stand for. */
 export interface CommandValues {
@@ -51,15 +51,21 @@ export async function runSetup(args: {
   cwd: string
   logPath: string
   onLine(line: string): void
+  signal?: AbortSignal
 }): Promise<boolean> {
   await mkdir(dirname(args.logPath), { recursive: true })
   const log = createWriteStream(args.logPath)
   const [command, ...rest] = args.argv
   return new Promise((resolve) => {
-    const child = spawnProgram(command!, rest, {
+    if (args.signal?.aborted) {
+      log.end(() => resolve(false))
+      return
+    }
+    const child = spawnOwnedProgram(command!, rest, {
       cwd: args.cwd,
       env: pluginEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
     })
     const lines = splitLines(args.onLine)
     const take = (chunk: Buffer) => {
@@ -68,18 +74,33 @@ export async function runSetup(args: {
     }
     child.stdout!.on('data', take)
     child.stderr!.on('data', take)
+    let done = false
     const finish = (ok: boolean, why?: string) => {
+      if (done) return
+      done = true
+      args.signal?.removeEventListener('abort', stop)
       if (why !== undefined) {
         log.write(`${why}\n`)
         args.onLine(why)
       }
       lines.flush()
-      log.end()
-      resolve(ok)
+      log.end(() => resolve(ok))
     }
+    const stop = () => {
+      // POSIX descendants can keep the output pipes open after their group
+      // leader exits. Probe before signalling the group so a recycled leader
+      // pid is never targeted. On Windows the owned launcher drains its Job
+      // Object before close; while live, its kill channel terminates that job.
+      if (process.platform === 'win32') {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      } else if (!killChildTree(child, 'SIGKILL') && child.exitCode === null) {
+        child.kill('SIGKILL')
+      }
+    }
+    args.signal?.addEventListener('abort', stop, { once: true })
     child.once('error', (err) => finish(false, `could not run ${command}: ${err.message}`))
     child.once('close', (code) =>
-      finish(code === 0, code === 0 ? undefined : `exited with ${code}`),
+      finish(code === 0 && !args.signal?.aborted, code === 0 ? undefined : `exited with ${code}`),
     )
   })
 }
@@ -102,7 +123,7 @@ export function runCheck(args: {
   return new Promise((resolve) => {
     if (args.signal?.aborted) return resolve(false)
     // Its own process group, so a kill stops what it started too.
-    const child = spawnProgram(command!, rest, {
+    const child = spawnOwnedProgram(command!, rest, {
       cwd: args.cwd,
       env: pluginEnv(),
       stdio: 'ignore',
@@ -120,14 +141,13 @@ export function runCheck(args: {
     let stopped = false
     const stop = () => {
       stopped = true
-      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
-        if (!killChildTree(child, 'SIGKILL')) child.kill('SIGKILL')
+      if (child.exitCode === null && child.signalCode === null) {
+        if (process.platform === 'win32' || !killChildTree(child, 'SIGKILL')) child.kill('SIGKILL')
       }
-      // `taskkill` takes a moment: on Windows the answer waits for the tree to
-      // be gone (the `exit` below says so), so a caller removing the check's
-      // folder finds nothing holding it.
+      // On Windows the ownership helper waits for its whole Job Object to be
+      // empty before `close`, so a caller removing the check's folder finds
+      // nothing holding it.
       if (process.platform === 'win32' && child.exitCode === null) {
-        setTimeout(() => finish(false), 3_000).unref()
         return
       }
       finish(false)
@@ -135,7 +155,7 @@ export function runCheck(args: {
     const timer = setTimeout(stop, args.timeoutMs ?? CHECK_TIMEOUT_MS)
     args.signal?.addEventListener('abort', stop, { once: true })
     child.once('error', () => finish(false))
-    child.once('exit', (code) => finish(!stopped && code === 0))
+    child.once('close', (code) => finish(!stopped && code === 0))
   })
 }
 

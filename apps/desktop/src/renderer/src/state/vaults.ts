@@ -1,5 +1,6 @@
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
+import { toast } from 'sonner'
 import { GITKEEP, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
@@ -14,7 +15,7 @@ import { trpc } from '@/lib/trpc'
 // reads the other's atoms until a store does.
 import { openDocumentAtom } from './open-document'
 // A cycle too (`document-runs` reads `activeRemoteAtom`), safe the same way.
-import { documentRunsAtom } from './document-runs'
+import { documentRunsAtom, documentUpgradesAtom, isRunLive } from './document-runs'
 import { settledRect } from '@/lib/settled-rect'
 import { folderSurfacesAtom } from './plugins'
 
@@ -26,13 +27,38 @@ export const vaultsAtom = atom<VaultEntry[]>([])
  *  empty list (first run) apart from a not-yet-loaded one. */
 export const vaultsLoadedAtom = atom(false)
 
+const activeRemoteValueAtom = atom<string | null>(null)
+const activeRemoteRevisionAtom = atom(0)
+
+/** Changes on every actual active-vault transition, including A→B→A. */
+export const activeRemoteRevisionValueAtom = atom((get) => get(activeRemoteRevisionAtom))
+
 /** The open vault, as `owner/repo`. A vault has no id: the remote IS the
- * identity, and the clone's path is machine-local. */
-export const activeRemoteAtom = atom<string | null>(null)
+ * identity, and the clone's path is machine-local. The revision records every
+ * actual selection change, including an A→B→A transition during async work. */
+export const activeRemoteAtom = atom(
+  (get) => get(activeRemoteValueAtom),
+  (get, set, remote: string | null) => {
+    if (get(activeRemoteValueAtom) === remote) return
+    set(activeRemoteValueAtom, remote)
+    set(activeRemoteRevisionAtom, (revision) => revision + 1)
+    set(openedRemoteAtom, null)
+    set(documentRunsAtom, {})
+  },
+)
 
 /** The remote whose main-process `vaults.open` has completed. Plugin vault
  * hooks must not run until main has finished opening that vault. */
 export const openedRemoteAtom = atom<string | null>(null)
+
+const attemptedOpenRevisionAtom = atom<number | null>(null)
+
+/** The selected vault has an open owner already, whether the shell, a document
+ *  intent, or recovery. Readiness can temporarily clear without inviting a
+ *  duplicate shell open that would supersede that owner. */
+export const selectedVaultOpenAttemptedAtom = atom(
+  (get) => get(attemptedOpenRevisionAtom) === get(activeRemoteRevisionAtom),
+)
 
 /**
  * Per-vault "show hidden files" preference, persisted across launches. One
@@ -75,9 +101,36 @@ export const snapshotLoadedAtom = atom((get) => get(snapshotAtom) !== EMPTY_SNAP
  */
 export const syncStateAtom = atom<SyncState>({ kind: 'up-to-date' })
 
-/** Files the large-file gate held out of the last commit: the callout's source.
- *  Pushed from main every commit tick (empty clears it, incl. on a vault switch). */
-const heldBackAtom = atom<HeldBackFile[]>([])
+/** Files the large-file gate held out of the last commit, which the tree
+ *  marks. Pushed from main every commit tick (empty clears it, incl. on a
+ *  vault switch). */
+export const heldBackAtom = atom<HeldBackFile[]>([])
+
+/**
+ * Settle a held-back file: commit it anyway (past the size gate), or keep it
+ * on this machine (`.git/info/exclude`). Dropped from the list at once; main
+ * pushes the accurate set on its next tick. Both are vault writes, so main
+ * rescans and pushes the snapshot before answering: a file kept local arrives
+ * dimmed.
+ */
+export const resolveHeldBackAtom = atom(
+  null,
+  async (get, set, { path, action }: { path: string; action: 'commit' | 'keep' }) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote) return
+    if (action === 'commit') await trpc.vaults.commitFile.mutate({ remote, path })
+    else await trpc.vaults.keepFileLocal.mutate({ remote, path })
+    if (get(activeRemoteAtom) !== remote) return
+    set(heldBackAtom, (files) => files.filter((file) => file.path !== path))
+  },
+)
+
+/** The open vault's paths git ignores (`snapshot.ignored`), as a set: what
+ *  never syncs from this machine, as main read it. Every vault's `.gitignore`
+ *  carries the local-only lines (`LOCAL_ONLY_IGNORE_LINES`), so `.local.` and
+ *  secret files are in it, and a local-named file someone committed anyway is
+ *  rightly not. The tree dims these rows. */
+export const ignoredPathsAtom = atom((get) => new Set(get(snapshotAtom).ignored))
 
 /**
  * How often each file's history has moved since launch: `all` counts merged
@@ -125,7 +178,10 @@ export const loadVaultsAtom = atom(null, async (get, set) => {
 export const loadSnapshotAtom = atom(null, async (get, set) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return set(snapshotAtom, EMPTY_SNAPSHOT)
-  set(snapshotAtom, await trpc.vaults.snapshot.query({ remote }))
+  const revision = get(activeRemoteRevisionAtom)
+  const snapshot = await trpc.vaults.snapshot.query({ remote })
+  if (get(activeRemoteAtom) === remote && get(activeRemoteRevisionAtom) === revision)
+    set(snapshotAtom, snapshot)
 })
 
 /**
@@ -135,19 +191,91 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
  * A vault switch in main is a teardown: exactly one `ActiveVault` exists. Nothing
  * here may keep a snapshot keyed by remote.
  */
-export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
-  // A cross-vault open (`onOpen` below) arrives with the old vault's editors
-  // still mounted: what was typed goes into the vault it was typed in, before
-  // that one closes. A switch from the vault menu flushed already
-  // (`applyVaultSwitchAtom`), and this finds nothing left to write.
-  await flushAllBuffers()
-  // Nothing of the vault left carries over: its document runs ended with it.
-  set(documentRunsAtom, {})
-  const snapshot = await trpc.vaults.open.mutate({ remote })
-  set(activeRemoteAtom, remote)
-  set(snapshotAtom, snapshot)
-  set(openedRemoteAtom, remote)
-})
+const openRequestAtom = atom(0)
+const documentOpenIntentAtom = atom(0)
+
+// Return main to the unchanged renderer selection, never depart from it. No
+// buffers or tabs are touched: a failed departure flush must retain dirty text.
+// Consuming the expected request deduplicates recovery; a newer request,
+// selection (including A→B→A), or document intent owns any later completion.
+const restoreSelectedVaultAtom = atom(
+  null,
+  async (get, set, expected: { request: number; revision: number; documentIntentId: number }) => {
+    const remote = get(activeRemoteAtom)
+    if (
+      !remote ||
+      get(openRequestAtom) !== expected.request ||
+      get(activeRemoteRevisionAtom) !== expected.revision ||
+      get(documentOpenIntentAtom) !== expected.documentIntentId
+    )
+      return
+    const request = expected.request + 1
+    set(openRequestAtom, request)
+    set(attemptedOpenRevisionAtom, expected.revision)
+    set(openedRemoteAtom, null)
+    const snapshot = await trpc.vaults.open.mutate({ remote })
+    if (
+      get(openRequestAtom) !== request ||
+      get(activeRemoteRevisionAtom) !== expected.revision ||
+      get(documentOpenIntentAtom) !== expected.documentIntentId
+    )
+      return
+    set(snapshotAtom, snapshot)
+    set(openedRemoteAtom, remote)
+    // VaultHost's initial attempt may have been superseded, so it cannot send
+    // this acknowledgement for us. Only the winning recovery releases main.
+    window.holi.vault.openReady()
+  },
+)
+
+export const openVaultAtom = atom(
+  null,
+  async (
+    get,
+    set,
+    target: string | { remote: string; documentIntentId?: number },
+  ): Promise<boolean> => {
+    const remote = typeof target === 'string' ? target : target.remote
+    const documentIntentId = typeof target === 'string' ? undefined : target.documentIntentId
+    const request = get(openRequestAtom) + 1
+    set(openRequestAtom, request)
+    const selectionRevision = get(activeRemoteRevisionAtom)
+    set(attemptedOpenRevisionAtom, selectionRevision)
+
+    // A cross-vault open (`onOpen` below) arrives with the old vault's editors
+    // still mounted: what was typed goes into the vault it was typed in, before
+    // that one closes. A switch from the vault menu flushed already
+    // (`applyVaultSwitchAtom`), and this finds nothing left to write.
+    await flushAllBuffers()
+    // A newer selection or open request owns the main-process transition now.
+    // Do not switch the renderer or clear per-vault state for a stale request.
+    if (
+      get(openRequestAtom) !== request ||
+      get(activeRemoteRevisionAtom) !== selectionRevision ||
+      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId)
+    )
+      return false
+
+    // Main can now leave the selected vault, even if this request later loses.
+    set(openedRemoteAtom, null)
+    const snapshot = await trpc.vaults.open.mutate({ remote })
+    if (
+      get(openRequestAtom) !== request ||
+      get(activeRemoteRevisionAtom) !== selectionRevision ||
+      (documentIntentId !== undefined && get(documentOpenIntentAtom) !== documentIntentId)
+    )
+      return false
+
+    // Publish the cross-vault document-open selection only after main has opened
+    // it. This lets VaultHost observe openedRemote alongside activeRemote and
+    // avoid starting a duplicate open for the same request.
+    set(activeRemoteAtom, remote)
+    set(attemptedOpenRevisionAtom, get(activeRemoteRevisionAtom))
+    set(snapshotAtom, snapshot)
+    set(openedRemoteAtom, remote)
+    return true
+  },
+)
 
 /**
  * Clone a repo the user already has, and open it.
@@ -221,11 +349,100 @@ export function subscribeToVault(
   // snapshot is in (`openVaultAtom` sets it before this resolves). A link's
   // heading is where the document's view puts the caret.
   const offReminder = window.holi.vault.onOpen(({ remote, path, heading }) => {
-    if (remote && remote !== store.get(activeRemoteAtom)) {
-      void store.set(openVaultAtom, remote).then(() => store.set(openDocumentAtom, path, heading))
+    const targetRemote = remote || store.get(activeRemoteAtom)
+    if (!targetRemote) return
+    const id = store.get(documentOpenIntentAtom) + 1
+    store.set(documentOpenIntentAtom, id)
+
+    const revision = store.get(activeRemoteRevisionAtom)
+    const reportError = (error: unknown) =>
+      toast.error('Couldn’t open the document.', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    const restoreSelection = (request: number) =>
+      store
+        .set(restoreSelectedVaultAtom, { request, revision, documentIntentId: id })
+        .catch(reportError)
+
+    if (targetRemote !== store.get(activeRemoteAtom)) {
+      const pending = store.set(openVaultAtom, { remote: targetRemote, documentIntentId: id })
+      const request = store.get(openRequestAtom)
+      void pending
+        .then((landed) => {
+          if (landed && store.get(documentOpenIntentAtom) === id)
+            store.set(openDocumentAtom, path, heading)
+        })
+        .catch((error: unknown) => {
+          reportError(error)
+          // The failed intent still superseded older opens. Restore the selected
+          // vault without retrying its failed flush or opening either stale path.
+          return restoreSelection(request)
+        })
     } else {
       store.set(openDocumentAtom, path, heading)
+      // Main may be opening another vault, or the initial open may not yet
+      // have landed. Recover now; stale completions never start another loop.
+      if (store.get(openedRemoteAtom) !== targetRemote)
+        void restoreSelection(store.get(openRequestAtom))
     }
+  })
+  const offNavigation = window.holi.vault.onNavigate((request) => {
+    // A click is a document-open intent even when it names the selected vault:
+    // it must supersede a delayed open for another vault just as a fresh note
+    // arrival does. openVaultAtom owns request ordering and flush/recovery.
+    const id = store.get(documentOpenIntentAtom) + 1
+    store.set(documentOpenIntentAtom, id)
+    const revision = store.get(activeRemoteRevisionAtom)
+    const navigate = async (): Promise<void> => {
+      // A ready same-vault notification only needs to dispatch its event. Reopening
+      // would tear down plugin vault state (including retained agent terminals)
+      // before the inbox can focus the existing session. Still advance the intent
+      // above so this notification supersedes older delayed opens.
+      const alreadyReady =
+        store.get(activeRemoteAtom) === request.remote &&
+        store.get(openedRemoteAtom) === request.remote
+      const landed = alreadyReady
+        ? true
+        : await store.set(openVaultAtom, {
+            remote: request.remote,
+            documentIntentId: id,
+          })
+      if (
+        !landed ||
+        store.get(documentOpenIntentAtom) !== id ||
+        store.get(activeRemoteAtom) !== request.remote ||
+        store.get(openedRemoteAtom) !== request.remote
+      )
+        return
+      const events = plugins.find((candidate) => candidate.info.id === request.plugin)?.events
+      const handler =
+        events !== undefined && Object.hasOwn(events, request.name)
+          ? events[request.name]
+          : undefined
+      handler?.({ remote: request.remote, payload: request.payload }, store)
+    }
+    void navigate().catch((error: unknown) => {
+      if (
+        store.get(documentOpenIntentAtom) !== id ||
+        store.get(activeRemoteRevisionAtom) !== revision
+      )
+        return
+      toast.error('Could not open the agent session', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+      void store
+        .set(restoreSelectedVaultAtom, {
+          request: store.get(openRequestAtom),
+          revision,
+          documentIntentId: id,
+        })
+        .catch((restoreError: unknown) => {
+          toast.error('Could not restore the selected vault', {
+            description:
+              restoreError instanceof Error ? restoreError.message : String(restoreError),
+          })
+        })
+    })
   })
   // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
   // opened the tab first, over `onOpen`, which arrives before this; a file's
@@ -250,6 +467,7 @@ export function subscribeToVault(
     offHeldBack()
     offCommitted()
     offReminder()
+    offNavigation()
     offLocate()
     offEvents.forEach((off) => off())
   }
@@ -384,19 +602,56 @@ export const moveNotesAtom = atom(
     {
       moves,
       folders = [],
-    }: { moves: { from: string; to: string }[]; folders?: { from: string; to: string }[] },
+      expectedRemote,
+      upgradePath,
+    }: {
+      moves: { from: string; to: string }[]
+      folders?: { from: string; to: string }[]
+      /** Refuse an action whose initiating editor no longer owns the active vault. */
+      expectedRemote?: string
+      /** Upgrade moves must still own the path and have no live agent at commit time. */
+      upgradePath?: string
+    },
   ) => {
     const remote = get(activeRemoteAtom)
-    if (!remote || (moves.length === 0 && folders.length === 0)) return
-    await restorePoint()
+    const revision = get(activeRemoteRevisionAtom)
+    const openRequest = get(openRequestAtom)
+    const stillOwned = () =>
+      get(activeRemoteAtom) === remote &&
+      get(activeRemoteRevisionAtom) === revision &&
+      get(openRequestAtom) === openRequest &&
+      get(openedRemoteAtom) === remote &&
+      (expectedRemote === undefined || remote === expectedRemote)
+    const upgradeStillAllowed = () => {
+      if (upgradePath === undefined) return true
+      const run = get(documentRunsAtom)[upgradePath]
+      return get(documentUpgradesAtom).has(upgradePath) && !isRunLive(run)
+    }
+    if (
+      !remote ||
+      !stillOwned() ||
+      !upgradeStillAllowed() ||
+      (moves.length === 0 && folders.length === 0)
+    )
+      return
+    // Keep every awaited stage on the initiating vault. In particular, a
+    // vault switch while buffers flush must not make the restore-point commit
+    // land in the replacement vault.
+    await flushAllBuffers()
+    if (!stillOwned()) return
+    await trpc.sync.commitNow.mutate()
+    if (!stillOwned()) return
     const release = freezeBuffers()
     try {
       await flushAllBuffers()
+      if (!stillOwned() || !upgradeStillAllowed()) return
       await trpc.notes.move.mutate({ remote, moves, folders })
+      if (!stillOwned()) return
       flushSync(() => {
         set(shellWorkspaceAtom, (ws) => retargetShellTabs(ws, moves, get(folderSurfacesAtom)))
       })
       await set(loadSnapshotAtom)
+      if (!stillOwned()) return
       await trpc.sync.commitNow.mutate()
     } finally {
       release()

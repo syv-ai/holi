@@ -9,7 +9,7 @@
  * Each test renders the whole tab, so each has 15 s, as `file-view.test.tsx`
  * does: a loaded machine is slow, not wrong.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { act, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -83,12 +83,12 @@ function show(m: MeetingState) {
   store.set(profilesAtom, [profile])
   store.set(meetingStatesAtom, { m1: m })
   store.set(shownMeetingIdAtom, 'm1')
-  render(
+  const view = render(
     <Provider store={store}>
       <MeetingsSurface />
     </Provider>,
   )
-  return store
+  return { store, view }
 }
 
 const thumbs = (dialog: HTMLElement) =>
@@ -152,6 +152,47 @@ test('moving a thumb leaves the preset', async () => {
   expect(thumbs(dialog)).toEqual([0, 200])
   expect(within(dialog).getByRole('radio', { name: 'Last 2 min' })).not.toBeChecked()
   expect(within(dialog).getByLabelText('Lines in range')).toHaveTextContent('12 lines')
+}, 15_000)
+
+test('parking the open dialog releases modal effects and keeps its draft and timer suspended', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'], now: NOW })
+  const { store, view } = show(live)
+  const foreground = vi.fn()
+  const originalPointerEvents = document.body.style.pointerEvents
+  const dialog = await openDialog()
+  await userEvent.type(within(dialog).getByLabelText('What should be done?'), 'Keep this draft')
+
+  await act(async () => {
+    vi.advanceTimersByTime(2000)
+  })
+  expect(within(dialog).getAllByRole('slider')[0]).toHaveAttribute('aria-valuemax', '202')
+
+  view.rerender(
+    <Provider store={store}>
+      <>
+        <MeetingsSurface visible={false} />
+        <button onClick={foreground}>Foreground action</button>
+      </>
+    </Provider>,
+  )
+  expect(document.body.style.pointerEvents).toBe(originalPointerEvents)
+  expect(document.body).not.toHaveAttribute('aria-hidden', 'true')
+  await userEvent.click(screen.getByRole('button', { name: 'Foreground action' }))
+  await userEvent.keyboard('{Enter}')
+  expect(foreground).toHaveBeenCalledTimes(2)
+  await act(async () => {
+    vi.advanceTimersByTime(5000)
+  })
+  expect(within(dialog).getAllByRole('slider')[0]).toHaveAttribute('aria-valuemax', '202')
+
+  view.rerender(
+    <Provider store={store}>
+      <MeetingsSurface visible />
+    </Provider>,
+  )
+  const restored = await screen.findByRole('dialog', { name: 'A task from a custom range' })
+  expect(within(restored).getByLabelText('What should be done?')).toHaveValue('Keep this draft')
+  expect(within(restored).getAllByRole('slider')[0]).toHaveAttribute('aria-valuemax', '207')
 }, 15_000)
 
 test('a range with nothing said in it cannot be made', async () => {

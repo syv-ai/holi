@@ -11,11 +11,11 @@
  */
 import {
   cap,
-  CapabilityError,
   killChildTree,
+  CapabilityError,
   noParams,
   paramsObject,
-  spawnProgram,
+  spawnOwnedProgram,
   stringParam,
 } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
@@ -96,7 +96,7 @@ function defaultRun(
 ): Promise<TestRun> {
   return new Promise((resolve) => {
     // A test reads nothing: its input is closed from the start.
-    const child = spawnProgram(bin, args, {
+    const child = spawnOwnedProgram(bin, args, {
       cwd: opts.cwd,
       env: opts.env,
       detached: true,
@@ -108,11 +108,11 @@ function defaultRun(
     let kill: NodeJS.Timeout | null = null
     // The group may be gone already: then there is nothing to do.
     const signal = (sig: NodeJS.Signals): void => {
-      if (killChildTree(child, sig) || process.platform !== 'win32') return
-      // The root has exited and a descendant holds the pipes: its tree cannot be
-      // found by pid, so the pipes are closed, which lets `close` fire.
-      child.stdout?.destroy()
-      child.stderr?.destroy()
+      if (process.platform === 'win32') {
+        child.kill(sig)
+        return
+      }
+      killChildTree(child, sig)
     }
     const stop = (why: 'timeout' | 'over'): void => {
       if (stopped !== null) return

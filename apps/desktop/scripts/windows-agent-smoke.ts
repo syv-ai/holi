@@ -1,0 +1,367 @@
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdirSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { app, BrowserWindow } from 'electron'
+import { launchPlan, spawnProgram, execProgram } from '../src/main/launch'
+import { resolveBin } from '../src/main/bin'
+import { spawnOwnedProgram } from '../src/main/owned-process'
+import { defaultSpawnPty } from '../src/main/terminal/pty'
+import { createTerminals } from '../src/main/terminal/terminals'
+import { AgentRuntime } from '../src/plugins/agent/main/host/pty'
+
+const root = process.env.HOLI_QA372_ROOT!
+const evidence = process.env.HOLI_QA372_EVIDENCE!
+const desktop = process.env.HOLI_QA372_DESKTOP!
+const nativeNode = process.env.HOLI_QA372_NODE!
+assert(root && evidence && desktop && nativeNode)
+const profile = join(root, 'profile')
+const vault = join(root, 'vault')
+for (const dir of [profile, vault, join(root, 'session'), join(root, 'app-data')]) {
+  mkdirSync(dir, { recursive: true })
+}
+app.setName('Holi Agent Launch QA 372')
+app.setAppUserModelId('ai.syv.holi.review372')
+app.setPath('appData', join(root, 'app-data'))
+app.setPath('userData', profile)
+app.setPath('sessionData', join(root, 'session'))
+assert.equal(app.getPath('userData'), profile)
+assert(!relative(root, vault).startsWith('..'))
+execFileSync('git', ['init', '--quiet', vault])
+
+const checks: string[] = []
+const active: AgentRuntime[] = []
+let terminals: ReturnType<typeof createTerminals> | undefined
+let output = ''
+let window: BrowserWindow | undefined
+const args = [
+  'two words',
+  '',
+  '☃',
+  'q"uote & > never.txt',
+  '%PATH%',
+  '!x!',
+  'back\\',
+  'one\r\ntwo',
+  'x'.repeat(12_000),
+]
+const env = Object.fromEntries(
+  Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+)
+delete env.ELECTRON_RUN_AS_NODE
+const until = async (ready: () => boolean | Promise<boolean>) => {
+  const end = Date.now() + 15_000
+  while (!(await ready())) {
+    assert(Date.now() < end, 'Native handshake timed out: ' + output.slice(-1000))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+const pidFile = join(vault, 'pids.json')
+const argvFile = join(vault, 'argv.json')
+const readPids = async () => JSON.parse(await readFile(pidFile, 'utf8')) as number[]
+
+async function run() {
+  await app.whenReady()
+  window = new BrowserWindow({
+    show: false,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  })
+  await window.loadURL('data:text/html,<h1>Holi native agent launch checks</h1>')
+  const bin = join(root, 'Ada Lovelace ! percent %', 'bin')
+  const packageDir = join(bin, 'node_modules', 'fixture')
+  await mkdir(packageDir, { recursive: true })
+  const script = join(packageDir, 'cli.js')
+  const esmScript = join(packageDir, 'cli.mjs')
+  const cliBody = join(packageDir, 'cli-body.cjs')
+  const stateFile = join(root, 'terminal-state.json')
+  await writeFile(
+    cliBody,
+    `
+const fs=require('node:fs'),cp=require('node:child_process');
+module.exports=function(){const args=process.argv.slice(2);
+if(args[0]==='--pty') {
+ if(process.platform==='win32'){
+  const inherited=cp.spawnSync(${JSON.stringify(nativeNode)},['-e','process.stdout.write(String(!!process.stdin.isTTY))'],{stdio:['inherit','pipe','inherit'],windowsHide:true});
+  if(inherited.status!==0 || inherited.stdout.toString()!==String(!!process.stdin.isTTY))throw new Error('child did not inherit the actual stdin descriptor');
+ }
+ fs.writeFileSync(${JSON.stringify(stateFile)},JSON.stringify({input:!!process.stdin.isTTY,output:!!process.stdout.isTTY}));
+ if(process.stdin.isTTY)process.stdin.setRawMode(true);
+ fs.writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(args.slice(1)));
+ const c=cp.spawn(process.execPath,['-e','setInterval(()=>0,1000)'],{stdio:'ignore',windowsHide:true,env:process.env});
+ fs.writeFileSync(${JSON.stringify(pidFile)},JSON.stringify([process.pid,c.pid]));
+ process.stdout.write('READY\\n');
+ let input=''; process.stdin.on('data',d=>{input+=d.toString().replace(/\\r/g,'\\n');let n;while((n=input.indexOf('\\n'))>=0){const line=input.slice(0,n).replace(/\\r/g,'');input=input.slice(n+1);process.stdout.write(line==='size'?'SIZE:'+process.stdout.getWindowSize().join('x')+'\\n':'INPUT:'+line+'\\n')}});
+} else { console.log(JSON.stringify(args)); }};
+`,
+  )
+  await writeFile(
+    script,
+    "if(require.main!==module)throw new Error('not the CLI entrypoint');require('./cli-body.cjs')();",
+  )
+  await writeFile(
+    esmScript,
+    "import { createRequire } from 'node:module';if(!import.meta.main)throw new Error('not the CLI entrypoint');await Promise.resolve();createRequire(import.meta.url)('./cli-body.cjs')();",
+  )
+  const shim = join(bin, 'claude.cmd')
+  const shimContents = await readFile(join(desktop, 'test/fixtures/npm-node-shim.cmd'), 'utf8')
+  await writeFile(shim, shimContents)
+  const esmShim = join(bin, 'claude-esm.cmd')
+  await writeFile(esmShim, shimContents.replaceAll('cli.js', 'cli.mjs'))
+  const lookupEnv = { ...env, Path: bin, PATH: undefined }
+  if (process.platform === 'win32') {
+    assert.equal(resolveBin('claude', lookupEnv), shim)
+    checks.push('Explorer Path/PATHEXT discovers actual npm shim')
+  }
+  // Force the same fallback inside a genuine Electron GUI parent, not Node masquerading as it.
+  const launch = {
+    platform: 'win32' as const,
+    resolve: () => null,
+    ...(process.platform !== 'win32' ? { bundledWindowsNode: () => process.execPath } : {}),
+  }
+  const plan = launchPlan(shim, args, { ...launch, env })
+  if (process.platform === 'win32') {
+    assert.notEqual(plan.file, process.execPath)
+    assert.match(plan.file, /node-win-x64[\\/]bin[\\/]node\.exe$/i)
+    assert.equal(plan.env?.ELECTRON_RUN_AS_NODE, undefined)
+  } else {
+    assert.equal(plan.file, process.execPath)
+    assert.equal(plan.env?.ELECTRON_RUN_AS_NODE, '1')
+  }
+  const program = process.platform === 'win32' ? shim : plan.file
+  const programArgs = process.platform === 'win32' ? args : plan.args
+  const programEnv = { ...env, ...plan.env }
+  const execution = process.platform === 'win32' ? launch : {}
+  const child = spawnProgram(
+    program,
+    programArgs,
+    { cwd: vault, env: programEnv, stdio: ['ignore', 'pipe', 'pipe'] },
+    execution,
+  )
+  let stdout = '',
+    stderr = ''
+  child.stdout!.on('data', (d) => {
+    stdout += d
+  })
+  child.stderr!.on('data', (d) => {
+    stderr += d
+  })
+  const code = await new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', resolve)
+  })
+  assert.equal(code, 0, stderr)
+  assert.deepEqual(JSON.parse(stdout), args)
+  assert.equal(env.ELECTRON_RUN_AS_NODE, undefined)
+  assert.equal(process.env.ELECTRON_RUN_AS_NODE, undefined)
+  checks.push(
+    process.platform === 'win32'
+      ? 'GUI Electron parent selects bundled genuine Node with exact argv and no Electron runtime flag'
+      : 'GUI Electron parent launches npm JS with exact argv and child-only runtime flag',
+  )
+  const result = await new Promise<string>((resolve, reject) =>
+    execProgram(
+      program,
+      programArgs,
+      { cwd: vault, env: programEnv, timeoutMs: 10_000, maxBuffer: 100_000, encoding: 'utf8' },
+      (err, out) => (err ? reject(err) : resolve(out)),
+      execution,
+    ),
+  )
+  assert.deepEqual(JSON.parse(result), args)
+  checks.push('execProgram preserves Unicode, empty, hostile, multiline and 12KiB arguments')
+
+  const ptySpawn: typeof defaultSpawnPty =
+    process.platform === 'win32'
+      ? defaultSpawnPty
+      : (file, argv, opts) => {
+          const planned = launchPlan(file, argv, { ...launch, env: opts.env })
+          return defaultSpawnPty(planned.file, planned.args, {
+            ...opts,
+            env: { ...opts.env, ...planned.env } as Record<string, string>,
+          })
+        }
+  const runtime = new AgentRuntime({ spawnPty: ptySpawn })
+  active.push(runtime)
+  runtime.onData((data) => {
+    output += data
+  })
+  runtime.start({ bin: shim, args: ['--pty', ...args], cwd: vault, env, cols: 100, rows: 30 })
+  await until(() => output.includes('READY'))
+  assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')), { input: true, output: true })
+  const pids = await readPids()
+  assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), args)
+  runtime.write('ping\r')
+  await until(() => output.includes('INPUT:ping'))
+  runtime.resize(113, 37)
+  await until(() => {
+    if (output.includes('SIZE:113x37')) return true
+    runtime.write('size\r')
+    return false
+  })
+  await runtime.kill()
+  await until(() => pids.every((pid) => !alive(pid)))
+  checks.push(
+    `real ${process.platform === 'win32' ? 'ConPTY' : 'PTY'} exact argv, stdin/output, resize and AgentRuntime Stop terminate root and descendant`,
+  )
+
+  if (process.platform === 'win32') {
+    const fallbackEnv = {
+      ...env,
+      ProgramFiles: root,
+      USERPROFILE: root,
+      HOME: root,
+      APPDATA: root,
+      LOCALAPPDATA: root,
+    }
+    for (const key of Object.keys(fallbackEnv))
+      if (key.toUpperCase() === 'PATH') delete fallbackEnv[key]
+    fallbackEnv.Path = root
+    const packagedNode = process.env.HOLI_QA372_PACKAGED_NODE
+    const runtimeCases = [
+      { bin: shim, args: ['--pty', ...args], name: 'bundled Node CommonJS' },
+      { bin: esmShim, args: ['--pty', ...args], name: 'bundled Node ESM with top-level await' },
+      ...(packagedNode
+        ? [
+            { bin: packagedNode, args: [script, '--pty', ...args], name: 'packaged Node CommonJS' },
+            {
+              bin: packagedNode,
+              args: [esmScript, '--pty', ...args],
+              name: 'packaged Node ESM with top-level await',
+            },
+          ]
+        : []),
+    ]
+    for (const { bin: runtimeBin, args: runtimeArgs, name: entryName } of runtimeCases) {
+      if (runtimeBin === shim || runtimeBin === esmShim) {
+        const fallbackPlan = launchPlan(runtimeBin, [], { env: fallbackEnv })
+        assert.notEqual(fallbackPlan.file, process.execPath)
+        assert.match(fallbackPlan.file, /node-win-x64[\\/]bin[\\/]node\.exe$/i)
+        assert.equal(fallbackPlan.env?.ELECTRON_RUN_AS_NODE, undefined)
+      }
+      const fallbackRuntime = new AgentRuntime()
+      active.push(fallbackRuntime)
+      let fallbackOutput = ''
+      fallbackRuntime.onData((data) => {
+        fallbackOutput += data
+        output += data
+      })
+      fallbackRuntime.start({
+        bin: runtimeBin,
+        args: runtimeArgs,
+        cwd: vault,
+        env: fallbackEnv,
+        cols: 100,
+        rows: 30,
+      })
+      await until(() => fallbackOutput.includes('READY'))
+      assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), args)
+      assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')), { input: true, output: true })
+      const fallbackPids = await readPids()
+      fallbackRuntime.write('ping\r')
+      await until(() => fallbackOutput.includes('INPUT:ping'))
+      fallbackRuntime.resize(113, 37)
+      await until(() => {
+        if (fallbackOutput.includes('SIZE:113x37')) return true
+        fallbackRuntime.write('size\r')
+        return false
+      })
+      await fallbackRuntime.kill()
+      await until(() => fallbackPids.every((pid) => !alive(pid)))
+      checks.push(
+        `${entryName} preserves argv, entry semantics and inherited stdin, responds to input, resizes and stops its full ConPTY tree`,
+      )
+    }
+  }
+
+  const managed = spawnOwnedProgram(plan.file, [script, '--pty'], {
+    cwd: vault,
+    env: { ...env, ...plan.env },
+    stdio: 'pipe',
+  })
+  let managedOutput = ''
+  managed.stdout!.on('data', (d) => {
+    managedOutput += d
+  })
+  managed.stderr!.on('data', (d) => {
+    output += d
+  })
+  const managedDone = new Promise((resolve, reject) => {
+    managed.once('error', reject)
+    managed.once('close', resolve)
+  })
+  managed.stdin!.write('ping\n')
+  await until(() => managedOutput.includes('READY'))
+  await until(() => managedOutput.includes('INPUT:ping'))
+  assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')), { input: false, output: false })
+  const managedPids = await readPids()
+  if (process.platform === 'win32') managed.kill()
+  else process.kill(-managed.pid!, 'SIGKILL')
+  await managedDone
+  await until(() => managedPids.every((pid) => !alive(pid)))
+  checks.push('managed process ownership stops its real descendant before completion')
+
+  terminals = createTerminals({
+    send() {},
+    shell: () => process.execPath,
+    baseEnv: () => env,
+    integrationDir: () => null,
+    gitSummary: async () => null,
+    processCwd: async () => null,
+    spawnPty: (_file, _args, opts) => ptySpawn(shim, ['--pty', ...args], opts),
+  })
+  const opened = terminals.create({ remote: 'qa/disposable', root: vault, cols: 100, rows: 30 })
+  assert(opened.ok)
+  await until(() => terminals!.replay('qa/disposable', opened.terminal.id).includes('READY'))
+  const leavePids = await readPids()
+  await terminals.closeRemote('qa/disposable')
+  await until(() => leavePids.every((pid) => !alive(pid)))
+  checks.push('vault leave closes real panel terminal and descendant')
+  const quitting = terminals.create({ remote: 'qa/disposable', root: vault, cols: 100, rows: 30 })
+  assert(quitting.ok)
+  await until(() => terminals!.replay('qa/disposable', quitting.terminal.id).includes('READY'))
+  const quitPids = await readPids()
+  app.once('before-quit', (event) => {
+    event.preventDefault()
+    void (async () => {
+      await terminals!.closeAll()
+      await until(() => quitPids.every((pid) => !alive(pid)))
+      checks.push('application quit closes real terminal tree')
+      await writeFile(
+        join(evidence, 'native-electron-results.json'),
+        JSON.stringify(
+          { ok: true, platform: process.platform, electron: process.versions.electron, checks },
+          null,
+          2,
+        ),
+      )
+      console.log(JSON.stringify({ ok: true, checks }))
+      app.exit(0)
+    })().catch(fail)
+  })
+  app.quit()
+}
+
+async function fail(error: unknown) {
+  console.error(error)
+  await Promise.allSettled(active.map((runtime) => runtime.kill()))
+  await terminals?.closeAll()
+  await writeFile(
+    join(evidence, 'native-electron-results.json'),
+    JSON.stringify(
+      { ok: false, checks, error: String(error), output: output.slice(-4000) },
+      null,
+      2,
+    ),
+  )
+  app.exit(1)
+}
+void run().catch(fail)

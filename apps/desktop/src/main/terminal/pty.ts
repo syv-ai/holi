@@ -33,12 +33,14 @@ export type SpawnPty = (file: string, args: string[], opts: SpawnPtyOptions) => 
 /** The only place node-pty is loaded — never reached under vitest. */
 export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
   const pty = require('node-pty') as typeof import('node-pty')
-  // A `.cmd` (how npm installs an agent) runs through `cmd.exe` on Windows;
-  // anything else, and every file elsewhere, is started as given.
+  // Canonical npm Node shims resolve to their script; opaque Windows batches
+  // use cmd.exe. Windows fallback Node is a genuine runtime with interactive stdio.
   const launch = launchPlan(file, args, { env: opts.env })
+  const env = launch.env ? { ...opts.env, ...launch.env } : opts.env
   return pty.spawn(launch.file, commandLine(launch), {
     name: 'xterm-256color',
     ...opts,
+    env,
   }) as unknown as PtyProcess
 }
 

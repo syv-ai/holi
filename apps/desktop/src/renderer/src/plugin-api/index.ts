@@ -46,6 +46,11 @@ export type {
 export type { /** @public */ PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
+export {
+  /** @public */ registerBuffer,
+  /** @public */ saveBeforeClosing,
+  /** @public */ withSavedBuffers,
+} from '@/lib/buffer-registry'
 export { capClient, /** @public */ type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
@@ -57,13 +62,14 @@ export { useNow } from '@/hooks/use-now'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export {
   activeRemoteAtom,
+  /** @public */ activeRemoteRevisionValueAtom,
   historyEpochsAtom,
   snapshotAtom,
   /** @public */ snapshotLoadedAtom,
   syncStateAtom,
   vaultsAtom,
 } from '@/state/vaults'
-export { openDocumentAtom } from '@/state/open-document'
+export { openDocumentAtom, openDocumentRequestAtom } from '@/state/open-document'
 export { openTabAtom } from '@/state/shell-tabs'
 // A sidebar row drags as the tab it opens (docs/features/tabs-panes.md, Drag targets).
 export { useTabDrag } from '@/features/shell/use-tab-drag'
@@ -76,7 +82,12 @@ export {
 } from '@/composites/arcade/holi-arcade'
 export { sessionAtom } from '@/state/session'
 export { forgetAgentLabelsAtom, useAgentLabel } from '@/state/document-runs'
-export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
+export {
+  activeVaultSettingsAtom,
+  agentProviderSettingAtom,
+  loadVaultSettingsAtom,
+  usePluginSetting,
+} from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
 export {
   terminalTheme,
@@ -116,11 +127,25 @@ export { byRecency, recentsAtom } from '@/state/recents'
 export { FileHistoryDialog } from '@/features/history/file-history-button'
 export {
   openDialogAtom,
+  /** @public */ shownDialogAtom,
+  closePluginDialogAtom,
   /** @public */ type ActiveDialog,
   /** @public */ type PluginDialog,
 } from '@/state/dialogs'
 export { askPrompt } from '@/lib/ask-agent'
-export { useGlobalPanelLayout } from '@/state/preferences'
+export { useGlobalPanelLayout, vimCodeEditingAtom } from '@/state/preferences'
+export { useVimEditor } from '@/editor/vim'
+/** @public Shared native field editing seam for core and plugin fields. */
+export { useVimField } from '@/hooks/use-vim-field'
+/** @public Mode presentation for native fields attached through the plugin seam. */
+export { VimFieldMode } from '@/composites/vim-field-mode'
 export { matchHotkey } from '@/lib/hotkey'
+export {
+  hostHintElementEligible,
+  registerHostHintAdapter,
+  type HostHintAdapter,
+  type HostHintAdapterTarget,
+  type HostHintTarget,
+} from '@/lib/host-hints'
 export { DiffView } from '@/composites/diff-view'
 export { plainMarkdownExtensions } from '@/editor/extensions'

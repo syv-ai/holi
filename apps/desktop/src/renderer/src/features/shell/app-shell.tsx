@@ -1,5 +1,5 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
-import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { SCRATCHPAD_PATH, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 
@@ -35,6 +35,8 @@ import {
   activeSplit,
   closeTab as closeTabIn,
   entryIds,
+  entryOf,
+  entryViews,
   focusedTab,
   focusMember,
   openInSplit,
@@ -51,10 +53,16 @@ import {
 import { openingBeside } from '@/state/alt-open'
 import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
 import { shellTabForPathAtom } from '@/state/surfaces'
-import { activeRemoteAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  openedRemoteAtom,
+  snapshotAtom,
+  snapshotLoadedAtom,
+} from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
+import { useHoliLinkPaste } from '@/hooks/use-holi-link-paste'
 import { useActivityLog } from '@/state/activity'
 import { useDocChangeMarks } from '@/state/doc-changes'
 import { usePanelTerminals } from '@/state/panel-terminals'
@@ -68,10 +76,13 @@ import { AppSidebar } from '@/features/sidebar/app-sidebar'
 import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 import { useNewDocument } from '@/features/sidebar/use-files'
 import { DialogHost } from './dialog-host'
+import { HostHintLayer } from './host-hint-layer'
 import { MobileHeader } from './mobile-header'
 import { readShares, writeShares } from './split-shares'
 import { SplitView, type MemberSlot } from './split-view'
-import { useRetainedSurfaces } from './retained-surfaces'
+import { isLauncherSurfaceKey, useRetainedSurfaces } from './retained-surfaces'
+import { isCoreTextFilePath } from '@/features/files/file-view'
+import { claimsAtom } from '@/state/plugins'
 import { TabStrip } from './tab-strip'
 import { TabView } from './tab-view'
 import { TitleBar } from './title-bar'
@@ -90,6 +101,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const snapshotLoaded = useAtomValue(snapshotLoadedAtom)
   const settings = useAtomValue(vaultSettingsAtom)
   const loadSettings = useSetAtom(loadVaultSettingsAtom)
   const store = useStore()
@@ -106,6 +118,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     if (pendingClose !== null && pendingClose.remote !== remote) setPendingClose(null)
   }, [pendingClose, remote])
   const folders = useAtomValue(folderSurfacesAtom)
+  const claims = useAtomValue(claimsAtom)
+  const vaultFiles = useAtomValue(snapshotAtom).files
   /** The key a sidebar row, a search hit or a plugin's request opens: a view's
    *  own key (the board), or a vault path's tab, which a plugin's folder
    *  document (a deck) opens as its surface. */
@@ -202,7 +216,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   function closeTab(key: string) {
-    void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)))
+    void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)), true).catch(() => {})
   }
 
   function requestEntryClose(request: EntryCloseRequest) {
@@ -258,6 +272,18 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   const createDocument = useNewDocument(openTabKey)
+  const openScratchpad =
+    remote !== null && snapshotLoaded && store.get(openedRemoteAtom) === remote
+      ? () => {
+          if (
+            store.get(activeRemoteAtom) === remote &&
+            store.get(openedRemoteAtom) === remote &&
+            store.get(snapshotLoadedAtom)
+          ) {
+            openTabKey(SCRATCHPAD_PATH)
+          }
+        }
+      : undefined
   function newDocument() {
     void createDocument()
   }
@@ -277,6 +303,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   })
 
   useShortcutDispatcher()
+  useHoliLinkPaste()
   // The activity log and the panel's shells are followed from here, for the
   // window's life, so the Output collects while the panel is closed.
   const retryActivity = useActivityLog()
@@ -301,6 +328,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     reopenTab: () => setWs(reopenClosed),
     splitRight: () => setWs(splitActive),
     newDocument,
+    openScratchpad,
     toggleFiles: toggleSidebar,
     showFiles,
     openApp,
@@ -378,13 +406,16 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           <TabView
             tab={tab}
             visible={visible}
+            focused={isFocused}
             settingsNavInSidebar={isFocused && settingsActive && !isMobile && sidebarOpen}
             onOpen={openTabKey}
             onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
             reading={
-              members
-                .map((member) => tabPath(member.key))
-                .find((path) => path !== null && path !== tab) ?? null
+              tab === null
+                ? null
+                : (entryViews(entryOf(ws, tab) ?? tab)
+                    .map((member) => tabPath(member))
+                    .find((path) => path !== null && path !== tab) ?? null)
             }
             onMoved={(from, to) => retargetTabs([{ from, to }])}
             onNewDocument={newDocument}
@@ -398,6 +429,33 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const retained = useRetainedSurfaces(
     isMobile ? [focusedKey ?? NO_TAB] : members.map((member) => member.key),
     memberBody,
+    (key) => {
+      const descriptor = parseTabKey(key)
+      if (isLauncherSurfaceKey(key)) return true
+      // TabView routes every markdown document to DocumentView before claims
+      // or file-kind dispatch, so retain it by the same rule even while its
+      // snapshot entry is absent.
+      if (descriptor?.kind === 'doc' && /\.md$/i.test(descriptor.path)) {
+        return true
+      }
+      if (descriptor?.kind === 'doc' && vaultFiles.some((file) => file.path === descriptor.path)) {
+        if (isCoreTextFilePath(descriptor.path, claims)) return true
+        if (claims.some((claim) => claim.retainView === true && claim.match(descriptor.path))) {
+          return true
+        }
+      }
+      if (descriptor?.kind === 'board' || descriptor?.kind === 'settings') return true
+      return (
+        descriptor?.kind === 'session' &&
+        (running
+          .find((plugin) => plugin.agentsMode)
+          ?.agentsMode?.keepsSelectionMounted?.({
+            owner: descriptor.owner,
+            id: descriptor.id,
+          }) ??
+          false)
+      )
+    },
   )
   const header = (
     <TabStrip onNewTab={openNewTab} onCloseRequest={requestEntryClose} draggable={!isMobile} />
@@ -545,6 +603,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           beside ? setWs((w) => openInSplit(w, keyFor(id))) : openTabKey(id)
         }
         onAddVault={onAddVault}
+        onOpenScratchpad={openScratchpad}
       />
       <ShortcutsDialog />
       <ConfirmDialog
@@ -567,6 +626,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         onConfirm={confirmPendingClose}
       />
       <DialogHost />
+      <HostHintLayer scopeKey={`${remote}:${ws.active}:${focusedKey}`} />
     </SidebarProvider>
   )
 }

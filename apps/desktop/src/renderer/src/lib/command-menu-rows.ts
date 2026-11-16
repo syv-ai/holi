@@ -14,7 +14,7 @@
  * mounting thousands of items.
  */
 import commandScore from 'command-score'
-import { isHiddenPath, type VaultSnapshot } from '@holi/shared'
+import { isHiddenPath, SCRATCHPAD_PATH, type VaultSnapshot } from '@holi/shared'
 
 export interface PlaceRow {
   /** What opens it: the vault path, or the app bundle's path. */
@@ -83,7 +83,7 @@ export function buildPlaces(
       .filter((d) => !isHiddenPath(d.path))
       .map((d) => path(d.path, 'doc', d.updatedAt)),
     ...snapshot.files
-      .filter((f) => !isHiddenPath(f.path))
+      .filter((f) => f.path !== SCRATCHPAD_PATH && !isHiddenPath(f.path))
       .map((f) => path(f.path, 'file', f.updatedAt)),
     ...apps.map(({ id, label }): PlaceRow => {
       const { detail } = splitPath(id)

@@ -6,12 +6,12 @@
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { AudioLines, Square } from 'lucide-react'
-import { openSurfaceAtom, type CommandMenuEntry } from '@/plugin-api'
+import type { CommandMenuEntry } from '@/plugin-api'
 import { recorderAtom, startRecordingAtom, stopRecordingAtom } from './recorder'
-import { MEETINGS_SURFACE, selectedProfileIdAtom } from './state'
+import { openMeetingsAtom, selectedProfileIdAtom } from './state'
 
 function startMeeting(get: Getter, set: Setter): void {
-  set(openSurfaceAtom, MEETINGS_SURFACE)
+  set(openMeetingsAtom)
   void set(startRecordingAtom, {
     profileId: get(selectedProfileIdAtom),
     title: '',
@@ -27,7 +27,7 @@ function stopMeeting(_get: Getter, set: Setter): void {
 const idle = (get: Getter) => get(recorderAtom).phase === 'idle'
 const recording = (get: Getter) => get(recorderAtom).phase === 'recording'
 
-/** Meetings under Go to: the way to the tab, since the nav is not drawn. */
+/** Meetings under Go to, beside its place in the sidebar. */
 const goToMeetings = (get: Getter): CommandMenuEntry => ({
   id: 'open',
   label: 'Meetings',
@@ -66,7 +66,7 @@ const actionEntries = (get: Getter): readonly CommandMenuEntry[] =>
       : []
 
 export const runMeetingMenuEntryAtom = atom(null, (get, set, id: string): void => {
-  if (id === 'open') set(openSurfaceAtom, MEETINGS_SURFACE)
+  if (id === 'open') set(openMeetingsAtom)
   if (id === 'start') startMeeting(get, set)
   if (id === 'stop') stopMeeting(get, set)
 })

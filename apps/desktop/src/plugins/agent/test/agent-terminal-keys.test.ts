@@ -63,6 +63,25 @@ describe('line motion', () => {
   })
 })
 
+describe('Pi transcript navigation', () => {
+  test.each([
+    ['ArrowUp', '\x1b[5~'],
+    ['ArrowDown', '\x1b[6~'],
+  ])('⌥%s aliases the native page key', (key, seq) => {
+    expect(terminalKeyAction(chord({ key, altKey: true }), false, 'pi')).toEqual({
+      kind: 'write',
+      seq,
+    })
+  })
+
+  test('modifiers and other providers keep their existing behavior', () => {
+    expect(
+      terminalKeyAction(chord({ key: 'ArrowUp', altKey: true, shiftKey: true }), false, 'pi'),
+    ).toBeNull()
+    expect(terminalKeyAction(chord({ key: 'ArrowUp', altKey: true }), false, 'claude')).toBeNull()
+  })
+})
+
 describe('word motion', () => {
   test.each([
     ['ArrowLeft', '\x1bb'],

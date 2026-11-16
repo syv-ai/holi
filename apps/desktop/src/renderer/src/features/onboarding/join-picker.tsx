@@ -53,6 +53,8 @@ import { vaultsAtom } from '@/state/vaults'
 import { ActHeading } from './act-heading'
 import { OwnerAvatar, type Owner } from './owner-avatar'
 import { openExternal } from '@/lib/open-external'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 /** Where an organisation's approval of Holi is granted (Authorized OAuth Apps). */
 const GITHUB_APP_ACCESS = 'https://github.com/settings/applications'
@@ -75,6 +77,7 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
   const [reposError, setReposError] = useState<string | null>(null)
   const [orgs, setOrgs] = useState<Owner[]>([])
   const [search, setSearch] = useState('')
+  const vim = useVimField('join-search', search)
   const [account, setAccount] = useState(ALL)
 
   const load = useCallback(() => {
@@ -137,11 +140,13 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
                 aria-label="Search vaults"
                 placeholder="Search vaults…"
                 value={search}
+                {...vim.vimFieldProps}
                 onChange={(e) => setSearch(e.target.value)}
                 autoComplete="off"
                 spellCheck={false}
               />
               <InputGroupAddon align="inline-end">
+                <VimFieldMode mode={vim.vimFieldMode} />
                 <div className="flex items-center gap-1">
                   {search.length > 0 && (
                     <IconButton label="Clear search" onClick={() => setSearch('')}>
@@ -217,7 +222,7 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
                           {repo.remote.split('/')[1]}
                         </span>
                         {repo.visibility !== 'private' && (
-                          <Badge variant="outline" radius="full">
+                          <Badge variant="secondary" radius="full">
                             {repo.visibility === 'public' ? 'Public' : 'Internal'}
                           </Badge>
                         )}

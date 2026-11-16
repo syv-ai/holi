@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { CheckIcon, ChevronsUpDownIcon, SettingsIcon } from 'lucide-react'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useStore } from 'jotai'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -30,28 +30,51 @@ import { initialsOf } from './data'
 export function NavUser({
   onManage,
   onError,
+  onBeforeChange,
+  visible,
+  canSwitchAccount,
 }: {
   onManage: () => void
   onError: (message: string) => void
+  onBeforeChange?: () => Promise<boolean>
+  visible: boolean
+  canSwitchAccount: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
+  const store = useStore()
   const { account, accounts, currentSub, refresh } = useGoogleAccount()
   const [switching, setSwitching] = useState(false)
+  const liveContext = useRef({ remote, currentSub })
+  liveContext.current = { remote, currentSub }
   const email = account?.email ?? ''
   const others = accounts.filter((a) => a.sub !== currentSub)
 
-  const use = (sub: string) => {
-    if (remote === null) return
+  const use = async (sub: string) => {
+    if (
+      remote === null ||
+      !canSwitchAccount ||
+      (onBeforeChange !== undefined && !(await onBeforeChange()))
+    )
+      return
+    if (
+      store.get(activeRemoteAtom) !== remote ||
+      liveContext.current.remote !== remote ||
+      liveContext.current.currentSub !== currentSub
+    )
+      return
     setSwitching(true)
-    void googleCap
-      .useAccount(remote, { sub })
-      .then(refresh)
-      .catch(() => onError('Could not switch accounts. Try again.'))
-      .finally(() => setSwitching(false))
+    try {
+      await googleCap.useAccount(remote, { sub })
+      refresh()
+    } catch {
+      onError('Could not switch accounts. Try again.')
+    } finally {
+      setSwitching(false)
+    }
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu key={`account-${visible ? 'visible' : 'hidden'}`}>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
@@ -100,11 +123,18 @@ export function NavUser({
                 <DropdownMenuLabel className="text-muted-foreground text-xs">
                   Read mail from
                 </DropdownMenuLabel>
+                {!canSwitchAccount && (
+                  <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+                    Close your reply before switching accounts.
+                  </DropdownMenuLabel>
+                )}
                 {accounts.map((a) => (
                   <DropdownMenuItem
                     key={a.sub}
-                    disabled={switching}
-                    onSelect={() => a.sub !== currentSub && use(a.sub)}
+                    disabled={switching || (a.sub !== currentSub && !canSwitchAccount)}
+                    onSelect={() => {
+                      if (a.sub !== currentSub) void use(a.sub)
+                    }}
                   >
                     <span className="min-w-0 flex-1 truncate">{a.email}</span>
                     {a.sub === currentSub && <CheckIcon aria-hidden="true" />}

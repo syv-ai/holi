@@ -20,6 +20,7 @@
 import { readFile } from 'node:fs/promises'
 import { rewriteWikiLinksMulti, vaultRelPath } from '@holi/shared'
 import { moveNoteComments } from './note-comments'
+import { isScratchpadPath } from './scratchpad'
 import {
   absPathFor,
   listFiles,
@@ -107,6 +108,14 @@ async function moveLocked(
     const dest = map.get(path)
     if (!path.endsWith('.md')) {
       // Not markdown: nothing to rewrite, and nothing to do unless it is moving.
+      if (dest !== undefined) {
+        planned.push({ dest, data: await readFile(absPathFor(root, vaultRelPath(path))) })
+      }
+      continue
+    }
+    const protectedMove = isScratchpadPath(path) || (dest !== undefined && isScratchpadPath(dest))
+    if (protectedMove) {
+      // Scratchpad content is user-owned, even if the bytes are not valid UTF-8.
       if (dest !== undefined) {
         planned.push({ dest, data: await readFile(absPathFor(root, vaultRelPath(path))) })
       }

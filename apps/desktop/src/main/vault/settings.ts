@@ -54,7 +54,25 @@ export interface VaultSettingsWrite {
 /** Merge one patch over one file's existing contents and write it atomically.
  *  `hooks` merges per transform, `plugins` per plugin and a plugin's block
  *  per setting; every other key replaces. */
+const settingsWriteQueues = new Map<string, Promise<void>>()
+
 async function mergeInto(
+  abs: string,
+  patch: Record<string, unknown>,
+  target: SettingTarget,
+  file: 'app' | 'plugins',
+): Promise<void> {
+  const previous = settingsWriteQueues.get(abs) ?? Promise.resolve()
+  const write = previous.catch(() => undefined).then(() => mergeIntoNow(abs, patch, target, file))
+  settingsWriteQueues.set(abs, write)
+  try {
+    await write
+  } finally {
+    if (settingsWriteQueues.get(abs) === write) settingsWriteQueues.delete(abs)
+  }
+}
+
+async function mergeIntoNow(
   abs: string,
   patch: Record<string, unknown>,
   target: SettingTarget,

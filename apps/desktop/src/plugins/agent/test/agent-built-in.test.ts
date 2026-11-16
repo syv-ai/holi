@@ -46,6 +46,7 @@ it('runs whatever a stale plugins.yaml pins for it', async () => {
       defaultProvider: async () => 'claude' as const,
     }),
     'agent',
+    'o/r',
   )
   const host = createPluginHost({
     plugins: MAIN_PLUGINS,

@@ -80,7 +80,8 @@ await holi.tasks.update(path, { due: '2026-08-24', priority: null }) // set fiel
 const created = await holi.tasks.create({ title: 'Call the vendor', folder: 'ops' }) // { path }
 await holi.docs.write(path, newText, text) // over the text you read; see Changing the vault
 await holi.open('projects/q2.md') // opens that note in a Holi tab
-await holi.open('board') // or a view, such as board, agenda, mail or settings
+await holi.open('board') // or a view, such as board, calendar, mail or settings
+await holi.open('agenda') // legacy alias; opens the same Calendar app tab
 const recents = await holi.recents() // [{ kind: 'path'|'surface'|'session', key, id? }], newest first; an app is { kind: 'surface', key: 'app', id: bundle }
 const hits = await holi.search('budget') // [{ path, match: 'name'|'body', snippet? }]
 const settings = await holi.settings() // the vault's resolved settings

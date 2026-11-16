@@ -6,8 +6,8 @@
  * the terminal geometry and the workspace, and a third module keeps
  * `agent.ts` free of both.
  *
- * **Every window lands through `land`**: its tab comes forward and its
- * terminal takes the keyboard.
+ * **Every window lands through one of the landing helpers**: its tab comes
+ * forward and its terminal takes the keyboard.
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { agentCap } from '../agent-cap'
@@ -20,7 +20,13 @@ import {
   sessionTitled,
   type AgentTarget,
 } from './sessions'
-import { activeRemoteAtom, appModeAtom, openSurfaceAtom } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  appModeAtom,
+  openSurfaceAtom,
+  openDocumentRequestAtom,
+} from '@/plugin-api'
 import { newSessionProviderAtom } from './providers'
 import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
 
@@ -33,6 +39,30 @@ function land(set: Setter, terminalId: string): void {
   // Deduped by id: two views over one PTY would both be attached to it.
   set(openSurfaceAtom, AGENT_SURFACE, terminalId)
   focusSessionTerminal(terminalId)
+}
+
+/** Land session-owned PTYs on the shell's canonical session tab. A surface
+ *  tab would mount a second xterm for the same terminal and replace its output
+ *  registry handle while the retained session tab was parked. */
+function canonicalTerminalFor(get: Getter, sessionId: string): string | null {
+  const terminalId = get(viewTerminalsAtom)[sessionId]
+  if (terminalId === undefined) return null
+  const terminal = get(agentTerminalsAtom).find((candidate) => candidate.id === terminalId)
+  if (terminal === undefined) return null
+  const titled = sessionTitled(terminal, get(agentSessionsAtom))
+  if (titled !== null) return titled.id === sessionId ? terminalId : null
+  return terminal.launchedFor === sessionId ? terminalId : null
+}
+
+function landSession(get: Getter, set: Setter, sessionId: string, terminalId: string): void {
+  const canonical = canonicalTerminalFor(get, sessionId)
+  const canonicalTerminal = canonical ?? terminalId
+  if (canonical === null) {
+    set(viewTerminalsAtom, (terminals) => ({ ...terminals, [sessionId]: canonicalTerminal }))
+  }
+  set(appModeAtom, 'agents')
+  set(agentsViewAtom, { kind: 'session', id: sessionId })
+  focusSessionTerminal(canonicalTerminal)
 }
 
 const geometry = (get: Getter) => get(agentGeometryAtom)
@@ -85,21 +115,42 @@ export const openConversationTerminalAtom = atom(
  * session has only a generic title, so it can land in a second window; two
  * windows on one session only mirror each other, never wrong, just more.
  */
+const openSessionRequestAtom = atom(0)
+
 export const openSessionAtom = atom(null, async (get, set, id: string): Promise<AgentResult> => {
+  // A later open owns the landing, even when it reuses a terminal immediately.
+  // The active-vault revision also catches A→B→A while an attach is pending.
+  const request = get(openSessionRequestAtom) + 1
+  set(openSessionRequestAtom, request)
+  const remote = get(activeRemoteAtom)
+  const vaultRevision = get(activeRemoteRevisionValueAtom)
+  const documentRequest = get(openDocumentRequestAtom)?.seq ?? 0
+  const isCurrent = () =>
+    get(openSessionRequestAtom) === request &&
+    (get(openDocumentRequestAtom)?.seq ?? 0) === documentRequest &&
+    get(activeRemoteAtom) === remote &&
+    get(activeRemoteRevisionValueAtom) === vaultRevision
+
   const terminals = get(agentTerminalsAtom)
   const sessions = get(agentSessionsAtom)
   const existing =
     terminals.find((t) => sessionTitled(t, sessions)?.id === id) ??
-    terminals.find((t) => t.launchedFor === id)
+    terminals.find((t) => t.launchedFor === id && sessionTitled(t, sessions) === null)
   if (existing !== undefined) {
-    land(set, existing.id)
+    landSession(get, set, id, existing.id)
     return { ok: true }
   }
-  const res = await inVault(get, (remote) =>
-    agentCap.open(remote, { attach: id, ...geometry(get) }),
-  )
+  if (remote === null) return NO_VAULT
+  let res: Awaited<ReturnType<typeof agentCap.open>>
+  try {
+    res = await agentCap.open(remote, { attach: id, ...geometry(get) })
+  } catch (error) {
+    if (!isCurrent()) return { ok: true }
+    throw error
+  }
+  if (!isCurrent()) return { ok: true }
   if (!res.ok) return res
-  land(set, res.terminalId)
+  landSession(get, set, id, res.terminalId)
   return { ok: true }
 })
 
@@ -114,7 +165,7 @@ export const startSessionAtom = atom(
       agentCap.start(remote, { ...opts, ...geometry(get) }),
     )
     if (!res.ok) return res
-    land(set, res.terminalId)
+    landSession(get, set, res.sessionId, res.terminalId)
     return { ok: true }
   },
 )
@@ -144,7 +195,8 @@ export const sendToAgentAtom = atom(
       }),
     )
     if (!res.ok) return res
-    land(set, res.terminalId)
+    if (args.target === 'new') land(set, res.terminalId)
+    else landSession(get, set, args.target, res.terminalId)
     return { ok: true }
   },
 )

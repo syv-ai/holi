@@ -1,11 +1,17 @@
 import { parse as parseYaml } from 'yaml'
 import { execFile } from 'node:child_process'
 import { commitChanges } from './commit-changes'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { parseTaskFile, privateTaskPath, sharedTaskPath, taskClaim } from '@holi/shared'
+import {
+  parseTaskFile,
+  privateTaskPath,
+  sharedTaskPath,
+  taskClaim,
+  SCRATCHPAD_PATH,
+} from '@holi/shared'
 import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
@@ -16,7 +22,7 @@ import { cap, createCapabilityRegistry } from '../src/main/capabilities/registry
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
-import { createRouter } from '../src/main/router'
+import { createRouter, type RouterDeps } from '../src/main/router'
 import { withFileLock } from '../src/main/vault/vault-files'
 import { exactPath } from '@holi/shared/path-safety-node'
 
@@ -69,7 +75,22 @@ afterEach(async () => {
   for (const h of hosts.splice(0)) await h.close().catch(() => {})
 })
 
-async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
+async function rig(
+  files: Record<string, string> = {},
+  auth?: StoredAuth,
+  overridesOrPrepare:
+    | (Pick<RouterDeps, 'seed' | 'opened'> & {
+        reconcile?: RouterDeps['plugins']['reconcile']
+        setDisplayed?: RouterDeps['plugins']['setDisplayed']
+        prepareClone?: RouterDeps['prepareClone']
+      })
+    | (() => Promise<void>) = {},
+  onSeed: typeof seedVault = seedVault,
+) {
+  const overrides =
+    typeof overridesOrPrepare === 'function'
+      ? { prepareClone: overridesOrPrepare, seed: onSeed }
+      : overridesOrPrepare
   const base = await mkdtemp(join(tmpdir(), 'holi-rt-'))
   dirs.push(base)
   const root = join(base, 'clone')
@@ -127,10 +148,18 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     pluginEnabled: async () => true,
     claims: TASKS,
   })
+  const openPastedHoliLink = vi.fn(async (url: string) =>
+    url.includes('valid')
+      ? { ok: true as const }
+      : { ok: false as const, message: 'failure', detail: 'detail' },
+  )
   const caller = createRouter({
-    seed: seedVault,
+    openPastedHoliLink,
+    seed: overrides.seed ?? seedVault,
     plugins: {
-      reconcile: async () => {},
+      reconcile: overrides.reconcile ?? (async () => {}),
+      invalidate: () => {},
+      setDisplayed: overrides.setDisplayed ?? (() => {}),
       syncBackground: async () => {},
       failures: () => ({}),
       scanClaimsFor: TASKS,
@@ -139,15 +168,88 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     registry,
     session,
     host,
+    userData: join(base, 'user-data'),
     vaultRoot: join(base, 'Holi'),
+    prepareClone: overrides.prepareClone ?? (async () => {}),
     openExternal: async () => {},
     trashItem,
     showItemInFolder,
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
+    opened: overrides.opened,
   }).createCaller({})
-  return { caller, root, registry, host, session, base, trashItem, showItemInFolder, capabilities }
+  return {
+    caller,
+    root,
+    registry,
+    host,
+    session,
+    base,
+    userData: join(base, 'user-data'),
+    trashItem,
+    showItemInFolder,
+    capabilities,
+    openPastedHoliLink,
+  }
 }
+
+describe('pasted Holi links', () => {
+  it('routes the raw URL to the shared main-side opener and returns its result', async () => {
+    const { caller, openPastedHoliLink } = await rig()
+    const url = 'holi://open?valid=true'
+    await expect(caller.holiLinks.openPasted({ url })).resolves.toEqual({ ok: true })
+    expect(openPastedHoliLink).toHaveBeenCalledWith(url)
+  })
+})
+
+describe('subscriptions IPC', () => {
+  it('captures the active repository and userData before awaiting HEAD', async () => {
+    const { caller, host, registry, base, userData } = await rig()
+    await caller.vaults.open({ remote: REMOTE })
+    const activeA = host.active()!
+    let release!: (sha: string) => void
+    const delayed = new Promise<string>((resolve) => (release = resolve))
+    const capturedHead = vi.fn(() => delayed)
+    activeA.repo.head = capturedHead
+
+    const setting = caller.subscriptions.set({ remote: REMOTE, path: '', enabled: true })
+    await vi.waitFor(() => expect(capturedHead).toHaveBeenCalledOnce())
+
+    const betaRoot = join(base, 'beta-subscriptions')
+    await mkdir(betaRoot, { recursive: true })
+    await seedVault(betaRoot)
+    await registry.add({
+      remote: 'syv-ai/beta-subscriptions',
+      path: betaRoot,
+      name: 'beta-subscriptions',
+      lastOpenedAt: '2026-07-01T00:00:00Z',
+    })
+    await caller.vaults.open({ remote: 'syv-ai/beta-subscriptions' })
+    release('a'.repeat(40))
+    await setting
+
+    const persisted = JSON.parse(await readFile(join(userData, 'subscriptions.json'), 'utf8')) as {
+      remotes: Record<string, { path: string; baseline: string | null }[]>
+    }
+    expect(persisted.remotes[REMOTE]).toEqual([{ path: '', baseline: 'a'.repeat(40) }])
+    expect(persisted.remotes).not.toHaveProperty('syv-ai/beta-subscriptions')
+    expect(host.active()?.remote).toBe('syv-ai/beta-subscriptions')
+  })
+
+  it('rejects a wrong active remote and validates set inputs through the caller', async () => {
+    const { caller } = await rig()
+    await caller.vaults.open({ remote: REMOTE })
+    await expect(
+      caller.subscriptions.set({ remote: 'other/repo', path: '', enabled: true }),
+    ).rejects.toThrow(/vault changed/)
+    await expect(
+      caller.subscriptions.set({ remote: REMOTE, path: '../escape', enabled: true }),
+    ).rejects.toThrow()
+    await expect(caller.subscriptions.list({ remote: REMOTE, paths: '{invalid' })).rejects.toThrow(
+      /invalid subscription paths/i,
+    )
+  })
+})
 
 describe('settings', () => {
   // Reachability, not resolution: the resolver is tested on strings in
@@ -241,6 +343,45 @@ describe('vaults', () => {
     expect((await caller.vaults.list()).map((v) => v.remote)).toEqual([REMOTE])
   })
 
+  it('prepares a cold vault before seeding and skips preparation for its live runtime', async () => {
+    const order: string[] = []
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const preparing = new Promise<void>((resolve) => (entered = resolve))
+    const { caller, host } = await rig(
+      {},
+      undefined,
+      async () => {
+        order.push('prepare')
+        entered()
+        await gate
+      },
+      async () => {
+        order.push('seed')
+        return { written: [] }
+      },
+    )
+
+    try {
+      const firstOpen = caller.vaults.open({ remote: REMOTE })
+      await preparing
+      const secondOpen = caller.vaults.open({ remote: REMOTE })
+      release()
+      await Promise.all([firstOpen, secondOpen])
+    } finally {
+      release()
+    }
+    expect(order).toEqual(['prepare', 'seed', 'seed'])
+    order.length = 0
+    await caller.vaults.open({ remote: REMOTE })
+    expect(order).toEqual(['seed'])
+    await host.close(REMOTE)
+    order.length = 0
+    await caller.vaults.open({ remote: REMOTE })
+    expect(order).toEqual(['prepare', 'seed'])
+  })
+
   it('open returns the vault contents and stamps lastOpenedAt', async () => {
     const { caller, registry } = await rig({ 'a.md': '# A\n' })
     const snap = await caller.vaults.open({ remote: REMOTE })
@@ -293,6 +434,122 @@ describe('vaults', () => {
     expect(after.permissions.ask).toContain('Bash(holi google send:*)')
   })
 
+  it('does not let an older seed completion reopen a superseded vault', async () => {
+    let releaseSeed!: () => void
+    const seedGate = new Promise<void>((resolve) => (releaseSeed = resolve))
+    const setDisplayed = vi.fn()
+    const opened = vi.fn()
+    const { caller, registry, host, base } = await rig({ 'alpha.md': '# Alpha\n' }, undefined, {
+      seed: async (root) => {
+        if (root.endsWith('beta')) await seedGate
+        else await seedVault(root)
+      },
+      setDisplayed,
+      opened,
+    })
+    const betaRoot = join(base, 'beta')
+    await mkdir(betaRoot, { recursive: true })
+    await writeFile(join(betaRoot, 'beta-only.md'), '# Beta\n')
+    await seedVault(betaRoot)
+    await registry.add({
+      remote: 'syv-ai/beta',
+      path: betaRoot,
+      name: 'beta',
+      lastOpenedAt: '2026-07-01T00:00:00Z',
+    })
+    await caller.vaults.open({ remote: REMOTE })
+    setDisplayed.mockClear()
+    opened.mockClear()
+
+    const beta = caller.vaults.open({ remote: 'syv-ai/beta' })
+    await caller.vaults.open({ remote: REMOTE })
+    releaseSeed()
+    const betaSnapshot = await beta
+
+    expect(host.active()?.remote).toBe(REMOTE)
+    expect(betaSnapshot.docs.map((doc) => doc.path)).toContain('beta-only.md')
+    expect(setDisplayed.mock.calls).toEqual([[REMOTE]])
+    expect(opened.mock.calls).toEqual([[REMOTE]])
+  })
+
+  it('supersedes a vault open waiting on registry touch', async () => {
+    const { caller, registry, host, base } = await rig()
+    const betaRoot = join(base, 'touch-beta')
+    await mkdir(betaRoot, { recursive: true })
+    await seedVault(betaRoot)
+    await registry.add({
+      remote: 'syv-ai/touch-beta',
+      path: betaRoot,
+      name: 'beta',
+      lastOpenedAt: '',
+    })
+    const originalTouch = registry.touch.bind(registry)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    vi.spyOn(registry, 'touch').mockImplementation(async (remote, stamp) => {
+      if (remote === 'syv-ai/touch-beta') await gate
+      return originalTouch(remote, stamp)
+    })
+
+    const old = caller.vaults.open({ remote: 'syv-ai/touch-beta' })
+    await caller.vaults.open({ remote: REMOTE })
+    release()
+    await old
+    expect(host.active()?.remote).toBe(REMOTE)
+  })
+
+  it('does not publish opened for a vault superseded during reconciliation', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const opened = vi.fn()
+    let reconcileCount = 0
+    let signalReconcile!: () => void
+    const reconcileStarted = new Promise<void>((resolve) => (signalReconcile = resolve))
+    const { caller, host } = await rig({}, undefined, {
+      reconcile: async () => {
+        if (reconcileCount++ === 0) {
+          signalReconcile()
+          await gate
+        }
+      },
+      opened,
+    })
+    const slow = caller.vaults.open({ remote: REMOTE })
+    await reconcileStarted
+    const latest = caller.vaults.open({ remote: REMOTE })
+    await latest
+    release()
+    await slow
+    expect(host.active()?.remote).toBe(REMOTE)
+    expect(opened).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a later open proceed after an obsolete preparation fails', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    let seeds = 0
+    let preparations = 0
+    const { caller, host } = await rig({}, undefined, {
+      prepareClone: async () => {
+        preparations++
+      },
+      seed: async (root) => {
+        if (seeds++ === 0) {
+          await gate
+          throw new Error('seed failed')
+        }
+        await seedVault(root)
+      },
+    })
+    const failed = caller.vaults.open({ remote: REMOTE })
+    await caller.vaults.open({ remote: REMOTE })
+    release()
+    await expect(failed).rejects.toThrow('seed failed')
+    expect(host.active()?.remote).toBe(REMOTE)
+    expect(preparations).toBe(1)
+    await expect(caller.vaults.open({ remote: REMOTE })).resolves.toHaveProperty('docs')
+  })
+
   it('open makes the vault active, so the loop is running behind the snapshot', async () => {
     const { caller, host } = await rig({ 'a.md': '# A\n' })
     await caller.vaults.open({ remote: REMOTE })
@@ -320,6 +577,37 @@ describe('vaults', () => {
     // Recoverable delete: the clone went to the OS trash, not an rm — so the
     // private vault, or one deleted by mistake, can be restored and re-ingested.
     expect(trashItem).toHaveBeenCalledWith(root)
+    expect(await caller.vaults.list()).toEqual([])
+  })
+
+  it('deleteClones closes every runtime before trashing any clone', async () => {
+    const { caller, host, registry, base, root } = await rig({ 'a.md': '# A\n' })
+    const secondRoot = join(base, 'second-clone')
+    await mkdir(secondRoot, { recursive: true })
+    await seedVault(secondRoot)
+    for (const cloneRoot of [root, secondRoot]) {
+      await plainGit(cloneRoot, ['init', '-b', 'main'])
+      await plainGit(cloneRoot, ['config', 'user.name', 'Test'])
+      await plainGit(cloneRoot, ['config', 'user.email', 'test@example.com'])
+      await plainGit(cloneRoot, ['add', '-A'])
+      await plainGit(cloneRoot, ['commit', '-m', 'seed'])
+    }
+    await registry.add({
+      remote: 'syv-ai/second',
+      path: secondRoot,
+      name: 'second',
+      lastOpenedAt: '2026-07-01T00:00:00Z',
+    })
+
+    await caller.vaults.open({ remote: REMOTE })
+    await host.getOrOpen('syv-ai/second')
+    expect(host.get(REMOTE)).not.toBeNull()
+    expect(host.get('syv-ai/second')).not.toBeNull()
+
+    await caller.vaults.deleteClones()
+
+    expect(host.get(REMOTE)).toBeNull()
+    expect(host.get('syv-ai/second')).toBeNull()
     expect(await caller.vaults.list()).toEqual([])
   })
 
@@ -397,6 +685,64 @@ describe('files', () => {
 })
 
 describe('notes', () => {
+  it.each(['outside', 'inside', 'dangling'] as const)(
+    'refuses to read or write a %s scratchpad symlink without changing it',
+    async (kind) => {
+      const { caller, root } = await rig()
+      const scratchpad = join(root, SCRATCHPAD_PATH)
+      const outside = join(root, '..', 'outside-scratchpad.md')
+      const inside = join(root, 'inside-scratchpad.md')
+      await writeFile(outside, 'outside bytes\n')
+      await writeFile(inside, 'inside bytes\n')
+      await rm(scratchpad, { force: true })
+      const target =
+        kind === 'outside' ? outside : kind === 'inside' ? inside : join(root, 'missing-target.md')
+      await symlink(target, scratchpad)
+
+      await expect(caller.notes.read({ remote: REMOTE, path: SCRATCHPAD_PATH })).rejects.toThrow(
+        /scratchpad.*symlink/i,
+      )
+      await expect(
+        caller.notes.write({ remote: REMOTE, path: SCRATCHPAD_PATH, text: 'replacement\n' }),
+      ).rejects.toThrow(/scratchpad.*symlink/i)
+      expect((await lstat(scratchpad)).isSymbolicLink()).toBe(true)
+      expect(await readFile(scratchpad, 'utf8').catch(() => null)).toBe(
+        kind === 'dangling' ? null : `${kind} bytes\n`,
+      )
+    },
+  )
+
+  it('refuses a scratchpad symlink introduced while a save waits for its lock', async () => {
+    const { caller, root } = await rig()
+    const scratchpad = join(root, SCRATCHPAD_PATH)
+    const outside = join(root, '..', 'outside-scratchpad-race.md')
+    await writeFile(outside, 'untouched\n')
+    const held = withFileLock((await exactPath(root, SCRATCHPAD_PATH))!, async () => {
+      await new Promise((r) => setTimeout(r, 50))
+      await rm(scratchpad)
+      await symlink(outside, scratchpad)
+    })
+    const save = caller.notes.write({
+      remote: REMOTE,
+      path: SCRATCHPAD_PATH,
+      text: 'replacement\n',
+    })
+    await Promise.all([held, expect(save).rejects.toThrow(/scratchpad.*symlink/i)])
+    expect((await lstat(scratchpad)).isSymbolicLink()).toBe(true)
+    expect(await readFile(outside, 'utf8')).toBe('untouched\n')
+  })
+
+  it('keeps regular and absent scratchpads readable and writable', async () => {
+    const { caller, root } = await rig()
+    const scratchpad = join(root, SCRATCHPAD_PATH)
+    expect(await caller.notes.read({ remote: REMOTE, path: SCRATCHPAD_PATH })).toBeTruthy()
+    await caller.notes.write({ remote: REMOTE, path: SCRATCHPAD_PATH, text: 'regular\n' })
+    expect(await readFile(scratchpad, 'utf8')).toBe('regular\n')
+    await rm(scratchpad)
+    await caller.notes.write({ remote: REMOTE, path: SCRATCHPAD_PATH, text: 'created\n' })
+    expect(await readFile(scratchpad, 'utf8')).toBe('created\n')
+  })
+
   it('reads and writes', async () => {
     const { caller, root } = await rig({ 'a.md': '# A\n' })
     expect(await caller.notes.read({ remote: REMOTE, path: 'a.md' })).toBe('# A\n')
@@ -1331,6 +1677,8 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
     seed: seedVault,
     plugins: {
       reconcile: async () => {},
+      invalidate: () => {},
+      setDisplayed: () => {},
       syncBackground: async () => {},
       failures: () => ({}),
       scanClaimsFor: TASKS,
@@ -1583,10 +1931,24 @@ describe('github', () => {
 
 describe('vaults.add', () => {
   it('clones, seeds, registers and opens', async () => {
-    const { caller, host, base } = await rig()
+    const order: string[] = []
+    const { caller, host, base } = await rig(
+      {},
+      undefined,
+      async () => {
+        order.push('prepare')
+      },
+      async (root) => {
+        order.push('seed')
+        return seedVault(root)
+      },
+    )
     const origin = await makeRemote()
 
     const snap = await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
+    expect(order).toEqual(['prepare', 'seed'])
+    await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
+    expect(order).toEqual(['prepare', 'seed'])
 
     // The repo's own content plus the once-files, because seeding happens on
     // the way in rather than at some later activation. No skills: this joins a
@@ -1611,7 +1973,8 @@ describe('vaults.add', () => {
     // directly. Adopting seeds the clone, so a plain code repo (no `.holi`
     // marker) must be refused before the seed can commit `AGENTS.md`/`.claude/`
     // into it — otherwise the next auto-push corrupts someone's codebase.
-    const { caller, base } = await rig()
+    const prepare = vi.fn(async () => {})
+    const { caller, base } = await rig({}, undefined, prepare)
     const origin = await makeNonVaultRemote()
 
     await expect(caller.vaults.add({ remote: 'syv-ai/just-code', url: origin })).rejects.toThrow(
@@ -1619,6 +1982,7 @@ describe('vaults.add', () => {
     )
 
     expect((await caller.vaults.list()).map((v) => v.remote)).toEqual([REMOTE])
+    expect(prepare).not.toHaveBeenCalled()
     // The clone made to inspect it is removed, so a refused adopt leaves nothing.
     await expect(
       readFile(join(base, 'Holi', 'syv-ai', 'just-code', 'README.md'), 'utf8'),
@@ -1686,13 +2050,16 @@ describe('vaults large-file actions', () => {
 
   it('keepFileLocal excludes a held-back file locally, keeping it on disk', async () => {
     const { caller, path } = await adopted()
-    await writeFile(join(path, 'video.mov'), 'x'.repeat(50), 'utf8')
+    await writeFile(join(path, 'video[1].mov'), 'x'.repeat(50), 'utf8')
+    await mkdir(join(path, 'sub'))
+    await writeFile(join(path, 'sub', 'video[1].mov'), 'x'.repeat(50), 'utf8')
 
-    await caller.vaults.keepFileLocal({ remote: 'syv-ai/notes', path: 'video.mov' })
+    await caller.vaults.keepFileLocal({ remote: 'syv-ai/notes', path: 'video[1].mov' })
     // No longer dirty (git-ignored locally) but still on disk.
-    expect(await plainGit(path, ['status', '--porcelain', '--', 'video.mov'])).toBe('')
-    await expect(readFile(join(path, 'video.mov'), 'utf8')).resolves.toHaveLength(50)
-    expect(await readFile(join(path, '.git', 'info', 'exclude'), 'utf8')).toContain('video.mov')
+    expect(await plainGit(path, ['status', '--porcelain', '--', 'video[1].mov'])).toBe('')
+    await expect(readFile(join(path, 'video[1].mov'), 'utf8')).resolves.toHaveLength(50)
+    // That one file, not a pattern: the same name in another folder still syncs.
+    expect(await plainGit(path, ['status', '--porcelain', '-uall'])).toContain('sub/')
   })
 })
 

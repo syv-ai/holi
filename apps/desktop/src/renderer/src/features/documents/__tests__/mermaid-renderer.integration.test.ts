@@ -101,6 +101,49 @@ describe('real Mermaid renderer', () => {
     },
   )
 
+  it.each([
+    ['rounded rectangle', '(Alpha)', '(Gamma)'],
+    ['diamond', '{Alpha}', '{Gamma}'],
+    ['circle', '((Alpha))', '((Gamma))'],
+    ['stadium', '([Alpha])', '([Gamma])'],
+    ['subroutine', '[[Alpha]]', '[[Gamma]]'],
+    ['cylinder', '[(Alpha)]', '[(Gamma)]'],
+    ['hexagon', '{{Alpha}}', '{{Gamma}}'],
+  ])('maps real Mermaid %s labels by stable node identity', async (_name, shape, changed) => {
+    polyfillSvgLayout()
+    const source = `flowchart LR\nA${shape} --> B[Keep]\nA --> C[Same]`
+    const before = await renderMermaid(source, 'default')
+    expect(before.targets.map(({ id, label }) => [id, label])).toEqual([
+      ['A', 'Alpha'],
+      ['B', 'Keep'],
+      ['C', 'Same'],
+    ])
+    const editedSource = patch(source, 'A', 'Gamma')
+    expect(editedSource).toContain(`A${changed}`)
+    const after = await renderMermaid(editedSource, 'default')
+    expect(after.targets.map(({ id, label }) => [id, label])).toEqual([
+      ['A', 'Gamma'],
+      ['B', 'Keep'],
+      ['C', 'Same'],
+    ])
+    expect(after.targets.map(({ id }) => id)).toEqual(before.targets.map(({ id }) => id))
+    const beforeRoot = renderedSvg(before.svg)
+    const afterRoot = renderedSvg(after.svg)
+    for (const target of after.targets) {
+      const node = [...afterRoot.querySelectorAll('g.node')].find(
+        (candidate) => candidate.id === target.domId,
+      )!
+      expect(node.querySelector('.label')!.textContent).toBe(target.label)
+      expect(target.domId.replace(/^holi-mermaid-\d+-/, '')).toBe(
+        before.targets
+          .find((prior) => prior.id === target.id)!
+          .domId.replace(/^holi-mermaid-\d+-/, ''),
+      )
+      expect(beforeRoot.querySelectorAll('g.node')).toHaveLength(3)
+      expect(afterRoot.querySelectorAll('g.node')).toHaveLength(3)
+    }
+  })
+
   it('fails closed when Mermaid changes punctuation or entity-looking drafts on render', async () => {
     polyfillSvgLayout()
     const drafts = ['`"\\!@#$%^&*()_+-={}[]|:;<>?,./~', 'literal &amp; &#91; &#93; &#x1F680;']
@@ -160,7 +203,7 @@ describe('real Mermaid renderer', () => {
   })
 
   it.each([
-    'flowchart LR\nA((circle))',
+    'flowchart LR\nA[/slanted/]',
     'flowchart LR\nA[one]\nA[two]',
     'flowchart LR\nA[one<br>two]',
     'flowchart LR\nA[one]\nclick A callback',
@@ -169,16 +212,16 @@ describe('real Mermaid renderer', () => {
     'renders unsupported or malicious source without exposing edit targets: %s',
     async (source) => {
       polyfillSvgLayout()
-      try {
-        const result = await renderMermaid(source, 'default')
-        expect(result.targets).toEqual([])
-        expect(result.svg).not.toMatch(/<foreignObject|<a(?:\s|>)/i)
-        expect(result.svg).not.toMatch(/\s(?:href|xlink:href|target)=/i)
-        expect(result.svg).not.toContain('onerror=')
-      } catch {
+      const result = await renderMermaid(source, 'default').catch(() => null)
+      if (!result) {
         // Mermaid may reject unsupported syntax; either outcome must leave no error SVG behind.
         expect(document.body.querySelectorAll('svg')).toHaveLength(0)
+        return
       }
+      expect(result.targets).toEqual([])
+      expect(result.svg).not.toMatch(/<foreignObject|<a(?:\s|>)/i)
+      expect(result.svg).not.toMatch(/\s(?:href|xlink:href|target)=/i)
+      expect(result.svg).not.toContain('onerror=')
     },
   )
 

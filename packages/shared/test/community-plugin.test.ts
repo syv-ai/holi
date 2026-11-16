@@ -107,6 +107,35 @@ describe('parsePluginManifest', () => {
     expect(problems({ ...dash, check: { ...check, hint: 'x'.repeat(201) } })).toHaveLength(1)
   })
 
+  it('reads verbs for holi plugin: an argv like a check, and one line per verb', () => {
+    const modelokale = { id: 'modelokale', name: 'Mødelokale', version: '0.2.0' }
+    const cli = {
+      run: ['node', 'bin/modelokale.mjs', '--vault', '{vault}'],
+      verbs: { login: 'Sign in to the booking site', 'free-rooms': ' Rooms free in a window ' },
+    }
+    // A plugin of verbs alone does something.
+    expect(parsePluginManifest({ ...modelokale, cli })).toEqual({
+      ok: true,
+      value: {
+        ...modelokale,
+        opens: [],
+        cli: { run: cli.run, verbs: { ...cli.verbs, 'free-rooms': 'Rooms free in a window' } },
+      },
+    })
+    expect(problems({ ...modelokale, cli: ['node', 'x'] })).toHaveLength(1)
+    expect(problems({ ...modelokale, cli: { ...cli, run: ['node x.mjs'] } })).toHaveLength(1)
+    expect(problems({ ...modelokale, cli: { ...cli, run: ['x', '{file}'] } })).toHaveLength(1)
+    expect(problems({ ...modelokale, cli: { ...cli, verbs: {} } })).toHaveLength(1)
+    expect(problems({ ...modelokale, cli: { run: cli.run } })).toHaveLength(1)
+    for (const verb of ['--book', 'Book', 'book now', '2fa', 'a_b', '__proto__'])
+      expect(
+        problems({ ...modelokale, cli: { ...cli, verbs: { [verb]: 'x' } } }),
+        verb,
+      ).toHaveLength(1)
+    for (const summary of ['', 'two\nlines', 'x'.repeat(201), 3])
+      expect(problems({ ...modelokale, cli: { ...cli, verbs: { book: summary } } })).toHaveLength(1)
+  })
+
   it('names a command without a path or shell meaning, and never holi', () => {
     for (const name of ['dashctl', 'gh2', 'my-tool', 'x.y_z'])
       expect(isCommandName(name)).toBe(true)

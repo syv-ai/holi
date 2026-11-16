@@ -6,7 +6,7 @@
  * Save. Nothing paints a fill, so the window's surface shows through. Every section is built from these and nothing else, so the
  * pages cannot drift apart.
  */
-import type { CSSProperties, ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { VAULT_SETTINGS, type VaultSettingKey } from '@holi/shared'
 
 import { cn } from '@/lib/cn'
@@ -196,15 +196,28 @@ export function OptionSelect<TValue extends string>({
   value,
   choices,
   onChange,
+  visible = true,
 }: {
   id: string
   label: string
   value: TValue
   choices: readonly Choice<TValue>[]
   onChange: (value: TValue) => void
+  visible?: boolean
 }) {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!visible) setOpen(false)
+  }, [visible])
+
   return (
-    <Select value={value} onValueChange={(next) => next && onChange(next as TValue)}>
+    <Select
+      open={visible && open}
+      onOpenChange={setOpen}
+      value={value}
+      onValueChange={(next) => next && onChange(next as TValue)}
+    >
       <SelectTrigger id={id} aria-label={label} className="w-full md:w-48">
         <SelectValue />
       </SelectTrigger>

@@ -6,11 +6,12 @@
  * **installed on this machine**, and agreed to, is this person's alone.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites/settings-ui'
-import { openDialogAtom } from '@/plugin-api'
+import { closePluginDialogAtom, openDialogAtom } from '@/plugin-api'
 import { communityCap, setPluginSwitch } from './community-cap'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './install-flow'
 import { PluginSearch } from './plugin-search'
@@ -27,6 +28,19 @@ const STATUS: Record<PluginRow['status'], string> = {
 }
 
 const versionOf = (row: PluginRow) => row.install?.version ?? row.pin?.version ?? ''
+
+function BusyLabel({ busy, children }: { busy: boolean; children: React.ReactNode }) {
+  return (
+    <span className="relative">
+      <span className={busy ? 'opacity-0' : undefined}>{children}</span>
+      {busy && (
+        <span className="absolute inset-0 grid place-items-center" aria-hidden="true">
+          <Spinner />
+        </span>
+      )}
+    </span>
+  )
+}
 
 /** Turn a plugin on or off for the vault: its `plugins.<id>` switch, beside
  *  the vault's other plugins, and its pin when it is a release. */
@@ -45,27 +59,60 @@ async function turnOnHere(remote: string, id: string): Promise<void> {
   if (row !== undefined && !row.on) await setOn(remote, row, true)
 }
 
-export function PluginsSettings({ remote }: { remote: string }): React.JSX.Element {
+export function PluginsSettings({
+  remote,
+  visible = true,
+}: {
+  remote: string
+  visible?: boolean
+}): React.JSX.Element {
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
+  const closePluginDialog = useSetAtom(closePluginDialogAtom)
+  const visibleRef = useRef(visible)
+  const visibilityGeneration = useRef(0)
+  const actionGeneration = useRef(0)
+  const dialogRenderer = useRef<((close: () => void) => React.ReactNode) | null>(null)
+  visibleRef.current = visible
   const rows = useAtomValue(rowsAtom)?.rows ?? []
   const updates = useAtomValue(updatesAtom)
 
   // Opening the section asks GitHub now rather than trusting the hourly check.
   useEffect(() => {
-    void refreshUpdates(remote, store, true)
-  }, [remote, store])
+    if (visible) {
+      void refreshUpdates(remote, store, true)
+    } else {
+      visibilityGeneration.current += 1
+      if (dialogRenderer.current !== null) closePluginDialog(dialogRenderer.current)
+      dialogRenderer.current = null
+    }
+    return () => {
+      visibilityGeneration.current += 1
+      if (dialogRenderer.current !== null) closePluginDialog(dialogRenderer.current)
+      dialogRenderer.current = null
+    }
+  }, [remote, store, visible, closePluginDialog])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [acting, setActing] = useState<string | null>(null)
+  const actionLock = useRef(false)
 
   const flow: InstallFlow = {
     remote,
     store,
-    openDialog: (render) => openDialog({ id: 'plugin', size: 'md', render }),
+    openDialog: (render) => {
+      if (!visibleRef.current || actionGeneration.current !== visibilityGeneration.current) return
+      dialogRenderer.current = render
+      openDialog({ id: 'plugin', size: 'md', render })
+    },
   }
 
-  const act = async (fn: () => Promise<string | null | void>) => {
+  const act = async (id: string, fn: () => Promise<string | null | void>) => {
+    if (actionLock.current) return
+    actionLock.current = true
+    actionGeneration.current = visibilityGeneration.current
     setBusy(true)
+    setActing(id)
     setError(null)
     try {
       const message = await fn()
@@ -73,7 +120,9 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
+      actionLock.current = false
       setBusy(false)
+      setActing(null)
       await refreshRows(remote, store)
     }
   }
@@ -91,9 +140,15 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
               <Button
                 size="xs"
                 disabled={busy}
-                onClick={() => askToRun(flow, row, () => communityCap.pin(remote, { id: row.id }))}
+                onClick={() =>
+                  void act(`${row.id}:pin`, async () =>
+                    askToRun(flow, row, () => communityCap.pin(remote, { id: row.id })),
+                  )
+                }
               >
-                Use {row.install.version} in this vault…
+                <BusyLabel busy={acting === `${row.id}:pin`}>
+                  Use {row.install.version} in this vault…
+                </BusyLabel>
               </Button>
             )}
             {row.pin !== null && (
@@ -102,7 +157,7 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                 variant="ghost"
                 disabled={busy}
                 onClick={() =>
-                  void act(() =>
+                  void act(`${row.id}:install`, () =>
                     installAndAsk(flow, {
                       repo: row.pin!.repo,
                       path: row.pin!.path,
@@ -112,7 +167,9 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                   )
                 }
               >
-                Install {row.pin.version}
+                <BusyLabel busy={acting === `${row.id}:install`}>
+                  Install {row.pin.version}
+                </BusyLabel>
               </Button>
             )}
           </span>
@@ -121,14 +178,25 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
       case 'needs-setup':
       case 'setup-failed':
         return (
-          <Button size="xs" disabled={busy} onClick={() => askToRun(flow, row)}>
-            {row.status === 'setup-failed' ? 'Run setup again…' : 'Review and allow…'}
+          <Button
+            size="xs"
+            disabled={busy}
+            onClick={() => void act(`${row.id}:setup`, async () => askToRun(flow, row))}
+          >
+            <BusyLabel busy={acting === `${row.id}:setup`}>
+              {row.status === 'setup-failed' ? 'Run setup again…' : 'Review and allow…'}
+            </BusyLabel>
           </Button>
         )
       case 'ready':
         return row.install?.kind === 'dev' && row.setup !== null ? (
-          <Button size="xs" variant="ghost" disabled={busy} onClick={() => askToRun(flow, row)}>
-            Run setup
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => void act(`${row.id}:setup`, async () => askToRun(flow, row))}
+          >
+            <BusyLabel busy={acting === `${row.id}:setup`}>Run setup</BusyLabel>
           </Button>
         ) : null
     }
@@ -168,9 +236,15 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                     <Button
                       size="xs"
                       disabled={busy}
-                      onClick={() => void act(() => updatePlugin(flow, row, updates[row.id]!))}
+                      onClick={() =>
+                        void act(`${row.id}:update`, () =>
+                          updatePlugin(flow, row, updates[row.id]!),
+                        )
+                      }
                     >
-                      Update to {updates[row.id]}…
+                      <BusyLabel busy={acting === `${row.id}:update`}>
+                        Update to {updates[row.id]}…
+                      </BusyLabel>
                     </Button>
                   )}
                   {row.check?.ok === false && (
@@ -180,11 +254,12 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                       disabled={busy}
                       onClick={() =>
                         void act(
+                          `${row.id}:check`,
                           async () => void (await communityCap.check(remote, { id: row.id })),
                         )
                       }
                     >
-                      Check again
+                      <BusyLabel busy={acting === `${row.id}:check`}>Check again</BusyLabel>
                     </Button>
                   )}
                   {nextStep(row)}
@@ -192,7 +267,9 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                     aria-label={`Use ${row.name} in this vault`}
                     checked={row.on}
                     disabled={busy || (row.install === null && !row.on)}
-                    onCheckedChange={(on) => void act(() => setOn(remote, row, on))}
+                    onCheckedChange={(on) =>
+                      void act(`${row.id}:switch`, () => setOn(remote, row, on))
+                    }
                   />
                 </span>
               }
@@ -225,9 +302,13 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                     size="xs"
                     variant="ghost"
                     disabled={busy}
-                    onClick={() => void act(() => communityCap.remove(remote, { id: row.id }))}
+                    onClick={() =>
+                      void act(`${row.id}:remove`, () =>
+                        communityCap.remove(remote, { id: row.id }),
+                      )
+                    }
                   >
-                    Remove
+                    <BusyLabel busy={acting === `${row.id}:remove`}>Remove</BusyLabel>
                   </Button>
                 }
               />
@@ -235,7 +316,7 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
         </SettingsList>
       )}
 
-      <AddPlugin flow={flow} busy={busy} act={act} />
+      <AddPlugin flow={flow} busy={busy} acting={acting} visible={visible} act={act} />
       {error !== null && (
         <p role="alert" className="mt-2 text-xs text-pretty break-words text-destructive">
           {error}
@@ -248,11 +329,15 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
 function AddPlugin({
   flow,
   busy,
+  acting,
+  visible,
   act,
 }: {
   flow: InstallFlow
   busy: boolean
-  act: (fn: () => Promise<string | null | void>) => Promise<void>
+  acting: string | null
+  visible: boolean
+  act: (id: string, fn: () => Promise<string | null | void>) => Promise<void>
 }): React.JSX.Element {
   const addFolder = async () => {
     const folder = await window.holi.chooseFolder()
@@ -271,8 +356,9 @@ function AddPlugin({
           <PluginSearch
             remote={flow.remote}
             disabled={busy}
+            visible={visible}
             onChoose={(c) =>
-              void act(() =>
+              void act('add:install', () =>
                 installAndAsk(flow, { repo: c.repo, path: c.path, version: c.latest }, (row) =>
                   turnOnHere(flow.remote, row.id),
                 ),
@@ -280,8 +366,14 @@ function AddPlugin({
             }
           />
         </div>
-        <Button size="xs" variant="ghost" disabled={busy} onClick={() => void act(addFolder)}>
-          Use a folder…
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={busy}
+          aria-label="Use a folder…"
+          onClick={() => void act('add:folder', addFolder)}
+        >
+          <BusyLabel busy={acting === 'add:folder'}>Use a folder…</BusyLabel>
         </Button>
       </div>
     </>

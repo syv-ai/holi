@@ -26,7 +26,12 @@ import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { EMPTY_PLANNING_FILTER, type PlanningFilter, type PlanningSort } from '@/lib/planning'
 import { trpc } from '@/lib/trpc'
-import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
+import {
+  activeRemoteAtom,
+  activeRemoteRevisionValueAtom,
+  loadSnapshotAtom,
+  snapshotAtom,
+} from './vaults'
 
 /** A file read through main: not yet, read (with what in it was not
  *  understood), or failed. */
@@ -36,6 +41,18 @@ export type Loadable<T> =
   | { state: 'error'; message: string }
 
 export const statusesFileAtom = atom<Loadable<StatusDef[]>>({ state: 'loading' })
+type StatusesRead = {
+  remote: string
+  revision: number
+  stamp: string | null
+  retry: number
+  file: Loadable<StatusDef[]>
+}
+const statusesReadAtom = atom<StatusesRead | null>(null)
+/** @public exported for state and sidebar tests. */
+export const recordStatusesReadAtom = atom(null, (_get, set, read: StatusesRead) =>
+  set(statusesReadAtom, read),
+)
 export const projectFileAtom = atom<Loadable<Project>>({ state: 'loading' })
 
 /** The vault's statuses, in board order: the defaults until the file is read,
@@ -66,6 +83,26 @@ const fileStampsAtom = atom((get) => {
 const retryAtom = atom(0)
 export const retryPlanningFilesAtom = atom(null, (_get, set) => set(retryAtom, (n) => n + 1))
 
+/** The active vault's definitions only after its matching read has settled. */
+export const activeStatusesAtom = atom<readonly StatusDef[] | null>((get) => {
+  const remote = get(activeRemoteAtom)
+  const revision = get(activeRemoteRevisionValueAtom)
+  const stamp = get(fileStampsAtom).statuses
+  const retry = get(retryAtom)
+  const read = get(statusesReadAtom)
+  if (
+    !remote ||
+    !read ||
+    read.remote !== remote ||
+    read.revision !== revision ||
+    read.stamp !== stamp ||
+    read.retry !== retry
+  )
+    return null
+  if (read.file.state === 'loading') return null
+  return read.file.state === 'ready' ? read.file.value : DEFAULT_STATUSES
+})
+
 async function readText(remote: string, path: string, exists: boolean): Promise<string | null> {
   if (!exists) return null
   return trpc.notes.read.query({ remote, path })
@@ -79,24 +116,44 @@ function message(err: unknown): string {
  *  in the app shell. */
 export function usePlanningFiles(): void {
   const remote = useAtomValue(activeRemoteAtom)
+  const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const stamps = useAtomValue(fileStampsAtom)
   const retry = useAtomValue(retryAtom)
   const setStatuses = useSetAtom(statusesFileAtom)
+  const recordStatusesRead = useSetAtom(recordStatusesReadAtom)
   const setProject = useSetAtom(projectFileAtom)
 
   useEffect(() => {
     if (remote === null) return
     let live = true
+    recordStatusesRead({
+      remote,
+      revision: remoteRevision,
+      stamp: stamps.statuses,
+      retry,
+      file: { state: 'loading' },
+    })
+    const settle = (file: Loadable<StatusDef[]>) => {
+      if (!live) return
+      setStatuses(file)
+      recordStatusesRead({
+        remote,
+        revision: remoteRevision,
+        stamp: stamps.statuses,
+        retry,
+        file,
+      })
+    }
     readText(remote, STATUSES_FILE, stamps.statuses !== null)
       .then((text) => {
         const { statuses, warnings } = parseStatusesFile(text)
-        if (live) setStatuses({ state: 'ready', value: statuses, warnings })
+        settle({ state: 'ready', value: statuses, warnings })
       })
-      .catch((err: unknown) => live && setStatuses({ state: 'error', message: message(err) }))
+      .catch((err: unknown) => settle({ state: 'error', message: message(err) }))
     return () => {
       live = false
     }
-  }, [remote, stamps.statuses, retry, setStatuses])
+  }, [remote, remoteRevision, stamps.statuses, retry, setStatuses, recordStatusesRead])
 
   useEffect(() => {
     if (remote === null) return

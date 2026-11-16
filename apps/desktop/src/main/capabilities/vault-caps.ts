@@ -490,7 +490,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
         } catch (err) {
           throw new CapabilityError('BAD_REQUEST', (err as Error).message)
         }
-        await writeAtomic(ctx.root, rel, text)
+        await writeAtomic(ctx.root, rel, text, ctx.assertCurrent)
       })
       return { path: rel }
     },

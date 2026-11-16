@@ -6,14 +6,15 @@
  * plugin's folder document (a deck) opens from its row and expands from its
  * chevron. A note's menu has Create vault app, as the document's own does.
  */
-import { Provider, createStore, useAtomValue } from 'jotai'
+import { Provider, createStore } from 'jotai'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
-import { emptyVaultSnapshot, TASKS_CLAIM, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { emptyVaultSnapshot, isSecretPath, TASKS_CLAIM, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { activeSplit, openTab } from '@/state/shell-workspace'
 import {
   activeRemoteAtom,
   showHiddenByVaultAtom,
@@ -27,6 +28,8 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 // eslint-disable-next-line no-restricted-imports
 import { tasksRenderer } from '../../../../../plugins/tasks/renderer'
 import { FilesSection } from '../files-section'
+import { activateHostHint, discoverHostHintTargets } from '@/lib/host-hints'
+import { installHintLayout } from '@/test/host-hint-layout'
 
 const deleteMany = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 const createNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
@@ -38,6 +41,47 @@ const createTask = vi.hoisted(() =>
 const writeNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 const snapshotQuery = vi.hoisted(() =>
   vi.fn(async () => (await import('@holi/shared')).emptyVaultSnapshot()),
+)
+const subscriptionScopes = vi.hoisted(() => ({
+  values: [] as {
+    path: string
+    explicit: boolean
+    coveredBy: string | null
+    baseline: string | null
+  }[],
+  fail: false,
+}))
+const subscriptionList = vi.hoisted(() =>
+  vi.fn(async ({ paths }: { paths: string }) => {
+    if (subscriptionScopes.fail) throw new Error('Subscription storage is unavailable.')
+    const requested = JSON.parse(paths) as string[]
+    if (requested.some(isSecretPath)) throw new Error('This path cannot be subscribed.')
+    return requested.map((path) => {
+      const own = subscriptionScopes.values.find((scope) => scope.path === path)
+      const parent = subscriptionScopes.values
+        .filter(
+          (scope) => scope.path !== path && scope.path !== '' && path.startsWith(`${scope.path}/`),
+        )
+        .sort((a, b) => b.path.length - a.path.length)[0]
+      const root = subscriptionScopes.values.find((scope) => scope.path === '')
+      return {
+        ...(own ?? { path, explicit: false, baseline: null }),
+        coveredBy: parent?.path ?? (path !== '' && root ? '' : null),
+      }
+    })
+  }),
+)
+const subscriptionSet = vi.hoisted(() =>
+  vi.fn(async ({ path, enabled }: { path: string; enabled: boolean }) => {
+    subscriptionScopes.values = subscriptionScopes.values.filter((scope) => scope.path !== path)
+    if (enabled)
+      subscriptionScopes.values.push({
+        path,
+        explicit: true,
+        coveredBy: null,
+        baseline: 'f'.repeat(40),
+      })
+  }),
 )
 const capRun = vi.hoisted(() =>
   vi.fn(async ({ name, paramsJson }: { name: string; paramsJson: string }) => {
@@ -54,6 +98,7 @@ vi.mock('@/lib/trpc', () => ({
       create: { mutate: createNote },
       write: { mutate: writeNote },
     },
+    subscriptions: { list: { query: subscriptionList }, set: { mutate: subscriptionSet } },
     cap: { run: { mutate: capRun } },
     vaults: {
       snapshot: {
@@ -64,11 +109,13 @@ vi.mock('@/lib/trpc', () => ({
 }))
 
 function KeyedFiles({ onOpen }: { onOpen: (path: string) => void }) {
-  const remote = useAtomValue(activeRemoteAtom)
-  return <FilesSection key={remote} activeId={null} onOpen={onOpen} onMoved={() => undefined} />
+  return <FilesSection activeId={null} onOpen={onOpen} onMoved={() => undefined} />
 }
 
 function mount({ tasks = true }: { tasks?: boolean } = {}) {
+  subscriptionScopes.values = []
+  subscriptionList.mockClear()
+  subscriptionSet.mockClear()
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
   store.set(showHiddenByVaultAtom, {})
@@ -165,6 +212,322 @@ function mount({ tasks = true }: { tasks?: boolean } = {}) {
   return { run, makeLink, onOpen, store }
 }
 
+test('vault and folder subscription controls persist explicit scopes and explain inherited coverage', async () => {
+  mount()
+  const vault = await screen.findByRole('button', { name: 'Subscribe this vault' })
+  await userEvent.click(vault)
+  await waitFor(() =>
+    expect(subscriptionSet).toHaveBeenCalledWith({ remote: 'mara/notes', path: '', enabled: true }),
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /Unsubscribe this vault/ })).toBeInTheDocument(),
+  )
+  expect(
+    await screen.findByRole('button', {
+      name: /Subscribe kunder explicitly.*covered by the vault/,
+    }),
+  ).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: /Subscribe kunder explicitly/ }))
+  await waitFor(() =>
+    expect(subscriptionSet).toHaveBeenCalledWith({
+      remote: 'mara/notes',
+      path: 'kunder',
+      enabled: true,
+    }),
+  )
+  expect(
+    await screen.findByRole('button', {
+      name: 'Remove explicit subscription for kunder (still covered by the vault)',
+    }),
+  ).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Unsubscribe this vault' }))
+  expect(await screen.findByRole('button', { name: 'Unsubscribe kunder' })).toBeInTheDocument()
+})
+
+test('folder subscription actions keep a trailing slot and reveal on pointer or keyboard focus', async () => {
+  const { store } = mount()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      dirs: ['kunder', 'a folder with a much longer name'],
+    }),
+  )
+
+  const short = await screen.findByRole('treeitem', { name: 'kunder' })
+  const long = await screen.findByRole('treeitem', { name: 'a folder with a much longer name' })
+  const shortLabel = short.querySelector('[data-slot=tree-item-label]')!
+  const longLabel = long.querySelector('[data-slot=tree-item-label]')!
+  const shortAction = short.querySelector<HTMLButtonElement>('[data-tree-row-action]')!
+  const longAction = long.querySelector<HTMLButtonElement>('[data-tree-row-action]')!
+
+  expect(shortLabel).toHaveClass('w-full')
+  expect(longLabel).toHaveClass('w-full')
+  // The action's own auto margin places it at the row's trailing edge;
+  // opacity-based reveal keeps that slot and the name's layout stable.
+  expect(shortAction).toHaveClass('ms-auto')
+  expect(longAction).toHaveClass('ms-auto')
+  expect(shortAction.parentElement).toHaveClass('flex', 'flex-1', 'min-w-0')
+  expect(longAction.parentElement).toHaveClass('flex', 'flex-1', 'min-w-0')
+  expect(shortLabel.className).toContain('[&_[data-tree-row-action]]:opacity-0')
+  expect(shortLabel.className).toContain('[&:hover_[data-tree-row-action]]:opacity-100')
+  expect(shortLabel.className).toContain('[&:focus-within_[data-tree-row-action]]:opacity-100')
+  expect(shortLabel.className).toContain(
+    'group-focus-within/tree-item:[&_[data-tree-row-action]]:opacity-100',
+  )
+  expect(short).toHaveClass('group/tree-item')
+  expect(shortLabel.className).toContain(
+    '[@media(hover:none)]:[&_[data-tree-row-action]]:opacity-100',
+  )
+  // The action occupies the trailing flex slot beside the truncating name in
+  // both short and long rows; revealing it cannot reflow the name.
+  expect(shortLabel.querySelector('.truncate')?.parentElement).toBe(shortAction.parentElement)
+  expect(longLabel.querySelector('.truncate')?.parentElement).toBe(longAction.parentElement)
+  expect(shortAction).toHaveAttribute('aria-label', 'Subscribe kunder')
+  expect(longAction).toHaveAttribute('aria-label', 'Subscribe a folder with a much longer name')
+
+  short.focus()
+  expect(document.activeElement).toBe(short)
+  const originalName = shortLabel.querySelector('.truncate')?.textContent
+  await userEvent.tab()
+  expect(document.activeElement).toBe(shortAction)
+  expect(shortAction).toHaveAttribute('aria-label', 'Subscribe kunder')
+  await userEvent.keyboard('{Enter}')
+  expect(await screen.findByRole('button', { name: 'Unsubscribe kunder' })).toBeInTheDocument()
+  expect(short.querySelector('.truncate')).toHaveTextContent(originalName!)
+  expect(short.querySelector('[data-tree-row-action]')).toBe(shortAction)
+})
+
+test('individual file subscription controls persist the file scope without subscribing its folder', async () => {
+  mount()
+  await screen.findByRole('button', { name: 'Subscribe this vault' })
+  expect(subscriptionList.mock.calls.map(([input]) => JSON.parse(input.paths))).toContainEqual(
+    expect.arrayContaining(['kunder/brief.md']),
+  )
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'kunder' }), { key: ' ' })
+  const fileControl = await screen.findByRole('button', { name: 'Subscribe brief.md' })
+  await userEvent.click(fileControl)
+  await waitFor(() =>
+    expect(subscriptionSet).toHaveBeenCalledWith({
+      remote: 'mara/notes',
+      path: 'kunder/brief.md',
+      enabled: true,
+    }),
+  )
+  const fileControlAfterSubscribe = await screen.findByRole('button', {
+    name: 'Unsubscribe brief.md',
+  })
+  expect(fileControlAfterSubscribe).not.toHaveAttribute('data-tree-row-action')
+  expect(fileControlAfterSubscribe).not.toHaveClass('ms-auto')
+  expect(screen.getByRole('button', { name: 'Subscribe kunder' })).toBeInTheDocument()
+})
+
+test('hidden secret files are excluded from subscription requests and row controls', async () => {
+  const { store } = mount()
+  store.set(showHiddenByVaultAtom, { 'mara/notes': true })
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      dirs: ['kunder', 'nested', '.secrets'],
+      docs: [
+        ...store.get(snapshotAtom)!.docs,
+        { path: '.env', title: '.env', updatedAt: '2026-10-23T10:00:00Z' },
+        {
+          path: 'nested/.secrets.prod',
+          title: '.secrets.prod',
+          updatedAt: '2026-10-23T10:00:00Z',
+        },
+        {
+          path: '.secrets/credentials.md',
+          title: 'credentials',
+          updatedAt: '2026-10-23T10:00:00Z',
+        },
+        {
+          path: '.holi/settings/app.local.yaml',
+          title: 'app.local',
+          updatedAt: '2026-10-23T10:00:00Z',
+        },
+      ] as never,
+    }),
+  )
+
+  await screen.findByRole('button', { name: 'Subscribe this vault' })
+  await waitFor(() =>
+    expect(subscriptionList.mock.calls.at(-1)?.[0].paths).toContain(
+      '.holi/settings/app.local.yaml',
+    ),
+  )
+  const requested = JSON.parse(subscriptionList.mock.calls.at(-1)![0].paths) as string[]
+  expect(requested).toContain('kunder/brief.md')
+  expect(requested).not.toContain('.env')
+  expect(requested).not.toContain('nested/.secrets.prod')
+  expect(requested).not.toContain('.secrets')
+  expect(requested).not.toContain('.secrets/credentials.md')
+
+  expect(await screen.findByRole('treeitem', { name: '.env' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Subscribe .env' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Subscribe this vault' })).toBeInTheDocument()
+
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'nested' }), { key: ' ' })
+  expect(await screen.findByRole('treeitem', { name: '.secrets' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Subscribe .secrets' })).toBeNull()
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'kunder' }), { key: ' ' })
+  expect(await screen.findByRole('button', { name: 'Subscribe brief.md' })).toBeInTheDocument()
+  const secretFolder = screen
+    .getAllByRole('treeitem', { name: '.secrets' })
+    .find((item) => item.getAttribute('aria-expanded') === 'false')
+  expect(secretFolder).toBeDefined()
+  fireEvent.keyDown(secretFolder!, { key: ' ' })
+  expect(await screen.findByRole('treeitem', { name: 'credentials.md' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Subscribe credentials.md' })).toBeNull()
+})
+
+test('file subscription controls explain inherited coverage and allow explicit overrides', async () => {
+  const { store } = mount()
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'kunder' }), { key: ' ' })
+  await screen.findByRole('button', { name: 'Subscribe brief.md' })
+  subscriptionScopes.values = [
+    { path: 'kunder', explicit: true, coveredBy: null, baseline: 'f'.repeat(40) },
+  ]
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      dirs: ['kunder', 'new-folder'],
+    }),
+  )
+  expect(
+    await screen.findByRole('button', {
+      name: 'Subscribe brief.md explicitly (already covered by kunder)',
+    }),
+  ).toBeInTheDocument()
+  await userEvent.click(
+    screen.getByRole('button', {
+      name: 'Subscribe brief.md explicitly (already covered by kunder)',
+    }),
+  )
+  await waitFor(() =>
+    expect(subscriptionSet).toHaveBeenCalledWith({
+      remote: 'mara/notes',
+      path: 'kunder/brief.md',
+      enabled: true,
+    }),
+  )
+  expect(
+    await screen.findByRole('button', {
+      name: 'Remove explicit subscription for brief.md (still covered by kunder)',
+    }),
+  ).toBeInTheDocument()
+})
+
+test('tree rows activate by Enter and Space without consuming nested controls', async () => {
+  const { onOpen } = mount()
+  const folder = await screen.findByRole('treeitem', { name: 'kunder' })
+  fireEvent.keyDown(folder, { key: ' ' })
+  expect(folder).toHaveAttribute('aria-expanded', 'true')
+  const file = await screen.findByRole('treeitem', { name: 'brief.md' })
+  fireEvent.keyDown(file, { key: 'Enter' })
+  expect(onOpen).toHaveBeenCalledWith('kunder/brief.md')
+  const subscribe = screen.getByRole('button', { name: 'Subscribe this vault' })
+  fireEvent.keyDown(subscribe, { key: 'Enter' })
+  expect(onOpen).not.toHaveBeenCalledWith('')
+})
+
+test('an older list response cannot erase a completed subscription refresh', async () => {
+  const { store } = mount()
+  let resolveOld!: (scopes: typeof subscriptionScopes.values) => void
+  const oldResponse = new Promise<typeof subscriptionScopes.values>((resolve) => {
+    resolveOld = resolve
+  })
+  subscriptionList.mockImplementationOnce(async () => oldResponse)
+  let finishMutation!: () => void
+  const mutationGate = new Promise<void>((resolve) => {
+    finishMutation = resolve
+  })
+  subscriptionSet.mockImplementationOnce(async ({ path, enabled }) => {
+    await mutationGate
+    subscriptionScopes.values = subscriptionScopes.values.filter((scope) => scope.path !== path)
+    if (enabled)
+      subscriptionScopes.values.push({
+        path,
+        explicit: true,
+        coveredBy: null,
+        baseline: 'f'.repeat(40),
+      })
+  })
+
+  await userEvent.click(await screen.findByRole('button', { name: 'Subscribe this vault' }))
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      dirs: ['kunder', 'new-folder'],
+    }),
+  )
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(2))
+  finishMutation()
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(3))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Unsubscribe this vault' })).toBeInTheDocument(),
+  )
+  resolveOld([])
+  await act(async () => oldResponse)
+  expect(screen.getByRole('button', { name: 'Unsubscribe this vault' })).toBeInTheDocument()
+})
+
+test('a superseded post-save list response does not leave subscription controls disabled', async () => {
+  const { store } = mount()
+  await screen.findByRole('button', { name: 'Subscribe this vault' })
+  let resolvePostSave!: (scopes: typeof subscriptionScopes.values) => void
+  const postSaveResponse = new Promise<typeof subscriptionScopes.values>((resolve) => {
+    resolvePostSave = resolve
+  })
+  subscriptionList.mockImplementationOnce(async () => postSaveResponse)
+
+  await userEvent.click(screen.getByRole('button', { name: 'Subscribe this vault' }))
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(2))
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      dirs: ['kunder', 'new-folder'],
+    }),
+  )
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(3))
+  const unsubscribe = await screen.findByRole('button', { name: 'Unsubscribe this vault' })
+  await waitFor(() => expect(unsubscribe).toBeEnabled())
+
+  resolvePostSave([])
+  await act(async () => postSaveResponse)
+  expect(screen.getByRole('button', { name: 'Unsubscribe this vault' })).toBeEnabled()
+})
+
+test('an earlier activation is discarded across an A-B-A vault switch', async () => {
+  const { store } = mount()
+  let resolveFirst!: (scopes: typeof subscriptionScopes.values) => void
+  const firstResponse = new Promise<typeof subscriptionScopes.values>((resolve) => {
+    resolveFirst = resolve
+  })
+  subscriptionList.mockImplementationOnce(async () => firstResponse)
+  act(() => store.set(activeRemoteAtom, 'other/repo'))
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(2))
+  subscriptionScopes.values = [
+    { path: '', explicit: true, coveredBy: null, baseline: 'f'.repeat(40) },
+  ]
+  act(() => store.set(activeRemoteAtom, 'mara/notes'))
+  await waitFor(() => expect(subscriptionList).toHaveBeenCalledTimes(3))
+  expect(await screen.findByRole('button', { name: 'Unsubscribe this vault' })).toBeInTheDocument()
+  resolveFirst([])
+  await act(async () => firstResponse)
+  expect(screen.getByRole('button', { name: 'Unsubscribe this vault' })).toBeInTheDocument()
+})
+
+test('subscription storage errors offer retry without hiding the tree', async () => {
+  subscriptionScopes.fail = true
+  mount()
+  expect(await screen.findByText('Subscription storage is unavailable.')).toBeInTheDocument()
+  expect(screen.getByText('kunder')).toBeInTheDocument()
+  subscriptionScopes.fail = false
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByRole('button', { name: 'Subscribe this vault' })).toBeInTheDocument()
+})
+
 test.each(['header New', 'More file actions', 'context menu'])(
   'the task dialog takes focus after the menu releases it (%s)',
   async (entryPoint) => {
@@ -198,6 +561,88 @@ test.each(['header New', 'More file actions', 'context menu'])(
     }
   },
 )
+
+test.each([{ metaKey: true }, { ctrlKey: true }])(
+  'a primary-modifier click opens an openable tree row beside the active tab (%o)',
+  async (modifier) => {
+    const { store } = mount()
+    act(() => store.set(shellWorkspaceAtom, (ws) => openTab(openTab(ws, 'A.md'), 'B.md')))
+    const deck = await screen.findByRole('treeitem', { name: 'talk.deck' })
+    fireEvent.click(deck.querySelector('[data-slot=tree-item-label]')!, modifier)
+    await waitFor(() => expect(activeSplit(store.get(shellWorkspaceAtom))).not.toBeNull())
+    expect(activeSplit(store.get(shellWorkspaceAtom))?.views).toHaveLength(2)
+    expect(activeSplit(store.get(shellWorkspaceAtom))?.views[0]).toBe('B.md')
+    expect(store.get(shellWorkspaceAtom).entries).toHaveLength(2)
+  },
+)
+
+test('a hinted deck label opens the folder document without expanding its chevron', async () => {
+  const { onOpen } = mount()
+  const deck = await screen.findByRole('treeitem', { name: 'talk.deck' })
+  const label = deck.querySelector<HTMLElement>('[data-slot=tree-item-label]')!
+  const chevron = label.querySelector('svg')!
+  const { place } = installHintLayout()
+  try {
+    place(deck, 10, 300, 300, 28)
+    place(label, 10, 300, 300, 28)
+    place(chevron, 20, 306, 12, 16)
+    const target = discoverHostHintTargets(document.body).find(({ element }) => element === deck)!
+    expect(target.x).toBeGreaterThan(chevron.getBoundingClientRect().right)
+    act(() => expect(activateHostHint(target)).toBe(true))
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('talk.deck')
+    expect(deck).toHaveAttribute('aria-expanded', 'false')
+  } finally {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('primary-modifier open focuses the clicked row for ArrowDown', async () => {
+  const { store } = mount()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      docs: [
+        ...store.get(snapshotAtom)!.docs,
+        { path: 'z.md', title: 'z', updatedAt: '2026-10-23T10:00:00Z' },
+      ] as never,
+    }),
+  )
+  const folder = await screen.findByRole('treeitem', { name: 'kunder' })
+  fireEvent.click(folder)
+  const deck = await screen.findByRole('treeitem', { name: 'talk.deck' })
+  fireEvent.click(deck.querySelector('[data-slot=tree-item-label]')!, { metaKey: true })
+
+  await waitFor(() => expect(deck).toHaveAttribute('data-focus', 'true'))
+  expect(deck).toHaveAttribute('aria-selected', 'true')
+  fireEvent.keyDown(deck, { key: 'ArrowDown' })
+  const next = await screen.findByRole('treeitem', { name: 'z.md' })
+  await waitFor(() => expect(next).toHaveAttribute('data-focus', 'true'))
+  fireEvent.click(next.querySelector('[data-slot=tree-item-label]')!, { shiftKey: true })
+  expect(deck).toHaveAttribute('aria-selected', 'true')
+  expect(next).toHaveAttribute('aria-selected', 'true')
+  expect(folder).toHaveAttribute('aria-selected', 'false')
+})
+
+test('primary-modifier open lets F2 rename the clicked row', async () => {
+  mount()
+  const folder = await screen.findByRole('treeitem', { name: 'kunder' })
+  fireEvent.click(folder)
+  const deck = await screen.findByRole('treeitem', { name: 'talk.deck' })
+  fireEvent.click(deck.querySelector('[data-slot=tree-item-label]')!, { ctrlKey: true })
+  await waitFor(() => expect(deck).toHaveAttribute('data-focus', 'true'))
+  fireEvent.keyDown(deck, { key: 'F2' })
+  expect(await screen.findByLabelText('Rename talk.deck')).toBeTruthy()
+})
+
+test('primary-modifier on a normal folder preserves expand and selection behavior', async () => {
+  const { store } = mount()
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(openTab(ws, 'A.md'), 'B.md')))
+  const folder = await screen.findByRole('treeitem', { name: 'kunder' })
+  fireEvent.click(folder, { metaKey: true })
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md', 'B.md'])
+  expect(folder).toHaveAttribute('aria-selected', 'true')
+})
 
 test('the Tasks plugin claim asks for a title and creates in the selected folder', async () => {
   createTask.mockClear()

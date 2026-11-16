@@ -32,6 +32,13 @@ function snapshot(over: Partial<VaultSnapshot> = {}): VaultSnapshot {
 const places = () => buildPlaces(snapshot(), [{ id: 'tools/Budget.app', label: 'Budget' }])
 
 describe('buildPlaces', () => {
+  it('does not list the canonical scratchpad as an ordinary place', () => {
+    const rows = buildPlaces(
+      snapshot({ files: [{ path: 'scratchpad.local.md', updatedAt: '2026-09-05T00:00:00Z' }] }),
+    )
+    expect(rows.map((row) => row.key)).not.toContain('scratchpad.local.md')
+  })
+
   it('lists visible paths with their folder, emoji and ignored state, then the apps', () => {
     const rows = places()
     expect(rows.map((r) => r.key)).toEqual([

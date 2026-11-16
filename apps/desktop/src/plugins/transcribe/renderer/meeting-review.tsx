@@ -188,7 +188,7 @@ export function MeetingReview({
                   Finishing the minutes
                 </Badge>
               )}
-              {meeting.phase === 'failed' && <Badge variant="destructive-light">Failed</Badge>}
+              {meeting.phase === 'failed' && <Badge variant="destructive">Failed</Badge>}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

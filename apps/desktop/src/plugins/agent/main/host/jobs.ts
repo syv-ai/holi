@@ -6,8 +6,8 @@
  * **Two places a job runs**, each sandboxed by the agent's own rules:
  *
  * - **A scratch folder** (`scope`, a document's agent): Holi makes one of its
- *   own (`<userData>/agent-jobs/<id>/`), copies in the files the job may
- *   read, at their vault paths, and runs the agent there. What bounds it is
+ *   own (`<userData>/agent-scratch/<vault-key>/jobs/<id>/`), copies in the
+ *   files the job may read, at their vault paths, and runs the agent there. What bounds it is
  *   what it writes back, not what it reads: Codex's sandbox keeps writes to
  *   the folder but can read the disk. When it succeeds, its process group is
  *   killed, then only the regular files it wrote that match its write scope
@@ -48,7 +48,7 @@
  * digits): working while a turn runs, then idle with its `outcome` (and why,
  * when it failed) for a while, so whoever started it reads the result off the
  * row: `completed` or `failed`, as a Pi run's, why it failed as its `error`.
- * What its turns used is its `usage.total`, when the agent says.
+ * Codex's `usage.total` is the latest reported cumulative thread total.
  *
  * **A follow-up** (`message`) to a vault job is a new turn on the agent's
  * thread (`resume`): queued while a turn runs, sent when it ends. The agent
@@ -84,7 +84,7 @@ import {
   killChildTree,
   killTree,
   readableOrNull,
-  spawnProgram,
+  spawnOwnedProgram,
   type PidState,
 } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
@@ -129,11 +129,11 @@ type SpawnJob = (
  *  child is not detached, which would only open a console window for what it
  *  starts; `killTree` stops its tree by the root pid.) */
 const defaultSpawnJob: SpawnJob = (bin, args, { cwd, env }) =>
-  spawnProgram(bin, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  spawnOwnedProgram(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
 
 export interface JobsDeps {
   vault: VaultRef
-  /** Where the scratch folders go: `<userData>/agent-jobs`. */
+  /** This vault's private scratch root from `agentScratchRoots`. */
   scratchRoot: string
   onChange(list: SessionSummary[]): void
   /** The vault's turn bracket, for a job in the vault: sync pauses and the
@@ -541,6 +541,16 @@ export function createJobs(deps: JobsDeps): Jobs {
   function signal(job: Job, sig: 'SIGTERM' | 'SIGKILL'): void {
     const child = job.child
     if (child === null || child.pid === undefined) return
+    if (process.platform === 'win32') {
+      // This ChildProcess is the ownership helper itself. Killing its process
+      // handle closes the Job Object; never target a Windows pid after a probe.
+      try {
+        child.kill(sig)
+      } catch {
+        // Raced with its exit.
+      }
+      return
+    }
     switch (probePid(child.pid)) {
       case 'group-leader':
         // Reaped between the probe and here is a no-op; on Windows a child that
@@ -574,9 +584,9 @@ export function createJobs(deps: JobsDeps): Jobs {
   /** Kill whatever the job's process left running in its group, so nothing
    *  changes the folder while it is copied back or the vault after its turn. */
   function killGroup(job: Job): void {
-    // The group may be empty already. (On Windows the leader has exited by
-    // now and its pid may be another program's, so nothing is sent.)
-    if (job.child) void killChildTree(job.child, 'SIGKILL')
+    // The Windows ownership helper closes only after its Job Object is empty.
+    // POSIX still needs the group sweep after the root closes.
+    if (process.platform !== 'win32' && job.child) void killChildTree(job.child, 'SIGKILL')
   }
 
   /** Move the current file aside atomically, then publish the replacement
@@ -819,10 +829,12 @@ export function createJobs(deps: JobsDeps): Jobs {
         if (event.kind === 'thread') {
           job.thread ??= event.id
           log(`${id}: thread ${event.id}`)
+        } else if (event.kind === 'turn-started') {
+          // usage.total is cumulative: keep it until Codex reports a newer total.
         } else if (event.kind === 'turn-completed') {
           completed = true
           if (event.tokens !== undefined) {
-            job.tokens += event.tokens
+            job.tokens = event.tokens
             push()
           }
         } else if (event.kind === 'turn-failed') failure = event.message

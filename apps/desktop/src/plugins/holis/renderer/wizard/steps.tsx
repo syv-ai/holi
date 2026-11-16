@@ -82,7 +82,7 @@ function Way({
           <span className="text-sm font-medium">{title}</span>
           <p className="text-xs text-pretty text-muted-foreground">{children}</p>
         </div>
-        <Badge variant="outline" className="mt-auto">
+        <Badge variant="secondary" className="mt-auto">
           {example}
         </Badge>
       </div>

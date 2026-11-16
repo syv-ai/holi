@@ -105,6 +105,18 @@ describe('scrubSecrets', () => {
     ['Authorization: Bearer abcdefghijklmnopqrstuvwxyz', 'Authorization: Bearer ***'],
     ['HOLI_GIT_TOKEN=secretvalue other', 'HOLI_GIT_TOKEN=*** other'],
     ['GITHUB_API_KEY=abc', 'GITHUB_API_KEY=***'],
+    [
+      'access_token: "ya29.abcDEF1234567890" refresh_token=1//secretrefreshvalue',
+      'access_token: "***" refresh_token=***',
+    ],
+    [
+      'https://example.com/callback?client_secret=abc123&code=secret',
+      'https://example.com/callback?client_secret=***&code=***',
+    ],
+    [
+      '{"access_token":"ya29.secretvalue123456","refresh_token":"1//secretrefreshvalue"}',
+      '{"access_token":"***","refresh_token":"***"}',
+    ],
   ])('%s', (input, out) => {
     expect(scrubSecrets(input)).toBe(out)
   })

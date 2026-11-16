@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+
 import {
   Avatar,
   AvatarFallback,
@@ -43,10 +45,16 @@ export function PersonAvatar({
 export function PeopleStack({
   logins,
   max = 3,
+  visible = true,
 }: {
   logins: readonly string[]
   max?: number
+  visible?: boolean
 }): React.JSX.Element | null {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!visible) setOpen(false)
+  }, [visible])
   if (logins.length === 0) return null
   const shown = logins.slice(0, max)
   const hidden = logins.slice(max)
@@ -57,7 +65,7 @@ export function PeopleStack({
       ))}
       {hidden.length > 0 ? (
         <AvatarGroupCount>
-          <Popover>
+          <Popover open={visible && open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
               <Button
                 variant="ghost"

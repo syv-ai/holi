@@ -1,6 +1,6 @@
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { TabsEntry } from '@/components/ui/tabs'
 import { TabStrip } from '../tab-strip'
 import { shellWorkspaceAtom, updateWorkspaceAtom, workspaceOfAtom } from '@/state/shell-tabs'
@@ -63,6 +63,29 @@ function setup(workspace = openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md')) {
   })
   return { store, list, tabs, transfer }
 }
+function pointerClick(
+  target: HTMLElement,
+  modifiers: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean } = {},
+  afterPress?: () => void,
+) {
+  fireEvent.pointerDown(target, { button: 0, ...modifiers })
+  const mouseDown = new MouseEvent('mousedown', {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    ...modifiers,
+  })
+  act(() => {
+    target.dispatchEvent(mouseDown)
+    target.focus()
+  })
+  afterPress?.()
+  fireEvent.pointerUp(target, { button: 0, ...modifiers })
+  fireEvent.mouseUp(target, { button: 0, ...modifiers })
+  fireEvent.click(target, { ...modifiers })
+  return mouseDown
+}
+
 function dragEvent(type: 'dragover' | 'drop', transfer: DataTransfer, x: number) {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperties(event, { clientX: { value: x }, dataTransfer: { value: transfer } })
@@ -73,9 +96,11 @@ test.each([
   ['source closure', 'middle combine', 150],
   ['source closure', 'leading edge', 5],
   ['source closure', 'trailing edge', 195],
+  ['source closure', 'unused space', 900],
   ['vault switch', 'middle combine', 150],
   ['vault switch', 'leading edge', 5],
   ['vault switch', 'trailing edge', 195],
+  ['vault switch', 'unused space', 900],
 ] as const)('same-tick %s rejects a %s drop and clears drag ownership', (change, position, x) => {
   const workspace =
     position === 'leading edge' ? openTab(openTab(emptyWorkspace(), 'B.md'), 'A.md') : undefined
@@ -164,6 +189,113 @@ test.each([
   expect(store.get(shellWorkspaceAtom)).not.toBe(workspace)
 })
 
+test('the strip drop target fills unused space without including its controls', () => {
+  const { list } = setup()
+  // jsdom has no layout: lock down the flex contract as well as the drop behavior below.
+  expect(list.classList.contains('flex-1')).toBe(true)
+  expect(list.contains(screen.getByRole('button', { name: 'New tab' }))).toBe(false)
+  expect(list.contains(screen.getByRole('button', { name: 'Tab options' }))).toBe(false)
+  expect(list.querySelector('[data-tab-switcher-toggle]')).toBeNull()
+})
+
+test.each([205, 450, 900])('unused strip space at x=%s reorders to the end', (x) => {
+  const { store, list, tabs, transfer } = setup()
+  // Leave a combine preview first: entering unused space must replace it with the end marker.
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  expect(tabs[1]!.dataset.combinePreview).toBe('true')
+  const over = dragEvent('dragover', transfer, x)
+  fireEvent(list, over)
+  expect(over.defaultPrevented).toBe(true)
+  expect(transfer.dropEffect).toBe('move')
+  expect(tabs[1]!.dataset.combinePreview).toBeUndefined()
+  expect(tabs[1]!.dataset.dropAfter).toBe('true')
+  const drop = dragEvent('drop', transfer, x)
+  fireEvent(list, drop)
+  expect(drop.defaultPrevented).toBe(true)
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md', 'A.md'])
+  expect(store.get(tabDragAtom)).toBeNull()
+  expect(document.querySelector('[data-drop-before="true"], [data-drop-after="true"]')).toBeNull()
+})
+
+test.each(['whole split', 'split member'])('unused space moves a %s to the end', (source) => {
+  const workspace = combineOnStrip(
+    openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md'),
+    'B.md',
+    'A.md',
+  )
+  const { store, list, transfer } = setup(workspace)
+  const split = workspace.entries[0]
+  if (split === undefined || typeof split === 'string') throw new Error('expected split')
+  const key = source === 'whole split' ? split.id : 'A.md'
+  transfer.setData(MIME, key)
+  act(() => store.set(tabDragAtom, { key, vault: 'owner/vault', wasOpen: true }))
+  fireEvent(list, dragEvent('dragover', transfer, 900))
+  fireEvent(list, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(
+    source === 'whole split' ? ['C.md', split] : ['B.md', 'C.md', 'A.md'],
+  )
+  expect(store.get(tabDragAtom)).toBeNull()
+})
+
+test('an end drop of the last entry remains a no-op', () => {
+  const { store, list, transfer } = setup()
+  const before = store.get(shellWorkspaceAtom)
+  transfer.setData(MIME, 'B.md')
+  act(() => store.set(tabDragAtom, { key: 'B.md', vault: 'owner/vault', wasOpen: true }))
+  const over = dragEvent('dragover', transfer, 900)
+  fireEvent(list, over)
+  expect(over.defaultPrevented).toBe(false)
+  fireEvent(list, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+  expect(store.get(tabDragAtom)).toBeNull()
+})
+
+test('unused strip space does not accept a non-Holi drag', () => {
+  const { store, list, transfer } = setup()
+  const before = store.get(shellWorkspaceAtom)
+  Object.defineProperty(transfer, 'types', { value: ['text/plain'] })
+  const over = dragEvent('dragover', transfer, 900)
+  fireEvent(list, over)
+  expect(over.defaultPrevented).toBe(false)
+  fireEvent(list, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+})
+
+test.each(['New tab', 'Tab options'])('%s stays outside the strip drop target', (name) => {
+  const { store, transfer } = setup()
+  const before = store.get(shellWorkspaceAtom)
+  const control = screen.getByRole('button', { name })
+  const over = dragEvent('dragover', transfer, 900)
+  fireEvent(control, over)
+  expect(over.defaultPrevented).toBe(false)
+  fireEvent(control, dragEvent('drop', transfer, 900))
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+})
+
+test('the overflow count stays outside the strip drop target', () => {
+  let resized = () => {}
+  const observer = vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(function (callback) {
+    const instance = { observe() {}, unobserve() {}, disconnect() {} }
+    resized = () => callback([], instance)
+    return instance
+  })
+  try {
+    const { store, list, transfer } = setup()
+    Object.defineProperties(list, { scrollWidth: { value: 400 }, clientWidth: { value: 200 } })
+    act(resized)
+    const count = screen.getByRole('button', { name: '2 tabs' })
+    expect(list.contains(count)).toBe(false)
+    const before = store.get(shellWorkspaceAtom)
+    const over = dragEvent('dragover', transfer, 900)
+    fireEvent(count, over)
+    expect(over.defaultPrevented).toBe(false)
+    fireEvent(count, dragEvent('drop', transfer, 900))
+    expect(store.get(shellWorkspaceAtom)).toBe(before)
+  } finally {
+    observer.mockRestore()
+  }
+})
+
 test('entry slots anchor close controls and shrink while triggers fill their slot', () => {
   setup()
   const entry = document.querySelector<HTMLElement>('[data-entry-id]')!
@@ -188,6 +320,115 @@ test.each([
     expect(entry.className).toContain(width)
     expect(entry.className).toContain(minWidth)
     expect(entry.className).not.toMatch(/(?:^| )flex-(?:1|\[)/)
+  },
+)
+
+test.each([
+  ['Home', 'B.md', 'A.md'],
+  ['End', 'A.md', 'B.md'],
+  ['ArrowLeft', 'B.md', 'A.md'],
+  ['ArrowRight', 'A.md', 'B.md'],
+])(
+  '%s preserves keyboard selection without enabling a later pointer press',
+  async (key, from, to) => {
+    const { store } = setup(selectEntry(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), from))
+    const start = screen.getByRole('tab', { name: from.slice(0, -3) })
+    act(() => start.focus())
+    fireEvent.keyDown(start, { key })
+    await waitFor(() => expect(store.get(shellWorkspaceAtom).active).toBe(to))
+    const next = screen.getByRole('tab', { name: from.slice(0, -3) })
+    fireEvent.pointerDown(next, { button: 0 })
+    fireEvent.mouseDown(next, { button: 0 })
+    act(() => next.focus())
+    expect(store.get(shellWorkspaceAtom).active).toBe(to)
+    fireEvent.mouseUp(next, { button: 0 })
+    fireEvent.keyUp(window, { key })
+  },
+)
+
+test('background pointer selection waits for a confirmed click without cancelling native drag', () => {
+  const workspace = selectEntry(
+    openTab(openTab(emptyWorkspace(), 'Delta.md'), 'Alpha.md'),
+    'Delta.md',
+  )
+  const { store } = setup(workspace)
+  const trigger = screen.getByRole('tab', { name: 'Alpha' }) as HTMLElement
+
+  const mouseDown = pointerClick(trigger)
+
+  expect(mouseDown.defaultPrevented).toBe(false)
+  expect(store.get(shellWorkspaceAtom).active).toBe('Alpha.md')
+})
+
+test.each([
+  ['Command', { metaKey: true }],
+  ['Alt', { altKey: true }],
+] as const)(
+  '%s-click opens a background tab beside the original active view',
+  (_name, modifiers) => {
+    const workspace = selectEntry(
+      openTab(openTab(emptyWorkspace(), 'Delta.md'), 'Alpha.md'),
+      'Delta.md',
+    )
+    const { store } = setup(workspace)
+    const trigger = screen.getByRole('tab', { name: 'Alpha' }) as HTMLElement
+
+    const mouseDown = pointerClick(trigger, modifiers, () => {
+      expect(store.get(shellWorkspaceAtom).active).toBe('Delta.md')
+    })
+    const result = store.get(shellWorkspaceAtom)
+    const active = result.entries.find(
+      (entry) => typeof entry !== 'string' && entry.id === result.active,
+    )
+
+    expect(mouseDown.defaultPrevented).toBe(false)
+    expect(active).toMatchObject({ views: ['Delta.md', 'Alpha.md'], focused: 'Alpha.md' })
+    expect(
+      result.entries.flatMap((entry) => (typeof entry === 'string' ? [entry] : entry.views)),
+    ).toHaveLength(2)
+  },
+)
+
+test('modifier-clicking a split member opens only that view beside the original active view', () => {
+  let workspace = openTab(openTab(openTab(emptyWorkspace(), 'Alpha.md'), 'Beta.md'), 'Delta.md')
+  workspace = combineOnStrip(workspace, 'Alpha.md', 'Beta.md')
+  workspace = selectEntry(workspace, 'Delta.md')
+  const { store } = setup(workspace)
+  const member = document.querySelector<HTMLElement>('[data-member="Beta.md"]')!
+  pointerClick(member, { metaKey: true })
+
+  const result = store.get(shellWorkspaceAtom)
+  expect(result.entries).toMatchObject([
+    'Alpha.md',
+    { views: ['Delta.md', 'Beta.md'], focused: 'Beta.md' },
+  ])
+  expect(
+    result.entries.flatMap((entry) => (typeof entry === 'string' ? [entry] : entry.views)),
+  ).toEqual(['Alpha.md', 'Delta.md', 'Beta.md'])
+})
+
+test.each([
+  ['Command', { metaKey: true }],
+  ['Alt', { altKey: true }],
+] as const)(
+  '%s-clicking split padding combines the whole group with the active entry',
+  (_name, modifiers) => {
+    let workspace = openTab(openTab(openTab(emptyWorkspace(), 'Alpha.md'), 'Beta.md'), 'Delta.md')
+    workspace = combineOnStrip(workspace, 'Alpha.md', 'Beta.md')
+    workspace = selectEntry(workspace, 'Delta.md')
+    const { store } = setup(workspace)
+    const group = screen.getByRole('tab', { name: 'Split view: Beta, Alpha' }) as HTMLElement
+
+    pointerClick(group, modifiers)
+    const result = store.get(shellWorkspaceAtom)
+    const split = result.entries.find(
+      (entry) => typeof entry !== 'string' && entry.id === result.active,
+    )
+
+    expect(split).toMatchObject({ views: ['Delta.md', 'Beta.md', 'Alpha.md'] })
+    expect(
+      result.entries.flatMap((entry) => (typeof entry === 'string' ? [entry] : entry.views)),
+    ).toEqual(['Delta.md', 'Beta.md', 'Alpha.md'])
   },
 )
 

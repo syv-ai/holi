@@ -1,0 +1,32 @@
+{
+  "name": "@holi/mobile",
+  "version": "0.0.1",
+  "private": true,
+  "main": "app/app.ts",
+  "scripts": {
+    "build:ios": "ns build ios --emulator --no-hmr --env.production --force --timeout 600",
+    "test:ios": "node --import tsx scripts/ios-simulator.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint --max-warnings 0 app scripts test nativescript.config.ts webpack.config.js eslint.config.mjs"
+  },
+  "dependencies": {
+    "@holi/shared": "workspace:*",
+    "@nativescript/core": "9.1.4",
+    "nativescript-vue": "3.1.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@nativescript/ios": "9.1.1",
+    "@nativescript/types": "9.1.4",
+    "@nativescript/webpack": "5.0.41",
+    "eslint": "9.39.5",
+    "globals": "17.4.0",
+    "nativescript": "9.1.2",
+    "ts-loader": "9.6.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.65.0",
+    "vitest": "4.1.10"
+  }
+}

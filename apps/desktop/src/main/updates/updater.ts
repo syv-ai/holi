@@ -5,6 +5,8 @@ import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-update
 import { jsonFileStore } from '../json-file-store'
 import {
   initialStatus,
+  defaultUpdateChannel,
+  parseUpdatePrefs,
   reduce,
   shouldCheck,
   type UpdateChannel,
@@ -40,13 +42,7 @@ export function createUpdater(deps: {
    *  and finishes the exit. */
   installFailed: (message: string) => void
 }): Updater {
-  const prefs = jsonFileStore(join(app.getPath('userData'), 'updates.json'), (raw) => {
-    const value = raw as { enabled?: unknown; channel?: unknown } | null
-    return {
-      enabled: value?.enabled !== false,
-      channel: value?.channel === 'dev' ? ('dev' as const) : ('stable' as const),
-    }
-  })
+  const prefs = jsonFileStore(join(app.getPath('userData'), 'updates.json'), parseUpdatePrefs)
   let status = initialStatus({
     supported: app.isPackaged,
     enabled: true,
@@ -148,7 +144,8 @@ export function createUpdater(deps: {
   }
 
   const initialization = prefs.read().then(
-    ({ enabled, channel }) => {
+    ({ enabled, channel: chosen }) => {
+      const channel = chosen ?? defaultUpdateChannel(process.platform)
       status = { ...status, enabled, channel }
       autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
       autoUpdater.allowPrerelease = channel === 'dev'

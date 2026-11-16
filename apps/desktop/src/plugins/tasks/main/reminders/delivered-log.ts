@@ -20,6 +20,8 @@ import type { Delivered } from './sweep'
 export interface DeliveredLog {
   read(remote: string): Delivered
   markDelivered(remote: string, path: string, fireAt: string): void
+  fallbackReceipts(): { has(remote: string, path: string, due: string): boolean }
+  markFallback(remote: string, path: string, due: string): void
 }
 
 const settingsFile = (root: string) => join(root, SETTINGS_LOCAL_FILE)
@@ -35,6 +37,14 @@ function loadSettings(root: string): Record<string, unknown> {
   }
 }
 
+function writeSettings(root: string, settings: Record<string, unknown>): void {
+  const file = settingsFile(root)
+  mkdirSync(dirname(file), { recursive: true })
+  const tmp = `${file}.tmp`
+  writeFileSync(tmp, writeSettingsText(settings, 'local', installedInfos()), 'utf8')
+  renameSync(tmp, file)
+}
+
 export function createDeliveredLog(rootFor: (remote: string) => string | null): DeliveredLog {
   return {
     read(remote) {
@@ -42,6 +52,45 @@ export function createDeliveredLog(rootFor: (remote: string) => string | null): 
       if (root === null) return {}
       const reminders = loadSettings(root).reminders
       return reminders && typeof reminders === 'object' ? (reminders as Delivered) : {}
+    },
+    fallbackReceipts() {
+      const cache = new Map<string, Record<string, unknown> | null>()
+      return {
+        has(remote, path, due) {
+          if (!cache.has(remote)) {
+            const root = rootFor(remote)
+            const value = root === null ? null : loadSettings(root).overdueTaskReceipts
+            cache.set(
+              remote,
+              value !== null && typeof value === 'object' && !Array.isArray(value)
+                ? (value as Record<string, unknown>)
+                : null,
+            )
+          }
+          const receipts = cache.get(remote)
+          return (
+            receipts?.[`receipt-${encodeURIComponent(JSON.stringify([remote, path, due]))}`] ===
+            true
+          )
+        },
+      }
+    },
+    markFallback(remote, path, due) {
+      const root = rootFor(remote)
+      if (root === null) return
+      const settings = loadSettings(root)
+      const existing = settings.overdueTaskReceipts
+      const receipts =
+        existing !== null && typeof existing === 'object' && !Array.isArray(existing)
+          ? (existing as Record<string, unknown>)
+          : {}
+      writeSettings(root, {
+        ...settings,
+        overdueTaskReceipts: {
+          ...receipts,
+          [`receipt-${encodeURIComponent(JSON.stringify([remote, path, due]))}`]: true,
+        },
+      })
     },
     markDelivered(remote, path, fireAt) {
       const root = rootFor(remote)
@@ -53,12 +102,7 @@ export function createDeliveredLog(rootFor: (remote: string) => string | null): 
           : {}),
         [path]: fireAt,
       }
-      const next = { ...settings, reminders }
-      const file = settingsFile(root)
-      mkdirSync(dirname(file), { recursive: true })
-      const tmp = `${file}.tmp`
-      writeFileSync(tmp, writeSettingsText(next, 'local', installedInfos()), 'utf8')
-      renameSync(tmp, file)
+      writeSettings(root, { ...settings, reminders })
     },
   }
 }

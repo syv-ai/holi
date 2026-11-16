@@ -9,7 +9,6 @@ import { cn } from '@/lib/cn'
 
 import { Button } from '@/components/ui/button'
 import {
-  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
@@ -17,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ArrowRightIcon, ChevronRightIcon } from 'lucide-react'
-import { PeopleStack } from '@/composites/person-avatar'
+import { PlanningPeopleStack } from '../planning-visibility'
 import { InlineAdd } from '../inline-add'
 import {
   DateBadge,
@@ -29,6 +28,7 @@ import {
   TagBadges,
 } from '../task-bits'
 import { COLUMN_LABELS, type TaskGroupRow, type TaskItemRow, type TaskTableRow } from './task-rows'
+import { PlanningDropdownMenu } from '../planning-visibility'
 
 export interface TaskColumnsContext {
   statuses: readonly StatusDef[]
@@ -92,7 +92,7 @@ function GroupCell({
         <span className="text-foreground shrink-0 truncate text-sm font-medium">
           {row.status.name}
         </span>
-        <Badge variant="outline" className="shrink-0 tabular-nums">
+        <Badge variant="secondary" className="shrink-0 tabular-nums">
           {count}
         </Badge>
       </div>
@@ -140,7 +140,7 @@ function TaskTitleCell({
 /** The status, and a menu that moves the task to another one. */
 function StatusCell({ row, context }: { row: TaskItemRow; context: TaskColumnsContext }) {
   return (
-    <DropdownMenu>
+    <PlanningDropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -167,7 +167,7 @@ function StatusCell({ row, context }: { row: TaskItemRow; context: TaskColumnsCo
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
-    </DropdownMenu>
+    </PlanningDropdownMenu>
   )
 }
 
@@ -239,7 +239,7 @@ export function createTaskColumns(
       header: header(COLUMN_LABELS.assignee),
       cell: onTask((row) =>
         row.task.assignees.length > 0 ? (
-          <PeopleStack logins={row.task.assignees} />
+          <PlanningPeopleStack logins={row.task.assignees} />
         ) : (
           <span className="text-muted-foreground text-xs">Unassigned</span>
         ),

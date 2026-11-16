@@ -1,5 +1,11 @@
-import { emptyVaultSnapshot, snapshotTasks, TASKS_CLAIM, taskClaim } from '@holi/shared'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import {
+  emptyVaultSnapshot,
+  SCRATCHPAD_PATH,
+  snapshotTasks,
+  TASKS_CLAIM,
+  taskClaim,
+} from '@holi/shared'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -37,6 +43,17 @@ async function vault(files: Record<string, string>): Promise<string> {
 }
 
 describe('scanVault', () => {
+  it('keeps the local scratchpad out of docs and reports its filesystem mtime', async () => {
+    const root = await vault({ [SCRATCHPAD_PATH]: '# Personal\n' })
+    const info = await stat(join(root, SCRATCHPAD_PATH))
+
+    const snapshot = await scanVault(root)
+
+    expect(snapshot.docs.some((doc) => doc.path === SCRATCHPAD_PATH)).toBe(false)
+    expect(snapshot.files.find((file) => file.path === SCRATCHPAD_PATH)?.updatedAt).toBe(
+      info.mtime.toISOString(),
+    )
+  })
   it("separates notes from a claim's files by its match, parsed by the claim", async () => {
     const root = await vault({
       'roadmap.md': '# Roadmap\n',

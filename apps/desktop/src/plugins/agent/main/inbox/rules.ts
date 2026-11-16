@@ -39,7 +39,7 @@ export interface InboxNotice {
   line: string
   /** A vault path the entry opens. */
   path?: string
-  /** A session, by job id, the entry opens. */
+  /** A Holi session id the entry opens, across supported providers. */
   session?: string
 }
 

@@ -1,4 +1,6 @@
 import { useId, useMemo } from 'react'
+import { useVimField } from '@/hooks/use-vim-field'
+import { VimFieldMode } from '@/composites/vim-field-mode'
 
 import { Button } from '@/components/ui/button'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
@@ -29,6 +31,7 @@ export function MermaidLabelEditor({
 }) {
   const inputId = useId()
   const errorId = `${inputId}-error`
+  const vim = useVimField(`mermaid-label-${target?.label ?? 'closed'}`, draft)
   const virtualRef = useMemo(
     () => ({
       current: {
@@ -55,7 +58,10 @@ export function MermaidLabelEditor({
               aria-invalid={Boolean(error)}
               aria-describedby={error ? errorId : undefined}
               onChange={(event) => onDraftChange(event.target.value)}
+              {...vim.vimFieldProps}
               onKeyDown={(event) => {
+                vim.vimFieldProps.onKeyDown?.(event)
+                if (event.defaultPrevented || vim.vimFieldMode === 'normal') return
                 if (event.key === 'Escape') onCancel()
                 if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
                   event.preventDefault()
@@ -63,6 +69,7 @@ export function MermaidLabelEditor({
                 }
               }}
             />
+            <VimFieldMode mode={vim.vimFieldMode} />
             <div className="flex gap-2">
               <Button type="button" size="sm" disabled={validating} onClick={onApply}>
                 Apply

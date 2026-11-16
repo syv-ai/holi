@@ -145,3 +145,8 @@ export const appInstancesAtom = selectAtom(
  * shows the new version with the command it already knows.
  */
 export const appOpensAtom = atom<Record<string, number>>({})
+
+/** Main's code-change signals, including dependencies absent from the snapshot.
+ * Count events rather than comparing hashes: returning to a vault restarts its
+ * scanner, and its first change can return to a hash seen on an earlier visit. */
+export const appCodeGenerationsAtom = atom<Record<string, Record<string, number>>>({})

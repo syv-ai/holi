@@ -163,6 +163,7 @@ describe('the doors', () => {
     const r = await rig()
     expect(resolveArgv(['meeting', 'group'], r.registry.commands(), null, SCRIBE)).toEqual({
       kind: 'stdin',
+      vault: null,
     })
     const run = resolveArgv(['meeting', 'group'], r.registry.commands(), groupJson(), SCRIBE)
     expect(run).toMatchObject({ kind: 'run', params: { session: SCRIBE, json: groupJson() } })

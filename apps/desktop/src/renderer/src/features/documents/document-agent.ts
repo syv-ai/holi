@@ -34,6 +34,7 @@ import {
   AGENT_MODEL,
   agentCapability,
   agentLabelAtom,
+  documentUpgradesAtom,
   documentRunsAtom,
   isRunLive,
   launchRunAtom,
@@ -123,7 +124,7 @@ async function clearMarker(remote: string, path: string): Promise<void> {
  * and stop one. `start` expects the document already saved: for a write, with
  * the marker in place.
  */
-export function useDocumentAgent(path: string) {
+export function useDocumentAgent(path: string, focused = true) {
   const remote = useAtomValue(activeRemoteAtom)
   const loadSettings = useSetAtom(loadVaultSettingsAtom)
   const remoteRef = useRef(remote)
@@ -220,17 +221,29 @@ export function useDocumentAgent(path: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run, finished, copying, copyFailed])
 
-  // Leaving the document while a run goes on: when it finishes, its app is
-  // offered rather than opened over whatever is in front by then.
+  // Once a run's document is left, its completion must never navigate over
+  // whatever is in front, even if the person later returns to this view.
+  useEffect(() => {
+    if (focused) return
+    setRuns((all) => {
+      const current = all[path]
+      return current === undefined || current.away
+        ? all
+        : { ...all, [path]: { ...current, away: true } }
+    })
+  }, [focused, path, setRuns, run])
+
   useEffect(
-    () => () =>
+    () => () => {
+      if (store.get(activeRemoteAtom) !== remote) return
       setRuns((all) => {
         const current = all[path]
-        return current === undefined || !isRunLive(current)
+        return current === undefined || current.away
           ? all
           : { ...all, [path]: { ...current, away: true } }
-      }),
-    [path, setRuns],
+      })
+    },
+    [path, setRuns, store, remote],
   )
 
   // A write that ended without removing its marker leaves no trace of it.
@@ -239,14 +252,29 @@ export function useDocumentAgent(path: string) {
     void clearMarker(remote, path)
   }, [run, remote, path])
 
-  const start = async (kind: AgentRunKind, request: string, passage?: string) => {
-    if (remote === null) return
+  const start = async (
+    kind: AgentRunKind,
+    request: string,
+    passage?: string,
+    currentVisit: () => boolean = () => focused,
+    displayLabel?: string,
+  ) => {
+    if (
+      remote === null ||
+      store.get(activeRemoteAtom) !== remote ||
+      store.get(documentUpgradesAtom).has(path)
+    )
+      return false
     if (kind === 'vault-app') {
-      await store.set(startVaultAppAtom, path)
-      return
+      const starting = store.set(startVaultAppAtom, path)
+      if (!currentVisit()) update({ away: true })
+      await starting
+      return store.get(documentRunsAtom)[path]?.status !== 'failed'
     }
     const name = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')
-    const label = kind === 'rewrite' ? request.charAt(0).toUpperCase() + request.slice(1) : request
+    const label =
+      displayLabel ??
+      (kind === 'rewrite' ? request.charAt(0).toUpperCase() + request.slice(1) : request)
     setRuns((all) => ({
       ...all,
       [path]: {
@@ -256,6 +284,7 @@ export function useDocumentAgent(path: string) {
         provider: 'claude',
         sessionId: null,
         status: 'starting',
+        away: !currentVisit(),
         seenWorking: false,
       },
     }))
@@ -264,9 +293,13 @@ export function useDocumentAgent(path: string) {
     try {
       const settings = await loadSettings()
       if (settings === null) throw new Error('No vault is open.')
-      if (remoteRef.current !== remote) {
+      if (
+        remoteRef.current !== remote ||
+        store.get(activeRemoteAtom) !== remote ||
+        store.get(documentUpgradesAtom).has(path)
+      ) {
         update({ status: 'stopped', message: 'The active vault changed before the agent started.' })
-        return
+        return false
       }
       provider = settings.agentProvider
     } catch (err) {
@@ -274,7 +307,7 @@ export function useDocumentAgent(path: string) {
         status: 'failed',
         message: err instanceof Error ? err.message : 'The agent did not start.',
       })
-      return
+      return false
     }
     update({ provider, agent: store.set(agentLabelAtom, { remote, id: provider, path }) })
     await store.set(
@@ -307,6 +340,7 @@ export function useDocumentAgent(path: string) {
             },
           },
     )
+    return store.get(documentRunsAtom)[path]?.status !== 'failed'
   }
 
   // Stopped wins over anything the session says after: a run no longer live

@@ -19,6 +19,8 @@ import {
 } from '@/components/ui/input-group'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/cn'
+import { VimFieldMode } from '@/composites/vim-field-mode'
+import { useVimField } from '@/hooks/use-vim-field'
 
 /** Option rows draw the value's own face, keeping the plain label only for
  *  search and the accessible name. */
@@ -44,7 +46,7 @@ function FirstFacePlus({
     <span className="flex min-w-0 items-center gap-1">
       <span className="flex min-w-0">{face(first)}</span>
       {values.length > 1 ? (
-        <Badge variant="outline" className="shrink-0 tabular-nums">
+        <Badge variant="secondary" className="shrink-0 tabular-nums">
           +{values.length - 1}
         </Badge>
       ) : null}
@@ -92,80 +94,85 @@ export function LogSearch({
   const [query, setQuery] = useAtom(queryAtom)
   const count = countFilterRules(query)
   const rules = `${count} ${count === 1 ? 'filter' : 'filters'}`
+  const searchVim = useVimField('log-search', search)
 
   return (
-    <InputGroup className="w-72">
-      <InputGroupAddon>
-        <SearchIcon aria-hidden="true" />
-      </InputGroupAddon>
-      <InputGroupInput
-        type="search"
-        placeholder={placeholder}
-        aria-label={label}
-        spellCheck={false}
-        autoComplete="off"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape' && search !== '') {
-            e.preventDefault()
-            setSearch('')
-          }
-        }}
-      />
-      <InputGroupAddon align="inline-end">
-        {count > 0 ? (
-          <>
-            <Badge
-              variant="primary-light"
-              radius="full"
-              className="tabular-nums"
-              aria-label={`${rules} applied`}
-            >
-              {count}
-            </Badge>
-            <InputGroupButton
-              size="icon-xs"
-              aria-label="Clear filters"
-              onClick={() => setQuery(createFilterQuery())}
-            >
-              <XIcon aria-hidden="true" />
-            </InputGroupButton>
-          </>
-        ) : null}
-        <Popover>
-          <PopoverTrigger asChild>
-            <InputGroupButton
-              size="icon-xs"
-              aria-label={count > 0 ? `Filter, ${rules}` : 'Filter'}
-              className={cn(count > 0 && 'text-foreground')}
-            >
-              <ListFilterIcon aria-hidden="true" />
-            </InputGroupButton>
-          </PopoverTrigger>
-          {/* The builder stops clicks at its edge. React bubbles them
+    <div className="flex items-center gap-2">
+      <VimFieldMode mode={searchVim.vimFieldMode} />
+      <InputGroup className="w-72">
+        <InputGroupAddon>
+          <SearchIcon aria-hidden="true" />
+        </InputGroupAddon>
+        <InputGroupInput
+          {...searchVim.vimFieldProps}
+          type="search"
+          placeholder={placeholder}
+          aria-label={label}
+          spellCheck={false}
+          autoComplete="off"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && search !== '') {
+              e.preventDefault()
+              setSearch('')
+            }
+          }}
+        />
+        <InputGroupAddon align="inline-end">
+          {count > 0 ? (
+            <>
+              <Badge
+                variant="default"
+                radius="full"
+                className="tabular-nums"
+                aria-label={`${rules} applied`}
+              >
+                {count}
+              </Badge>
+              <InputGroupButton
+                size="icon-xs"
+                aria-label="Clear filters"
+                onClick={() => setQuery(createFilterQuery())}
+              >
+                <XIcon aria-hidden="true" />
+              </InputGroupButton>
+            </>
+          ) : null}
+          <Popover>
+            <PopoverTrigger asChild>
+              <InputGroupButton
+                size="icon-xs"
+                aria-label={count > 0 ? `Filter, ${rules}` : 'Filter'}
+                className={cn(count > 0 && 'text-foreground')}
+              >
+                <ListFilterIcon aria-hidden="true" />
+              </InputGroupButton>
+            </PopoverTrigger>
+            {/* The builder stops clicks at its edge. React bubbles them
               through the portal to the input group's addon, which focuses
               the search field on any click; Radix reads that focus as
               outside and closed the builder the moment an attribute was
               picked. */}
-          <PopoverContent
-            align="end"
-            aria-label="Filters"
-            className="w-144 max-w-(--radix-popover-content-available-width)"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Filters
-              fields={fields}
-              query={query}
-              onQueryChange={setQuery}
-              variant="advanced"
-              advancedMode="inline"
-              size="sm"
-              operatorLabels={COMPACT_OPERATORS}
-            />
-          </PopoverContent>
-        </Popover>
-      </InputGroupAddon>
-    </InputGroup>
+            <PopoverContent
+              align="end"
+              aria-label="Filters"
+              className="w-144 max-w-(--radix-popover-content-available-width)"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Filters
+                fields={fields}
+                query={query}
+                onQueryChange={setQuery}
+                variant="advanced"
+                advancedMode="inline"
+                size="sm"
+                operatorLabels={COMPACT_OPERATORS}
+              />
+            </PopoverContent>
+          </Popover>
+        </InputGroupAddon>
+      </InputGroup>
+    </div>
   )
 }

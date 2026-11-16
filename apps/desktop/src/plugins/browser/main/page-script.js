@@ -311,6 +311,7 @@
   function fill(ref, text) {
     const el = find(ref)
     if (el === null) return false
+    if (richHost(el)) return false
     if (el.tagName === 'SELECT') {
       const option = [...el.options].find(
         (o) => squash(o.textContent) === squash(text) || o.value === text,
@@ -340,5 +341,500 @@
     return { top: Math.round(page.scrollTop), atTop: page.scrollTop <= 0, atEnd }
   }
 
-  globalThis.__holiPage = { refs: [null], read, point, click, focus, valueOf, fill, scroll }
+  // Native field and supported contenteditable motions stay in this isolated
+  // world. The host configures one specific document and revisions only move forward.
+  const newVimNonce = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  let vimNonce = newVimNonce()
+  let vimEnabled = false
+  let vimMode = 'insert'
+  let vimRevision = 0
+  let vimField = null
+  let vimObservedHost = false
+  let verticalColumn = null
+  const vimTypes = new Set(['text', 'search', 'url', 'tel'])
+  const nativeTextTags = new Set(['DIV', 'SPAN', 'P', 'LABEL'])
+  // Rich hosts stay page-owned. Only this small inline-tag vocabulary is
+  // eligible; any block, atom, custom editor, or nested editable host stays native.
+  const richInlineTags = new Set([
+    'A',
+    'B',
+    'STRONG',
+    'I',
+    'EM',
+    'U',
+    'S',
+    'STRIKE',
+    'SUB',
+    'SUP',
+    'SPAN',
+    'CODE',
+    'MARK',
+    'SMALL',
+    'DEL',
+    'INS',
+  ])
+  const editorSelector =
+    '[role="textbox"], [data-lexical-editor], [data-slate-editor], [data-tiptap-editor], .ProseMirror, .CodeMirror'
+  const eligibleEnvelope = (el, kind) => {
+    if (
+      !(el instanceof HTMLElement) ||
+      !nativeTextTags.has(el.tagName) ||
+      el.localName.includes('-') ||
+      el.getAttribute('contenteditable')?.toLowerCase() !== kind ||
+      document.designMode === 'on' ||
+      el.matches(editorSelector) ||
+      el.querySelector(editorSelector)
+    )
+      return false
+    for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+      const editable = parent.getAttribute('contenteditable')?.toLowerCase()
+      if ((editable != null && editable !== 'false') || parent.matches(editorSelector)) return false
+    }
+    return true
+  }
+  const plainHost = (el) =>
+    eligibleEnvelope(el, 'plaintext-only') &&
+    [...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE) &&
+    !/[\r\n]/u.test(el.textContent)
+  const richHost = (el) => {
+    if (!eligibleEnvelope(el, 'true') || el.closest('[inert]')) return false
+    const visit = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return !/[\r\n]/u.test(node.nodeValue || '')
+      if (node.nodeType !== Node.ELEMENT_NODE) return false
+      const child = node
+      if (
+        !richInlineTags.has(child.tagName) ||
+        child.getAttribute('contenteditable') != null ||
+        child.hasAttribute('inert')
+      )
+        return false
+      const style = getComputedStyle(child)
+      if (
+        style.display !== 'inline' ||
+        style.visibility === 'hidden' ||
+        style.visibility === 'collapse' ||
+        style.userSelect === 'none' ||
+        child.matches(
+          'img, br, input, button, select, textarea, iframe, video, audio, canvas, svg, [contenteditable="false"]',
+        )
+      )
+        return false
+      if (child.tagName === 'A' && !child.hasAttribute('href')) return false
+      return [...child.childNodes].every(visit)
+    }
+    if (![...el.childNodes].every(visit)) return false
+    const style = getComputedStyle(el)
+    return (
+      style.display === 'block' &&
+      style.visibility !== 'hidden' &&
+      style.visibility !== 'collapse' &&
+      style.userSelect !== 'none'
+    )
+  }
+  const vimEligible = (el) =>
+    el instanceof HTMLTextAreaElement ||
+    (el instanceof HTMLInputElement && vimTypes.has(el.type)) ||
+    plainHost(el) ||
+    richHost(el)
+  const resetOwnership = () => {
+    vimMode = 'insert'
+    verticalColumn = null
+  }
+  const invalidatesHost = (record, host) => {
+    const changed = record.target
+    if (changed === host || host.contains(changed)) return true
+    if (record.type === 'attributes' && changed.nodeType === 1 && changed.contains(host))
+      return true
+    return (
+      record.type === 'childList' &&
+      [...record.addedNodes, ...record.removedNodes].some(
+        (node) => node === host || (node.nodeType === 1 && node.contains(host)),
+      )
+    )
+  }
+  const flushHostMutations = () => {
+    if (!vimObservedHost || !vimField || vimField.nodeType !== 1) return false
+    const records = hostMutationObserver.takeRecords()
+    if (records.some((record) => invalidatesHost(record, vimField))) {
+      resetOwnership()
+      return true
+    }
+    return false
+  }
+  const hostMutationObserver = new MutationObserver((records) => {
+    if (
+      vimObservedHost &&
+      vimField &&
+      vimField.nodeType === 1 &&
+      records.some((record) => invalidatesHost(record, vimField))
+    )
+      resetOwnership()
+  })
+  hostMutationObserver.observe(document, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: [
+      'contenteditable',
+      'href',
+      'inert',
+      'role',
+      'class',
+      'data-lexical-editor',
+      'data-slate-editor',
+      'data-tiptap-editor',
+      'style',
+      'hidden',
+    ],
+  })
+  const eligibleNow = () => {
+    flushHostMutations()
+    const eligible =
+      vimEnabled &&
+      vimField !== null &&
+      document.activeElement === vimField &&
+      vimField.isConnected &&
+      !vimField.disabled &&
+      !vimField.readOnly &&
+      vimEligible(vimField) &&
+      vimField.getRootNode() === document &&
+      (!(plainHost(vimField) || richHost(vimField)) || selectionFor(vimField) !== null)
+    if (!eligible) {
+      vimMode = 'insert'
+      verticalColumn = null
+    }
+    return eligible
+  }
+  const selectionFor = (host) => {
+    if (!plainHost(host) && !richHost(host)) return null
+    const selection = host.ownerDocument.getSelection()
+    if (
+      !selection ||
+      selection.rangeCount !== 1 ||
+      !selection.anchorNode ||
+      !selection.focusNode ||
+      (!host.contains(selection.anchorNode) && selection.anchorNode !== host) ||
+      (!host.contains(selection.focusNode) && selection.focusNode !== host)
+    )
+      return null
+    const textNodes = []
+    const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) textNodes.push(node)
+    const offsetOf = (node, offset) => {
+      let total = 0
+      for (const text of textNodes) {
+        if (text === node) return total + offset
+        if (text.contains?.(node)) return null
+        total += text.textContent.length
+      }
+      if (node === host) {
+        const range = host.ownerDocument.createRange()
+        range.setStart(host, 0)
+        range.setEnd(host, offset)
+        return range.toString().length
+      }
+      if (node.nodeType === Node.ELEMENT_NODE && host.contains(node)) {
+        const range = host.ownerDocument.createRange()
+        range.setStart(host, 0)
+        range.setEnd(node, offset)
+        return range.toString().length
+      }
+      return null
+    }
+    const range = selection.getRangeAt(0)
+    const start = offsetOf(range.startContainer, range.startOffset)
+    const end = offsetOf(range.endContainer, range.endOffset)
+    return start === null || end === null ? null : { selection, start, end }
+  }
+  const placeCaret = (host, offset) => {
+    let remaining = Math.max(0, Math.min(host.textContent.length, offset))
+    const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_TEXT)
+    const nodes = []
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node)
+    const range = host.ownerDocument.createRange()
+    for (const node of nodes) {
+      const length = node.textContent.length
+      if (remaining < length || (remaining === 0 && length === 0)) {
+        range.setStart(node, remaining)
+        range.collapse(true)
+        const selection = host.ownerDocument.getSelection()
+        selection.removeAllRanges()
+        selection.addRange(range)
+        return
+      }
+      remaining -= length
+    }
+    range.setStart(host, host.childNodes.length)
+    range.collapse(true)
+    const selection = host.ownerDocument.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+  const isNativeHost = (el) => plainHost(el) || richHost(el)
+  const fieldValue = (el) => (isNativeHost(el) ? el.textContent : el.value)
+  const fieldSelection = (el) => {
+    if (!isNativeHost(el))
+      return { start: el.selectionStart ?? 0, end: el.selectionEnd ?? el.selectionStart ?? 0 }
+    const selection = selectionFor(el)
+    return selection ? { start: selection.start, end: selection.end } : null
+  }
+  const setCaret = (el, offset) => (isNativeHost(el) ? placeCaret(el, offset) : move(el, offset))
+  const graphemes = (value) => {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    return [...segmenter.segment(value)].map(({ index, segment }) => ({
+      index,
+      end: index + segment.length,
+      text: segment,
+    }))
+  }
+  const boundaries = (value) => [0, ...graphemes(value).map((part) => part.end)]
+  const previous = (value, at) =>
+    boundaries(value)
+      .filter((n) => n < at)
+      .at(-1) ?? 0
+  const next = (value, at) => boundaries(value).find((n) => n > at) ?? value.length
+  const move = (el, at) =>
+    el.setSelectionRange(
+      Math.max(0, Math.min(el.value.length, at)),
+      Math.max(0, Math.min(el.value.length, at)),
+    )
+  const lineStart = (value, at) => (at === 0 ? 0 : value.lastIndexOf('\n', at - 1) + 1)
+  const lineEnd = (value, at) => {
+    const end = value.indexOf('\n', at)
+    return end < 0 ? value.length : end
+  }
+  const firstNonblank = (value, at) => {
+    const start = lineStart(value, at)
+    const line = value.slice(start, lineEnd(value, at))
+    return start + (line.match(/^\s*/u)?.[0].length ?? 0)
+  }
+  const wordSegments = (value) =>
+    [...new Intl.Segmenter(undefined, { granularity: 'word' }).segment(value)].filter(
+      (part) => part.isWordLike,
+    )
+  const wordForward = (value, at) => {
+    const parts = wordSegments(value)
+    const current = parts.find((part) => part.index <= at && part.index + part.segment.length > at)
+    return (
+      parts.find((part) => part.index > at || (current && part.index > current.index))?.index ??
+      value.length
+    )
+  }
+  const wordBackward = (value, at) => {
+    const parts = wordSegments(value)
+    const current = parts.find((part) => part.index < at && part.index + part.segment.length > at)
+    return current?.index ?? parts.filter((part) => part.index < at).at(-1)?.index ?? 0
+  }
+  const wordEnd = (value, at) => {
+    const part = wordSegments(value).find((item) => {
+      const end = item.index + (boundaries(item.segment).at(-2) ?? 0)
+      return end > at
+    })
+    return part ? part.index + (boundaries(part.segment).at(-2) ?? 0) : at
+  }
+  const verticalMove = (target, at, direction) => {
+    const value = target.value
+    const start = lineStart(value, at)
+    const column = verticalColumn ?? graphemes(value.slice(start, at)).length
+    let adjacentStart
+    if (direction === 'down') {
+      const end = lineEnd(value, at)
+      if (end === value.length) return at
+      adjacentStart = end + 1
+    } else {
+      if (start === 0) return at
+      adjacentStart = lineStart(value, start - 1)
+    }
+    const end = lineEnd(value, adjacentStart)
+    const stops = boundaries(value.slice(adjacentStart, end))
+    return adjacentStart + (stops[Math.min(column, stops.length - 1)] ?? 0)
+  }
+  const onVimKey = (event) => {
+    const target = event.target
+    flushHostMutations()
+    if (
+      !vimEnabled ||
+      !vimEligible(target) ||
+      target.disabled ||
+      target.readOnly ||
+      document.activeElement !== target ||
+      target.getRootNode() !== document ||
+      target.ownerDocument !== document
+    ) {
+      if (vimField === target) resetOwnership()
+      return
+    }
+    if (vimField !== target) {
+      vimField = target
+      vimObservedHost = isNativeHost(target)
+      vimMode = 'insert'
+      verticalColumn = null
+    }
+    const selection = fieldSelection(target)
+    if (selection === null) {
+      resetOwnership()
+      return
+    }
+    if (
+      event.isComposing ||
+      event.keyCode === 229 ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey
+    )
+      return
+    if (vimMode === 'insert') {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        vimMode = 'normal'
+        verticalColumn = null
+      }
+      return
+    }
+    if (
+      event.shiftKey &&
+      ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
+    )
+      return
+    const value = fieldValue(target)
+    const at = selection.start
+    const end = selection.end
+    const key = event.key
+    let destination = at
+    let enteringInsert = false
+    if (key === 'i') enteringInsert = true
+    else if (key === 'a') {
+      destination = next(value, end)
+      enteringInsert = true
+    } else if (key === 'I') {
+      destination = firstNonblank(value, at)
+      enteringInsert = true
+    } else if (key === 'A') {
+      destination = lineEnd(value, at)
+      enteringInsert = true
+    } else if (key === 'h') destination = previous(value, at)
+    else if (key === 'l') destination = next(value, at)
+    else if (key === '0') destination = lineStart(value, at)
+    else if (key === '^') destination = firstNonblank(value, at)
+    else if (key === '$') destination = lineEnd(value, at)
+    else if (key === 'w') destination = wordForward(value, at)
+    else if (key === 'b') destination = wordBackward(value, at)
+    else if (key === 'e') destination = wordEnd(value, at)
+    else if (key === 'j' && target instanceof HTMLTextAreaElement)
+      destination = verticalMove(target, at, 'down')
+    else if (key === 'k' && target instanceof HTMLTextAreaElement)
+      destination = verticalMove(target, at, 'up')
+    else if (key === 'Escape') {
+      event.preventDefault()
+      return
+    } else {
+      // Normal mode does not let editing or printable keys reach the browser.
+      if (
+        key.length === 1 ||
+        [
+          'Backspace',
+          'Delete',
+          'Enter',
+          'ArrowLeft',
+          'ArrowRight',
+          'ArrowUp',
+          'ArrowDown',
+          'Home',
+          'End',
+        ].includes(key)
+      )
+        event.preventDefault()
+      return
+    }
+    event.preventDefault()
+    if (enteringInsert) {
+      if (!(key === 'i' && richHost(target))) setCaret(target, destination)
+      vimMode = 'insert'
+      verticalColumn = null
+      return
+    }
+    setCaret(target, destination)
+    verticalColumn =
+      key === 'j' || key === 'k'
+        ? (verticalColumn ?? graphemes(value.slice(lineStart(value, at), at)).length)
+        : null
+  }
+  document.addEventListener(
+    'focusin',
+    (event) => {
+      if (
+        vimEnabled &&
+        vimEligible(event.target) &&
+        event.target.getRootNode() === document &&
+        !event.target.disabled &&
+        !event.target.readOnly
+      ) {
+        hostMutationObserver.takeRecords()
+        vimField = event.target
+        vimObservedHost = isNativeHost(event.target)
+        vimMode = 'insert'
+        verticalColumn = null
+      }
+    },
+    true,
+  )
+  document.addEventListener(
+    'focusout',
+    (event) => {
+      if (vimField === event.target) {
+        vimField = null
+        vimObservedHost = false
+        vimMode = 'insert'
+        verticalColumn = null
+      }
+    },
+    true,
+  )
+  document.addEventListener(
+    'selectionchange',
+    () => {
+      if (vimField && vimField.nodeType === 1 && isNativeHost(vimField) && !selectionFor(vimField))
+        resetOwnership()
+    },
+    true,
+  )
+  document.addEventListener('keydown', onVimKey, true)
+  const vim = {
+    documentNonce() {
+      return vimNonce
+    },
+    rearm() {
+      vimNonce = newVimNonce()
+      vimEnabled = false
+      vimMode = 'insert'
+      vimField = null
+      vimObservedHost = false
+      verticalColumn = null
+      return vimNonce
+    },
+    configure(enabled, revision, nonce) {
+      if (
+        nonce !== vimNonce ||
+        typeof enabled !== 'boolean' ||
+        !Number.isSafeInteger(revision) ||
+        revision <= vimRevision
+      )
+        return false
+      vimRevision = revision
+      vimEnabled = enabled
+      vimMode = 'insert'
+      vimField = null
+      vimObservedHost = false
+      verticalColumn = null
+      return true
+    },
+    reset(revision, nonce) {
+      return this.configure(false, revision, nonce)
+    },
+    mode() {
+      return { revision: vimRevision, mode: eligibleNow() ? vimMode : 'insert' }
+    },
+  }
+  globalThis.__holiPage = { refs: [null], read, point, click, focus, valueOf, fill, scroll, vim }
 })()

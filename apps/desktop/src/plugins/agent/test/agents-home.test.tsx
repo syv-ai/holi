@@ -70,6 +70,8 @@ test("a vault with chat: false pinned still opens on the agent's home", () => {
     </Provider>,
   )
   expect(screen.getByText('No session here')).toBeInTheDocument()
+  expect(screen.getByText(/Use the sidebar's \+ to choose an agent\./)).toBeInTheDocument()
+  expect(screen.queryByText(/Hover the sidebar/)).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'New session' })).toBeInTheDocument()
   expect(screen.queryByText('Nothing needs you')).not.toBeInTheDocument()
 })

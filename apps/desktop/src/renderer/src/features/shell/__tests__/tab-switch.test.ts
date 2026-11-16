@@ -48,4 +48,12 @@ describe('tabSwitch', () => {
     const open = tabSwitch(null, step(1)).state
     expect(tabSwitch(open, { kind: 'release', order: ['now', 'older'] })).toEqual({ state: null })
   })
+
+  test('opened by a click it stays open past a release, and Enter opens the one selected', () => {
+    let state = tabSwitch(null, { kind: 'open', order, active: 'now' }).state
+    expect(state).toEqual({ order, at: 1, pinned: true })
+    expect(tabSwitch(state, { kind: 'release', order }).state).toBe(state)
+    state = tabSwitch(state, step(1)).state
+    expect(tabSwitch(state, { kind: 'commit', order })).toEqual({ state: null, select: 'older' })
+  })
 })

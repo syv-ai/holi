@@ -78,7 +78,7 @@ type Scan = { ok: true; graph: Graph } | { ok: false } | null
  * The vault's graph: asked once on open, then again once the notes have been
  * still a moment after a change. `retry` asks again now.
  */
-function useGraph(): { scan: Scan; retry: () => void } {
+function useGraph(displayed: boolean): { scan: Scan; retry: () => void; attempt: number } {
   const remote = useAtomValue(activeRemoteAtom)
   const hidden = useAtomValue(showHiddenByVaultAtom)[remote ?? ''] ?? false
   const docs = useAtomValue(snapshotAtom).docs
@@ -90,37 +90,65 @@ function useGraph(): { scan: Scan; retry: () => void } {
   )
   const [scan, setScan] = useState<Scan>(null)
   const [attempt, setAttempt] = useState(0)
-  const asked = useRef<string | null>(null)
+  const startedScope = useRef<string | null>(null)
+  const startedToken = useRef<string | null>(null)
+  const immediate = useRef(false)
+  const displayedRef = useRef(displayed)
+  displayedRef.current = displayed
+  const scope = remote === null ? null : `${remote}\n${hidden}`
+  const token = scope === null ? null : `${scope}\n${fingerprint}`
 
   useEffect(() => {
-    if (remote === null) return
-    const scope = `${remote}\n${hidden}`
-    // A new vault, or the hidden files shown or not: asked at once, and the
-    // last vault's picture is not shown meanwhile.
-    const fresh = asked.current !== scope
-    if (fresh) setScan(null)
-    asked.current = scope
+    if (remote === null) {
+      startedScope.current = null
+      startedToken.current = null
+      setScan(null)
+      return
+    }
+    if (!displayed || token === null || scope === null) return
+    const freshScope = startedScope.current !== scope
+    if (freshScope) {
+      startedScope.current = scope
+      startedToken.current = null
+      setScan(null)
+    }
+    const forceImmediate = immediate.current
+    immediate.current = false
+    if (startedToken.current === token && !forceImmediate) return
     let live = true
+    let settled = false
     const timer = window.setTimeout(
       () => {
+        startedToken.current = token
         trpc.notes.graph.query({ remote, hidden }).then(
-          (graph) => live && setScan({ ok: true, graph }),
-          () => live && setScan({ ok: false }),
+          (graph) => {
+            settled = true
+            if (live) setScan({ ok: true, graph })
+          },
+          () => {
+            settled = true
+            if (live) setScan({ ok: false })
+          },
         )
       },
-      fresh ? 0 : SETTLE_MS,
+      freshScope || forceImmediate ? 0 : SETTLE_MS,
     )
     return () => {
       live = false
       window.clearTimeout(timer)
+      if (!settled) {
+        if (startedToken.current === token) startedToken.current = null
+        if (!displayedRef.current) immediate.current = true
+      }
     }
-  }, [remote, hidden, fingerprint, attempt])
+  }, [displayed, remote, hidden, scope, token, attempt])
 
   const retry = useCallback(() => {
+    immediate.current = true
     setScan(null)
     setAttempt((n) => n + 1)
   }, [])
-  return { scan, retry }
+  return { scan, retry, attempt }
 }
 
 /**
@@ -128,29 +156,22 @@ function useGraph(): { scan: Scan; retry: () => void } {
  * layout so a new link moves the picture a little. What it answers is a
  * graph with ITS layout: the previous pair stays up meanwhile.
  */
-function useLayout(graph: Graph | null): {
+function useLayout(
+  graph: Graph | null,
+  displayed: boolean,
+  attempt: number,
+): {
   laid: { graph: Graph; points: Point[] } | null
   failed: boolean
 } {
   const [laid, setLaid] = useState<{ graph: Graph; points: Point[] } | null>(null)
   const [failed, setFailed] = useState(false)
+  const graphRef = useRef(graph)
+  graphRef.current = graph
+  const failedRef = useRef(failed)
+  failedRef.current = failed
   const positions = useRef(new Map<string, Point>())
-  const worker = useRef<Worker | null>(null)
-  useEffect(() => {
-    // Without workers (a test's jsdom) the layout runs on the page.
-    if (typeof Worker === 'undefined') return
-    const w = new Worker(new URL('../../lib/graph-layout.worker.ts', import.meta.url), {
-      type: 'module',
-    })
-    // A worker that fails to load or throws answers nothing: say so rather
-    // than read the vault forever.
-    w.onerror = () => setFailed(true)
-    worker.current = w
-    return () => {
-      w.terminate()
-      worker.current = null
-    }
-  }, [])
+  const completed = useRef('')
   // Once per shape, not per answer: an answer is a new object even when
   // nothing in it changed.
   const shape = useMemo(
@@ -158,46 +179,72 @@ function useLayout(graph: Graph | null): {
     [graph],
   )
   useEffect(() => {
-    if (graph === null) return
-    const land = (points: Point[]) => {
-      positions.current = new Map(graph.nodes.map((node, i) => [node, points[i]!]))
-      setLaid({ graph, points })
-    }
-    const w = worker.current
-    if (w === null) {
-      land(layoutGraph(graph.nodes, graph.edges, positions.current))
+    const currentGraph = graphRef.current
+    if (!displayed || currentGraph === null || (completed.current === shape && !failedRef.current))
       return
+    let live = true
+    let worker: Worker | null = null
+    let onMessage: ((event: MessageEvent<LayoutResponse>) => void) | null = null
+    const land = (points: Point[]) => {
+      if (!live) return
+      positions.current = new Map(currentGraph.nodes.map((node, i) => [node, points[i]!]))
+      completed.current = shape
+      setFailed(false)
+      setLaid({ graph: currentGraph, points })
     }
-    const id = Math.random()
-    const onMessage = (event: MessageEvent<LayoutResponse>) => {
-      if (event.data.id === id) land(event.data.points)
+    const failedLayout = () => {
+      if (live) setFailed(true)
     }
-    w.addEventListener('message', onMessage)
-    const request: LayoutRequest = {
-      id,
-      nodes: graph.nodes,
-      edges: graph.edges,
-      previous: [...positions.current],
+    if (typeof Worker === 'undefined') {
+      land(layoutGraph(currentGraph.nodes, currentGraph.edges, positions.current))
+    } else {
+      try {
+        worker = new Worker(new URL('../../lib/graph-layout.worker.ts', import.meta.url), {
+          type: 'module',
+        })
+        worker.onerror = failedLayout
+        // Correlate this worker request and reply; randomness never runs during render.
+        const id = Math.random()
+        onMessage = (event) => {
+          if (event.data.id === id) land(event.data.points)
+        }
+        worker.addEventListener('message', onMessage)
+        const request: LayoutRequest = {
+          id,
+          nodes: currentGraph.nodes,
+          edges: currentGraph.edges,
+          previous: [...positions.current],
+        }
+        worker.postMessage(request)
+      } catch {
+        failedLayout()
+      }
     }
-    w.postMessage(request)
-    return () => w.removeEventListener('message', onMessage)
-    // `shape` is the graph's identity: an answer that changed nothing keeps it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shape])
+    return () => {
+      live = false
+      if (worker !== null) {
+        if (onMessage !== null) worker.removeEventListener('message', onMessage)
+        worker.terminate()
+      }
+    }
+  }, [displayed, shape, attempt])
   return { laid, failed }
 }
 
 export function GraphView({
   onOpen,
   reading = null,
+  displayed = true,
 }: {
   /** Open a note beside the graph. */
   onOpen: (path: string) => void
   /** The note being read beside the graph, drawn in the theme colour. */
   reading?: string | null
+  /** Whether the shell currently displays this graph, including split members. */
+  displayed?: boolean
 }) {
-  const { scan, retry } = useGraph()
-  const { laid, failed } = useLayout(scan?.ok ? scan.graph : null)
+  const { scan, retry, attempt } = useGraph(displayed)
+  const { laid, failed } = useLayout(scan?.ok ? scan.graph : null, displayed, attempt)
   const points = laid?.points ?? NO_POINTS
   const drawn = laid?.graph ?? null
 
@@ -221,13 +268,13 @@ export function GraphView({
   const fitted = useRef(false)
   useEffect(() => {
     const el = box.current
-    if (el === null) return
+    if (!displayed || el === null) return
     const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight })
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [pictured])
+  }, [pictured, displayed])
 
   // Fit once the first layout and the box are both known; after that the
   // view is the reader's.
@@ -255,7 +302,7 @@ export function GraphView({
   // Native and not passive, so a pinch zooms the graph rather than the page.
   useEffect(() => {
     const el = box.current
-    if (el === null) return
+    if (!displayed || el === null) return
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
       const rect = el.getBoundingClientRect()
@@ -276,7 +323,16 @@ export function GraphView({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [pictured])
+  }, [pictured, displayed])
+
+  const dragCleanup = useRef<(() => void) | null>(null)
+  useEffect(() => () => dragCleanup.current?.(), [])
+  useEffect(() => {
+    if (displayed) return
+    dragCleanup.current?.()
+    dragCleanup.current = null
+    setHover(null)
+  }, [displayed])
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || (event.target as Element).closest('[data-graph-node]')) return
@@ -293,7 +349,11 @@ export function GraphView({
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up)
       el.removeEventListener('pointercancel', up)
+      if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId)
+      dragCleanup.current = null
     }
+    dragCleanup.current?.()
+    dragCleanup.current = up
     el.addEventListener('pointermove', move)
     el.addEventListener('pointerup', up)
     el.addEventListener('pointercancel', up)

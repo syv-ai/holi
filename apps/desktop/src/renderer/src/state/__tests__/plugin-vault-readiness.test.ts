@@ -16,12 +16,15 @@ describe('hostPluginVaults', () => {
     store.set(installedPluginsAtom, [plugin])
     const stop = hostPluginVaults(store)
 
-    store.set(openedRemoteAtom, 'owner/a')
     store.set(activeRemoteAtom, 'owner/a')
+    store.set(openedRemoteAtom, 'owner/a')
     expect(vault).toHaveBeenCalledWith('owner/a', store)
 
     store.set(activeRemoteAtom, 'owner/b')
     expect(stopVault).toHaveBeenCalledOnce()
+    expect(vault).toHaveBeenCalledTimes(1)
+    // A late completion from the prior vault is not readiness for B.
+    store.set(openedRemoteAtom, 'owner/a')
     expect(vault).toHaveBeenCalledTimes(1)
 
     // The switch's main open is still pending. Do not start B's plugin watch

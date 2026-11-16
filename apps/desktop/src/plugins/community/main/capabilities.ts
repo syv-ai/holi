@@ -1,13 +1,15 @@
 /**
- * Community plugins' capabilities, all at the UI door only: installing,
+ * Community plugins' capabilities, nearly all at the UI door only: installing,
  * consenting to and running code is the person's own act in the settings
- * tab, never something an app or the agent can ask for.
+ * tab, never something an app or the agent can ask for. At the CLI door are
+ * a running plugin's folder (`holi community path`) and its verbs
+ * (`holi plugin`, `verbs.ts`), each only for a plugin someone allowed here.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { lstat, realpath, readdir, readFile, rm } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   isCommunityPluginId,
   isPluginPath,
@@ -29,6 +31,7 @@ import {
   gitignoreWith,
   noParams,
   paramsObject,
+  flagParam,
   readVaultSettings,
   stringParam,
   toolPath,
@@ -42,19 +45,29 @@ import {
   listReleases,
   listVersions,
   newestFirst,
+  readBoundedRegularText,
   readManifest,
   versionsOf,
   type GitAccess,
 } from './fetch'
 import { searchPlugins } from './search'
-import { seedApps, writeSkills } from './skills'
+import { refreshSkills, seedApps, writeSkills } from './skills'
+import {
+  assertCheckoutIdentity,
+  assertManifestPinned,
+  assertNoCompetingSkillClaims,
+  canonicalJson,
+  readPinnedSkillSnapshots,
+  validateSkillSnapshot,
+} from './skill-release'
 import { COMMUNITY_INFO } from '../info'
 import { linkCommands, linkedIn, unlinkCommands, type LinkedCommands } from './commands'
 import { expandCommand, pluginEnv, runSetup } from './setup'
 import type { Install, InstallStore } from './store'
 import type { ServerState, Supervisor } from './supervisor'
+import { resolveVerb, type RunningPlugin, type VerbAnswer } from './verbs'
 
-export const COMMUNITY_NAMESPACES = ['community'] as const
+export const COMMUNITY_NAMESPACES = ['community', 'plugin'] as const
 
 /** Where a plugin stands, for this vault on this machine, in the order the
  *  settings tab walks someone through. */
@@ -95,6 +108,9 @@ export interface PluginRow {
   apps: string[]
   /** The commands it adds to the agent's `PATH`, for the consent dialog. */
   bin: string[]
+  /** What `holi plugin <id> <verb>` runs and its verbs, for the consent
+   *  dialog; null for a plugin without verbs. */
+  cli: { run: string[]; verbs: string[] } | null
   /** Running, which of its commands the agent did not get and why, as the
    *  vault's last rebuild left them; null when it has them all. */
   commandsNote: string | null
@@ -119,6 +135,14 @@ export interface CommunityDeps {
   scratch: string
   /** The plugins' readiness checks' last answers. */
   checks: Checks
+  /** Serialize machine-wide install, consent, setup and removal transitions. */
+  mutate<T>(work: () => Promise<T>): Promise<T>
+  /** Serialize resource reads with machine-wide mutations. */
+  admit?<T>(work: () => Promise<T>): Promise<T>
+  /** Attachment lifetime, supplied by the main-process owner; omitted by focused tests. */
+  signal?: AbortSignal
+  live?: () => boolean
+  run?<T>(work: () => Promise<T>): Promise<T>
   /** The `PATH` the vault's agent inherits, before Holi's own folders: a
    *  plugin's command may not take a name already on it. By default
    *  `toolPath()`: a Dock-launched Holi's own `PATH` lacks the folders the
@@ -131,7 +155,9 @@ async function readPins(root: string): Promise<Map<string, PluginPin>> {
   const pins = new Map<string, PluginPin>()
   const dirs = await readdir(join(root, PLUGIN_PINS_DIR)).catch(() => [] as string[])
   for (const id of dirs) {
-    const text = await readFile(join(root, pluginPinPath(id)), 'utf8').catch(() => null)
+    const text = await readBoundedRegularText(join(root, pluginPinPath(id)), 'plugin pin').catch(
+      () => null,
+    )
     if (text === null) continue
     try {
       const parsed = parsePluginPin(JSON.parse(text))
@@ -202,6 +228,10 @@ function rowOf(
     serve: manifest.serve ?? null,
     apps: manifest.apps ?? [],
     bin: Object.keys(manifest.bin ?? {}),
+    cli:
+      manifest.cli === undefined
+        ? null
+        : { run: manifest.cli.run, verbs: Object.keys(manifest.cli.verbs) },
     commandsNote: on && status === 'ready' ? commandsNote(id, linked) : null,
     check: on && status === 'ready' && manifest.check !== undefined ? check : null,
   }
@@ -215,11 +245,8 @@ function commandsNote(id: string, linked: LinkedCommands | null): string | null 
   return mine.map((r) => `${r.name} is not on the agent's PATH: ${r.reason}.`).join(' ')
 }
 
-/** Every plugin this vault pins or this machine has, as the settings tab
- *  lists them.
- * @public exported for its test
- */
-export async function listPlugins(
+/** Pair each authorized row with the install snapshot it describes. */
+async function pluginEntries(
   root: string,
   deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },
 ) {
@@ -236,9 +263,22 @@ export async function listPlugins(
       const status = await statusOf(install, pin, deps.consent)
       const on = settings.plugins.vault[id] === true
       const check = deps.checks?.get(root, id) ?? null
-      return rowOf(id, install, pin, status, on, linkedIn(root), check)
+      return {
+        row: rowOf(id, install, pin, status, on, linkedIn(root), check),
+        install,
+      }
     }),
   )
+}
+
+/** Every plugin this vault pins or this machine has, as the settings tab lists them.
+ * @public exported for its test
+ */
+export async function listPlugins(
+  root: string,
+  deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },
+) {
+  return (await pluginEntries(root, deps)).map(({ row }) => row)
 }
 
 const idParams = (raw: unknown) => ({ id: stringParam(paramsObject(raw), 'id') })
@@ -247,6 +287,16 @@ const pathParam = (raw: unknown): { path: string } => ({
 })
 
 /** The server key: one per vault, plugin and file. */
+function insidePath(root: string, path: string): boolean {
+  const rel = relative(root, path)
+  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+}
+
+function manifestFromPin(pin: PluginPin): PluginManifest {
+  const { repo: _repo, path: _path, commit: _commit, ...manifest } = pin
+  return manifest
+}
+
 const serverKey = (root: string, id: string, path: string) => `${root}\0${id}\0${path}`
 
 const repoParam = (p: Record<string, unknown>): string => {
@@ -277,7 +327,14 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
   /** Each acquire's server key, by the lease it returned: a release names
    *  its lease, so it drops exactly what its acquire took, whatever has
    *  changed about the plugin since. */
-  const leases = new Map<string, string>()
+  const leases = new Map<string, () => Promise<void>>()
+
+  const admit = deps.admit ?? (<T>(work: () => Promise<T>) => work())
+
+  const ensureLive = () => {
+    if (deps.live?.() === false || deps.signal?.aborted)
+      throw new CapabilityError('FORBIDDEN', 'community attachment is closed')
+  }
 
   const installOf = async (id: string): Promise<Install> => {
     const install = await deps.store.get(id)
@@ -290,27 +347,14 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       throw new CapabilityError('BAD_REQUEST', `${id} is the name of a plugin built into Holi`)
   }
 
-  /** The running plugin that opens `path` here, or a refusal saying why not. */
-  const servingPlugin = async (root: string, path: string): Promise<PluginRow> => {
-    const rows = await listPlugins(root, deps)
-    const row = rows.find((r) => r.on && servedFile(r, path) !== null)
-    if (row === undefined) throw new CapabilityError('NOT_FOUND', `no plugin opens ${path}`)
-    if (!row.running)
-      throw new CapabilityError(
-        'FORBIDDEN',
-        `${row.name} is not ready on this machine (${row.status})`,
-      )
-    return row
-  }
-
   /** Set up afresh: what its check said before no longer holds. Asked now
    *  when it runs in the vault; otherwise once it is turned on there. */
   const checkAfterSetup = async (root: string, id: string) => {
-    deps.checks.forget(root, id)
+    await deps.checks.forget(root, id)
     await runChecks(root, deps, { ids: [id], fresh: true })
   }
 
-  return {
+  const table = {
     'community.list': cap({
       doors: ['ui'],
       params: noParams,
@@ -375,32 +419,35 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         if (p.expectId !== undefined) params.expectId = stringParam(p, 'expectId')
         return params
       },
-      run: async (ctx, { repo, path, version, expectId }) => {
-        const fetched = await fetchRelease(
-          {
-            repo,
-            path,
-            version,
-            ...(expectId === undefined ? {} : { expectId }),
-            scratch: deps.scratch,
-            releaseDir: deps.store.releaseDir,
-          },
-          deps.git,
-        )
-        claimFirstParty(fetched.manifest.id)
-        await deps.store.put({
-          id: fetched.manifest.id,
-          source: { kind: 'release', repo, path, tag: fetched.tag, commit: fetched.commit },
-          manifest: fetched.manifest,
-          setup: 'none',
-        })
-        deps.checks.forget(ctx.root, fetched.manifest.id)
-        // A new release of a running plugin waits for consent: its commands go
-        // until then.
-        await linkRunningCommands(ctx.root, deps)
-        const rows = await listPlugins(ctx.root, deps)
-        return rows.find((r) => r.id === fetched.manifest.id)!
-      },
+      run: async (ctx, { repo, path, version, expectId }) =>
+        deps.mutate(async () => {
+          const fetched = await fetchRelease(
+            {
+              repo,
+              path,
+              version,
+              ...(expectId === undefined ? {} : { expectId }),
+              scratch: deps.scratch,
+              releaseDir: deps.store.releaseDir,
+            },
+            deps.git,
+          )
+          ensureLive()
+          claimFirstParty(fetched.manifest.id)
+          await deps.supervisor.stopAll((key) => parseServerKey(key).id === fetched.manifest.id)
+          await deps.store.put({
+            id: fetched.manifest.id,
+            source: { kind: 'release', repo, path, tag: fetched.tag, commit: fetched.commit },
+            manifest: fetched.manifest,
+            setup: 'none',
+          })
+          await deps.checks.forget(ctx.root, fetched.manifest.id)
+          // A new release of a running plugin waits for consent: its commands go
+          // until then.
+          await linkRunningCommands(ctx.root, deps)
+          const rows = await listPlugins(ctx.root, deps)
+          return rows.find((r) => r.id === fetched.manifest.id)!
+        }),
     }),
 
     // A folder the person works on, used in place: their own code, so no
@@ -408,20 +455,22 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.installFolder': cap({
       doors: ['ui'],
       params: (raw: unknown) => ({ folder: stringParam(paramsObject(raw), 'folder') }),
-      run: async (ctx, { folder }) => {
-        const manifest = await readManifest(folder)
-        claimFirstParty(manifest.id)
-        await deps.store.put({
-          id: manifest.id,
-          source: { kind: 'dev', folder },
-          manifest,
-          setup: 'none',
-        })
-        deps.checks.forget(ctx.root, manifest.id)
-        await linkRunningCommands(ctx.root, deps)
-        const rows = await listPlugins(ctx.root, deps)
-        return rows.find((r) => r.id === manifest.id)!
-      },
+      run: async (ctx, { folder }) =>
+        deps.mutate(async () => {
+          const manifest = await readManifest(folder)
+          claimFirstParty(manifest.id)
+          await deps.supervisor.stopAll((key) => parseServerKey(key).id === manifest.id)
+          await deps.store.put({
+            id: manifest.id,
+            source: { kind: 'dev', folder },
+            manifest,
+            setup: 'none',
+          })
+          await deps.checks.forget(ctx.root, manifest.id)
+          await linkRunningCommands(ctx.root, deps)
+          const rows = await listPlugins(ctx.root, deps)
+          return rows.find((r) => r.id === manifest.id)!
+        }),
     }),
 
     'community.consent': cap({
@@ -430,48 +479,61 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         const p = paramsObject(raw)
         return { id: stringParam(p, 'id'), commit: stringParam(p, 'commit') }
       },
-      run: async (_ctx, { id, commit }) => {
-        const install = await installOf(id)
-        // The commit the dialog showed: a re-fetch in between asks again.
-        if (installCommit(install) !== commit)
-          throw new CapabilityError('BAD_REQUEST', `${id} changed since it was shown; look again`)
-        await deps.consent.grant(id, commit)
-      },
+      run: async (_ctx, { id, commit }) =>
+        deps.mutate(async () => {
+          const install = await installOf(id)
+          // The commit the dialog showed: a re-fetch in between asks again.
+          if (installCommit(install) !== commit)
+            throw new CapabilityError('BAD_REQUEST', `${id} changed since it was shown; look again`)
+          ensureLive()
+          await deps.consent.grant(id, commit)
+        }),
     }),
 
     // Run the manifest's setup, its output streaming as `setup-log` events.
     'community.setup': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) => {
-        const install = await installOf(id)
-        const commit = installCommit(install)
-        if (commit !== null && !(await deps.consent.has(id, commit)))
-          throw new CapabilityError('FORBIDDEN', `nobody here has agreed to run ${id} ${commit}`)
-        if (install.manifest.setup === undefined) {
-          await deps.store.setSetup(id, 'ok')
-          await seedRunningApps(ctx.root, deps)
-          await linkRunningCommands(ctx.root, deps)
-          await checkAfterSetup(ctx.root, id)
-          return true
-        }
-        deps.emit(ctx.remote, 'setup-log', { id, line: null })
-        const ok = await runSetup({
-          argv: expandCommand(install.manifest.setup, { vault: ctx.root }),
-          cwd: deps.store.codeDir(install),
-          logPath: deps.store.setupLog(id),
-          onLine: (line) => deps.emit(ctx.remote, 'setup-log', { id, line }),
-        })
-        await deps.store.setSetup(id, ok ? 'ok' : 'failed')
-        // Set up in a vault that runs it: its apps and commands arrive now, not
-        // at the next open.
-        if (ok) {
-          await seedRunningApps(ctx.root, deps)
-          await linkRunningCommands(ctx.root, deps)
-          await checkAfterSetup(ctx.root, id)
-        }
-        return ok
-      },
+      run: async (ctx, { id }) =>
+        deps.mutate(async () => {
+          const install = await installOf(id)
+          const commit = installCommit(install)
+          if (commit !== null && !(await deps.consent.has(id, commit)))
+            throw new CapabilityError('FORBIDDEN', `nobody here has agreed to run ${id} ${commit}`)
+          ensureLive()
+          await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
+          if (install.manifest.setup === undefined) {
+            await deps.store.setSetup(id, 'ok')
+            await seedRunningApps(ctx.root, deps)
+            await linkRunningCommands(ctx.root, deps)
+            await checkAfterSetup(ctx.root, id)
+            return true
+          }
+          // Setup can partially change machine state before failing or being
+          // cancelled. Invalidate shared readiness before starting it.
+          await deps.store.setSetup(id, 'failed')
+          deps.emit(ctx.remote, 'setup-log', { id, line: null })
+          const ok = await runSetup({
+            argv: expandCommand(install.manifest.setup, { vault: ctx.root }),
+            signal: deps.signal,
+            cwd: deps.store.codeDir(install),
+            logPath: deps.store.setupLog(id),
+            onLine: (line) => {
+              if (deps.live?.() !== false) deps.emit(ctx.remote, 'setup-log', { id, line })
+            },
+          })
+          // Persist the outcome even if this attachment closed while setup ran:
+          // the install state is machine-wide and other vaults must see failure.
+          await deps.store.setSetup(id, ok ? 'ok' : 'failed')
+          // Set up in a vault that runs it: its apps and commands arrive now, not
+          // at the next open.
+          if (ok) {
+            await seedRunningApps(ctx.root, deps)
+            await linkRunningCommands(ctx.root, deps)
+            await checkAfterSetup(ctx.root, id)
+          }
+          return ok
+        }),
     }),
 
     // Ask a running plugin's readiness check again, for its settings row and
@@ -479,12 +541,14 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.check': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) => {
-        await runChecks(ctx.root, deps, { ids: [id], fresh: true })
-        const row = (await listPlugins(ctx.root, deps)).find((r) => r.id === id)
-        if (row === undefined) throw new CapabilityError('NOT_FOUND', `${id} is not here`)
-        return row
-      },
+      run: async (ctx, { id }) =>
+        admit(async () => {
+          ensureLive()
+          await runChecks(ctx.root, deps, { ids: [id], fresh: true })
+          const row = (await listPlugins(ctx.root, deps)).find((r) => r.id === id)
+          if (row === undefined) throw new CapabilityError('NOT_FOUND', `${id} is not here`)
+          return row
+        }),
     }),
 
     'community.setupLog': cap({
@@ -500,34 +564,36 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.pin': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) => {
-        const install = await installOf(id)
-        if (install.source.kind !== 'release')
-          throw new CapabilityError(
-            'BAD_REQUEST',
-            `${id} is a folder on this machine; pin a release`,
+      run: async (ctx, { id }) =>
+        admit(async () => {
+          ensureLive()
+          const install = await installOf(id)
+          if (install.source.kind !== 'release')
+            throw new CapabilityError(
+              'BAD_REQUEST',
+              `${id} is a folder on this machine; pin a release`,
+            )
+          const pin: PluginPin = {
+            ...install.manifest,
+            repo: install.source.repo,
+            path: install.source.path,
+            commit: install.source.commit,
+          }
+          await writeAtomic(
+            ctx.root,
+            vaultRelPath(pluginPinPath(id)),
+            `${JSON.stringify(pin, null, 2)}\n`,
           )
-        const pin: PluginPin = {
-          ...install.manifest,
-          repo: install.source.repo,
-          path: install.source.path,
-          commit: install.source.commit,
-        }
-        await writeAtomic(
-          ctx.root,
-          vaultRelPath(pluginPinPath(id)),
-          `${JSON.stringify(pin, null, 2)}\n`,
-        )
-        await writeSkills(install.manifest, deps.store.codeDir(install), ctx.root)
-        await seedApps(install.manifest, deps.store.codeDir(install), ctx.root)
-        await linkRunningCommands(ctx.root, deps)
-        const lines = install.manifest.ignore ?? []
-        if (lines.length > 0) {
-          const existing = await readFile(join(ctx.root, '.gitignore'), 'utf8').catch(() => null)
-          const next = gitignoreWith(existing, lines)
-          if (next !== null) await writeAtomic(ctx.root, vaultRelPath('.gitignore'), next)
-        }
-      },
+          await writeSkills(install.manifest, deps.store.codeDir(install), ctx.root)
+          await seedApps(install.manifest, deps.store.codeDir(install), ctx.root)
+          await linkRunningCommands(ctx.root, deps)
+          const lines = install.manifest.ignore ?? []
+          if (lines.length > 0) {
+            const existing = await readFile(join(ctx.root, '.gitignore'), 'utf8').catch(() => null)
+            const next = gitignoreWith(existing, lines)
+            if (next !== null) await writeAtomic(ctx.root, vaultRelPath('.gitignore'), next)
+          }
+        }),
     }),
 
     // A folder install's skills, which no pin writes: turning one on in a
@@ -535,14 +601,16 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.skills': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) => {
-        const install = await installOf(id)
-        const dir = deps.store.codeDir(install)
-        return [
-          ...(await writeSkills(install.manifest, dir, ctx.root)),
-          ...(await seedApps(install.manifest, dir, ctx.root)),
-        ]
-      },
+      run: async (ctx, { id }) =>
+        admit(async () => {
+          ensureLive()
+          const install = await installOf(id)
+          const dir = deps.store.codeDir(install)
+          return [
+            ...(await writeSkills(install.manifest, dir, ctx.root)),
+            ...(await seedApps(install.manifest, dir, ctx.root)),
+          ]
+        }),
     }),
 
     // Where a plugin's code is on this machine, for the vault's agent to run
@@ -552,13 +620,245 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       doors: ['cli'],
       cli: { args: ['id'], summary: "a running community plugin's folder on this machine" },
       params: idParams,
-      run: async (ctx, { id }) => {
-        const row = (await listPlugins(ctx.root, deps)).find((r) => r.id === id)
-        if (row === undefined || !row.running)
-          throw new CapabilityError('NOT_FOUND', `${id} does not run in this vault here`)
-        return deps.store.codeDir(await installOf(id))
-      },
+      run: async (ctx, { id }) =>
+        admit(async () => {
+          ensureLive()
+          const entry = (await pluginEntries(ctx.root, deps)).find(({ row }) => row.id === id)
+          if (entry === undefined || !entry.row.running || entry.install === null)
+            throw new CapabilityError('NOT_FOUND', `${id} does not run in this vault here`)
+          return deps.store.codeDir(entry.install)
+        }),
       text: (dir) => dir,
+    }),
+
+    'community.refresh-skills': cap({
+      doors: ['cli'],
+      cli: {
+        args: ['id'],
+        flags: ['force'],
+        values: [],
+        summary:
+          'refresh skills from this vault’s pinned community-plugin release; --force replaces complete skill folders, including local edits',
+      },
+      params: (raw) => ({
+        id: stringParam(paramsObject(raw), 'id'),
+        force: flagParam(paramsObject(raw), 'force'),
+      }),
+      run: async (ctx, { id, force }) =>
+        admit(async () => {
+          ensureLive()
+          const deny: (message: string) => never = (message) => {
+            throw new CapabilityError('FORBIDDEN', message)
+          }
+          if (!isCommunityPluginId(id, deps.firstPartyIds()))
+            throw new CapabilityError('BAD_REQUEST', `${id} is not a valid community plugin id`)
+          const pinPath = join(ctx.root, pluginPinPath(id))
+          const pinInfo = await lstat(pinPath).catch(() => null)
+          if (
+            !pinInfo?.isFile() ||
+            pinInfo.isSymbolicLink() ||
+            resolve(pinPath) !== pinPath ||
+            (await realpath(pinPath).catch(() => null)) !== pinPath
+          )
+            deny(`${id} has no safe release pin in this vault`)
+          let pin: PluginPin
+          try {
+            const parsed = parsePluginPin(
+              JSON.parse(await readBoundedRegularText(pinPath, 'plugin pin')),
+            )
+            if (!parsed.ok || parsed.value.id !== id) throw new Error('invalid identity')
+            pin = parsed.value
+          } catch {
+            return deny(`${id} has no valid release pin in this vault`)
+          }
+          const install = await deps.store.get(id)
+          if (install === null || install.source.kind !== 'release')
+            deny(`${id} is not an installed release`)
+          const source = install.source
+          if (
+            pin.id !== install.id ||
+            pin.repo !== source.repo ||
+            pin.path !== source.path ||
+            pin.commit !== source.commit
+          )
+            deny(`${id} installed release does not match this vault's complete pin`)
+          if (!(await deps.consent.has(id, source.commit)) || install.setup !== 'ok')
+            deny(`${id} is not consented and setup-ready`)
+          const entries = await pluginEntries(ctx.root, deps)
+          const entry = entries.find(({ row }) => row.id === id)
+          if (entry === undefined || !entry.row.on || entry.row.status !== 'ready')
+            deny(`${id} is disabled or not ready in this vault`)
+          const skills = install.manifest.skills ?? []
+          try {
+            await assertNoCompetingSkillClaims(ctx.root, id, skills)
+          } catch (error) {
+            deny(String(error))
+          }
+          const codeDir = resolve(deps.store.codeDir(install))
+          const expectedRoot = resolve(deps.store.releaseDir(id, source.commit))
+          const expectedDir = resolve(expectedRoot, source.path)
+          if (codeDir !== expectedDir || !insidePath(expectedRoot, codeDir))
+            deny(`${id} source provenance does not match its pinned release`)
+          const rootReal = await realpath(expectedRoot).catch(() => null)
+          const codeReal = await realpath(codeDir).catch(() => null)
+          if (rootReal !== expectedRoot || codeReal !== codeDir)
+            deny(`${id} release paths are not canonical`)
+          const manifest = await readManifest(codeDir, source.path).catch(() => null)
+          try {
+            await assertCheckoutIdentity(
+              expectedRoot,
+              source.commit,
+              deps.git.url(source.repo),
+              deps.signal,
+            )
+          } catch {
+            deny(`${id} release checkout does not match its pin`)
+          }
+          if (
+            manifest === null ||
+            canonicalJson(manifest) !== canonicalJson(install.manifest) ||
+            canonicalJson(manifest) !== canonicalJson(manifestFromPin(pin))
+          )
+            deny(`${id} release checkout does not match its pin`)
+          try {
+            await assertManifestPinned(
+              expectedRoot,
+              source.commit,
+              source.path,
+              manifest,
+              deps.signal,
+            )
+          } catch (error) {
+            deny(`${id} manifest does not match pinned Git object: ${String(error)}`)
+          }
+          let expectedSnapshots
+          try {
+            expectedSnapshots = await readPinnedSkillSnapshots(
+              expectedRoot,
+              source.commit,
+              source.path,
+              skills,
+              deps.signal,
+            )
+          } catch (error) {
+            deny(`${id} skills do not match pinned Git objects: ${String(error)}`)
+          }
+          const guard = async () => {
+            ensureLive()
+            const [currentPin, currentInstall, consented, settings] = await Promise.all([
+              readBoundedRegularText(pinPath, 'plugin pin').catch(() => null),
+              deps.store.get(id),
+              deps.consent.has(id, source.commit),
+              readVaultSettings(ctx.root),
+            ])
+            let parsedPin: PluginPin | null = null
+            try {
+              const parsed = parsePluginPin(JSON.parse(currentPin ?? ''))
+              if (parsed.ok) parsedPin = parsed.value
+            } catch {
+              /* fail closed below */
+            }
+            const currentEntry = (await pluginEntries(ctx.root, deps)).find(
+              ({ row }) => row.id === id,
+            )
+            if (
+              !parsedPin ||
+              canonicalJson(parsedPin) !== canonicalJson(pin) ||
+              currentInstall === null ||
+              currentInstall.source.kind !== 'release' ||
+              JSON.stringify(currentInstall.source) !== JSON.stringify(source) ||
+              canonicalJson(currentInstall.manifest) !== canonicalJson(install.manifest) ||
+              !consented ||
+              currentInstall.setup !== 'ok' ||
+              settings.plugins.vault[id] !== true ||
+              !currentEntry?.row.on ||
+              currentEntry.row.status !== 'ready'
+            )
+              deny(`${id} authorization changed during refresh`)
+            const nowRoot = await realpath(expectedRoot).catch(() => null)
+            const nowDir = await realpath(codeDir).catch(() => null)
+            if (nowRoot !== expectedRoot || nowDir !== codeDir)
+              deny(`${id} release provenance changed during refresh`)
+            await assertCheckoutIdentity(
+              expectedRoot,
+              source.commit,
+              deps.git.url(source.repo),
+              deps.signal,
+            ).catch(() => deny(`${id} release provenance changed during refresh`))
+            try {
+              await assertManifestPinned(
+                expectedRoot,
+                source.commit,
+                source.path,
+                install.manifest,
+                deps.signal,
+              )
+            } catch (error) {
+              deny(`${id} manifest provenance changed during refresh: ${String(error)}`)
+            }
+            await assertNoCompetingSkillClaims(ctx.root, id, skills).catch((error) =>
+              deny(String(error)),
+            )
+            ensureLive()
+          }
+          return refreshSkills(install.manifest, codeDir, ctx.root, {
+            force,
+            guard,
+            expectedSnapshots,
+            validateSnapshot: async (snapshots) => {
+              await guard()
+              try {
+                await validateSkillSnapshot(
+                  expectedRoot,
+                  source.commit,
+                  source.path,
+                  skills,
+                  snapshots,
+                  deps.signal,
+                )
+              } catch (error) {
+                deny(`${id} private snapshot does not match pinned Git objects: ${String(error)}`)
+              }
+              await guard()
+            },
+          })
+        }),
+      text: (paths) => paths.join('\n'),
+    }),
+
+    // A running plugin's verbs, `holi plugin <id> <verb> …`: read here and
+    // run by the `holi` script in its own place (`verbs.ts`). Each call asks,
+    // as any command does, until the person allows that plugin's verb.
+    'plugin.run': cap({
+      doors: ['cli'],
+      cli: {
+        args: [],
+        rest: true,
+        summary: "a running community plugin's verbs: holi plugin <id> <verb> [arguments]",
+      },
+      params: (raw): { argv: string[] } => {
+        const argv = paramsObject(raw).argv
+        if (!Array.isArray(argv) || !argv.every((w) => typeof w === 'string'))
+          throw new CapabilityError('BAD_REQUEST', 'argv must be a list of words')
+        return { argv }
+      },
+      run: async (ctx, { argv }): Promise<VerbAnswer> =>
+        admit(async () => {
+          ensureLive()
+          const running: RunningPlugin[] = []
+          for (const { row, install } of await pluginEntries(ctx.root, deps)) {
+            if (!row.running || install === null) continue
+            running.push({
+              id: row.id,
+              name: row.name,
+              ...(install.manifest.cli === undefined ? {} : { cli: install.manifest.cli }),
+              codeDir: deps.store.codeDir(install),
+            })
+          }
+          return resolveVerb(argv, running, ctx.root)
+        }),
+      cliRun: (answer) => (answer.kind === 'run' ? answer.run : null),
+      text: (answer) => (answer.kind === 'text' ? answer.text : ''),
     }),
 
     'community.unpin': cap({
@@ -578,19 +878,21 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.remove': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }) => {
-        // Its servers first: their code is about to go.
-        await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
-        const install = await deps.store.remove(id)
-        await deps.consent.forget(id)
-        deps.checks.forget(ctx.root, id)
-        await linkRunningCommands(ctx.root, deps)
-        if (install?.source.kind === 'release')
-          await rm(join(deps.store.releaseDir(id, install.source.commit), '..'), {
-            recursive: true,
-            force: true,
-          })
-      },
+      run: async (ctx, { id }) =>
+        deps.mutate(async () => {
+          // Its servers first: their code is about to go.
+          await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
+          ensureLive()
+          const install = await deps.store.remove(id)
+          await deps.consent.forget(id)
+          await deps.checks.forget(ctx.root, id)
+          await linkRunningCommands(ctx.root, deps)
+          if (install?.source.kind === 'release')
+            await rm(join(deps.store.releaseDir(id, install.source.commit), '..'), {
+              recursive: true,
+              force: true,
+            })
+        }),
     }),
 
     // The server for a file a plugin opens, started if none is up. Resolves
@@ -600,26 +902,71 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       doors: ['ui'],
       params: pathParam,
       run: async (ctx, { path }) => {
-        const row = await servingPlugin(ctx.root, path)
-        const install = await installOf(row.id)
-        // A folder document's server is given its entry file.
-        const file = await resolveRelative(ctx.root, servedFile(row, path)!)
-        const key = serverKey(ctx.root, row.id, path)
-        const bridge = deps.bridgeScript()
-        const { port } = await deps.supervisor.acquire(key, {
-          cwd: deps.store.codeDir(install),
-          argv: (port) => expandCommand(install.manifest.serve!, { file, vault: ctx.root, port }),
-          env: (port) =>
-            pluginEnv({
-              HOLI_VAULT_ROOT: ctx.root,
-              HOLI_FILE: file,
-              HOLI_PORT: String(port),
-              ...(bridge === null ? {} : { HOLI_BRIDGE_SCRIPT: bridge }),
-            }),
+        const admitted = await admit(async () => {
+          ensureLive()
+          const entries = await pluginEntries(ctx.root, deps)
+          ensureLive()
+          const entry = entries.find(({ row }) => row.on && servedFile(row, path) !== null)
+          if (entry === undefined) throw new CapabilityError('NOT_FOUND', `no plugin opens ${path}`)
+          if (!entry.row.running)
+            throw new CapabilityError(
+              'FORBIDDEN',
+              `${entry.row.name} is not ready on this machine (${entry.row.status})`,
+            )
+          if (entry.install === null)
+            throw new CapabilityError('NOT_FOUND', `${entry.row.id} is not installed here`)
+          const { row, install } = entry
+          const file = await resolveRelative(ctx.root, servedFile(row, path)!)
+          const key = serverKey(ctx.root, row.id, path)
+          const bridge = deps.bridgeScript()
+          const cwd = deps.store.codeDir(install)
+          // Path canonicalization can yield while this attachment is closed.
+          // Do not acquire a server after close's stopAll sweep has passed.
+          ensureLive()
+          const start = deps.supervisor.acquire(key, {
+            cwd,
+            argv: (port) => expandCommand(install.manifest.serve!, { file, vault: ctx.root, port }),
+            env: (port) =>
+              pluginEnv({
+                HOLI_VAULT_ROOT: ctx.root,
+                HOLI_FILE: file,
+                HOLI_PORT: String(port),
+                ...(bridge === null ? {} : { HOLI_BRIDGE_SCRIPT: bridge }),
+              }),
+          })
+          return { row, install, start }
         })
-        const lease = randomUUID()
-        leases.set(lease, key)
-        return { id: row.id, port, lease }
+        // Keep readiness outside the FIFO so a remove/update can stop this start.
+        const acquired = await admitted.start
+        try {
+          return await admit(async () => {
+            ensureLive()
+            const current = await deps.store.get(admitted.row.id)
+            const same =
+              current !== null &&
+              current.source.kind === admitted.install.source.kind &&
+              JSON.stringify(current.source) === JSON.stringify(admitted.install.source) &&
+              current.manifest.version === admitted.install.manifest.version &&
+              deps.store.codeDir(current) === deps.store.codeDir(admitted.install)
+            if (
+              !same ||
+              !acquired.isCurrentAndRunning() ||
+              deps.live?.() === false ||
+              deps.signal?.aborted
+            ) {
+              throw new CapabilityError(
+                'FORBIDDEN',
+                'community installation changed while starting',
+              )
+            }
+            const lease = randomUUID()
+            leases.set(lease, acquired.release)
+            return { id: admitted.row.id, port: acquired.port, lease }
+          })
+        } catch (error) {
+          await acquired.release()
+          throw error
+        }
       },
     }),
 
@@ -627,10 +974,10 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       doors: ['ui'],
       params: (raw: unknown) => ({ lease: stringParam(paramsObject(raw), 'lease') }),
       run: async (_ctx, { lease }) => {
-        const key = leases.get(lease)
-        if (key === undefined) return
+        const release = leases.get(lease)
+        if (release === undefined) return
         leases.delete(lease)
-        await deps.supervisor.release(key)
+        await release()
       },
     }),
 
@@ -648,10 +995,26 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       },
     }),
   } satisfies CapabilityTable
+  for (const capability of Object.values(table)) {
+    const mutable = capability as { run: (ctx: never, params: never) => Promise<unknown> }
+    const run = mutable.run
+    mutable.run = async (ctx, params) => {
+      if (deps.live?.() === false)
+        throw new CapabilityError('FORBIDDEN', 'community attachment is closed')
+      try {
+        return await (deps.run ? deps.run(() => run(ctx, params)) : run(ctx, params))
+      } catch (error) {
+        if (deps.signal?.aborted || deps.live?.() === false)
+          throw new CapabilityError('FORBIDDEN', 'community attachment is closed')
+        throw error
+      }
+    }
+  }
+  return table
 }
 
 /** The vault a server key belongs to, and its file, for events. */
-export function parseServerKey(key: string): { root: string; id: string; path: string } {
+function parseServerKey(key: string): { root: string; id: string; path: string } {
   const [root, id, path] = key.split('\0')
   return { root: root!, id: id!, path: path! }
 }
@@ -692,7 +1055,7 @@ export async function runChecks(
       // Turned off, or no longer ready: what its check said no longer holds,
       // so turning it on again asks afresh.
       if (!row.running) {
-        deps.checks.forget(root, row.id)
+        await deps.checks.forget(root, row.id)
         continue
       }
       if (opts.ids !== undefined && !opts.ids.includes(row.id)) continue

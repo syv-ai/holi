@@ -8,7 +8,6 @@ import { useTable, type ColumnVisibilityState, type ExpandedState } from '@tanst
 
 import { Button } from '@/components/ui/button'
 import {
-  DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -28,6 +27,8 @@ import { Settings2Icon } from 'lucide-react'
 /** List: headerless rows under collapsible status groups, with an Add task
  *  line in each. Table: the same groups under a header, every field a
  *  column, columns switched on and off from Display. */
+import { PlanningDropdownMenu } from '../planning-visibility'
+
 type TaskGridVariant = 'list' | 'table'
 
 const VARIANT_COLUMNS: Record<TaskGridVariant, TaskColumnKey[]> = {
@@ -162,7 +163,7 @@ export function TaskGridView({
         {everyExpanded ? 'Collapse groups' : 'Expand groups'}
       </Button>
       {variant === 'table' ? (
-        <DropdownMenu modal={false}>
+        <PlanningDropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="ghost" size="sm">
               <Settings2Icon data-icon="inline-start" aria-hidden="true" />
@@ -184,7 +185,7 @@ export function TaskGridView({
               ))}
             </DropdownMenuGroup>
           </DropdownMenuContent>
-        </DropdownMenu>
+        </PlanningDropdownMenu>
       ) : null}
     </>
   )

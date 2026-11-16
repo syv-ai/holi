@@ -11,12 +11,16 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom } from '@/plugin-api'
 import { InboxEntries } from '../renderer/agents/inbox-entries'
 import { inboxCountAtom } from '../renderer/state/agents-status'
-import { inboxAtom, type InboxView } from '../renderer/state/inbox'
+import { inboxAtom, openInboxEntryAtom, type InboxView } from '../renderer/state/inbox'
+import { toast } from 'sonner'
 import { agentSessionsAtom, type AgentSession } from '../renderer/state/sessions'
+import { agentsViewAtom } from '../renderer/state/agents-view'
+import { inboxEvents } from '../renderer/state/inbox'
 
 const agentCap = vi.hoisted(() => ({
   inboxSeen: vi.fn(),
   inboxDismiss: vi.fn(),
+  open: vi.fn(),
 }))
 vi.mock('../renderer/agent-cap', () => ({ agentCap }))
 
@@ -44,6 +48,7 @@ const VIEW: InboxView = {
 beforeEach(() => {
   agentCap.inboxSeen.mockReset()
   agentCap.inboxDismiss.mockReset()
+  agentCap.open.mockReset()
   agentCap.inboxSeen.mockImplementation(async () => ({ ...VIEW, unread: 0 }))
 })
 
@@ -71,6 +76,40 @@ test('lists the entries, reads them, and keeps the unread marked', async () => {
   expect(within(rows[2]!).getByText('Mail checked')).not.toHaveClass('font-semibold')
 })
 
+test('the inbox-open event opens its actual session handler target', async () => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(agentSessionsAtom, [
+    { id: 'j0123456789ab', provider: 'codex', name: 'Review', state: 'idle' } as AgentSession,
+  ])
+  agentCap.open.mockResolvedValueOnce({ ok: true, terminalId: 'codex-terminal' })
+  inboxEvents['inbox-open']!(
+    {
+      remote: 'syv/vault',
+      payload: {
+        id: 'job-entry',
+        at: new Date().toISOString(),
+        title: 'Review is ready',
+        line: 'Open the result.',
+        session: 'j0123456789ab',
+      },
+    },
+    store,
+  )
+
+  await vi.waitFor(() =>
+    expect(store.get(agentsViewAtom)).toEqual({
+      kind: 'session',
+      id: 'j0123456789ab',
+    }),
+  )
+  expect(agentCap.open).toHaveBeenCalledWith('syv/vault', {
+    attach: 'j0123456789ab',
+    cols: 80,
+    rows: 24,
+  })
+})
+
 test('X dismisses an entry', async () => {
   const user = userEvent.setup()
   agentCap.inboxDismiss.mockImplementation(async () => ({
@@ -85,6 +124,32 @@ test('X dismisses an entry', async () => {
   )
   expect(screen.queryByText('Offer drafted')).toBeNull()
 })
+
+test.each([{ ok: false, message: 'That Codex job has expired.' }, new Error('IPC disconnected')])(
+  'shows an unavailable-session message when opening a session fails: %o',
+  async (failure) => {
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv/vault')
+    const error = vi.spyOn(toast, 'error').mockImplementation(() => 'toast-id')
+    error.mockClear()
+    agentCap.open.mockReset()
+    if (failure instanceof Error) agentCap.open.mockRejectedValue(failure)
+    else agentCap.open.mockResolvedValue(failure)
+
+    store.set(openInboxEntryAtom, {
+      id: 'job',
+      at: new Date().toISOString(),
+      title: 'Codex run',
+      line: 'Review the result.',
+      session: 'j0123456789ab',
+    })
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith('Could not open agent session', {
+        description: failure.message,
+      }),
+    )
+  },
+)
 
 test("the count leaves out a waiting session's own entry", () => {
   const store = createStore()

@@ -1,5 +1,5 @@
 // ReUI: @reui/tree (`npx shadcn@latest view @reui/tree` shows the published source)
-import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes } from "react"
+import type { CSSProperties, HTMLAttributes, KeyboardEvent as ReactKeyboardEvent } from "react"
 import { createContext, Fragment, useContext } from "react"
 import type { ItemInstance } from "@headless-tree/core"
 import { Slot } from "radix-ui"
@@ -71,10 +71,7 @@ function Tree({
   )
 }
 
-interface TreeItemProps<T = any> extends Omit<
-  ButtonHTMLAttributes<HTMLButtonElement>,
-  "indent"
-> {
+interface TreeItemProps<T = any> extends Omit<HTMLAttributes<HTMLDivElement>, "indent"> {
   item: ItemInstance<T>
   indent?: number
   asChild?: boolean
@@ -109,7 +106,7 @@ function TreeItem<T = any>({
     "data-slot": "tree-item",
     style: mergedStyle,
     className: cn(
-      "z-10 ps-(--tree-padding) outline-hidden select-none not-last:pb-0.5 focus:z-20 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "group/tree-item z-10 ps-(--tree-padding) outline-hidden select-none not-last:pb-0.5 focus:z-20 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       arrived && "motion-in-rise",
       className
     ),
@@ -136,11 +133,40 @@ function TreeItem<T = any>({
     "aria-expanded": item.isExpanded(),
   }
 
-  const Comp = asChild ? Slot.Root : "button"
+  // Headless-tree provides the treeitem role and keyboard handlers; a div
+  // permits accessible row actions without nesting interactive elements.
+  const Comp = asChild ? Slot.Root : "div"
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const headlessKeyDown = itemProps.onKeyDown as
+      | ((event: ReactKeyboardEvent<HTMLDivElement>) => void)
+      | undefined
+    const callerKeyDown = props.onKeyDown
+    callerKeyDown?.(event)
+    headlessKeyDown?.(event)
+    if (
+      event.defaultPrevented ||
+      (event.key !== "Enter" && event.key !== " ") ||
+      event.target !== event.currentTarget ||
+      event.currentTarget.closest("[data-disabled='true']") !== null
+    )
+      return
+    event.preventDefault()
+    event.currentTarget.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+      }),
+    )
+  }
 
   return (
     <TreeContext.Provider value={{ ...parentContext, currentItem: item }}>
-      <Comp {...defaultProps} {...otherProps}>
+      <Comp {...defaultProps} {...otherProps} onKeyDown={handleKeyDown}>
         {children}
       </Comp>
     </TreeContext.Provider>
@@ -150,6 +176,7 @@ function TreeItem<T = any>({
 interface TreeItemLabelProps<T = any> extends HTMLAttributes<HTMLSpanElement> {
   item?: ItemInstance<T>
   asChild?: boolean
+  rowActions?: boolean
 }
 
 function TreeItemLabel<T = any>({
@@ -157,6 +184,7 @@ function TreeItemLabel<T = any>({
   children,
   className,
   asChild = false,
+  rowActions = false,
   ...props
 }: TreeItemLabelProps<T>) {
   const { currentItem, toggleIconType } = useTreeContext<T>()
@@ -174,6 +202,7 @@ function TreeItemLabel<T = any>({
       data-slot="tree-item-label"
       className={cn(
         "in-focus-visible:ring-ring/50 bg-background hover:bg-accent in-data-[selected=true]:bg-accent in-data-[selected=true]:text-accent-foreground in-data-[drag-target=true]:bg-accent flex items-center gap-1 transition-colors not-in-data-[folder=true]:ps-7 in-focus-visible:ring-[3px] in-data-[search-match=true]:bg-blue-50! [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        rowActions && "w-full [&_[data-tree-row-action]]:opacity-0 [&:hover_[data-tree-row-action]]:opacity-100 [&:focus-within_[data-tree-row-action]]:opacity-100 group-focus-within/tree-item:[&_[data-tree-row-action]]:opacity-100 [@media(hover:none)]:[&_[data-tree-row-action]]:opacity-100",
         "rounded-md",
         "py-1.5",
         "px-2",

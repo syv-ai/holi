@@ -164,6 +164,8 @@ export interface RunOptions {
   cwd: string
   env: Record<string, string>
   timeoutMs: number
+  /** Successful `--bg` is the only launch whose descendants outlive the CLI. */
+  retainDescendantsOnSuccess?: boolean
 }
 
 export interface ClaudeCliDeps {
@@ -305,6 +307,7 @@ function defaultRun(bin: string, args: string[], opts: RunOptions): Promise<stri
         timeoutMs: opts.timeoutMs,
         maxBuffer: 1024 * 1024,
         encoding: 'utf8',
+        retainDescendantsOnSuccess: opts.retainDescendantsOnSuccess,
       },
       (err, stdout, stderr) => (err ? reject(new Error(stderr || String(err))) : resolve(stdout)),
     )
@@ -320,12 +323,22 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
   const resolveBin = deps.resolveBin ?? (() => resolveClaudeBin())
   const run = deps.run ?? defaultRun
 
-  async function exec(target: VaultCliTarget, args: string[], timeoutMs: number): Promise<string> {
+  async function exec(
+    target: VaultCliTarget,
+    args: string[],
+    timeoutMs: number,
+    retainDescendantsOnSuccess = false,
+  ): Promise<string> {
     const bin = resolveBin()
     if (bin === null) {
       throw new Error(NOT_INSTALLED)
     }
-    return run(bin, args, { cwd: target.root, env: cliEnv(process.env, target), timeoutMs })
+    return run(bin, args, {
+      cwd: target.root,
+      env: cliEnv(process.env, target),
+      timeoutMs,
+      ...(retainDescendantsOnSuccess ? { retainDescendantsOnSuccess: true } : {}),
+    })
   }
 
   async function action(target: VaultCliTarget, args: string[]): Promise<ActionResult> {
@@ -341,7 +354,7 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
   async function start(target: VaultCliTarget, args: string[]): Promise<StartResult> {
     let stdout: string
     try {
-      stdout = await exec(target, args, ACTION_TIMEOUT_MS)
+      stdout = await exec(target, args, ACTION_TIMEOUT_MS, true)
     } catch (err: unknown) {
       log(`--bg failed: ${String(err)}`)
       return { ok: false, message: err instanceof Error ? err.message : String(err) }
