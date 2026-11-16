@@ -15,15 +15,28 @@ import '../src/renderer/src/index.css'
 const store = createStore()
 store.set(activeRemoteAtom, 'synthetic/mail-vim-vault')
 store.set(vimCodeEditingAtom, true)
-const calls: { op: string; account: string; payload?: unknown }[] = []
+const calls: { op: string; account: string; payload?: unknown; vault?: string; view?: string }[] =
+  []
 ;(window as unknown as { __mailVimCalls: typeof calls }).__mailVimCalls = calls
+const liveContext = {
+  account: 'fixture-account-a',
+  vault: 'synthetic/mail-vim-vault',
+  view: 'thread-a',
+}
+;(window as unknown as { __mailVimContext: typeof liveContext }).__mailVimContext = liveContext
 const imagePolicy = { senders: [] as string[], allSenders: false }
 ;(window as unknown as { __mailVimPolicy: typeof imagePolicy }).__mailVimPolicy = imagePolicy
 Object.defineProperty(window, 'holi', {
   configurable: true,
   value: {
     openExternal: (url: string) =>
-      calls.push({ op: 'openExternal', account: 'fixture-account-a', payload: url }),
+      calls.push({
+        op: 'openExternal',
+        account: liveContext.account,
+        vault: liveContext.vault,
+        view: liveContext.view,
+        payload: url,
+      }),
     trpc: async (op: { path: string }) =>
       op.path === 'settings.read'
         ? {
@@ -74,6 +87,9 @@ function Fixture() {
   const [vault, setVault] = useState('synthetic/mail-vim-vault')
   const setActiveRemote = useSetAtom(activeRemoteAtom)
   const setVim = useSetAtom(vimCodeEditingAtom)
+  liveContext.account = account
+  liveContext.vault = vault
+  liveContext.view = readerView
   useShortcutDispatcher()
   useEffect(() => {
     setVim(true)
@@ -104,6 +120,20 @@ function Fixture() {
       ? () => handle.prepareToLeave()
       : undefined
   }
+  const threadUrl =
+    account === 'fixture-account-a' &&
+    vault === 'synthetic/mail-vim-vault' &&
+    readerView === 'thread-a'
+      ? 'https://example.test/thread'
+      : `https://example.test/${encodeURIComponent(vault)}/${account}/${readerView}`
+  const messageBody = `Fixture message ${account} ${vault} ${readerView}`
+  const isOriginalFixture =
+    account === 'fixture-account-a' &&
+    vault === 'synthetic/mail-vim-vault' &&
+    readerView === 'thread-a'
+  const html = isOriginalFixture
+    ? '<p>Fixture message text</p><p><a href="https://example.test/">Fixture external link</a></p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><img src="https://images.example.test/fixture.png" width="1" height="1" alt="">'
+    : `<p>${messageBody}</p><p><a href="https://example.test/${account}/${readerView}/link">${messageBody} external link</a></p><details><summary>Expand ${messageBody} details</summary><p>${messageBody}</p></details>`
   return (
     <TooltipProvider>
       <main
@@ -126,8 +156,8 @@ function Fixture() {
                   kind: 'ready',
                   thread: {
                     id: 'fixture-thread',
-                    subject: 'Fixture message',
-                    webUrl: 'https://example.test/thread',
+                    subject: `Fixture message ${account} ${readerView}`,
+                    webUrl: threadUrl,
                     messages: [
                       {
                         id: 'fixture-message',
@@ -136,8 +166,8 @@ function Fixture() {
                         cc: [],
                         bcc: [],
                         date: '2026-11-15T12:00:00.000Z',
-                        body: 'Fixture message text',
-                        html: '<p>Fixture message text</p><p><a href="https://example.test/">Fixture external link</a></p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><img src="https://images.example.test/fixture.png" width="1" height="1" alt="">',
+                        body: messageBody,
+                        html,
                         attachments: [
                           { filename: 'fixture.txt', mimeType: 'text/plain', size: 128 },
                         ],

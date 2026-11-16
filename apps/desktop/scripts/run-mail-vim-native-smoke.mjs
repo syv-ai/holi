@@ -518,6 +518,13 @@ try {
     `document.querySelector('[aria-label="Compose mail"]')===null`,
     'composer teardown before isolated frame hints',
   )
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `window.__mailVim.state().account==='fixture-account-a'`,
+    'reader fixture context reset',
+  )
   await click('button')
   await key('Escape')
   const framePoint = await evaluate(
@@ -583,80 +590,187 @@ try {
     `document.querySelector('[data-host-hints]')===null`,
     'native disclosure activation completes the consumed hint session',
   )
-  await focusNativeWindow()
-  await click('button')
-  await key('f')
-  const staleLinkKey = await wait(
-    () =>
-      evaluate(
-        `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')?.getAttribute('data-hint-key')`,
-      ),
-    'exact mail target session before retained hide',
-  )
-  assert(staleLinkKey, 'retained reader session has a native target to invalidate')
   const retainedState = await evaluate(
     `(()=>{window.__mailRetainedFrame=document.querySelector('iframe[aria-label="Message from Fixture"]');window.__mailRetainedFrame.contentWindow.focus();const document_=window.__mailRetainedFrame.contentDocument;const paragraph=document_.querySelector('details p');const range=document_.createRange();range.selectNodeContents(paragraph);const selection=document_.getSelection();selection.removeAllRanges();selection.addRange(range);return selection.toString()})()`,
   )
   assert.equal(retainedState, 'Only static fixture content.')
   assert.equal(
-    await evaluate(
-      `document.querySelector('iframe[aria-label="Message from Fixture"]').contentDocument.querySelector('details').open`,
-    ),
+    await evaluate(`window.__mailRetainedFrame.contentDocument.querySelector('details').open`),
     true,
     'disclosure stays open before retained hide',
   )
+  const startNativeSession = async (label) => {
+    await focusNativeWindow()
+    await click('button')
+    await key('f')
+    const targetKey = await wait(
+      () =>
+        evaluate(
+          `document.querySelector('[data-host-hints] [data-hint-target="${label}"]')?.getAttribute('data-hint-key')`,
+        ),
+      `${label} native target in active session before ${label} transition`,
+    )
+    assert(targetKey, `active native hint session owns exact ${label} target`)
+    assert.equal(await evaluate(`document.querySelector('[data-host-hints]')!==null`), true)
+    assert.equal(
+      await evaluate(
+        `document.querySelector('[data-host-hints] [data-hint-target="${label}"]')!==null`,
+      ),
+      true,
+    )
+    return targetKey
+  }
+  const assertStaleKeyNoAction = async (staleKey, before, description) => {
+    for (const character of staleKey) await key(character)
+    assert.equal(
+      await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`),
+      before,
+      description,
+    )
+  }
+
+  // Retained same-document hide is intentionally isolated from context replacement.
+  const hideKey = await startNativeSession('Fixture external link')
   await evaluate(
     `window.__mailVim.reader(false,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
   )
   await until(
     `document.querySelector('[data-host-hints]')===null`,
-    'hide revokes mail hint session',
+    'active hint session cancelled by hide',
   )
   assert.equal(
     await evaluate(
       `document.querySelector('iframe[aria-label="Message from Fixture"]')===window.__mailRetainedFrame`,
     ),
     true,
-    'hiding the retained reader replaced its sandboxed document',
   )
   assert.equal(
     await evaluate(`window.__mailRetainedFrame.contentDocument.querySelector('details').open`),
     true,
-    'hiding the reader collapsed its native disclosure',
   )
-  const externalCallsBeforeStaleKey = await evaluate(
-    `window.__mailVimCalls.filter(c=>c.op==='openExternal').length`,
-  )
-  for (const character of staleLinkKey) await key(character)
-  assert.equal(
-    await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`),
-    externalCallsBeforeStaleKey,
-    'a hidden reader accepted a stale native hint',
-  )
-  await evaluate(
-    `window.__mailVim.reader(true,'fixture-account-b','thread-b','synthetic/other-vault')`,
-  )
-  await until(
-    `!document.querySelector('iframe[aria-label="Message from Fixture"]').closest('[hidden]')`,
-    'reader shown in B context',
-  )
-  await until(
-    `window.__mailRetainedFrame.contentDocument.getSelection().toString()==='Only static fixture content.'`,
-    'retained native selection restored when reader becomes visible in B',
-  )
-  await evaluate(
-    `window.__mailVim.reader(false,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
-  )
-  await until(
-    `document.querySelector('[data-host-hints]')===null`,
-    'A-B-A reader ownership revoked',
-  )
+  const hideCalls = await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`)
+  await assertStaleKeyNoAction(hideKey, hideCalls, 'hidden reader accepted stale native key')
   await evaluate(
     `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
   )
   await until(
     `window.__mailRetainedFrame.contentDocument.getSelection().toString()==='Only static fixture content.'`,
-    'retained native selection survives the A-B-A reader return',
+    'same-document hide restores selection',
+  )
+
+  // Account, vault and thread changes each get a fresh independently active session.
+  const accountKey = await startNativeSession('Fixture external link')
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-b','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'account transition cancels active native hint session',
+  )
+  const accountCalls = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal').length`,
+  )
+  await assertStaleKeyNoAction(accountKey, accountCalls, 'account transition accepted stale A key')
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/fixture-account-b/thread-a/link'`,
+    'reader document reflects account B URL',
+  )
+  const aCallsBeforeB = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-a').length`,
+  )
+  await click('button')
+  await key('f')
+  const bTarget = await wait(
+    () =>
+      evaluate(
+        `document.querySelector('[data-host-hints] [data-hint-target*="fixture-account-b"]')?.getAttribute('data-hint-key')`,
+      ),
+    'fresh B native target',
+  )
+  assert(bTarget, 'B context exposes its own exact native link target')
+  const bLink = await evaluate(
+    `document.querySelector('[data-host-hints] [data-hint-key="${bTarget}"]').getAttribute('data-hint-target')`,
+  )
+  for (const character of bTarget) await key(character)
+  const bCall = await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').at(-1)`)
+  assert.equal(bCall.account, 'fixture-account-b', 'B target uses live B account binding')
+  assert.equal(bCall.vault, 'synthetic/mail-vim-vault')
+  assert.equal(bCall.view, 'thread-a')
+  assert.equal(bCall.payload, 'https://example.test/fixture-account-b/thread-a/link')
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-b'&&c.payload==='https://example.test/fixture-account-b/thread-a/link').length`,
+    ),
+    1,
+    'B URL/context counter increments once',
+  )
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-a').length`,
+    ),
+    aCallsBeforeB,
+    'B target does not increment A transport counter',
+  )
+  assert(bLink.includes('fixture-account-b'))
+
+  const returnKey = await startNativeSession(bLink)
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'A-B-A return cancels B session',
+  )
+  const returnCalls = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal').length`,
+  )
+  await assertStaleKeyNoAction(
+    returnKey,
+    returnCalls,
+    'A-B-A old B label activated after return to A',
+  )
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/'`,
+    'reader document returns to A URL',
+  )
+
+  const vaultKey = await startNativeSession('Fixture external link')
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/other-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'vault transition cancels active native hint session',
+  )
+  const vaultCalls = await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`)
+  await assertStaleKeyNoAction(vaultKey, vaultCalls, 'vault transition accepted stale native key')
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/fixture-account-a/thread-a/link'`,
+    'reader document reflects new vault context',
+  )
+
+  const viewKey = await startNativeSession(
+    'Fixture message fixture-account-a synthetic/other-vault thread-a external link',
+  )
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-b','synthetic/other-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'thread transition cancels active native hint session',
+  )
+  const viewCalls = await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`)
+  await assertStaleKeyNoAction(viewKey, viewCalls, 'thread transition accepted stale native key')
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/fixture-account-a/thread-b/link'`,
+    'reader view changes rendered document identity',
+  )
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]')?.contentDocument.querySelector('a')?.getAttribute('href')==='https://example.test/'`,
+    'reader restored to original synthetic context',
   )
   await click('button')
   await key('f')
@@ -913,6 +1027,14 @@ try {
   const result = {
     ok: true,
     electron: electronVersion,
+    readerTransitionScenarios: [
+      'retained-reader-hide',
+      'account-a-to-b',
+      'account-b-to-a-return',
+      'vault-change',
+      'thread-view-change',
+    ],
+    independentlyStartedReaderHintSessions: 5,
     checks: [
       'trusted-native-keyboard-and-mouse',
       'recipient-chip-and-payload-persistence',
@@ -927,7 +1049,11 @@ try {
       'attachment-action-opens-provider-thread-without-mark-read-or-draft-side-effects',
       'real-disclosure-activation-preserves-native-details-behavior',
       'retained-reader-hide-revokes-hints-and-restores-disclosure-and-selection',
-      'account-vault-view-A-B-A-revokes-stale-reader-hints-and-current-hints-still-work',
+      'account-transition-starts-independent-active-session-and-rejects-stale-A-key',
+      'account-B-link-action-increments-only-live-B-url-and-context-counter',
+      'A-B-A-return-revokes-old-B-session-and-rejects-its-label',
+      'vault-transition-starts-independent-active-session-and-rejects-stale-key',
+      'thread-view-transition-starts-independent-active-session-and-rejects-stale-key',
       'viewport-zoom-revokes-stale-native-targets-before-current-operation',
       'covering-overlay-and-target-removal-revoke-native-actions',
       'remote-image-consent-grant-and-revoke-rewrite-and-reregister-native-mail-targets',
