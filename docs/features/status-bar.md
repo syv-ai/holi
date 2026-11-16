@@ -70,7 +70,8 @@ rather than unmounted, so a closed panel keeps the shells' scrollback.
 Windows `$SHELL` if they set one to a Windows path (Git Bash does for its own children; a Cygwin `/bin/bash` is no path node-pty can start), else PowerShell 7 (`pwsh`, found
 on the tool `PATH`) if installed, else Windows PowerShell (`default-shell.ts`). It is not always started `-l` there: that is not a PowerShell switch (it exits 1),
 so PowerShell gets `-NoLogo` and, with the integration below, `-NoExit -Command`; cmd and
-`wsl.exe` (where `-l` lists distributions) take no arguments. Git Bash, MSYS zsh and other
+`wsl.exe` (where `-l` lists distributions) take no arguments. Git Bash gets `--init-file` with the
+integration below (its script reads what a login bash would); without it, Git Bash, MSYS zsh and other
 shells keep `-l`. On Windows shell names are matched with or without `.exe`. It runs in
 the open vault's clone, with `TERM=xterm-256color` and the `holi` command on `PATH`. It is core's
 (`main/terminal/`), not the agent plugin's: a terminal is a terminal whatever the vault runs, and
