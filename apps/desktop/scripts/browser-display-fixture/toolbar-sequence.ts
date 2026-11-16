@@ -436,6 +436,12 @@
   await composed('ui-dark.png')
   await ui('document.documentElement.dataset.theme="light"')
   await field(`document.documentElement.style.colorScheme='light'`)
+  await field(
+    `(() => { const host=document.querySelector('#plaintext'); host.focus(); const range=document.createRange(); range.setStart(host.firstChild,0); range.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(range) })()`,
+  )
+  assert.equal(await field('document.activeElement.id'), 'plaintext')
+  await trustedPress(view, 'Escape')
+  await badge('normal')
   let recording = true
   let frame = 0
   mkdirSync(join(evidence, 'frames'), { recursive: true })
@@ -447,9 +453,17 @@
     }
   })()
   await pause(600)
+  const pageMode = async () =>
+    view.webContents.executeJavaScriptInIsolatedWorld(1017, [
+      { code: '__holiPage.vim.mode().mode' },
+    ])
+  assert.equal(await pageMode(), 'normal', 'recording starts in page normal mode')
+  assert.equal(await field(`document.querySelector('#plaintext').textContent`), 'one two three')
   await trustedPress(view, '0')
+  assert.equal(await pageMode(), 'normal', '0 keeps page normal mode')
   await pause(600)
   await trustedPress(view, 'w')
+  assert.equal(await pageMode(), 'normal', 'w keeps page normal mode')
   await pause(600)
   await trustedPress(view, 'i')
   await badge('insert')
@@ -477,6 +491,28 @@
     await field(`document.querySelector('#plaintext').textContent`),
     'one native two three!',
   )
+  const originalRichMarkup = '<strong>bold</strong> <a href="/next">café🙂 link</a><em></em>'
+  await field(`document.querySelector('#rich').innerHTML=${JSON.stringify(originalRichMarkup)}`)
+  await field(
+    `(() => { const host=document.querySelector('#rich'); const node=host.querySelector('a').firstChild; host.focus(); const range=document.createRange(); range.setStart(node,5); range.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(range) })()`,
+  )
+  await trustedPress(view, 'Escape')
+  await badge('normal')
+  await trustedPress(view, 'l')
+  assert.equal(await field('getSelection().anchorOffset'), 7)
+  await trustedPress(view, 'i')
+  await badge('insert')
+  await trustedPress(view, 'x')
+  const changedRichMarkup = await field(`document.querySelector('#rich').innerHTML`)
+  assert.equal(changedRichMarkup, '<strong>bold</strong> <a href="/next">café🙂x link</a><em></em>')
+  await trustedPress(view, 'Escape')
+  await badge('normal')
+  view.webContents.undo()
+  await pause(500)
+  assert.equal(await field(`document.querySelector('#rich').innerHTML`), originalRichMarkup)
+  view.webContents.redo()
+  await pause(500)
+  assert.equal(await field(`document.querySelector('#rich').innerHTML`), changedRichMarkup)
   await pause(800)
   recording = false
   await recordingLoop
@@ -494,10 +530,14 @@
       trusted,
       finalValue: await field(`document.querySelector('#plaintext').textContent`),
       source: process.env.HOLI_553_SHA,
+      sourceHash: process.env.HOLI_553_SOURCE_HASH,
+      worktree: process.env.HOLI_553_WORKTREE,
+      worktreeStatus: process.env.HOLI_553_STATUS,
       capture: 'actual host and native page frames composed at native view bounds',
     }),
   )
   mark('production-toolbar-native-interaction-light-dark-and-trusted-recording')
+  mark('native-rich-contenteditable-recorded')
   await ui('qa.setVisible(false)')
   await pause(200)
   await win.loadURL('data:text/html,<h1>Holi shell: no browser page attached</h1>')

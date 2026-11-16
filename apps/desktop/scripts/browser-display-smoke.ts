@@ -63,7 +63,11 @@ async function run(): Promise<void> {
       <label>Readonly <input aria-label="Readonly" id="readonly" value="locked" readonly></label>
       <label>Editable <div aria-label="Editable" id="editable" contenteditable="true">edit me</div></label>
       <label>Plain text <div aria-label="Plain text" id="plaintext" contenteditable="plaintext-only">café🙂 two</div></label>
+      <label>Rich text <div aria-label="Rich text" id="rich" contenteditable="true" style="border:1px solid currentColor;padding:8px"><strong>bold</strong> <a href="/next">café🙂 link</a><em></em></div></label>
       <label>Empty plain text <div aria-label="Empty plain text" id="plaintext-empty" contenteditable="plaintext-only"></div></label>
+      <label>Block-shaped rich host <div id="rich-block" contenteditable="true" style="display:block"><span style="display:block">one</span><span style="display:block">two</span></div></label>
+      <label>Atomic rich host <div id="rich-atom" contenteditable="true">one<img src="data:," alt="atom">two</div></label>
+      <label>Nested rich host <div id="rich-nested" contenteditable="true"><span contenteditable="true">nested</span></div></label>
       <label>Not editable <div aria-label="Not editable" id="inert" contenteditable="false">inert</div></label>
       <label>Graphemes <textarea aria-label="Graphemes" id="graphemes">a café🙂 z</textarea></label>
       <label>Rows <textarea aria-label="Rows" id="rows">  alpha beta\n  gamma delta\n  omega</textarea></label>
@@ -478,13 +482,12 @@ async function run(): Promise<void> {
     ['#number', '1', '1'],
     ['#readonly', 'a', 'locked'],
     ['#inert', 'a', 'inert'],
-    ['#editable', 'a', 'a'],
   ] as const) {
     await inPage(a, `document.querySelector('${selector}').focus()`)
     await nativePress(a, key)
     const value = await inPage<string>(
       a,
-      `document.querySelector('${selector}').${selector === '#editable' || selector === '#inert' ? 'innerText' : 'value'}`,
+      `document.querySelector('${selector}').${selector === '#inert' ? 'innerText' : 'value'}`,
     )
     assert(value.includes(expected), `${selector} passthrough: ${value}`)
   }
@@ -510,6 +513,19 @@ async function run(): Promise<void> {
     'aframe',
   )
   mark('unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough')
+  for (const selector of ['#rich-block', '#rich-atom', '#rich-nested']) {
+    await inPage(a, `document.querySelector('${selector}').focus()`)
+    const before = await inPage<string>(a, `document.querySelector('${selector}').innerHTML`)
+    await nativePress(a, 'Escape')
+    await nativePress(a, 'w')
+    const after = await inPage<string>(a, `document.querySelector('${selector}').innerHTML`)
+    assert.notEqual(after, before, `${selector} accepts native text instead of swallowing it`)
+    const mode = await a.webContents.executeJavaScriptInIsolatedWorld(1017, [
+      { code: '__holiPage.vim.mode().mode' },
+    ])
+    assert.equal(mode, 'insert', `${selector} cannot enter normal mode`)
+  }
+  mark('rich-block-atom-and-nested-hosts-remain-native')
   const setPlainSelection = (selector: string, offset = 0) =>
     inPage(
       a,
@@ -546,6 +562,160 @@ async function run(): Promise<void> {
     plainAfterInsert,
   )
   mark('native-plaintext-only-motion-insert-and-native-undo-redo')
+
+  const originalRichMarkup = await inPage<string>(a, `document.querySelector('#rich').innerHTML`)
+  await applyVimConfig(vimSnapshot, false, 7)
+  const setLinkStart = () =>
+    inPage(
+      a,
+      `(() => { const host=document.querySelector('#rich'); const n=host.querySelector('a').firstChild; host.focus(); const r=document.createRange(); r.setStart(n,0); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r) })()`,
+    )
+  const richSelection = () =>
+    inPage(
+      a,
+      `(() => { const s=getSelection(); const n=s.anchorNode; return { node:n?.nodeName, parent:n?.parentElement?.tagName, offset:s.anchorOffset, text:n?.textContent, collapsed:s.isCollapsed } })()`,
+    )
+  // Establish Blink's actual affinity at an anchor's first text offset without
+  // enabling Holi Vim. The enabled path must preserve this exact selection and
+  // the same markup/undo behavior, rather than assume the insertion belongs in
+  // the link based on a guessed Range affinity.
+  await setLinkStart()
+  const nativeBefore = await richSelection()
+  await nativePress(a, 'X')
+  const nativeBaselineMarkup = await inPage<string>(a, `document.querySelector('#rich').innerHTML`)
+  const nativeBaselineSelection = await richSelection()
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#rich').innerHTML`),
+    originalRichMarkup,
+  )
+  a.webContents.redo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#rich').innerHTML`),
+    nativeBaselineMarkup,
+  )
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  await applyVimConfig(vimSnapshot, true, 8)
+  await setLinkStart()
+  assert.deepEqual(await richSelection(), nativeBefore)
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'i')
+  assert.deepEqual(await richSelection(), nativeBefore, 'Escape → i preserves the native Range')
+  await nativePress(a, 'X')
+  const affinityMarkup = await inPage<string>(a, `document.querySelector('#rich').innerHTML`)
+  assert.equal(affinityMarkup, nativeBaselineMarkup, 'Vim insertion matches native baseline markup')
+  assert.deepEqual(await richSelection(), nativeBaselineSelection)
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#rich').innerHTML`),
+    originalRichMarkup,
+  )
+  a.webContents.redo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(await inPage<string>(a, `document.querySelector('#rich').innerHTML`), affinityMarkup)
+  const vimAfterSelection = await richSelection()
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  mark('native-baseline-and-vim-rich-link-start-affinity-undo-redo')
+  const richBaselineEvidence = {
+    baselineMode: 'disabled',
+    markup: nativeBaselineMarkup,
+    beforeSelection: nativeBefore,
+    afterSelection: nativeBaselineSelection,
+    vimMarkup: affinityMarkup,
+    vimAfterSelection,
+  }
+  writeFileSync(join(evidence, 'rich-affinity.json'), JSON.stringify(richBaselineEvidence, null, 2))
+  await inPage(
+    a,
+    `(() => { const host = document.querySelector('#rich'); const node = host.querySelector('strong').firstChild; host.focus(); const range = document.createRange(); range.setStart(node, 0); range.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(range) })()`,
+  )
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'w')
+  assert.equal(
+    await inPage<boolean>(
+      a,
+      `(() => { const host = document.querySelector('#rich'); const s = getSelection(); return host.contains(s.anchorNode) && s.anchorNode.parentElement.closest('a') === host.querySelector('a') })()`,
+    ),
+    true,
+    'word motion crosses the bold-to-link formatting boundary without flattening markup',
+  )
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#rich').innerHTML`),
+    originalRichMarkup,
+  )
+  await inPage(
+    a,
+    `(() => { const host = document.querySelector('#rich'); const node = host.querySelector('a').firstChild; const range = document.createRange(); range.setStart(node, 5); range.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(range) })()`,
+  )
+  await nativePress(a, 'l')
+  assert.equal(
+    await inPage<number>(a, `getSelection().anchorOffset`),
+    7,
+    'l crosses an emoji grapheme atomically',
+  )
+  await nativePress(a, 'i')
+  await nativePress(a, 'x')
+  const changedRichMarkup = await inPage<string>(a, `document.querySelector('#rich').innerHTML`)
+  assert.notEqual(changedRichMarkup, originalRichMarkup)
+  assert.match(changedRichMarkup, /<a href="\/next">café🙂x link<\/a>/)
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#rich').innerHTML`),
+    originalRichMarkup,
+  )
+  a.webContents.redo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#rich').innerHTML`),
+    changedRichMarkup,
+  )
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  await inPage(
+    a,
+    `(() => { const host = document.querySelector('#rich'); const node = host.querySelector('a').firstChild; host.focus(); const range = document.createRange(); range.setStart(node, 0); range.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(range) })()`,
+  )
+  await nativePress(a, 'Escape')
+  await inPage(
+    a,
+    `(() => { const host=document.querySelector('#rich'); host.style.display='inline'; host.style.display='block' })()`,
+  )
+  await nativePress(a, 'Q')
+  const richAfterShapeTransition = await inPage<string>(
+    a,
+    `document.querySelector('#rich').innerHTML`,
+  )
+  assert.notEqual(richAfterShapeTransition, originalRichMarkup)
+  assert.equal(
+    await a.webContents.executeJavaScriptInIsolatedWorld(1017, [
+      { code: '__holiPage.vim.mode().mode' },
+    ]),
+    'insert',
+    'CSS eligibility transition retires rich normal-mode ownership',
+  )
+  mark('rich-css-loss-and-restoration-retains-native-key-ownership')
+  await inPage(a, `document.querySelector('#rich').innerHTML=${JSON.stringify(originalRichMarkup)}`)
+  await setLinkStart()
+  if (!a.webContents.debugger.isAttached()) a.webContents.debugger.attach('1.3')
+  await a.webContents.debugger.sendCommand('Input.imeSetComposition', {
+    text: '日本語',
+    selectionStart: 3,
+    selectionEnd: 3,
+  })
+  await a.webContents.debugger.sendCommand('Input.insertText', { text: '日本語' })
+  const composedRichMarkup = await inPage<string>(a, `document.querySelector('#rich').innerHTML`)
+  assert.match(composedRichMarkup, /<strong>bold<\/strong>/)
+  assert(composedRichMarkup.includes('日本語'))
+  assert.match(composedRichMarkup, /<a href="\/next">café🙂 link<\/a>/)
+  mark('native-rich-inline-ime-composition-retains-formatting-and-link')
+  mark('native-rich-inline-motion-insert-undo-redo-preserves-formatting-and-link')
+
   await setPlainSelection('#plaintext')
   await nativePress(a, 'Escape')
   if (!a.webContents.debugger.isAttached()) a.webContents.debugger.attach('1.3')
@@ -578,7 +748,7 @@ async function run(): Promise<void> {
   )
   mark('plaintext-shape-loss-and-restoration-invalidates-normal-ownership')
 
-  await applyVimConfig(vimSnapshot, false, 5)
+  await applyVimConfig(vimSnapshot, false, 9)
   await setPlainSelection('#plaintext')
   const disabledPlain = await inPage<string>(a, `document.querySelector('#plaintext').textContent`)
   await nativePress(a, 'q')
@@ -586,7 +756,7 @@ async function run(): Promise<void> {
     await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
     disabledPlain,
   )
-  await applyVimConfig(vimSnapshot, true, 6)
+  await applyVimConfig(vimSnapshot, true, 10)
   await setPlainSelection('#plaintext')
   await nativePress(a, 'Escape')
   mark('plaintext-live-preference-off-passes-native-typing')
@@ -647,7 +817,7 @@ async function run(): Promise<void> {
   assert((await inPage<string>(a, `document.querySelector('#text').value`)).includes('日本語'))
   mark('native-ime-composition-in-insert-mode')
   await inPage(a, `document.querySelector('#text').value = 'one two three'`)
-  await applyVimConfig(vimSnapshot, false, 7)
+  await applyVimConfig(vimSnapshot, false, 11)
   await inPage(
     a,
     `document.querySelector('#text').focus(); document.querySelector('#text').setSelectionRange(0, 0)`,
@@ -658,7 +828,7 @@ async function run(): Promise<void> {
     'zone two three',
     'disabled preference passes input through',
   )
-  await applyVimConfig(vimSnapshot, true, 8)
+  await applyVimConfig(vimSnapshot, true, 12)
   await inPage(a, `document.querySelector('#text').focus()`)
   await nativePress(a, 'Escape')
   const reenabledMode = await waitFor(() => {

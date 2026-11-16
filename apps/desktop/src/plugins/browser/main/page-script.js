@@ -311,6 +311,7 @@
   function fill(ref, text) {
     const el = find(ref)
     if (el === null) return false
+    if (richHost(el)) return false
     if (el.tagName === 'SELECT') {
       const option = [...el.options].find(
         (o) => squash(o.textContent) === squash(text) || o.value === text,
@@ -340,28 +341,46 @@
     return { top: Math.round(page.scrollTop), atTop: page.scrollTop <= 0, atEnd }
   }
 
-  // Native textarea/input editing stays in this isolated world. The host
-  // configures one specific document and revisions only move forward.
+  // Native field and supported contenteditable motions stay in this isolated
+  // world. The host configures one specific document and revisions only move forward.
   const newVimNonce = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
   let vimNonce = newVimNonce()
   let vimEnabled = false
   let vimMode = 'insert'
   let vimRevision = 0
   let vimField = null
-  let vimPlainHost = false
+  let vimObservedHost = false
   let verticalColumn = null
   const vimTypes = new Set(['text', 'search', 'url', 'tel'])
   const nativeTextTags = new Set(['DIV', 'SPAN', 'P', 'LABEL'])
-  const plainHost = (el) => {
-    const editorSelector =
-      '[role="textbox"], [data-lexical-editor], [data-slate-editor], [data-tiptap-editor], .ProseMirror, .CodeMirror'
+  // Rich hosts stay page-owned. Only this small inline-tag vocabulary is
+  // eligible; any block, atom, custom editor, or nested editable host stays native.
+  const richInlineTags = new Set([
+    'A',
+    'B',
+    'STRONG',
+    'I',
+    'EM',
+    'U',
+    'S',
+    'STRIKE',
+    'SUB',
+    'SUP',
+    'SPAN',
+    'CODE',
+    'MARK',
+    'SMALL',
+    'DEL',
+    'INS',
+  ])
+  const editorSelector =
+    '[role="textbox"], [data-lexical-editor], [data-slate-editor], [data-tiptap-editor], .ProseMirror, .CodeMirror'
+  const eligibleEnvelope = (el, kind) => {
     if (
       !(el instanceof HTMLElement) ||
       !nativeTextTags.has(el.tagName) ||
       el.localName.includes('-') ||
-      el.getAttribute('contenteditable')?.toLowerCase() !== 'plaintext-only' ||
-      ![...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE) ||
-      /[\r\n]/u.test(el.textContent) ||
+      el.getAttribute('contenteditable')?.toLowerCase() !== kind ||
       document.designMode === 'on' ||
       el.matches(editorSelector) ||
       el.querySelector(editorSelector)
@@ -373,15 +392,51 @@
     }
     return true
   }
+  const plainHost = (el) =>
+    eligibleEnvelope(el, 'plaintext-only') &&
+    [...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE) &&
+    !/[\r\n]/u.test(el.textContent)
+  const richHost = (el) => {
+    if (!eligibleEnvelope(el, 'true')) return false
+    const visit = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return !/[\r\n]/u.test(node.nodeValue || '')
+      if (node.nodeType !== Node.ELEMENT_NODE) return false
+      const child = node
+      if (!richInlineTags.has(child.tagName) || child.getAttribute('contenteditable') != null)
+        return false
+      const style = getComputedStyle(child)
+      if (
+        style.display !== 'inline' ||
+        style.visibility === 'hidden' ||
+        style.visibility === 'collapse' ||
+        style.userSelect === 'none' ||
+        child.matches(
+          'img, br, input, button, select, textarea, iframe, video, audio, canvas, svg, [contenteditable="false"]',
+        )
+      )
+        return false
+      if (child.tagName === 'A' && !child.hasAttribute('href')) return false
+      return [...child.childNodes].every(visit)
+    }
+    if (![...el.childNodes].every(visit)) return false
+    const style = getComputedStyle(el)
+    return (
+      style.display === 'block' &&
+      style.visibility !== 'hidden' &&
+      style.visibility !== 'collapse' &&
+      style.userSelect !== 'none'
+    )
+  }
   const vimEligible = (el) =>
     el instanceof HTMLTextAreaElement ||
     (el instanceof HTMLInputElement && vimTypes.has(el.type)) ||
-    plainHost(el)
+    plainHost(el) ||
+    richHost(el)
   const resetOwnership = () => {
     vimMode = 'insert'
     verticalColumn = null
   }
-  const invalidatesPlainHost = (record, host) => {
+  const invalidatesHost = (record, host) => {
     const changed = record.target
     if (changed === host || host.contains(changed)) return true
     if (record.type === 'attributes' && changed.nodeType === 1 && changed.contains(host))
@@ -393,25 +448,25 @@
       )
     )
   }
-  const flushPlainHostMutations = () => {
-    if (!vimPlainHost || !vimField || vimField.nodeType !== 1) return false
-    const records = plainHostObserver.takeRecords()
-    if (records.some((record) => invalidatesPlainHost(record, vimField))) {
+  const flushHostMutations = () => {
+    if (!vimObservedHost || !vimField || vimField.nodeType !== 1) return false
+    const records = hostMutationObserver.takeRecords()
+    if (records.some((record) => invalidatesHost(record, vimField))) {
       resetOwnership()
       return true
     }
     return false
   }
-  const plainHostObserver = new MutationObserver((records) => {
+  const hostMutationObserver = new MutationObserver((records) => {
     if (
-      vimPlainHost &&
+      vimObservedHost &&
       vimField &&
       vimField.nodeType === 1 &&
-      records.some((record) => invalidatesPlainHost(record, vimField))
+      records.some((record) => invalidatesHost(record, vimField))
     )
       resetOwnership()
   })
-  plainHostObserver.observe(document, {
+  hostMutationObserver.observe(document, {
     subtree: true,
     childList: true,
     characterData: true,
@@ -423,10 +478,12 @@
       'data-lexical-editor',
       'data-slate-editor',
       'data-tiptap-editor',
+      'style',
+      'hidden',
     ],
   })
   const eligibleNow = () => {
-    flushPlainHostMutations()
+    flushHostMutations()
     const eligible =
       vimEnabled &&
       vimField !== null &&
@@ -436,7 +493,7 @@
       !vimField.readOnly &&
       vimEligible(vimField) &&
       vimField.getRootNode() === document &&
-      (!plainHost(vimField) || selectionFor(vimField) !== null)
+      (!(plainHost(vimField) || richHost(vimField)) || selectionFor(vimField) !== null)
     if (!eligible) {
       vimMode = 'insert'
       verticalColumn = null
@@ -444,7 +501,7 @@
     return eligible
   }
   const selectionFor = (host) => {
-    if (!plainHost(host)) return null
+    if (!plainHost(host) && !richHost(host)) return null
     const selection = host.ownerDocument.getSelection()
     if (
       !selection ||
@@ -455,17 +512,29 @@
       (!host.contains(selection.focusNode) && selection.focusNode !== host)
     )
       return null
+    const textNodes = []
+    const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) textNodes.push(node)
     const offsetOf = (node, offset) => {
       let total = 0
-      for (const child of host.childNodes) {
-        if (child === node) return total + (node.nodeType === Node.TEXT_NODE ? offset : 0)
-        total += child.textContent.length
+      for (const text of textNodes) {
+        if (text === node) return total + offset
+        if (text.contains?.(node)) return null
+        total += text.textContent.length
       }
-      return node === host
-        ? [...host.childNodes]
-            .slice(0, offset)
-            .reduce((n, child) => n + child.textContent.length, 0)
-        : null
+      if (node === host) {
+        const range = host.ownerDocument.createRange()
+        range.setStart(host, 0)
+        range.setEnd(host, offset)
+        return range.toString().length
+      }
+      if (node.nodeType === Node.ELEMENT_NODE && host.contains(node)) {
+        const range = host.ownerDocument.createRange()
+        range.setStart(host, 0)
+        range.setEnd(node, offset)
+        return range.toString().length
+      }
+      return null
     }
     const range = selection.getRangeAt(0)
     const start = offsetOf(range.startContainer, range.startOffset)
@@ -474,11 +543,14 @@
   }
   const placeCaret = (host, offset) => {
     let remaining = Math.max(0, Math.min(host.textContent.length, offset))
+    const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_TEXT)
+    const nodes = []
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node)
     const range = host.ownerDocument.createRange()
-    for (const child of host.childNodes) {
-      const length = child.textContent.length
-      if (remaining <= length) {
-        range.setStart(child, remaining)
+    for (const node of nodes) {
+      const length = node.textContent.length
+      if (remaining < length || (remaining === 0 && length === 0)) {
+        range.setStart(node, remaining)
         range.collapse(true)
         const selection = host.ownerDocument.getSelection()
         selection.removeAllRanges()
@@ -493,14 +565,15 @@
     selection.removeAllRanges()
     selection.addRange(range)
   }
-  const fieldValue = (el) => (plainHost(el) ? el.textContent : el.value)
+  const isNativeHost = (el) => plainHost(el) || richHost(el)
+  const fieldValue = (el) => (isNativeHost(el) ? el.textContent : el.value)
   const fieldSelection = (el) => {
-    if (!plainHost(el))
+    if (!isNativeHost(el))
       return { start: el.selectionStart ?? 0, end: el.selectionEnd ?? el.selectionStart ?? 0 }
     const selection = selectionFor(el)
     return selection ? { start: selection.start, end: selection.end } : null
   }
-  const setCaret = (el, offset) => (plainHost(el) ? placeCaret(el, offset) : move(el, offset))
+  const setCaret = (el, offset) => (isNativeHost(el) ? placeCaret(el, offset) : move(el, offset))
   const graphemes = (value) => {
     const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
     return [...segmenter.segment(value)].map(({ index, segment }) => ({
@@ -573,7 +646,7 @@
   }
   const onVimKey = (event) => {
     const target = event.target
-    flushPlainHostMutations()
+    flushHostMutations()
     if (
       !vimEnabled ||
       !vimEligible(target) ||
@@ -588,7 +661,7 @@
     }
     if (vimField !== target) {
       vimField = target
-      vimPlainHost = plainHost(target)
+      vimObservedHost = isNativeHost(target)
       vimMode = 'insert'
       verticalColumn = null
     }
@@ -670,7 +743,7 @@
     }
     event.preventDefault()
     if (enteringInsert) {
-      setCaret(target, destination)
+      if (!(key === 'i' && isNativeHost(target))) setCaret(target, destination)
       vimMode = 'insert'
       verticalColumn = null
       return
@@ -691,9 +764,9 @@
         !event.target.disabled &&
         !event.target.readOnly
       ) {
-        plainHostObserver.takeRecords()
+        hostMutationObserver.takeRecords()
         vimField = event.target
-        vimPlainHost = plainHost(event.target)
+        vimObservedHost = isNativeHost(event.target)
         vimMode = 'insert'
         verticalColumn = null
       }
@@ -705,7 +778,7 @@
     (event) => {
       if (vimField === event.target) {
         vimField = null
-        vimPlainHost = false
+        vimObservedHost = false
         vimMode = 'insert'
         verticalColumn = null
       }
@@ -715,7 +788,7 @@
   document.addEventListener(
     'selectionchange',
     () => {
-      if (vimField && vimField.nodeType === 1 && plainHost(vimField) && !selectionFor(vimField))
+      if (vimField && vimField.nodeType === 1 && isNativeHost(vimField) && !selectionFor(vimField))
         resetOwnership()
     },
     true,
@@ -730,7 +803,7 @@
       vimEnabled = false
       vimMode = 'insert'
       vimField = null
-      vimPlainHost = false
+      vimObservedHost = false
       verticalColumn = null
       return vimNonce
     },
@@ -746,7 +819,7 @@
       vimEnabled = enabled
       vimMode = 'insert'
       vimField = null
-      vimPlainHost = false
+      vimObservedHost = false
       verticalColumn = null
       return true
     },

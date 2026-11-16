@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { externalizeDepsPlugin } from 'electron-vite'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -70,6 +71,7 @@ await build({
     },
   },
 })
+await rm(join(evidence, 'frames'), { recursive: true, force: true })
 for (const name of [
   'result.json',
   'electron-smoke.log',
@@ -82,6 +84,7 @@ for (const name of [
   'app-frame-read-b.png',
   'browser-dark.png',
   'recording.json',
+  'rich-affinity.json',
   'ui-light.png',
   'ui-dark.png',
   'interaction.mp4',
@@ -175,6 +178,22 @@ try {
     HOLI_553_RENDERER: join(root, 'renderer'),
     HOLI_553_PRELOAD: join(fixture, 'preload.cjs'),
     HOLI_553_SHA: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    HOLI_553_WORKTREE: execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+    }).trim(),
+    HOLI_553_STATUS: execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(),
+    HOLI_553_SOURCE_HASH: createHash('sha256')
+      .update(
+        [
+          'apps/desktop/src/plugins/browser/main/page-script.js',
+          'apps/desktop/scripts/browser-display-smoke.ts',
+          'apps/desktop/scripts/browser-display-fixture/toolbar-sequence.ts',
+          'apps/desktop/scripts/run-browser-display-smoke.mjs',
+        ]
+          .map((path) => `${path}\0${readFileSync(join(desktop, '..', '..', path))}`)
+          .join('\0'),
+      )
+      .digest('hex'),
   }
   delete env.ELECTRON_RUN_AS_NODE
   const launch = spawn(electron, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -200,7 +219,7 @@ try {
         timeout = setTimeout(() => {
           child.kill()
           reject(new Error('Electron smoke timed out'))
-        }, 60_000)
+        }, 150_000)
       }),
     ])
   } finally {
@@ -246,6 +265,8 @@ try {
           'native-same-id-replacement-gets-fresh-vim-owner',
           'native-composition-preserves-unmodified-insert-path',
           'production-toolbar-native-interaction-light-dark-and-trusted-recording',
+          'native-rich-contenteditable-recorded',
+          'native-baseline-and-vim-rich-link-start-affinity-undo-redo',
           'plaintext-host-replacement-releases-old-owner',
         ]
       : []),
@@ -257,6 +278,9 @@ try {
     'native-j-k-vertical-column',
     'unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough',
     'native-plaintext-only-motion-insert-and-native-undo-redo',
+    'native-rich-inline-motion-insert-undo-redo-preserves-formatting-and-link',
+    'rich-css-loss-and-restoration-retains-native-key-ownership',
+    'native-rich-inline-ime-composition-retains-formatting-and-link',
     'native-plaintext-ime-composition-remains-native',
     'plaintext-live-preference-off-passes-native-typing',
     'plaintext-shape-loss-and-restoration-invalidates-normal-ownership',
@@ -319,6 +343,24 @@ try {
       'recording lacks trusted native input',
     )
     assert.equal(recording.source, env.HOLI_553_SHA, 'recording source HEAD mismatch')
+    assert.equal(recording.sourceHash, env.HOLI_553_SOURCE_HASH, 'recording source hash mismatch')
+    assert.equal(recording.worktree, env.HOLI_553_WORKTREE, 'recording worktree mismatch')
+    assert.equal(
+      recording.worktreeStatus,
+      env.HOLI_553_STATUS,
+      'recording worktree status mismatch',
+    )
+    const affinity = JSON.parse(await readFile(join(evidence, 'rich-affinity.json'), 'utf8'))
+    assert.equal(affinity.baselineMode, 'disabled')
+    assert.deepEqual(affinity.vimMarkup, affinity.markup)
+    assert.deepEqual(affinity.vimAfterSelection, affinity.afterSelection)
+    assert.deepEqual(affinity.beforeSelection, {
+      node: '#text',
+      parent: 'A',
+      offset: 0,
+      text: 'café🙂 link',
+      collapsed: true,
+    })
   }
   assert(
     typeof result.electron === 'string' && result.electron.length > 0,

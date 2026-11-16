@@ -558,6 +558,166 @@ test.each(['input', 'textarea'] as const)(
   },
 )
 
+test('rich inline native hosts retain formatting and links while motions cross nodes', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'true')
+  host.setAttribute('tabindex', '0')
+  host.setAttribute('aria-label', 'rich')
+  host.style.display = 'block'
+  Object.defineProperty(host, 'isContentEditable', { value: true })
+  host.innerHTML =
+    '<strong style="display:inline">café</strong><a href="/next" style="display:inline">🙂 two</a><em style="display:inline"></em>'
+  document.body.append(host)
+  host.focus()
+  const originalMarkup = host.innerHTML
+  const richReference = Number(
+    holi()
+      .read(12_000)
+      .text.match(/\[(\d+)\] textbox "rich"/)?.[1],
+  )
+  expect(richReference).toBeGreaterThan(0)
+  expect(holi().fill(richReference, 'replacement')).toBe(false)
+  expect(host.innerHTML).toBe(originalMarkup)
+  const first = host.querySelector('strong')!.firstChild!
+  const range = document.createRange()
+  range.setStart(first, 0)
+  range.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(range)
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 60, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  expect(press('Escape').defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('normal')
+  expect(press('w').defaultPrevented).toBe(true)
+  expect(getSelection()!.anchorNode).toBe(host.querySelector('a')!.firstChild)
+  expect(getSelection()!.anchorOffset).toBe(3)
+  expect(host.innerHTML).toBe(
+    '<strong style="display:inline">café</strong><a href="/next" style="display:inline">🙂 two</a><em style="display:inline"></em>',
+  )
+  expect(press('a').defaultPrevented).toBe(true)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(getSelection()!.anchorNode).toBe(host.querySelector('a')!.firstChild)
+  expect(getSelection()!.anchorOffset).toBe(4)
+  const typing = new KeyboardEvent('keydown', { key: '!', bubbles: true, cancelable: true })
+  host.dispatchEvent(typing)
+  expect(typing.defaultPrevented).toBe(false)
+})
+
+test('rich host ownership retires for synchronous and asynchronous DOM transitions', async () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'true')
+  host.setAttribute('tabindex', '0')
+  host.style.display = 'block'
+  host.innerHTML = '<strong style="display:inline">alpha</strong> beta'
+  Object.defineProperty(host, 'isContentEditable', { value: true })
+  document.body.append(host)
+  host.focus()
+  const select = () => {
+    const range = document.createRange()
+    range.setStart(host.querySelector('strong')!.firstChild!, 0)
+    range.collapse(true)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(range)
+  }
+  select()
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 63, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  const enterNormal = () => {
+    expect(press('Escape').defaultPrevented).toBe(true)
+    expect(holi().vim.mode().mode).toBe('normal')
+  }
+  const nativeAfterInvalidation = () => {
+    expect(holi().vim.mode().mode).toBe('insert')
+    expect(press('x').defaultPrevented).toBe(false)
+  }
+
+  enterNormal()
+  host.querySelector('strong')!.firstChild!.textContent = 'changed'
+  nativeAfterInvalidation()
+
+  select()
+  enterNormal()
+  host.setAttribute('contenteditable', 'false')
+  host.setAttribute('contenteditable', 'true')
+  nativeAfterInvalidation()
+
+  select()
+  enterNormal()
+  host.style.display = 'inline'
+  host.style.display = 'block'
+  nativeAfterInvalidation()
+
+  select()
+  enterNormal()
+  const formatted = host.querySelector('strong')!
+  formatted.style.display = 'block'
+  formatted.style.display = 'inline'
+  nativeAfterInvalidation()
+
+  select()
+  enterNormal()
+  host.append(document.createElement('span'))
+  await Promise.resolve()
+  nativeAfterInvalidation()
+})
+
+test('rich host structure is revalidated before each command and unsupported DOM remains native', () => {
+  const nonce = holi().vim.documentNonce()
+  holi().vim.configure(true, 61, nonce)
+  const cases = [
+    '<div contenteditable="true" tabindex="0">one<br>two</div>',
+    '<div contenteditable="true" tabindex="0"><p>block</p></div>',
+    '<div contenteditable="true" tabindex="0"><span style="display:block">block span</span></div>',
+    '<div contenteditable="true" tabindex="0">atom<span contenteditable="false">x</span></div>',
+    '<div contenteditable="true" tabindex="0"><span contenteditable="true">nested</span></div>',
+    '<div contenteditable="true" tabindex="0">line\nbreak</div>',
+  ]
+  for (const html of cases) {
+    const host = document.createElement('div')
+    host.innerHTML = html
+    const candidate = host.firstElementChild as HTMLElement
+    document.body.append(candidate)
+    candidate.focus()
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    candidate.dispatchEvent(event)
+    expect(event.defaultPrevented, html).toBe(false)
+    candidate.remove()
+  }
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'true')
+  host.setAttribute('tabindex', '0')
+  host.style.display = 'block'
+  host.innerHTML = '<b style="display:inline">alpha</b> beta'
+  document.body.append(host)
+  host.focus()
+  const range = document.createRange()
+  range.setStart(host.querySelector('b')!.firstChild!, 0)
+  range.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(range)
+  holi().vim.configure(true, 62, nonce)
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  press('Escape')
+  host.append(document.createElement('br'))
+  expect(press('x').defaultPrevented).toBe(false)
+  expect(host.innerHTML).toBe('<b style="display:inline">alpha</b> beta<br>')
+  expect(holi().vim.mode().mode).toBe('insert')
+})
+
 test('fills a field and picks an option, as typing would', () => {
   holi().read(12_000)
   const input = vi.fn()
