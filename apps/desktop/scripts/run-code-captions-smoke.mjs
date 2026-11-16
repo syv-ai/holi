@@ -247,6 +247,7 @@ try {
     'native-root-to-nested-copy-paste-save-reopen-real-typst-pdf',
     'native-root-to-root-copy-paste-save-reopen-real-typst-pdf',
     'native-nested-to-root-copy-paste-save-reopen-real-typst-pdf',
+    'native-spaced-image-path-copy-paste-save-reopen-real-typst-pdf',
   ])
     assert(result.checks.includes(name), `missing native acceptance: ${name}`)
   for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)

@@ -82,8 +82,10 @@ describe('markdown round trip', () => {
   })
 
   it('does not duplicate definitions retained inside malformed envelopes on repeated saves', () => {
-    let saved = '<!-- holi:figure -->\n![Alt][x]\n\n[x]: images/x.png\n'
+    let saved =
+      '![Other][ref]\n\n<!-- holi:figure -->\n\n![Photo](../photo.png)\n\n[ref]: ../other.png "Title"\n\nAfter.'
     for (let cycle = 0; cycle < 3; cycle++) saved = roundTrip(saved)
-    expect(saved.split('[x]: images/x.png')).toHaveLength(2)
+    expect(saved.match(/\[ref\]:/g)).toHaveLength(1)
+    expect(roundTrip(saved)).toBe(saved)
   })
 })

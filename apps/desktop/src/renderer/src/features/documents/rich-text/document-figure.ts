@@ -290,20 +290,56 @@ export const DocumentFigure = Node.create({
             })
             // References belong to the source document, not the clipboard.
             // Materialize visible image attrs while retaining caption marks.
-            const flattenOpenFigures = (node: any): any[] =>
-              node.type === 'documentFigure' && (slice.openStart > 0 || slice.openEnd > 0)
-                ? (node.content ?? []).flatMap(flattenOpenFigures)
-                : [
-                    {
-                      ...portable(node),
-                      ...(node.content
-                        ? { content: node.content.flatMap(flattenOpenFigures) }
-                        : {}),
-                    },
-                  ]
+            const flattenOpenFigures = (
+              node: any,
+              openStart: number,
+              openEnd: number,
+              first: boolean,
+              last: boolean,
+            ): any[] => {
+              const startsOpen = first && openStart > 0
+              const endsOpen = last && openEnd > 0
+              if (node.type === 'documentFigure' && (startsOpen || endsOpen))
+                return (node.content ?? []).flatMap((child: any, index: number, content: any[]) => {
+                  const flattened = flattenOpenFigures(
+                    child,
+                    startsOpen ? openStart - 1 : 0,
+                    endsOpen ? openEnd - 1 : 0,
+                    index === 0,
+                    index === content.length - 1,
+                  )
+                  return child.type === 'documentCaption'
+                    ? flattened.map((caption: any) => ({ ...caption, type: 'paragraph' }))
+                    : flattened
+                })
+              const content = node.content?.flatMap((child: any, index: number, children: any[]) =>
+                flattenOpenFigures(
+                  child,
+                  startsOpen ? openStart - 1 : 0,
+                  endsOpen ? openEnd - 1 : 0,
+                  index === 0,
+                  index === children.length - 1,
+                ),
+              )
+              return [
+                {
+                  ...portable(node),
+                  ...(content ? { content } : {}),
+                },
+              ]
+            }
+            const content = slice.content.toJSON()
             return editor.markdown.serialize({
               type: 'doc',
-              content: slice.content.toJSON().flatMap(flattenOpenFigures),
+              content: content.flatMap((node: any, index: number) =>
+                flattenOpenFigures(
+                  node,
+                  slice.openStart,
+                  slice.openEnd,
+                  index === 0,
+                  index === content.length - 1,
+                ),
+              ),
             })
           },
           handleDOMEvents: {
