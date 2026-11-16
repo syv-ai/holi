@@ -145,7 +145,11 @@ function scripted(script: string): JobsProvider {
 
 async function rig(
   body: string,
-  opts: { keepMs?: number; afterWrite?: (rel: string) => Promise<void> | void } = {},
+  opts: {
+    keepMs?: number
+    afterWrite?: (rel: string) => Promise<void> | void
+    activationSignal?: AbortSignal
+  } = {},
 ) {
   const root = await temp('holi-job-vault-')
   const userData = await temp('holi-job-data-')
@@ -244,6 +248,35 @@ describe('a job', () => {
     expect(await scratch).toEqual(gone)
     expect(await vault).toEqual(gone)
     expect(spawn).not.toHaveBeenCalled()
+    expect(jobs.sessions()).toEqual([])
+  })
+
+  it('aborts queued follow-ups immediately when activation is invalidated', async () => {
+    const activation = new AbortController()
+    const body = [
+      "const fs = require('node:fs')",
+      "fs.appendFileSync(require('node:path').join(__dirname, 'starts'), 'x')",
+      event({ type: 'thread.started', thread_id: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51' }),
+      event({ type: 'turn.started' }),
+      'setInterval(() => {}, 1000)',
+    ].join('\n')
+    const { userData, jobs, provider, ended } = await rig(body, {
+      activationSignal: activation.signal,
+    })
+    const started = await jobs.start({
+      provider,
+      name: 'queued',
+      prompt: 'first',
+      allow: ['Edit(tilbud/**)'],
+    })
+    const id = (started as { sessionId: string }).sessionId
+    await vi.waitFor(async () => expect(await readFile(join(userData, 'starts'), 'utf8')).toBe('x'))
+    jobs.message(id, 'must not run')
+    activation.abort()
+    expect(await ended(id)).toMatchObject({ outcome: 'failed', error: 'Stopped.' })
+    expect(await readFile(join(userData, 'starts'), 'utf8')).toBe('x')
+    expect(jobs.sessions()).toHaveLength(1)
+    await jobs.leave()
     expect(jobs.sessions()).toEqual([])
   })
 
