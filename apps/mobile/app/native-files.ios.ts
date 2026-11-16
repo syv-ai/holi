@@ -62,7 +62,8 @@ function checkedPath(
       const parent = index === 0 ? root : current.substring(0, current.lastIndexOf('/'))
       const siblings = NSFileManager.defaultManager.contentsOfDirectoryAtPathError(parent, error)
       checkError(error)
-      if (!siblings || !Array.from(siblings).includes(piece)) throw new Error('Case alias rejected')
+      if (!siblings || !Array.from(siblings).some((name) => String(name) === piece))
+        throw new Error('Case alias rejected')
     }
   }
   return filePath(root, relative)

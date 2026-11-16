@@ -119,6 +119,8 @@ try {
     await sleep(250, undefined, { signal: controller.signal })
   }
   assert.ok(report, 'Timed out waiting for a complete sandbox report')
+  // Retain bounded app-produced evidence before host validation can reject it.
+  await writeFile(join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
   const expectedStorageParent = join(canonicalContainer, 'Documents')
   validateReport(report, {
     runId,
@@ -127,7 +129,6 @@ try {
     osVersion: runtime.version,
     storageRoot: expectedStorageParent,
   })
-  await writeFile(join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
   // Let the native view arrive, and catch a crash immediately after writing evidence.
   await sleep(2_000, undefined, { signal: controller.signal })
   process.kill(pid, 0)

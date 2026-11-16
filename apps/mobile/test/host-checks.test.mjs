@@ -20,7 +20,7 @@ const report = {
   finishedAt: 120,
   corpus,
   storage: {
-    schemaVersion: 1,
+    schemaVersion: 2,
     passed: 1,
     total: 1,
     failed: 0,
@@ -47,6 +47,12 @@ for (const [name, mutate] of [
     'traversal storage root',
     (value) => {
       value.storageRoot = '/sandbox/Documents/../Library/private'
+    },
+  ],
+  [
+    'symlink-like namespace root',
+    (value) => {
+      value.storageRoot = '/sandbox/Documents/holi-storage-check-fresh-110/../outside'
     },
   ],
   [

@@ -19,7 +19,7 @@ export function validateReport(report, { runId, launchedAt, now, osVersion, stor
   assert.deepEqual(
     report.storage,
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       passed: 1,
       total: 1,
       failed: 0,
@@ -38,10 +38,14 @@ export function validateReport(report, { runId, launchedAt, now, osVersion, stor
   assert.equal(typeof report.storageRoot, 'string', 'Storage path is missing')
   assert.equal(
     report.storageRoot,
-    `${storageRoot}/holi-storage-check-${runId}-${report.storageRoot.split('-').at(-1)}`,
-    'Storage path is outside the owned Documents run namespace',
+    `${storageRoot}/holi-storage-check-${runId}-${report.startedAt}`,
+    'Storage path is outside the exact owned Documents run root',
   )
-  assert.match(report.storageRoot.split('/').at(-1), /^holi-storage-check-.+-\d+$/)
+  assert.equal(
+    report.storageRoot.split('/').length,
+    storageRoot.split('/').length + 1,
+    'Storage root must be one direct child of the owned Documents directory',
+  )
 }
 
 export function validateSharedGraph(graph) {
