@@ -500,13 +500,19 @@ describe('sessions Holi runs', () => {
     if (!started.ok) throw new Error(started.message)
     t.opened[0]?.onInput?.('\r')
 
-    const stopping = t.sessions.stop(started.sessionId)
-    await stopping
+    let stopped = false
+    const stopping = t.sessions.stop(started.sessionId).then((result) => {
+      stopped = true
+      return result
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
     expect(t.sessions.has(started.sessionId)).toBe(true)
     expect(t.sessions.sessions()[0]).toMatchObject({ id: started.sessionId, copying: true })
     expect(t.edges).toEqual([`begin:${started.sessionId}`])
 
     finish({ error: 'Final copy failed.' })
+    await stopping
     await vi.waitFor(() =>
       expect(t.sessions.sessions()[0]).toMatchObject({
         id: started.sessionId,

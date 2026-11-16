@@ -63,6 +63,8 @@ export interface AgentSessionsDeps {
    *  pushed (`sessions`) and each turn's end (`turn-end`). */
   publish?(name: string, payload: unknown): void
   /** The provider whose supervisor runs these sessions. */
+  /** Revokes PTY/session admission when this vault activation is invalidated. */
+  activationSignal?: AbortSignal
   provider: Pick<
     BackgroundProvider,
     'id' | 'notInstalled' | 'configure' | 'terminal' | 'firstSpawn' | 'capabilities'
@@ -367,7 +369,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   async function ensureCurrent(): Promise<Current | null> {
-    if (leaving !== null) return null
+    if (deps.activationSignal?.aborted || leaving !== null) return null
     const vault = attached
     if (vault === null) return null
     if (current?.remote === vault.remote) return current
@@ -398,7 +400,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     const c = current
     if (c === null) return
     const stdout = await bg.cli.list(targetOf(c))
-    if (current !== c) return // the vault moved while we read
+    if (current !== c || deps.activationSignal?.aborted) return // the vault moved while we read
     rows = bg.parseListing(stdout, c.root)
     const liveRows = live()
     const liveIds = new Set(liveRows.map((r) => r.id))
@@ -491,6 +493,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       c.spawnChecked = true
       notice = await firstSpawnNotice(provider, c.configDir)
     }
+    if (deps.activationSignal?.aborted || current !== c)
+      return { ok: false, message: 'The vault was left before the terminal opened.' }
     const target = targetOf(c)
     const res = deps.terminals.open({
       remote: c.remote,
@@ -545,6 +549,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
       if (!res.ok) return res
+      if (deps.activationSignal?.aborted || current !== c) {
+        await bg.cli.stop(targetOf(c), res.id)
+        return { ok: false, message: 'The vault closed as the session started.' }
+      }
       if (prompt === undefined) unprompted.add(res.id)
       await refresh()
       const opened = await openOn(c, { attach: res.id, cols, rows: r })
@@ -564,7 +572,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(mcpConfig === undefined ? {} : { mcpConfig }),
       })
       if (!res.ok) return res
-      if (current !== c) {
+      if (deps.activationSignal?.aborted || current !== c) {
         // The leave read the sessions to stop before this one was listed, so
         // it would go on running in the vault left while its caller is told
         // it failed: stop it here.
@@ -638,6 +646,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       const name = label === 'New session' ? undefined : `${label} (copy)`
       const res = await bg.cli.forkBg(targetOf(c), row.sessionId, name)
       if (!res.ok) return res
+      if (deps.activationSignal?.aborted || current !== c) {
+        await bg.cli.stop(targetOf(c), res.id)
+        return { ok: false, message: 'The vault closed as the session started.' }
+      }
       await refresh()
       const opened = await openOn(c, { attach: res.id, ...geometry })
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
@@ -761,6 +773,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     }
     await deps.terminals.closeAll()
     for (const id of [...coordinator.working]) coordinator.forget(id)
+    await coordinator.drain()
     bracketed.clear()
     workingPid.clear()
     unprompted.clear()

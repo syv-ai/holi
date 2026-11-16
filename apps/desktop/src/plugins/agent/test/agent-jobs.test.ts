@@ -279,13 +279,17 @@ describe('a job', () => {
 
   it('stops where a Stop comes in during the copy back', async () => {
     let id = ''
-    let jobs: Awaited<ReturnType<typeof rig>>['jobs'] | undefined
+    let stopped: Promise<{ ok: boolean; message?: string }> | undefined
+    let enterCopy!: () => void
+    let resumeCopy!: () => void
+    const entered = new Promise<void>((resolve) => (enterCopy = resolve))
+    const continueCopy = new Promise<void>((resolve) => (resumeCopy = resolve))
     const r = await rig(WRITES(5, 1), {
       afterWrite: async () => {
-        await jobs!.stop(id)
+        enterCopy()
+        await continueCopy
       },
     })
-    jobs = r.jobs
     const started = await r.jobs.start({
       provider: r.provider,
       name: 'x',
@@ -293,7 +297,17 @@ describe('a job', () => {
       scope: SCOPE,
     })
     id = (started as { sessionId: string }).sessionId
+    await entered
+    let stopFinished = false
+    stopped = r.jobs.stop(id).then((result) => {
+      stopFinished = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(stopFinished).toBe(false)
+    resumeCopy()
     const row = await r.ended(id)
+    expect(await stopped).toEqual({ ok: true })
     expect(row).toMatchObject({ outcome: 'failed', error: 'Stopped.' })
     // One file landed before the Stop; the finished marker never did.
     const written = (await readdir(join(r.root, 'notes/Plan.app'))).sort()
@@ -1400,7 +1414,7 @@ describe('a fenced session', () => {
   })
 
   it('says why when its session does not start', async () => {
-    const { fenced, own } = await fencedRig()
+    const { fenced, own, fence } = await fencedRig()
     own.start.mockResolvedValueOnce({ ok: false, message: 'Codex is not installed.' } as never)
     const res = await fenced.start({
       provider: { id: 'codex' } as never,
@@ -1409,6 +1423,7 @@ describe('a fenced session', () => {
       scope: SCOPE,
     })
     expect(res).toEqual({ ok: false, message: 'Codex is not installed.' })
+    await fence.exited()
     await fenced.leave()
   })
 })

@@ -61,8 +61,9 @@ export class AgentRuntime {
   private pty: PtyProcess | null = null
   private dataCbs: Array<(data: string) => void> = []
   private exitCbs: Array<(e: AgentExit) => void> = []
-  private exitWaiters: Array<() => void> = []
+  private exitWaiters: Array<{ resolve: () => void; reject: (error: Error) => void }> = []
   private killTimer: ReturnType<typeof setTimeout> | null = null
+  private killPromise: Promise<void> | null = null
   private readonly spawnPty: SpawnPty
   private readonly probePid: (pid: number) => PidState
   private readonly platform: NodeJS.Platform
@@ -120,7 +121,7 @@ export class AgentRuntime {
         this.killTimer = null
       }
       for (const cb of this.exitCbs) cb({ exitCode: e.exitCode, signal: e.signal })
-      for (const resolve of this.exitWaiters.splice(0)) resolve()
+      for (const waiter of this.exitWaiters.splice(0)) waiter.resolve()
     })
   }
 
@@ -140,13 +141,32 @@ export class AgentRuntime {
    * first signal already stops the whole tree (`killTree`); there is no
    * gentler one for a console program.
    */
-  async kill(): Promise<void> {
+  kill(): Promise<void> {
+    if (this.killPromise !== null) return this.killPromise
     const pty = this.pty
-    if (!pty) return
+    if (!pty) return Promise.resolve()
+    const pending = this.killAndWait(pty)
+    this.killPromise = pending
+    void pending.then(
+      () => {
+        if (this.killPromise === pending) this.killPromise = null
+      },
+      () => {
+        if (this.killPromise === pending) this.killPromise = null
+      },
+    )
+    return pending
+  }
 
-    const exited = new Promise<void>((resolve) => {
-      this.exitWaiters.push(resolve)
-      setTimeout(resolve, this.killBackstopMs) // never hang a vault switch on a zombie
+  private async killAndWait(pty: PtyProcess): Promise<void> {
+    let backstop: ReturnType<typeof setTimeout> | undefined
+    const exited = new Promise<void>((resolve, reject) => {
+      this.exitWaiters.push({ resolve, reject })
+      backstop = setTimeout(() => {
+        const index = this.exitWaiters.findIndex((waiter) => waiter.resolve === resolve)
+        if (index !== -1) this.exitWaiters.splice(index, 1)
+        reject(new Error(`PTY ${pty.pid} did not report process exit before teardown timed out.`))
+      }, this.killBackstopMs)
     })
 
     this.signal(pty, 'SIGTERM')
@@ -155,7 +175,11 @@ export class AgentRuntime {
       if (this.pty === pty) this.signal(pty, 'SIGKILL')
     }, this.killGraceMs)
 
-    await exited
+    try {
+      await exited
+    } finally {
+      if (backstop !== undefined) clearTimeout(backstop)
+    }
   }
 
   /**

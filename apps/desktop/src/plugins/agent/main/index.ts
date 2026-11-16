@@ -121,9 +121,11 @@ export const agentMain: MainPlugin = {
       let ownPast: SessionSummary[] = []
       let jobRows: SessionSummary[] = []
       const pushHistory = (): void => {
+        if (ctx.activationSignal.aborted) return
         ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
       }
       const pushSessions = (): void => {
+        if (ctx.activationSignal.aborted) return
         const all = [...background, ...piSessions, ...own, ...jobRows]
         ctx.emit(ctx.remote, 'sessions', all)
         ctx.publish('sessions', all)
@@ -131,6 +133,7 @@ export const agentMain: MainPlugin = {
       }
 
       const sessions = createAgentSessions({
+        activationSignal: ctx.activationSignal,
         emit: (remote, name, payload) => {
           if (name === 'history' && remote === ctx.remote) {
             backgroundPast = payload as SessionSummary[]
@@ -144,7 +147,7 @@ export const agentMain: MainPlugin = {
         // Each turn's end, for the plugins built on the agent (automations
         // close a run once it is done), and for the activity log.
         publish: (name, payload) => {
-          if (name !== 'turn-end') return
+          if (ctx.activationSignal.aborted || name !== 'turn-end') return
           ctx.publish(name, payload)
           sessionLog.turnEnd((payload as { id: string }).id)
         },
@@ -179,6 +182,7 @@ export const agentMain: MainPlugin = {
       const ptyHistory = jsonFileStore(join(ctx.userData, 'agent-pty-history.json'), parsePastFile)
       const ptySessions = createPtySessions({
         vault: { remote: ctx.remote, root: ctx.root },
+        activationSignal: ctx.activationSignal,
         past: {
           read: async () => (await ptyHistory.read())[ctx.remote] ?? [],
           write: async (list) => {
@@ -216,6 +220,7 @@ export const agentMain: MainPlugin = {
       const jobs = createJobs({
         vault,
         scratchRoot: scratchRoots.jobs,
+        activationSignal: ctx.activationSignal,
         bracket: (id, edge) => sessions.bracket(id, edge),
         onChange: (list) => {
           jobRows = list
@@ -228,6 +233,7 @@ export const agentMain: MainPlugin = {
         vault,
         scratchRoot: scratchRoots.fenced,
         own: ptySessions,
+        activationSignal: ctx.activationSignal,
         copyBack: jobs.copyBack,
       })
       // What the agent and Holi want the person to see: an entry in the
@@ -269,6 +275,7 @@ export const agentMain: MainPlugin = {
       })
       // A teammate's comment that mentions the person, found after a pull.
       const unmention = ctx.onMention((mention) => {
+        if (ctx.activationSignal.aborted) return
         void inbox
           .raise(mentionNotice(mention))
           .catch((err: unknown) => console.error('[agent] mention:', err))
@@ -276,16 +283,19 @@ export const agentMain: MainPlugin = {
       // Keystrokes and resizes, in the order they were typed. The host drops
       // any about a vault that is not the open one.
       ctx.on('pty-write', (_remote, payload) => {
+        if (ctx.activationSignal.aborted) return
         const p = payload as { id?: unknown; data?: unknown }
         if (typeof p?.id === 'string' && typeof p.data === 'string') terminals.write(p.id, p.data)
       })
       ctx.on('pty-resize', (_remote, payload) => {
+        if (ctx.activationSignal.aborted) return
         const p = payload as { id?: unknown; cols?: unknown; rows?: unknown }
         if (typeof p?.id === 'string' && typeof p.cols === 'number' && typeof p.rows === 'number') {
           terminals.resize(p.id, p.cols, p.rows)
         }
       })
       ctx.on('pty-appearance', (_remote, payload) => {
+        if (ctx.activationSignal.aborted) return
         const p = payload as { id?: unknown; appearance?: unknown }
         if (typeof p?.id === 'string') terminals.setAppearance(p.id, p.appearance)
       })
@@ -295,6 +305,7 @@ export const agentMain: MainPlugin = {
       for (const p of providers().filter((x) => x.custom !== true)) {
         p.capabilities.turns?.routes(ctx, {
           onTurn: async (remote, id, active, pending, pid) => {
+            if (ctx.activationSignal.aborted) return null
             if (PTY_SESSION_ID.test(id)) {
               if (remote === ctx.remote) ptySessions.noteTurn(id, active)
               return null
@@ -306,13 +317,18 @@ export const agentMain: MainPlugin = {
             return runGit(ctx.root, ['rev-parse', '--verify', `${commit}^{tree}`]).catch(() => null)
           },
           // A session's status line: how much of its context is used.
-          onStatus: (remote, id, status) => sessions.noteStatus(remote, id, status),
+          onStatus: (remote, id, status) => {
+            if (!ctx.activationSignal.aborted) sessions.noteStatus(remote, id, status)
+          },
           onConversation: (remote, id, about) => {
-            if (remote === ctx.remote) ptySessions.noteConversation(id, about)
+            if (!ctx.activationSignal.aborted && remote === ctx.remote)
+              ptySessions.noteConversation(id, about)
           },
           // Where a background session takes messages: its inbox socket, kept
           // in memory.
-          onChannel: (remote, id, channel) => sessions.noteChannel(remote, id, channel),
+          onChannel: (remote, id, channel) => {
+            if (!ctx.activationSignal.aborted) sessions.noteChannel(remote, id, channel)
+          },
         })
       }
       // `holi-signal`, from a session of a harness a person added: whichever
@@ -320,7 +336,7 @@ export const agentMain: MainPlugin = {
       // through their own hooks.
       const unsignal = registerSignalRoute(ctx, {
         onSignal: (remote, id, signal) => {
-          if (remote !== ctx.remote) return
+          if (ctx.activationSignal.aborted || remote !== ctx.remote) return
           const provider = ptySessions.providerOf(id)
           if (provider === null || isIntegration(provider)) return
           if (signal.kind === 'status') return ptySessions.noteStatus(id, signal)
@@ -364,13 +380,14 @@ export const agentMain: MainPlugin = {
       sweepTimer.unref?.()
       // The per-turn hook reads the focused note, and its selected lines, from a
       // file in this clone.
-      const unreport = ctx.onReport((report) =>
+      const unreport = ctx.onReport((report) => {
+        if (ctx.activationSignal.aborted) return
         sessions.setFocus({
           focusedPath: report.focusedPath,
           selection: report.selection,
           openPaths: report.openPaths,
-        }),
-      )
+        })
+      })
       // Stopping stops the vault's sessions (the renderer asked first if one
       // was busy). Background ones stay in the agents list and resume when
       // opened; the ones Holi runs end with it.

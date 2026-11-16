@@ -45,6 +45,8 @@ export interface FencedSessionsDeps {
   own: Pick<PtySessions, 'start'>
   copyBack: Jobs['copyBack']
   log?: (msg: string) => void
+  /** Revokes admission synchronously when this vault activation is invalidated. */
+  activationSignal?: AbortSignal
 }
 
 export interface FencedSessions {
@@ -70,12 +72,24 @@ export interface FencedSessions {
 export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-fenced] ${msg}`))
   const copies = new Set<Promise<unknown>>()
+  const finalizers = new Set<Promise<unknown>>()
+  const active = new Set<string>()
+  const cancellations = new Set<AbortController>()
   // Folders a crash left behind. Their processes died with Holi's PTYs.
-  const swept = rm(deps.scratchRoot, { recursive: true, force: true }).catch(() => undefined)
+  const swept = rm(deps.scratchRoot, { recursive: true, force: true })
 
   /** Bumped as the vault is left: a start that began before sees it. */
   let generation = 0
+  let closing = deps.activationSignal?.aborted === true
   const starting = new Set<Promise<StartResult>>()
+  deps.activationSignal?.addEventListener(
+    'abort',
+    () => {
+      closing = true
+      generation += 1
+    },
+    { once: true },
+  )
 
   async function begin({
     provider,
@@ -86,6 +100,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     cols,
     rows,
   }: Parameters<FencedSessions['start']>[0]): Promise<StartResult> {
+    if (closing) return { ok: false, message: 'The vault is closing.' }
     const began = generation
     const left = (): boolean => generation !== began
     const gone = { ok: false as const, message: 'The vault was left before the session started.' }
@@ -96,9 +111,14 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     const id = randomBytes(6).toString('hex')
     const dir = join(deps.scratchRoot, id)
     const state = join(deps.scratchRoot, `${id}.agent`)
+    const controller = new AbortController()
+    cancellations.add(controller)
+    let sessionId: string | null = null
     const drop = async (): Promise<void> => {
-      await rm(dir, { recursive: true, force: true }).catch(() => undefined)
-      await rm(state, { recursive: true, force: true }).catch(() => undefined)
+      cancellations.delete(controller)
+      if (sessionId !== null) active.delete(sessionId)
+      await rm(dir, { recursive: true, force: true })
+      await rm(state, { recursive: true, force: true })
     }
     await mkdir(dir, { recursive: true })
     await mkdir(state, { recursive: true, mode: 0o700 })
@@ -118,7 +138,12 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     const copy = (): Promise<FenceCopy> => {
       const next = chain.then(async (): Promise<FenceCopy> => {
         try {
-          const { written, skipped } = await deps.copyBack(dir, scope.write, made)
+          const { written, skipped } = await deps.copyBack(
+            dir,
+            scope.write,
+            made,
+            controller.signal,
+          )
           log(`${name}: ${written} file(s) copied back, ${skipped.length} left out`)
           const leftOut = leftOutMessage(skipped)
           return leftOut === undefined ? {} : { leftOut }
@@ -146,25 +171,37 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
         dir,
         state,
         turnEnded: copy,
-        exited: () =>
-          copy()
+        exited: () => {
+          const finalizer = copy()
             .then(async (result) => {
               try {
                 await provider.release?.(state)
+                return result
               } catch (err) {
-                log(`${name}: could not release agent state: ${String(err)}`)
+                return { error: `Could not release agent state: ${String(err)}` }
               }
-              return result
             })
-            .finally(drop),
+            .finally(drop)
+          finalizers.add(finalizer)
+          void finalizer.then(
+            () => finalizers.delete(finalizer),
+            () => finalizers.delete(finalizer),
+          )
+          return finalizer
+        },
       },
     })
     if (!started.ok) await drop()
+    else {
+      sessionId = started.sessionId
+      if (cancellations.has(controller)) active.add(sessionId)
+    }
     return started
   }
 
   return {
     async start(args) {
+      if (closing) return { ok: false, message: 'The vault is closing.' }
       const begun = begin(args)
       starting.add(begun)
       try {
@@ -175,13 +212,17 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     },
 
     async closing() {
+      closing = true
       generation += 1
+      for (const controller of cancellations) controller.abort()
       await Promise.allSettled([...starting])
     },
 
     async leave() {
       await Promise.all([...copies])
-      await rm(deps.scratchRoot, { recursive: true, force: true }).catch(() => undefined)
+      await Promise.all([...finalizers])
+      if (active.size > 0) throw new Error(`Fenced PTYs did not exit: ${[...active].join(', ')}`)
+      await rm(deps.scratchRoot, { recursive: true, force: true })
     },
   }
 }

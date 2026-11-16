@@ -112,6 +112,24 @@ function rig(
 }
 
 describe('the working set', () => {
+  it('drains turn records before teardown reports success', async () => {
+    let finish!: (sha: string) => void
+    const r = rig({ commitNow: () => new Promise<string>((resolve) => (finish = resolve)) })
+    r.coordinator.begin('a')
+    const ending = r.coordinator.end('a')
+    let drained = false
+    const draining = r.coordinator.drain().then(() => {
+      drained = true
+    })
+    await settle()
+    expect(drained).toBe(false)
+    finish('settled-sha')
+    await ending
+    await draining
+    expect(drained).toBe(true)
+    expect(r.appended).toEqual([expect.objectContaining({ sessionId: 'a', end: 'settled-sha' })])
+  })
+
   it('pauses on the first session in and resumes on the last one out', async () => {
     const r = rig()
     r.coordinator.begin('a')
