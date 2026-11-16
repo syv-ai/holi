@@ -52,7 +52,11 @@ interface CapabilityCall {
   beforeInvoke?: (target: { remote: string; root: string }) => Promise<void>
 }
 
-export type Dispatch = (call: CapabilityCall) => Promise<CapabilityResult>
+export type Dispatch = (
+  call: CapabilityCall,
+  /** Main-only authority supplied by a draining plugin context, never request data. */
+  finalization?: CapabilityCall['beforeInvoke'],
+) => Promise<CapabilityResult>
 
 /** What opens the app door: the consent check for entries with an `appGrant`. */
 export interface AppDoorOpener {
@@ -108,10 +112,19 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     admit?: Admit,
     isCurrent?: () => boolean,
     beforeInvoke?: CapabilityCall['beforeInvoke'],
+    finalization?: CapabilityCall['beforeInvoke'],
   ): Promise<CapabilityResult> {
     const root = await rootOf(remote)
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
-    const isEnabled = await enabled(name, root, remote, beforeInvoke !== undefined)
+    const mayDrain = () =>
+      finalization !== undefined || deps.registry.allowsDrain(name, remote, door)
+    const validate = async (): Promise<void> => {
+      await finalization?.({ remote, root })
+      if (!(await enabled(name, root, remote, mayDrain())))
+        throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+    }
+    await finalization?.({ remote, root })
+    const isEnabled = await enabled(name, root, remote, mayDrain())
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
     if (!isEnabled) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
@@ -141,11 +154,14 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       params,
       admit,
       isCurrent,
-      beforeInvoke,
+      async (target) => {
+        await beforeInvoke?.(target)
+        await validate()
+      },
     )
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
     if (result.run !== undefined) {
-      if (!(await enabled(name, root, remote, beforeInvoke !== undefined))) {
+      if (!(await enabled(name, root, remote, mayDrain()))) {
         throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       }
       if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
@@ -169,9 +185,19 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
 
   const openedDoors = new Map<string, object>()
   return {
-    dispatch: async ({ door, remote, name, params, beforeInvoke }) => {
+    dispatch: async ({ door, remote, name, params, beforeInvoke }, finalization) => {
       if (door !== 'cli' || !docCommands.has(name)) {
-        return run(door, remote, null, name, params, undefined, undefined, beforeInvoke)
+        return run(
+          door,
+          remote,
+          null,
+          name,
+          params,
+          undefined,
+          undefined,
+          beforeInvoke,
+          finalization,
+        )
       }
       const previous = docQueues.get(remote) ?? Promise.resolve()
       let release!: () => void
@@ -181,7 +207,17 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       docQueues.set(remote, pending)
       await previous
       try {
-        return await run(door, remote, null, name, params, undefined, undefined, beforeInvoke)
+        return await run(
+          door,
+          remote,
+          null,
+          name,
+          params,
+          undefined,
+          undefined,
+          beforeInvoke,
+          finalization,
+        )
       } finally {
         release()
         if (docQueues.get(remote) === pending) docQueues.delete(remote)

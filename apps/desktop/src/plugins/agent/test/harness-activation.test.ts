@@ -1,9 +1,10 @@
 import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
+import { request } from 'node:http'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
@@ -14,7 +15,7 @@ import type { RunOptions } from '../main/claude/cli'
 import { PRESETS } from '../main/harness/record'
 import type { AgentExit, StartArgs } from '../main/host/pty'
 import { agentMain } from '../main/index'
-import type { BridgeRoute } from '../../../main/plugin-api'
+import type { BridgeRoute, MainPlugin, PluginCtx } from '../../../main/plugin-api'
 import { openTurnLog } from '../main/host/turn-log'
 
 const adapters = vi.hoisted(() => ({
@@ -26,8 +27,10 @@ const adapters = vi.hoisted(() => ({
   historyRename: null as null | { source: string; entered: () => void; wait: Promise<void> },
   exitObserved: null as null | { cwd: string; entered: () => void },
   routes: new Map<string, Map<string, BridgeRoute>>(),
+  watchers: new Set<import('node:fs').FSWatcher>(),
   watchStarts: 0,
   watchCloses: 0,
+  watchCloseFailure: null as { error: Error; watch: number } | null,
 }))
 
 vi.mock('node:fs/promises', async (original) => {
@@ -59,12 +62,19 @@ vi.mock('node:fs', async (original) => {
   return {
     ...fs,
     watch: (...args: Parameters<typeof fs.watch>) => {
-      adapters.watchStarts++
+      const ordinal = ++adapters.watchStarts
       const watcher = fs.watch(...args)
+      adapters.watchers.add(watcher)
       const close = watcher.close.bind(watcher)
       watcher.close = () => {
+        adapters.watchers.delete(watcher)
         adapters.watchCloses++
         close()
+        const failure = adapters.watchCloseFailure
+        if (failure?.watch === ordinal) {
+          adapters.watchCloseFailure = null
+          throw failure.error
+        }
       }
       return watcher
     },
@@ -134,11 +144,20 @@ beforeEach(() => {
   adapters.routes.clear()
   adapters.watchStarts = 0
   adapters.watchCloses = 0
+  adapters.watchCloseFailure = null
 })
 afterEach(async () => {
-  await Promise.all(stops.splice(0).map((stop) => stop()))
-  vi.restoreAllMocks()
-  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  try {
+    await Promise.all(stops.splice(0).map((stop) => stop()))
+  } finally {
+    for (const watcher of adapters.watchers) watcher.close()
+    if (vi.isFakeTimers()) {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+    vi.restoreAllMocks()
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  }
 })
 
 function deferred() {
@@ -151,8 +170,9 @@ async function rig(
   userData?: string,
   holdAgentDisposer?: { entered: () => void; wait: Promise<void> },
   liveContext = false,
+  lifecycle?: { plugins?: MainPlugin[]; context?: (ctx: PluginCtx) => void },
 ) {
-  userData ??= await mkdtemp(join(tmpdir(), 'holi-agent-owner-'))
+  userData ??= await mkdtemp(join(tmpdir(), 'holi-573-repair3-agent-'))
   dirs.push(userData)
   const roots = { [A]: join(userData, 'vault-a'), [B]: join(userData, 'vault-b') }
   for (const root of Object.values(roots)) {
@@ -169,29 +189,44 @@ async function rig(
     execFileSync('git', ['-C', root, 'commit', '-qm', 'fixture'])
   }
   const sent: { remote: string; name: string }[] = []
-  const bridge = createBridgeServer({ log: () => {} })
+  const machineToken = 'holi-573-repair3-machine-token'
+  const bridge = createBridgeServer({
+    log: () => {},
+    cli: {
+      dispatch: (call) => capabilities.dispatch(call),
+      commands: (remote) => registry.commands(remote),
+      rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
+      machine: {
+        token: () => machineToken,
+        resolveTarget: async (selector) => {
+          const root = roots[selector as keyof typeof roots]
+          return root === undefined || selector === null
+            ? null
+            : { remote: selector, root, live: true }
+        },
+      },
+    },
+  })
   await bridge.start()
   let activeRemote: typeof A | typeof B | null = null
   const registry = createCapabilityRegistry()
   const activateAgent = agentMain.activate!
-  const agentPlugin =
-    holdAgentDisposer === undefined
-      ? agentMain
-      : {
-          ...agentMain,
-          async activate(ctx: Parameters<typeof activateAgent>[0]) {
-            const dispose = await activateAgent(ctx)
-            if (dispose === undefined)
-              throw new Error('Agent activation did not return a disposer.')
-            return async () => {
-              await dispose()
-              holdAgentDisposer.entered()
-              await holdAgentDisposer.wait
-            }
-          },
-        }
+  const agentPlugin = {
+    ...agentMain,
+    async activate(ctx: PluginCtx) {
+      lifecycle?.context?.(ctx)
+      const dispose = await activateAgent(ctx)
+      if (dispose === undefined) throw new Error('Agent activation did not return a disposer.')
+      if (holdAgentDisposer === undefined) return dispose
+      return async () => {
+        await dispose()
+        holdAgentDisposer.entered()
+        await holdAgentDisposer.wait
+      }
+    },
+  }
   const host = createPluginHost({
-    plugins: [agentPlugin, automationsMain],
+    plugins: [agentPlugin, automationsMain, ...(lifecycle?.plugins ?? [])],
     registry,
     userData,
     coreSeeds: [],
@@ -238,8 +273,13 @@ async function rig(
     frameOrigin: () => () => {},
     notify: () => false,
     focused: () => false,
-    call: async (remote, name, params, beforeInvoke) =>
-      (await capabilities.dispatch({ door: 'ui', remote, name, params, beforeInvoke })).value,
+    call: async (remote, name, params, beforeInvoke, finalization) =>
+      (
+        await capabilities.dispatch(
+          { door: 'ui', remote, name, params, beforeInvoke },
+          finalization,
+        )
+      ).value,
   })
   const capabilities = createCapabilityHost({
     registry,
@@ -272,16 +312,60 @@ async function rig(
       'open',
     )
   }
+  const machineCall = (remote: typeof A | typeof B, ...args: string[]) =>
+    new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request(
+        {
+          host: '127.0.0.1',
+          port: bridge.port()!,
+          path: '/cli',
+          method: 'POST',
+          headers: { 'x-holi-cli-token': machineToken },
+        },
+        (response) => {
+          let body = ''
+          response.on('data', (chunk) => {
+            body += chunk
+          })
+          response.on('end', () => resolve({ status: response.statusCode!, body }))
+        },
+      )
+      req.on('error', reject)
+      req.end(
+        new URLSearchParams([...args, '--vault', remote].map((arg) => ['argv', arg])).toString(),
+      )
+    })
   const setActive = (remote: typeof A | typeof B) => {
     activeRemote = remote
   }
   const call = async (remote: typeof A | typeof B, name: string, params: unknown = {}) =>
     (await capabilities.dispatch({ door: 'ui', remote, name, params })).value
+  let failedDrainExpected = false
   stops.push(async () => {
-    await host.stopAll()
-    await bridge.stop()
+    try {
+      if (failedDrainExpected) await expect(host.stopAll()).rejects.toThrow('failed to stop')
+      else await host.stopAll()
+    } finally {
+      await bridge.stop()
+    }
   })
-  return { host, enter, call, capabilities, roots, userData, sent, setActive, bridge, registry }
+  const expectFailedDrain = () => {
+    failedDrainExpected = true
+  }
+  return {
+    host,
+    enter,
+    call,
+    capabilities,
+    roots,
+    userData,
+    sent,
+    setActive,
+    bridge,
+    registry,
+    expectFailedDrain,
+    machineCall,
+  }
 }
 
 const harness = {
@@ -298,22 +382,207 @@ const customRow = {
   ]),
 }
 
-it('refuses real agent capability dispatch as soon as its lifetime is stopped', async () => {
-  const entered = deferred()
-  const release = deferred()
-  const { host, enter, capabilities } = await rig(undefined, {
-    entered: entered.resolve,
-    wait: release.promise,
+describe('real agent lifecycle repair regressions', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
   })
-  await enter(A)
+  it.each(['direct', 'machine'] as const)(
+    'revokes the real agent before its disposer starts through %s dispatch, preserving dependency finalization and vault B',
+    async (doorKind) => {
+      const entered = deferred()
+      const release = deferred()
+      const contexts = new Map<string, PluginCtx>()
+      let finalized = false
+      const dependent: MainPlugin = {
+        info: { id: 'dependent', label: 'Dependent', default: true, requires: ['agent'] },
+        activate(ctx) {
+          return async () => {
+            if (ctx.remote !== A) return
+            entered.resolve()
+            await release.promise
+            expect(await ctx.call('agent.harnesses', {})).toMatchObject({
+              agents: expect.any(Array),
+            })
+            finalized = true
+          }
+        },
+      }
+      const { host, enter, call, capabilities, registry, machineCall } = await rig(
+        undefined,
+        undefined,
+        false,
+        {
+          plugins: [dependent],
+          context: (ctx) => contexts.set(ctx.remote, ctx),
+        },
+      )
+      await enter(A)
+      await enter(B)
+      const closedBefore = adapters.watchCloses
+      const stopping = host.stop(A)
+      const again = host.stop(A)
+      try {
+        expect(contexts.get(A)!.activationSignal.aborted).toBe(true)
+        expect(contexts.get(B)!.activationSignal.aborted).toBe(false)
+        await entered.promise
+        // The dependent, not a wrapper around an already-completed agent disposer,
+        // holds teardown. Real agent state and registration still exist here.
+        expect(adapters.watchCloses).toBe(closedBefore)
+        expect(registry.has('agent.sessions', A)).toBe(true)
+        if (doorKind === 'direct') {
+          for (const door of ['ui', 'cli'] as const) {
+            await expect(
+              capabilities.dispatch({
+                door,
+                remote: A,
+                name: 'agent.sessions',
+                params: { finalization: true },
+                beforeInvoke: async () => {},
+              }),
+            ).rejects.toThrow('no such method')
+          }
+        } else {
+          const refusedCli = await machineCall(A, 'agent', 'sessions')
+          expect(refusedCli.status).toBe(422)
+          expect(refusedCli.body).toContain('no such method')
+          expect((await machineCall(B, 'agent', 'sessions')).status).toBe(200)
+        }
+        expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+        expect(finalized).toBe(false)
+      } finally {
+        release.resolve()
+        await Promise.all([stopping, again])
+      }
+      expect(finalized).toBe(true)
+      expect(adapters.watchCloses).toBe(closedBefore + 1)
+      await enter(A)
+      expect(contexts.get(A)!.activationSignal.aborted).toBe(false)
+      expect(await call(A, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+    },
+  )
 
-  const stopping = host.stop(A)
-  await entered.promise
-  await expect(
-    capabilities.dispatch({ door: 'ui', remote: A, name: 'agent.sessions', params: {} }),
-  ).rejects.toThrow('no such method: agent.sessions')
-  release.resolve()
-  await stopping
+  it.each(['stop', 'stopAll'] as const)(
+    'cancels real delayed startup through %s and permits replacement only after a clean drain',
+    async (method) => {
+      const entered = deferred()
+      const release = deferred()
+      const contexts: PluginCtx[] = []
+      const { host, enter, call, roots } = await rig(undefined, undefined, false, {
+        context: (ctx) => contexts.push(ctx),
+      })
+      adapters.run.mockImplementationOnce(async () => {
+        entered.resolve()
+        await release.promise
+        return '[]'
+      })
+      const opening = enter(A)
+      await entered.promise
+      expect(adapters.watchStarts).toBe(1)
+      const first = method === 'stop' ? host.stop(A) : host.stopAll()
+      const again = host.stop(A)
+      try {
+        expect(contexts[0]!.activationSignal.aborted).toBe(true)
+        expect(adapters.watchCloses).toBe(0)
+        expect(roots[A]).not.toBe(roots[B])
+      } finally {
+        release.resolve()
+        await Promise.all([opening, first, again])
+      }
+      expect(adapters.watchCloses).toBe(1)
+      await enter(A)
+      expect(contexts).toHaveLength(2)
+      expect(contexts[1]!.activationSignal.aborted).toBe(false)
+      expect(await call(A, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+    },
+  )
+
+  it.each(['stop', 'stopAll'] as const)(
+    'propagates real cancelled-start cleanup failure through queued %s and every later stop/restart',
+    async (method) => {
+      const entered = deferred()
+      const release = deferred()
+      const contexts = new Map<string, PluginCtx>()
+      const { host, enter, call, expectFailedDrain } = await rig(undefined, undefined, false, {
+        context: (ctx) => contexts.set(ctx.remote, ctx),
+      })
+      await enter(B)
+      adapters.run.mockImplementationOnce(async () => {
+        entered.resolve()
+        await release.promise
+        return '[]'
+      })
+      const opening = enter(A).catch((err: unknown) => err)
+      await entered.promise
+      const cleanupFailure = new Error('native watcher close unproven')
+      adapters.watchCloseFailure = { error: cleanupFailure, watch: adapters.watchStarts }
+      expectFailedDrain()
+      const first = (method === 'stop' ? host.stop(A) : host.stopAll()).catch((err: unknown) => err)
+      const again = host.stop(A).catch((err: unknown) => err)
+      expect(contexts.get(A)!.activationSignal.aborted).toBe(true)
+      release.resolve()
+      const activationFailure = await opening
+      expect(activationFailure).toMatchObject({
+        message: 'agent activation failed',
+        errors: [expect.any(Error), cleanupFailure],
+      })
+      const stoppingFailure = await first
+      expect(stoppingFailure).toBeInstanceOf(AggregateError)
+      expect(await again).toBe(activationFailure)
+      await expect(host.stop(A)).rejects.toBe(activationFailure)
+      await expect(enter(A)).rejects.toBe(activationFailure)
+      if (method === 'stop') {
+        expect(contexts.get(B)!.activationSignal.aborted).toBe(false)
+        expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+      }
+      await expect(host.stopAll()).rejects.toMatchObject({
+        errors: expect.arrayContaining([activationFailure]),
+      })
+    },
+  )
+
+  it.each(['close', 'timer'] as const)(
+    'latches real failed-start %s cleanup, retaining both native error identities',
+    async (kind) => {
+      const { host, enter, call, expectFailedDrain } = await rig()
+      await enter(B)
+      const startupFailure = new Error('native activation failed')
+      const cleanupFailure = new Error(`native ${kind} cleanup unproven`)
+      let restoreTimer = () => {}
+      adapters.version.mockImplementationOnce(() => {
+        if (kind === 'timer') {
+          // A native watcher event arms the real listing watcher's debounce.
+          // Its actual unwatch cleanup, not a fake session host, clears it.
+          const watcher = [...adapters.watchers].at(-1)!
+          watcher.emit('change', 'change', 'sessions/fixture.json')
+          const clear = globalThis.clearTimeout
+          const timer = vi.spyOn(globalThis, 'clearTimeout').mockImplementationOnce((id) => {
+            clear(id)
+            throw cleanupFailure
+          })
+          restoreTimer = () => timer.mockRestore()
+        }
+        throw startupFailure
+      })
+      if (kind === 'close')
+        adapters.watchCloseFailure = { error: cleanupFailure, watch: adapters.watchStarts + 1 }
+      expectFailedDrain()
+      try {
+        const failure = await enter(A).catch((err: unknown) => err)
+        restoreTimer()
+        expect(failure).toMatchObject({
+          message: 'agent activation failed',
+          errors: [startupFailure, cleanupFailure],
+        })
+        await expect(host.stop(A)).rejects.toBe(failure)
+        expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+        await expect(host.stopAll()).rejects.toMatchObject({ errors: [failure] })
+        await expect(enter(A)).rejects.toBe(failure)
+        await expect(call(A, 'agent.sessions')).rejects.toThrow('no such method')
+      } finally {
+        restoreTimer()
+      }
+    },
+  )
 })
 
 it('serializes overlapping PTY history updates across activations and drains stop A', async () => {

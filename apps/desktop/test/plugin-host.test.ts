@@ -130,15 +130,18 @@ function rig(
     activity: (entry) => activity.push(entry),
     call:
       opts.call ??
-      (async (remote, name, params, beforeInvoke) =>
+      (async (remote, name, params, beforeInvoke, finalization) =>
         (
-          await capabilities.dispatch({
-            door: 'ui',
-            remote,
-            name,
-            params,
-            beforeInvoke,
-          })
+          await capabilities.dispatch(
+            {
+              door: 'ui',
+              remote,
+              name,
+              params,
+              beforeInvoke,
+            },
+            finalization,
+          )
         ).value),
   })
   let root = ''
@@ -182,6 +185,7 @@ function rig(
   return {
     host,
     registry,
+    capabilities,
     calls,
     ping,
     sent,
@@ -1847,6 +1851,202 @@ describe('activation cancellation and teardown failures', () => {
     })
     expect(starts).toBe(1)
   })
+})
+
+function repairGate() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => (resolve = done))
+  return { promise, resolve }
+}
+
+describe('admission revocation across queued activation work', () => {
+  it.each(['stop', 'stopAll', 'self'] as const)(
+    'revokes pending registered capabilities on %s invalidation',
+    async (method) => {
+      const entered = repairGate()
+      const release = repairGate()
+      let context!: PluginCtx
+      const plugin: MainPlugin = {
+        info: { id: 'fake', label: 'Fake', default: true },
+        async activate(ctx) {
+          context = ctx
+          ctx.register(['fake'], {
+            'fake.ping': cap({
+              doors: ['ui', 'cli'],
+              cli: { args: [], summary: 'probe' },
+              params: noParams,
+              run: async () => 'pong',
+            }),
+          })
+          entered.resolve()
+          await release.promise
+          return () => {}
+        },
+      }
+      const root = await tempDir()
+      const { host, capabilities, registry } = rig({ plugins: [plugin], roots: { A: root } })
+      const opening = host.reconcile(openVault('A', root), 'open')
+      await entered.promise
+      const stopping =
+        method === 'stop'
+          ? host.stop('A')
+          : method === 'stopAll'
+            ? host.stopAll()
+            : Promise.resolve(context.invalidateActivation())
+      try {
+        expect(context.activationSignal.aborted).toBe(true)
+        expect(registry.has('fake.ping', 'A')).toBe(true)
+        for (const door of ['ui', 'cli'] as const) {
+          const untrusted = {
+            door,
+            remote: 'A',
+            name: 'fake.ping',
+            params: {},
+            finalization: true,
+            allowDrain: true,
+            beforeInvoke: async () => {},
+          }
+          await expect(capabilities.dispatch(untrusted)).rejects.toThrow('no such method')
+        }
+      } finally {
+        release.resolve()
+        await Promise.all([opening, stopping])
+        await host.stopAll()
+      }
+    },
+  )
+
+  it('rechecks admission after ordinary target validation yields', async () => {
+    const entered = repairGate()
+    const release = repairGate()
+    const { host, enter, capabilities } = rig()
+    const root = await tempDir()
+    await enter(openVault('o/r', root))
+    const calling = capabilities.dispatch({
+      door: 'ui',
+      remote: 'o/r',
+      name: 'fake.ping',
+      params: {},
+      beforeInvoke: async () => {
+        entered.resolve()
+        await release.promise
+      },
+    })
+    const result = calling.then(
+      () => 'accepted',
+      () => 'refused',
+    )
+    await entered.promise
+    const stopping = host.stop('o/r')
+    release.resolve()
+    expect(await result).toBe('refused')
+    await stopping
+  })
+
+  it.each(['settings', 'snapshot'] as const)(
+    'cancels immediately and replaces, never reuses, a rapidly reenabled %s activation',
+    async (why) => {
+      const entered = repairGate()
+      const release = repairGate()
+      const contexts: PluginCtx[] = []
+      let disposed = 0
+      const fake: MainPlugin = {
+        info: { id: 'fake', label: 'Fake', default: true },
+        activate(ctx) {
+          contexts.push(ctx)
+          ctx.register(['fake'], {
+            'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => contexts.length }),
+          })
+          return () => {
+            disposed++
+          }
+        },
+      }
+      const blocker: MainPlugin = {
+        info: { id: 'blocker', label: 'Blocker', default: true },
+        activate() {
+          return async () => {
+            entered.resolve()
+            await release.promise
+          }
+        },
+      }
+      const root = await tempDir()
+      const { host, capabilities } = rig({ plugins: [fake, blocker], roots: { A: root } })
+      const vault = openVault('A', root)
+      await host.reconcile(vault, 'open')
+      const pending: Promise<void>[] = []
+      try {
+        await writeVaultSettings(root, { committed: { plugins: { blocker: false } } })
+        const blocking = host.reconcile(vault, why)
+        pending.push(blocking)
+        await entered.promise
+        await writeVaultSettings(root, { committed: { plugins: { blocker: false, fake: false } } })
+        const disabling = host.reconcile(vault, why)
+        pending.push(disabling)
+        await vi.waitFor(() => expect(contexts[0]!.activationSignal.aborted).toBe(true))
+        expect(disposed).toBe(0)
+        await expect(
+          capabilities.dispatch({ door: 'ui', remote: 'A', name: 'fake.ping', params: {} }),
+        ).rejects.toThrow('no such method')
+        await writeVaultSettings(root, { committed: { plugins: { blocker: false, fake: true } } })
+        const enabling = host.reconcile(vault, why)
+        pending.push(enabling)
+        release.resolve()
+        await Promise.all([blocking, disabling, enabling])
+        expect(disposed).toBe(1)
+        expect(contexts).toHaveLength(2)
+        expect(contexts[1]!.activationSignal.aborted).toBe(false)
+        contexts[0]!.invalidateActivation()
+        expect(
+          (await capabilities.dispatch({ door: 'ui', remote: 'A', name: 'fake.ping', params: {} }))
+            .value,
+        ).toBe(2)
+      } finally {
+        release.resolve()
+        await Promise.allSettled(pending)
+        await host.stopAll()
+      }
+    },
+  )
+
+  it.each(['stop', 'stopAll'] as const)(
+    'retains a cancelled-start disposer failure through queued %s, repeated stops and restart',
+    async (method) => {
+      const entered = repairGate()
+      const release = repairGate()
+      const failure = new Error('unproven cancelled startup cleanup')
+      let starts = 0
+      const plugin: MainPlugin = {
+        info: { id: 'fake', label: 'Fake', default: true },
+        async activate() {
+          starts++
+          entered.resolve()
+          await release.promise
+          return () => {
+            throw failure
+          }
+        },
+      }
+      const root = await tempDir()
+      const { host } = rig({ plugins: [plugin], roots: { A: root } })
+      const vault = openVault('A', root)
+      const opening = host.reconcile(vault, 'open').catch((err: unknown) => err)
+      await entered.promise
+      const first = (method === 'stop' ? host.stop('A') : host.stopAll()).catch(
+        (err: unknown) => err,
+      )
+      const second = host.stop('A').catch((err: unknown) => err)
+      release.resolve()
+      expect(await opening).toMatchObject({ errors: [failure] })
+      expect(await first).toBeInstanceOf(AggregateError)
+      expect(await second).toBeInstanceOf(AggregateError)
+      await expect(host.stop('A')).rejects.toMatchObject({ errors: [failure] })
+      await expect(host.stopAll()).rejects.toThrow('failed to stop')
+      await expect(host.reconcile(vault, 'open')).rejects.toMatchObject({ errors: [failure] })
+      expect(starts).toBe(1)
+    },
+  )
 })
 
 describe('work across vaults', () => {

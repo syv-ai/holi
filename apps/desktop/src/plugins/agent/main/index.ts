@@ -416,7 +416,10 @@ export const agentMain: MainPlugin = {
       } catch (cleanupError) {
         failures.push(cleanupError)
       }
-      throw failures.length === 1 ? err : new AggregateError(failures, 'agent activation failed')
+      if (failures.length === 1) throw err
+      const failure = new AggregateError(failures, 'agent activation failed')
+      ctx.reportDrainFailure(failure)
+      throw failure
     }
   },
 }
