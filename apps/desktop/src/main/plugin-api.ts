@@ -128,6 +128,8 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   activationSignal: AbortSignal
   /** Revoke this activation before awaiting failed-start cleanup. */
   invalidateActivation(): void
+  /** Latch unproven cleanup; stop and replacement must fail with this error. */
+  reportDrainFailure(error: unknown): void
   /** The renderer's displayed vault, independent of plugin lifetimes. */
   displayed(): string | null
   /** Capture whether this activation's vault is the current presentation. */

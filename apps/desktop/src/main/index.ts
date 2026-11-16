@@ -81,7 +81,7 @@ import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { prepareManagedClone } from './vault/prepare-clone'
 import { createSelectedRuntimeGate } from './vault/selected-runtime'
-import { drainShutdown } from './shutdown'
+import { drainShutdown, settleVaultForQuit } from './shutdown'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
 import { showNotification, type NativeNotice } from './notifications'
@@ -434,8 +434,13 @@ async function main(): Promise<void> {
     frameOrigin: acquireFrameOrigin,
     // One plugin's main side calling another's, at the UI door its renderer
     // would use. `capabilityHost` is built below, before any vault opens.
-    call: async (remote, name, params, beforeInvoke) =>
-      (await capabilityHost.dispatch({ door: 'ui', remote, name, params, beforeInvoke })).value,
+    call: async (remote, name, params, beforeInvoke, finalization) =>
+      (
+        await capabilityHost.dispatch(
+          { door: 'ui', remote, name, params, beforeInvoke },
+          finalization,
+        )
+      ).value,
     activity: activity.write,
     // A plugin's notification is the reminders' kind, kept off a Holi that
     // has focus. A click brings the window forward before the plugin acts.
@@ -1184,28 +1189,7 @@ async function main(): Promise<void> {
         stopPlugins: () => plugins.stopAll(),
         closeTerminals: () => terminals.closeAll(),
         disposeUpdater: () => updater.dispose(),
-        settleVault: async () => {
-          // Commit the flushed buffer, then get it off-machine before the
-          // window closes. An unreachable remote must not hang quit.
-          const vault = host.active()
-          if (vault !== null) {
-            await vault.commitNow()
-            let timer: ReturnType<typeof setTimeout> | undefined
-            try {
-              await Promise.race([
-                vault.pushNow(),
-                new Promise<never>((_resolve, reject) => {
-                  timer = setTimeout(
-                    () => reject(new Error('Vault push timed out during quit')),
-                    1_000,
-                  )
-                }),
-              ])
-            } finally {
-              if (timer !== undefined) clearTimeout(timer)
-            }
-          }
-        },
+        settleVault: () => settleVaultForQuit(host.active()),
         closeVaults: () => host.closeAll(),
         closeBridge: async () => {
           const endpoint = cliEndpoint
