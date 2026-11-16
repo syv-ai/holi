@@ -1,0 +1,738 @@
+import { app, BrowserWindow, ipcMain, session } from 'electron'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { loadavg } from 'node:os'
+import { freezeMeasurement, trialSucceeded } from './vault-snapshot-bench-analysis.mjs'
+import { createHash } from 'node:crypto'
+import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import type { MainPlugin, Notice } from '../src/main/plugin-api'
+import { createPluginHost } from '../src/main/plugin-host/host'
+import { tasksMain } from '../src/plugins/tasks/main'
+import { join } from 'node:path'
+import { openRepo } from '../src/main/git'
+import { openActiveVault, type ActiveVault } from '../src/main/vault/active-vault'
+import { createSnapshotBenchAdapter } from './vault-snapshot-bench-adapter'
+import { createBenchRpc } from './vault-snapshot-bench-rpc'
+
+export function shouldSendSnapshot(previous: string | null, next: unknown, force = false): boolean {
+  return force || previous === null || previous !== JSON.stringify(next)
+}
+
+const root = process.env.HOLI_544_ROOT
+const evidence = process.env.HOLI_544_EVIDENCE
+const trialText = process.env.HOLI_544_TRIAL
+if (!root || !evidence || !trialText)
+  throw new Error('HOLI_544_ROOT, HOLI_544_EVIDENCE and HOLI_544_TRIAL are required')
+const trial = JSON.parse(trialText) as {
+  id: string
+  mode: 'baseline' | 'candidate'
+  size: 'small' | 'large'
+  warmupSeconds: number
+  durationSeconds: number
+  pilot: boolean
+}
+type MetricRow = {
+  at: number
+  pid: number
+  type: string
+  name: string
+  cpuPercent: number
+  cumulativeCpuUsage?: number
+  workingSetBytes: number
+  privateBytes: number
+}
+
+async function run(root: string, evidence: string): Promise<void> {
+  const paths = {
+    appData: join(root, 'app-data'),
+    userData: join(root, 'user-data'),
+    sessionData: join(root, 'session-data'),
+    vault: join(root, 'vault'),
+  }
+  for (const path of [...Object.values(paths), evidence]) mkdirSync(path, { recursive: true })
+  app.setName('Holi snapshot benchmark')
+  app.setPath('appData', paths.appData)
+  app.setPath('userData', paths.userData)
+  app.setPath('sessionData', paths.sessionData)
+  process.env.HOLI_VAULT_ROOT = paths.vault
+  if (
+    [app.getPath('userData'), app.getPath('appData'), app.getPath('sessionData')].some(
+      (path) => !path.startsWith(root),
+    )
+  )
+    throw new Error('Electron data path escaped benchmark root')
+  await app.whenReady()
+  const denied: string[] = []
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    if (/^(file|data|devtools):/.test(details.url)) callback({})
+    else {
+      denied.push(details.url)
+      callback({ cancel: true })
+    }
+  })
+  let win: BrowserWindow | null = null
+  let active: ActiveVault | null = null
+  let adapter: ReturnType<typeof createSnapshotBenchAdapter> | null = null
+  let host: ReturnType<typeof createPluginHost> | null = null
+  let sampleInterval: NodeJS.Timeout | null = null
+  const cleanupLedger: string[] = []
+  const samples: Array<{
+    at: number
+    elapsedSeconds: number
+    hostLoad: number[]
+    processes: MetricRow[]
+  }> = []
+  let snapshotDigest = ''
+  let snapshotNotifications = 0
+  let scanStartedAt: { at: number; measured: boolean } | null = null
+  const scanDurationsMs: number[] = []
+  let measuring = false
+  const pipelinePromises = new Set<Promise<unknown>>()
+  const sendStats = { count: 0 }
+  const started = performance.now()
+  let finished = false
+  let rendererStats: unknown = null
+  let measured: any = null
+  let nativeUserChangesLatency: any = null
+  const cleanupErrors: string[] = []
+  const pipelineErrors: string[] = []
+  const drainPipeline = async () => {
+    while (pipelinePromises.size) await Promise.allSettled([...pipelinePromises])
+    if (pipelineErrors.length) throw new Error(pipelineErrors.join('; '))
+  }
+  const pilotAssertions: string[] = []
+  let pilotValid = true
+  let tasksEnabled = true
+  const cleanup = async () => {
+    if (sampleInterval) clearInterval(sampleInterval)
+    sampleInterval = null
+    // Close the watcher first, then drain callbacks before stopping their host.
+    if (active) {
+      try {
+        await active.refresh()
+      } catch (error) {
+        cleanupErrors.push(`vault.refresh before close: ${error}`)
+      }
+      try {
+        await active.close()
+        cleanupLedger.push('vault.close')
+      } catch (error) {
+        cleanupErrors.push(`vault.close: ${error}`)
+      }
+    }
+    try {
+      await drainPipeline()
+    } catch (error) {
+      cleanupErrors.push(`pipeline.drain: ${error}`)
+    }
+    adapter?.dispose()
+    if (host) {
+      try {
+        await host.stopAll()
+        cleanupLedger.push('plugins.stopAll')
+      } catch (error) {
+        cleanupErrors.push(`plugins.stopAll: ${error}`)
+      } finally {
+        host = null
+      }
+    }
+    active = null
+    if (win && !win.isDestroyed()) {
+      try {
+        win.destroy()
+        cleanupLedger.push('window.destroy')
+      } catch (error) {
+        cleanupErrors.push(`window.destroy: ${error}`)
+      }
+    }
+    win = null
+    ipcMain.removeHandler('snapshot-bench:rpc')
+    ipcMain.removeHandler('vault:snapshot-bench')
+  }
+  const finish = async (error?: unknown) => {
+    if (finished) return
+    finished = true
+    try {
+      if (win && !win.isDestroyed())
+        await win.webContents
+          .executeJavaScript('window.snapshotBench?.dispose?.()')
+          .catch((error) => {
+            cleanupErrors.push(`renderer.dispose: ${error}`)
+          })
+      const snapshot = measured?.snapshot ?? null
+      const finalSnapshotDigest = snapshot ? digest(JSON.stringify(snapshot)) : ''
+      await cleanup()
+      const result = {
+        ok: trialSucceeded({
+          error,
+          cleanupErrors,
+          valid:
+            denied.length === 0 &&
+            pilotValid &&
+            Boolean(nativeUserChangesLatency?.complete) &&
+            (measured?.samples.length ?? 0) >= 2 &&
+            (measured?.scanDurationsMs.length ?? 0) > 0 &&
+            Boolean(rendererStats) &&
+            (measured?.adapter.scans ?? 0) > 0 &&
+            Boolean(snapshot),
+        }),
+        error: error === undefined ? null : String(error),
+        trial,
+        mode: trial.mode,
+        snapshot,
+        snapshotChecksum: snapshot ? finalSnapshotDigest : null,
+        rendererStats,
+        snapshotNotifications: measured?.snapshotNotifications ?? null,
+        snapshotNotificationDigest: snapshotDigest || finalSnapshotDigest,
+        snapshotCounts: snapshot ? snapshotCount(snapshot) : null,
+        scans: measured?.scanDurationsMs.length ?? 0,
+        scanDurationsMs: measured?.scanDurationsMs ?? [],
+        rendererSends: measured?.rendererSends ?? null,
+        adapter: measured?.adapter ?? null,
+        nativeUserChangesLatency,
+        diagnosticCountersAfterIdle: {
+          rendererSends: { count: sendStats.count },
+          adapter: adapter?.metrics(),
+        },
+        protocolRevision: 3,
+        mainBundleSha256: digest(readFileSync(join(root, 'main.cjs'), 'utf8')),
+        electron: process.versions.electron,
+        chromium: process.versions.chrome,
+        node: process.versions.node,
+        platform: process.platform,
+        arch: process.arch,
+        samples: measured?.samples ?? [],
+        denied,
+        cleanupLedger,
+        cleanupErrors,
+        pipelineErrors,
+        wiring: 'reproduced main/index.ts snapshot callback order with production plugin host',
+        cpuUnit:
+          'CPU seconds, sum of per-process cumulative CPU deltas; fallback percent/100 × elapsed seconds',
+        cpuSeconds: integrateCpu(measured?.samples ?? []),
+        processBreakdown: aggregateProcesses(measured?.samples ?? []),
+        sampleElapsedSeconds:
+          (measured?.samples.length ?? 0) > 1
+            ? measured.samples.at(-1).at - measured.samples[0].at
+            : 0,
+        phases: {
+          warmupSeconds: trial.warmupSeconds,
+          measurementSeconds: trial.durationSeconds,
+          diagnosticAfterMeasurement: true,
+          idle: 'all top-level counters, rendererStats, samples and CPU cover only timed idle',
+          changedUpdates:
+            'nativeUserChangesLatency: five real task edits after idle, restored before cleanup',
+          pilot: 'extra correctness checks after changed-update diagnostics',
+        },
+        verifiedModules: ['openActiveVault', 'createPluginHost', 'tasksMain'],
+        counterFlags: {
+          nonEmptySnapshot: Boolean(snapshot),
+          genuineSamples: (measured?.samples.length ?? 0) >= 2,
+          genuineScans: (measured?.scanDurationsMs.length ?? 0) > 0,
+          genuineRendererStats: Boolean(rendererStats),
+        },
+        pilotCorrectness: trial.pilot ? pilotAssertions : null,
+      }
+      writeFileSync(join(evidence, 'result.json'), JSON.stringify(result, null, 2))
+      writeFileSync(
+        join(evidence, 'raw-samples.json'),
+        JSON.stringify(measured?.samples ?? [], null, 2),
+      )
+      if (!result.ok) process.exitCode = 1
+    } catch (cleanupError) {
+      console.error(cleanupError)
+      process.exitCode = 1
+    }
+    app.quit()
+  }
+  process.once('SIGINT', () => void finish(new Error('SIGINT')))
+  process.once('SIGTERM', () => void finish(new Error('SIGTERM')))
+  try {
+    win = new BrowserWindow({
+      show: true,
+      width: 1200,
+      height: 800,
+      webPreferences: {
+        preload: join(root, 'preload.cjs'),
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    })
+    const web = win.webContents
+    web.on('console-message', (event) => console.error('[snapshot-bench renderer]', event.message))
+    const isAuthorized = (event: Electron.IpcMainInvokeEvent) =>
+      event.sender === web && event.senderFrame === web.mainFrame && !web.isDestroyed()
+    const publish = (channel: string, payload: unknown) => {
+      if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+    }
+    const remote = 'bench/snapshot'
+    const inertAgent: MainPlugin = {
+      info: { id: 'agent', label: 'Inert benchmark agent', builtIn: true, default: true },
+    }
+    host = createPluginHost({
+      plugins: [tasksMain, inertAgent],
+      registry: { register: () => () => {} },
+      userData: paths.userData,
+      coreSeeds: [],
+      active: () => active,
+      rootFor: async (at) => (at === remote ? paths.vault : null),
+      readSettings: async () => ({
+        ...VAULT_SETTING_DEFAULTS,
+        plugins: { vault: { tasks: true }, localOff: tasksEnabled ? [] : ['tasks'] },
+        warnings: [],
+      }),
+      events: { send: () => {}, listen: () => () => {}, liveRemote: () => remote },
+      openAppDoor: () => {
+        throw new Error('No app door in benchmark')
+      },
+      route: () => () => {},
+      binDir: () => root,
+      githubToken: () => null,
+      frameOrigin: () => () => {},
+      notify: (_notice: Notice) => false,
+      navigate: () => {},
+      focused: () => false,
+    })
+    adapter = createSnapshotBenchAdapter({
+      mode: trial.mode,
+      remote,
+      getVault: () => active,
+      host,
+      send: (snapshot) => {
+        sendStats.count++
+        // The adapter already accounts serialized bytes symmetrically in both modes.
+        // Do not serialize again here or retain payload bodies per send.
+        snapshotNotifications++
+        publish('vault:snapshot', snapshot)
+      },
+      refresh: () => {
+        void active?.refresh()
+      },
+      pluginReady: () => true,
+    })
+    host.setDisplayed(remote)
+    active = await openActiveVault({
+      remote,
+      repo: openRepo(paths.vault),
+      claims: () => {
+        scanStartedAt = { at: performance.now(), measured: measuring }
+        return host!.scanClaimsFor(paths.vault)
+      },
+      onSnapshot(snapshot) {
+        const scan = scanStartedAt
+        scanStartedAt = null
+        if (measuring && scan?.measured) scanDurationsMs.push(performance.now() - scan.at)
+        const promise = adapter!.onSnapshot(snapshot)
+        pipelinePromises.add(promise)
+        void promise.then(
+          () => pipelinePromises.delete(promise),
+          (error) => {
+            pipelineErrors.push(String(error))
+            pipelinePromises.delete(promise)
+          },
+        )
+      },
+      onSyncState: (state) => publish('vault:sync', state),
+      onHeldBack: (files) => publish('vault:heldback', files),
+      onCommitted: (paths) => publish('vault:committed', paths),
+      timings: { healIntervalMs: 30_000, pullIntervalMs: 30_000 },
+    })
+    const handlers = [
+      'vault:snapshot',
+      'vault:sync',
+      'vault:heldback',
+      'vault:committed',
+      'vault:open',
+      'vault:navigate',
+    ]
+    for (const channel of handlers)
+      ipcMain.on(channel, (event) => {
+        if (!isAuthorized(event)) event.preventDefault()
+      })
+    const rpc = createBenchRpc({
+      root: paths.vault,
+      remote,
+      getSnapshot: () => active?.snapshot() ?? emptyVaultSnapshot(),
+    })
+    ipcMain.handle(
+      'snapshot-bench:rpc',
+      async (event, operation: Parameters<ReturnType<typeof createBenchRpc>>[0]) => {
+        if (!isAuthorized(event)) throw new Error('Unauthorized benchmark IPC sender')
+        if (operation.path === 'vault.refresh') {
+          if (!active) throw new Error('Benchmark vault is not open')
+          await active.refresh()
+          return { ok: true, data: active.snapshot() }
+        }
+        return rpc(operation)
+      },
+    )
+    ipcMain.handle('vault:snapshot-bench', async (event, action: string, force = false) => {
+      if (!isAuthorized(event)) throw new Error('Unauthorized benchmark IPC sender')
+      if (action !== 'scan') throw new Error(`Unsupported action: ${action}`)
+      if (!active) throw new Error('Benchmark vault is not open')
+      await active.refresh()
+      if (force) await adapter?.onSnapshot(active.snapshot() ?? emptyVaultSnapshot(), true)
+      return { snapshot: active.snapshot(), metrics: adapter?.metrics() }
+    })
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    win.webContents.on('will-navigate', (event) => event.preventDefault())
+    await host.reconcile(active, 'open')
+    await win.loadFile(join(root, 'renderer.html'))
+    let readinessTimeout: NodeJS.Timeout | undefined
+    let ready: unknown
+    try {
+      ready = await Promise.race([
+        win.webContents.executeJavaScript('window.snapshotBench?.ready'),
+        new Promise((_, reject) => {
+          readinessTimeout = setTimeout(
+            () => reject(new Error('Renderer readiness timed out')),
+            20_000,
+          )
+        }),
+      ])
+    } finally {
+      clearTimeout(readinessTimeout)
+    }
+    if (ready !== true) throw new Error('Renderer subscriptions did not become ready')
+    await active.refresh()
+    const first = active.snapshot()
+    if (!first || typeof first !== 'object') throw new Error('Production vault snapshot missing')
+    const sendsBeforeInitialForce = sendStats.count
+    await adapter.onSnapshot(first, true)
+    const initialForcePassed = sendStats.count > sendsBeforeInitialForce
+    pilotAssertions.push(
+      `${initialForcePassed ? 'PASS' : 'FAIL'}: forced initial snapshot after renderer readiness`,
+    )
+    if (!initialForcePassed) pilotValid = false
+    const dataReady = await win.webContents.executeJavaScript('window.snapshotBench.dataReady')
+    if (dataReady !== true) throw new Error('Production consumers did not load fixture content')
+    if (trial.pilot) {
+      const dom = await win.webContents.executeJavaScript(`({
+        document: document.querySelector('[contenteditable="true"].tiptap')?.textContent ?? '',
+        task: document.querySelector('[data-bench-task]')?.textContent ?? ''
+      })`)
+      const consumersValid =
+        dom.document.includes('Deterministic fixture body 0.') && dom.task.includes('Task 0')
+      pilotAssertions.push(
+        `${consumersValid ? 'PASS' : 'FAIL'}: production document and task consumers render fixture content`,
+      )
+      if (!consumersValid) pilotValid = false
+    }
+    writeFileSync(
+      join(evidence, 'main-ready.json'),
+      JSON.stringify({
+        trial,
+        paths,
+        electron: process.versions.electron,
+        chromium: process.versions.chrome,
+        readiness: ready,
+      }),
+    )
+    const sample = () => {
+      const at = performance.now()
+      const rows = app.getAppMetrics()
+      samples.push({
+        at: (at - started) / 1000,
+        elapsedSeconds: samples.length ? (at - started) / 1000 - samples.at(-1)!.at : 0,
+        hostLoad: loadavg(),
+        processes: rows.map((row) => ({
+          at: (at - started) / 1000,
+          pid: row.pid,
+          type: row.type,
+          name: row.name ?? row.type,
+          cpuPercent: row.cpu.percentCPUUsage,
+          ...(typeof row.cpu.cumulativeCPUUsage === 'number'
+            ? { cumulativeCpuUsage: row.cpu.cumulativeCPUUsage }
+            : {}),
+          workingSetBytes: (row.memory.workingSetSize ?? 0) * 1024,
+          privateBytes: (row.memory.privateBytes ?? 0) * 1024,
+        })),
+      })
+    }
+    await new Promise((resolve) => setTimeout(resolve, trial.warmupSeconds * 1000))
+    await drainPipeline()
+    await win.webContents.executeJavaScript('window.snapshotBench.resetMetrics()')
+    adapter.resetMetrics()
+    samples.length = 0
+    sample()
+    snapshotNotifications = 0
+    scanDurationsMs.length = 0
+    sendStats.count = 0
+    samples.length = 1
+    samples[0]!.elapsedSeconds = 0
+    measuring = true
+    const begin = performance.now()
+    sampleInterval = setInterval(() => void sample(), 1000)
+    await new Promise((resolve) => setTimeout(resolve, trial.durationSeconds * 1000))
+    // No await between the final sample and the frozen counter capture. Sampling
+    // stops before diagnostic RPC, filesystem writes, hashes or screenshots.
+    sample()
+    measuring = false
+    clearInterval(sampleInterval)
+    sampleInterval = null
+    const end = performance.now()
+    // Enqueue renderer capture at the same seam, before snapshot cloning/hash
+    // work can give its independent event loop extra time to accumulate work.
+    const rendererAtEnd = win.webContents.executeJavaScript('window.snapshotBench.metrics()')
+    const adapterAtEnd = adapter.metrics()
+    measured = freezeMeasurement({
+      rendererSends: { count: sendStats.count, bytes: adapterAtEnd.payloadBytes },
+      snapshotNotifications,
+      scanDurationsMs,
+      adapter: adapterAtEnd,
+      snapshot: active.snapshot(),
+      samples,
+    })
+    const renderer = await rendererAtEnd
+    if (!renderer.consumerReady || renderer.treeItems <= 0 || renderer.taskCount <= 0)
+      throw new Error('Production benchmark consumers did not render fixture data')
+    rendererStats = freezeMeasurement(renderer)
+    snapshotDigest = measured.snapshot ? digest(JSON.stringify(measured.snapshot)) : ''
+    // These counters now describe only diagnostics, never the result's idle fields.
+    sendStats.count = 0
+    snapshotNotifications = 0
+    await drainPipeline()
+    adapter.resetMetrics()
+    writeFileSync(
+      join(evidence, 'renderer-metrics.json'),
+      JSON.stringify({ renderer, elapsedSeconds: (end - begin) / 1000 }, null, 2),
+    )
+    // Idle sampling is over. Bring the diagnostic consumer onscreen and allow
+    // compositor frames even if the desktop briefly occludes the benchmark.
+    win.webContents.setBackgroundThrottling(false)
+    win.show()
+    app.focus({ steal: true })
+    win.focus()
+    const taskPath = join(paths.vault, 'nested/tasks/task.0.md')
+    const originalTask = readFileSync(taskPath, 'utf8')
+    const taskCount = snapshotCount(active.snapshot()).tasks
+    const diagnosticAssertions: string[] = []
+    const rawMs: number[] = []
+    // Pause only after idle: do not let synthetic diagnostic edits enter autosave
+    // history. Scans, plugin reconciliation, IPC and real consumers still run.
+    active.pause('post-idle changed-update diagnostic')
+    const diagnosticHead = await active.repo.head()
+    const pollPaint = (heading: string, timeoutMs: number) =>
+      win!.webContents.executeJavaScript(`
+      new Promise((resolve, reject) => {
+        const heading = ${JSON.stringify(heading)};
+        const deadline = performance.now() + ${timeoutMs};
+        const timer = setTimeout(() => reject(new Error('Changed heading DOM/paint timed out')), ${timeoutMs});
+        const visible = () => [...document.querySelectorAll('[data-planning-view] button')]
+          .some(node => node.textContent?.trim() === heading && node.getClientRects().length > 0 &&
+            node.getBoundingClientRect().bottom > 0 && node.getBoundingClientRect().top < innerHeight);
+        const poll = () => {
+          if (performance.now() > deadline) return reject(new Error('Changed heading not visible in production PlanningView before timeout'));
+          if (!visible()) return setTimeout(poll, 10);
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (visible()) { clearTimeout(timer); resolve(window.snapshotBench.metrics().taskCount); }
+            else poll();
+          }));
+        };
+        poll();
+      })`)
+    // Select an actual production PlanningView list, not the benchmark's output.
+    await win.webContents.executeJavaScript(`
+      [...document.querySelectorAll('[data-planning-view] [role="tab"]')]
+        .find(node => node.textContent?.trim() === 'List')?.click()`)
+    await pollPaint('Task 0', 5000)
+    try {
+      for (let index = 0; index < 5; index++) {
+        const heading = `Task 0 changed ${trial.id} ${index + 1}`
+        const text = originalTask.replace('# Task 0', `# ${heading}`)
+        const writeStart = performance.now()
+        let timer: NodeJS.Timeout | undefined
+        try {
+          await Promise.race([
+            (async () => {
+              writeFileSync(taskPath, text)
+              await active!.refresh()
+              await drainPipeline()
+              const renderedCount = await pollPaint(
+                heading,
+                Math.max(1, 4900 - (performance.now() - writeStart)),
+              )
+              rawMs.push(performance.now() - writeStart)
+              if (
+                renderedCount !== taskCount ||
+                snapshotCount(active!.snapshot()).tasks !== taskCount
+              )
+                throw new Error('Changed update altered task count')
+              if (
+                readFileSync(taskPath, 'utf8') !== text ||
+                (await active!.repo.head()) !== diagnosticHead
+              )
+                throw new Error('Changed update was discarded or accidentally autosaved')
+            })(),
+            new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error('Changed update exceeded 5000ms')), 5000)
+            }),
+          ])
+          diagnosticAssertions.push(
+            `PASS: changed update ${index + 1} visible in PlanningView after two animation frames; stable task count; no autosave/discard`,
+          )
+        } finally {
+          clearTimeout(timer)
+        }
+      }
+    } finally {
+      writeFileSync(taskPath, originalTask)
+      await active.refresh()
+      await drainPipeline()
+      await pollPaint('Task 0', 5000)
+      if (
+        readFileSync(taskPath, 'utf8') !== originalTask ||
+        (await active.repo.head()) !== diagnosticHead
+      )
+        throw new Error('Changed-update fixture restoration failed or was autosaved')
+      diagnosticAssertions.push(
+        'PASS: original task restored and pipeline drained without autosave',
+      )
+      nativeUserChangesLatency = {
+        phase: 'post-idle changed-update diagnostic',
+        display: 'focused window, background throttling disabled only after idle sampling',
+        metric:
+          'write-start to real PlanningView DOM text plus two animation frames (includes refresh and pipeline drain)',
+        rawMs,
+        p95Ms: rawMs.length === 5 ? Math.max(...rawMs) : null,
+        complete: rawMs.length === 5,
+        assertions: diagnosticAssertions,
+      }
+    }
+    if (trial.pilot) {
+      const assertPilot = (name: string, passed: boolean) => {
+        pilotAssertions.push(`${passed ? 'PASS' : 'FAIL'}: ${name}`)
+        if (!passed) pilotValid = false
+      }
+      const unchanged = active.snapshot()!
+      const beforeUnchanged = adapter.metrics()
+      await adapter.onSnapshot(unchanged)
+      const afterUnchanged = adapter.metrics()
+      assertPilot(
+        'unchanged scan follows mode send policy',
+        trial.mode === 'candidate'
+          ? afterUnchanged.suppressed > beforeUnchanged.suppressed
+          : afterUnchanged.sent > beforeUnchanged.sent,
+      )
+      assertPilot(
+        'plugin receives unchanged snapshot',
+        afterUnchanged.pluginCallbacks.length > beforeUnchanged.pluginCallbacks.length,
+      )
+      const beforeForced = afterUnchanged.sent
+      await adapter.onSnapshot(unchanged, true)
+      assertPilot('forced identical refresh sends snapshot', adapter.metrics().sent > beforeForced)
+      adapter.epochChanged()
+      const beforeEpoch = adapter.metrics().sent
+      await adapter.onSnapshot(unchanged)
+      assertPilot('presentation epoch replays snapshot', adapter.metrics().sent > beforeEpoch)
+
+      const notePath = join(paths.vault, 'pilot-note.md')
+      const taskPath = join(paths.vault, 'task.pilot.md')
+      writeFileSync(notePath, '# Pilot note\n\nBody before update.\n')
+      writeFileSync(taskPath, '# Pilot task\n\nTask before update.\n')
+      await active.refresh()
+      await drainPipeline()
+      const baselineNoteAt = active
+        .snapshot()
+        ?.docs.find((doc) => doc.path === 'pilot-note.md')?.updatedAt
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      writeFileSync(notePath, '# Pilot note\n\nBody after update.\n')
+      writeFileSync(taskPath, '# Pilot task\n\nTask after update.\n')
+      await active.refresh()
+      await drainPipeline()
+      let changed = active.snapshot()!
+      assertPilot(
+        'body update propagates through snapshot',
+        changed.docs.some(
+          (doc) => doc.path === 'pilot-note.md' && doc.updatedAt !== baselineNoteAt,
+        ),
+      )
+      const task = changed.claimed.tasks?.items.find((item) => item.path === 'task.pilot.md') as
+        { description?: string } | undefined
+      assertPilot(
+        'task update propagates through plugin claim',
+        task?.description?.includes('Task after update') === true,
+      )
+
+      tasksEnabled = false
+      host.invalidate(remote)
+      await host.reconcile(active, 'settings')
+      await active.refresh()
+      await drainPipeline()
+      changed = active.snapshot()!
+      assertPilot('settings update changes task claims', changed.claimed.tasks === undefined)
+    }
+    if (win && !win.isDestroyed())
+      writeFileSync(join(evidence, 'capture.png'), (await win.capturePage()).toPNG())
+    await finish()
+  } catch (error) {
+    await finish(error)
+  }
+}
+
+function digest(text: string): string {
+  return createHash('sha256').update(text).digest('hex')
+}
+function snapshotCount(snapshot: any) {
+  return {
+    documents: snapshot.docs?.length ?? 0,
+    directories: snapshot.dirs?.length ?? 0,
+    tasks: snapshot.claimed?.tasks?.items?.length ?? 0,
+  }
+}
+function integrateCpu(samples: Array<{ at: number; processes: MetricRow[] }>): number {
+  let total = 0
+  for (let i = 1; i < samples.length; i++) {
+    const previous = new Map(samples[i - 1]!.processes.map((row) => [row.pid, row]))
+    const elapsed = samples[i]!.at - samples[i - 1]!.at
+    for (const row of samples[i]!.processes) {
+      const prior = previous.get(row.pid)
+      if (prior && row.cumulativeCpuUsage !== undefined && prior.cumulativeCpuUsage !== undefined) {
+        const delta = row.cumulativeCpuUsage - prior.cumulativeCpuUsage
+        if (delta >= 0) total += delta
+      } else total += (row.cpuPercent / 100) * elapsed
+    }
+  }
+  return total
+}
+
+function aggregateProcesses(samples: Array<{ processes: MetricRow[] }>) {
+  const totals = new Map<
+    string,
+    {
+      type: string
+      name: string
+      cpuPercentSum: number
+      samples: number
+      workingSetBytes: number
+      privateBytes: number
+    }
+  >()
+  for (const sample of samples)
+    for (const row of sample.processes) {
+      const key = `${row.type}:${row.pid}`
+      const item = totals.get(key) ?? {
+        type: row.type,
+        name: row.name ?? row.type,
+        cpuPercentSum: 0,
+        samples: 0,
+        workingSetBytes: 0,
+        privateBytes: 0,
+      }
+      item.cpuPercentSum += row.cpuPercent
+      item.samples++
+      item.workingSetBytes = row.workingSetBytes
+      item.privateBytes = row.privateBytes
+      totals.set(key, item)
+    }
+  return [...totals.values()].map((item) => ({
+    ...item,
+    averageCpuPercent: item.samples ? item.cpuPercentSum / item.samples : 0,
+  }))
+}
+
+void run(root, evidence).catch((error) => {
+  console.error(error)
+  app.quit()
+  process.exitCode = 1
+})
