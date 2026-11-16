@@ -24,7 +24,7 @@
  * writes. A cache is safe where reads are hot (the registry is read by every
  * path-taking procedure).
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 interface FileState {
@@ -56,7 +56,7 @@ export interface JsonFileStore<T> {
 export function jsonFileStore<T>(
   path: string,
   parse: (raw: unknown, text: string | null) => T,
-  options: { cache?: boolean } = {},
+  options: { cache?: boolean; mode?: number } = {},
 ): JsonFileStore<T> {
   const filename = resolve(path)
   const state = stateFor(filename)
@@ -86,7 +86,11 @@ export function jsonFileStore<T>(
   const write = async (value: T): Promise<void> => {
     await mkdir(dirname(filename), { recursive: true })
     const temporary = `${filename}.tmp`
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: 'utf8',
+      ...(options.mode === undefined ? {} : { mode: options.mode }),
+    })
+    if (options.mode !== undefined) await chmod(temporary, options.mode)
     await rename(temporary, filename)
     state.writes += 1
     if (options.cache === true) cached = { value, writes: state.writes }

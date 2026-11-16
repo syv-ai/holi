@@ -140,6 +140,49 @@ async function vault(timings?: Parameters<typeof openActiveVault>[0]['timings'])
 }
 
 describe('ActiveVault — snapshot', () => {
+  it('records the real autosave and held-back override paths', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const recorded: Array<string | null> = []
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir, {
+        commitProvenance: {
+          begin: () => ({ accountId: 31, generation: 2 }),
+          record: async (_ticket, _root, oid) => {
+            recorded.push(oid)
+          },
+        },
+      }),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: {
+        rescanDebounceMs: 60_000,
+        commitQuietMs: 60_000,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+        pushQuietMs: 60_000,
+      },
+    })
+    open.push(active)
+
+    await writeFile(join(dir, 'autosave.md'), 'autosaved\n')
+    await active.commitNow()
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]).toMatch(/^[0-9a-f]{40}$/)
+
+    await writeFile(join(dir, 'large.bin'), Buffer.alloc(10 * 1024 * 1024 + 1))
+    await active.commitNow()
+    await waitFor('large file to be held back', () =>
+      active.heldBack().some((file) => file.path === 'large.bin'),
+    )
+    await active.commitHeldBack('large.bin')
+    expect(recorded).toHaveLength(2)
+    expect(recorded[1]).toMatch(/^[0-9a-f]{40}$/)
+  })
+
   it('drains a failed held-back override before commitNow returns', async () => {
     const { active, dir } = await vault({
       rescanDebounceMs: 60_000,

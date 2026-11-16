@@ -11,6 +11,7 @@
  * `--porcelain=v2`. Human-readable output is not a stable interface.
  */
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { appendFile, lstat, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -55,6 +56,11 @@ export interface GitDeps {
   /** Extra environment for the git child process. Tests use it to simulate a
    * machine with no global config; nothing in the app needs it. */
   env?: Record<string, string>
+  /** Optional machine-local recorder used only by managed vault commits. */
+  commitProvenance?: {
+    begin(root: string): Promise<unknown> | unknown
+    record(ticket: unknown, root: string, oid: string | null): Promise<void>
+  }
 }
 
 /** Bounded so a large `git log` cannot silently truncate: execFile's default is
@@ -949,6 +955,42 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     )
   }
 
+  async function commitWithProvenance(args: string[]): Promise<string> {
+    const ticket = await Promise.resolve(deps.commitProvenance?.begin(root)).catch((error) => {
+      console.error('[git] commit provenance capture failed:', error)
+      return null
+    })
+    const marker = `holi-managed-commit:${randomUUID()}`
+    await runGit(root, args, { ...opts, env: { ...opts.env, GIT_REFLOG_ACTION: marker } })
+    let exactOid: string | null = null
+    try {
+      const reflog = await runGit(
+        root,
+        ['reflog', 'show', '--format=%H%x00%gs', '-n', '32', 'HEAD'],
+        opts,
+      )
+      const matches = reflog.split('\n').flatMap((line) => {
+        const [oid, action] = line.split('\0')
+        return action?.startsWith(`${marker}:`) &&
+          oid &&
+          /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid)
+          ? [oid]
+          : []
+      })
+      if (matches.length === 1) exactOid = matches[0]!
+    } catch (error) {
+      console.error('[git] commit reflog evidence unavailable:', error)
+    }
+    if (ticket !== null && deps.commitProvenance !== undefined) {
+      await deps.commitProvenance
+        .record(ticket, root, exactOid)
+        .catch((error) => console.error('[git] commit provenance write failed:', error))
+    }
+    // Preserve the legacy return contract when exact invocation evidence is absent;
+    // that fallback is never passed to the recorder.
+    return exactOid ?? runGit(root, ['rev-parse', 'HEAD'], opts)
+  }
+
   async function commitAll(message: string, paths: string[]): Promise<string | null> {
     // The caller decides what commits (the large-file gate holds oversized files
     // out by simply not naming them); an empty pathspec is the idle/all-held-back
@@ -977,8 +1019,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     // Nothing actually got staged (e.g. the named paths were already clean): not
     // an error, just the idle path — do not create an empty commit.
     if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
-    await runGit(root, [...(await identityArgs()), 'commit', '-m', message], opts)
-    return runGit(root, ['rev-parse', 'HEAD'], opts)
+    return commitWithProvenance([...(await identityArgs()), 'commit', '-m', message])
   }
 
   async function commitFileNoVerify(path: string): Promise<string | null> {
@@ -986,22 +1027,17 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     // staged entries. Literal pathspecs keep bracketed names exact.
     if (!(await status()).dirtyPaths.includes(path)) return null
     await runGit(root, ['--literal-pathspecs', 'add', '-A', '--', path], opts)
-    await runGit(
-      root,
-      [
-        '--literal-pathspecs',
-        ...(await identityArgs()),
-        'commit',
-        '--only',
-        '--no-verify',
-        '-m',
-        `Add ${path}`,
-        '--',
-        path,
-      ],
-      opts,
-    )
-    return runGit(root, ['rev-parse', 'HEAD'], opts)
+    return commitWithProvenance([
+      '--literal-pathspecs',
+      ...(await identityArgs()),
+      'commit',
+      '--only',
+      '--no-verify',
+      '-m',
+      `Add ${path}`,
+      '--',
+      path,
+    ])
   }
 
   /** Uses `.git/info/exclude`, not the shared `.gitignore`: another clone
