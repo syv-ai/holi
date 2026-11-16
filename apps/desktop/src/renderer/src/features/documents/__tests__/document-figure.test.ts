@@ -1,6 +1,6 @@
 import { Editor } from '@tiptap/react'
 import { NodeSelection } from '@tiptap/pm/state'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createDocumentExtensions } from '../document-extensions'
 import { applyReload } from '../apply-reload'
@@ -62,6 +62,50 @@ describe('document code captions', () => {
     expect(instance.state.doc.firstChild?.childCount).toBe(2)
     expect(instance.getMarkdown()).toBe(captioned)
   })
+
+  it.each([
+    ['image', 1],
+    ['whole figure', 0],
+  ] as const)(
+    'blocks readonly %s cuts without changing content or clipboard, but allows copy',
+    (_selection, position) => {
+      const instance = open(
+        '<!-- holi:figure -->\n\n![Photo](../photo.png)\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->',
+      )
+      const initial = instance.getMarkdown()
+      const selectedPosition =
+        position === 0
+          ? 0
+          : (() => {
+              let imagePosition = -1
+              instance.state.doc.descendants((node, pos) => {
+                if (node.type.name === 'image') imagePosition = pos
+              })
+              return imagePosition
+            })()
+      instance.commands.setNodeSelection(selectedPosition)
+      instance.setEditable(false)
+      expect(instance.view.editable).toBe(false)
+      const initialDoc = instance.state.doc.toJSON()
+      const setData = vi.fn()
+      const clipboardData = { clearData: vi.fn(), setData }
+      const cut = new Event('cut', { bubbles: true, cancelable: true })
+      Object.defineProperty(cut, 'clipboardData', { value: clipboardData })
+      instance.view.dom.dispatchEvent(cut)
+      expect(cut.defaultPrevented).toBe(true)
+      expect(setData).not.toHaveBeenCalled()
+      expect(instance.state.doc.toJSON()).toEqual(initialDoc)
+      expect(instance.getMarkdown().trimEnd()).toBe(initial.trimEnd())
+
+      const copy = new Event('copy', { bubbles: true, cancelable: true })
+      Object.defineProperty(copy, 'clipboardData', { value: clipboardData })
+      instance.view.dom.dispatchEvent(copy)
+      expect(copy.defaultPrevented).toBe(true)
+      expect(setData).toHaveBeenCalledWith('text/html', expect.any(String))
+      expect(setData).toHaveBeenCalledWith('text/plain', expect.any(String))
+      expect(instance.getMarkdown().trimEnd()).toBe(initial.trimEnd())
+    },
+  )
 
   it('opens and saves image captions with inline syntax and document-wide reference definitions', () => {
     const cases = [

@@ -32,21 +32,103 @@ function markdownImageFromSource(body: string, source: string) {
   }
 }
 
-function preserveReferenceDefinitions(parsed: any, source: string) {
-  const opaqueRanges = unhandledCaptionRanges(source, [], protectedMarkdownRanges(source))
-  let offset = 0
-  for (const token of marked.lexer(source)) {
-    if (
-      token.type === 'def' &&
-      !opaqueRanges.some((range) => offset >= range.from && offset < range.to)
-    ) {
-      const end = offset + token.raw.length
-      const definition = source.slice(offset, end).replace(/\r?\n$/, '')
-      parsed.content ??= []
-      parsed.content.push({ type: 'htmlBlock', attrs: { html: definition } })
-    }
-    offset += token.raw.length
+function parseWithReferenceDefinitions(
+  manager: { parse: (source: string) => any },
+  source: string,
+) {
+  const protectedRanges = protectedMarkdownRanges(source)
+  const opaqueRanges = unhandledCaptionRanges(source, [], protectedRanges)
+  const topTokens = marked.lexer(source)
+  const nestedDefinitions: any[] = []
+  const hasDefinition = (token: any): boolean => {
+    if (token.type === 'def') return true
+    return (
+      Boolean(token.tokens?.some(hasDefinition)) ||
+      Boolean(token.items?.some((item: any) => item.tokens?.some(hasDefinition)))
+    )
   }
+  const collect = (items: any[]) => {
+    for (const token of items) {
+      if (token.type === 'def') nestedDefinitions.push(token)
+      if (token.tokens) collect(token.tokens)
+      if (token.items) for (const item of token.items) if (item.tokens) collect(item.tokens)
+    }
+  }
+  collect(topTokens)
+  const replacements: Array<{ from: number; to: number; raw: string; marker: string }> = []
+  const containerRanges: Array<{ from: number; to: number }> = []
+  let topOffset = 0
+  for (let index = 0; index < topTokens.length; index++) {
+    const token = topTokens[index]!
+    const from = topOffset
+    topOffset += token.raw.length
+    if (
+      (token.type === 'list' || token.type === 'blockquote') &&
+      hasDefinition(token) &&
+      !protectedRanges.some((range) => from >= range.from && from < range.to) &&
+      !opaqueRanges.some((range) => from >= range.from && from < range.to)
+    ) {
+      const raw = source.slice(from, from + token.raw.length)
+      replacements.push({
+        from,
+        to: from + token.raw.length,
+        raw,
+        marker: `holi-private-container-${index}`,
+      })
+      containerRanges.push({ from, to: from + token.raw.length })
+    }
+  }
+  let cursor = 0
+  for (let index = 0; index < nestedDefinitions.length; index++) {
+    const token = nestedDefinitions[index]!
+    const from = source.indexOf(token.raw, cursor)
+    cursor = from < 0 ? cursor : from + token.raw.length
+    if (
+      from < 0 ||
+      containerRanges.some((range) => from >= range.from && from < range.to) ||
+      protectedRanges.some((range) => from >= range.from && from < range.to) ||
+      opaqueRanges.some((range) => from >= range.from && from < range.to)
+    )
+      continue
+    replacements.push({
+      from,
+      to: from + token.raw.length,
+      raw: source.slice(from, from + token.raw.length).replace(/\r?\n$/, ''),
+      marker: `holi-private-reference-${index}-marker`,
+    })
+  }
+  if (!replacements.length) return manager.parse(source)
+  let prepared = source
+  const markers = new Map<string, string>()
+  for (const replacement of replacements) {
+    while (source.includes(replacement.marker) || markers.has(replacement.marker))
+      replacement.marker += '-x'
+    markers.set(replacement.marker, replacement.raw)
+  }
+  for (const replacement of [...replacements].sort((left, right) => right.from - left.from)) {
+    prepared =
+      prepared.slice(0, replacement.from) + replacement.marker + prepared.slice(replacement.to)
+  }
+  const copies = nestedDefinitions.map((token) => token.raw.trimEnd()).join('\n\n')
+  const parsed = manager.parse(`${prepared}\n\n${copies}`)
+  const restore = (nodes: any[]) => {
+    for (let index = 0; index < nodes.length; index++) {
+      const node = nodes[index]
+      const marker =
+        node.type === 'htmlBlock'
+          ? String(node.attrs?.html ?? '').trim()
+          : node.type === 'paragraph'
+            ? node.content?.map((part: any) => part.text ?? '').join('')
+            : node.text
+      const raw = markers.get(marker)
+      if (raw) {
+        nodes[index] = { type: 'htmlBlock', attrs: { html: raw } }
+        continue
+      }
+      if (node.content) restore(node.content)
+    }
+  }
+  restore(parsed.content ?? [])
   return parsed
 }
 
@@ -207,7 +289,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
     })),
     ...standaloneImages.map((image) => ({ ...image, frameIndex: null as number | null })),
   ].sort((left, right) => left.from - right.from)
-  if (!items.length) return preserveReferenceDefinitions(manager.parse(source), source)
+  if (!items.length) return parseWithReferenceDefinitions(manager, source)
   const placeholders = items.map((_, index) => {
     let token = `<!-- holi-private-caption-${index} -->`
     let suffix = 0
@@ -219,7 +301,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
     const item = items[index]!
     substituted = substituted.slice(0, item.from) + placeholders[index] + substituted.slice(item.to)
   }
-  const parsed = manager.parse(substituted)
+  const parsed = parseWithReferenceDefinitions(manager, substituted)
   const figures = frames.map((frame) => {
     try {
       const imageFrame = imageFrames.find(
@@ -294,7 +376,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
         restored = restored.replaceAll(placeholder, source.slice(range.from, range.to))
     return [{ ...node, attrs: { ...node.attrs, html: restored } }]
   })
-  return preserveReferenceDefinitions(parsed, source)
+  return parsed
 }
 
 export const DocumentMarkdown = Markdown.extend({
