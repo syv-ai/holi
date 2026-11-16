@@ -2,6 +2,7 @@ import { Provider, createStore } from 'jotai'
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Editor } from '@tiptap/react'
+import { DOMSerializer } from '@tiptap/pm/model'
 import { emptyVaultSnapshot, resolveVaultSettings } from '@holi/shared'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -140,6 +141,15 @@ function App() {
         async anchor() {
           const { head } = splitDocument(await trpc.notes.read.query({ remote, path }))
           return { anchor: selectionAnchor(editor(), head), lines: selectionLines(editor(), head) }
+        },
+        htmlSelection() {
+          const current = editor()
+          const fragment = DOMSerializer.fromSchema(current.schema).serializeFragment(
+            current.state.selection.content().content,
+          )
+          const container = document.createElement('div')
+          container.append(fragment)
+          return container.innerHTML
         },
       },
     })

@@ -100,6 +100,26 @@ describe('document code captions', () => {
     expect(reopened.state.doc.firstChild?.firstChild?.attrs.src).toContain('photo%20one.png')
   })
 
+  it('keeps reference image spelling through add and remove when its attributes are unchanged', () => {
+    const source = '  ![Photo][photo]\n\n[photo]: ../assets/photo%20one.png "Photo title"'
+    const instance = open(source)
+    expect(instance.getMarkdown().trimEnd()).toBe(source)
+    expect(addImageCaption(instance, 0)).toBe(true)
+    instance.commands.insertContent('Photo caption')
+    const captionedSource = instance.getMarkdown()
+    expect(captionedSource).toContain('  ![Photo][photo]')
+    expect(captionedSource).toContain('[photo]: ../assets/photo%20one.png "Photo title"')
+    expect(removeCodeCaption(instance, 0)).toBe(true)
+    expect(instance.getMarkdown().trimEnd()).toBe(source)
+    const image = instance.state.doc.firstChild!
+    instance.view.dispatch(
+      instance.state.tr.setNodeMarkup(0, undefined, { ...image.attrs, alt: 'Edited photo' }),
+    )
+    expect(instance.getMarkdown()).toContain(
+      '![Edited photo](../assets/photo%20one.png "Photo title")',
+    )
+  })
+
   it('adds and removes captions for remote images without rebuilding their visible attrs', () => {
     const instance = open('![A cat](https://example.com/cat.png "remote title")')
     const image = instance.state.doc.firstChild!

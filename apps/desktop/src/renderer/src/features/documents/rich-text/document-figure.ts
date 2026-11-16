@@ -93,7 +93,11 @@ function writeFigureCaption(body: string, caption: any, rendered: string): strin
   }
 }
 
-function renderImageMarkdown(attrs: { src?: unknown; alt?: unknown; title?: unknown }): string {
+export function renderImageMarkdown(attrs: {
+  src?: unknown
+  alt?: unknown
+  title?: unknown
+}): string {
   const alt = String(attrs.alt ?? '')
     .replaceAll('\\', '\\\\')
     .replaceAll('[', '\\[')

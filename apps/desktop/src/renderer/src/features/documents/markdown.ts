@@ -180,15 +180,30 @@ function annotateStandaloneImageSources(
     )
     if (index < 0) return node
     const [candidate] = available.splice(index, 1)
+    const sourceMarkdownImageAttrs = JSON.stringify([
+      candidate!.image.attrs?.src ?? '',
+      candidate!.image.attrs?.alt ?? null,
+      candidate!.image.attrs?.title ?? null,
+    ])
     return {
       ...node,
       ...(node.type === 'image'
-        ? { attrs: { ...node.attrs, sourceMarkdown: candidate!.body } }
+        ? {
+            attrs: {
+              ...node.attrs,
+              sourceMarkdown: candidate!.body,
+              sourceMarkdownImageAttrs,
+            },
+          }
         : {
             content: [
               {
                 ...node.content[0],
-                attrs: { ...image.attrs, sourceMarkdown: candidate!.body },
+                attrs: {
+                  ...image.attrs,
+                  sourceMarkdown: candidate!.body,
+                  sourceMarkdownImageAttrs,
+                },
               },
             ],
           }),
