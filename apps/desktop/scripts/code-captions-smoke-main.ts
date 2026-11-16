@@ -297,16 +297,25 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
     const destination = await js<{ x: number; y: number }>(
       `const r=document.querySelector('[data-pane="primary"] [role="textbox"] > p:last-of-type').getBoundingClientRect();return {x:r.right-4,y:r.bottom-1}`,
     )
-    let data: Record<string, unknown> | undefined
-    const intercepted = (
-      _event: Electron.Event,
-      method: string,
-      params: { data: Record<string, unknown> },
-    ) => {
-      if (method === 'Input.dragIntercepted') data = params.data
-    }
-    win.webContents.debugger.on('message', intercepted)
-    await win.webContents.debugger.sendCommand('Input.setInterceptDrags', { enabled: true })
+    // Observe the real DOM payload after ProseMirror's dragstart handler.
+    // Replaying Input.dragIntercepted through dispatchDragEvent crashes Electron
+    // 43's renderer intermittently on macOS. Native mouse events complete the
+    // actual production drag/drop/dragend lifecycle without that CDP replay.
+    await js(`
+      window.captionNativeDrag = { items: [], events: [] };
+      window.captionDragObserver = (event) => {
+        window.captionNativeDrag.events.push(event.type);
+        if (event.type === 'dragstart') {
+          window.captionNativeDrag.items = Array.from(event.dataTransfer.types).map(mimeType => ({ mimeType, data: event.dataTransfer.getData(mimeType) }));
+          // Moving the figure detaches its original DOM, so dragend no longer
+          // bubbles to document. Observe it on the actual native source.
+          window.captionDragSource = event.target;
+          event.target.addEventListener('dragend', window.captionDragObserver, { once: true });
+        }
+      };
+      for (const type of ['dragstart', 'drop']) document.addEventListener(type, window.captionDragObserver);
+      return true;
+    `)
     try {
       await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
         type: 'mouseMoved',
@@ -321,7 +330,7 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
         buttons: 1,
         clickCount: 1,
       })
-      for (let step = 1; step <= 6 && !data; step++) {
+      for (let step = 1; step <= 6; step++) {
         await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
           type: 'mouseMoved',
           x: source.x + (destination.x - source.x) * (step / 6),
@@ -331,74 +340,48 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
         })
         await sleep(80)
       }
-      assert(data, 'Native image drag must expose its whole-figure payload')
-      await writeFile(join(evidence, 'image-native-drag-data.json'), JSON.stringify(data, null, 2))
-      // Deliver the intercepted gesture in protocol order without waiting on
-      // a nested native drag loop before releasing its physical button.
-      const deliveries = ['dragEnter', 'dragOver', 'drop'].map((type) => {
-        console.log(`image drag: send ${type}`)
-        return win.webContents.debugger
-          .sendCommand('Input.dispatchDragEvent', {
-            type,
-            ...destination,
-            data,
-          })
-          .then(() => {
-            console.log(`image drag: completed ${type}`)
-          })
-      })
-      win.webContents.sendInputEvent({
-        type: 'mouseUp',
+    } finally {
+      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
         ...destination,
         button: 'left',
+        buttons: 0,
         clickCount: 1,
       })
-      deliveries.push(
-        win.webContents.debugger
-          .sendCommand('Input.dispatchMouseEvent', {
-            type: 'mouseReleased',
-            ...destination,
-            button: 'left',
-            buttons: 0,
-            clickCount: 1,
-          })
-          .then(() => {
-            console.log('image drag: completed mouse release')
-          }),
-      )
-      let timeout: ReturnType<typeof setTimeout> | undefined
       try {
-        await Promise.race([
-          Promise.all(deliveries),
-          new Promise<never>((_resolve, reject) => {
-            timeout = setTimeout(
-              () => reject(new Error('intercepted image drop delivery timed out')),
-              10000,
-            )
-          }),
-        ])
+        await wait(
+          `window.captionNativeDrag.events.includes('dragend')`,
+          'native image drag ends',
+          10000,
+        )
       } finally {
-        clearTimeout(timeout)
+        await js(`
+          for (const type of ['dragstart', 'drop']) document.removeEventListener(type, window.captionDragObserver);
+          window.captionDragSource?.removeEventListener('dragend', window.captionDragObserver);
+          delete window.captionDragSource;
+          delete window.captionDragObserver;
+          return true;
+        `)
       }
-    } finally {
-      if (!win.webContents.isCrashed()) {
-        win.webContents.sendInputEvent({
-          type: 'mouseUp',
-          ...destination,
-          button: 'left',
-          clickCount: 1,
-        })
-        await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
-          type: 'mouseReleased',
-          ...destination,
-          button: 'left',
-          buttons: 0,
-          clickCount: 1,
-        })
-        await win.webContents.debugger.sendCommand('Input.setInterceptDrags', { enabled: false })
-      }
-      win.webContents.debugger.removeListener('message', intercepted)
     }
+    const data = await js<{
+      items: { mimeType: string; data: string }[]
+      events: string[]
+    }>('return window.captionNativeDrag')
+    assert.deepEqual(data.events, ['dragstart', 'drop', 'dragend'])
+    assert(
+      data.items.some(
+        (item) =>
+          item.mimeType === 'text/html' &&
+          item.data.includes('<figure') &&
+          item.data.includes('<figcaption>'),
+      ),
+      'Native image drag must expose its whole-figure payload',
+    )
+    assert(
+      data.items.some((item) => item.mimeType === 'text/plain' && item.data.includes(imageCaption)),
+    )
+    await writeFile(join(evidence, 'image-native-drag-data.json'), JSON.stringify(data, null, 2))
     await wait(
       `window.captionFixture.state().json.content.filter(n=>n.type==='documentFigure').length===1 && window.captionFixture.state().markdown.indexOf('holi:figure')>window.captionFixture.state().markdown.indexOf('After the image.')`,
       'native direct image drop',
@@ -2167,9 +2150,20 @@ async function run() {
     await wait(`document.querySelector('input[aria-invalid]')`, 'Mermaid label editor')
     await sleep(350)
     await click('input[aria-invalid]')
+    await wait(
+      `document.activeElement === document.querySelector('input[aria-invalid]')`,
+      'Mermaid label field owns native focus',
+    )
     win.webContents.selectAll()
+    await wait(
+      `(() => { const input = document.querySelector('input[aria-invalid]'); return input.selectionStart === 0 && input.selectionEnd === input.value.length })()`,
+      'Mermaid label text selected before replacement',
+    )
     await win.webContents.insertText('Gamma')
-    await sleep(350)
+    await wait(
+      `document.querySelector('input[aria-invalid]')?.value === 'Gamma'`,
+      'Mermaid label replacement committed',
+    )
     await js(
       `Array.from(document.querySelectorAll('button')).find(e=>e.textContent.trim()==='Apply')?.click(); return true`,
     )
