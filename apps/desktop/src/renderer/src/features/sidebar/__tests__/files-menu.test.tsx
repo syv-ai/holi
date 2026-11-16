@@ -266,8 +266,9 @@ test('folder subscription actions keep a trailing slot and reveal on pointer or 
   expect(shortLabel.className).toContain('[&:hover_[data-tree-row-action]]:opacity-100')
   expect(shortLabel.className).toContain('[&:focus-within_[data-tree-row-action]]:opacity-100')
   expect(shortLabel.className).toContain(
-    'in-data-[focus=true]:[&_[data-tree-row-action]]:opacity-100',
+    'group-focus-within/tree-item:[&_[data-tree-row-action]]:opacity-100',
   )
+  expect(short).toHaveClass('group/tree-item')
   expect(shortLabel.className).toContain(
     '[@media(hover:none)]:[&_[data-tree-row-action]]:opacity-100',
   )
