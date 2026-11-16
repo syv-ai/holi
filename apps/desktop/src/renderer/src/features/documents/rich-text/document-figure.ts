@@ -114,6 +114,84 @@ export function renderImageMarkdown(attrs: {
   return `![${alt}](${src}${title})`
 }
 
+function serializeFigureClipboard(editor: Editor, slice: Slice): string {
+  let hasFigure = false
+  slice.content.descendants((node) => {
+    if (node.type.name === 'documentFigure') hasFigure = true
+  })
+  // A falsy result lets other serializers and ProseMirror's ordinary
+  // textBetween fallback keep handling selections outside figures.
+  if (!hasFigure || !editor.markdown) return ''
+  const portable = (node: any): any => ({
+    ...node,
+    ...(node.type === 'image' || node.type === 'documentFigure'
+      ? {
+          attrs: {
+            ...node.attrs,
+            sourceBody: null,
+            sourceImageAttrs: null,
+            sourceMarkdown: null,
+            sourceMarkdownImageAttrs: null,
+          },
+        }
+      : {}),
+    ...(node.content ? { content: node.content.map(portable) } : {}),
+  })
+  // References belong to the source document, not the clipboard.
+  // Materialize visible image attrs while retaining caption marks.
+  const flattenOpenFigures = (
+    node: any,
+    openStart: number,
+    openEnd: number,
+    first: boolean,
+    last: boolean,
+  ): any[] => {
+    const startsOpen = first && openStart > 0
+    const endsOpen = last && openEnd > 0
+    if (node.type === 'documentFigure' && (startsOpen || endsOpen))
+      return (node.content ?? []).flatMap((child: any, index: number, content: any[]) => {
+        const flattened = flattenOpenFigures(
+          child,
+          startsOpen ? openStart - 1 : 0,
+          endsOpen ? openEnd - 1 : 0,
+          index === 0,
+          index === content.length - 1,
+        )
+        return child.type === 'documentCaption'
+          ? flattened.map((caption: any) => ({ ...caption, type: 'paragraph' }))
+          : flattened
+      })
+    const content = node.content?.flatMap((child: any, index: number, children: any[]) =>
+      flattenOpenFigures(
+        child,
+        startsOpen ? openStart - 1 : 0,
+        endsOpen ? openEnd - 1 : 0,
+        index === 0,
+        index === children.length - 1,
+      ),
+    )
+    return [
+      {
+        ...portable(node),
+        ...(content ? { content } : {}),
+      },
+    ]
+  }
+  const content = slice.content.toJSON()
+  return editor.markdown.serialize({
+    type: 'doc',
+    content: content.flatMap((node: any, index: number) =>
+      flattenOpenFigures(
+        node,
+        slice.openStart,
+        slice.openEnd,
+        index === 0,
+        index === content.length - 1,
+      ),
+    ),
+  })
+}
+
 function copyContainingFigure(view: EditorView, event: ClipboardEvent, cut: boolean): boolean {
   if (cut && !view.editable) {
     event.preventDefault()
@@ -270,81 +348,7 @@ export const DocumentFigure = Node.create({
         },
         props: {
           clipboardTextSerializer(slice) {
-            let hasFigure = false
-            slice.content.descendants((node) => {
-              if (node.type.name === 'documentFigure') hasFigure = true
-            })
-            // A falsy result lets other serializers and ProseMirror's ordinary
-            // textBetween fallback keep handling selections outside figures.
-            if (!hasFigure || !editor.markdown) return ''
-            const portable = (node: any): any => ({
-              ...node,
-              ...(node.type === 'image' || node.type === 'documentFigure'
-                ? {
-                    attrs: {
-                      ...node.attrs,
-                      sourceBody: null,
-                      sourceImageAttrs: null,
-                      sourceMarkdown: null,
-                      sourceMarkdownImageAttrs: null,
-                    },
-                  }
-                : {}),
-              ...(node.content ? { content: node.content.map(portable) } : {}),
-            })
-            // References belong to the source document, not the clipboard.
-            // Materialize visible image attrs while retaining caption marks.
-            const flattenOpenFigures = (
-              node: any,
-              openStart: number,
-              openEnd: number,
-              first: boolean,
-              last: boolean,
-            ): any[] => {
-              const startsOpen = first && openStart > 0
-              const endsOpen = last && openEnd > 0
-              if (node.type === 'documentFigure' && (startsOpen || endsOpen))
-                return (node.content ?? []).flatMap((child: any, index: number, content: any[]) => {
-                  const flattened = flattenOpenFigures(
-                    child,
-                    startsOpen ? openStart - 1 : 0,
-                    endsOpen ? openEnd - 1 : 0,
-                    index === 0,
-                    index === content.length - 1,
-                  )
-                  return child.type === 'documentCaption'
-                    ? flattened.map((caption: any) => ({ ...caption, type: 'paragraph' }))
-                    : flattened
-                })
-              const content = node.content?.flatMap((child: any, index: number, children: any[]) =>
-                flattenOpenFigures(
-                  child,
-                  startsOpen ? openStart - 1 : 0,
-                  endsOpen ? openEnd - 1 : 0,
-                  index === 0,
-                  index === children.length - 1,
-                ),
-              )
-              return [
-                {
-                  ...portable(node),
-                  ...(content ? { content } : {}),
-                },
-              ]
-            }
-            const content = slice.content.toJSON()
-            return editor.markdown.serialize({
-              type: 'doc',
-              content: content.flatMap((node: any, index: number) =>
-                flattenOpenFigures(
-                  node,
-                  slice.openStart,
-                  slice.openEnd,
-                  index === 0,
-                  index === content.length - 1,
-                ),
-              ),
-            })
+            return serializeFigureClipboard(editor, slice)
           },
           handleDOMEvents: {
             dragstart(view) {
@@ -508,8 +512,7 @@ export function addCodeCaption(editor: Editor, pos: number): boolean {
   if (!editor.isEditable) return false
   if (pos < 0 || pos > editor.state.doc.content.size) return false
   const node = editor.state.doc.nodeAt(pos)
-  if (!node || node.type.name !== 'codeBlock' || node.attrs.language?.toLowerCase() === 'mermaid')
-    return false
+  if (!node || node.type.name !== 'codeBlock') return false
   const paragraph = editor.schema.nodes.documentCaption?.create()
   if (!paragraph) return false
   const code = node.type.create({ ...node.attrs, preserveFence: true }, node.content, node.marks)

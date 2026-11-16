@@ -6,8 +6,8 @@
  * **Two places a job runs**, each sandboxed by the agent's own rules:
  *
  * - **A scratch folder** (`scope`, a document's agent): Holi makes one of its
- *   own (`<userData>/agent-jobs/<id>/`), copies in the files the job may
- *   read, at their vault paths, and runs the agent there. What bounds it is
+ *   own (`<userData>/agent-scratch/<vault-key>/jobs/<id>/`), copies in the
+ *   files the job may read, at their vault paths, and runs the agent there. What bounds it is
  *   what it writes back, not what it reads: Codex's sandbox keeps writes to
  *   the folder but can read the disk. When it succeeds, its process group is
  *   killed, then only the regular files it wrote that match its write scope
@@ -133,7 +133,7 @@ const defaultSpawnJob: SpawnJob = (bin, args, { cwd, env }) =>
 
 export interface JobsDeps {
   vault: VaultRef
-  /** Where the scratch folders go: `<userData>/agent-jobs`. */
+  /** This vault's private scratch root from `agentScratchRoots`. */
   scratchRoot: string
   onChange(list: SessionSummary[]): void
   /** The vault's turn bracket, for a job in the vault: sync pauses and the

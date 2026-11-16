@@ -8,7 +8,7 @@
  * normalised the first time it is edited here, never on open alone.
  */
 import { Markdown } from '@tiptap/markdown'
-import { marked } from 'marked'
+import { Lexer, Marked, Tokenizer, type TokensList } from 'marked'
 import {
   isPortableInlineCaption,
   readMarkdownCaptionEnvelopes,
@@ -19,10 +19,51 @@ import {
  *  comment, so it is invisible anywhere else the file is read. */
 export const AGENT_MARKER = '<!-- holi:agent -->'
 
+/** Retain every definition token at its parser-owned position. Marked normally
+ * discards duplicates, which also makes summed token.raw ranges skip source.
+ * Use the same grammar for provenance scans and the editor's parse lexer. */
+function referenceMarkdown(references?: () => TokensList['links']) {
+  const instance = new Marked()
+  instance.Lexer = class<ParserOutput = string, RendererOutput = string> extends Lexer<
+    ParserOutput,
+    RendererOutput
+  > {
+    lex(source: string) {
+      if (references) Object.assign(this.tokens.links, references())
+      return super.lex(source)
+    }
+  }
+  // Recognize a definition at the lexer's current block position, before
+  // Marked discards duplicate definitions. Keep only that source block opaque,
+  // never its enclosing editable list/quote. The original links are already
+  // seeded, so these source tokens cannot change first-definition precedence.
+  const definitionTokenizer = new Tokenizer({ gfm: true })
+  new Lexer({ gfm: true, tokenizer: definitionTokenizer })
+  instance.use({
+    extensions: [
+      {
+        name: 'holiReferenceDefinition',
+        level: 'block',
+        tokenizer(source) {
+          const definition = definitionTokenizer.def(source)
+          if (!definition) return
+          this.lexer.tokens.links[definition.tag] ??= {
+            href: definition.href,
+            title: definition.title,
+          }
+          return { type: 'html', block: true, raw: definition.raw, text: definition.raw }
+        },
+      },
+    ],
+  })
+  return instance
+}
+const sourceMarkdown = referenceMarkdown()
+
 function markdownImageFromSource(body: string, source: string) {
   // Lex in document context: Marked resolves full, collapsed and shortcut
   // references, escapes and multiline definitions without scanning example text.
-  const paragraph = marked.lexer(`${body}\n\n${source}`)[0]
+  const paragraph = sourceMarkdown.lexer(`${body}\n\n${source}`)[0]
   if (paragraph?.type !== 'paragraph') return null
   const image = paragraph.tokens?.find((token) => token.type === 'image')
   if (image?.type !== 'image' || image.raw.trim() !== body.trim()) return null
@@ -32,112 +73,14 @@ function markdownImageFromSource(body: string, source: string) {
   }
 }
 
-function parseWithReferenceDefinitions(
-  manager: { parse: (source: string) => any },
-  source: string,
-) {
-  const protectedRanges = protectedMarkdownRanges(source)
-  const opaqueRanges = unhandledCaptionRanges(source, [], protectedRanges)
-  const topTokens = marked.lexer(source)
-  const nestedDefinitions: any[] = []
-  const hasDefinition = (token: any): boolean => {
-    if (token.type === 'def') return true
-    return (
-      Boolean(token.tokens?.some(hasDefinition)) ||
-      Boolean(token.items?.some((item: any) => item.tokens?.some(hasDefinition)))
-    )
-  }
-  const collect = (items: any[]) => {
-    for (const token of items) {
-      if (token.type === 'def') nestedDefinitions.push(token)
-      if (token.tokens) collect(token.tokens)
-      if (token.items) for (const item of token.items) if (item.tokens) collect(item.tokens)
-    }
-  }
-  collect(topTokens)
-  const replacements: Array<{ from: number; to: number; raw: string; marker: string }> = []
-  const containerRanges: Array<{ from: number; to: number }> = []
-  let topOffset = 0
-  for (let index = 0; index < topTokens.length; index++) {
-    const token = topTokens[index]!
-    const from = topOffset
-    topOffset += token.raw.length
-    if (
-      (token.type === 'list' || token.type === 'blockquote') &&
-      hasDefinition(token) &&
-      !protectedRanges.some((range) => from >= range.from && from < range.to) &&
-      !opaqueRanges.some((range) => from >= range.from && from < range.to)
-    ) {
-      const raw = source.slice(from, from + token.raw.length)
-      replacements.push({
-        from,
-        to: from + token.raw.length,
-        raw,
-        marker: `holi-private-container-${index}`,
-      })
-      containerRanges.push({ from, to: from + token.raw.length })
-    }
-  }
-  let cursor = 0
-  for (let index = 0; index < nestedDefinitions.length; index++) {
-    const token = nestedDefinitions[index]!
-    const from = source.indexOf(token.raw, cursor)
-    cursor = from < 0 ? cursor : from + token.raw.length
-    if (
-      from < 0 ||
-      containerRanges.some((range) => from >= range.from && from < range.to) ||
-      protectedRanges.some((range) => from >= range.from && from < range.to) ||
-      opaqueRanges.some((range) => from >= range.from && from < range.to)
-    )
-      continue
-    replacements.push({
-      from,
-      to: from + token.raw.length,
-      raw: source.slice(from, from + token.raw.length).replace(/\r?\n$/, ''),
-      marker: `holi-private-reference-${index}-marker`,
-    })
-  }
-  if (!replacements.length) return manager.parse(source)
-  let prepared = source
-  const markers = new Map<string, string>()
-  for (const replacement of replacements) {
-    while (source.includes(replacement.marker) || markers.has(replacement.marker))
-      replacement.marker += '-x'
-    markers.set(replacement.marker, replacement.raw)
-  }
-  for (const replacement of [...replacements].sort((left, right) => right.from - left.from)) {
-    prepared =
-      prepared.slice(0, replacement.from) + replacement.marker + prepared.slice(replacement.to)
-  }
-  const copies = nestedDefinitions.map((token) => token.raw.trimEnd()).join('\n\n')
-  const parsed = manager.parse(`${prepared}\n\n${copies}`)
-  const restore = (nodes: any[]) => {
-    for (let index = 0; index < nodes.length; index++) {
-      const node = nodes[index]
-      const marker =
-        node.type === 'htmlBlock'
-          ? String(node.attrs?.html ?? '').trim()
-          : node.type === 'paragraph'
-            ? node.content?.map((part: any) => part.text ?? '').join('')
-            : node.text
-      const raw = markers.get(marker)
-      if (raw) {
-        nodes[index] = { type: 'htmlBlock', attrs: { html: raw } }
-        continue
-      }
-      if (node.content) restore(node.content)
-    }
-  }
-  restore(parsed.content ?? [])
-  return parsed
-}
-
 function protectedMarkdownRanges(source: string) {
   const ranges: Array<{ from: number; to: number }> = []
   let offset = 0
-  for (const token of marked.lexer(source)) {
+  for (const token of sourceMarkdown.lexer(source)) {
     if (
       token.type === 'code' ||
+      token.type === 'list' ||
+      token.type === 'blockquote' ||
       (token.type === 'html' && !/^<!--\s*\/?holi:(?:figure|caption)\s*-->$/.test(token.raw.trim()))
     )
       ranges.push({ from: offset, to: offset + token.raw.length })
@@ -151,7 +94,7 @@ function protectedMarkdownRanges(source: string) {
 function standaloneImageBlocks(source: string, consumed: Array<{ from: number; to: number }>) {
   const images: Array<{ from: number; to: number; node: any }> = []
   let offset = 0
-  for (const token of marked.lexer(source)) {
+  for (const token of sourceMarkdown.lexer(source)) {
     const from = offset
     offset += token.raw.length
     if (consumed.some((range) => from >= range.from && from < range.to)) continue
@@ -181,30 +124,20 @@ function unhandledCaptionRanges(
   supported: Array<{ from: number; to: number }>,
   protectedRanges: Array<{ from: number; to: number }>,
 ) {
-  const lines = source.split(/\r?\n/)
   const ranges: Array<{ from: number; to: number }> = []
   const open: number[] = []
   let offset = 0
-  let fence: { marker: string; length: number } | null = null
-  for (const line of lines) {
-    const protectedLine = protectedRanges.some((range) => offset >= range.from && offset < range.to)
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line)
-    if (protectedLine) {
-      // Marked owns code and raw HTML blocks; caption markers there are data.
-    } else if (fence) {
-      if (fenceMatch?.[1]?.[0] === fence.marker && fenceMatch[1].length >= fence.length)
-        fence = null
-    } else if (fenceMatch) {
-      fence = { marker: fenceMatch[1]![0]!, length: fenceMatch[1]!.length }
-    } else if (line.trim() === '<!-- holi:figure -->') {
-      open.push(offset)
-    } else if (line.trim() === '<!-- /holi:figure -->' && open.length) {
-      ranges.push({ from: open.pop()!, to: offset + line.length })
-    }
-    const afterLine = offset + line.length
-    offset =
-      afterLine +
-      (source.startsWith('\r\n', afterLine) ? 2 : source.startsWith('\n', afterLine) ? 1 : 0)
+  // Only actual top-level HTML comment tokens can delimit an envelope.
+  // A line scan mistakes list continuations and nested <pre> contents for
+  // envelopes and can split away the enclosing HTML's closing tag.
+  for (const token of sourceMarkdown.lexer(source)) {
+    const from = offset
+    offset += token.raw.length
+    if (token.type !== 'html') continue
+    if (protectedRanges.some((range) => from >= range.from && from < range.to)) continue
+    if (token.raw.trim() === '<!-- holi:figure -->') open.push(from)
+    else if (token.raw.trim() === '<!-- /holi:figure -->' && open.length)
+      ranges.push({ from: open.pop()!, to: from + token.raw.trimEnd().length })
   }
   for (const from of open) ranges.push({ from, to: source.length })
   return ranges.filter(
@@ -220,7 +153,6 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
   const protectedRanges = protectedMarkdownRanges(source)
   const codeFrames = readMarkdownCodeCaptions(source).filter(
     (frame) =>
-      frame.language.toLowerCase() !== 'mermaid' &&
       !protectedRanges.some(
         (range) => frame.envelope.from >= range.from && frame.envelope.from < range.to,
       ),
@@ -289,7 +221,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
     })),
     ...standaloneImages.map((image) => ({ ...image, frameIndex: null as number | null })),
   ].sort((left, right) => left.from - right.from)
-  if (!items.length) return parseWithReferenceDefinitions(manager, source)
+  if (!items.length) return manager.parse(source)
   const placeholders = items.map((_, index) => {
     let token = `<!-- holi-private-caption-${index} -->`
     let suffix = 0
@@ -301,7 +233,7 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
     const item = items[index]!
     substituted = substituted.slice(0, item.from) + placeholders[index] + substituted.slice(item.to)
   }
-  const parsed = parseWithReferenceDefinitions(manager, substituted)
+  const parsed = manager.parse(substituted)
   const figures = frames.map((frame) => {
     try {
       const imageFrame = imageFrames.find(
@@ -382,16 +314,34 @@ function withDocumentFigures(manager: { parse: (source: string) => any }, source
 export const DocumentMarkdown = Markdown.extend({
   onBeforeCreate(event) {
     const initial = this.editor.options.content
+    let references: TokensList['links'] = Object.create(null)
+    // Each editor owns its lexer and the original document's first-wins
+    // reference context, including definitions inside opaque envelopes.
+    const instance = referenceMarkdown(() => references)
+    this.options.marked = instance as unknown as NonNullable<typeof this.options.marked>
     this.parent?.(event)
     const manager = this.editor.markdown
-    if (!manager || typeof initial !== 'string') return
+    if (!manager) return
     const parse = manager.parse.bind(manager)
-    manager.parse = (source: string) => withDocumentFigures({ parse }, source)
+    const parseDocument = (source: string) => {
+      const previous = references
+      source = source.replace(/\r\n?/g, '\n')
+      references = sourceMarkdown.lexer(source).links
+      try {
+        return withDocumentFigures({ parse }, source)
+      } finally {
+        references = previous
+      }
+    }
+    manager.parse = parseDocument
+    if (typeof initial !== 'string') return
     if (
       this.editor.options.contentType === 'markdown' &&
-      (readMarkdownCaptionEnvelopes(initial).length || standaloneImageBlocks(initial, []).length)
+      (readMarkdownCaptionEnvelopes(initial).length ||
+        standaloneImageBlocks(initial, []).length ||
+        Object.keys(sourceMarkdown.lexer(initial).links).length)
     ) {
-      this.editor.options.content = withDocumentFigures({ parse }, initial)
+      this.editor.options.content = parseDocument(initial)
       this.editor.options.contentType = 'json'
     }
   },

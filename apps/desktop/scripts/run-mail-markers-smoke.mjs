@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,8 +11,8 @@ import { build } from 'vite'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const repo = resolve(desktop, '../..')
-const evidence = resolve(process.argv[2] ?? '/tmp/holi-463/native')
-const root = await mkdtemp(join(tmpdir(), 'holi-463-native-'))
+const evidence = resolve(process.argv[2] ?? '/tmp/holi-464/native')
+const root = await mkdtemp(join(tmpdir(), 'holi-464-native-'))
 await mkdir(evidence, { recursive: true })
 await rm(join(evidence, 'frames'), { recursive: true, force: true })
 for (const name of ['result.json', 'electron-smoke.log', 'light.png', 'dark.png'])
@@ -64,13 +64,13 @@ try {
   )
   await writeFile(
     join(root, 'package.json'),
-    JSON.stringify({ name: 'holi-mail-markers-smoke-463', main: 'main.cjs' }),
+    JSON.stringify({ name: 'holi-mail-markers-smoke-464', main: 'main.cjs' }),
   )
   const electron = createRequire(import.meta.url)('electron')
   const env = {
     ...process.env,
-    HOLI_463_ROOT: root,
-    HOLI_463_EVIDENCE: evidence,
+    HOLI_464_ROOT: root,
+    HOLI_464_EVIDENCE: evidence,
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
       .join(delimiter),
@@ -108,6 +108,10 @@ try {
   assert(result.captures.includes('connections-dark.png'))
   assert(result.captures.includes('shell-reader-dark.png'))
   assert(result.captures.includes('surface-reader-dark.png'))
+  assert(result.captures.includes('shell-marker-action-light.png'))
+  assert(result.captures.includes('shell-marker-action-dark.png'))
+  assert(result.captures.includes('surface-marker-action-light.png'))
+  assert(result.captures.includes('surface-marker-action-dark.png'))
   assert(
     result.checks.includes(
       'native-keyboard-enable-disable-reorder-persists-through-production-capabilities',
@@ -116,9 +120,72 @@ try {
   assert(
     result.checks.includes('delayed-native-a-b-a-marker-result-does-not-resurrect-old-annotation'),
   )
+  assert(
+    result.checks.includes(
+      'native-reader-header-retry-recovers-action-reconciliation-in-both-surfaces',
+    ),
+  )
+  assert(result.checks.includes('native-reader-retains-unstar-state-after-refused-gmail-unstar'))
+  assert(
+    result.checks.includes('native-shell-click-during-secondary-refetch-advances-marker-sequence'),
+  )
   for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)
+  const frames = await readdir(join(evidence, 'frames'))
+  assert(frames.length > 0, 'native frame capture must produce recording frames')
+  execFileSync(
+    'ffmpeg',
+    [
+      '-y',
+      '-framerate',
+      '5',
+      '-i',
+      join(evidence, 'frames/frame-%04d.png'),
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      join(evidence, 'native-complete.mp4'),
+    ],
+    { stdio: 'ignore' },
+  )
+  const keyframes = execFileSync(
+    'ffprobe',
+    [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'frame=key_frame',
+      '-of',
+      'csv=p=0',
+      join(evidence, 'native-complete.mp4'),
+    ],
+    { encoding: 'utf8' },
+  )
+  assert(
+    keyframes.split(/\r?\n/).some((frame) => frame.trim().startsWith('1')),
+    'recorded video must contain an inspected key frame',
+  )
+  assert(
+    result.checks.includes(
+      'native-stale-annotation-does-not-prevent-first-star-in-both-mail-lists',
+    ),
+  )
+  assert(
+    result.checks.includes('native-refused-unstar-error-retries-reconciliation-without-replay'),
+  )
+  assert(result.checks.includes('native-shell-list-retry-recovers-refused-unstar-without-replay'))
+  assert(result.checks.includes('both-production-mail-lists-star-without-opening-or-marking-read'))
+  assert(
+    result.checks.includes('native-four-click-production-cycle-wraps-through-configured-markers'),
+  )
+  assert(
+    result.checks.includes('native-single-marker-star-then-delayed-unstar-in-both-mail-surfaces'),
+  )
+  assert(result.checks.includes('mounted-mail-surfaces-observe-preference-reorder-without-remount'))
   assert(result.checks.includes('production-account-local-marker-store-and-restart-persistence'))
-  assert(result.checks.includes('account-a-account-b-account-a-isolation'))
+  assert(result.checks.includes('native-account-context-switch-and-marker-store-isolation'))
   assert(result.checks.includes('native-electron-production-connections-section-mounted'))
   assert.deepEqual(result.networkDenied, [], 'unexpected outbound requests were attempted')
   assert.deepEqual(result.rendererErrors, [], 'renderer emitted errors or unhandled rejections')

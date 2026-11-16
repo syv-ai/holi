@@ -12,6 +12,8 @@ const draw = vi.hoisted(() => vi.fn())
 vi.mock('mermaid', () => ({ default: { initialize: vi.fn(), render: draw } }))
 
 const diagram = '```mermaid\nflowchart LR\nA --> B\n```'
+const captionedDiagram =
+  '<!-- holi:figure -->\n\n~~~mermaid extra-info\nflowchart LR\nA --> B\n~~~\n\n<!-- holi:caption -->\n\nA rendered caption.\n\n<!-- /holi:figure -->'
 const picture = '![Map](../assets/map.png)'
 const svg = (label: string) => ({
   svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 100"><text>${label}</text></svg>`,
@@ -99,6 +101,21 @@ describe('rendered media inspection through the document editor', () => {
     expect(await screen.findByRole('dialog', { name: title })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+
+  it('renders a nested captioned Mermaid figure before focus and keeps its settled preview on blur', async () => {
+    const e = mount(captionedDiagram)
+    await waitFor(() => expect(document.querySelector('[data-mermaid-diagram] svg')).toBeTruthy())
+    expect(e.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(e.state.doc.firstChild?.firstChild?.type.name).toBe('codeBlock')
+    expect(e.state.doc.firstChild?.lastChild?.type.name).toBe('documentCaption')
+    expect(screen.getByText('A rendered caption.')).toBeInTheDocument()
+    expect(document.querySelector('[role="status"]')).toBeNull()
+
+    act(() => e.view.dom.blur())
+    await waitFor(() => expect(document.querySelector('[data-mermaid-diagram] svg')).toBeTruthy())
+    expect(document.querySelector('[role="status"]')).toBeNull()
+    expect(e.getMarkdown()).toContain('A rendered caption.')
   })
 
   it('clears the old drawing and announces a theme redraw inside an open lightbox', async () => {

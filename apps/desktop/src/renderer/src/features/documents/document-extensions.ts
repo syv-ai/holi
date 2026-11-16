@@ -169,8 +169,15 @@ const HtmlBlock = Node.create({
     if (!token.block) return { type: 'text', text: token.raw ?? '' }
     return { type: 'htmlBlock', attrs: { html: (token.raw ?? '').trimEnd() } }
   },
-  renderMarkdown(node) {
-    return node.attrs?.html ?? ''
+  renderMarkdown(node, _helpers, context) {
+    const source = String(node.attrs?.html ?? '')
+    // List items join blocks with a single newline. A reference definition
+    // cannot interrupt a paragraph, so keep a blank separator before it.
+    const needsSeparator =
+      (context.parentType === 'listItem' || context.parentType === 'taskItem') &&
+      context.index > 0 &&
+      /^ {0,3}\[/.test(source)
+    return needsSeparator ? `\n${source}` : source
   },
 })
 
