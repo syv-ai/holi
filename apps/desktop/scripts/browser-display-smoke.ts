@@ -68,6 +68,7 @@ async function run(): Promise<void> {
       <label>Block-shaped rich host <div id="rich-block" contenteditable="true" style="display:block"><span style="display:block">one</span><span style="display:block">two</span></div></label>
       <label>Atomic rich host <div id="rich-atom" contenteditable="true">one<img src="data:," alt="atom">two</div></label>
       <label>Nested rich host <div id="rich-nested" contenteditable="true"><span contenteditable="true">nested</span></div></label>
+      <label>Inert rich descendant <div id="rich-inert" contenteditable="true"><strong>one </strong><span inert>skip</span> two</div></label>
       <label>Not editable <div aria-label="Not editable" id="inert" contenteditable="false">inert</div></label>
       <label>Graphemes <textarea aria-label="Graphemes" id="graphemes">a café🙂 z</textarea></label>
       <label>Rows <textarea aria-label="Rows" id="rows">  alpha beta\n  gamma delta\n  omega</textarea></label>
@@ -513,7 +514,7 @@ async function run(): Promise<void> {
     'aframe',
   )
   mark('unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough')
-  for (const selector of ['#rich-block', '#rich-atom', '#rich-nested']) {
+  for (const selector of ['#rich-block', '#rich-atom', '#rich-nested', '#rich-inert']) {
     await inPage(a, `document.querySelector('${selector}').focus()`)
     const before = await inPage<string>(a, `document.querySelector('${selector}').innerHTML`)
     await nativePress(a, 'Escape')
@@ -739,6 +740,26 @@ async function run(): Promise<void> {
     'link eligibility loss and restoration releases normal-mode key ownership',
   )
   mark('rich-href-loss-and-restoration-retains-native-key-ownership')
+  await inPage(a, `document.querySelector('#rich').innerHTML=${JSON.stringify(originalRichMarkup)}`)
+  await setLinkStart()
+  await nativePress(a, 'Escape')
+  await inPage(
+    a,
+    `(() => { const child = document.querySelector('#rich strong'); child.setAttribute('inert', ''); child.removeAttribute('inert') })()`,
+  )
+  assert.equal(
+    await a.webContents.executeJavaScriptInIsolatedWorld(1017, [
+      { code: '__holiPage.vim.mode().mode' },
+    ]),
+    'insert',
+  )
+  await nativePress(a, 'x')
+  assert.notEqual(
+    await inPage<string>(a, `document.querySelector('#rich').innerHTML`),
+    originalRichMarkup,
+    'inert transition releases normal-mode key ownership even when restored',
+  )
+  mark('rich-inert-transition-releases-native-key-ownership')
   await inPage(a, `document.querySelector('#rich').innerHTML=${JSON.stringify(originalRichMarkup)}`)
   await setLinkStart()
   if (!a.webContents.debugger.isAttached()) a.webContents.debugger.attach('1.3')

@@ -699,6 +699,12 @@ test('rich host ownership retires for synchronous and asynchronous DOM transitio
   select()
   enterNormal()
   const formatted = host.querySelector('strong')!
+  formatted.setAttribute('inert', '')
+  formatted.removeAttribute('inert')
+  nativeAfterInvalidation()
+
+  select()
+  enterNormal()
   formatted.style.display = 'block'
   formatted.style.display = 'inline'
   nativeAfterInvalidation()
@@ -718,6 +724,8 @@ test('rich host structure is revalidated before each command and unsupported DOM
     '<div contenteditable="true" tabindex="0"><p>block</p></div>',
     '<div contenteditable="true" tabindex="0"><span style="display:block">block span</span></div>',
     '<div contenteditable="true" tabindex="0">atom<span contenteditable="false">x</span></div>',
+    '<div contenteditable="true" tabindex="0">one<span inert>skip</span> two</div>',
+    '<div contenteditable="true" tabindex="0" inert>inactive host</div>',
     '<div contenteditable="true" tabindex="0"><span contenteditable="true">nested</span></div>',
     '<div contenteditable="true" tabindex="0">line\nbreak</div>',
   ]

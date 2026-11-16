@@ -397,12 +397,16 @@
     [...el.childNodes].every((node) => node.nodeType === Node.TEXT_NODE) &&
     !/[\r\n]/u.test(el.textContent)
   const richHost = (el) => {
-    if (!eligibleEnvelope(el, 'true')) return false
+    if (!eligibleEnvelope(el, 'true') || el.closest('[inert]')) return false
     const visit = (node) => {
       if (node.nodeType === Node.TEXT_NODE) return !/[\r\n]/u.test(node.nodeValue || '')
       if (node.nodeType !== Node.ELEMENT_NODE) return false
       const child = node
-      if (!richInlineTags.has(child.tagName) || child.getAttribute('contenteditable') != null)
+      if (
+        !richInlineTags.has(child.tagName) ||
+        child.getAttribute('contenteditable') != null ||
+        child.hasAttribute('inert')
+      )
         return false
       const style = getComputedStyle(child)
       if (
@@ -474,6 +478,7 @@
     attributeFilter: [
       'contenteditable',
       'href',
+      'inert',
       'role',
       'class',
       'data-lexical-editor',

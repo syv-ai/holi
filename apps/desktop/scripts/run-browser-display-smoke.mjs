@@ -282,6 +282,7 @@ try {
     'native-rich-inline-motion-insert-undo-redo-preserves-formatting-and-link',
     'rich-css-loss-and-restoration-retains-native-key-ownership',
     'rich-href-loss-and-restoration-retains-native-key-ownership',
+    'rich-inert-transition-releases-native-key-ownership',
     'native-rich-inline-ime-composition-retains-formatting-and-link',
     'native-plaintext-ime-composition-remains-native',
     'plaintext-live-preference-off-passes-native-typing',
