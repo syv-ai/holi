@@ -415,7 +415,7 @@ export {
   type SpawnPtyOptions,
 } from './terminal/pty'
 export type { ActivityChannel, ActivityLevel } from './activity/log'
-export { remoteUrl, runGit, type RangeFile } from './git'
+export { remoteUrl, runGit, GitHistoricalPathMissingError, type RangeFile } from './git'
 export { gitignoreWith } from './vault/seed/core'
 export {
   absPathFor,
