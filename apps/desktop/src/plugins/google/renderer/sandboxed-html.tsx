@@ -13,7 +13,7 @@
  * The `mail-` modules are not mail-specific and are deliberately not renamed,
  * so the security-relevant code and its test suites stay put.
  */
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useAtomValue } from 'jotai'
 import { ImageOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -231,6 +231,7 @@ function HtmlFrame({
   mailHints,
 }: HtmlFrameProps): React.JSX.Element {
   const ref = useRef<HTMLIFrameElement>(null)
+  const [frame, setFrame] = useState<HTMLIFrameElement | null>(null)
   const generation = useRef(0)
   const scopeRef = useRef(hintScope)
   if (scopeRef.current !== hintScope) {
@@ -238,11 +239,14 @@ function HtmlFrame({
     generation.current += 1
   }
   const [height, setHeight] = useState(0)
+  const setFrameRef = useCallback((element: HTMLIFrameElement | null) => {
+    ref.current = element
+    setFrame(element)
+  }, [])
 
   // Layout, not passive: the frame has no height until it is measured, so an
   // ordinary effect would paint every block at zero height first and snap.
   useLayoutEffect(() => {
-    const frame = ref.current
     const document_ = frame?.contentDocument
     if (document_ == null) return
 
@@ -347,13 +351,12 @@ function HtmlFrame({
       observer.disconnect()
       unregister?.()
     }
-  }, [html, css, palette, allowRemoteContent, registerAs, mailHints])
+  }, [frame, html, css, palette, allowRemoteContent, registerAs, mailHints])
 
   // Hint ownership changes much more often than the framed document (for
   // example, when a retained reader is hidden). Revoke old targets in layout
   // cleanup and register against the same document without rewriting it.
   useLayoutEffect(() => {
-    const frame = ref.current
     if (!mailHints || frame === null) return
     const adapter = createMailHintAdapter({
       frame,
@@ -361,11 +364,11 @@ function HtmlFrame({
       scope: () => scopeRef.current,
     })
     return registerHostHintAdapter(frame, adapter)
-  }, [hintScope, mailHints])
+  }, [frame, hintScope, mailHints])
 
   return (
     <iframe
-      ref={ref}
+      ref={setFrameRef}
       /**
        * **A fresh element when the policy widens, or the images never load.**
        *

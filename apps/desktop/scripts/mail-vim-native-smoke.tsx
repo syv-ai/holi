@@ -144,7 +144,7 @@ function Fixture() {
             onClose={() => calls.push({ op: 'close-callback', account })}
           />
         )}
-        <HostHintLayer scopeKey={`${vault}:${account}:${readerView}:${readerVisible}:${draft}`} />
+        <HostHintLayer scopeKey="mail-native-smoke" />
       </main>
     </TooltipProvider>
   )

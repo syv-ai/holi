@@ -75,9 +75,25 @@ export function registerHostHintAdapter(owner: HTMLElement, adapter: HostHintAda
   }
 }
 
+function adapterParticipates(owner: HTMLElement, root: HTMLElement): boolean {
+  if (!owner.isConnected || owner.closest<HTMLElement>('[data-pane]') !== root) return false
+  for (let current: Element | null = owner; current; current = current.parentElement) {
+    const style = current.ownerDocument.defaultView?.getComputedStyle(current)
+    if (
+      current.matches('[hidden],[inert],[aria-hidden="true"],[aria-disabled="true"]') ||
+      style?.display === 'none' ||
+      style?.visibility === 'hidden' ||
+      style?.visibility === 'collapse' ||
+      style?.opacity === '0'
+    )
+      return false
+  }
+  return true
+}
+
 function adaptersFor(root: HTMLElement): HostHintAdapter[] {
   return [...registeredAdapters]
-    .filter(([owner]) => owner.isConnected && owner.closest<HTMLElement>('[data-pane]') === root)
+    .filter(([owner]) => adapterParticipates(owner, root))
     .map(([, adapter]) => adapter)
 }
 

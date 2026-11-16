@@ -555,6 +555,7 @@ try {
     `document.querySelector('iframe[aria-label="Message from Fixture"]').contentDocument.querySelector('details').open`,
     'native details disclosure activation through the host coordinator',
   )
+  await click('button')
   await key('f')
   await until(
     `document.querySelector('[data-host-hints]')!==null`,
@@ -565,7 +566,7 @@ try {
   )
   assert.equal(retainedFrameToken, true)
   const staleLinkKey = await evaluate(
-    `document.querySelector('[data-hint-key]')?.getAttribute('data-hint-key')`,
+    `document.querySelector('[data-hint-target="Fixture external link"]')?.getAttribute('data-hint-key')`,
   )
   assert(staleLinkKey, 'retained reader session has a native target to invalidate')
   await evaluate(
@@ -620,21 +621,17 @@ try {
     'current A ownership discovers fresh native targets',
   )
   const currentLinkKey = await evaluate(
-    `document.querySelector('[data-hint-key]')?.getAttribute('data-hint-key')`,
+    `document.querySelector('[data-hint-target="Fixture external link"]')?.getAttribute('data-hint-key')`,
   )
-  assert(currentLinkKey, 'current A ownership has a native target')
+  assert(currentLinkKey, 'fresh current-A mail link target is explicitly selected')
   const linkCallsBeforeInvalidation = await evaluate(
-    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-a'&&c.payload==='https://example.test/').length`,
   )
-  await cdp('Emulation.setDeviceMetricsOverride', {
-    width: 1000,
-    height: 700,
-    deviceScaleFactor: 1,
-    mobile: false,
-  })
+  const widthBeforeZoom = await evaluate('window.innerWidth')
+  await evaluate(`console.log('HOLI_MAIL_SMOKE_ZOOM:1.2')`)
   await until(
-    `document.querySelector('[data-host-hints]')===null`,
-    'viewport resize invalidates active mail hints',
+    `window.innerWidth!==${widthBeforeZoom} && document.querySelector('[data-host-hints]')===null`,
+    'native webContents zoom invalidates active mail hints',
   )
   for (const character of currentLinkKey) await key(character)
   assert.equal(
@@ -644,7 +641,8 @@ try {
     linkCallsBeforeInvalidation,
     'resized viewport accepted a stale mail hint',
   )
-  await cdp('Emulation.clearDeviceMetricsOverride')
+  await evaluate(`console.log('HOLI_MAIL_SMOKE_ZOOM:1')`)
+  await until(`window.innerWidth===${widthBeforeZoom}`, 'native webContents zoom reset')
   await click('button')
   await key('f')
   await until(
@@ -683,8 +681,23 @@ try {
   assert(freshLinkKey, 'viewport reset exposes a current native target')
   for (const character of freshLinkKey) await key(character)
   await until(
-    `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/')`,
-    'current A ownership still activates the native mail link',
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length>${linkCallsBeforeInvalidation}`,
+    'current A ownership activates a new native mail bridge call',
+  )
+  const activatedMailCall = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').at(-1)`,
+  )
+  assert.equal(
+    activatedMailCall.account,
+    'fixture-account-a',
+    'mail target uses its live account binding',
+  )
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.account==='fixture-account-a'&&c.payload==='https://example.test/').length`,
+    ),
+    linkCallsBeforeInvalidation + 1,
+    'mail activation increments the correctly bound bridge counter exactly once',
   )
   await key('f')
   await until(

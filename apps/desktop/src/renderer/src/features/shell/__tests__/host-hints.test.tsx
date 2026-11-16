@@ -383,6 +383,67 @@ test('request-scoped adapters share the host label namespace and revalidate befo
   expect(hints()).toHaveLength(0)
 })
 
+test('inactive registered adapters do not block foreground modal actions', async () => {
+  const action = vi.fn()
+  const unchanged = vi.fn(() => false)
+  const adapter: HostHintAdapter = {
+    discover: () => [],
+    unchanged,
+    activate: vi.fn(() => false),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <div aria-hidden="true">
+        <iframe aria-label="Background mail" />
+      </div>
+      <div role="dialog" aria-label="Foreground dialog">
+        <Button onClick={action}>Confirm</Button>
+      </div>
+    </section>,
+  )
+  const frame = screen.getByLabelText('Background mail')
+  registerHostHintAdapter(frame, adapter)
+  const confirm = screen.getByRole('button', { name: 'Confirm' })
+  confirm.focus()
+  await userEvent.keyboard('f')
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['Confirm'])
+  await choose('Confirm')
+  expect(action).toHaveBeenCalledOnce()
+  expect(unchanged).not.toHaveBeenCalled()
+})
+
+test('a participating adapter becoming inactive cancels its captured labels', async () => {
+  let target: Element = document.createElement('a')
+  target.textContent = 'Mail target'
+  let active = true
+  const adapter: HostHintAdapter = {
+    discover: () =>
+      active ? [{ element: target, label: 'Mail target', x: 40, y: 50, token: target }] : [],
+    unchanged: () => true,
+    activate: vi.fn(() => true),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <div data-testid="mail-surface">
+        <iframe aria-label="Mail frame" />
+      </div>
+    </section>,
+  )
+  const surface = screen.getByTestId('mail-surface')
+  const frame = surface.querySelector('iframe')!
+  target = frame
+  const unregister = registerHostHintAdapter(frame, adapter)
+  screen.getByLabelText('Mail frame').focus()
+  await userEvent.keyboard('f')
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toContain('Mail target')
+  active = false
+  surface.setAttribute('aria-hidden', 'true')
+  await userEvent.keyboard('a')
+  expect(hints()).toHaveLength(0)
+  expect(adapter.activate).not.toHaveBeenCalled()
+  unregister()
+})
+
 test('explicit terminal hints show labels; Ctrl-C cancels without consuming the interrupt', async () => {
   setup(
     <div data-panel-terminal="shell-one" className="xterm">
