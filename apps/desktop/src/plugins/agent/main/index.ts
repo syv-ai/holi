@@ -90,7 +90,12 @@ export const agentMain: MainPlugin = {
       },
     })
     let started: ReturnType<typeof createAgentSessions> | undefined
+    const assertActive = (): void => {
+      if (ctx.activationSignal.aborted)
+        throw new Error(`agent activation for ${ctx.remote} was cancelled`)
+    }
     try {
+      assertActive()
       const providers = (): ReturnType<typeof harnesses.providers> => harnesses.providers()
       const claude = providers().find(hasBackground)!
       // `holi-signal`, the hook command a harness a person added reports
@@ -98,6 +103,7 @@ export const agentMain: MainPlugin = {
       await installSignalCommand(ctx.binDir()).catch((err: unknown) =>
         console.error('[agent] holi-signal:', err),
       )
+      assertActive()
       const terminals = createAgentTerminals({ emit: ctx.emit })
       const sessionLog = createSessionLog(ctx.log)
       // Capabilities and provider hooks belong to this activation's vault, not
@@ -374,26 +380,41 @@ export const agentMain: MainPlugin = {
         unwatchNeedsYou()
         // A fenced session still starting opens nothing now, or is one the
         // sessions' leave ends.
-        await fenced.closing().catch((err) => console.error('[agent] fenced sessions:', err))
-        await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
-        await piBackground.leave().catch((err) => console.error('[agent] Pi sessions:', err))
-        await fenced.leave().catch((err) => console.error('[agent] fenced sessions:', err))
-        await jobs.leave().catch((err) => console.error('[agent] jobs:', err))
-        await sessions.leave().catch((err) => console.error('[agent] leave failed:', err))
-        await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
-        await harnesses.dispose()
+        const failures: unknown[] = []
+        for (const cleanup of [
+          () => fenced.closing(),
+          () => ptySessions.leave(),
+          () => piBackground.leave(),
+          () => fenced.leave(),
+          () => jobs.leave(),
+          () => sessions.leave(),
+          () => terminals.closeAll(),
+          () => harnesses.dispose(),
+        ]) {
+          try {
+            await cleanup()
+          } catch (err) {
+            failures.push(err)
+          }
+        }
+        if (failures.length > 0) throw new AggregateError(failures, 'agent teardown failed')
       }
     } catch (err) {
       // `ensure` may have attached the vault's config watcher before a later
       // activation step fails. Join any pending attach and release it before
       // allowing a retry to create another session host.
-      await started
-        ?.leave({ stopSessions: false })
-        .catch((cleanupError: unknown) =>
-          console.error('[agent] failed activation cleanup:', cleanupError),
-        )
-      await harnesses.dispose()
-      throw err
+      const failures: unknown[] = [err]
+      try {
+        await started?.leave({ stopSessions: false })
+      } catch (cleanupError) {
+        failures.push(cleanupError)
+      }
+      try {
+        await harnesses.dispose()
+      } catch (cleanupError) {
+        failures.push(cleanupError)
+      }
+      throw failures.length === 1 ? err : new AggregateError(failures, 'agent activation failed')
     }
   },
 }

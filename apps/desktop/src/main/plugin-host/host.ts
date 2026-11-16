@@ -185,12 +185,17 @@ export interface PluginHost {
 interface Started {
   id: string
   dispose: Disposer
-  lease: { phase: 'active' | 'draining' | 'closed'; events: ReturnType<typeof pluginEvents> }
+  lease: {
+    phase: 'active' | 'draining' | 'closed'
+    events: ReturnType<typeof pluginEvents>
+    cancel: () => void
+  }
   establish(): void
   closeEvents(): void
   /** What it registered through its context and has not undone yet,
    *  undone after its disposer. */
   undos: Set<() => void>
+  cancel: () => void
 }
 
 export function createPluginHost(deps: PluginHostDeps): PluginHost {
@@ -210,6 +215,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     holds: { reasons: Map<symbol, string> } | null
     stopping: Map<string, boolean>
     leases: Set<Started['lease']>
+    stopPromise: Promise<void> | null
+    teardownFailure: unknown
   }
   const runsByRemote = new Map<string, VaultRun>()
   const makeRun = (vault: OpenVault): VaultRun => ({
@@ -223,6 +230,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     holds: null,
     stopping: new Map(),
     leases: new Set(),
+    stopPromise: null,
+    teardownFailure: null,
   })
   let displayed: string | null = null
   let displayEpoch = 0
@@ -457,9 +466,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     let established = false
     let eventsLive = true
     const { remote, root } = vault
+    const controller = new AbortController()
     const lease: Started['lease'] = {
       phase: 'active',
       events: events(id, remote, root, () => lease.phase !== 'closed'),
+      cancel: () => controller.abort(),
     }
     state.leases.add(lease)
     const eventBus = lease.events
@@ -493,6 +504,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       return once
     }
     const ctx: PluginCtx = {
+      activationSignal: controller.signal,
       remote,
       root,
       userData: deps.userData,
@@ -788,6 +800,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           eventsLive = false
         },
         undos,
+        cancel: lease.cancel,
       }
     try {
       const dispose = await plugin.activate(ctx)
@@ -802,8 +815,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           eventsLive = false
         },
         undos,
+        cancel: lease.cancel,
       }
     } catch (err) {
+      controller.abort()
       lease.phase = 'closed'
       eventBus.cancelPending()
       state.leases.delete(lease)
@@ -832,14 +847,17 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     }
   }
 
-  function undoAll(id: string, undos: ReadonlySet<() => void>): void {
+  function undoAll(id: string, undos: ReadonlySet<() => void>): unknown[] {
+    const failures: unknown[] = []
     for (const undo of [...undos].reverse()) {
       try {
         undo()
       } catch (err) {
+        failures.push(err)
         console.error(`[plugins] ${id} undo failed:`, err)
       }
     }
+    return failures
   }
 
   /** Its disposer, then what it registered. It is served until both are done. */
@@ -847,28 +865,44 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     state.stopping.set(s.id, true)
     s.lease.events.cancelPending()
     s.lease.phase = 'draining'
+    const failures: unknown[] = []
     try {
-      await Promise.resolve()
-        .then(s.dispose)
-        .catch((err) => console.error(`[plugins] ${s.id} stop failed:`, err))
-      await s.lease.events.drain()
+      try {
+        await Promise.resolve().then(s.dispose)
+      } catch (err) {
+        failures.push(err)
+        console.error(`[plugins] ${s.id} stop failed:`, err)
+      }
+      try {
+        await s.lease.events.drain()
+      } catch (err) {
+        failures.push(err)
+      }
     } finally {
       s.lease.phase = 'closed'
       s.lease.events.cancelPending()
       s.closeEvents()
-      undoAll(s.id, s.undos)
+      failures.push(...undoAll(s.id, s.undos))
       state.leases.delete(s.lease)
       state.stopping.delete(s.id)
     }
+    if (failures.length > 0) throw new AggregateError(failures, `plugin ${s.id} teardown failed`)
   }
 
   async function stopNow(remote: string, state: VaultRun): Promise<void> {
     state.parked = true
     state.failed.clear()
     state.lastWant = ''
+    const failures: unknown[] = []
     for (const s of [...state.started].reverse()) {
       state.started = state.started.filter((x) => x !== s)
-      await stopOne(s, state)
+      try {
+        await stopOne(s, state)
+      } catch (err) {
+        failures.push(err)
+        // Keep providers alive when a dependent's cleanup cannot be proven.
+        break
+      }
     }
     for (const entry of reportListeners) if (entry.remote === remote) reportListeners.delete(entry)
     for (const entry of mentionListeners)
@@ -879,6 +913,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     for (const key of heard.keys()) if (key.startsWith(`${remote}/`)) heard.delete(key)
     snapshots.delete(remote)
     state.holds = null
+    if (failures.length > 0)
+      throw new AggregateError(failures, `plugins in ${remote} failed to stop`)
   }
 
   async function reconcileNow(
@@ -895,6 +931,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       state.vault = vault
     }
     if (state.generation !== scheduledGeneration) return
+    if (state.teardownFailure !== null) throw state.teardownFailure
     if (why === 'open') state.parked = false
     else if (state.parked) return
     const activation = state.generation
@@ -985,14 +1022,27 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     async stop(remote) {
       const state = runsByRemote.get(remote)
       if (state === undefined) return
+      if (state.stopPromise !== null) return state.stopPromise
       appFrames.revokeActivation(remote, state.generation)
       state.generation += 1
       state.parked = true
-      for (const lease of state.leases) lease.events.cancelPending()
+      for (const lease of state.leases) {
+        lease.cancel()
+        lease.events.cancelPending()
+      }
       cacheVersions.set(state.vault.root, (cacheVersions.get(state.vault.root) ?? 0) + 1)
       cache.delete(state.vault.root)
-      await queued(state, () => stopNow(remote, state))
-      forget(remote)
+      const stopping = queued(state, () => stopNow(remote, state)).catch((err) => {
+        state.teardownFailure ??= err
+        throw err
+      })
+      state.stopPromise = stopping
+      try {
+        await stopping
+        forget(remote)
+      } finally {
+        if (state.teardownFailure === null) state.stopPromise = null
+      }
     },
 
     async stopAll() {
@@ -1001,14 +1051,34 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         appFrames.revokeActivation(remote, state.generation)
         state.generation += 1
         state.parked = true
-        for (const lease of state.leases) lease.events.cancelPending()
+        for (const lease of state.leases) {
+          lease.cancel()
+          lease.events.cancelPending()
+        }
         cacheVersions.set(state.vault.root, (cacheVersions.get(state.vault.root) ?? 0) + 1)
         cache.delete(state.vault.root)
       }
-      await Promise.all(
-        entries.map(([remote, state]) => queued(state, () => stopNow(remote, state))),
+      const results = await Promise.allSettled(
+        entries.map(async ([remote, state]) => {
+          if (state.stopPromise !== null) return state.stopPromise
+          const stopping = queued(state, () => stopNow(remote, state)).catch((err) => {
+            state.teardownFailure ??= err
+            throw err
+          })
+          state.stopPromise = stopping
+          try {
+            await stopping
+          } finally {
+            if (state.teardownFailure === null) state.stopPromise = null
+          }
+        }),
       )
       cache.clear()
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : [],
+      )
+      if (failures.length > 0)
+        throw new AggregateError(failures, 'one or more plugin lifetimes failed to stop')
     },
 
     displayed: () => displayed,

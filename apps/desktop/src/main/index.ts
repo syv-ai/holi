@@ -1176,11 +1176,12 @@ async function main(): Promise<void> {
         console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
         return false
       }
-      updater.dispose()
       // Stop the work across vaults and in the active vault only after dirty
-      // buffers are safe on disk.
-      await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
-      await plugins.stopAll().catch((err) => console.error('[quit] plugins stop failed:', err))
+      // buffers are safe on disk. A failed drain keeps quit cancellable and
+      // leaves the updater and vault infrastructure available for a retry.
+      await plugins.stopBackground()
+      await plugins.stopAll()
+      updater.dispose()
       await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
       // Quit is a leave point: commit the flushed buffer, then get it
       // off-machine before the window closes. Best-effort with a 1s budget:

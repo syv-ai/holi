@@ -1754,6 +1754,39 @@ describe('an owned prefix', () => {
   })
 })
 
+describe('activation cancellation and teardown failures', () => {
+  it('aborts synchronously, joins repeated stop, and blocks replacement after failed cleanup', async () => {
+    const contexts: PluginCtx[] = []
+    let starts = 0
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        contexts.push(ctx)
+        starts += 1
+        return async () => {
+          await gate
+          throw new Error('cleanup failed')
+        }
+      },
+    }
+    const root = await tempDir()
+    const { host, enter } = rig({ plugins: [plugin] })
+    await enter(openVault('A', root))
+    const first = host.stop('A')
+    expect(contexts[0]!.activationSignal.aborted).toBe(true)
+    const firstResult = first.then(() => null, (err: unknown) => err)
+    const second = host.stop('A')
+    const secondResult = second.then(() => null, (err: unknown) => err)
+    release()
+    expect(await firstResult).toBeInstanceOf(AggregateError)
+    expect(await secondResult).toBeInstanceOf(AggregateError)
+    await expect(host.reconcile(openVault('A', root), 'open')).rejects.toThrow('cleanup failed')
+    expect(starts).toBe(1)
+  })
+})
+
 describe('work across vaults', () => {
   it('runs while some registered vault runs the plugin, and says why', async () => {
     const [a, b] = [await tempDir(), await tempDir()]
