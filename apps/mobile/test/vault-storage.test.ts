@@ -1,41 +1,68 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { runVaultStorageCheck } from '../app/vault-storage-check'
 import { createVaultStorage } from '../app/vault-storage'
-import { nodeFiles } from './native-files-node'
+import { createNodeFiles, nodeFiles } from './native-files-node'
 
+const runId = randomUUID()
+const suiteRoot = `/tmp/holi-588-suite-${runId}`
+const evidenceRoot = `/tmp/holi-588-suite-evidence-${runId}`
 const roots: string[] = []
 async function root() {
-  const path = await mkdtemp(join(tmpdir(), 'holi-vault-storage-'))
+  await mkdir(suiteRoot, { recursive: true })
+  await mkdir(evidenceRoot, { recursive: true })
+  const path = await mkdtemp(join(suiteRoot, 'root-'))
   roots.push(path)
   return path
 }
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+  await rm(suiteRoot, { recursive: true, force: true })
 })
 
 describe('vault storage with real directories', () => {
-  it('preserves bytes, isolates roots, and rejects stale concurrent saves', async () => {
+  it('runs the shared adversarial scenario on real roots and retains its evidence', async () => {
     const a = await root()
     const b = await root()
-    const left = createVaultStorage(nodeFiles, { remote: 'holi/left', root: a })
-    const right = createVaultStorage(nodeFiles, { remote: 'holi/right', root: b })
-    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, 0x0d, 0x0a, 0x65, 0xcc, 0x81])
-    const created = await left.create('folder/note.md', bytes)
-    await right.create('folder/note.md', new TextEncoder().encode('separate'))
-    expect([...(await left.read(created.path)).bytes]).toEqual([...bytes])
-    expect(new TextDecoder().decode((await right.read('folder/note.md')).bytes)).toBe('separate')
-    const attempts = await Promise.allSettled([
-      left.save(created.path, new TextEncoder().encode('one'), created.revision),
-      left.save(created.path, new TextEncoder().encode('two'), created.revision),
-    ])
-    expect(attempts.filter((item) => item.status === 'fulfilled')).toHaveLength(1)
-    const after = await left.read(created.path)
-    await expect(
-      left.save(created.path, new TextEncoder().encode('stale'), created.revision),
-    ).rejects.toThrow()
-    expect(new TextDecoder().decode(after.bytes)).not.toBe('stale')
+    const outside = await root()
+    await writeFile(join(outside, 'note.md'), 'outside')
+    await symlink(outside, join(a, 'linked'))
+    await symlink(join(outside, 'note.md'), join(a, 'leaf-link.md'))
+    await symlink(join(outside, 'missing.md'), join(a, 'dangling-link.md'))
+    const result = await runVaultStorageCheck(nodeFiles, a, b)
+    await writeFile(join(evidenceRoot, 'node-storage.json'), JSON.stringify(result, null, 2))
+    expect(result).toMatchObject({ passed: 1, failed: 0, exactBytes: true, staleRejected: true })
+    expect(await readFile(join(outside, 'note.md'), 'utf8')).toBe('outside')
+  })
+
+  it('keeps durable bytes intact at each real staging failure checkpoint', async () => {
+    for (const phase of [
+      'stage-open',
+      'stage-write',
+      'stage-sync',
+      'stage-close',
+      'publish',
+    ] as const) {
+      const base = await root()
+      const setup = createVaultStorage(nodeFiles, { remote: 'holi/failure-setup', root: base })
+      const prior = new TextEncoder().encode('durable previous bytes')
+      const document = await setup.create('note.md', prior)
+      const failing = createVaultStorage(
+        createNodeFiles(async (at) => {
+          if (at === phase) throw new Error(`injected ${phase}`)
+        }),
+        { remote: 'holi/failure-injection', root: base },
+      )
+      await expect(
+        failing.save('note.md', new TextEncoder().encode('partial replacement'), document.revision),
+      ).rejects.toThrow()
+      expect([...(await setup.read('note.md')).bytes]).toEqual([...prior])
+      expect(
+        (await readdir(base)).filter((name) => name.startsWith('.holi-storage-stage-')),
+      ).toEqual([])
+    }
   })
 
   it('rejects traversal, case aliases, links and file/directory collisions', async () => {

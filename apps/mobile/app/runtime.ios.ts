@@ -2,7 +2,6 @@ import { Device, File, knownFolders, path } from '@nativescript/core'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
 import { nativeFiles } from './native-files.ios'
 import { runVaultStorageCheck } from './vault-storage-check'
-import { createVaultStorage } from './vault-storage'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -40,32 +39,28 @@ export async function checkCompatibility(): Promise<string> {
       if (error.value || !created)
         throw new Error(error.value?.localizedDescription ?? 'Could not create storage test root')
     }
+    phase = 'prepare-adversarial-fixtures'
+    operation = 'createSymlinks'
+    await nativeFiles.create(secondRoot, 'symlink-target.md', nativeUtf8('outside'))
+    const manager = NSFileManager.defaultManager
+    const symlinkFixtures: Array<[string, string]> = [
+      ['linked', secondRoot],
+      ['leaf-link.md', `${secondRoot}/symlink-target.md`],
+      ['dangling-link.md', `${secondRoot}/missing.md`],
+    ]
+    for (const [name, destination] of symlinkFixtures) {
+      const error = new interop.Reference<NSError>()
+      const made = manager.createSymbolicLinkAtPathWithDestinationPathError(
+        `${storageRoot}/${name}`,
+        destination,
+        error,
+      )
+      if (error.value || !made)
+        throw new Error(error.value?.localizedDescription ?? `Could not create ${name} fixture`)
+    }
     phase = 'shared-storage-scenarios'
     operation = 'runVaultStorageCheck'
     const storage = await runVaultStorageCheck(nativeFiles, storageRoot, secondRoot)
-    const linkError = new interop.Reference<NSError>()
-    const linkPath = `${storageRoot}/symlinked-vault`
-    const linkCreated =
-      NSFileManager.defaultManager.createSymbolicLinkAtPathWithDestinationPathError(
-        linkPath,
-        secondRoot,
-        linkError,
-      )
-    if (linkError.value || !linkCreated)
-      throw new Error(linkError.value?.localizedDescription ?? 'Could not create symlink fixture')
-    let symlinkRejected = false
-    try {
-      await createVaultStorage(nativeFiles, {
-        remote: 'holi/storage-check',
-        root: storageRoot,
-      }).read('symlinked-vault/same/note.md')
-    } catch {
-      symlinkRejected = true
-    }
-    if (!symlinkRejected) throw new Error('Native storage followed a symlink')
-    storage.symlinkRejected = symlinkRejected
-    phase = 'symlink-rejection'
-    operation = 'createAndReadSymlinkFixture'
     status = `${corpus.passed}/${corpus.total} format cases and storage passed; ${corpus.failed} failed`
     evidence = { corpus, storage, storageRoot }
   } catch (error) {
