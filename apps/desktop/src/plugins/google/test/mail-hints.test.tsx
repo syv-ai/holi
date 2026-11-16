@@ -62,6 +62,28 @@ afterEach(() => {
 })
 
 describe('mail document Vim hints', () => {
+  it('matches stable mail targets independent of host screen order', () => {
+    const first = document_.querySelector('a')!
+    const second = document_.createElement('a')
+    second.href = 'https://example.test/second'
+    second.textContent = 'Second target'
+    document_.body.append(second)
+    vi.spyOn(first, 'getBoundingClientRect').mockReturnValue(new DOMRect(180, 10, 80, 20))
+    vi.spyOn(second, 'getBoundingClientRect').mockReturnValue(new DOMRect(10, 10, 80, 20))
+    Object.defineProperty(document_, 'elementFromPoint', {
+      configurable: true,
+      value: (x: number) => (x < 100 ? second : first),
+    })
+
+    const targets = scopedTargets()
+    expect(targets.map(({ label }) => label)).toEqual(['Read more', 'Second target'])
+    expect(adapter.unchanged([...targets].reverse())).toBe(true)
+    expect(adapter.unchanged([targets[0]!, targets[0]!])).toBe(false)
+    const click = vi.spyOn(second, 'click')
+    expect(adapter.activate(targets[1]!)).toBe(true)
+    expect(click).toHaveBeenCalledOnce()
+  })
+
   it('shares the host coordinator session and activates only safe native anchors', () => {
     const targets = scopedTargets()
     expect(targets.map(({ label }) => label)).toEqual(['Read more'])

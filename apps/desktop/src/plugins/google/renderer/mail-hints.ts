@@ -136,19 +136,35 @@ export function createMailHintAdapter({
       if (!current()) return false
       if (targets.length === 0) return true
       const live = discover()
-      return (
-        live.length === targets.length &&
-        live.every((target, index) => {
-          const previous = targets[index]!
-          return (
-            target.element === previous.element &&
-            target.label === previous.label &&
-            target.x === previous.x &&
-            target.y === previous.y &&
-            target.token === previous.token
-          )
-        })
-      )
+      if (live.length !== targets.length) return false
+      const previousByElement = new Map<Element, HostHintTarget>()
+      const previousTokens = new Set<unknown>()
+      for (const previous of targets) {
+        if (previousByElement.has(previous.element) || previousTokens.has(previous.token))
+          return false
+        previousByElement.set(previous.element, previous)
+        previousTokens.add(previous.token)
+      }
+      const seenElements = new Set<Element>()
+      const seenTokens = new Set<unknown>()
+      return live.every((target) => {
+        const previous = previousByElement.get(target.element)
+        if (
+          !previous ||
+          seenElements.has(target.element) ||
+          seenTokens.has(target.token) ||
+          target.token !== previous.token
+        )
+          return false
+        seenElements.add(target.element)
+        seenTokens.add(target.token)
+        return (
+          target.label === previous.label &&
+          target.x === previous.x &&
+          target.y === previous.y &&
+          target.token === previous.token
+        )
+      })
     },
     subscribe(listener, routeKey) {
       listeners.add(listener)

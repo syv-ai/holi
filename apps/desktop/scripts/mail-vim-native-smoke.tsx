@@ -57,6 +57,7 @@ interface SmokeControls {
   context(account: string, draft: string): void
   vim(enabled: boolean): void
   hideComposer(): void
+  reorderedTargets(enabled: boolean): void
   reader(visible: boolean, account: string, view: string, vault: string): void
   state(): unknown
 }
@@ -65,6 +66,7 @@ let controls: SmokeControls | null = null
   context: (account, draft) => controls?.context(account, draft),
   vim: (enabled) => controls?.vim(enabled),
   hideComposer: () => controls?.hideComposer(),
+  reorderedTargets: (enabled) => controls?.reorderedTargets(enabled),
   reader: (visible, account, view, vault) => controls?.reader(visible, account, view, vault),
   state: () => controls?.state(),
 }
@@ -84,6 +86,7 @@ function Fixture() {
   const [showComposer, setShowComposer] = useState(true)
   const [readerVisible, setReaderVisible] = useState(true)
   const [readerView, setReaderView] = useState('thread-a')
+  const [reorderedTargets, setReorderedTargets] = useState(false)
   const [vault, setVault] = useState('synthetic/mail-vim-vault')
   const setActiveRemote = useSetAtom(activeRemoteAtom)
   const setVim = useSetAtom(vimCodeEditingAtom)
@@ -102,6 +105,7 @@ function Fixture() {
       },
       vim: setVim,
       hideComposer: () => setShowComposer(false),
+      reorderedTargets: setReorderedTargets,
       reader: (visible, nextAccount, view, nextVault) => {
         setReaderVisible(visible)
         setAccount(nextAccount)
@@ -114,7 +118,7 @@ function Fixture() {
     return () => {
       controls = null
     }
-  }, [account, draft, readerVisible, readerView, vault, setActiveRemote, setVim])
+  }, [account, draft, readerVisible, readerView, reorderedTargets, vault, setActiveRemote, setVim])
   const ref = (handle: MailComposerHandle | null) => {
     ;(window as unknown as { __mailVimFlush?: () => Promise<boolean> }).__mailVimFlush = handle
       ? () => handle.prepareToLeave()
@@ -131,9 +135,11 @@ function Fixture() {
     account === 'fixture-account-a' &&
     vault === 'synthetic/mail-vim-vault' &&
     readerView === 'thread-a'
-  const html = isOriginalFixture
-    ? '<p>Fixture message text</p><p><a href="https://example.test/">Fixture external link</a></p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><img src="https://images.example.test/fixture.png" width="1" height="1" alt="">'
-    : `<p>${messageBody}</p><p><a href="https://example.test/${account}/${readerView}/link">${messageBody} external link</a></p><details><summary>Expand ${messageBody} details</summary><p>${messageBody}</p></details>`
+  const html = reorderedTargets
+    ? '<style>body{height:70px;columns:2;column-fill:auto;column-gap:20px;direction:rtl} p{direction:ltr;margin:0} .spacer{height:55px}</style><p class="spacer">Fixture spacer</p><p><a href="https://example.test/reordered-first">Reordered first target</a></p><p><a href="https://example.test/reordered-second">Reordered second target</a></p>'
+    : isOriginalFixture
+      ? '<p>Fixture message text</p><p><a href="https://example.test/">Fixture external link</a></p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><img src="https://images.example.test/fixture.png" width="1" height="1" alt="">'
+      : `<p>${messageBody}</p><p><a href="https://example.test/${account}/${readerView}/link">${messageBody} external link</a></p><details><summary>Expand ${messageBody} details</summary><p>${messageBody}</p></details>`
   return (
     <TooltipProvider>
       <main
