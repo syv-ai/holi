@@ -81,6 +81,7 @@ import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { prepareManagedClone } from './vault/prepare-clone'
 import { createSelectedRuntimeGate } from './vault/selected-runtime'
+import { drainShutdown } from './shutdown'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
 import { showNotification, type NativeNotice } from './notifications'
@@ -573,10 +574,8 @@ async function main(): Promise<void> {
     // holds the vault they ran in. The panel's shells were started in its
     // clone too, and stop with it.
     onLeave: async (remote) => {
-      await terminals
-        .closeRemote(remote)
-        .catch((err) => console.error('[terminal] close failed:', err))
       await plugins.stop(remote)
+      await terminals.closeRemote(remote)
       if (plugins.displayed() === remote) plugins.setDisplayed(null)
     },
   })
@@ -882,7 +881,8 @@ async function main(): Promise<void> {
     }),
     // A plugin being turned off keeps its capabilities until its disposer is
     // done, so what it finishes on the way out still reaches it.
-    pluginEnabled: async (plugin, root) => (await plugins.serving(root)).has(plugin),
+    pluginEnabled: async (plugin, root, allowDrain) =>
+      (await plugins.serving(root, allowDrain)).has(plugin),
     claims: (root) => plugins.scanClaimsFor(root),
   })
   const dispatch = capabilityHost.dispatch
@@ -1179,30 +1179,41 @@ async function main(): Promise<void> {
       // Stop the work across vaults and in the active vault only after dirty
       // buffers are safe on disk. A failed drain keeps quit cancellable and
       // leaves the updater and vault infrastructure available for a retry.
-      await plugins.stopBackground()
-      await plugins.stopAll()
-      updater.dispose()
-      await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
-      // Quit is a leave point: commit the flushed buffer, then get it
-      // off-machine before the window closes. Best-effort with a 1s budget:
-      // an unreachable remote must not hang quit, and the next launch drains
-      // what did not make it out. Order is flush -> commit -> push -> close.
-      const vault = host.active()
-      if (vault !== null) {
-        await vault.commitNow().catch((err) => console.error('[quit] commit failed:', err))
-        await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, 1_000))])
-      }
-      // `close()` commits the open vault again (a clean no-op) before letting
-      // go of it.
-      await host.closeAll()
-      // Final commits and their hooks still need the bridge. Revoke machine
-      // discovery only after settlement, then stop accepting bridge requests.
-      const endpoint = cliEndpoint
-      cliEndpoint = null
-      await endpoint
-        ?.dispose()
-        .catch((err) => console.error('[quit] CLI endpoint cleanup failed:', err))
-      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
+      await drainShutdown({
+        stopBackground: () => plugins.stopBackground(),
+        stopPlugins: () => plugins.stopAll(),
+        closeTerminals: () => terminals.closeAll(),
+        disposeUpdater: () => updater.dispose(),
+        settleVault: async () => {
+          // Commit the flushed buffer, then get it off-machine before the
+          // window closes. An unreachable remote must not hang quit.
+          const vault = host.active()
+          if (vault !== null) {
+            await vault.commitNow()
+            let timer: ReturnType<typeof setTimeout> | undefined
+            try {
+              await Promise.race([
+                vault.pushNow(),
+                new Promise<never>((_resolve, reject) => {
+                  timer = setTimeout(
+                    () => reject(new Error('Vault push timed out during quit')),
+                    1_000,
+                  )
+                }),
+              ])
+            } finally {
+              if (timer !== undefined) clearTimeout(timer)
+            }
+          }
+        },
+        closeVaults: () => host.closeAll(),
+        closeBridge: async () => {
+          const endpoint = cliEndpoint
+          await endpoint?.dispose()
+          cliEndpoint = null
+          await bridge.stop()
+        },
+      })
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
       channel.cancel?.()

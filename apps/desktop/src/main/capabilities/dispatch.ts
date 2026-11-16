@@ -35,7 +35,7 @@ export interface CapabilityHostDeps {
   } | null
   core(remote: string, root: string): CoreServices
   /** Whether the vault cloned at `root` runs this plugin. */
-  pluginEnabled(plugin: string, root: string): Promise<boolean>
+  pluginEnabled(plugin: string, root: string, allowDrain?: boolean): Promise<boolean>
   /** What the scanner claims in the vault cloned at `root`: the claims of
    *  the plugins it runs. */
   claims(root: string): Promise<readonly ScanClaim[]>
@@ -89,9 +89,14 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     return root
   }
 
-  async function enabled(name: string, root: string, remote: string): Promise<boolean> {
+  async function enabled(
+    name: string,
+    root: string,
+    remote: string,
+    allowDrain = false,
+  ): Promise<boolean> {
     const plugin = deps.registry.pluginOf(name, remote)
-    return plugin === null || (await deps.pluginEnabled(plugin, root))
+    return plugin === null || (await deps.pluginEnabled(plugin, root, allowDrain))
   }
 
   async function run(
@@ -106,7 +111,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
   ): Promise<CapabilityResult> {
     const root = await rootOf(remote)
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
-    const isEnabled = await enabled(name, root, remote)
+    const isEnabled = await enabled(name, root, remote, beforeInvoke !== undefined)
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
     if (!isEnabled) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
@@ -140,7 +145,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     )
     if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
     if (result.run !== undefined) {
-      if (!(await enabled(name, root, remote))) {
+      if (!(await enabled(name, root, remote, beforeInvoke !== undefined))) {
         throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       }
       if (isCurrent && !isCurrent()) throw new Error('the app door is closed')
