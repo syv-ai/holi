@@ -1,10 +1,12 @@
+import { execFileSync } from 'node:child_process'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { open, readFile, realpath, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { jsonFileStore } from './json-file-store'
 import { canonicalGitHubRemote } from './mdx-trust'
 
-interface ProvenanceRecord {
+interface ProvenanceKey {
   remote: string
   root: string
   gitDir: string
@@ -12,9 +14,13 @@ interface ProvenanceRecord {
   inode: number
   lifetime: string
   oid: string
-  accountId: number
-  generation: number
 }
+
+type ProvenanceRecord = ProvenanceKey &
+  (
+    | (CommitIdentity & { conflicted?: never })
+    | { conflicted: true; accountId?: never; generation?: never }
+  )
 
 interface ProvenanceFile {
   version: 1
@@ -57,6 +63,7 @@ function isRecord(value: unknown): value is ProvenanceRecord {
     remoteIsCanonical = false
   }
   return (
+    (r.conflicted === undefined || r.conflicted === true) &&
     remoteIsCanonical &&
     typeof r.root === 'string' &&
     isAbsolute(r.root) &&
@@ -68,10 +75,12 @@ function isRecord(value: unknown): value is ProvenanceRecord {
     /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(r.lifetime) &&
     typeof r.oid === 'string' &&
     /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(r.oid) &&
-    Number.isSafeInteger(r.accountId) &&
-    (r.accountId as number) > 0 &&
-    Number.isSafeInteger(r.generation) &&
-    (r.generation as number) >= 0
+    (r.conflicted === true
+      ? r.accountId === undefined && r.generation === undefined
+      : Number.isSafeInteger(r.accountId) &&
+        (r.accountId as number) > 0 &&
+        Number.isSafeInteger(r.generation) &&
+        (r.generation as number) >= 0)
   )
 }
 
@@ -81,7 +90,9 @@ async function repositoryIdentity(
   const canonicalRoot = await realpath(root)
   const gitDirRaw = await (
     await import('./git')
-  ).runGit(canonicalRoot, ['rev-parse', '--absolute-git-dir'])
+  ).runGit(canonicalRoot, ['--no-replace-objects', 'rev-parse', '--absolute-git-dir'], {
+    executionBudget: { maxBuffer: 65536, timeout: 1000 },
+  })
   const gitDir = await realpath(gitDirRaw)
   const gitStat = await stat(gitDir)
   const lifetimeFile = `${gitDir}/holi-managed-provenance-id`
@@ -122,6 +133,8 @@ export function createManagedCommitProvenance(args: {
   remote: string
   identity: () => CommitIdentity | null
   subscribed: () => Promise<boolean>
+  /** Live synchronous check at the publication linearization point. */
+  subscribedNow: () => boolean
 }) {
   const remote = canonicalGitHubRemote(args.remote)
   const store = jsonFileStore<ProvenanceFile>(args.file, parse, { mode: 0o600 })
@@ -140,7 +153,11 @@ export function createManagedCommitProvenance(args: {
         return null
       try {
         const repo = await repositoryIdentity(root)
-        const origin = await (await import('./git')).runGit(root, ['remote', 'get-url', 'origin'])
+        const origin = await (
+          await import('./git')
+        ).runGit(root, ['--no-replace-objects', 'remote', 'get-url', 'origin'], {
+          executionBudget: { maxBuffer: 65536, timeout: 1000 },
+        })
         if (canonicalGitHubRemote(origin) !== remote) return null
         const current = args.identity()
         if (
@@ -173,7 +190,11 @@ export function createManagedCommitProvenance(args: {
           repositoryIdentity(root).catch(() => null),
           (async () => {
             try {
-              return await (await import('./git')).runGit(root, ['remote', 'get-url', 'origin'])
+              return await (
+                await import('./git')
+              ).runGit(root, ['--no-replace-objects', 'remote', 'get-url', 'origin'], {
+                executionBudget: { maxBuffer: 65536, timeout: 1000 },
+              })
             } catch {
               return ''
             }
@@ -218,40 +239,91 @@ export function createManagedCommitProvenance(args: {
         })
       )
         return
-      await store.update((state) => {
-        const existing = state.records.find(
-          (r) =>
-            r.remote === remote &&
-            r.root === now.root &&
-            r.gitDir === now.gitDir &&
-            r.inode === now.inode &&
-            r.lifetime === now.lifetime &&
-            r.oid === oid,
-        )
-        if (existing) {
-          if (
-            existing.accountId === started.accountId &&
-            existing.generation === started.generation
+      await store.update(
+        (state) => {
+          const existing = state.records.find(
+            (r) =>
+              r.remote === remote &&
+              r.root === now.root &&
+              r.gitDir === now.gitDir &&
+              r.inode === now.inode &&
+              r.lifetime === now.lifetime &&
+              r.oid === oid,
           )
-            return state
-          return { version: 1, records: state.records.filter((record) => record !== existing) }
-        }
-        if (state.records.length >= 10000)
-          throw new Error('Managed commit provenance capacity reached.')
-        return {
-          version: 1,
-          records: [
-            ...state.records,
-            {
-              remote,
-              ...now,
-              oid,
-              accountId: started.accountId,
-              generation: started.generation,
-            },
-          ],
-        }
-      }, stillOwned)
+          if (existing) {
+            if (existing.conflicted) return state
+            if (
+              existing.accountId === started.accountId &&
+              existing.generation === started.generation
+            )
+              return state
+            return {
+              version: 1,
+              records: state.records.map((record) =>
+                record === existing ? { remote, ...now, oid, conflicted: true } : record,
+              ),
+            }
+          }
+          if (state.records.length >= 10000)
+            throw new Error('Managed commit provenance capacity reached.')
+          return {
+            version: 1,
+            records: [
+              ...state.records,
+              {
+                remote,
+                ...now,
+                oid,
+                accountId: started.accountId,
+                generation: started.generation,
+              },
+            ],
+          }
+        },
+        stillOwned,
+        () => {
+          // No await between these current observations and the atomic rename.
+          // The two local Git queries are bounded: configuration indirection and
+          // worktrees must be resolved by Git, not a partial config parser.
+          try {
+            const current = args.identity()
+            if (
+              !current ||
+              current.accountId !== started.accountId ||
+              current.generation !== started.generation
+            )
+              return false
+            const git = (command: string[]) =>
+              execFileSync('git', ['--no-replace-objects', ...command], {
+                cwd: root,
+                encoding: 'utf8',
+                timeout: 250,
+                maxBuffer: 65536,
+                env: {
+                  ...process.env,
+                  LC_ALL: 'C',
+                  GIT_NO_REPLACE_OBJECTS: '1',
+                  GIT_TERMINAL_PROMPT: '0',
+                },
+                stdio: ['ignore', 'pipe', 'pipe'],
+              }).trim()
+            if (canonicalGitHubRemote(git(['remote', 'get-url', 'origin'])) !== remote) return false
+            const gitDir = realpathSync(git(['rev-parse', '--absolute-git-dir']))
+            const info = statSync(gitDir)
+            return (
+              realpathSync(root) === started.root &&
+              gitDir === started.gitDir &&
+              Number(info.dev) === started.device &&
+              Number(info.ino) === started.inode &&
+              readFileSync(`${gitDir}/holi-managed-provenance-id`, 'utf8').trim() ===
+                started.lifetime &&
+              args.subscribedNow()
+            )
+          } catch {
+            return false
+          }
+        },
+      )
     },
   }
 }

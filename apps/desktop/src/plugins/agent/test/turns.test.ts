@@ -128,6 +128,23 @@ test('asks nothing when there is no turn to ask about', async () => {
   expect(s.get(turnFilesAtom)).toEqual([])
 })
 
+test('consumes a turn-file resource failure and reports it without an unhandled rejection', async () => {
+  const s = store()
+  s.set(reviewTurnAtom, TURN)
+  files.mockRejectedValueOnce(new Error('historical read exceeded its time limit'))
+  await expect(s.set(loadTurnFilesAtom)).resolves.toBeUndefined()
+  expect(s.get(turnFilesAtom)).toEqual([])
+})
+
+test('consumes a diff resource failure and leaves the loading state', async () => {
+  const s = store()
+  s.set(reviewTurnAtom, TURN)
+  fileDiff.mockRejectedValueOnce(new Error('historical read exceeded its output limit'))
+  await expect(s.set(loadTurnDiffAtom, 'a.md')).resolves.toBeUndefined()
+  expect(s.get(selectedTurnPathAtom)).toBeNull()
+  expect(s.get(turnDiffAtom)).toBeNull()
+})
+
 test('an unreachable range is an empty file list, not a throw', async () => {
   // A turn record outlives the commits it names. The panel says so; it must not
   // be handed an error.

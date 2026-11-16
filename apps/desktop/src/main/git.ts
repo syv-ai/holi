@@ -15,7 +15,13 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, lstat, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { MEMORY_INDEX, appBundleOf, isAppDataPath, isSharedMemoryPath } from '@holi/shared'
+import {
+  MEMORY_INDEX,
+  appBundleOf,
+  isAppDataPath,
+  isSharedMemoryPath,
+  shownPathOrNull,
+} from '@holi/shared'
 import { writeMemoryIndex } from './vault/hooks/memory-index'
 
 /**
@@ -41,6 +47,28 @@ export class GitMissingError extends Error {
   constructor(readonly gitPath: string) {
     super(`\`${gitPath}\` was not found. Holi needs the git command-line tool installed.`)
     this.name = 'GitMissingError'
+  }
+}
+
+/** A bounded historical read could not complete within its fixed resource budget. */
+class GitResourceError extends Error {
+  constructor(readonly kind: 'time' | 'output') {
+    super(`Historical Git read exceeded its ${kind === 'time' ? 'time' : 'output'} resource limit.`)
+    this.name = 'GitResourceError'
+  }
+}
+
+class GitHistoricalObjectError extends Error {
+  constructor() {
+    super('Historical Git endpoint must be a full commit or tree object id.')
+    this.name = 'GitHistoricalObjectError'
+  }
+}
+
+export class GitHistoricalPathMissingError extends Error {
+  constructor() {
+    super('The path is not present at this historical object.')
+    this.name = 'GitHistoricalPathMissingError'
   }
 }
 
@@ -121,6 +149,8 @@ export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath' | 'env'> {
    * a path list (`check-ignore`): thousands of paths as arguments hit `E2BIG`.
    */
   input?: string
+  /** Limits for historical reads consumed by an agent turn; absent for ordinary git work. */
+  executionBudget?: { maxBuffer: number; timeout: number }
 }
 
 export interface RepoStatus {
@@ -211,12 +241,13 @@ export interface GitRepo {
   /** The current commit, or **null** on an unborn branch (no commits yet): a
    *  real state of a real vault, not an error. */
   head(): Promise<string | null>
-  /** The paths changed across `from..to`, with line counts.
-   *
-   *  **Empty on failure, never a throw.** A turn record outlives the commits it
-   *  names — a reset, a re-clone — and a range whose shas are gone is a turn
-   *  whose history is gone, which the caller reports rather than crashes on. */
-  rangeFiles(from: string, to: string): Promise<RangeFile[]>
+  /** The paths changed across `from..to`, with line counts. Missing or invalid
+   *  history is empty; an exhausted execution budget throws GitResourceError. */
+  rangeFiles(
+    from: string,
+    to: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<RangeFile[]>
   /** The vault's history — which IS git history (`features/history.md`).
    * `path` follows a file through renames; a `folder` is every commit under it,
    * which `--follow` (one file only) cannot walk. */
@@ -224,8 +255,13 @@ export interface GitRepo {
   /** A file's content at a past commit, for the history preview/restore
    * (`features/history.md`). Rejects when `path` is absent at `sha` —
    * e.g. a commit from before the file was renamed (`show` reads the given name,
-   * it does not `--follow`). */
-  show(sha: string, path: string): Promise<string>
+   * it does not `--follow`). A budgeted read throws typed historical-object,
+   * missing-path and resource errors. */
+  show(
+    sha: string,
+    path: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<string>
   /** One commit's exact metadata and churn, even when it is outside a recent
    * history listing. Null when the object is unavailable. */
   commit(sha: string): Promise<Commit | null>
@@ -328,6 +364,12 @@ export interface GitOutcome {
   stderr: string
 }
 
+function isMissingObject(stderr: string): boolean {
+  return /could not get object info|not a valid object name|bad object|path .* does not exist in|path .* exists on disk, but not in/i.test(
+    stderr,
+  )
+}
+
 /**
  * Run one git command and return its stdout, trimmed. Throws `GitError` on a
  * non-zero exit and `GitMissingError` when the binary is absent.
@@ -423,22 +465,55 @@ async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<G
     })
   }
   return new Promise((resolve, reject) => {
+    let expired = false
+    let outputExceeded = false
+    let outputBytes = 0
+    let killTimer: NodeJS.Timeout | undefined
+    const budgetTimer =
+      opts.executionBudget === undefined
+        ? undefined
+        : setTimeout(() => {
+            expired = true
+            child.kill('SIGTERM')
+            killTimer = setTimeout(() => child.kill('SIGKILL'), 100)
+          }, opts.executionBudget.timeout)
     const child = execFile(
       gitPath,
       args,
       {
         cwd,
-        maxBuffer: MAX_BUFFER,
+        maxBuffer: opts.executionBudget?.maxBuffer ?? MAX_BUFFER,
         env,
       },
       (err, stdout, stderr) => {
+        if (budgetTimer !== undefined) clearTimeout(budgetTimer)
+        if (killTimer !== undefined) clearTimeout(killTimer)
+        if (outputExceeded) return reject(new GitResourceError('output'))
+        if (expired) return reject(new GitResourceError('time'))
         if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
           return reject(new GitMissingError(gitPath))
+        }
+        if (err && opts.executionBudget !== undefined) {
+          const code = (err as NodeJS.ErrnoException).code
+          if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
+            return reject(new GitResourceError('output'))
         }
         const code = err ? ((err as { code?: number }).code ?? 1) : 0
         resolve({ ok: !err, code, stdout: String(stdout), stderr: String(stderr) })
       },
     )
+    if (opts.executionBudget !== undefined) {
+      const accountOutput = (chunk: Buffer): void => {
+        outputBytes += Buffer.byteLength(String(chunk))
+        if (outputExceeded || outputBytes <= opts.executionBudget!.maxBuffer) return
+        outputExceeded = true
+        clearTimeout(budgetTimer)
+        child.kill('SIGTERM')
+        killTimer = setTimeout(() => child.kill('SIGKILL'), 100)
+      }
+      child.stdout?.on('data', accountOutput)
+      child.stderr?.on('data', accountOutput)
+    }
     if (opts.input !== undefined) {
       // EPIPE is normal here, not a failure: git may exit before reading all of
       // it (`check-ignore` stops at a bad pathspec). The callback above still
@@ -726,9 +801,39 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
 
   /** A file's content at a commit. Unlike `runGit`, this must **not** trim:
    * restore writes the result back verbatim, and a stripped trailing newline is
-   * a real edit. Rejects (a `GitError`) when the path does not exist at `sha`. */
-  async function show(sha: string, path: string): Promise<string> {
-    const res = await tryGit(root, ['show', `${sha}:${path}`], opts)
+   * a real edit. A budgeted read throws typed historical-object, missing-path
+   * and resource errors. */
+  async function show(
+    sha: string,
+    path: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<string> {
+    const readOpts = { ...opts, ...(executionBudget === undefined ? {} : { executionBudget }) }
+    if (executionBudget !== undefined) {
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) throw new GitHistoricalObjectError()
+      const endpoint = await tryGit(root, ['cat-file', '-t', sha], readOpts)
+      if (!endpoint.ok) {
+        if (isMissingObject(endpoint.stderr)) return ''
+        throw new GitError(
+          `git cat-file failed (${endpoint.code}): ${endpoint.stderr}`,
+          endpoint.code,
+          endpoint.stderr,
+        )
+      }
+      if (!['commit', 'tree'].includes(endpoint.stdout.trim())) throw new GitHistoricalObjectError()
+      const pathType = await tryGit(root, ['cat-file', '-t', `${sha}:${path}`], readOpts)
+      if (!pathType.ok) {
+        if (isMissingObject(pathType.stderr)) throw new GitHistoricalPathMissingError()
+        throw new GitError(
+          `git cat-file failed (${pathType.code}): ${pathType.stderr}`,
+          pathType.code,
+          pathType.stderr,
+        )
+      }
+      // A path that resolves to a tree is a directory, not a file-side value.
+      if (pathType.stdout.trim() !== 'blob') throw new GitHistoricalPathMissingError()
+    }
+    const res = await tryGit(root, ['show', '--end-of-options', `${sha}:${path}`], readOpts)
     if (!res.ok) {
       throw new GitError(
         `git show ${sha}:${path} failed (${res.code}): ${res.stderr.split('\n')[0] ?? ''}`,
@@ -841,6 +946,14 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     throw new GitError('Could not read repository HEAD.', res.code, res.stderr)
   }
 
+  async function gitObjectType(id: string, readOpts: RunOpts): Promise<'commit' | 'tree' | null> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(id)) return null
+    const result = await tryGit(root, ['cat-file', '-t', id], readOpts)
+    if (!result.ok) return null
+    const type = result.stdout.trim()
+    return type === 'commit' || type === 'tree' ? type : null
+  }
+
   /**
    * `from..to`, as paths with line counts.
    *
@@ -848,13 +961,25 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * `git diff` silently drops the counts (the last flag wins), so this joins two
    * results on the path.
    */
-  async function rangeFiles(from: string, to: string): Promise<RangeFile[]> {
+  async function rangeFiles(
+    from: string,
+    to: string,
+    executionBudget?: { maxBuffer: number; timeout: number },
+  ): Promise<RangeFile[]> {
+    const readOpts = { ...opts, ...(executionBudget === undefined ? {} : { executionBudget }) }
+    const fromType = await gitObjectType(from, readOpts)
+    const toType = await gitObjectType(to, readOpts)
+    if (fromType === null || toType === null) return []
     const range = `${from}..${to}`
-    const stat = await tryGit(root, ['diff', '--numstat', '-z', '--no-color', range], opts)
+    const stat = await tryGit(
+      root,
+      ['diff', '--numstat', '-z', '--no-color', '-M', range],
+      readOpts,
+    )
     const names = await tryGit(
       root,
       ['diff', '--name-status', '-z', '--no-color', '-M', range],
-      opts,
+      readOpts,
     )
     if (!stat.ok || !names.ok) return []
 
@@ -866,15 +991,18 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     for (let i = 0; i < statFields.length; i++) {
       const field = statFields[i]
       if (field === undefined || field === '') continue
-      const parts = field.split('\t')
-      if (parts.length < 2) continue
+      const first = field.indexOf('\t')
+      const second = field.indexOf('\t', first + 1)
+      if (first < 0 || second < 0) continue
       // A binary file reports `-` for both counts. Zero is the honest number to
       // show beside a picture; a dash in a `+N / -M` column reads as an error.
-      const added = parts[0] === '-' ? 0 : Number(parts[0])
-      const removed = parts[1] === '-' ? 0 : Number(parts[1])
+      const addedText = field.slice(0, first)
+      const removedText = field.slice(first + 1, second)
+      const added = addedText === '-' ? 0 : Number(addedText)
+      const removed = removedText === '-' ? 0 : Number(removedText)
       // Two tabs and a trailing path: an ordinary entry. One trailing empty
       // field: a rename, whose two paths are the next two records.
-      let path = parts[2] ?? ''
+      let path = field.slice(second + 1)
       if (path === '') {
         i += 2
         path = statFields[i] ?? ''
@@ -891,11 +1019,14 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       const status = nameFields[i]
       if (status === undefined || status === '') continue
       const renamed = status.startsWith('R') || status.startsWith('C')
+      const oldPath = renamed ? (nameFields[i + 1] ?? '') : ''
       const path = nameFields[renamed ? i + 2 : i + 1] ?? ''
       i += renamed ? 2 : 1
       if (path === '') continue
+      const shown = shownPathOrNull(path)
+      if (shown === null || (renamed && shownPathOrNull(oldPath) === null)) continue
       const count = counts.get(path) ?? { added: 0, removed: 0 }
-      out.push({ path, status, added: count.added, removed: count.removed })
+      out.push({ path: shown, status, added: count.added, removed: count.removed })
     }
     return out
   }
@@ -968,17 +1099,45 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     let marker: string | null = null
     let before: string[] | null = null
     let beforeHead: string | null = null
+    // Separate budgets either side of the commit: native hooks keep their normal
+    // permissions and duration. Only provenance reads get a deadline/output cap.
+    let deadline = Date.now() + 1000
+    const evidenceOpts = (): RunOpts => {
+      const timeout = deadline - Date.now()
+      if (timeout <= 0) throw new GitResourceError('time')
+      return {
+        ...opts,
+        env: { ...opts.env, GIT_NO_REPLACE_OBJECTS: '1' },
+        executionBudget: { maxBuffer: 65536, timeout },
+      }
+    }
+    // These are reads, not index mutations: never retry an evidence process.
+    const probe = (command: string[]) =>
+      runGitOnce(root, ['--no-replace-objects', ...command], evidenceOpts())
+    const evidence = async (command: string[]) => {
+      const outcome = await probe(command)
+      if (!outcome.ok)
+        throw new GitError('Commit evidence read failed', outcome.code, outcome.stderr)
+      return outcome.stdout.trim()
+    }
     if (recorder !== undefined && ticket !== null) {
       marker = `holi-managed-commit:${randomUUID()}`
       try {
-        if (!(await tryGit(root, ['rev-parse', '--verify', 'MERGE_HEAD'], opts)).ok) {
-          const head = await tryGit(root, ['rev-parse', '--verify', 'HEAD'], opts)
+        if (!(await probe(['rev-parse', '--verify', 'MERGE_HEAD'])).ok) {
+          const head = await probe(['rev-parse', '--verify', 'HEAD'])
           beforeHead = head.ok ? head.stdout.trim() : null
-          before = (await runGit(root, ['reflog', 'show', '--format=%H%x00%gs', 'HEAD'], opts))
-            .split('\n')
-            .filter(Boolean)
+          // One previous entry and its exact parent are enough to anchor a
+          // single new entry. Never scan or materialize the historical reflog.
+          before =
+            beforeHead === null
+              ? []
+              : (await evidence(['reflog', 'show', '-n1', '--format=%H%x00%gs', 'HEAD']))
+                  .split('\n')
+                  .filter(Boolean)
+          if (beforeHead !== null && before.length !== 1) throw new Error('Missing reflog anchor')
         }
       } catch (error) {
+        before = null
         console.error('[git] commit reflog anchor unavailable:', error)
       }
     }
@@ -988,55 +1147,43 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     })
     let exactOid: string | null = null
     if (marker !== null && before !== null) {
+      deadline = Date.now() + 1000
       try {
-        const after = (await runGit(root, ['reflog', 'show', '--format=%H%x00%gs', 'HEAD'], opts))
+        const after = (await evidence(['reflog', 'show', '-n2', '--format=%H%x00%gs', 'HEAD']))
           .split('\n')
           .filter(Boolean)
-        let anchor = before.length === 0 ? after.length : -1
-        for (let i = 0; before.length > 0 && i + before.length <= after.length; i++) {
-          if (before.every((entry, j) => after[i + j] === entry)) {
-            if (anchor !== -1) throw new Error('Ambiguous reflog anchor')
-            anchor = i
-          }
-        }
-        if (anchor === 0) throw new Error('Commit reflog interval is empty')
-        if (anchor > 0) {
-          const interval = after.slice(0, anchor)
-          const marked = interval.flatMap((line) => {
-            const [oid, action] = line.split('\0')
-            return action?.startsWith(`${marker}:`) &&
-              oid &&
-              /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid)
-              ? [oid]
-              : []
-          })
-          if (marked.length === 1 && interval.length === 1) {
-            const oid = marked[0]!
-            const object = await runGit(root, ['cat-file', '-p', oid], opts)
-            const lines = object.split('\n')
-            if (lines[0] !== undefined && /^tree (?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(lines[0])) {
-              const parents = lines.filter((line) => line.startsWith('parent '))
-              const parentOid = parents[0]?.slice('parent '.length) ?? null
-              if (
-                parents.length <= 1 &&
-                parentOid === beforeHead &&
-                !(await tryGit(root, ['rev-parse', '--verify', 'MERGE_HEAD'], opts)).ok
-              ) {
-                const type = await runGit(root, ['cat-file', '-t', oid], opts)
-                if (type === 'commit') exactOid = oid
-              }
-            }
-          }
-        }
+        if (after.length !== before.length + 1 || (before.length === 1 && after[1] !== before[0]))
+          throw new Error('Missing or ambiguous commit reflog interval')
+        const [oid, action] = after[0]!.split('\0')
+        if (
+          !oid ||
+          !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid) ||
+          !action?.startsWith(`${marker}:`)
+        )
+          throw new Error('Missing invocation marker')
+        const type = await evidence(['cat-file', '-t', oid])
+        const object = await evidence(['cat-file', '-p', oid])
+        const headers = object.split('\n\n', 1)[0]!.split('\n')
+        const parents = headers.filter((line) => line.startsWith('parent '))
+        if (
+          type !== 'commit' ||
+          !/^tree (?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headers[0]!) ||
+          parents.length > 1 ||
+          (parents[0]?.slice('parent '.length) ?? null) !== beforeHead ||
+          (await probe(['rev-parse', '--verify', 'MERGE_HEAD'])).ok
+        )
+          throw new Error('Commit object is not the managed non-merge invocation')
+        exactOid = oid
       } catch (error) {
         console.error('[git] commit reflog evidence unavailable:', error)
       }
-      if (recorder !== undefined) {
-        try {
-          await recorder.record(ticket, root, exactOid)
-        } catch (error) {
-          console.error('[git] commit provenance write failed:', error)
-        }
+    }
+    if (recorder !== undefined && ticket !== null) {
+      try {
+        // Null is an explicit evidence gap, including pre-commit read failure.
+        await recorder.record(ticket, root, exactOid)
+      } catch (error) {
+        console.error('[git] commit provenance write failed:', error)
       }
     }
     // Preserve the historical API: return the current HEAD after hooks, even

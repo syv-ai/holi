@@ -83,6 +83,7 @@ import { createSubscriptions } from './vault/subscriptions'
 import { createManagedCommitProvenance } from './managed-commit-provenance'
 import { prepareManagedClone } from './vault/prepare-clone'
 import { createSelectedRuntimeGate } from './vault/selected-runtime'
+import { drainShutdown, settleVaultForQuit } from './shutdown'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
 import { showNotification, type NativeNotice } from './notifications'
@@ -435,8 +436,13 @@ async function main(): Promise<void> {
     frameOrigin: acquireFrameOrigin,
     // One plugin's main side calling another's, at the UI door its renderer
     // would use. `capabilityHost` is built below, before any vault opens.
-    call: async (remote, name, params, beforeInvoke) =>
-      (await capabilityHost.dispatch({ door: 'ui', remote, name, params, beforeInvoke })).value,
+    call: async (remote, name, params, beforeInvoke, finalization) =>
+      (
+        await capabilityHost.dispatch(
+          { door: 'ui', remote, name, params, beforeInvoke },
+          finalization,
+        )
+      ).value,
     activity: activity.write,
     // A plugin's notification is the reminders' kind, kept off a Holi that
     // has focus. A click brings the window forward before the plugin acts.
@@ -503,6 +509,7 @@ async function main(): Promise<void> {
             : null
         },
         subscribed: () => subscriptions.hasExplicit(remote),
+        subscribedNow: () => subscriptions.hasExplicitNow(remote),
       }),
     claims: (root) => plugins.scanClaimsFor(root),
     onSnapshot: (remote, snapshot) => {
@@ -588,10 +595,8 @@ async function main(): Promise<void> {
     // holds the vault they ran in. The panel's shells were started in its
     // clone too, and stop with it.
     onLeave: async (remote) => {
-      await terminals
-        .closeRemote(remote)
-        .catch((err) => console.error('[terminal] close failed:', err))
       await plugins.stop(remote)
+      await terminals.closeRemote(remote)
       if (plugins.displayed() === remote) plugins.setDisplayed(null)
     },
   })
@@ -897,7 +902,8 @@ async function main(): Promise<void> {
     }),
     // A plugin being turned off keeps its capabilities until its disposer is
     // done, so what it finishes on the way out still reaches it.
-    pluginEnabled: async (plugin, root) => (await plugins.serving(root)).has(plugin),
+    pluginEnabled: async (plugin, root, allowDrain) =>
+      (await plugins.serving(root, allowDrain)).has(plugin),
     claims: (root) => plugins.scanClaimsFor(root),
   })
   const dispatch = capabilityHost.dispatch
@@ -1191,32 +1197,23 @@ async function main(): Promise<void> {
         console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
         return false
       }
-      updater.dispose()
       // Stop the work across vaults and in the active vault only after dirty
-      // buffers are safe on disk.
-      await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
-      await plugins.stopAll().catch((err) => console.error('[quit] plugins stop failed:', err))
-      await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
-      // Quit is a leave point: commit the flushed buffer, then get it
-      // off-machine before the window closes. Best-effort with a 1s budget:
-      // an unreachable remote must not hang quit, and the next launch drains
-      // what did not make it out. Order is flush -> commit -> push -> close.
-      const vault = host.active()
-      if (vault !== null) {
-        await vault.commitNow().catch((err) => console.error('[quit] commit failed:', err))
-        await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, 1_000))])
-      }
-      // `close()` commits the open vault again (a clean no-op) before letting
-      // go of it.
-      await host.closeAll()
-      // Final commits and their hooks still need the bridge. Revoke machine
-      // discovery only after settlement, then stop accepting bridge requests.
-      const endpoint = cliEndpoint
-      cliEndpoint = null
-      await endpoint
-        ?.dispose()
-        .catch((err) => console.error('[quit] CLI endpoint cleanup failed:', err))
-      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
+      // buffers are safe on disk. A failed drain keeps quit cancellable and
+      // leaves the updater and vault infrastructure available for a retry.
+      await drainShutdown({
+        stopBackground: () => plugins.stopBackground(),
+        stopPlugins: () => plugins.stopAll(),
+        closeTerminals: () => terminals.closeAll(),
+        disposeUpdater: () => updater.dispose(),
+        settleVault: () => settleVaultForQuit(host.active()),
+        closeVaults: () => host.closeAll(),
+        closeBridge: async () => {
+          const endpoint = cliEndpoint
+          await endpoint?.dispose()
+          cliEndpoint = null
+          await bridge.stop()
+        },
+      })
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
       channel.cancel?.()

@@ -1684,6 +1684,7 @@ export function createVaultHost(args: {
         await args.onLeave?.(remote)
       } catch (err) {
         console.error('[vault] leave hook failed:', err)
+        throw err
       }
       current = null
     }

@@ -24,7 +24,12 @@ import { useShortcutDispatcher, useShortcutHandlers } from '@/hooks/use-shortcut
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { liveShortcutIdsAtom } from '@/state/shortcuts'
 import { HostHintLayer } from '../host-hint-layer'
-import { HOST_HINT_SURFACE, requestAdaptedHostHints, type HostHintAdapter } from '@/lib/host-hints'
+import {
+  HOST_HINT_SURFACE,
+  registerHostHintAdapter,
+  requestAdaptedHostHints,
+  type HostHintAdapter,
+} from '@/lib/host-hints'
 
 let store: ReturnType<typeof createStore>
 let layout: ReturnType<typeof installHintLayout>
@@ -378,6 +383,67 @@ test('request-scoped adapters share the host label namespace and revalidate befo
   expect(hints()).toHaveLength(0)
 })
 
+test('inactive registered adapters do not block foreground modal actions', async () => {
+  const action = vi.fn()
+  const unchanged = vi.fn(() => false)
+  const adapter: HostHintAdapter = {
+    discover: () => [],
+    unchanged,
+    activate: vi.fn(() => false),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <div aria-hidden="true">
+        <iframe aria-label="Background mail" />
+      </div>
+      <div role="dialog" aria-label="Foreground dialog">
+        <Button onClick={action}>Confirm</Button>
+      </div>
+    </section>,
+  )
+  const frame = screen.getByLabelText('Background mail')
+  registerHostHintAdapter(frame, adapter)
+  const confirm = screen.getByRole('button', { name: 'Confirm' })
+  confirm.focus()
+  await userEvent.keyboard('f')
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['Confirm'])
+  await choose('Confirm')
+  expect(action).toHaveBeenCalledOnce()
+  expect(unchanged).not.toHaveBeenCalled()
+})
+
+test('a participating adapter becoming inactive cancels its captured labels', async () => {
+  let target: Element = document.createElement('a')
+  target.textContent = 'Mail target'
+  let active = true
+  const adapter: HostHintAdapter = {
+    discover: () =>
+      active ? [{ element: target, label: 'Mail target', x: 40, y: 50, token: target }] : [],
+    unchanged: () => true,
+    activate: vi.fn(() => true),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <div data-testid="mail-surface">
+        <iframe aria-label="Mail frame" />
+      </div>
+    </section>,
+  )
+  const surface = screen.getByTestId('mail-surface')
+  const frame = surface.querySelector('iframe')!
+  target = frame
+  const unregister = registerHostHintAdapter(frame, adapter)
+  screen.getByLabelText('Mail frame').focus()
+  await userEvent.keyboard('f')
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toContain('Mail target')
+  active = false
+  surface.setAttribute('aria-hidden', 'true')
+  await userEvent.keyboard('a')
+  expect(hints()).toHaveLength(0)
+  expect(adapter.activate).not.toHaveBeenCalled()
+  unregister()
+})
+
 test('explicit terminal hints show labels; Ctrl-C cancels without consuming the interrupt', async () => {
   setup(
     <div data-panel-terminal="shell-one" className="xterm">
@@ -436,6 +502,47 @@ test('request-scoped adapter validates its shell lifetime even with no links', a
   expect(adapter.unchanged).toHaveBeenCalledWith([])
   expect(event.defaultPrevented).toBe(true)
   expect(hints()).toHaveLength(0)
+})
+
+test('keeps a zero-target owned adapter subscribed for frame keys and disposes it on cancel', async () => {
+  let route: ((event: KeyboardEvent) => boolean) | undefined
+  const disposed = vi.fn()
+  const adapter: HostHintAdapter = {
+    discover: () => [],
+    unchanged: () => true,
+    activate: vi.fn(() => false),
+    subscribe: (_invalidate, onKey) => {
+      route = onKey
+      const frameDocument = document.querySelector('iframe')!.contentDocument!
+      const onFrameKeyDown = (event: KeyboardEvent) => {
+        if (!onKey?.(event)) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+      }
+      frameDocument.addEventListener('keydown', onFrameKeyDown, true)
+      return () => {
+        frameDocument.removeEventListener('keydown', onFrameKeyDown, true)
+        disposed()
+      }
+    },
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <iframe aria-label="Linkless frame" />
+    </section>,
+  )
+  const pane = document.querySelector<HTMLElement>('[data-pane]')!
+  const unregister = registerHostHintAdapter(pane.querySelector('iframe')!, adapter)
+  const frame = pane.querySelector('iframe')!
+  frame.contentDocument!.body.focus()
+  await userEvent.keyboard('f')
+  expect(hints()).toHaveLength(0)
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  frame.contentDocument!.dispatchEvent(event)
+  expect(route).toBeDefined()
+  expect(event.defaultPrevented).toBe(true)
+  expect(disposed).toHaveBeenCalledOnce()
+  unregister()
 })
 
 test('nested portalled overlays use their focused top layer and Escape leaves the overlay open', async () => {

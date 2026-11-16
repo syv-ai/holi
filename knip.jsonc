@@ -58,6 +58,8 @@
         "scripts/pdf-vim-native-smoke.tsx",
         "scripts/mail-vim-native-smoke-main.ts",
         "scripts/mail-vim-native-smoke.tsx",
+        "scripts/folder-subscriptions-native-smoke-main.ts",
+        "scripts/folder-subscriptions-native-smoke.tsx",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",

@@ -1,10 +1,37 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createManagedCommitProvenance } from '../src/main/managed-commit-provenance'
 import { openRepo } from '../src/main/git'
 import { cleanupFixtures, makeClone, makeRemote, plainGit } from './helpers/git-fixtures'
+
+const observations = vi.hoisted(() => ({
+  lifetime: null as (() => void) | null,
+  origin: null as (() => void) | null,
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      const result = await actual.readFile(...args)
+      if (String(args[0]).endsWith('/holi-managed-provenance-id')) observations.lifetime?.()
+      return result
+    },
+  }
+})
+vi.mock('../src/main/git', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/git')>()
+  return {
+    ...actual,
+    runGit: async (...args: Parameters<typeof actual.runGit>) => {
+      const result = await actual.runGit(...args)
+      if (args[1].includes('get-url')) observations.origin?.()
+      return result
+    },
+  }
+})
 
 const roots: string[] = []
 
@@ -33,6 +60,7 @@ describe('managed commit provenance', () => {
       remote: 'owner/repo',
       identity: () => identity,
       subscribed: async () => true,
+      subscribedNow: () => true,
     })
     await writeFile(join(root, 'note.md'), 'committed\n')
     const oid = await openRepo(root, {
@@ -67,12 +95,13 @@ describe('managed commit provenance', () => {
       remote: 'owner/repo',
       identity: () => ({ accountId: 2, generation: 0 }),
       subscribed: async () => true,
+      subscribedNow: () => true,
     })
     const capture = await recorder.begin(root)
     await expect(recorder.record(capture, root, 'a'.repeat(40))).rejects.toThrow(/invalid/)
   })
 
-  it('removes conflicting ownership for an identical commit object', async () => {
+  it('retains a conflict tombstone through a to b to a and fresh recorder handles', async () => {
     const root = await makeClone(await makeRemote())
     await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])
     const file = await stateFile()
@@ -82,6 +111,7 @@ describe('managed commit provenance', () => {
       remote: 'owner/repo',
       identity: () => identity,
       subscribed: async () => true,
+      subscribedNow: () => true,
     })
     await writeFile(join(root, 'same.md'), 'same\n')
     const oid = await openRepo(root, {
@@ -94,7 +124,21 @@ describe('managed commit provenance', () => {
     identity = { accountId: 42, generation: 1 }
     const capture = await recorder.begin(root)
     await recorder.record(capture, root, oid)
-    expect(JSON.parse(await readFile(file, 'utf8')).records).toEqual([])
+    expect(
+      JSON.parse(await readFile(file, 'utf8')).records.filter(
+        (record: { conflicted?: boolean }) => !record.conflicted,
+      ),
+    ).toEqual([])
+    identity = { accountId: 41, generation: 0 }
+    const restarted = createManagedCommitProvenance({
+      file,
+      remote: 'owner/repo',
+      identity: () => identity,
+      subscribed: async () => true,
+      subscribedNow: () => true,
+    })
+    await restarted.record(await restarted.begin(root), root, oid)
+    expect(JSON.parse(await readFile(file, 'utf8')).records).toMatchObject([{ conflicted: true }])
   })
 
   it('does not accept a repository whose origin no longer matches its subscribed remote', async () => {
@@ -104,6 +148,7 @@ describe('managed commit provenance', () => {
       remote: 'owner/repo',
       identity: () => ({ accountId: 3, generation: 1 }),
       subscribed: async () => true,
+      subscribedNow: () => true,
     })
     expect(await recorder.begin(root)).toBeNull()
   })
@@ -117,6 +162,7 @@ describe('managed commit provenance', () => {
       remote: 'owner/repo',
       identity: () => ({ accountId: 11, generation: 0 }),
       subscribed: async () => true,
+      subscribedNow: () => true,
     })
     const capture = await recorder.begin(root)
     await rm(join(root, '.git', 'holi-managed-provenance-id'))
@@ -141,6 +187,7 @@ describe('managed commit provenance', () => {
       file,
       remote: 'owner/repo',
       identity: () => identity,
+      subscribedNow: () => true,
       subscribed: async () => {
         checks += 1
         if (checks === 4) {
@@ -159,6 +206,66 @@ describe('managed commit provenance', () => {
     await expect(readFile(file, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it.each(['unsubscribe', 'origin', 'replacement'] as const)(
+    'rejects %s while an earlier publication observation is suspended',
+    async (change) => {
+      const root = await makeClone(await makeRemote())
+      await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])
+      const file = await stateFile()
+      let subscribed = true
+      let armed = false
+      let calls = 0
+      let release!: (value: boolean) => void
+      let entered!: () => void
+      const waiting = new Promise<void>((resolve) => (entered = resolve))
+      const gate = new Promise<boolean>((resolve) => (release = resolve))
+      let lifetimeReads = 0
+      let originReads = 0
+      let seenLifetime!: () => void
+      let seenOrigin!: () => void
+      const latestLifetime = new Promise<void>((resolve) => (seenLifetime = resolve))
+      const latestOrigin = new Promise<void>((resolve) => (seenOrigin = resolve))
+      observations.lifetime = () => {
+        if (++lifetimeReads === 3) seenLifetime()
+      }
+      observations.origin = () => {
+        if (++originReads === 3) seenOrigin()
+      }
+      const recorder = createManagedCommitProvenance({
+        file,
+        remote: 'owner/repo',
+        identity: () => ({ accountId: 15, generation: 0 }),
+        subscribedNow: () => subscribed,
+        subscribed: async () => {
+          if (armed && ++calls === 4) {
+            await Promise.all([latestLifetime, latestOrigin])
+            entered()
+            return gate
+          }
+          return subscribed
+        },
+      })
+      const capture = await recorder.begin(root)
+      armed = true
+      const recording = recorder.record(capture, root, 'a'.repeat(40)).catch(() => undefined)
+      await waiting
+      if (change === 'unsubscribe') subscribed = false
+      if (change === 'origin')
+        await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/other/repo.git'])
+      if (change === 'replacement') {
+        await rename(join(root, '.git'), join(root, '.git-old'))
+        await plainGit(root, ['init'])
+        await plainGit(root, ['remote', 'add', 'origin', 'https://github.com/owner/repo.git'])
+      }
+      release(true)
+      await recording
+      observations.lifetime = null
+      observations.origin = null
+      await expect(readFile(file, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(`${file}.tmp`, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    },
+  )
+
   it('does not begin capture without an explicit subscription', async () => {
     const root = await makeClone(await makeRemote())
     const recorder = createManagedCommitProvenance({
@@ -166,6 +273,7 @@ describe('managed commit provenance', () => {
       remote: 'owner/repo',
       identity: () => ({ accountId: 18, generation: 0 }),
       subscribed: async () => false,
+      subscribedNow: () => false,
     })
     expect(await recorder.begin(root)).toBeNull()
   })
@@ -179,6 +287,7 @@ describe('managed commit provenance', () => {
       remote: 'owner/repo',
       identity: () => ({ accountId: 19, generation: 0 }),
       subscribed: async () => true,
+      subscribedNow: () => true,
     })
     await writeFile(join(root, 'entry.md'), 'entry\n')
     const oid = await openRepo(root, {
