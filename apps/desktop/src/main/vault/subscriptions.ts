@@ -83,6 +83,10 @@ export function createSubscriptions(file: string) {
   }
 
   return {
+    async hasExplicit(remote: string): Promise<boolean> {
+      if (!isRemote(remote)) return false
+      return ((await store.read()).remotes[remote]?.length ?? 0) > 0
+    },
     async list(remote: string, root: string, paths: string[]) {
       if (!isRemote(remote)) throw new Error('Invalid vault remote.')
       const valid = await Promise.all(paths.map((path) => validateScope(root, path)))
