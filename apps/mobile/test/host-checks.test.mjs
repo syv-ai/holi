@@ -13,6 +13,21 @@ const report = {
   startedAt: 110,
   finishedAt: 120,
   corpus,
+  storage: {
+    schemaVersion: 1,
+    passed: 1,
+    total: 1,
+    failed: 0,
+    concurrentFulfilled: 1,
+    staleRejected: true,
+    isolatedRoots: true,
+    exactBytes: true,
+    listingFiltered: true,
+    caseAliasRejected: true,
+    symlinkRejected: true,
+    finalBytes: 'winner A',
+  },
+  storageRoot: '/sandbox/Documents/holi-storage-check-fresh-110',
 }
 
 test('host accepts only fresh complete native evidence for every bundled case', () => {
@@ -71,6 +86,18 @@ for (const [name, mutate] of [
     },
   ],
   [
+    'missing storage evidence',
+    (value) => {
+      delete value.storage
+    },
+  ],
+  [
+    'failed storage evidence',
+    (value) => {
+      value.storage.failed = 1
+    },
+  ],
+  [
     'partial report',
     (value) => {
       value.corpus.results.pop()
@@ -117,8 +144,14 @@ for (const [name, mutate] of [
 test('host rejects absent, incomplete or nonportable shared graph evidence', () => {
   const graph = {
     schemaVersion: 1,
-    resources: ['path-safety.ts', 'vault-format.ts', 'vault-format.v1.json'],
+    resources: [
+      'mobile-path-safety.ts',
+      'path-safety.ts',
+      'vault-format.ts',
+      'vault-format.v1.json',
+    ],
     edges: [
+      { from: 'mobile-path-safety.ts', request: './path-safety', to: 'path-safety.ts' },
       { from: 'vault-format.ts', request: './path-safety', to: 'path-safety.ts' },
       { from: 'vault-format.ts', request: './vault-format.v1.json', to: 'vault-format.v1.json' },
     ],

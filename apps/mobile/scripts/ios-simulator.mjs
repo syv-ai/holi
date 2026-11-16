@@ -124,8 +124,49 @@ try {
   process.kill(pid, 0)
   await simctl('io', simulator, 'screenshot', join(artifacts, 'status.png'))
   validateReport(report, { runId, launchedAt, now: Date.now(), osVersion: runtime.version })
+  const durableNote = join(report.storageRoot, 'same/note.md')
+  const beforeRestart = await readFile(durableNote)
+  await simctl('terminate', simulator, bundleId)
+  const restartedAt = Date.now()
+  const restarted = await command('xcrun', ['simctl', 'launch', simulator, bundleId], {
+    env: { ...process.env, SIMCTL_CHILD_HOLI_COMPAT_RUN_ID: runId },
+  })
+  const restartedPid = Number(restarted.match(/: (\d+)$/)?.[1])
+  assert.ok(
+    Number.isSafeInteger(restartedPid) && restartedPid > 0,
+    `No restarted app PID: ${restarted}`,
+  )
+  let restartReport
+  const restartDeadline = Date.now() + 90_000
+  while (Date.now() < restartDeadline) {
+    process.kill(restartedPid, 0)
+    try {
+      restartReport = JSON.parse(await readFile(reportPath, 'utf8'))
+      if (restartReport.startedAt >= restartedAt) break
+    } catch (error) {
+      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
+    }
+    await sleep(250, undefined, { signal: controller.signal })
+  }
+  assert.ok(
+    restartReport?.startedAt >= restartedAt,
+    'App did not complete a fresh post-restart storage run',
+  )
+  assert.deepEqual(
+    await readFile(durableNote),
+    beforeRestart,
+    'Persisted note bytes changed across app restart',
+  )
+  await writeFile(join(artifacts, 'restart-report.json'), JSON.stringify(restartReport, null, 2))
+  await writeFile(join(artifacts, 'restart-note.bin'), beforeRestart)
+  validateReport(restartReport, {
+    runId,
+    launchedAt: restartedAt,
+    now: Date.now(),
+    osVersion: runtime.version,
+  })
   console.log(
-    `iOS ${runtime.version}: ${report.corpus.passed}/${report.corpus.total} cases passed. Evidence: ${artifacts}`,
+    `iOS ${runtime.version}: ${report.corpus.passed}/${report.corpus.total} format cases and storage passed across same-container restart. Evidence: ${artifacts}`,
   )
 } catch (error) {
   console.error(`iOS compatibility failed. Evidence: ${artifacts}`)

@@ -1,5 +1,8 @@
 import { Device, File, knownFolders, path } from '@nativescript/core'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
+import { nativeFiles } from './native-files.ios'
+import { runVaultStorageCheck } from './vault-storage-check'
+import { createVaultStorage } from './vault-storage'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -9,15 +12,52 @@ function nativeUtf8(text: string): Uint8Array {
 }
 
 /** The only iOS adapter: launch identity, native encoding and sandbox evidence. */
-export function checkCompatibility(): string {
+export async function checkCompatibility(): Promise<string> {
   const startedAt = Date.now()
   const runId = NSProcessInfo.processInfo.environment.objectForKey('HOLI_COMPAT_RUN_ID') ?? 'manual'
   let status: string
   let evidence: Record<string, unknown>
   try {
     const corpus = runVaultFormatCorpus(nativeUtf8)
-    status = `${corpus.passed}/${corpus.total} cases passed; ${corpus.failed} failed`
-    evidence = { corpus }
+    const documents = knownFolders.documents().path
+    const storageRoot = `${documents}/holi-storage-check-${runId}-${startedAt}`
+    const secondRoot = `${documents}/holi-storage-other-${runId}-${startedAt}`
+    for (const root of [storageRoot, secondRoot]) {
+      const error = new interop.Reference<NSError>()
+      const created =
+        NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(
+          root,
+          true,
+          null,
+          error,
+        )
+      if (error.value || !created)
+        throw new Error(error.value?.localizedDescription ?? 'Could not create storage test root')
+    }
+    const storage = await runVaultStorageCheck(nativeFiles, storageRoot, secondRoot)
+    const linkError = new interop.Reference<NSError>()
+    const linkPath = `${storageRoot}/symlinked-vault`
+    const linkCreated =
+      NSFileManager.defaultManager.createSymbolicLinkAtPathWithDestinationPathError(
+        linkPath,
+        secondRoot,
+        linkError,
+      )
+    if (linkError.value || !linkCreated)
+      throw new Error(linkError.value?.localizedDescription ?? 'Could not create symlink fixture')
+    let symlinkRejected = false
+    try {
+      await createVaultStorage(nativeFiles, {
+        remote: 'holi/storage-check',
+        root: storageRoot,
+      }).read('symlinked-vault/same/note.md')
+    } catch {
+      symlinkRejected = true
+    }
+    if (!symlinkRejected) throw new Error('Native storage followed a symlink')
+    storage.symlinkRejected = symlinkRejected
+    status = `${corpus.passed}/${corpus.total} format cases and storage passed; ${corpus.failed} failed`
+    evidence = { corpus, storage, storageRoot }
   } catch (error) {
     status = `Compatibility failed: ${String(error)}`
     evidence = { error: String(error) }
@@ -35,7 +75,7 @@ export function checkCompatibility(): string {
   File.fromPath(path.join(knownFolders.documents().path, 'vault-format-report.json')).writeTextSync(
     JSON.stringify(report),
     (error) => {
-      throw error
+      if (error) throw error
     },
   )
   return status

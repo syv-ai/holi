@@ -16,23 +16,58 @@ export function validateReport(report, { runId, launchedAt, now, osVersion }) {
   assert.ok(reference.total > 0)
   assert.equal(reference.failed, 0, 'The canonical corpus has incorrect expectations')
   assert.deepEqual(report.corpus, reference, 'Native report is partial, mismatched or failed')
+  assert.deepEqual(
+    report.storage,
+    {
+      schemaVersion: 1,
+      passed: 1,
+      total: 1,
+      failed: 0,
+      concurrentFulfilled: 1,
+      staleRejected: true,
+      isolatedRoots: true,
+      exactBytes: true,
+      listingFiltered: true,
+      caseAliasRejected: true,
+      symlinkRejected: true,
+      finalBytes: report.storage?.finalBytes,
+    },
+    'Native storage evidence is missing or failed',
+  )
+  assert.ok(['winner A', 'winner B'].includes(report.storage.finalBytes))
+  assert.ok(
+    typeof report.storageRoot === 'string' &&
+      report.storageRoot.includes(`/Documents/holi-storage-check-${runId}-`),
+  )
 }
 
 export function validateSharedGraph(graph) {
-  const resources = ['path-safety.ts', 'vault-format.ts', 'vault-format.v1.json']
+  const resources = [
+    'mobile-path-safety.ts',
+    'path-safety.ts',
+    'vault-format.ts',
+    'vault-format.v1.json',
+  ]
   assert.equal(graph.schemaVersion, 1)
   assert.deepEqual(graph.resources, resources)
   assert.ok(Array.isArray(graph.edges) && graph.edges.length > 0)
   for (const edge of graph.edges) {
-    assert.equal(edge.from, 'vault-format.ts')
     assert.ok(
-      (edge.request === './path-safety' && edge.to === 'path-safety.ts') ||
-        (edge.request === './vault-format.v1.json' && edge.to === 'vault-format.v1.json'),
+      (edge.from === 'vault-format.ts' &&
+        edge.request === './path-safety' &&
+        edge.to === 'path-safety.ts') ||
+        (edge.from === 'vault-format.ts' &&
+          edge.request === './vault-format.v1.json' &&
+          edge.to === 'vault-format.v1.json') ||
+        (edge.from === 'mobile-path-safety.ts' &&
+          edge.request === './path-safety' &&
+          edge.to === 'path-safety.ts'),
       `Unexpected shared dependency: ${JSON.stringify(edge)}`,
     )
   }
   assert.ok(graph.edges.some((edge) => edge.to === 'path-safety.ts'))
   assert.ok(graph.edges.some((edge) => edge.to === 'vault-format.v1.json'))
+  assert.ok(graph.edges.some((edge) => edge.from === 'mobile-path-safety.ts'))
 }
 
 /** Kill the complete CLI/build process group on timeout or cancellation. */
