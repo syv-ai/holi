@@ -19,6 +19,7 @@ import {
 } from './native-smoke-browser-errors.mjs'
 import { observeChild, startupDiagnostic } from './native-smoke-process.mjs'
 import { assertExclusiveRowHover, assertStableRowBoxes } from './native-smoke-row-assertions.mjs'
+import { rowSnapshotExpression } from './native-smoke-row-snapshot.mjs'
 import { encodeScreencast } from './native-smoke-recording.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -298,10 +299,7 @@ try {
     evaluate(
       `(()=>[...document.querySelectorAll('[data-slot="tree-item-label"],[data-tree-row-action]')].every(e=>!e.matches(':hover')))()`,
     )
-  const metrics = () =>
-    evaluate(
-      `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="parent"]');const label=row.querySelector('[data-slot="tree-item-label"]');const action=label.querySelector('[data-tree-row-action]');const name=label.querySelector('.truncate');const nested=document.querySelector('[role="treeitem"][aria-label="nested"]');const nestedAction=nested?.querySelector('[data-tree-row-action]');const box=e=>{const r=e.getBoundingClientRect();return{x:r.x,y:r.y,right:r.right,width:r.width}};return{opacity:getComputedStyle(action).opacity,name:box(name),action:box(action),nestedAction:nestedAction?box(nestedAction):null,focused:document.activeElement===row,hoverLabels:[...document.querySelectorAll('[data-slot="tree-item-label"]')].filter(e=>e.matches(':hover')).length,hoverButtons:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e.matches(':hover')).length}})()`,
-    )
+  const rowSnapshot = (path) => evaluate(rowSnapshotExpression(path))
   // The real pointer is parked in the window's blank lower margin, outside every tree label and button.
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 680, y: 760 })
   assert(
@@ -312,11 +310,16 @@ try {
   const labels = await evaluate(`document.querySelectorAll('[data-slot="tree-item-label"]').length`)
   assert(labels > 0)
   const initialButtons = await assertAllHidden('startup before focus enters tree')
-  const rest = await metrics()
+  const rest = await rowSnapshot('parent')
   assert.equal(rest.opacity, '0', 'action stays hidden at rest outside hover and focus')
   assert(await allNoHover(), 'pointer must remain outside all tree labels and buttons')
-  const initialGeometry = await evaluate(
-    `(()=>Object.fromEntries([...document.querySelectorAll('[role=treeitem]')].map(row=>{const name=row.querySelector('.truncate');const action=row.querySelector('[data-tree-row-action]');return[row.getAttribute('aria-label'),{nameX:name.getBoundingClientRect().x,actionRight:action.getBoundingClientRect().right}]})))()`,
+  const initialGeometry = Object.fromEntries(
+    await Promise.all(
+      ['parent', 'a-long-folder-name-to-test-row-geometry'].map(async (path) => {
+        const snapshot = await rowSnapshot(path)
+        return [path, { nameX: snapshot.boxes.name.x, actionRight: snapshot.boxes.bell.right }]
+      }),
+    ),
   )
   const hoverStates = []
   for (const path of ['parent', 'a-long-folder-name-to-test-row-geometry']) {
@@ -328,21 +331,19 @@ try {
       `getComputedStyle(document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}] [data-tree-row-action]')).opacity==='1'`,
       `hover folder name reveals ${path}`,
     )
-    const state = await evaluate(
-      `(()=>{const row=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}]');const label=row.querySelector('.truncate');const action=row.querySelector('[data-tree-row-action]');const box=e=>{const r=e.getBoundingClientRect();return{x:r.x,right:r.right}};return{path:${JSON.stringify(path)},opacity:getComputedStyle(action).opacity,label:box(label),action:box(action),hoverName:label.matches(':hover'),hoverBell:action.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e!==action).map(e=>({path:e.closest('[role=treeitem]')?.getAttribute('aria-label'),opacity:getComputedStyle(e).opacity}))}})()`,
-    )
+    const state = await rowSnapshot(path)
     assert.equal(state.opacity, '1')
     assertExclusiveRowHover(
-      { nameHovered: state.hoverName, bellHovered: state.hoverBell, otherActions: state.others },
+      { nameHovered: state.nameHover, bellHovered: state.bellHover, otherActions: state.others },
       `${path} folder hover`,
     )
-    assert(state.label.x < state.action.x, `name precedes ${path} trailing action`)
+    assert(state.boxes.name.x < state.boxes.bell.x, `name precedes ${path} trailing action`)
     assert(
-      Math.abs(state.label.x - initialGeometry[path].nameX) < 1,
+      Math.abs(state.boxes.name.x - initialGeometry[path].nameX) < 1,
       `${path} name does not shift on hover`,
     )
     assert(
-      Math.abs(state.action.right - initialGeometry[path].actionRight) < 1,
+      Math.abs(state.boxes.bell.right - initialGeometry[path].actionRight) < 1,
       `${path} trailing edge remains fixed on hover`,
     )
     await screenshot(`name-hover-${path === 'parent' ? 'short' : 'long'}.png`)
@@ -350,12 +351,10 @@ try {
       `(()=>{const row=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}]');const name=row.querySelector('.truncate').getBoundingClientRect();const action=row.querySelector('[data-tree-row-action]').getBoundingClientRect();return{x:(name.right+action.left)/2,y:action.y+action.height/2}})()`,
     )
     await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...gapPoint })
-    const gapState = await evaluate(
-      `(()=>{const row=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}]');const action=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(action).opacity,hoverLabel:row.querySelector('[data-slot="tree-item-label"]').matches(':hover'),hoverBell:action.matches(':hover')}})()`,
-    )
+    const gapState = await rowSnapshot(path)
     assert.equal(gapState.opacity, '1', `${path} bell remains usable across the gap`)
-    assert(gapState.hoverLabel, `${path} label retains hover across the gap`)
-    assert(!gapState.hoverBell, `${path} pointer crosses the gap before the bell`)
+    assert(gapState.labelHover, `${path} label retains hover across the gap`)
+    assert(!gapState.bellHover, `${path} pointer crosses the gap before the bell`)
     const bellPoint = await evaluate(
       `(()=>{const r=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}] [data-tree-row-action]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
     )
@@ -364,13 +363,11 @@ try {
       `document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}] [data-tree-row-action]').matches(':hover')`,
       `pointer reaches bell for ${path}`,
     )
-    const bellState = await evaluate(
-      `(()=>{const row=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}]');const action=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(action).opacity,hoverBell:action.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e!==action).map(e=>getComputedStyle(e).opacity)}})()`,
-    )
+    const bellState = await rowSnapshot(path)
     assert.equal(bellState.opacity, '1')
-    assert(bellState.hoverBell, `pointer reaches ${path} bell from its name`)
+    assert(bellState.bellHover, `pointer reaches ${path} bell from its name`)
     assert(
-      bellState.others.every((opacity) => opacity === '0'),
+      bellState.others.every((action) => action.opacity === '0'),
       `${path} bell hover is exclusive`,
     )
     hoverStates.push({ ...state, gap: gapState, bell: bellState })
@@ -383,7 +380,7 @@ try {
     await assertAllHidden(`after hover exits ${path}`)
   }
   assert(
-    Math.abs(hoverStates[0].action.right - hoverStates[1].action.right) < 1,
+    Math.abs(hoverStates[0].boxes.bell.right - hoverStates[1].boxes.bell.right) < 1,
     'short and long folder trailing action edges align',
   )
   await cdp('Page.stopScreencast')
@@ -414,11 +411,11 @@ try {
     'row action fully revealed',
   )
   assert(await allNoHover())
-  const rowBefore = await metrics()
+  const rowBefore = await rowSnapshot('parent')
   assert.equal(rowBefore.opacity, '1', 'outer focused treeitem must reveal its subscription action')
   assert.equal(rowBefore.hoverLabels, 0)
   assert.equal(rowBefore.hoverButtons, 0)
-  assert(rowBefore.name.x < rowBefore.action.x, 'name must remain before trailing action')
+  assert(rowBefore.boxes.name.x < rowBefore.boxes.bell.x, 'name must remain before trailing action')
   await screenshot('row-focus.png')
   // Tab reaches the actual folder button; Enter changes its subscription through the fixture tRPC adapter.
   await key('Tab')
@@ -468,7 +465,7 @@ try {
     `document.querySelector('[role="treeitem"][aria-label="parent"] [data-slot="tree-item-label"] .truncate').getBoundingClientRect().x`,
   )
   assert(
-    Math.abs(buttonFocusedNameX - rowBefore.name.x) < 1,
+    Math.abs(buttonFocusedNameX - rowBefore.boxes.name.x) < 1,
     'button focus does not shift the folder name',
   )
   // Return to the same row through native Tab traversal and use ArrowRight to expand it.
@@ -510,9 +507,7 @@ try {
   )
   await assertAllHidden('nested name hover starts without keyboard focus')
   assert(await allNoHover(), 'nested geometry check must be hover-free')
-  const nestedBeforeHover = await evaluate(
-    `(()=>{const row=document.querySelector('[role=treeitem][aria-label="nested"]');const name=row.querySelector('.truncate').getBoundingClientRect();const action=row.querySelector('[data-tree-row-action]').getBoundingClientRect();return{nameX:name.x,actionRight:action.right}})()`,
-  )
+  const nestedBeforeHover = await rowSnapshot('nested')
   const nestedNamePoint = await evaluate(
     `(()=>{const e=document.querySelector('[role="treeitem"][aria-label="nested"] .truncate');const range=document.createRange();range.selectNodeContents(e);const r=range.getBoundingClientRect();return{x:r.x+Math.min(r.width/2,8),y:r.y+r.height/2}})()`,
   )
@@ -521,13 +516,11 @@ try {
     `getComputedStyle(document.querySelector('[role=treeitem][aria-label="nested"] [data-tree-row-action]')).opacity==='1'`,
     'hover nested folder name reveals action',
   )
-  const nestedHover = await evaluate(
-    `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="nested"]');const e=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(e).opacity,hoverName:row.querySelector('.truncate').matches(':hover'),hoverBell:e.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(x=>x!==e).map(x=>({path:x.closest('[role=treeitem]')?.getAttribute('aria-label'),opacity:getComputedStyle(x).opacity}))}})()`,
-  )
+  const nestedHover = await rowSnapshot('nested')
   assertExclusiveRowHover(
     {
-      nameHovered: nestedHover.hoverName,
-      bellHovered: nestedHover.hoverBell,
+      nameHovered: nestedHover.nameHover,
+      bellHovered: nestedHover.bellHover,
       otherActions: nestedHover.others,
     },
     'nested folder hover',
@@ -536,14 +529,12 @@ try {
     `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="nested"]');const name=row.querySelector('.truncate').getBoundingClientRect();const action=row.querySelector('[data-tree-row-action]').getBoundingClientRect();return{x:(name.right+action.left)/2,y:action.y+action.height/2}})()`,
   )
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...nestedGapPoint })
-  const nestedGap = await evaluate(
-    `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="nested"]');const action=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(action).opacity,hoverLabel:row.querySelector('[data-slot="tree-item-label"]').matches(':hover'),hoverBell:action.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e!==action).map(e=>getComputedStyle(e).opacity)}})()`,
-  )
+  const nestedGap = await rowSnapshot('nested')
   assert.equal(nestedGap.opacity, '1', 'nested bell stays usable across the name/bell gap')
-  assert(nestedGap.hoverLabel, 'nested label retains hover across the gap')
-  assert(!nestedGap.hoverBell, 'nested pointer is not at the bell while crossing the gap')
+  assert(nestedGap.labelHover, 'nested label retains hover across the gap')
+  assert(!nestedGap.bellHover, 'nested pointer is not at the bell while crossing the gap')
   assert(
-    nestedGap.others.every((opacity) => opacity === '0'),
+    nestedGap.others.every((action) => action.opacity === '0'),
     'nested gap keeps unrelated bells hidden',
   )
   const nestedBellPoint = await evaluate(
@@ -554,24 +545,20 @@ try {
     `document.querySelector('[role="treeitem"][aria-label="nested"] [data-tree-row-action]').matches(':hover')`,
     'pointer reaches nested bell from its name',
   )
-  const nestedBell = await evaluate(
-    `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="nested"]');const action=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(action).opacity,hoverBell:action.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e!==action).map(e=>getComputedStyle(e).opacity)}})()`,
-  )
+  const nestedBell = await rowSnapshot('nested')
   assert.equal(nestedBell.opacity, '1')
-  assert(nestedBell.hoverBell, 'nested bell is pointer-accessible from its name')
+  assert(nestedBell.bellHover, 'nested bell is pointer-accessible from its name')
   assert(
-    nestedBell.others.every((opacity) => opacity === '0'),
+    nestedBell.others.every((action) => action.opacity === '0'),
     'nested bell hover is exclusive',
   )
-  const nestedDuringHover = await evaluate(
-    `(()=>{const row=document.querySelector('[role=treeitem][aria-label="nested"]');const name=row.querySelector('.truncate').getBoundingClientRect();const action=row.querySelector('[data-tree-row-action]').getBoundingClientRect();return{nameX:name.x,actionRight:action.right}})()`,
-  )
+  const nestedDuringHover = await rowSnapshot('nested')
   assert(
-    Math.abs(nestedDuringHover.nameX - nestedBeforeHover.nameX) < 1,
+    Math.abs(nestedDuringHover.boxes.name.x - nestedBeforeHover.boxes.name.x) < 1,
     'nested name does not shift on hover',
   )
   assert(
-    Math.abs(nestedDuringHover.actionRight - nestedBeforeHover.actionRight) < 1,
+    Math.abs(nestedDuringHover.boxes.bell.right - nestedBeforeHover.boxes.bell.right) < 1,
     'nested trailing edge remains fixed on hover',
   )
   hoverStates.push({
@@ -587,20 +574,19 @@ try {
     'hover exit hides nested folder',
   )
   assert(await allNoHover(), 'pointer is outside before nested row measurements')
-  const nested = await evaluate(
-    `(()=>{const parent=document.querySelector('[role="treeitem"][aria-label="parent"]');const child=document.querySelector('[role="treeitem"][aria-label="nested"]');const box=e=>{const r=e.getBoundingClientRect();return{x:r.x,right:r.right}};return{parentAction:box(parent.querySelector('[data-tree-row-action]')),nestedAction:box(child.querySelector('[data-tree-row-action]')),nestedName:box(child.querySelector('.truncate')),nestedOpacity:getComputedStyle(child.querySelector('[data-tree-row-action]')).opacity,hoverLabels:[...document.querySelectorAll('[data-slot="tree-item-label"]')].filter(e=>e.matches(':hover')).length,hoverButtons:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e.matches(':hover')).length}})()`,
-  )
-  assert.equal(nested.nestedOpacity, '0', 'unfocused nested action remains hidden at rest')
+  const parentRest = await rowSnapshot('parent')
+  const nested = await rowSnapshot('nested')
+  assert.equal(nested.opacity, '0', 'unfocused nested action remains hidden at rest')
   assert.equal(nested.hoverLabels, 0)
   assert.equal(nested.hoverButtons, 0)
   assert(
-    Math.abs(nested.parentAction.right - nested.nestedAction.right) < 1,
+    Math.abs(parentRest.boxes.bell.right - nested.boxes.bell.right) < 1,
     'nested/parent trailing action edges align',
   )
-  assert(nested.nestedName.x > rowBefore.name.x, 'nested name has the expected deeper indent')
-  const restored = await metrics()
+  assert(nested.boxes.name.x > rowBefore.boxes.name.x, 'nested name has the expected deeper indent')
+  const restored = await rowSnapshot('parent')
   assert(
-    Math.abs(restored.name.x - rowBefore.name.x) < 1,
+    Math.abs(restored.boxes.name.x - rowBefore.boxes.name.x) < 1,
     'revealing the action cannot shift the name',
   )
   const hoverCheckedNodes = await evaluate(
@@ -653,29 +639,6 @@ try {
   ]
   const fileStates = []
   const rowSelector = (path) => `[role="treeitem"][aria-label=${JSON.stringify(path)}]`
-  const fileMetrics = (path) =>
-    evaluate(`(() => {
-      const row = document.querySelector(${JSON.stringify(rowSelector(path))});
-      const label = row.querySelector('[data-slot="tree-item-label"]');
-      const name = label.querySelector(':scope > span > .truncate');
-      const action = label.querySelector('[data-tree-row-action]');
-      const box = e => { const r = e.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom} };
-      const style = getComputedStyle(action);
-      return {
-        boxes: {row:box(row),label:box(label),name:box(name),bell:box(action)},
-        opacity: style.opacity,
-        ariaLabel: action.getAttribute('aria-label'),
-        icon: action.querySelector('svg')?.getAttribute('class'),
-        nameHover: name.matches(':hover'),
-        bellHover: action.matches(':hover'),
-        rowFocused: document.activeElement === row,
-        bellFocused: document.activeElement === action,
-        focusVisible: action.matches(':focus-visible'),
-        focusShadow: style.boxShadow,
-        nameTruncated: name.scrollWidth > name.clientWidth,
-        others: [...document.querySelectorAll('[data-tree-row-action]')].filter(e => e !== action).map(e => ({label:e.getAttribute('aria-label'),opacity:getComputedStyle(e).opacity}))
-      };
-    })()`)
   const exitTree = async () => {
     await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 680, y: 760 })
     for (let i = 0; i < 40; i++) {
@@ -729,7 +692,7 @@ try {
       const stateName = subscribed ? 'subscribed' : 'unsubscribed'
       const stem = `file-${index === 0 ? 'short' : 'long'}-${stateName}`
       await exitTree()
-      const rest = await fileMetrics(path)
+      const rest = await rowSnapshot(path)
       firstRest ??= rest
       assertStableRowBoxes(firstRest, rest, `${path} ${stateName} rest`)
       assert.equal(rest.opacity, '0', `${path}: even a subscribed bell is hidden at rest`)
@@ -744,7 +707,7 @@ try {
         `${path}: fixture exercises short and genuinely truncated names`,
       )
       assert(
-        Math.abs(rest.boxes.bell.right - nested.parentAction.right) < 0.5,
+        Math.abs(rest.boxes.bell.right - parentRest.boxes.bell.right) < 0.5,
         `${path}: file bell aligns with directory baseline`,
       )
       assert(rest.boxes.bell.right <= rest.boxes.label.right, `${path}: bell stays within its row`)
@@ -756,7 +719,7 @@ try {
         `getComputedStyle(document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})).opacity === '1'`,
         `${path}: real filename hover reveals bell`,
       )
-      const hover = await fileMetrics(path)
+      const hover = await rowSnapshot(path)
       assertExclusiveRowHover(
         { nameHovered: hover.nameHover, bellHovered: hover.bellHover, otherActions: hover.others },
         `${path} filename hover`,
@@ -770,19 +733,19 @@ try {
         y: point.y,
       })
       assert.equal(
-        (await fileMetrics(path)).opacity,
+        (await rowSnapshot(path)).opacity,
         '1',
         `${path}: bell remains revealed across gap`,
       )
       await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...bellPoint })
-      const bellHover = await fileMetrics(path)
+      const bellHover = await rowSnapshot(path)
       assert(bellHover.bellHover, `${path}: pointer can reach revealed bell`)
       assert.equal(bellHover.opacity, '1')
       assertStableRowBoxes(rest, bellHover, `${path} ${stateName} bell hover`)
       await exitTree()
-      assertStableRowBoxes(rest, await fileMetrics(path), `${path} ${stateName} hover exit`)
+      assertStableRowBoxes(rest, await rowSnapshot(path), `${path} ${stateName} hover exit`)
       await focusFile(path)
-      const rowFocus = await fileMetrics(path)
+      const rowFocus = await rowSnapshot(path)
       assert(
         rowFocus.rowFocused && rowFocus.opacity === '1',
         `${path}: native row focus reveals bell without hover`,
@@ -795,7 +758,7 @@ try {
         `document.activeElement?.matches(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})`,
         `${path}: Tab reaches bell`,
       )
-      const bellFocus = await fileMetrics(path)
+      const bellFocus = await rowSnapshot(path)
       assert(
         bellFocus.bellFocused && bellFocus.focusVisible && bellFocus.opacity === '1',
         `${path}: keyboard focus makes bell visible`,
@@ -811,7 +774,7 @@ try {
       assert(await allNoHover())
       assertStableRowBoxes(rest, bellFocus, `${path} ${stateName} bell focus`)
       await key('Escape') // Dismiss the real tooltip without hiding the focused bell.
-      assert((await fileMetrics(path)).focusVisible, `${path}: Escape preserves keyboard focus`)
+      assert((await rowSnapshot(path)).focusVisible, `${path}: Escape preserves keyboard focus`)
       await screenshot(`${stem}-bell-focus.png`)
       const callCount = await evaluate('window.__folderBellCalls.length')
       await key('Enter')
@@ -827,9 +790,9 @@ try {
         `document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})?.getAttribute('aria-label') === ${JSON.stringify(`${subscribed ? 'Subscribe' : 'Unsubscribe'} ${path}`)} && !document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})?.disabled`,
         `${path}: toggle settles`,
       )
-      assertStableRowBoxes(rest, await fileMetrics(path), `${path} toggle`)
+      assertStableRowBoxes(rest, await rowSnapshot(path), `${path} toggle`)
       await exitTree()
-      assertStableRowBoxes(rest, await fileMetrics(path), `${path} focus exit`)
+      assertStableRowBoxes(rest, await rowSnapshot(path), `${path} focus exit`)
       fileStates.push({
         path,
         subscribed,
