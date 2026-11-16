@@ -358,6 +358,12 @@ export interface GitOutcome {
   stderr: string
 }
 
+function isMissingObject(stderr: string): boolean {
+  return /could not get object info|not a valid object name|bad object|path .* does not exist in|path .* exists on disk, but not in/i.test(
+    stderr,
+  )
+}
+
 /**
  * Run one git command and return its stdout, trimmed. Throws `GitError` on a
  * non-zero exit and `GitMissingError` when the binary is absent.
@@ -492,7 +498,7 @@ async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<G
     )
     if (opts.executionBudget !== undefined) {
       const accountOutput = (chunk: Buffer): void => {
-        outputBytes += chunk.length
+        outputBytes += Buffer.byteLength(String(chunk))
         if (outputExceeded || outputBytes <= opts.executionBudget!.maxBuffer) return
         outputExceeded = true
         clearTimeout(budgetTimer)
@@ -798,10 +804,28 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   ): Promise<string> {
     const readOpts = { ...opts, ...(executionBudget === undefined ? {} : { executionBudget }) }
     if (executionBudget !== undefined) {
-      const type = await gitObjectType(sha, readOpts)
-      if (type === null) throw new GitHistoricalObjectError()
-      const exists = await tryGit(root, ['cat-file', '-e', `${sha}:${path}`], readOpts)
-      if (!exists.ok) throw new GitHistoricalPathMissingError()
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) throw new GitHistoricalObjectError()
+      const endpoint = await tryGit(root, ['cat-file', '-t', sha], readOpts)
+      if (!endpoint.ok) {
+        if (isMissingObject(endpoint.stderr)) return ''
+        throw new GitError(
+          `git cat-file failed (${endpoint.code}): ${endpoint.stderr}`,
+          endpoint.code,
+          endpoint.stderr,
+        )
+      }
+      if (!['commit', 'tree'].includes(endpoint.stdout.trim())) throw new GitHistoricalObjectError()
+      const pathType = await tryGit(root, ['cat-file', '-t', `${sha}:${path}`], readOpts)
+      if (!pathType.ok) {
+        if (isMissingObject(pathType.stderr)) throw new GitHistoricalPathMissingError()
+        throw new GitError(
+          `git cat-file failed (${pathType.code}): ${pathType.stderr}`,
+          pathType.code,
+          pathType.stderr,
+        )
+      }
+      // A path that resolves to a tree is a directory, not a file-side value.
+      if (pathType.stdout.trim() !== 'blob') throw new GitHistoricalPathMissingError()
     }
     const res = await tryGit(root, ['show', '--end-of-options', `${sha}:${path}`], readOpts)
     if (!res.ok) {
@@ -916,13 +940,6 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     throw new GitError('Could not read repository HEAD.', res.code, res.stderr)
   }
 
-  /**
-   * `from..to`, as paths with line counts.
-   *
-   * **Two calls, not one.** Passing `--numstat` and `--name-status` to one
-   * `git diff` silently drops the counts (the last flag wins), so this joins two
-   * results on the path.
-   */
   async function gitObjectType(id: string, readOpts: RunOpts): Promise<'commit' | 'tree' | null> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(id)) return null
     const result = await tryGit(root, ['cat-file', '-t', id], readOpts)
@@ -931,6 +948,13 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return type === 'commit' || type === 'tree' ? type : null
   }
 
+  /**
+   * `from..to`, as paths with line counts.
+   *
+   * **Two calls, not one.** Passing `--numstat` and `--name-status` to one
+   * `git diff` silently drops the counts (the last flag wins), so this joins two
+   * results on the path.
+   */
   async function rangeFiles(
     from: string,
     to: string,
@@ -941,7 +965,11 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     const toType = await gitObjectType(to, readOpts)
     if (fromType === null || toType === null) return []
     const range = `${from}..${to}`
-    const stat = await tryGit(root, ['diff', '--numstat', '-z', '--no-color', range], readOpts)
+    const stat = await tryGit(
+      root,
+      ['diff', '--numstat', '-z', '--no-color', '-M', range],
+      readOpts,
+    )
     const names = await tryGit(
       root,
       ['diff', '--name-status', '-z', '--no-color', '-M', range],

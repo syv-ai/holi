@@ -80,6 +80,37 @@ describe('rangeFiles()', () => {
     expect(files).toEqual([{ path: 'gone.md', status: 'D', added: 0, removed: 1 }])
   })
 
+  it('keeps rename counts consistent when repository config disables rename detection', async () => {
+    const { dir, repo } = await repoAt()
+    await commitFile(dir, 'before.md', 'one\ntwo\nthree\n')
+    await commitFile(dir, 'exact-before.md', 'same\ncontent\n')
+    const base = (await repo.head())!
+    await plainGit(dir, ['mv', 'before.md', 'after.md'])
+    await plainGit(dir, ['mv', 'exact-before.md', 'exact-after.md'])
+    await writeFile(join(dir, 'after.md'), 'one\ntwo\nCHANGED\n')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['config', 'diff.renames', 'false'])
+    await plainGit(dir, ['commit', '-m', 'rename and edit'])
+    const files = await repo.rangeFiles(base, (await repo.head())!)
+    expect(files).toHaveLength(2)
+    expect(files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'after.md',
+          status: expect.stringMatching(/^R/),
+          added: 1,
+          removed: 1,
+        }),
+        expect.objectContaining({
+          path: 'exact-after.md',
+          status: expect.stringMatching(/^R/),
+          added: 0,
+          removed: 0,
+        }),
+      ]),
+    )
+  })
+
   it('reports a rename once, at its new path', async () => {
     // `--name-status -z` spends THREE fields on a rename (`R100`, old, new)
     // where everything else spends two. Parsed as two, the next file's status
@@ -134,6 +165,21 @@ describe('rangeFiles()', () => {
     await expect(
       repo.rangeFiles(base, (await repo.head())!, { maxBuffer: 1024, timeout: 10_000 }),
     ).rejects.toThrow(/output resource limit/)
+  })
+
+  it('counts decoded Unicode stdout and stderr against the combined byte budget', async () => {
+    const { dir } = await repoAt()
+    const wrapper = join(dir, 'unicode-git-wrapper.cjs')
+    await writeFile(
+      wrapper,
+      `#!/usr/bin/env node\nif (process.argv[2] === 'diff') { process.stdout.write('é'.repeat(400)); process.stderr.write('é'.repeat(400)); } else { const { spawnSync } = require('node:child_process'); const r = spawnSync('git', process.argv.slice(2), { cwd: process.cwd(), encoding: 'utf8' }); process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); process.exit(r.status || 0); }\n`,
+      { mode: 0o700 },
+    )
+    const repo = openRepo(dir, { gitPath: wrapper })
+    const sha = (await openRepo(dir).head())!
+    await expect(repo.rangeFiles(sha, sha, { maxBuffer: 1024, timeout: 10_000 })).rejects.toThrow(
+      /output resource limit/,
+    )
   })
 
   it('keeps tabs and further tabs in literal filenames', async () => {
