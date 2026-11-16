@@ -363,6 +363,31 @@ test('retained hint-scope changes revoke ownership without rewriting native docu
   expect(document.getSelection()?.toString()).toBe('Selectable retained content')
 })
 
+test('restores a retained native selection when a hidden reader becomes visible', async () => {
+  const html = '<details open><summary>Disclosure</summary><p>Selected mail text</p></details>'
+  const fixture = (hidden: boolean) => (
+    <div hidden={hidden}>
+      <SandboxedHtml html={html} label="Message" mailHints />
+    </div>
+  )
+  const view = render(fixture(false))
+  const frame = await initialFrame(view.container)
+  const document = frame.contentDocument!
+  const paragraph = document.querySelector('p')!
+  const range = document.createRange()
+  range.selectNodeContents(paragraph)
+  const selection = document.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+
+  view.rerender(fixture(true))
+  expect(view.container.querySelector('iframe')).toBe(frame)
+  view.rerender(fixture(false))
+  await waitFor(() => expect(document.getSelection()?.toString()).toBe('Selected mail text'))
+  expect(frame.contentDocument).toBe(document)
+  expect(document.querySelector('details')?.open).toBe(true)
+})
+
 test('does not churn the frame when nothing about the policy changed', async () => {
   const props = { html: '<p>just a sentence</p>', label: 'Message', identity }
   const view = render(<SandboxedHtml {...props} />)

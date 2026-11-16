@@ -8,6 +8,7 @@ import type { MailState } from '../src/plugins/google/renderer/mail/use-mail'
 import { HostHintLayer } from '../src/renderer/src/features/shell/host-hint-layer'
 import { useShortcutDispatcher } from '../src/renderer/src/hooks/use-shortcuts'
 import { activeRemoteAtom } from '../src/renderer/src/plugin-api'
+import { useForgetImageSenders } from '../src/plugins/google/renderer/mail-images'
 import { vimCodeEditingAtom } from '../src/renderer/src/state/preferences'
 import '../src/renderer/src/index.css'
 
@@ -16,11 +17,27 @@ store.set(activeRemoteAtom, 'synthetic/mail-vim-vault')
 store.set(vimCodeEditingAtom, true)
 const calls: { op: string; account: string; payload?: unknown }[] = []
 ;(window as unknown as { __mailVimCalls: typeof calls }).__mailVimCalls = calls
+const imagePolicy = { senders: [] as string[], allSenders: false }
+;(window as unknown as { __mailVimPolicy: typeof imagePolicy }).__mailVimPolicy = imagePolicy
 Object.defineProperty(window, 'holi', {
   configurable: true,
   value: {
     openExternal: (url: string) =>
       calls.push({ op: 'openExternal', account: 'fixture-account-a', payload: url }),
+    trpc: async (op: { path: string }) =>
+      op.path === 'settings.read'
+        ? {
+            ok: true,
+            data: {
+              pluginValues: {
+                google: {
+                  imageSenders: [...imagePolicy.senders],
+                  imagesFromAllSenders: imagePolicy.allSenders,
+                },
+              },
+            },
+          }
+        : { ok: false, message: `Unexpected smoke RPC: ${op.path}` },
   },
 })
 interface SmokeControls {
@@ -37,6 +54,15 @@ let controls: SmokeControls | null = null
   hideComposer: () => controls?.hideComposer(),
   reader: (visible, account, view, vault) => controls?.reader(visible, account, view, vault),
   state: () => controls?.state(),
+}
+
+function ImagePolicyControls() {
+  const forget = useForgetImageSenders()
+  return (
+    <button type="button" onClick={() => void forget()}>
+      Revoke image consent
+    </button>
+  )
 }
 
 function Fixture() {
@@ -111,7 +137,7 @@ function Fixture() {
                         bcc: [],
                         date: '2026-11-15T12:00:00.000Z',
                         body: 'Fixture message text',
-                        html: '<p>Fixture message text</p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><p><a href="https://example.test/">Fixture external link</a></p>',
+                        html: '<p>Fixture message text</p><p><a href="https://example.test/">Fixture external link</a></p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><img src="https://images.example.test/fixture.png" width="1" height="1" alt="">',
                         attachments: [
                           { filename: 'fixture.txt', mimeType: 'text/plain', size: 128 },
                         ],
@@ -144,6 +170,7 @@ function Fixture() {
             onClose={() => calls.push({ op: 'close-callback', account })}
           />
         )}
+        <ImagePolicyControls />
         <HostHintLayer scopeKey="mail-native-smoke" />
       </main>
     </TooltipProvider>
