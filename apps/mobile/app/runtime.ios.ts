@@ -1,6 +1,6 @@
 import { Device, File, knownFolders, path } from '@nativescript/core'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
-import { nativeFiles } from './native-files.ios'
+import { createNativeFiles, nativeFiles } from './native-files.ios'
 import { runVaultStorageCheck } from './vault-storage-check'
 import { nativeIO } from './native-posix.ios'
 import { createVaultStorage } from './vault-storage'
@@ -107,7 +107,9 @@ export async function checkCompatibility(): Promise<string> {
     }
     phase = 'shared-storage-scenarios'
     operation = 'runVaultStorageCheck'
-    const storage = await runVaultStorageCheck(nativeFiles, storageRoot, secondRoot)
+    const storage = await runVaultStorageCheck(nativeFiles, storageRoot, secondRoot, (fault) =>
+      createNativeFiles({ fault }),
+    )
     phase = 'native-filename-spellings'
     operation = 'verifyHostCreatedRawFilenameSpellings'
     status = `${corpus.passed}/${corpus.total} format cases and storage passed; ${corpus.failed} failed`

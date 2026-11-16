@@ -8,7 +8,14 @@ const bytes = (value: string) =>
 const text = (value: Uint8Array) => decodeURIComponent(escape(String.fromCharCode(...value)))
 
 /** Portable adversarial acceptance run unchanged against each real filesystem adapter. */
-export async function runVaultStorageCheck(adapter: NativeFiles, root: string, secondRoot: string) {
+export async function runVaultStorageCheck(
+  adapter: NativeFiles,
+  root: string,
+  secondRoot: string,
+  faultAdapter?: (
+    phase: 'stage-open' | 'stage-write' | 'stage-sync' | 'stage-close' | 'publish',
+  ) => NativeFiles,
+) {
   const first = createVaultStorage(adapter, { remote: 'holi/storage-check', root })
   const firstAgain = createVaultStorage(adapter, { remote: 'holi/storage-check', root })
   const second = createVaultStorage(adapter, { remote: 'holi/storage-other', root: secondRoot })
@@ -105,8 +112,77 @@ export async function runVaultStorageCheck(adapter: NativeFiles, root: string, s
     }
     if ((await first.list()).includes(path as never)) throw new Error(`Unsafe path listed: ${path}`)
   }
+  // Plant real adversarial files before listing; rejected storage creates are not fixtures.
+  for (const path of [
+    '.git/ignored.md',
+    'private.local.md',
+    '.env',
+    '.secrets/key',
+    '.holi-storage-unowned.tmp',
+    'unowned.md',
+    'mismatched.md.holi-sidecar',
+    'malformed.md.holi-meta',
+  ]) {
+    try {
+      await adapter.create(await adapter.canonicalRoot(root), path, bytes(`fixture:${path}`))
+    } catch {
+      // Some adapters prohibit fixture placement at the filesystem seam.
+    }
+  }
   const listed = await first.list()
+  for (const excludedPath of ['.git/ignored.md', 'private.local.md', '.env', '.secrets/key'])
+    if (listed.includes(excludedPath as never))
+      throw new Error(`Excluded fixture listed: ${excludedPath}`)
   if (!listed.includes('same/note.md' as never)) throw new Error('Publishable note missing')
+  if (
+    text(await adapter.read(await adapter.canonicalRoot(root), 'unowned.md')) !==
+    'fixture:unowned.md'
+  )
+    throw new Error('Unowned fixture bytes changed')
+  if (
+    text(await adapter.read(await adapter.canonicalRoot(root), 'mismatched.md.holi-sidecar')) !==
+    'fixture:mismatched.md.holi-sidecar'
+  )
+    throw new Error('Mismatched sidecar fixture bytes changed')
+  if (
+    text(await adapter.read(await adapter.canonicalRoot(root), 'malformed.md.holi-meta')) !==
+    'fixture:malformed.md.holi-meta'
+  )
+    throw new Error('Malformed sidecar fixture bytes changed')
+
+  if (faultAdapter) {
+    for (const phase of [
+      'stage-open',
+      'stage-write',
+      'stage-sync',
+      'stage-close',
+      'publish',
+    ] as const) {
+      const base = createVaultStorage(adapter, { remote: 'holi/fault-base', root })
+      const failing = createVaultStorage(faultAdapter(phase), { remote: 'holi/fault', root })
+      const before = bytes('durable previous bytes')
+      const note = `fault-${phase}.md`
+      await base.create(note, before)
+      await Promise.all([
+        failing.create(`failed-create-${phase}.md`, bytes('must not publish')).then(
+          () => {
+            throw new Error(`Create fault ${phase} was ignored`)
+          },
+          () => {},
+        ),
+        failing.save(note, bytes('partial replacement'), (await base.read(note)).revision).then(
+          () => {
+            throw new Error(`Save fault ${phase} was ignored`)
+          },
+          () => {},
+        ),
+      ])
+      if (text((await base.read(note)).bytes) !== text(before))
+        throw new Error(`Save fault ${phase} changed durable bytes`)
+      if ((await base.list()).includes(`failed-create-${phase}.md` as never))
+        throw new Error(`Create fault ${phase} published a note`)
+    }
+  }
   return {
     schemaVersion: 2,
     passed: 1,

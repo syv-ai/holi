@@ -31,7 +31,11 @@ describe('vault storage with real directories', () => {
     await symlink(outside, join(a, 'linked'))
     await symlink(join(outside, 'note.md'), join(a, 'leaf-link.md'))
     await symlink(join(outside, 'missing.md'), join(a, 'dangling-link.md'))
-    const result = await runVaultStorageCheck(nodeFiles, a, b)
+    const result = await runVaultStorageCheck(nodeFiles, a, b, (phase) =>
+      createNodeFiles(async (at) => {
+        if (at === phase) throw new Error(`injected ${phase}`)
+      }),
+    )
     await writeFile(join(evidenceRoot, 'node-storage.json'), JSON.stringify(result, null, 2))
     expect(result).toMatchObject({ passed: 1, failed: 0, exactBytes: true, staleRejected: true })
     expect(await readFile(join(outside, 'note.md'), 'utf8')).toBe('outside')

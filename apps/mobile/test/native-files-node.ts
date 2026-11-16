@@ -105,6 +105,7 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
       let owned = false
       try {
         await writeStage(stage, bytes, checkpoint, () => (owned = true))
+        await checkpoint?.('publish')
         await link(stage, target)
         await unlink(stage)
         owned = false
