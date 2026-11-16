@@ -1,235 +1,155 @@
+import { knownFolders } from '@nativescript/core'
 import { isInIgnoredDir, isLocalOnlyPath, isSecretPath } from '@holi/shared/mobile-path-safety'
+import { nativeIO, nativePath } from './native-posix.ios'
 import type { Entry, NativeFiles } from './native-files'
 
-function checkError(error: interop.Reference<NSError>): void {
-  if (error.value) throw new Error(error.value.localizedDescription)
+type Fault = 'stage-open' | 'stage-write' | 'stage-sync' | 'stage-close' | 'publish'
+interface NativeOptions {
+  fault?: Fault
+  staged?: (event: { root: string; relative: string; stage: string }) => Promise<void>
 }
 
-function filePath(root: string, relative: string): string {
-  if (
-    !root.startsWith('/') ||
-    relative
-      .split('/')
-      .some((part) => !part || part === '.' || part === '..' || part.includes('\\'))
-  ) {
-    throw new Error('Invalid native path')
-  }
-  const normalized = NSString.stringWithString(`${root}/${relative}`).stringByStandardizingPath
-  if (!normalized.startsWith(`${root}/`)) throw new Error('Path escaped the vault')
-  return normalized
+function directory(path: string): void {
+  const kind = nativeIO.kind(path)
+  if (kind === null) nativeIO.mkdir(path)
+  else if (kind !== 'directory') throw new Error('Directory collision or symlink')
 }
-function attrs(path: string): NSDictionary<string, unknown> | null {
-  const error = new interop.Reference<NSError>()
-  const value = NSFileManager.defaultManager.attributesOfItemAtPathError(path, error)
-  if (error.value && error.value.code !== 260 && error.value.code !== 2) checkError(error)
-  return value
-}
-function checkedPath(
-  root: string,
-  relative: string,
-  allowMissing = false,
-  allowDirectory = false,
-): string {
-  let current = root
+
+function checkedPath(root: string, relative: string, createParents = false): string {
   const pieces = relative.split('/')
-  for (let index = 0; index < pieces.length; index++) {
-    const piece = pieces[index] ?? ''
-    current = `${current}/${piece}`
-    const info = attrs(current)
-    if (!info) {
-      if (!allowMissing) throw new Error('File does not exist')
-      if (index < pieces.length - 1) {
-        const error = new interop.Reference<NSError>()
-        const made =
-          NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(
-            current,
-            false,
-            null,
-            error,
-          )
-        checkError(error)
-        if (!made) throw new Error('Could not create parent directory')
-      }
-      continue
-    }
-    const type = info.objectForKey(NSFileType)
-    if (type === NSFileTypeSymbolicLink) throw new Error('Symbolic link rejected')
-    const directory = type === NSFileTypeDirectory
-    if (index < pieces.length - 1 && !directory) throw new Error('File ancestor collision')
-    if (index === pieces.length - 1 && directory && !allowDirectory)
-      throw new Error('Directory collision')
-    {
-      const error = new interop.Reference<NSError>()
-      const parent = index === 0 ? root : current.substring(0, current.lastIndexOf('/'))
-      const siblings = NSFileManager.defaultManager.contentsOfDirectoryAtPathError(parent, error)
-      checkError(error)
-      if (
-        !siblings ||
-        !Array.from(siblings).some((name) => {
-          const sibling = String(name)
-          return sibling === piece
-        })
-      )
-        throw new Error('Filesystem spelling alias rejected')
-    }
-  }
-  return filePath(root, relative)
-}
-function toBytes(data: NSData): Uint8Array {
-  return new Uint8Array(interop.bufferFromData(data))
-}
-function toData(bytes: Uint8Array): NSData {
-  return NSData.dataWithBytesLength(bytes, bytes.length)
-}
-function readData(path: string): NSData {
-  const error = new interop.Reference<NSError>()
-  const data = NSData.dataWithContentsOfURLOptionsError(
-    NSURL.fileURLWithPath(path),
-    0 as NSDataReadingOptions,
-    error,
+  if (
+    pieces.some(
+      (part) =>
+        !part || part === '.' || part === '..' || part.includes('\\') || part.includes('\0'),
+    )
   )
-  checkError(error)
-  if (!data) throw new Error('Foundation returned no file data')
-  return data
-}
-function syncAndClose(path: string): void {
-  const handle = NSFileHandle.fileHandleForWritingAtPath(path)
-  if (!handle) throw new Error('Could not open staged file')
-  let failure: unknown
-  try {
-    const error = new interop.Reference<NSError>()
-    if (!handle.synchronizeAndReturnError(error)) checkError(error)
-    checkError(error)
-  } catch (error) {
-    failure = error
+    throw new Error('Invalid native path')
+  let current = root
+  for (let index = 0; index < pieces.length; index++) {
+    const name = pieces[index] ?? ''
+    const names = nativeIO.names(current)
+    const collisionKey = (value: string) =>
+      String(NSString.stringWithString(value).precomposedStringWithCanonicalMapping).toLowerCase()
+    if (
+      createParents &&
+      names.some((entry) => entry !== name && collisionKey(entry) === collisionKey(name))
+    )
+      throw new Error('Filesystem spelling collision')
+    const next = `${current}/${name}`
+    const kind = nativeIO.kind(next)
+    if (kind !== null && !names.includes(name))
+      throw new Error('Filesystem spelling alias rejected')
+    if (kind === 'symlink' || kind === 'other') throw new Error('Unsupported filesystem entry')
+    if (index < pieces.length - 1) {
+      if (kind === null && createParents) nativeIO.mkdir(next)
+      else if (kind !== 'directory') throw new Error('Missing or non-directory ancestor')
+    } else if (kind === 'directory') throw new Error('Directory collision')
+    current = next
   }
-  try {
-    const error = new interop.Reference<NSError>()
-    if (!handle.closeAndReturnError(error)) checkError(error)
-    checkError(error)
-  } catch (error) {
-    failure ??= error
-  }
-  if (failure) throw failure
-}
-function removeOwned(path: string): void {
-  const error = new interop.Reference<NSError>()
-  if (!NSFileManager.defaultManager.removeItemAtPathError(path, error)) checkError(error)
-  checkError(error)
-}
-async function stagedCheckpoint(stagePath: string): Promise<void> {
-  const marker = NSProcessInfo.processInfo.environment.objectForKey(
-    'HOLI_STORAGE_STAGED_CHECKPOINT',
-  ) as string | undefined
-  if (!marker) return
-  const data = NSString.stringWithString(stagePath).dataUsingEncoding(NSUTF8StringEncoding)
-  if (!data) throw new Error('Could not encode staged checkpoint')
-  const error = new interop.Reference<NSError>()
-  if (!data.writeToFileOptionsError(marker, 1, error)) checkError(error)
-  checkError(error)
-  while (NSFileManager.defaultManager.fileExistsAtPath(marker))
-    await new Promise((resolve) => setTimeout(resolve, 25))
+  return current
 }
 
-/** Foundation-backed filesystem adapter. Failed native results are never treated as success. */
-export const nativeFiles: NativeFiles = {
-  async canonicalRoot(root) {
-    const url = NSURL.fileURLWithPathIsDirectory(root, true)
-    if (!url) throw new Error('Invalid vault URL')
-    const standardized = url.URLByStandardizingPath
-    if (!standardized) throw new Error('Could not standardize vault URL')
-    const canonical = standardized.URLByResolvingSymlinksInPath
-    if (
-      !canonical ||
-      !canonical.path ||
-      !NSFileManager.defaultManager.fileExistsAtPath(canonical.path)
-    )
-      throw new Error('Vault root is unavailable')
-    const info = attrs(canonical.path)
-    if (info?.objectForKey(NSFileType) !== NSFileTypeDirectory)
-      throw new Error('Vault root is not a directory')
-    return canonical.path
-  },
-  async list(root) {
-    const result: Entry[] = []
-    const walk = (directory: string, prefix: string) => {
-      const error = new interop.Reference<NSError>()
-      const names = NSFileManager.defaultManager.contentsOfDirectoryAtPathError(directory, error)
-      checkError(error)
-      for (const name of Array.from(names ?? [])) {
-        const rel = prefix ? `${prefix}/${name}` : name
-        // Excluded directories are pruned before metadata reads or recursion.
-        if (isInIgnoredDir(rel) || isLocalOnlyPath(rel) || isSecretPath(rel)) continue
-        if (rel.split('/').some((part: string) => part.startsWith('.holi-storage-'))) continue
-        const unchecked = `${directory}/${name}`
-        if (attrs(unchecked)?.objectForKey(NSFileType) === NSFileTypeSymbolicLink) continue
-        const target = checkedPath(root, rel, false, true)
-        const kind = attrs(target)?.objectForKey(NSFileType)
-        if (kind === NSFileTypeDirectory) {
-          result.push({ path: rel, kind: 'directory' })
-          walk(target, rel)
-        } else if (kind === NSFileTypeRegular) result.push({ path: rel, kind: 'file' })
-      }
-    }
-    walk(root, '')
-    return result
-  },
-  async read(root, relative) {
-    const target = checkedPath(root, relative)
-    return toBytes(readData(target))
-  },
-  async create(root, relative, bytes) {
-    const target = checkedPath(root, relative, true)
-    const directory = target.substring(0, target.lastIndexOf('/'))
-    const staging = `${directory}/.holi-storage-stage-${NSUUID.UUID().UUIDString}.tmp`
-    const manager = NSFileManager.defaultManager
-    let stageOwned = false
-    try {
-      if (!manager.createFileAtPathContentsAttributes(staging, toData(bytes), null))
-        throw new Error('Exclusive staging creation failed')
-      stageOwned = true
-      syncAndClose(staging)
-      const error = new interop.Reference<NSError>()
-      if (!manager.moveItemAtPathToPathError(staging, target, error)) checkError(error)
-      checkError(error)
-      stageOwned = false
-    } finally {
-      if (stageOwned) removeOwned(staging)
-    }
-  },
-  async publish(root, relative, bytes, expected) {
-    const target = checkedPath(root, relative)
-    const before = toBytes(readData(target))
-    if (
-      expected &&
-      (before.length !== expected.length || before.some((byte, index) => byte !== expected[index]))
-    )
-      throw new Error('Stale bytes')
-    const directory = target.substring(0, target.lastIndexOf('/'))
-    const staging = `${directory}/.holi-storage-stage-${NSUUID.UUID().UUIDString}.tmp`
-    const manager = NSFileManager.defaultManager
-    let stageOwned = false
-    try {
-      if (!manager.createFileAtPathContentsAttributes(staging, toData(bytes), null))
-        throw new Error('Could not create owned staging file')
-      stageOwned = true
-      syncAndClose(staging)
-      await stagedCheckpoint(staging)
-      const error = new interop.Reference<NSError>()
-      const replaced =
-        manager.replaceItemAtURLWithItemAtURLBackupItemNameOptionsResultingItemURLError(
-          NSURL.fileURLWithPath(target),
-          NSURL.fileURLWithPath(staging),
-          null,
-          0 as NSFileManagerItemReplacementOptions,
-          null,
-          error,
-        )
-      checkError(error)
-      if (!replaced) throw new Error('Atomic staging publish failed')
-      stageOwned = false
-    } finally {
-      if (stageOwned) removeOwned(staging)
-    }
-  },
+function excluded(path: string): boolean {
+  return (
+    isInIgnoredDir(path) ||
+    isLocalOnlyPath(path) ||
+    isSecretPath(path) ||
+    path.split('/').some((name) => name.startsWith('.holi-storage-'))
+  )
 }
+
+function equal(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index])
+}
+
+/** Trusted staging is outside vault content, namespaced by the exact canonical root bytes. */
+function privateStages(root: string): string {
+  const library = nativeIO.canonical(knownFolders.ios.library().path)
+  let stageRoot = `${library}/HoliVaultStorage`
+  if (stageRoot === root || stageRoot.startsWith(`${root}/`) || root.startsWith(`${stageRoot}/`))
+    throw new Error('Vault overlaps private storage')
+  directory(stageRoot)
+  const encoded = new Uint8Array(interop.bufferFromData(nativePath(root)))
+  const key = Array.from(encoded, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  for (let index = 0; index < key.length; index += 64) {
+    stageRoot += `/${key.slice(index, index + 64)}`
+    directory(stageRoot)
+  }
+  return stageRoot
+}
+
+const stagePattern = /^stage-[A-F0-9-]{36}\.tmp$/
+
+/** The store serializes operations per canonical root, including first-use recovery. */
+export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
+  const recovered = new Map<string, string>()
+  const stages = (root: string): string => {
+    const previous = recovered.get(root)
+    if (previous) return previous
+    const path = privateStages(root)
+    for (const name of nativeIO.names(path)) {
+      if (!stagePattern.test(name)) continue
+      const candidate = `${path}/${name}`
+      if (nativeIO.kind(candidate) === 'regular') nativeIO.removeFile(candidate)
+    }
+    recovered.set(root, path)
+    return path
+  }
+  const publish = async (
+    root: string,
+    relative: string,
+    bytes: Uint8Array,
+    expected: Uint8Array | null,
+  ) => {
+    const target = checkedPath(root, relative, expected === null)
+    if (expected !== null && !equal(nativeIO.read(target), expected)) throw new Error('Stale bytes')
+    const stage = `${stages(root)}/stage-${NSUUID.UUID().UUIDString}.tmp`
+    let owned = false
+    try {
+      nativeIO.writeExclusive(stage, bytes, options.fault)
+      owned = true
+      await options.staged?.({ root, relative, stage })
+      if (expected !== null && !equal(nativeIO.read(checkedPath(root, relative)), expected))
+        throw new Error('Changed during save')
+      nativeIO.publish(stage, target, expected === null, options.fault)
+      owned = false
+    } finally {
+      if (owned && nativeIO.kind(stage) === 'regular') nativeIO.removeFile(stage)
+    }
+  }
+  return {
+    async canonicalRoot(root) {
+      return nativeIO.canonical(root)
+    },
+    async list(root) {
+      stages(root)
+      const result: Entry[] = []
+      const walk = (path: string, prefix: string) => {
+        for (const name of nativeIO.names(path)) {
+          const relative = prefix ? `${prefix}/${name}` : name
+          if (excluded(relative)) continue
+          const absolute = `${path}/${name}`
+          const kind = nativeIO.kind(absolute)
+          if (kind === 'directory') {
+            result.push({ path: relative, kind: 'directory' })
+            walk(absolute, relative)
+          } else if (kind === 'regular') result.push({ path: relative, kind: 'file' })
+        }
+      }
+      walk(root, '')
+      return result
+    },
+    async read(root, relative) {
+      stages(root)
+      return nativeIO.read(checkedPath(root, relative))
+    },
+    async create(root, relative, bytes) {
+      await publish(root, relative, bytes, null)
+    },
+    async publish(root, relative, bytes, expected) {
+      await publish(root, relative, bytes, expected)
+    },
+  }
+}
+
+export const nativeFiles = createNativeFiles()

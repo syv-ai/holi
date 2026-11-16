@@ -15,16 +15,27 @@ export async function runVaultStorageCheck(adapter: NativeFiles, root: string, s
   const original = bytes('\uFEFF---\r\nunknown: [keep]\r\n---\r\nCafe\u0301\n')
   const created = await first.create('same/note.md', original)
   const other = await second.create('same/note.md', bytes('other vault'))
-  // Foundation exposes directory names in NFD even when callers use NFC.
   await first.create('Café.md', bytes('unicode spelling'))
-  if (text((await first.read('Cafe\u0301.md')).bytes) !== 'unicode spelling')
-    throw new Error('NFD filename spelling was not readable')
+  if (text((await first.read('Café.md')).bytes) !== 'unicode spelling')
+    throw new Error('NFC filename spelling was not preserved')
   const decomposed = await second.create('Cafe\u0301.md', bytes('decomposed spelling'))
-  if (text((await second.read('Café.md')).bytes) !== 'decomposed spelling')
-    throw new Error('NFC filename spelling was not readable')
+  if (text((await second.read('Cafe\u0301.md')).bytes) !== 'decomposed spelling')
+    throw new Error('NFD filename spelling was not preserved')
   await second.save('Cafe\u0301.md', bytes('decomposed saved'), decomposed.revision)
-  if (text((await second.read('Café.md')).bytes) !== 'decomposed saved')
+  if (text((await second.read('Cafe\u0301.md')).bytes) !== 'decomposed saved')
     throw new Error('Unicode spelling save changed the file identity')
+  for (const [store, alias] of [
+    [first, 'Cafe\u0301.md'],
+    [second, 'Café.md'],
+  ] as const) {
+    let rejected = false
+    try {
+      await store.read(alias)
+    } catch {
+      rejected = true
+    }
+    if (!rejected) throw new Error('Unicode filename alias was accepted')
+  }
   if (text((await first.read(created.path)).bytes) !== text(original))
     throw new Error('Byte preservation failed')
   if (text((await second.read(other.path)).bytes) !== 'other vault')

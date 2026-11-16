@@ -99,6 +99,11 @@ try {
   const container = await simctl('get_app_container', simulator, bundleId, 'data')
   const canonicalContainer = await realpath(container)
   const reportPath = join(canonicalContainer, 'Documents/vault-format-report.json')
+  for (const [index, name] of ['Café.md', 'Cafe\u0301.md'].entries()) {
+    const directory = join(canonicalContainer, `Documents/holi-raw-${runId}-${index}`)
+    await mkdir(directory)
+    await writeFile(join(directory, name), 'raw native fixture', { flag: 'wx' })
+  }
   await rm(reportPath, { force: true })
   const launchedAt = Date.now()
   const launch = await command('xcrun', ['simctl', 'launch', simulator, bundleId], {

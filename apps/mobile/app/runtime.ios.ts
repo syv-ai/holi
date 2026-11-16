@@ -2,6 +2,8 @@ import { Device, File, knownFolders, path } from '@nativescript/core'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
 import { nativeFiles } from './native-files.ios'
 import { runVaultStorageCheck } from './vault-storage-check'
+import { nativeIO } from './native-posix.ios'
+import { createVaultStorage } from './vault-storage'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -20,9 +22,54 @@ export async function checkCompatibility(): Promise<string> {
   let storageRoot: string | undefined
   let secondRoot: string | undefined
   let evidence: Record<string, unknown>
+  let rawNames: unknown
   try {
     const corpus = runVaultFormatCorpus(nativeUtf8)
     const documents = knownFolders.documents().path
+    phase = 'raw-native-bindings'
+    operation = 'nativeNames/nativeRead'
+    rawNames = await Promise.all(
+      ['Café.md', 'Cafe\u0301.md'].map(async (name, index) => {
+        const root = `${documents}/holi-raw-${runId}-${index}`
+        const names = nativeIO.names(root)
+        if (names.length !== 1 || names[0] !== name)
+          throw new Error(`Raw spelling mismatch: ${JSON.stringify(names)}`)
+        const store = createVaultStorage(nativeFiles, { remote: `holi/raw-${index}`, root })
+        const original = await store.read(name)
+        const originalText = String.fromCharCode(...original.bytes)
+        if (originalText !== 'raw native fixture' && originalText !== 'updated raw native fixture')
+          throw new Error('Raw file content mismatch')
+        const updated = await store.save(
+          name,
+          nativeUtf8('updated raw native fixture'),
+          original.revision,
+        )
+        if (String.fromCharCode(...updated.bytes) !== 'updated raw native fixture')
+          throw new Error('Raw save mismatch')
+        const listed = await store.list()
+        if (listed.length !== 1 || listed[0] !== name)
+          throw new Error('Raw listing spelling mismatch')
+        const alias = index === 0 ? 'Cafe\u0301.md' : 'Café.md'
+        let aliasRejected = false
+        try {
+          await store.read(alias)
+        } catch {
+          aliasRejected = true
+        }
+        if (!aliasRejected)
+          throw new Error(
+            `Unicode alias was accepted: ${JSON.stringify({ name, alias, entries: nativeIO.names(root), codepoints: Array.from(alias, (char) => char.codePointAt(0)) })}`,
+          )
+        return {
+          root,
+          name,
+          names,
+          aliasRejected,
+          originalText,
+          saved: 'updated raw native fixture',
+        }
+      }),
+    )
     storageRoot = `${documents}/holi-storage-check-${runId}-${startedAt}`
     secondRoot = `${documents}/holi-storage-other-${runId}-${startedAt}`
     phase = 'create-storage-fixtures'
@@ -62,48 +109,13 @@ export async function checkCompatibility(): Promise<string> {
     operation = 'runVaultStorageCheck'
     const storage = await runVaultStorageCheck(nativeFiles, storageRoot, secondRoot)
     phase = 'native-filename-spellings'
-    operation = 'verifyNativeFilenameSpellings'
-    const filenameCases = [
-      { root: storageRoot, name: 'Native-Café.md', alternate: 'Native-Café.md' },
-      { root: secondRoot, name: 'Native-Cafe\u0301.md', alternate: 'Native-Cafe\u0301.md' },
-    ]
-    const initial = nativeUtf8('native filename bytes')
-    const updated = nativeUtf8('updated native filename bytes')
-    const initialData =
-      NSString.stringWithString('native filename bytes').dataUsingEncoding(NSUTF8StringEncoding)
-    if (!initialData) throw new Error('Could not encode native filename fixture')
-    for (const item of filenameCases) {
-      if (
-        !manager.createFileAtPathContentsAttributes(`${item.root}/${item.name}`, initialData, null)
-      )
-        throw new Error(`Could not create independent native fixture: ${item.name}`)
-      const original = await nativeFiles.read(item.root, item.alternate)
-      if (
-        original.length !== initial.length ||
-        original.some((byte, index) => byte !== initial[index])
-      )
-        throw new Error(`Alternate filename spelling could not read native fixture: ${item.name}`)
-      await nativeFiles.publish(item.root, item.name, updated, initial)
-      const afterSave = await nativeFiles.read(item.root, item.alternate)
-      if (
-        afterSave.length !== updated.length ||
-        afterSave.some((byte, index) => byte !== updated[index])
-      )
-        throw new Error(
-          `Alternate filename spelling could not read saved native fixture: ${item.name}`,
-        )
-      const listed = await nativeFiles.list(item.root)
-      const normalized = (value: string) =>
-        String(NSString.stringWithString(value).decomposedStringWithCanonicalMapping)
-      if (listed.filter((entry) => normalized(entry.path) === normalized(item.name)).length !== 1)
-        throw new Error(`Native filename was not listed exactly once: ${item.name}`)
-    }
+    operation = 'verifyHostCreatedRawFilenameSpellings'
     status = `${corpus.passed}/${corpus.total} format cases and storage passed; ${corpus.failed} failed`
     evidence = {
       corpus,
       storage,
       nativeFilenameSpellings: true,
-      nativeFilenameRoots: filenameCases.map(({ root, name }) => ({ root, name })),
+      nativeFilenameRoots: rawNames,
       storageRoot,
     }
   } catch (error) {
@@ -122,6 +134,7 @@ export async function checkCompatibility(): Promise<string> {
     osVersion: Device.osVersion,
     startedAt,
     finishedAt: Date.now(),
+    rawNames,
     ...evidence,
   }
   // The driver reads only this app's fresh simulator sandbox, never a checkout path.

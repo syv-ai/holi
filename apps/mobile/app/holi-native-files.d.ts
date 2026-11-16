@@ -4,10 +4,19 @@ declare class HoliNativeFiles extends NSObject {
   static alloc(): HoliNativeFiles
   init(): this
 
-  canonicalPathError(pathBytes: NSData, error: interop.Pointer | interop.Reference<NSError>): NSData | null
-  namesError(pathBytes: NSData, error: interop.Pointer | interop.Reference<NSError>): NSArray<NSData> | null
+  canonicalPathError(
+    pathBytes: NSData,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): NSData | null
+  namesError(
+    pathBytes: NSData,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): NSArray<NSData> | null
   kindError(pathBytes: NSData, error: interop.Pointer | interop.Reference<NSError>): string | null
-  makeDirectoryError(pathBytes: NSData, error: interop.Pointer | interop.Reference<NSError>): boolean
+  makeDirectoryError(
+    pathBytes: NSData,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): boolean
   readError(pathBytes: NSData, error: interop.Pointer | interop.Reference<NSError>): NSData | null
   writeExclusiveDataFaultError(
     pathBytes: NSData,
@@ -23,5 +32,8 @@ declare class HoliNativeFiles extends NSObject {
     error: interop.Pointer | interop.Reference<NSError>,
   ): boolean
   removeFileError(pathBytes: NSData, error: interop.Pointer | interop.Reference<NSError>): boolean
-  removeDirectoryError(pathBytes: NSData, error: interop.Pointer | interop.Reference<NSError>): boolean
+  removeDirectoryError(
+    pathBytes: NSData,
+    error: interop.Pointer | interop.Reference<NSError>,
+  ): boolean
 }

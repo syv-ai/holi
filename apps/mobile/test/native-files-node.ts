@@ -26,10 +26,10 @@ async function safe(root: string, relativePath: string, allowMissingLeaf = false
   for (let index = 0; index < segments.length; index++) {
     const names = await readdir(current)
     const folded = (value: string) => value.normalize('NFD').toLowerCase()
-    const found = names.find((name) => folded(name) === folded(segments[index]))
-    if (found && found.normalize('NFC') !== segments[index].normalize('NFC'))
-      throw new Error('Case alias rejected')
-    current = join(current, found ?? segments[index])
+    const requested = segments[index] ?? ''
+    if (names.some((name) => name !== requested && folded(name) === folded(requested)))
+      throw new Error('Filesystem spelling alias rejected')
+    current = join(current, requested)
     try {
       const info = await lstat(current)
       if (info.isSymbolicLink()) throw new Error('Symlink rejected')
