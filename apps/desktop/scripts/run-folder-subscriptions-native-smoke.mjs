@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,6 +23,7 @@ const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? '/tmp/holi-564-evidence-final')
 const root = await mkdtemp(join(tmpdir(), 'holi-564-native-'))
 const profile = join(root, 'profile')
+const vault = join(root, 'vault')
 let child
 let processState
 let server
@@ -31,6 +33,7 @@ let logs = ''
 let cdpClient
 const browserErrors = []
 const videoFrames = []
+const captures = []
 try {
   await mkdir(evidence, { recursive: true })
   for (const name of [
@@ -42,11 +45,21 @@ try {
     'name-hover-long.png',
     'assertions.json',
     'electron-smoke.log',
+    'cleanup.json',
+    ...['short', 'long'].flatMap((length) =>
+      ['subscribed', 'unsubscribed'].flatMap((state) =>
+        ['rest', 'hover', 'row-focus', 'bell-focus'].map(
+          (interaction) => `file-${length}-${state}-${interaction}.png`,
+        ),
+      ),
+    ),
   ])
     await rm(join(evidence, name), { force: true })
+  await mkdir(vault, { recursive: true })
   await build({
     configFile: false,
     root: desktop,
+    define: { 'import.meta.env.VITE_FOLDER_BELL_VAULT': JSON.stringify(vault) },
     base: './',
     resolve: { alias: { '@': join(desktop, 'src/renderer/src') } },
     plugins: [
@@ -57,7 +70,7 @@ try {
         enforce: 'pre',
         transform(_code, id) {
           if (id.endsWith('/src/renderer/src/lib/trpc.ts'))
-            return `const calls=()=>window.__folderBellCalls;const subscriptions=new Map();export const trpc={subscriptions:{list:{query:async({paths})=>JSON.parse(paths).map(path=>({path,explicit:subscriptions.get(path)===true,coveredBy:null,baseline:null}))},set:{mutate:async({path,enabled})=>{subscriptions.set(path,enabled);calls().push({path,enabled})}}}}`
+            return `const calls=()=>window.__folderBellCalls;const subscriptions=new Map();export const trpc={subscriptions:{list:{query:async({paths})=>JSON.parse(paths).map(path=>({path,explicit:subscriptions.get(path)===true,coveredBy:null,baseline:subscriptions.get(path)===true?'f'.repeat(40):null}))},set:{mutate:async({path,enabled})=>{subscriptions.set(path,enabled);calls().push({path,enabled})}}}}`
           return null
         },
       },
@@ -162,7 +175,7 @@ try {
       await new Promise((r) => setTimeout(r, 100))
     }
     throw Error(
-      `${startupDiagnostic(label, processState, logs)}; errors=${JSON.stringify(browserErrors)}`,
+      `${startupDiagnostic(label, processState, logs)}; errors=${JSON.stringify(browserErrors)}; focus=${JSON.stringify(await evaluate(`({hasFocus:document.hasFocus(),active:document.activeElement?.getAttribute('aria-label'),focusWithin:[...document.querySelectorAll(':focus-within')].map(e=>e.getAttribute('aria-label'))})`).catch(() => null))}`,
     )
   }
   const port = await wait(
@@ -180,7 +193,10 @@ try {
     onEvent(message) {
       if (isBrowserRuntimeError(message)) browserErrors.push(message)
       if (message.method === 'Page.screencastFrame') {
-        videoFrames.push(Buffer.from(message.params.data, 'base64'))
+        videoFrames.push({
+          image: Buffer.from(message.params.data, 'base64'),
+          timestamp: message.params.metadata.timestamp,
+        })
         void cdpClient
           .call(
             'Page.screencastFrameAck',
@@ -205,6 +221,14 @@ try {
   evaluate = page.evaluate
   const until = (expr, label) => wait(() => evaluate(expr), label)
   const key = async (key, modifiers = 0) => {
+    const expectedRow = ['Home', 'ArrowDown', 'ArrowUp'].includes(key)
+      ? await evaluate(`(() => {
+          const rows = [...document.querySelectorAll('[role="treeitem"]')];
+          const index = rows.indexOf(document.activeElement);
+          if (index < 0) return null;
+          return rows[${JSON.stringify(key)} === 'Home' ? 0 : Math.max(0, Math.min(rows.length - 1, index + (${JSON.stringify(key)} === 'ArrowDown' ? 1 : -1)))].getAttribute('aria-label');
+        })()`)
+      : null
     const code = key.length === 1 ? `Key${key.toUpperCase()}` : key
     const windowsVirtualKeyCode =
       key === 'Enter'
@@ -231,10 +255,25 @@ try {
       modifiers,
       windowsVirtualKeyCode,
     })
+    // Headless-tree commits navigation state before its asynchronous DOM focus
+    // transfer. Wait for that transfer, not merely the CDP input acknowledgement.
+    if (expectedRow !== null)
+      await wait(
+        () =>
+          evaluate(
+            `document.activeElement?.getAttribute('aria-label') === ${JSON.stringify(expectedRow)} && document.activeElement?.getAttribute('data-focus') === 'true'`,
+          ),
+        `native ${key} focus transfer to ${expectedRow}`,
+      )
   }
   const screenshot = async (name) => {
-    const r = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
-    await writeFile(join(evidence, name), Buffer.from(r.data, 'base64'))
+    // Capture the native view rather than its GPU surface: the latter can fail
+    // with UnknownVizError on macOS even while the visible window is healthy.
+    const r = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: false })
+    const image = Buffer.from(r.data, 'base64')
+    assert(image.length > 1000, `${name}: capture must contain rendered content`)
+    await writeFile(join(evidence, name), image)
+    captures.push({ name, method: 'Page.captureScreenshot', fromSurface: false })
   }
   await until(
     '!!window.__folderBellReady && !!document.querySelector(\'[role="tree"] [role="treeitem"]\')',
@@ -359,6 +398,7 @@ try {
     }
   }
   assert(focusedByKeyboard, 'Tab must reach an outer treeitem using native keyboard traversal')
+  await key('Home')
   for (
     let i = 0;
     i < 6 && !(await evaluate(`document.activeElement.getAttribute('aria-label')==='parent'`));
@@ -603,9 +643,218 @@ try {
   )
   assert(await allNoHover(), 'focus-exit assertion is pointer-free')
   const finalHiddenButtons = await assertAllHidden('after focus exits tree')
+  // These are browser layout/input assertions, not jsdom class-name proxies.
+  // Keep both file lengths beside the directory baseline in the same real tree.
+  const filePaths = [
+    'brief.md',
+    'a-considerably-longer-filename-to-check-the-trailing-action-slot.md',
+  ]
+  const fileStates = []
+  const rowSelector = (path) => `[role="treeitem"][aria-label=${JSON.stringify(path)}]`
+  const fileMetrics = (path) =>
+    evaluate(`(() => {
+      const row = document.querySelector(${JSON.stringify(rowSelector(path))});
+      const label = row.querySelector('[data-slot="tree-item-label"]');
+      const name = label.querySelector(':scope > span > .truncate');
+      const action = label.querySelector('[data-tree-row-action]');
+      const box = e => { const r = e.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom} };
+      const style = getComputedStyle(action);
+      return {
+        boxes: {row:box(row),label:box(label),name:box(name),bell:box(action)},
+        opacity: style.opacity,
+        ariaLabel: action.getAttribute('aria-label'),
+        icon: action.querySelector('svg')?.getAttribute('class'),
+        nameHover: name.matches(':hover'),
+        bellHover: action.matches(':hover'),
+        rowFocused: document.activeElement === row,
+        bellFocused: document.activeElement === action,
+        focusVisible: action.matches(':focus-visible'),
+        focusShadow: style.boxShadow,
+        nameTruncated: name.scrollWidth > name.clientWidth,
+        others: [...document.querySelectorAll('[data-tree-row-action]')].filter(e => e !== action).map(e => ({label:e.getAttribute('aria-label'),opacity:getComputedStyle(e).opacity}))
+      };
+    })()`)
+  const stableBoxes = (rest, next, label) => {
+    for (const part of ['row', 'label', 'name', 'bell'])
+      for (const dimension of ['x', 'y', 'width', 'height', 'right', 'bottom'])
+        assert(
+          Math.abs(rest.boxes[part][dimension] - next.boxes[part][dimension]) < 0.5,
+          `${label}: ${part}.${dimension} shifted: ${JSON.stringify({ rest: rest.boxes, next: next.boxes })}`,
+        )
+  }
+  const exitTree = async () => {
+    await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 680, y: 760 })
+    for (let i = 0; i < 40; i++) {
+      if (
+        await evaluate(
+          `document.activeElement?.matches('button[aria-label="Subscribe this vault"]')`,
+        )
+      )
+        break
+      await key('Tab')
+    }
+    assert(
+      await evaluate(
+        `document.activeElement?.matches('button[aria-label="Subscribe this vault"]')`,
+      ),
+      'Tab exits tree to toolbar',
+    )
+    await until(
+      `[...document.querySelectorAll('[data-tree-row-action]')].every(e => getComputedStyle(e).opacity === '0')`,
+      'all row bells hidden after native focus exit',
+    )
+    assert(await allNoHover())
+  }
+  const focusFile = async (path) => {
+    for (let i = 0; i < 40; i++) {
+      await key('Tab')
+      if (await evaluate(`document.activeElement?.matches('[role="treeitem"]')`)) break
+    }
+    assert(
+      await evaluate(`document.activeElement?.matches('[role="treeitem"]')`),
+      'Tab enters tree',
+    )
+    await key('Home')
+    for (let i = 0; i < 12; i++) {
+      if (await evaluate(`document.activeElement?.matches(${JSON.stringify(rowSelector(path))})`))
+        break
+      await key('ArrowDown')
+    }
+    await until(
+      `document.activeElement?.matches(${JSON.stringify(rowSelector(path))})`,
+      `keyboard reaches ${path}`,
+    )
+    await until(
+      `getComputedStyle(document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})).opacity === '1'`,
+      `keyboard reveals ${path}`,
+    )
+  }
+  for (const [index, path] of filePaths.entries()) {
+    let firstRest
+    for (const subscribed of [false, true]) {
+      const stateName = subscribed ? 'subscribed' : 'unsubscribed'
+      const stem = `file-${index === 0 ? 'short' : 'long'}-${stateName}`
+      await exitTree()
+      const rest = await fileMetrics(path)
+      firstRest ??= rest
+      stableBoxes(firstRest, rest, `${path} ${stateName} rest`)
+      assert.equal(rest.opacity, '0', `${path}: even a subscribed bell is hidden at rest`)
+      assert.equal(rest.ariaLabel, `${subscribed ? 'Unsubscribe' : 'Subscribe'} ${path}`)
+      assert(
+        rest.icon?.split(/\s+/).includes(subscribed ? 'lucide-bell-ring' : 'lucide-bell'),
+        `${path}: rendered icon reflects subscription`,
+      )
+      assert.equal(
+        rest.nameTruncated,
+        index === 1,
+        `${path}: fixture exercises short and genuinely truncated names`,
+      )
+      assert(
+        Math.abs(rest.boxes.bell.right - nested.parentAction.right) < 0.5,
+        `${path}: file bell aligns with directory baseline`,
+      )
+      assert(rest.boxes.bell.right <= rest.boxes.label.right, `${path}: bell stays within its row`)
+      assert(rest.boxes.name.right <= rest.boxes.bell.x, `${path}: filename cannot overlap bell`)
+      await screenshot(`${stem}-rest.png`)
+      const point = { x: rest.boxes.name.x + 8, y: rest.boxes.name.y + rest.boxes.name.height / 2 }
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+      await until(
+        `getComputedStyle(document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})).opacity === '1'`,
+        `${path}: real filename hover reveals bell`,
+      )
+      const hover = await fileMetrics(path)
+      assert(hover.nameHover && !hover.bellHover, `${path}: pointer is over filename, not bell`)
+      assert(
+        hover.others.every((e) => e.opacity === '0'),
+        `${path}: hovering this file cannot reveal another row: ${JSON.stringify(hover.others)}`,
+      )
+      stableBoxes(rest, hover, `${path} ${stateName} hover`)
+      await screenshot(`${stem}-hover.png`)
+      const bellPoint = { x: rest.boxes.bell.x + rest.boxes.bell.width / 2, y: point.y }
+      await cdp('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: (rest.boxes.name.right + rest.boxes.bell.x) / 2,
+        y: point.y,
+      })
+      assert.equal(
+        (await fileMetrics(path)).opacity,
+        '1',
+        `${path}: bell remains revealed across gap`,
+      )
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...bellPoint })
+      const bellHover = await fileMetrics(path)
+      assert(bellHover.bellHover, `${path}: pointer can reach revealed bell`)
+      assert.equal(bellHover.opacity, '1')
+      stableBoxes(rest, bellHover, `${path} ${stateName} bell hover`)
+      await exitTree()
+      stableBoxes(rest, await fileMetrics(path), `${path} ${stateName} hover exit`)
+      await focusFile(path)
+      const rowFocus = await fileMetrics(path)
+      assert(
+        rowFocus.rowFocused && rowFocus.opacity === '1',
+        `${path}: native row focus reveals bell without hover`,
+      )
+      assert(await allNoHover())
+      stableBoxes(rest, rowFocus, `${path} ${stateName} row focus`)
+      await screenshot(`${stem}-row-focus.png`)
+      await key('Tab')
+      await until(
+        `document.activeElement?.matches(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})`,
+        `${path}: Tab reaches bell`,
+      )
+      const bellFocus = await fileMetrics(path)
+      assert(
+        bellFocus.bellFocused && bellFocus.focusVisible && bellFocus.opacity === '1',
+        `${path}: keyboard focus makes bell visible`,
+      )
+      assert(
+        bellFocus.focusShadow !== 'none' && bellFocus.focusShadow !== rest.focusShadow,
+        `${path}: keyboard focus paints a ring: ${bellFocus.focusShadow}`,
+      )
+      assert(
+        bellFocus.others.every((e) => e.opacity === '0'),
+        `${path}: keyboard focus does not reveal unrelated bells`,
+      )
+      assert(await allNoHover())
+      stableBoxes(rest, bellFocus, `${path} ${stateName} bell focus`)
+      await key('Escape') // Dismiss the real tooltip without hiding the focused bell.
+      assert((await fileMetrics(path)).focusVisible, `${path}: Escape preserves keyboard focus`)
+      await screenshot(`${stem}-bell-focus.png`)
+      const callCount = await evaluate('window.__folderBellCalls.length')
+      await key('Enter')
+      await until(
+        `window.__folderBellCalls.length === ${callCount + 1}`,
+        `${path}: keyboard toggles ${stateName}`,
+      )
+      assert.deepEqual(await evaluate('window.__folderBellCalls.at(-1)'), {
+        path,
+        enabled: !subscribed,
+      })
+      await until(
+        `document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})?.getAttribute('aria-label') === ${JSON.stringify(`${subscribed ? 'Subscribe' : 'Unsubscribe'} ${path}`)} && !document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})?.disabled`,
+        `${path}: toggle settles`,
+      )
+      stableBoxes(rest, await fileMetrics(path), `${path} toggle`)
+      await exitTree()
+      stableBoxes(rest, await fileMetrics(path), `${path} focus exit`)
+      fileStates.push({
+        path,
+        subscribed,
+        rest,
+        hover,
+        bellHover,
+        rowFocus,
+        bellFocus,
+        keyboardMutation: { path, enabled: !subscribed },
+      })
+    }
+  }
   assertNoBrowserRuntimeErrors(browserErrors)
   const report = {
     result: 'PASS',
+    fileAcceptance: fileStates,
+    isolatedPaths: { root, profile, vault },
+    captures,
     rendererRuntimeErrors: browserErrors,
     runtimeErrorGuardVerification: {
       uncaughtException: 'fails smoke',
@@ -613,7 +862,7 @@ try {
       cleanCollection: 'passes',
     },
     hoverEvidence:
-      'Native CDP mouse movement over folder-name text, through the name/bell gap, then onto the bell; each matching bell appears exclusively.',
+      'Native CDP mouse movement over folder and file name text, through the name/bell gap, then onto the bell; each matching bell appears exclusively. Files are checked in subscribed and unsubscribed states.',
     actualProductionFilesSection: true,
     actualNativeKeyboard: true,
     hoverFree: true,
@@ -634,42 +883,71 @@ try {
     pointerMutation: await evaluate('window.__folderBellCalls[1]'),
     pointer: { x: 680, y: 760 },
     screenshots: [
+      ...captures
+        .filter((capture) => capture.name.startsWith('file-'))
+        .map((capture) => capture.name),
       'name-hover-short.png',
       'name-hover-long.png',
       'row-focus.png',
       'button-focus.png',
     ],
     recordings: ['folder-subscriptions-hover.webm', 'folder-subscriptions-keyboard.webm'],
+    recordingTiming:
+      'Actual CDP screencast frames with their native timestamps; no staged or synthetic frames',
   }
   await cdp('Page.stopScreencast')
   assert(videoFrames.length > 0, 'native screencast must capture real rendered frames')
   const keyboardFrames = videoFrames.splice(0)
-  const encode = (frames, filename) =>
-    spawnSync(
+  const encode = async (frames, filename) => {
+    const frameRoot = join(root, filename + '-frames')
+    await mkdir(frameRoot)
+    const manifest = []
+    await Promise.all(
+      frames.map((frame, index) => writeFile(join(frameRoot, `${index}.png`), frame.image)),
+    )
+    for (const [index, frame] of frames.entries()) {
+      assert(Number.isFinite(frame.timestamp), 'native screencast supplies frame timestamps')
+      manifest.push(`file '${index}.png'`)
+      // CDP only emits changed frames: retain the elapsed native interaction
+      // time instead of turning every event into a fixed-length slide.
+      manifest.push(
+        `duration ${Math.max(0.001, (frames[index + 1]?.timestamp ?? frame.timestamp + 0.1) - frame.timestamp)}`,
+      )
+    }
+    manifest.push(`file '${frames.length - 1}.png'`)
+    const manifestPath = join(frameRoot, 'frames.txt')
+    await writeFile(manifestPath, manifest.join('\n') + '\n')
+    const encoded = spawnSync(
       'ffmpeg',
       [
         '-y',
         '-f',
-        'image2pipe',
-        '-vcodec',
-        'png',
-        '-framerate',
-        '3',
+        'concat',
+        '-safe',
+        '0',
         '-i',
-        'pipe:0',
+        manifestPath,
         '-an',
         '-c:v',
         'libvpx-vp9',
+        '-deadline',
+        'realtime',
+        '-cpu-used',
+        '8',
+        '-threads',
+        '2',
+        '-fps_mode',
+        'vfr',
         '-pix_fmt',
         'yuv420p',
         join(evidence, filename),
       ],
-      { input: Buffer.concat(frames), encoding: 'utf8', timeout: 30000 },
+      { encoding: 'utf8', timeout: 30000 },
     )
-  const keyboardEncoded = encode(keyboardFrames, 'folder-subscriptions-keyboard.webm')
-  assert.equal(keyboardEncoded.status, 0, `keyboard video encode failed: ${keyboardEncoded.stderr}`)
-  const hoverEncoded = encode(hoverFrames, 'folder-subscriptions-hover.webm')
-  assert.equal(hoverEncoded.status, 0, `hover video encode failed: ${hoverEncoded.stderr}`)
+    assert.equal(encoded.status, 0, `${filename} encode failed: ${encoded.stderr}`)
+  }
+  await encode(keyboardFrames, 'folder-subscriptions-keyboard.webm')
+  await encode(hoverFrames, 'folder-subscriptions-hover.webm')
   await writeFile(join(evidence, 'assertions.json'), JSON.stringify(report, null, 2) + '\n')
   console.log(JSON.stringify(report, null, 2))
 } catch (error) {
@@ -693,5 +971,19 @@ try {
   if (server?.listening) await new Promise((resolve) => server.close(resolve))
   if (processState?.exit || !child || processState?.spawnFailure)
     await rm(root, { recursive: true, force: true })
-  else console.error(`Preserving owned profile because Electron remains alive: ${root}`)
+  else {
+    console.error(`Preserving owned profile because Electron remains alive: ${root}`)
+    process.exitCode = 1
+  }
+  const cleanup = {
+    root,
+    profile,
+    vault,
+    pid: child?.pid,
+    childExit: processState?.exit,
+    temporaryRootRemoved: !existsSync(root),
+    serverClosed: !server?.listening,
+  }
+  await writeFile(join(evidence, 'cleanup.json'), JSON.stringify(cleanup, null, 2) + '\n')
+  console.log('Native cleanup:', JSON.stringify(cleanup))
 }
