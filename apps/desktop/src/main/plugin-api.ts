@@ -124,6 +124,12 @@ export interface PluginScheme {
  * undo below the host also runs when it stops.
  */
 export interface PluginCtx extends LiveVault, SchemeContext {
+  /** Aborted synchronously when this activation is stopped or invalidated. */
+  activationSignal: AbortSignal
+  /** Revoke this activation before awaiting failed-start cleanup. */
+  invalidateActivation(): void
+  /** Latch unproven cleanup; stop and replacement must fail with this error. */
+  reportDrainFailure(error: unknown): void
   /** The renderer's displayed vault, independent of plugin lifetimes. */
   displayed(): string | null
   /** Capture whether this activation's vault is the current presentation. */
@@ -415,7 +421,7 @@ export {
   type SpawnPtyOptions,
 } from './terminal/pty'
 export type { ActivityChannel, ActivityLevel } from './activity/log'
-export { remoteUrl, runGit, type RangeFile } from './git'
+export { remoteUrl, runGit, GitHistoricalPathMissingError, type RangeFile } from './git'
 export { gitignoreWith } from './vault/seed/core'
 export {
   absPathFor,

@@ -54,6 +54,8 @@ export interface JsonFileStore<T> {
   update(
     change: (current: T) => T | Promise<T>,
     stillOwned?: () => boolean | Promise<boolean>,
+    /** Runs without yielding immediately before rename, after async preparation. */
+    publishOwned?: () => boolean,
   ): Promise<T>
 }
 
@@ -87,7 +89,11 @@ export function jsonFileStore<T>(
     return value
   }
 
-  const write = async (value: T, stillOwned?: () => boolean | Promise<boolean>): Promise<void> => {
+  const write = async (
+    value: T,
+    stillOwned?: () => boolean | Promise<boolean>,
+    publishOwned?: () => boolean,
+  ): Promise<void> => {
     await mkdir(dirname(filename), { recursive: true })
     const temporary = `${filename}.tmp`
     try {
@@ -96,9 +102,12 @@ export function jsonFileStore<T>(
         ...(options.mode === undefined ? {} : { mode: options.mode }),
       })
       if (options.mode !== undefined) await chmod(temporary, options.mode)
-      if (stillOwned === undefined) await rename(temporary, filename)
+      if (stillOwned === undefined && publishOwned === undefined) await rename(temporary, filename)
       else {
-        if (!(await stillOwned())) throw new Error('Update ownership changed')
+        if (stillOwned !== undefined && !(await stillOwned()))
+          throw new Error('Update ownership changed')
+        if (publishOwned !== undefined && !publishOwned())
+          throw new Error('Update ownership changed')
         renameSync(temporary, filename)
       }
     } finally {
@@ -110,10 +119,10 @@ export function jsonFileStore<T>(
 
   return {
     read,
-    update(change, stillOwned) {
+    update(change, stillOwned, publishOwned) {
       const run = async (): Promise<T> => {
         const next = await change(await read())
-        await write(next, stillOwned)
+        await write(next, stillOwned, publishOwned)
         return next
       }
       const done = state.tail.then(run, run)
