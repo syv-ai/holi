@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, formatRecord } from '@holi/shared'
-import { appsCapabilities, storeCapabilities } from '../main/capabilities'
+import { appsCapabilities, bundleArg, storeCapabilities } from '../main/capabilities'
 import { storeDelete, storePut } from '../main/store'
 import { noCoreServices } from '../../../main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../../../main/capabilities/vault-caps'
@@ -269,6 +269,19 @@ describe('the app store', () => {
       ).rejects.toThrow(/not inside an app/)
     },
   )
+
+  // `apps.open` and `apps.init` read the bundle through `bundleArg`; the
+  // platform is injected, so both branches run on any OS.
+  it('reads a bundle written with backslashes or a drive path as its vault path on Windows', () => {
+    const root = String.raw`C:\vault`
+    expect(bundleArg(root, String.raw`Work\New.app`, 'win32')).toBe('Work/New.app')
+    expect(bundleArg(root, String.raw`c:\VAULT\Work\New.app`, 'win32')).toBe('Work/New.app')
+  })
+
+  it('takes a bundle exactly as typed off Windows', () => {
+    expect(bundleArg('/vault', String.raw`Work\New.app`, 'linux')).toBe(String.raw`Work\New.app`)
+    expect(bundleArg('/vault', '/vault/Work/New.app', 'darwin')).toBe('/vault/Work/New.app')
+  })
 
   // A committed link would otherwise let an app's store write into the agent
   // surface, or out of the vault altogether.

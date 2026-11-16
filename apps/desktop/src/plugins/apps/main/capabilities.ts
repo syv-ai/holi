@@ -152,9 +152,10 @@ const readManifest = (root: string, bundle: string) =>
 
 /** A bundle path as `apps.open` and `apps.init` take it. Where the OS writes it
  *  with backslashes or a drive (the check hook hands the agent one to run), it
- *  is read as the vault path it names; elsewhere it is exactly what was typed. */
-const bundleArg = (root: string, path: string): string =>
-  process.platform === 'win32' ? pathUnderRoot(root, path) : path
+ *  is read as the vault path it names; elsewhere it is exactly what was typed.
+ *  @public */
+export const bundleArg = (root: string, path: string, platform = process.platform): string =>
+  platform === 'win32' ? pathUnderRoot(root, path, platform) : path
 
 export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
   /** Frame document authority is issued only to Holi's UI door, never an app. */
