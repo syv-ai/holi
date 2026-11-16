@@ -33,6 +33,8 @@ function checkedPath(
   const pieces = relative.split('/')
   for (let index = 0; index < pieces.length; index++) {
     const piece = pieces[index]
+    // iOS exposes canonical filenames in NFD; reject aliases before Foundation resolves them.
+    if (piece !== piece?.normalize('NFD')) throw new Error('Filesystem spelling alias rejected')
     current = `${current}/${piece}`
     const info = attrs(current)
     if (!info) {
