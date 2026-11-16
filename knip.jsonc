@@ -82,7 +82,7 @@
         "src/renderer/src/components/ui/**": ["exports", "types"],
       },
       // System binaries used by smoke tests and native video capture.
-      "ignoreBinaries": ["pgrep", "ffmpeg", "agent-browser"],
+      "ignoreBinaries": ["pgrep", "ffmpeg"],
     },
     "apps/mobile": {
       "entry": [
