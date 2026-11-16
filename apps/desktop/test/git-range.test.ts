@@ -124,6 +124,16 @@ describe('rangeFiles()', () => {
     expect(await repo.rangeFiles(sha, sha)).toEqual([])
   })
 
+  it('fails honestly when a consumed historical read exceeds its output budget', async () => {
+    const { dir, repo } = await repoAt()
+    const base = (await repo.head())!
+    for (let i = 0; i < 150; i++)
+      await commitFile(dir, `large-${i.toString().padStart(3, '0')}.md`, 'x\n')
+    await expect(
+      repo.rangeFiles(base, (await repo.head())!, { maxBuffer: 1024, timeout: 10_000 }),
+    ).rejects.toThrow(/resource limit/)
+  })
+
   it('is empty when a sha is unreachable, because a dropped range is not an error', async () => {
     // A turn record outlives the commits it names — a reset, a re-clone. The
     // panel says "this turn's history is gone"; it must not be handed a throw.
