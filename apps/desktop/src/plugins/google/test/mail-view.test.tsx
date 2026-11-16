@@ -38,6 +38,9 @@ const draftMock = vi.fn()
 const draftsMock = vi.fn()
 const meetingMock = vi.fn()
 const mailMarkersMock = vi.fn()
+const markerPreferencesMock = vi.fn()
+const setMailMarkerMock = vi.fn()
+let currentAnnotations: Record<string, string> = {}
 /** What `openDialogAtom` was asked to open. */
 const openedDialog = vi.fn()
 const createTaskMock = vi.fn()
@@ -89,6 +92,8 @@ const google: Record<string, (params: unknown) => unknown> = {
   drafts: () => draftsMock(),
   meeting: (p) => meetingMock(p),
   mailMarkerAnnotations: (p) => mailMarkersMock(p),
+  mailMarkerPreferences: (p) => markerPreferencesMock(p),
+  setMailMarker: (p) => setMailMarkerMock(p),
 }
 
 vi.mock('@/plugin-api', async (original) => {
@@ -252,7 +257,15 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   categoryCountsMock.mockReset().mockResolvedValue({})
   meetingMock.mockReset().mockResolvedValue(null)
-  mailMarkersMock.mockReset().mockResolvedValue({})
+  currentAnnotations = {}
+  mailMarkersMock.mockReset().mockImplementation(async () => currentAnnotations)
+  markerPreferencesMock.mockReset().mockResolvedValue({ enabledOrder: ['yellow-star'] })
+  setMailMarkerMock.mockReset().mockImplementation(async (raw) => {
+    const { id, marker } = raw as { id: string; marker: string | null }
+    if (marker === null) delete currentAnnotations[id]
+    else currentAnnotations[id] = marker
+    return { ok: true }
+  })
   imageSendersMock.mockReset().mockResolvedValue({ imageSenders: [], imagesFromAllSenders: false })
   setImagesFromAllSendersMock.mockReset().mockResolvedValue({ ok: true })
   allowImagesFromMock.mockReset().mockResolvedValue({ ok: true })
@@ -1145,6 +1158,38 @@ test('a refused mark-read puts the row back to unread', async () => {
   )
 })
 
+test('the row marker action is independently keyboard reachable and never opens or marks read', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: false })]))
+  markerPreferencesMock.mockResolvedValue({ enabledOrder: ['red-star', 'blue-question'] })
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  const star = await screen.findByRole('button', { name: 'Star thread' })
+  star.focus()
+  await user.keyboard('{Enter}')
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenCalledWith({
+      id: 't1',
+      marker: 'red-star',
+      expectedAccountSub: 'mail-view-account',
+    }),
+  )
+  expect(screen.queryByRole('article')).toBeNull()
+  expect(setReadMock).not.toHaveBeenCalled()
+  expect(await screen.findByLabelText('Red star')).toBeInTheDocument()
+  const unstar = await screen.findByRole('button', { name: 'Unstar thread' })
+  await new Promise((resolve) => setTimeout(resolve, 510))
+  unstar.focus()
+  await user.keyboard(' ')
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenLastCalledWith({
+      id: 't1',
+      marker: null,
+      expectedAccountSub: 'mail-view-account',
+    }),
+  )
+})
+
 test('stars and unstars the open thread', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ starred: false })]))
@@ -1154,11 +1199,24 @@ test('stars and unstars the open thread', async () => {
 
   await user.click(screen.getByRole('button', { name: 'Star this thread' }))
 
-  await waitFor(() => expect(setStarredMock).toHaveBeenCalledWith({ id: 't1', off: false }))
-  // The button becomes its own inverse.
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenCalledWith({
+      id: 't1',
+      marker: 'yellow-star',
+      expectedAccountSub: 'mail-view-account',
+    }),
+  )
+  // The button becomes its own inverse after the interaction state updates.
   const unstar = await screen.findByRole('button', { name: 'Unstar this thread' })
+  await new Promise((resolve) => setTimeout(resolve, 510))
   await user.click(unstar)
-  await waitFor(() => expect(setStarredMock).toHaveBeenLastCalledWith({ id: 't1', off: true }))
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenLastCalledWith({
+      id: 't1',
+      marker: null,
+      expectedAccountSub: 'mail-view-account',
+    }),
+  )
 })
 
 test('archiving removes the row and closes the reader', async () => {
@@ -2707,25 +2765,68 @@ test('hides a persisted annotation when Gmail reports the thread unstarred', asy
 })
 
 test('refresh and Gmail star writes invalidate the visible thread marker', async () => {
-  threadMock
-    .mockResolvedValueOnce(page([summary()]))
-    .mockResolvedValue(page([summary({ starred: true })]))
-  mailMarkersMock
-    .mockResolvedValueOnce({ t1: 'red-star' })
-    .mockResolvedValueOnce({ t1: 'blue-question' })
-    .mockResolvedValue({ t1: 'yellow-star' })
+  // Extra page reads must not star the thread before the write happens.
+  let starred = false
+  currentAnnotations = { t1: 'red-star' }
+  threadMock.mockImplementation(async () => page([summary({ starred })]))
+  mailMarkersMock.mockImplementation(async () => ({ ...currentAnnotations }))
+  const writeMarker = setMailMarkerMock.getMockImplementation()!
+  setMailMarkerMock.mockImplementation((raw) => {
+    starred = (raw as { marker: string | null }).marker !== null
+    return writeMarker(raw)
+  })
   const user = userEvent.setup()
   render(<MailView />)
 
   await screen.findByRole('button', { name: /Q2 budget/i })
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
   expect(screen.queryByLabelText('Red star')).toBeNull()
   await user.click(screen.getByRole('button', { name: /Q2 budget/i }))
   await user.click(await screen.findByRole('button', { name: 'Star this thread' }))
-  expect((await screen.findAllByLabelText('Blue question mark')).length).toBeGreaterThan(0)
-
-  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+  await waitFor(() =>
+    expect(setMailMarkerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 't1', marker: 'yellow-star' }),
+    ),
+  )
   expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
-  expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3)
+
+  const readsBeforeRefresh = mailMarkersMock.mock.calls.length
+  mailMarkersMock.mockResolvedValueOnce({ t1: 'blue-question' })
+  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+  await waitFor(() => expect(mailMarkersMock.mock.calls.length).toBeGreaterThan(readsBeforeRefresh))
+  // An older annotation refresh cannot undo the newest explicit marker intent.
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+  expect(screen.queryByLabelText('Blue question mark')).toBeNull()
+})
+
+test('reader Retry settles a failed marker reconciliation', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await openThread()
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+  mailMarkersMock
+    .mockRejectedValueOnce(new Error('temporary annotation failure'))
+    .mockResolvedValueOnce({ t1: 'yellow-star' })
+  await user.click(screen.getAllByRole('button', { name: 'Star this thread' }).at(-1)!)
+
+  const readerHeader = screen.getByRole('heading', { name: 'Q2 budget' }).parentElement!
+  await user.click(within(readerHeader).getByRole('button', { name: 'Retry marker' }))
+
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+  await waitFor(() => expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3))
+})
+
+test('reader preserves a Gmail star when its personal marker is absent', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+  setMailMarkerMock.mockRejectedValue(new Error('removal refused'))
+  render(<MailView />)
+  await openThread()
+  await user.click(screen.getAllByRole('button', { name: 'Unstar this thread' }).at(-1)!)
+
+  expect(screen.getAllByRole('button', { name: 'Unstar this thread' }).at(-1)).toBeInTheDocument()
+  expect(setMailMarkerMock).toHaveBeenCalled()
 })
 
 test('shows ordinary Gmail stars only after the annotation read and retries marker errors', async () => {

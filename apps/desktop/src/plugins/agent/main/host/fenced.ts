@@ -5,8 +5,9 @@
  *
  * It is an ordinary session in the one list, in its terminal, where the
  * person watches it, answers its approvals and adds to it. What fences it is
- * the folder: `<userData>/agent-fenced/<id>/`, the files it reads copied in
- * at their vault paths, its writes sandboxed there by the agent's own rules.
+ * the folder: `<userData>/agent-scratch/<vault-key>/fenced/<id>/`, the files
+ * it reads copied in at their vault paths, its writes sandboxed there by
+ * the agent's own rules.
  * As each turn ends, and once more when its process exits, what it wrote
  * inside its write scope is copied back by the jobs' own copy
  * (`jobs.ts`, `copyBack`: the vault's shared content only, no symlink
@@ -39,7 +40,7 @@ import type { Geometry, StartResult } from './sessions'
 
 export interface FencedSessionsDeps {
   vault: VaultRef
-  /** Where the folders go: `<userData>/agent-fenced`. */
+  /** This vault's private scratch root from `agentScratchRoots`. */
   scratchRoot: string
   own: Pick<PtySessions, 'start'>
   copyBack: Jobs['copyBack']

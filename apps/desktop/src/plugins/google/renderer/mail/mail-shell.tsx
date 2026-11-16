@@ -374,6 +374,7 @@ function MailAccountShell({
             onCompose={() => startCompose()}
             standaloneComposer={standaloneComposer}
             visible={visible}
+            accountSub={currentSub}
           />
         </div>
       </SidebarProvider>

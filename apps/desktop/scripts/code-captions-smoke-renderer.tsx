@@ -137,6 +137,12 @@ function App() {
             selection: current.state.selection.toJSON(),
           }
         },
+        async replace(text: string) {
+          await flushAllBuffers()
+          await trpc.notes.write.mutate({ remote, path, text })
+          reload()
+          await new Promise((resolve) => window.setTimeout(resolve, 250))
+        },
         async anchor() {
           const { head } = splitDocument(await trpc.notes.read.query({ remote, path }))
           return { anchor: selectionAnchor(editor(), head), lines: selectionLines(editor(), head) }

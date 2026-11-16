@@ -27,8 +27,40 @@ function open(markdown: string): Editor {
 
 const captioned =
   '<!-- holi:figure -->\n\n~~~typescript extra\nconst value = 1\n~~~\n\n<!-- holi:caption -->\n\nA **portable** caption.\n\n<!-- /holi:figure -->'
+const mermaidCaptioned =
+  '<!-- holi:figure -->\n\n~~~mermaid extra-info\nflowchart TD\n  A[Start] --> B[End]\n~~~\n\n<!-- holi:caption -->\n\nA **portable** diagram caption.\n\n<!-- /holi:figure -->'
 
 describe('document code captions', () => {
+  it('parses and serializes Mermaid captions without changing their source fence', () => {
+    expect(readMarkdownCodeCaptions(mermaidCaptioned)).toHaveLength(1)
+    const instance = open(mermaidCaptioned)
+    const figure = instance.state.doc.firstChild
+    expect(figure?.type.name).toBe('documentFigure')
+    expect(figure?.firstChild?.attrs.language).toBe('mermaid extra-info')
+    expect(figure?.lastChild?.textContent).toBe('A portable diagram caption.')
+    expect(instance.getMarkdown()).toBe(mermaidCaptioned)
+
+    const code = figure!.firstChild!
+    const captionStart = 1 + code.nodeSize + 1
+    instance.view.dispatch(instance.state.tr.insertText('Edited ', captionStart))
+    expect(instance.getMarkdown()).toContain(
+      '~~~mermaid extra-info\nflowchart TD\n  A[Start] --> B[End]\n~~~',
+    )
+    expect(instance.getMarkdown()).toContain('Edited A **portable** diagram caption.')
+    expect(readMarkdownCodeCaptions(instance.getMarkdown())).toHaveLength(1)
+  })
+
+  it('adds and removes a caption around Mermaid source without changing the fence', () => {
+    const source = '~~~mermaid extra-info\nflowchart TD\nA --> B\n~~~'
+    const instance = open(source)
+    expect(addCodeCaption(instance, 0)).toBe(true)
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(instance.getMarkdown()).toContain(source)
+    expect(removeCodeCaption(instance, 0)).toBe(true)
+    expect(instance.getMarkdown()).toContain(source)
+    expect(readMarkdownCodeCaptions(instance.getMarkdown())).toHaveLength(0)
+  })
+
   it('parses and serializes a portable code caption without changing its fence', () => {
     expect(readMarkdownCodeCaptions(captioned)).toHaveLength(1)
     const instance = open(captioned)
@@ -399,14 +431,14 @@ const value = 1
 ~~~`)
   })
 
-  it('parses captions through external reload and preserves unsupported Mermaid framing', () => {
+  it('parses captions through external reload and preserves Mermaid framing', () => {
     const instance = open('A paragraph.')
     expect(applyReload(instance, captioned)).toBe(true)
     expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
     const mermaid =
       '<!-- holi:figure -->\n\n```Mermaid\ngraph TD\n```\n\n<!-- holi:caption -->\n\nDiagram\n\n<!-- /holi:figure -->'
     const mermaidEditor = open(mermaid)
-    expect(mermaidEditor.state.doc.firstChild?.type.name).not.toBe('documentFigure')
+    expect(mermaidEditor.state.doc.firstChild?.type.name).toBe('documentFigure')
     expect(mermaidEditor.getMarkdown()).toContain(mermaid)
   })
 
@@ -462,11 +494,11 @@ const value = 1
     ).toHaveLength(1)
   })
 
-  it('does not author Mermaid captions or turn malformed envelopes into figures', () => {
+  it('authors Mermaid captions and does not turn malformed envelopes into figures', () => {
     const instance = open('```mermaid\ngraph TD\n```')
-    expect(addCodeCaption(instance, 0)).toBe(false)
+    expect(addCodeCaption(instance, 0)).toBe(true)
     const uppercase = open('```MERMAID\ngraph TD\n```')
-    expect(addCodeCaption(uppercase, 0)).toBe(false)
+    expect(addCodeCaption(uppercase, 0)).toBe(true)
     uppercase.destroy()
     instance.destroy()
     editor = null

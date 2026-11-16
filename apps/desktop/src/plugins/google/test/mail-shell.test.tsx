@@ -21,6 +21,7 @@ const draftBodyMock = vi.fn()
 const markReadMock = vi.fn()
 const starMock = vi.fn()
 const mailMarkersMock = vi.fn()
+const setMailMarkerMock = vi.fn()
 const archiveMock = vi.fn()
 const trashMock = vi.fn()
 const useAccountMock = vi.fn()
@@ -68,6 +69,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   mailMarkerAnnotations: (p) => mailMarkersMock(p),
   mailMarkerPreferences: () => ({ enabledOrder: ['yellow-star'] }),
   setMailMarkerPreferences: () => ({ ok: true }),
+  setMailMarker: (p) => setMailMarkerMock(p),
   archive: (p) => archiveMock(p),
   trash: (p) => trashMock(p),
   imageSenders: () => [],
@@ -169,6 +171,7 @@ beforeEach(() => {
   markReadMock.mockReset().mockResolvedValue({ ok: true })
   starMock.mockReset().mockResolvedValue({ ok: true })
   mailMarkersMock.mockReset().mockResolvedValue({})
+  setMailMarkerMock.mockReset().mockResolvedValue({ ok: true })
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
   useAccountMock.mockReset().mockImplementation(async ({ sub }: { sub: string }) => {
@@ -409,19 +412,61 @@ test('archive takes the thread out at once and offers Undo', async () => {
   )
 })
 
-test('a refused star reverts and says why', async () => {
+test('a refused primary marker reconciles the star and says why', async () => {
   const user = userEvent.setup()
-  starMock.mockRejectedValue(new Error('Insufficient permission'))
+  setMailMarkerMock.mockRejectedValue(new Error('Insufficient permission'))
   render(<MailShell />)
   await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
 
-  await user.click(await screen.findByRole('button', { name: 'Star thread' }))
+  const primary = within(screen.getByRole('toolbar', { name: 'Thread actions' })).getByRole(
+    'button',
+    {
+      name: 'Star thread',
+    },
+  )
+  await user.click(primary)
 
   expect(await screen.findByRole('alert')).toHaveTextContent(/Reconnect Google/)
-  expect(screen.getByRole('button', { name: 'Star thread' })).toHaveAttribute(
-    'aria-pressed',
-    'false',
+  await waitFor(() => expect(primary).toHaveAttribute('aria-pressed', 'true'))
+})
+
+test('reader Retry settles a failed marker reconciliation', async () => {
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  await waitFor(() => expect(mailMarkersMock).toHaveBeenCalled())
+  mailMarkersMock
+    .mockRejectedValueOnce(new Error('temporary annotation failure'))
+    .mockResolvedValueOnce({ t1: 'yellow-star' })
+  await user.click(
+    within(await screen.findByRole('toolbar', { name: 'Thread actions' })).getByRole('button', {
+      name: 'Star thread',
+    }),
   )
+
+  const readerHeader = screen.getByRole('heading', { name: 'Q2 budget' }).closest('header')!
+  await user.click(within(readerHeader).getByRole('button', { name: 'Retry marker' }))
+
+  expect((await screen.findAllByLabelText('Yellow star')).length).toBeGreaterThan(0)
+  await waitFor(() => expect(mailMarkersMock.mock.calls.length).toBeGreaterThanOrEqual(3))
+})
+
+test('reader preserves a Gmail star when its personal marker is absent', async () => {
+  const user = userEvent.setup()
+  searchMock.mockImplementation(async ({ query }: { query?: string } = {}) =>
+    page([summary({ starred: query === 'is:starred' || query === undefined })]),
+  )
+  setMailMarkerMock.mockRejectedValue(new Error('removal refused'))
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  const toolbar = await screen.findByRole('toolbar', { name: 'Thread actions' })
+  await user.click(within(toolbar).getByRole('button', { name: 'Unstar thread' }))
+
+  expect(within(toolbar).getByRole('button', { name: 'Unstar thread' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(mailMarkersMock).toHaveBeenCalled()
 })
 
 test('drafts come from Gmail and say so when there are none', async () => {

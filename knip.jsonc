@@ -43,6 +43,9 @@
         "scripts/browser-display-fixture/toolbar-sequence.ts",
         "scripts/mail-markers-smoke-main.ts",
         "scripts/mail-markers-smoke-renderer.tsx",
+        // Native file-subscription smoke entries are built by the disposable MJS runner.
+        "scripts/files-subscriptions-smoke-main.ts",
+        "scripts/files-subscriptions-smoke-renderer.tsx",
         // Vite's disposable #542 Electron smoke entry is selected by filesystem path.
         "scripts/agent-inbox-542-smoke-main.ts",
         "scripts/agent-inbox-542-smoke-renderer.tsx",
@@ -55,6 +58,8 @@
         "scripts/pdf-vim-native-smoke.tsx",
         "scripts/mail-vim-native-smoke-main.ts",
         "scripts/mail-vim-native-smoke.tsx",
+        "scripts/folder-subscriptions-native-smoke-main.ts",
+        "scripts/folder-subscriptions-native-smoke.tsx",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",
@@ -79,8 +84,8 @@
         // they export a component's whole API whether or not Holi uses it yet.
         "src/renderer/src/components/ui/**": ["exports", "types"],
       },
-      // System binaries used by smoke tests and native video capture.
-      "ignoreBinaries": ["pgrep", "ffmpeg"],
+      // System binaries used by smoke tests and native video capture/inspection.
+      "ignoreBinaries": ["pgrep", "ffmpeg", "ffprobe"],
     },
     "apps/mobile": {
       "entry": [

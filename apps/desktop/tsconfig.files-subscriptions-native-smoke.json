@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src",
+    "scripts/files-subscriptions-smoke-renderer.tsx",
+    "scripts/files-subscriptions-smoke-main.ts"
+  ]
+}

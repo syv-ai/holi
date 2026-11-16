@@ -111,7 +111,7 @@ async function expectAllowedFreshFrame(
 
 test('unblocking builds a NEW frame, because a document cannot shed a CSP', async () => {
   const user = userEvent.setup()
-  const view = render(<SandboxedHtml html={source} label="Message" identity={identity} />)
+  const view = render(<SandboxedHtml html={source} label="Message" identity={identity} mailHints />)
   const before = await initialFrame(view.container)
   expectBlockedFrame(before)
 
@@ -122,7 +122,7 @@ test('unblocking builds a NEW frame, because a document cannot shed a CSP', asyn
 
 test('“always from this sender” rebuilds the frame too, not just the banner', async () => {
   const user = userEvent.setup()
-  const view = render(<SandboxedHtml html={source} label="Message" identity={identity} />)
+  const view = render(<SandboxedHtml html={source} label="Message" identity={identity} mailHints />)
   const before = await initialFrame(view.container)
   expectBlockedFrame(before)
 
@@ -138,11 +138,12 @@ test('sender consent updates mounted copies and later mounts through the shared 
   const user = userEvent.setup()
   const view = render(
     <>
-      <SandboxedHtml html={source} label="First" identity={identity} />
+      <SandboxedHtml html={source} label="First" identity={identity} mailHints />
       <SandboxedHtml
         html={source}
         label="Copy"
         identity={{ key: 'message-2', sender: 'jane@example.com' }}
+        mailHints
       />
     </>,
   )
@@ -167,6 +168,7 @@ test('sender consent updates mounted copies and later mounts through the shared 
       html={source}
       label="Later"
       identity={{ key: 'message-3', sender: 'JANE@example.com' }}
+      mailHints
     />,
   )
   const frame = await initialFrame(later.container)
@@ -192,7 +194,7 @@ test('all-senders consent allows current HTML without a parsed sender and rebuil
 test('failed all-senders save exposes a reachable retry and does not unblock before persistence', async () => {
   const user = userEvent.setup()
   setImagesFromAllSendersMock.mockRejectedValueOnce(new Error('disk unavailable'))
-  const view = render(<SandboxedHtml html={source} label="Message" identity={identity} />)
+  const view = render(<SandboxedHtml html={source} label="Message" identity={identity} mailHints />)
   const before = await initialFrame(view.container)
   await user.click(
     await within(view.container).findByRole('button', { name: /always from all senders/i }),
@@ -209,11 +211,12 @@ test('global consent updates mounted copies and disabling it rebuilds both frame
   const view = render(
     <>
       <PolicyControls />
-      <SandboxedHtml html={source} label="First" identity={identity} />
+      <SandboxedHtml html={source} label="First" identity={identity} mailHints />
       <SandboxedHtml
         html={source}
         label="Second"
         identity={{ key: 'message-2', sender: 'Other@example.com' }}
+        mailHints
       />
     </>,
   )
@@ -241,7 +244,7 @@ test('global consent updates mounted copies and disabling it rebuilds both frame
 
 test('one-off consent is isolated by vault even when message keys repeat across an A-B-A switch', async () => {
   const user = userEvent.setup()
-  const view = render(<SandboxedHtml html={source} label="Message" identity={identity} />)
+  const view = render(<SandboxedHtml html={source} label="Message" identity={identity} mailHints />)
   await user.click(await within(view.container).findByRole('button', { name: /^load images$/i }))
   expect(within(view.container).queryByRole('button', { name: /^load images$/i })).toBeNull()
   getDefaultStore().set(activeRemoteAtom, 'another/vault')
@@ -261,7 +264,7 @@ test('a deferred preference write cannot publish after switching A-B-A', async (
   const view = render(
     <>
       <PolicyControls />
-      <SandboxedHtml html={source} label="Message" identity={identity} />
+      <SandboxedHtml html={source} label="Message" identity={identity} mailHints />
     </>,
   )
   await user.click(screen.getByRole('button', { name: 'Enable all senders' }))
@@ -274,6 +277,115 @@ test('a deferred preference write cannot publish after switching A-B-A', async (
       within(view.container).getByRole('button', { name: /^load images$/i }),
     ).toBeInTheDocument(),
   )
+})
+
+test('only explicitly opted-in mail frames forward keys and preserve repeat metadata', async () => {
+  const calendar = render(<SandboxedHtml html="<p>calendar description</p>" label="Event" />)
+  const calendarFrame = await initialFrame(calendar.container)
+  const calendarKey = new KeyboardEvent('keydown', {
+    key: 'f',
+    bubbles: true,
+    cancelable: true,
+    repeat: true,
+    shiftKey: true,
+  })
+  calendarFrame.contentDocument!.body.dispatchEvent(calendarKey)
+  expect(calendarKey.defaultPrevented).toBe(false)
+  calendar.unmount()
+
+  const mail = render(
+    <SandboxedHtml html="<p>message</p>" label="Message" hintScope="thread-a" mailHints />,
+  )
+  const mailFrame = await initialFrame(mail.container)
+  const dispatch = vi.spyOn(mailFrame, 'dispatchEvent').mockReturnValue(true)
+  const key = new KeyboardEvent('keydown', {
+    key: 'F',
+    bubbles: true,
+    cancelable: true,
+    repeat: true,
+    shiftKey: true,
+  })
+  mailFrame.contentDocument!.body.dispatchEvent(key)
+  expect(dispatch).toHaveBeenCalledOnce()
+  expect(dispatch.mock.calls[0]?.[0]).toMatchObject({ repeat: true, shiftKey: true, key: 'F' })
+  expect(key.defaultPrevented).toBe(false)
+
+  dispatch.mockReturnValue(false)
+  const consumed = new KeyboardEvent('keydown', { key: 'f', bubbles: true, cancelable: true })
+  mailFrame.contentDocument!.body.dispatchEvent(consumed)
+  expect(consumed.defaultPrevented).toBe(true)
+})
+
+test('retained hint-scope changes revoke ownership without rewriting native document state', async () => {
+  const html =
+    '<details><summary>Disclosure</summary><p>Selectable retained content</p></details><p>More content</p>'
+  const view = render(
+    <SandboxedHtml
+      html={html}
+      label="Message"
+      hintScope="account-a:vault-a:thread-a:true"
+      mailHints
+    />,
+  )
+  const frame = await initialFrame(view.container)
+  const document = frame.contentDocument!
+  const details = document.querySelector('details')!
+  details.open = true
+  const paragraph = document.querySelector('p')!
+  const range = document.createRange()
+  range.selectNodeContents(paragraph)
+  document.getSelection()!.removeAllRanges()
+  document.getSelection()!.addRange(range)
+
+  view.rerender(
+    <SandboxedHtml
+      html={html}
+      label="Message"
+      hintScope="account-a:vault-a:thread-a:false"
+      mailHints
+    />,
+  )
+
+  expect(view.container.querySelector('iframe')).toBe(frame)
+  expect(frame.contentDocument).toBe(document)
+  expect(details.open).toBe(true)
+  expect(document.getSelection()?.toString()).toBe('Selectable retained content')
+  view.rerender(
+    <SandboxedHtml
+      html={html}
+      label="Message"
+      hintScope="account-b:vault-a:thread-a:true"
+      mailHints
+    />,
+  )
+  expect(view.container.querySelector('iframe')).toBe(frame)
+  expect(details.open).toBe(true)
+  expect(document.getSelection()?.toString()).toBe('Selectable retained content')
+})
+
+test('restores a retained native selection when a hidden reader becomes visible', async () => {
+  const html = '<details open><summary>Disclosure</summary><p>Selected mail text</p></details>'
+  const fixture = (hidden: boolean) => (
+    <div hidden={hidden}>
+      <SandboxedHtml html={html} label="Message" mailHints />
+    </div>
+  )
+  const view = render(fixture(false))
+  const frame = await initialFrame(view.container)
+  const document = frame.contentDocument!
+  const paragraph = document.querySelector('p')!
+  const range = document.createRange()
+  range.selectNodeContents(paragraph)
+  const selection = document.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+
+  view.rerender(fixture(true))
+  expect(view.container.querySelector('iframe')).toBe(frame)
+  view.rerender(fixture(false))
+  await waitFor(() => expect(document.getSelection()?.toString()).toBe('Selected mail text'))
+  expect(frame.contentDocument).toBe(document)
+  expect(document.querySelector('details')?.open).toBe(true)
 })
 
 test('does not churn the frame when nothing about the policy changed', async () => {
