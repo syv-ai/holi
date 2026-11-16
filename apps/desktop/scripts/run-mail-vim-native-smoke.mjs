@@ -460,7 +460,13 @@ try {
   )
   assert.equal(
     await evaluate(`JSON.stringify(window.__mailVim.state())`),
-    JSON.stringify({ account: 'fixture-account-b', draft: 'replacement' }),
+    JSON.stringify({
+      account: 'fixture-account-b',
+      draft: 'replacement',
+      readerVisible: true,
+      readerView: 'thread-a',
+      vault: 'synthetic/mail-vim-vault',
+    }),
     'fixture context did not update without remounting the composer',
   )
   assert.equal(
@@ -552,6 +558,164 @@ try {
   await key('f')
   await until(
     `document.querySelector('[data-host-hints]')!==null`,
+    'hint session before retained hide',
+  )
+  const retainedFrameToken = await evaluate(
+    `(()=>{window.__mailRetainedFrame=document.querySelector('iframe[aria-label="Message from Fixture"]');return true})()`,
+  )
+  assert.equal(retainedFrameToken, true)
+  const staleLinkKey = await evaluate(
+    `document.querySelector('[data-hint-key]')?.getAttribute('data-hint-key')`,
+  )
+  assert(staleLinkKey, 'retained reader session has a native target to invalidate')
+  await evaluate(
+    `window.__mailVim.reader(false,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'hide revokes mail hint session',
+  )
+  assert.equal(
+    await evaluate(
+      `document.querySelector('iframe[aria-label="Message from Fixture"]')===window.__mailRetainedFrame`,
+    ),
+    true,
+    'hiding the retained reader replaced its sandboxed document',
+  )
+  assert.equal(
+    await evaluate(`window.__mailRetainedFrame.contentDocument.querySelector('details').open`),
+    true,
+    'hiding the reader collapsed its native disclosure',
+  )
+  const externalCallsBeforeStaleKey = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal').length`,
+  )
+  for (const character of staleLinkKey) await key(character)
+  assert.equal(
+    await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`),
+    externalCallsBeforeStaleKey,
+    'a hidden reader accepted a stale native hint',
+  )
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-b','thread-b','synthetic/other-vault')`,
+  )
+  await until(
+    `!document.querySelector('iframe[aria-label="Message from Fixture"]').closest('[hidden]')`,
+    'reader shown in B context',
+  )
+  await evaluate(
+    `window.__mailVim.reader(false,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'A-B-A reader ownership revoked',
+  )
+  await evaluate(
+    `window.__mailVim.reader(true,'fixture-account-a','thread-a','synthetic/mail-vim-vault')`,
+  )
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-key]')!==null`,
+    'current A ownership discovers fresh native targets',
+  )
+  const currentLinkKey = await evaluate(
+    `document.querySelector('[data-hint-key]')?.getAttribute('data-hint-key')`,
+  )
+  assert(currentLinkKey, 'current A ownership has a native target')
+  const linkCallsBeforeInvalidation = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+  )
+  await cdp('Emulation.setDeviceMetricsOverride', {
+    width: 1000,
+    height: 700,
+    deviceScaleFactor: 1,
+    mobile: false,
+  })
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'viewport resize invalidates active mail hints',
+  )
+  for (const character of currentLinkKey) await key(character)
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+    ),
+    linkCallsBeforeInvalidation,
+    'resized viewport accepted a stale mail hint',
+  )
+  await cdp('Emulation.clearDeviceMetricsOverride')
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-key]')!==null`,
+    'fresh targets after viewport reset',
+  )
+  const overlayStaleKey = await evaluate(
+    `document.querySelector('[data-hint-key]').getAttribute('data-hint-key')`,
+  )
+  await evaluate(
+    `window.__mailSmokeOverlay=document.createElement('div');Object.assign(window.__mailSmokeOverlay.style,{position:'fixed',inset:'0',zIndex:'9999',background:'transparent'});document.body.append(window.__mailSmokeOverlay)`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'covering overlay invalidates native hints',
+  )
+  const callsBeforeOverlayKey = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal').length`,
+  )
+  for (const character of overlayStaleKey) await key(character)
+  assert.equal(
+    await evaluate(`window.__mailVimCalls.filter(c=>c.op==='openExternal').length`),
+    callsBeforeOverlayKey,
+    'a covered native target still activated',
+  )
+  await evaluate(`window.__mailSmokeOverlay.remove()`)
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-key]')!==null`,
+    'fresh targets after overlay removal',
+  )
+  const freshLinkKey = await evaluate(
+    `document.querySelector('[data-hint-key]')?.getAttribute('data-hint-key')`,
+  )
+  assert(freshLinkKey, 'viewport reset exposes a current native target')
+  for (const character of freshLinkKey) await key(character)
+  await until(
+    `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/')`,
+    'current A ownership still activates the native mail link',
+  )
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Fixture external link"]')!==null`,
+    'link target available before native removal',
+  )
+  const removedLinkKey = await evaluate(
+    `document.querySelector('[data-hint-target="Fixture external link"]').getAttribute('data-hint-key')`,
+  )
+  const linksBeforeRemoval = await evaluate(
+    `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+  )
+  await evaluate(
+    `document.querySelector('iframe[aria-label="Message from Fixture"]').contentDocument.querySelector('a[href="https://example.test/"]').remove()`,
+  )
+  await until(
+    `document.querySelector('[data-host-hints]')===null`,
+    'removed native link invalidates hints',
+  )
+  for (const character of removedLinkKey) await key(character)
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.filter(c=>c.op==='openExternal'&&c.payload==='https://example.test/').length`,
+    ),
+    linksBeforeRemoval,
+    'a removed native target still opened the external link',
+  )
+  await click('button')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints]')!==null`,
     'mail hint session cancellation test',
   )
   await key('Escape')
@@ -604,6 +768,10 @@ try {
       'mail-reader-external-link-uses-host-bridge',
       'attachment-action-opens-provider-thread-without-mark-read-or-draft-side-effects',
       'real-disclosure-activation-preserves-native-details-behavior',
+      'retained-reader-hide-revokes-hints-without-rewriting-disclosure-state',
+      'account-vault-view-A-B-A-revokes-stale-reader-hints-and-current-hints-still-work',
+      'viewport-zoom-revokes-stale-native-targets-before-current-operation',
+      'covering-overlay-and-target-removal-revoke-native-actions',
       'normal-enter-does-not-commit-or-send-uncommitted-recipient',
       'cc-bcc-fields-validation-tab-backspace-and-enter',
       'renderer-error-free-and-no-blocked-network-requests',
