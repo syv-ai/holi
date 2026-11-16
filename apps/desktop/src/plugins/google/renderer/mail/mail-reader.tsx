@@ -267,6 +267,7 @@ function MessageBody({
       label={`Message from ${message.from.name}`}
       identity={{ key: message.id, sender: message.from.email }}
       hintScope={`${hintOwner}:url:${threadUrl}:message:${message.id}`}
+      mailHints
     />
   )
 }

@@ -204,6 +204,24 @@ try {
       clickCount: 1,
     })
   }
+  const clickButtonContaining = async (text) => {
+    const rect = await evaluate(
+      `(()=>{const e=[...document.querySelectorAll('button')].find(e=>e.textContent.includes(${JSON.stringify(text)}));if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+    )
+    assert(rect, `missing button containing ${text}`)
+    await cdp('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      ...rect,
+      button: 'left',
+      clickCount: 1,
+    })
+    await cdp('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      ...rect,
+      button: 'left',
+      clickCount: 1,
+    })
+  }
   const click = async (selector) => {
     const rect = await evaluate(
       `(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
@@ -473,7 +491,7 @@ try {
   await click('button')
   await key('Escape')
   const framePoint = await evaluate(
-    `(()=>{const f=document.querySelector('iframe[aria-label="Fixture message"]');const p=f.contentDocument.querySelector('p');const a=f.getBoundingClientRect(),b=p.getBoundingClientRect();return{x:a.left+b.left+b.width/2,y:a.top+b.top+b.height/2}})()`,
+    `(()=>{const f=document.querySelector('iframe[aria-label="Message from Fixture"]');const p=f.contentDocument.querySelector('p');const a=f.getBoundingClientRect(),b=p.getBoundingClientRect();return{x:a.left+b.left+b.width/2,y:a.top+b.top+b.height/2}})()`,
   )
   await cdp('Input.dispatchMouseEvent', {
     type: 'mousePressed',
@@ -497,12 +515,38 @@ try {
     join(evidence, 'mail-document-hints.png'),
     Buffer.from(hintScreenshot.data, 'base64'),
   )
+  const externalLinkLabel = await evaluate(
+    `document.querySelector('[data-hint-target="Fixture external link"]').getAttribute('data-hint-key')`,
+  )
+  for (const character of externalLinkLabel) await key(character)
+  await until(
+    `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/')`,
+    'mail link routed through the host external-link bridge',
+  )
+  await clickButtonContaining('fixture.txt')
+  await until(
+    `window.__mailVimCalls.some(c=>c.op==='openExternal'&&c.payload==='https://example.test/thread')`,
+    'mail attachment action opens its provider thread through the host bridge',
+  )
+  assert.equal(
+    await evaluate(
+      `window.__mailVimCalls.some(c=>c.op==='mark-read'||c.op==='send'||c.op==='discardDraft')`,
+    ),
+    false,
+    'mail hint/attachment path caused an unrelated thread or draft side effect',
+  )
+  await key('Escape')
+  await key('f')
+  await until(
+    `document.querySelector('[data-host-hints] [data-hint-target="Expand fixture details"]')!==null`,
+    'mail detail hints remain available after safe link and attachment actions',
+  )
   const detailsLabel = await evaluate(
     `document.querySelector('[data-hint-target="Expand fixture details"]').getAttribute('data-hint-key')`,
   )
   for (const character of detailsLabel) await key(character)
   await until(
-    `document.querySelector('iframe[aria-label="Fixture message"]').contentDocument.querySelector('details').open`,
+    `document.querySelector('iframe[aria-label="Message from Fixture"]').contentDocument.querySelector('details').open`,
     'native details disclosure activation through the host coordinator',
   )
   await key('f')
@@ -543,6 +587,7 @@ try {
   )
   const electronVersion = /HOLI_563_ELECTRON=([0-9.]+)/.exec(log)?.[1]
   assert.equal(electronVersion?.split('.')[0], '43', 'smoke must run under Electron 43')
+  const allCalls = await evaluate(`JSON.stringify(window.__mailVimCalls)`).then(JSON.parse)
   const result = {
     ok: true,
     electron: electronVersion,
@@ -556,6 +601,8 @@ try {
       'insert-mode-f-does-not-open-host-hints',
       'normal-mode-f-opens-production-host-hints-and-escape-cancels',
       'owned-sandboxed-mail-targets-share-host-label-session-and-escape-cancel',
+      'mail-reader-external-link-uses-host-bridge',
+      'attachment-action-opens-provider-thread-without-mark-read-or-draft-side-effects',
       'real-disclosure-activation-preserves-native-details-behavior',
       'normal-enter-does-not-commit-or-send-uncommitted-recipient',
       'cc-bcc-fields-validation-tab-backspace-and-enter',
@@ -571,7 +618,7 @@ try {
     ],
     disposableFiles: [disposableDraft],
     cleanup: { root, removed: true },
-    calls: saved,
+    calls: allCalls,
   }
   assert((await stat(join(evidence, 'composer.png'))).size > 0)
   child.kill('SIGTERM')

@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createStore, Provider, useSetAtom } from 'jotai'
 import { MailComposer, type MailComposerHandle } from '../src/plugins/google/renderer/mail-composer'
-import { SandboxedHtml } from '../src/plugins/google/renderer/sandboxed-html'
+import { TooltipProvider } from '../src/renderer/src/components/ui/tooltip'
+import { MailReader } from '../src/plugins/google/renderer/mail/mail-reader'
+import type { MailState } from '../src/plugins/google/renderer/mail/use-mail'
 import { HostHintLayer } from '../src/renderer/src/features/shell/host-hint-layer'
 import { useShortcutDispatcher } from '../src/renderer/src/hooks/use-shortcuts'
 import { activeRemoteAtom } from '../src/renderer/src/plugin-api'
@@ -14,6 +16,13 @@ store.set(activeRemoteAtom, 'synthetic/mail-vim-vault')
 store.set(vimCodeEditingAtom, true)
 const calls: { op: string; account: string; payload?: unknown }[] = []
 ;(window as unknown as { __mailVimCalls: typeof calls }).__mailVimCalls = calls
+Object.defineProperty(window, 'holi', {
+  configurable: true,
+  value: {
+    openExternal: (url: string) =>
+      calls.push({ op: 'openExternal', account: 'fixture-account-a', payload: url }),
+  },
+})
 interface SmokeControls {
   context(account: string, draft: string): void
   vim(enabled: boolean): void
@@ -57,40 +66,66 @@ function Fixture() {
       : undefined
   }
   return (
-    <main
-      data-pane=""
-      data-pane-focused=""
-      className="flex h-screen flex-col gap-3 overflow-auto bg-background p-4 text-foreground"
-    >
-      <button type="button" data-smoke-host-action="">
-        Host action
-      </button>
-      <SandboxedHtml
-        html={
-          '<p>Fixture message text</p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><p><a href="https://example.test/">Fixture external link</a></p>'
-        }
-        label="Fixture message"
-        identity={{ key: 'fixture-message', sender: 'fixture@example.test' }}
-        hintScope={`thread:fixture-${account}:${draft}:message:fixture-message`}
-      />
-      {showComposer && (
-        <MailComposer
-          ref={ref}
-          intent={{ kind: 'new' }}
+    <TooltipProvider>
+      <main
+        data-pane=""
+        data-pane-focused=""
+        className="flex h-screen flex-col gap-3 overflow-auto bg-background p-4 text-foreground"
+      >
+        <button type="button" data-smoke-host-action="">
+          Host action
+        </button>
+        <MailReader
+          mail={
+            {
+              reader: {
+                kind: 'ready',
+                thread: {
+                  id: 'fixture-thread',
+                  subject: 'Fixture message',
+                  webUrl: 'https://example.test/thread',
+                  messages: [
+                    {
+                      id: 'fixture-message',
+                      from: { name: 'Fixture', email: 'fixture@example.test' },
+                      to: [],
+                      cc: [],
+                      bcc: [],
+                      date: '2026-11-15T12:00:00.000Z',
+                      body: 'Fixture message text',
+                      html: '<p>Fixture message text</p><details><summary>Expand fixture details</summary><p>Only static fixture content.</p></details><p><a href="https://example.test/">Fixture external link</a></p>',
+                      attachments: [{ filename: 'fixture.txt', mimeType: 'text/plain', size: 128 }],
+                    },
+                  ],
+                },
+              },
+              reloadThread: async () => {},
+            } as unknown as MailState
+          }
+          composer={null}
+          onCompose={() => {}}
+          visible
           accountSub={account}
-          draftId={draft === 'new' ? undefined : draft}
-          bare
-          suggestions={[
-            { name: 'Alice Fixture', email: 'alice@example.test' },
-            { name: 'Bob Fixture', email: 'bob@example.test' },
-          ]}
-          onSent={() => calls.push({ op: 'sent-callback', account })}
-          onDiscarded={() => calls.push({ op: 'discard-callback', account })}
-          onClose={() => calls.push({ op: 'close-callback', account })}
         />
-      )}
-      <HostHintLayer scopeKey={`${account}:${draft}`} />
-    </main>
+        {showComposer && (
+          <MailComposer
+            ref={ref}
+            intent={{ kind: 'new' }}
+            accountSub={account}
+            draftId={draft === 'new' ? undefined : draft}
+            bare
+            suggestions={[
+              { name: 'Alice Fixture', email: 'alice@example.test' },
+              { name: 'Bob Fixture', email: 'bob@example.test' },
+            ]}
+            onSent={() => calls.push({ op: 'sent-callback', account })}
+            onDiscarded={() => calls.push({ op: 'discard-callback', account })}
+            onClose={() => calls.push({ op: 'close-callback', account })}
+          />
+        )}
+        <HostHintLayer scopeKey={`${account}:${draft}`} />
+      </main>
+    </TooltipProvider>
   )
 }
 

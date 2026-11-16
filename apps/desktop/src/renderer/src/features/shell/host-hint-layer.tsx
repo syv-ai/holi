@@ -22,6 +22,7 @@ interface HintSession {
   prefix: string
   adapter?: HostHintAdapter
   root: HTMLElement
+  adapters: HostHintAdapter[]
 }
 
 /** The shell owns transient input; editors only request it through the library seam. */
@@ -39,6 +40,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       }
       current.current = next
       const sources = new Set([
+        ...(next?.adapters ?? []),
         ...(next?.adapter ? [next.adapter] : []),
         ...(next?.targets.flatMap((target) => (target.adapter ? [target.adapter] : [])) ?? []),
       ])
@@ -75,9 +77,11 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
           (pane) => !pane.closest('[inert],[hidden]'),
         ) ??
         document.body
-      if (adapter === undefined) captureHostHintAdapters(root)
+      const adapters = adapter === undefined ? captureHostHintAdapters(root) : [adapter]
       const targets = discoverHostHintTargets(root, adapter)
-      change(targets.length ? { targets, prefix: '', adapter, root } : null)
+      change(
+        targets.length || adapters.length ? { targets, prefix: '', adapter, root, adapters } : null,
+      )
     },
     [change],
   )

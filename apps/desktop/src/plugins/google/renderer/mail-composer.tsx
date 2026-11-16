@@ -750,6 +750,7 @@ export function MailComposer({
           html={html}
           label="Preview of your message"
           hintScope={`composer:${accountSubRef.current ?? 'no-account'}:active-account:${currentSub ?? 'none'}:draft:${draftRef.current ?? draftId ?? 'new'}:${loads}:${tab}`}
+          mailHints
         />
       )}
 

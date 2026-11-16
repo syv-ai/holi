@@ -24,7 +24,12 @@ import { useShortcutDispatcher, useShortcutHandlers } from '@/hooks/use-shortcut
 import { vimCodeEditingAtom } from '@/state/preferences'
 import { liveShortcutIdsAtom } from '@/state/shortcuts'
 import { HostHintLayer } from '../host-hint-layer'
-import { HOST_HINT_SURFACE, requestAdaptedHostHints, type HostHintAdapter } from '@/lib/host-hints'
+import {
+  HOST_HINT_SURFACE,
+  registerHostHintAdapter,
+  requestAdaptedHostHints,
+  type HostHintAdapter,
+} from '@/lib/host-hints'
 
 let store: ReturnType<typeof createStore>
 let layout: ReturnType<typeof installHintLayout>
@@ -436,6 +441,47 @@ test('request-scoped adapter validates its shell lifetime even with no links', a
   expect(adapter.unchanged).toHaveBeenCalledWith([])
   expect(event.defaultPrevented).toBe(true)
   expect(hints()).toHaveLength(0)
+})
+
+test('keeps a zero-target owned adapter subscribed for frame keys and disposes it on cancel', async () => {
+  let route: ((event: KeyboardEvent) => boolean) | undefined
+  const disposed = vi.fn()
+  const adapter: HostHintAdapter = {
+    discover: () => [],
+    unchanged: () => true,
+    activate: vi.fn(() => false),
+    subscribe: (_invalidate, onKey) => {
+      route = onKey
+      const frameDocument = document.querySelector('iframe')!.contentDocument!
+      const onFrameKeyDown = (event: KeyboardEvent) => {
+        if (!onKey?.(event)) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+      }
+      frameDocument.addEventListener('keydown', onFrameKeyDown, true)
+      return () => {
+        frameDocument.removeEventListener('keydown', onFrameKeyDown, true)
+        disposed()
+      }
+    },
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <iframe aria-label="Linkless frame" />
+    </section>,
+  )
+  const pane = document.querySelector<HTMLElement>('[data-pane]')!
+  const unregister = registerHostHintAdapter(pane.querySelector('iframe')!, adapter)
+  const frame = pane.querySelector('iframe')!
+  frame.contentDocument!.body.focus()
+  await userEvent.keyboard('f')
+  expect(hints()).toHaveLength(0)
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  frame.contentDocument!.dispatchEvent(event)
+  expect(route).toBeDefined()
+  expect(event.defaultPrevented).toBe(true)
+  expect(disposed).toHaveBeenCalledOnce()
+  unregister()
 })
 
 test('nested portalled overlays use their focused top layer and Escape leaves the overlay open', async () => {
