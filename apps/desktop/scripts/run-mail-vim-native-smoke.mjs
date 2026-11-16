@@ -9,6 +9,7 @@ import { build } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { externalizeDepsPlugin } from 'electron-vite'
+import { createCdpClient } from './native-smoke-cdp.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? '/tmp/holi-563-evidence')
@@ -17,8 +18,7 @@ let child
 let closed
 let log = ''
 let ws
-let nextId = 0
-const pending = new Map()
+let cdpClient
 let successResult
 function signalOwnedElectron(signal) {
   if (!child?.pid) return
@@ -143,34 +143,7 @@ try {
     ws.addEventListener('open', resolve, { once: true })
     ws.addEventListener('error', reject, { once: true })
   })
-  ws.addEventListener('message', (event) => {
-    const message = JSON.parse(event.data)
-    const p = pending.get(message.id)
-    if (p) {
-      pending.delete(message.id)
-      message.error ? p.reject(new Error(message.error.message)) : p.resolve(message.result)
-    }
-  })
-  const sendDevToolsCommand = (method, params = {}, sessionId) =>
-    new Promise((resolve, reject) => {
-      const id = ++nextId
-      const timeout = setTimeout(() => {
-        pending.delete(id)
-        reject(new Error(`DevTools command timed out: ${method}`))
-      }, 20000)
-      pending.set(id, {
-        resolve: (result) => {
-          clearTimeout(timeout)
-          resolve(result)
-        },
-        reject: (error) => {
-          clearTimeout(timeout)
-          reject(error)
-        },
-      })
-      ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
-    })
-  const call = (method, params = {}) => sendDevToolsCommand(method, params)
+  cdpClient = createCdpClient(ws, { timeoutMs: 10000 })
   const target = await wait(
     async () =>
       (await (await fetch(`http://127.0.0.1:${portMatch}/json/list`)).json()).find(
@@ -178,18 +151,10 @@ try {
       ),
     'renderer target',
   )
-  const { sessionId } = await call('Target.attachToTarget', { targetId: target.id, flatten: true })
-  const cdp = (method, params = {}) => sendDevToolsCommand(method, params, sessionId)
+  const page = await cdpClient.attach(target.id)
+  const cdp = page.call
   await cdp('Runtime.enable')
-  const evaluate = async (expression) => {
-    const result = await cdp('Runtime.evaluate', {
-      expression,
-      returnByValue: true,
-      awaitPromise: true,
-    })
-    if (result.exceptionDetails) throw new Error(result.exceptionDetails.text)
-    return result.result.value
-  }
+  const evaluate = page.evaluate
   const until = (expression, label) => wait(() => evaluate(expression), label)
   const focusNativeWindow = async () => {
     await evaluate(`console.log('HOLI_MAIL_SMOKE_FOCUS')`)
