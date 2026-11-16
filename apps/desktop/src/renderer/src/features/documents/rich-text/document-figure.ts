@@ -115,6 +115,10 @@ export function renderImageMarkdown(attrs: {
 }
 
 function copyContainingFigure(view: EditorView, event: ClipboardEvent, cut: boolean): boolean {
+  if (cut && !view.editable) {
+    event.preventDefault()
+    return true
+  }
   const { selection } = view.state
   if (!(selection instanceof NodeSelection) || selection.node.type.name !== 'image') return false
   let figurePos: number | null = null

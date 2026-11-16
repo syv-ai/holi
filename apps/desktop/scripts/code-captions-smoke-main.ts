@@ -43,6 +43,14 @@ const remote = 'fixture/captions'
 const vault = join(root, 'vault')
 const path = 'notes/Code-caption.md'
 const note = join(vault, path)
+const fixtureImagePaths = new Set([
+  'assets/smoke.png',
+  'assets/second.png',
+  'assets/smoke photo.png',
+])
+const fixtureImageUrls = new Set(
+  [...fixtureImagePaths].map((imagePath) => `holi-vault://vault/${encodeURI(imagePath)}`),
+)
 const head = '---\ntitle:  Byte-sensitive caption\n# Keep this comment\ntags: [kept]\n---\n\n'
 const originalFence = '~~~typescript extra-info\nconst value = 1\n~~~'
 const initial = `${head}# Code caption\n\nBefore the code.\n\n${originalFence}\n\nAfter the code.\n`
@@ -274,13 +282,20 @@ async function run() {
   })
   const url = pathToFileURL(join(root, 'renderer.html')).href
   await win.webContents.session.protocol.handle('holi-vault', async (request) => {
+    const imageUrl = new URL(request.url)
+    let imagePath: string | null = null
+    try {
+      const decoded = decodeURIComponent(imageUrl.pathname).replace(/^\//, '')
+      if (imageUrl.hostname === 'vault' && fixtureImagePaths.has(decoded)) imagePath = decoded
+    } catch {
+      // Malformed URL escapes are not fixture assets.
+    }
     assert(
-      ['holi-vault://vault/assets/smoke.png', 'holi-vault://vault/assets/second.png'].includes(
-        request.url,
-      ),
+      imagePath && fixtureImageUrls.has(request.url),
+      `unexpected fixture image: ${request.url}`,
     )
     try {
-      const bytes = await readFile(join(vault, new URL(request.url).pathname))
+      const bytes = await readFile(join(vault, imagePath))
       imageRequests.push({ url: request.url, bytes: bytes.byteLength, status: 200 })
       return new Response(bytes, { headers: { 'content-type': 'image/png' } })
     } catch {
@@ -309,9 +324,7 @@ async function run() {
   win.webContents.session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, done) => {
     const allowed =
       details.url.startsWith(pathToFileURL(root).href + '/') ||
-      ['holi-vault://vault/assets/smoke.png', 'holi-vault://vault/assets/second.png'].includes(
-        details.url,
-      ) ||
+      fixtureImageUrls.has(details.url) ||
       details.url.startsWith('data:')
     if (!allowed) denied.push(details.url)
     done({ cancel: !allowed })
@@ -1685,7 +1698,10 @@ async function run() {
       await js(`window.captionFixture.select('image'); return true`)
       win.webContents.copy()
       await sleep(150)
-      assert(clipboard.readText().includes('<!-- holi:figure -->'))
+      const portableClipboard = clipboard.readText()
+      assert(portableClipboard.includes('<!-- holi:figure -->'))
+      assert(portableClipboard.includes(transfer.src))
+      assert(!portableClipboard.includes('holi-vault:'))
       await setRightFocus(true)
       await js(
         `document.querySelector('[data-pane="secondary"] [role="textbox"]').editor.view.focus(); return true`,
@@ -1701,10 +1717,12 @@ async function run() {
       )
       await js('await window.captionFixture.flush(); return true')
       const saved = await readFile(join(vault, transfer.target), 'utf8')
-      const expectedImageMarkdown = /\s/.test(transfer.expected)
-        ? `![Smoke photo](<${transfer.expected}> "Photo title")`
-        : `![Smoke photo](${transfer.expected} "Photo title")`
-      assert(saved.includes(expectedImageMarkdown))
+      const encodedExpected = transfer.expected.replaceAll(' ', '%20')
+      const expectedImageMarkdown = [transfer.expected, encodedExpected].flatMap((destination) => [
+        `![Smoke photo](${destination} "Photo title")`,
+        `![Smoke photo](<${destination}> "Photo title")`,
+      ])
+      assert(expectedImageMarkdown.some((markdown) => saved.includes(markdown)))
       assert(!saved.includes('holi-vault:'))
       await js(
         `await window.captionFixture.openPaths(${JSON.stringify(transfer.target)}, 'notes/Clipboard.md'); window.captionFixture.split(false); window.captionFixture.rightFocused(false); return true`,
@@ -1713,10 +1731,8 @@ async function run() {
         `window.captionFixture.state().json.content.some(n=>n.type==='documentFigure')`,
         'folder transfer reopen',
       )
-      assert.equal(
-        collectImageAttrs(await js('return window.captionFixture.state()'))[0].src,
-        transfer.expected,
-      )
+      const reopenedSrc = collectImageAttrs(await js('return window.captionFixture.state()'))[0].src
+      assert.equal(decodeURIComponent(reopenedSrc), transfer.expected)
       await writeFile(
         join(evidence, `${transfer.name}-reopened.json`),
         JSON.stringify(await js('return window.captionFixture.state()'), null, 2),
