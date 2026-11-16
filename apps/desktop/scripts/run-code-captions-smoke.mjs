@@ -187,11 +187,53 @@ try {
       timeout = setTimeout(() => {
         child.kill()
         reject(new Error('Electron smoke timed out'))
-      }, 180_000)
+      }, 300_000)
     }),
   ]).finally(() => clearTimeout(timeout))
   assert.equal(code, 0, 'native code caption acceptance failed')
   assert(!log.includes('Error occurred in handler'), 'native IPC handler failed')
+  const frames = join(evidence, 'frames', 'frame-%04d.png')
+  const video = join(evidence, 'native-interaction.mp4')
+  const encode = spawnSync(
+    'ffmpeg',
+    [
+      '-y',
+      '-framerate',
+      '5',
+      '-i',
+      frames,
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-movflags',
+      '+faststart',
+      video,
+    ],
+    { encoding: 'utf8', timeout: 120000 },
+  )
+  assert.equal(encode.status, 0, `interaction video encoding failed: ${encode.stderr}`)
+  const probe = spawnSync(
+    'ffprobe',
+    [
+      '-v',
+      'error',
+      '-show_entries',
+      'format=duration:stream=codec_name,nb_frames',
+      '-of',
+      'json',
+      video,
+    ],
+    { encoding: 'utf8', timeout: 30000 },
+  )
+  assert.equal(probe.status, 0, `interaction video probe failed: ${probe.stderr}`)
+  const videoInfo = JSON.parse(probe.stdout)
+  assert.equal(videoInfo.streams?.[0]?.codec_name, 'h264')
+  assert(
+    Number(videoInfo.format?.duration) >= 10,
+    'interaction video must show the full native flow',
+  )
+  await writeFile(join(evidence, 'video-proof.json'), JSON.stringify(videoInfo, null, 2))
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   assert.equal(result.electron.split('.')[0], '43')

@@ -747,6 +747,175 @@ const value = 1
     expect(pasted.getMarkdown()).toContain('A **portable** caption.')
   })
 
+  it('preserves full multiline reference definitions without activating protected examples', () => {
+    const source = [
+      '![Photo][photo]',
+      '',
+      '[photo]:',
+      '  ../right.png',
+      '  "right title"',
+      '',
+      '```md',
+      '[photo]: ../wrong.png "wrong title"',
+      '```',
+    ].join('\n')
+    const instance = open(source)
+    expect(instance.state.doc.firstChild?.type.name).toBe('image')
+    expect(instance.state.doc.firstChild?.attrs.src).toBe('../right.png')
+    const saved = instance.getMarkdown()
+    expect(saved).toContain('[photo]:\n  ../right.png\n  "right title"')
+    expect(saved).toContain('[photo]: ../wrong.png "wrong title"')
+    const reopened = open(saved)
+    expect(reopened.state.doc.firstChild?.attrs.src).toBe('../right.png')
+  })
+
+  it('keeps envelopes in raw HTML opaque and restores their original bytes after edits', () => {
+    const source = `<pre>\n${captioned}\n</pre>\n\nAfter.`
+    const instance = open(source)
+    expect(JSON.stringify(instance.state.doc.toJSON())).not.toContain('documentFigure')
+    expect(instance.getMarkdown()).toContain(source)
+    instance.commands.setTextSelection(instance.state.doc.content.size - 2)
+    instance.commands.insertContent('!')
+    expect(instance.getMarkdown()).toContain(`<pre>\n${captioned}\n</pre>`)
+    expect(instance.getMarkdown()).not.toContain('holi-private-caption')
+  })
+
+  it('leaves envelopes with multiple body blocks entirely opaque', () => {
+    const malformed = [
+      '<!-- holi:figure -->',
+      '',
+      '![Photo](../photo.png)',
+      '',
+      'Important text that must survive.',
+      '',
+      '<!-- holi:caption -->',
+      '',
+      'Caption',
+      '',
+      '<!-- /holi:figure -->',
+    ].join('\n')
+    const instance = open(malformed)
+    expect(JSON.stringify(instance.state.doc.toJSON())).not.toContain('documentFigure')
+    expect(instance.getMarkdown()).toContain('Important text that must survive.')
+  })
+
+  it('promotes direct image copy and cut to the containing figure selection', () => {
+    const instance = open(
+      '<!-- holi:figure -->\n\n![Photo](../photo.png)\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->',
+    )
+    instance.view.dispatch(
+      instance.state.tr.setSelection(NodeSelection.create(instance.state.doc, 1)),
+    )
+    instance.view.dom.dispatchEvent(new Event('copy', { bubbles: true, cancelable: true }))
+    expect(instance.state.selection).toBeInstanceOf(NodeSelection)
+    expect((instance.state.selection as NodeSelection).node.type.name).toBe('documentFigure')
+    const copied = instance.view.serializeForClipboard(instance.state.selection.content())
+    expect(copied.dom.innerHTML).toContain('figcaption')
+    expect(copied.text).toContain('Caption')
+    instance.view.dispatch(
+      instance.state.tr.setSelection(NodeSelection.create(instance.state.doc, 1)),
+    )
+    instance.view.dom.dispatchEvent(new Event('cut', { bubbles: true, cancelable: true }))
+    expect(
+      instance.state.doc.content.content.some((node) => node.type.name === 'documentFigure'),
+    ).toBe(false)
+    expect(instance.getMarkdown()).not.toContain('Caption')
+  })
+
+  it('rebases copied vault image URLs from the source note folder to the destination folder', () => {
+    const source = open(
+      '<!-- holi:figure -->\n\n![Photo](../assets/photo%20one.png "Title")\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->',
+    )
+    const html = source.getHTML()
+    const target = new Editor({
+      extensions: createDocumentExtensions({
+        folder: 'notes/deep',
+        placeholder: '',
+        onOpenLink: () => undefined,
+      }),
+      content: '',
+      contentType: 'markdown',
+    })
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { getData: (type: string) => (type === 'text/html' ? html : '') },
+    })
+    target.view.dom.dispatchEvent(event)
+    const markdown = target.getMarkdown()
+    expect(markdown).toContain('![Photo](../../assets/photo%20one.png "Title")')
+    expect(markdown).not.toContain('holi-vault:')
+    const reopened = new Editor({
+      extensions: createDocumentExtensions({
+        folder: 'notes/deep',
+        placeholder: '',
+        onOpenLink: () => undefined,
+      }),
+      content: markdown,
+      contentType: 'markdown',
+    })
+    expect(reopened.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(reopened.state.doc.firstChild?.firstChild?.attrs.src).toBe(
+      '../../assets/photo%20one.png',
+    )
+    reopened.destroy()
+    target.destroy()
+  })
+
+  it('materializes copied references so an empty document reopens the whole figure', () => {
+    const source =
+      '<!-- holi:figure -->\n\n![Photo][photo]\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->\n\n[photo]: ../photo.png "Title"'
+    const instance = open(source)
+    const clipboard = instance.view.serializeForClipboard(
+      instance.state.doc.slice(0, instance.state.doc.firstChild!.nodeSize),
+    )
+    const target = open('')
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { getData: (type: string) => (type === 'text/html' ? clipboard.dom.innerHTML : '') },
+    })
+    target.view.dom.dispatchEvent(event)
+    const saved = target.getMarkdown()
+    expect(saved).toContain('![Photo](../photo.png "Title")')
+    expect(saved).not.toContain('![Photo][photo]')
+    expect(saved).not.toContain('[photo]:')
+    const reopened = open(saved)
+    expect(reopened.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(reopened.state.doc.firstChild?.firstChild?.attrs.src).toBe('../photo.png')
+  })
+
+  it('retains validated reference metadata when removing a caption after reopen', () => {
+    const source =
+      '<!-- holi:figure -->\n\n  ![Photo][photo]\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->\n\n[photo]: ../photo.png "Title"'
+    const reopened = open(open(source).getMarkdown())
+    expect(removeCodeCaption(reopened, 0)).toBe(true)
+    expect(reopened.getMarkdown()).toContain('  ![Photo][photo]')
+    expect(reopened.getMarkdown()).toContain('[photo]: ../photo.png "Title"')
+  })
+
+  it('does not reuse image provenance after image attributes change', () => {
+    const instance = open('![Old](../old.png)')
+    instance.view.dispatch(
+      instance.state.tr.setNodeMarkup(0, undefined, {
+        ...instance.state.doc.firstChild!.attrs,
+        src: '../new.png',
+        alt: 'New',
+      }),
+    )
+    expect(addImageCaption(instance, 0)).toBe(true)
+    instance.commands.insertContent('Caption')
+    expect(instance.getMarkdown()).toContain('![New](../new.png)')
+    expect(instance.getMarkdown()).not.toContain('old.png')
+  })
+
+  it('rejects conflicting source-body claims in clipboard HTML', () => {
+    const instance = open('')
+    instance.commands.setContent(
+      '<figure data-holi-code-figure="" data-source-body="![Hidden](../hidden.png)" data-holi-source-image="[&quot;../hidden.png&quot;,&quot;Hidden&quot;,null]"><img src="https://example.com/visible.png" alt="Visible"><figcaption>Caption</figcaption></figure>',
+    )
+    expect(instance.getMarkdown()).toContain('https://example.com/visible.png')
+    expect(instance.getMarkdown()).not.toContain('hidden.png')
+  })
+
   it('retains portable caption formatting through HTML clipboard serialization', () => {
     const instance = open(captioned)
     const html = instance.getHTML()
