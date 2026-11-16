@@ -21,7 +21,7 @@ import { createPluginHost, type OpenVault } from '../src/main/plugin-host/host'
 import { install } from '../src/main/plugin-host/installed'
 import { coreSeed } from '../src/main/vault/seed/core'
 import { readSeedState } from '../src/main/vault/seed/state'
-import { writeVaultSettings } from '../src/main/vault/settings'
+import { readVaultSettings, writeVaultSettings } from '../src/main/vault/settings'
 
 const SKILL = '.claude/skills/fake/SKILL.md'
 const dirs: string[] = []
@@ -30,8 +30,8 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'holi-plugin-host-'))
+async function tempDir(prefix = 'holi-plugin-host-'): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix))
   dirs.push(dir)
   return dir
 }
@@ -60,6 +60,7 @@ function rig(
     appDoor?: boolean
     call?: Parameters<typeof createPluginHost>[0]['call']
     rootFor?: (remote: string) => Promise<string | null>
+    readSettings?: Parameters<typeof createPluginHost>[0]['readSettings']
     window?: () => import('electron').BrowserWindow | null
     frameOrigin?: (origin: string) => () => void
     navigate?: (plugin: string, remote: string, name: string, payload: unknown) => void
@@ -104,6 +105,7 @@ function rig(
     userData: '/nowhere',
     coreSeeds: [coreSeed(plugins.map((p) => p.info))],
     active: () => open,
+    readSettings: opts.readSettings,
     rootFor: opts.rootFor ?? (async (remote) => opts.roots?.[remote] ?? null),
     events: {
       send: (channel, event) => void sent.push({ channel, event }),
@@ -130,15 +132,18 @@ function rig(
     activity: (entry) => activity.push(entry),
     call:
       opts.call ??
-      (async (remote, name, params, beforeInvoke) =>
+      (async (remote, name, params, beforeInvoke, finalization) =>
         (
-          await capabilities.dispatch({
-            door: 'ui',
-            remote,
-            name,
-            params,
-            beforeInvoke,
-          })
+          await capabilities.dispatch(
+            {
+              door: 'ui',
+              remote,
+              name,
+              params,
+              beforeInvoke,
+            },
+            finalization,
+          )
         ).value),
   })
   let root = ''
@@ -148,7 +153,8 @@ function rig(
       opts.roots?.[remote] ?? (remote === (opts.remote ?? 'o/r') ? root : null),
     active: () => null,
     core: noCoreServices,
-    pluginEnabled: async (plugin, at) => (await host.serving(at)).has(plugin),
+    pluginEnabled: async (plugin, at, allowDrain) =>
+      (await host.serving(at, allowDrain)).has(plugin),
     claims: (at) => host.scanClaimsFor(at),
   })
   const ping = (at: string) => {
@@ -181,6 +187,7 @@ function rig(
   return {
     host,
     registry,
+    capabilities,
     calls,
     ping,
     sent,
@@ -1420,7 +1427,7 @@ describe('the lifecycle', () => {
     const stopped = reconcile('settings')
     await left
     await vi.waitFor(() => expect(sent.map((s) => s.event.name)).toEqual(['stop-recording']))
-    expect((await ping(root)).value).toBe('pong')
+    await expect(ping(root)).rejects.toThrow('no such method: fake.ping')
 
     finish()
     await stopped
@@ -1752,6 +1759,979 @@ describe('an owned prefix', () => {
     await host.seed(root)
     await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
   })
+})
+
+describe('activation cancellation and teardown failures', () => {
+  it('aborts a settings-disabled activation before its queued cleanup can begin', async () => {
+    let context: PluginCtx | undefined
+    let entered!: () => void
+    let release!: () => void
+    const active = new Promise<void>((resolve) => (entered = resolve))
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      async activate(ctx) {
+        context = ctx
+        entered()
+        await held
+        return () => {}
+      },
+    }
+    const root = await tempDir()
+    const { host } = rig({ plugins: [plugin] })
+    const opening = host.reconcile(openVault('A', root), 'open')
+    await active
+    await writeVaultSettings(root, { committed: { plugins: { fake: false } } })
+    const disabling = host.reconcile(openVault('A', root), 'settings')
+    await vi.waitFor(() => expect(context!.activationSignal.aborted).toBe(true))
+    release()
+    await Promise.all([opening, disabling])
+    await expect(host.reconcile(openVault('A', root), 'open')).resolves.toBeUndefined()
+  })
+
+  it('latches failed cleanup when activation itself rejects', async () => {
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        ctx.register(['fake'], {})
+        throw new Error('activation failed')
+      },
+    }
+    const root = await tempDir()
+    const registry = createCapabilityRegistry()
+    vi.spyOn(registry, 'register').mockReturnValue(() => {
+      throw new Error('registration cleanup failed')
+    })
+    const { host } = rig({ plugins: [plugin], registry })
+    const activation = host.reconcile(openVault('A', root), 'open')
+    await expect(activation).rejects.toMatchObject({
+      message: 'plugin fake activation cleanup failed',
+      errors: [
+        expect.objectContaining({ message: 'activation failed' }),
+        expect.objectContaining({ message: 'registration cleanup failed' }),
+      ],
+    })
+    await expect(host.stop('A')).rejects.toThrow('plugin fake activation cleanup failed')
+  })
+
+  it('aborts synchronously, joins repeated stop, and blocks replacement after failed cleanup', async () => {
+    const contexts: PluginCtx[] = []
+    let starts = 0
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        contexts.push(ctx)
+        starts += 1
+        return async () => {
+          await gate
+          throw new Error('cleanup failed')
+        }
+      },
+    }
+    const root = await tempDir()
+    const { host, enter } = rig({ plugins: [plugin] })
+    await enter(openVault('A', root))
+    const first = host.stop('A')
+    expect(contexts[0]!.activationSignal.aborted).toBe(true)
+    const firstResult = first.then(
+      () => null,
+      (err: unknown) => err,
+    )
+    const second = host.stop('A')
+    const secondResult = second.then(
+      () => null,
+      (err: unknown) => err,
+    )
+    release()
+    expect(await firstResult).toBeInstanceOf(AggregateError)
+    expect(await secondResult).toBeInstanceOf(AggregateError)
+    await expect(host.reconcile(openVault('A', root), 'open')).rejects.toMatchObject({
+      message: 'plugin fake teardown failed',
+      errors: [expect.objectContaining({ message: 'cleanup failed' })],
+    })
+    expect(starts).toBe(1)
+  })
+})
+
+function repairGate() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => (resolve = done))
+  return { promise, resolve }
+}
+
+describe('admission revocation across queued activation work', () => {
+  it.each(['stop', 'stopAll', 'self'] as const)(
+    'revokes pending registered capabilities on %s invalidation',
+    async (method) => {
+      const entered = repairGate()
+      const release = repairGate()
+      let context!: PluginCtx
+      const plugin: MainPlugin = {
+        info: { id: 'fake', label: 'Fake', default: true },
+        async activate(ctx) {
+          context = ctx
+          ctx.register(['fake'], {
+            'fake.ping': cap({
+              doors: ['ui', 'cli'],
+              cli: { args: [], summary: 'probe' },
+              params: noParams,
+              run: async () => 'pong',
+            }),
+          })
+          entered.resolve()
+          await release.promise
+          return () => {}
+        },
+      }
+      const root = await tempDir()
+      const { host, capabilities, registry } = rig({ plugins: [plugin], roots: { A: root } })
+      const opening = host.reconcile(openVault('A', root), 'open')
+      await entered.promise
+      const stopping =
+        method === 'stop'
+          ? host.stop('A')
+          : method === 'stopAll'
+            ? host.stopAll()
+            : Promise.resolve(context.invalidateActivation())
+      try {
+        expect(context.activationSignal.aborted).toBe(true)
+        expect(registry.has('fake.ping', 'A')).toBe(true)
+        for (const door of ['ui', 'cli'] as const) {
+          const untrusted = {
+            door,
+            remote: 'A',
+            name: 'fake.ping',
+            params: {},
+            finalization: true,
+            allowDrain: true,
+            beforeInvoke: async () => {},
+          }
+          await expect(capabilities.dispatch(untrusted)).rejects.toThrow('no such method')
+        }
+      } finally {
+        release.resolve()
+        await Promise.all([opening, stopping])
+        await host.stopAll()
+      }
+    },
+  )
+
+  it('rechecks admission after ordinary target validation yields', async () => {
+    const entered = repairGate()
+    const release = repairGate()
+    const { host, enter, capabilities } = rig()
+    const root = await tempDir()
+    await enter(openVault('o/r', root))
+    const calling = capabilities.dispatch({
+      door: 'ui',
+      remote: 'o/r',
+      name: 'fake.ping',
+      params: {},
+      beforeInvoke: async () => {
+        entered.resolve()
+        await release.promise
+      },
+    })
+    const result = calling.then(
+      () => 'accepted',
+      () => 'refused',
+    )
+    await entered.promise
+    const stopping = host.stop('o/r')
+    release.resolve()
+    expect(await result).toBe('refused')
+    await stopping
+  })
+
+  it.each(['settings', 'snapshot'] as const)(
+    'cancels immediately and replaces, never reuses, a rapidly reenabled %s activation',
+    async (why) => {
+      const entered = repairGate()
+      const release = repairGate()
+      const contexts: PluginCtx[] = []
+      let disposed = 0
+      const fake: MainPlugin = {
+        info: { id: 'fake', label: 'Fake', default: true },
+        activate(ctx) {
+          contexts.push(ctx)
+          ctx.register(['fake'], {
+            'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => contexts.length }),
+          })
+          return () => {
+            disposed++
+          }
+        },
+      }
+      const blocker: MainPlugin = {
+        info: { id: 'blocker', label: 'Blocker', default: true },
+        activate() {
+          return async () => {
+            entered.resolve()
+            await release.promise
+          }
+        },
+      }
+      const root = await tempDir()
+      const { host, capabilities } = rig({ plugins: [fake, blocker], roots: { A: root } })
+      const vault = openVault('A', root)
+      await host.reconcile(vault, 'open')
+      const pending: Promise<void>[] = []
+      try {
+        await writeVaultSettings(root, { committed: { plugins: { blocker: false } } })
+        const blocking = host.reconcile(vault, why)
+        pending.push(blocking)
+        await entered.promise
+        await writeVaultSettings(root, { committed: { plugins: { blocker: false, fake: false } } })
+        const disabling = host.reconcile(vault, why)
+        pending.push(disabling)
+        await vi.waitFor(() => expect(contexts[0]!.activationSignal.aborted).toBe(true))
+        expect(disposed).toBe(0)
+        await expect(
+          capabilities.dispatch({ door: 'ui', remote: 'A', name: 'fake.ping', params: {} }),
+        ).rejects.toThrow('no such method')
+        await writeVaultSettings(root, { committed: { plugins: { blocker: false, fake: true } } })
+        const enabling = host.reconcile(vault, why)
+        pending.push(enabling)
+        release.resolve()
+        await Promise.all([blocking, disabling, enabling])
+        expect(disposed).toBe(1)
+        expect(contexts).toHaveLength(2)
+        expect(contexts[1]!.activationSignal.aborted).toBe(false)
+        contexts[0]!.invalidateActivation()
+        expect(
+          (await capabilities.dispatch({ door: 'ui', remote: 'A', name: 'fake.ping', params: {} }))
+            .value,
+        ).toBe(2)
+      } finally {
+        release.resolve()
+        await Promise.allSettled(pending)
+        await host.stopAll()
+      }
+    },
+  )
+
+  it.each(['stop', 'stopAll'] as const)(
+    'retains a cancelled-start disposer failure through queued %s, repeated stops and restart',
+    async (method) => {
+      const entered = repairGate()
+      const release = repairGate()
+      const failure = new Error('unproven cancelled startup cleanup')
+      let starts = 0
+      const plugin: MainPlugin = {
+        info: { id: 'fake', label: 'Fake', default: true },
+        async activate() {
+          starts++
+          entered.resolve()
+          await release.promise
+          return () => {
+            throw failure
+          }
+        },
+      }
+      const root = await tempDir()
+      const { host } = rig({ plugins: [plugin], roots: { A: root } })
+      const vault = openVault('A', root)
+      const opening = host.reconcile(vault, 'open').catch((err: unknown) => err)
+      await entered.promise
+      const first = (method === 'stop' ? host.stop('A') : host.stopAll()).catch(
+        (err: unknown) => err,
+      )
+      const second = host.stop('A').catch((err: unknown) => err)
+      release.resolve()
+      expect(await opening).toMatchObject({ errors: [failure] })
+      expect(await first).toBeInstanceOf(AggregateError)
+      expect(await second).toBeInstanceOf(AggregateError)
+      await expect(host.stop('A')).rejects.toMatchObject({ errors: [failure] })
+      await expect(host.stopAll()).rejects.toThrow('failed to stop')
+      await expect(host.reconcile(vault, 'open')).rejects.toMatchObject({ errors: [failure] })
+      expect(starts).toBe(1)
+    },
+  )
+})
+
+describe('overlapping cancellation cohorts', () => {
+  it.each([
+    ['settings', false],
+    ['snapshot', false],
+    ['settings', true],
+    ['snapshot', true],
+  ] as const)('discards a stale %s read after stop, with replacement %s', async (why, reopen) => {
+    const entered = repairGate()
+    const release = repairGate()
+    const root = await tempDir('holi-573-racefix-')
+    let holdNext = false
+    const h = rig({
+      roots: { A: root },
+      readSettings: async (at) => {
+        const settings = await readVaultSettings(at)
+        if (holdNext) {
+          holdNext = false
+          entered.resolve()
+          await release.promise
+        }
+        return settings
+      },
+    })
+    const vault = openVault('A', root)
+    await h.host.reconcile(vault, 'open')
+    // An enabled stale read must not restart a stopped vault; a disabled
+    // stale read must not cancel an enabled replacement activation.
+    await turn(root, !reopen)
+    holdNext = true
+    const stale = h.host.reconcile(vault, why)
+    try {
+      await entered.promise
+      await h.host.stop('A')
+      if (reopen) {
+        await turn(root, true)
+        await h.host.reconcile(vault, 'open')
+      }
+      const current = h.ctx()
+      release.resolve()
+      await stale
+      expect(h.calls).toEqual({ started: reopen ? 2 : 1, stopped: 1 })
+      expect(h.registry.has('fake.ping', 'A')).toBe(reopen)
+      expect(current.activationSignal.aborted).toBe(!reopen)
+      if (reopen) {
+        expect(
+          (
+            await h.capabilities.dispatch({
+              door: 'ui',
+              remote: 'A',
+              name: 'fake.ping',
+              params: {},
+            })
+          ).value,
+        ).toBe('pong:A')
+      }
+    } finally {
+      release.resolve()
+      await Promise.allSettled([stale])
+      await h.host.stopAll()
+    }
+  })
+
+  it.each(['stop', 'settings'] as const)(
+    'preserves a queued recording handoff when stopAll joins %s disposal',
+    async (first) => {
+      const disposing = repairGate()
+      const releaseDispose = repairGate()
+      const outbound = repairGate()
+      const releaseOutbound = repairGate()
+      const contexts = new Map<string, PluginCtx>()
+      const transcribed: string[] = []
+      const base: MainPlugin = {
+        info: { id: 'base', label: 'Base', default: true },
+        activate(ctx) {
+          ctx.register(['transcribe'], {
+            'transcribe.accept': cap({
+              doors: ['ui'],
+              params: noParams,
+              run: async () => void transcribed.push(ctx.remote),
+            }),
+          })
+          return () => {}
+        },
+      }
+      const recorder: MainPlugin = {
+        info: { id: 'fake', label: 'Recorder', default: true, requires: ['base'] },
+        activate(ctx) {
+          contexts.set(ctx.remote, ctx)
+          ctx.register(['fake'], {
+            'fake.finalAudio': cap({
+              doors: ['ui'],
+              drain: true,
+              params: noParams,
+              run: async () => ctx.call('transcribe.accept', {}),
+            }),
+          })
+          return async () => {
+            if (ctx.remote !== 'A') return
+            ctx.emit('A', 'recording-stop', null)
+            disposing.resolve()
+            await releaseDispose.promise
+          }
+        },
+      }
+      const a = await tempDir('holi-573-racefix-')
+      const b = await tempDir('holi-573-racefix-')
+      const h = rig({
+        plugins: [base, recorder],
+        roots: { A: a, B: b },
+        rootFor: async (remote) => {
+          if (remote === 'A') {
+            outbound.resolve()
+            await releaseOutbound.promise
+          }
+          return remote === 'A' ? a : b
+        },
+      })
+      const vault = openVault('A', a)
+      await h.host.reconcile(vault, 'open')
+      await h.host.reconcile(openVault('B', b), 'open')
+      if (first === 'settings') await turn(a, false)
+      const pending = [first === 'stop' ? h.host.stop('A') : h.host.reconcile(vault, 'settings')]
+      try {
+        await disposing.promise
+        await outbound.promise
+        pending.push(h.host.stopAll(), h.host.stop('A'), h.host.stopAll())
+        // All newly stopped remotes are cancelled before any held disposer.
+        expect(contexts.get('B')!.activationSignal.aborted).toBe(true)
+        releaseOutbound.resolve()
+        await vi.waitFor(() =>
+          expect(h.sent.map((item) => item.event.name)).toContain('recording-stop'),
+        )
+        await h.capabilities.dispatch({
+          door: 'ui',
+          remote: 'A',
+          name: 'fake.finalAudio',
+          params: {},
+        })
+        expect(transcribed).toEqual(['A'])
+        releaseDispose.resolve()
+        await Promise.all(pending)
+        expect(h.registry.has('fake.finalAudio', 'A')).toBe(false)
+        expect(h.registry.has('fake.finalAudio', 'B')).toBe(false)
+      } finally {
+        releaseOutbound.resolve()
+        releaseDispose.resolve()
+        await Promise.allSettled(pending)
+        await h.host.stopAll()
+      }
+    },
+  )
+
+  it('keeps invalidated providers finalizable after an overlapping startup is cancelled', async () => {
+    const starting = repairGate()
+    const releaseStart = repairGate()
+    const invalidated = repairGate()
+    const disposing = repairGate()
+    const releaseDispose = repairGate()
+    const cleaned: string[] = []
+    let providerStarts = 0
+    let dependentStarts = 0
+    const base: MainPlugin = {
+      info: { id: 'base', label: 'Base', default: true },
+      activate(ctx) {
+        providerStarts++
+        ctx.activationSignal.addEventListener('abort', invalidated.resolve, { once: true })
+        ctx.register(['base'], {
+          'base.finish': cap({
+            doors: ['ui', 'cli'],
+            cli: { args: [], summary: 'finalize' },
+            params: noParams,
+            run: async () => {
+              const head = await ctx.head()
+              cleaned.push(head)
+              return head
+            },
+          }),
+        })
+        return () => {}
+      },
+    }
+    const dependent: MainPlugin = {
+      info: { id: 'fake', label: 'Dependent', default: true, requires: ['base'] },
+      activate(ctx) {
+        dependentStarts++
+        return async () => {
+          disposing.resolve()
+          await releaseDispose.promise
+          await ctx.call('base.finish', {})
+        }
+      },
+    }
+    const late: MainPlugin = {
+      info: { id: 'late', label: 'Late', default: false },
+      async activate() {
+        starting.resolve()
+        await releaseStart.promise
+        return () => {}
+      },
+    }
+    const root = await tempDir('holi-573-racefix-')
+    const h = rig({ plugins: [base, dependent, late], roots: { A: root } })
+    const vault = openVault('A', root)
+    await h.host.reconcile(vault, 'open')
+    await writeVaultSettings(root, { committed: { plugins: { late: true } } })
+    const opening = h.host.reconcile(vault, 'settings')
+    const pending: Promise<unknown>[] = [opening]
+    try {
+      await starting.promise
+      await writeVaultSettings(root, { committed: { plugins: { base: false } } })
+      // Consume rejection immediately, so a failed disposer never leaks one.
+      const disabling = h.host.reconcile(vault, 'settings').then(
+        () => null,
+        (err: unknown) => err,
+      )
+      pending.push(disabling)
+      await invalidated.promise
+      releaseStart.resolve()
+      await opening
+      await disposing.promise
+      expect(h.registry.has('base.finish', 'A')).toBe(true)
+      for (const door of ['ui', 'cli'] as const) {
+        await expect(
+          h.capabilities.dispatch({
+            door,
+            remote: 'A',
+            name: 'base.finish',
+            params: {},
+          }),
+        ).rejects.toThrow('no such method')
+      }
+      releaseDispose.resolve()
+      expect(await disabling).toBeNull()
+      expect(cleaned).toEqual(['sha'])
+      expect(h.registry.has('base.finish', 'A')).toBe(false)
+      await writeVaultSettings(root, { committed: { plugins: { base: true, late: false } } })
+      await h.host.reconcile(vault, 'settings')
+      expect(providerStarts).toBe(2)
+      expect(dependentStarts).toBe(2)
+      expect(h.host.failures('A')).toEqual({})
+      expect(
+        (
+          await h.capabilities.dispatch({
+            door: 'cli',
+            remote: 'A',
+            name: 'base.finish',
+            params: {},
+          })
+        ).value,
+      ).toBe('sha')
+    } finally {
+      releaseStart.resolve()
+      releaseDispose.resolve()
+      await Promise.allSettled(pending)
+      await h.host.stopAll().catch(() => {})
+    }
+  })
+})
+
+describe('stopped lifetimes and superseded configuration admission', () => {
+  it.each([
+    ['settings', 'during'],
+    ['snapshot', 'during'],
+    ['settings', 'after'],
+    ['snapshot', 'after'],
+  ] as const)('does not let %s admitted %s stop reopen a lifetime', async (why, admission) => {
+    const disposing = repairGate()
+    const release = repairGate()
+    const starts: string[] = []
+    const stops: string[] = []
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        starts.push(ctx.remote)
+        ctx.register(['fake'], {
+          'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => ctx.remote }),
+        })
+        return async () => {
+          if (ctx.remote === 'A') {
+            disposing.resolve()
+            await release.promise
+          }
+          stops.push(ctx.remote)
+        }
+      },
+    }
+    const a = await tempDir('holi-573-admission-')
+    const b = await tempDir('holi-573-admission-')
+    const h = rig({ plugins: [plugin], roots: { A: a, B: b } })
+    const vault = openVault('A', a)
+    await h.host.reconcile(vault, 'open')
+    await h.host.reconcile(openVault('B', b), 'open')
+    const pending = [h.host.stop('A')]
+    try {
+      await disposing.promise
+      if (admission === 'after') {
+        release.resolve()
+        await pending[0]
+      }
+      pending.push(h.host.reconcile(vault, why))
+      expect(starts).toEqual(['A', 'B'])
+      expect(
+        (
+          await h.capabilities.dispatch({
+            door: 'ui',
+            remote: 'B',
+            name: 'fake.ping',
+            params: {},
+          })
+        ).value,
+      ).toBe('B')
+      release.resolve()
+      await Promise.all(pending)
+      expect(starts).toEqual(['A', 'B'])
+      expect(stops).toEqual(['A'])
+      await h.host.reconcile(vault, why)
+      expect(starts).toEqual(['A', 'B'])
+      await expect(
+        h.capabilities.dispatch({ door: 'ui', remote: 'A', name: 'fake.ping', params: {} }),
+      ).rejects.toThrow('no such method')
+      await h.host.reconcile(vault, 'open')
+      expect(starts).toEqual(['A', 'B', 'A'])
+    } finally {
+      release.resolve()
+      await Promise.allSettled(pending)
+      await h.host.stopAll()
+    }
+  })
+
+  it('queues explicit reopening behind proven prior cleanup', async () => {
+    const disposing = repairGate()
+    const release = repairGate()
+    const starts: PluginCtx[] = []
+    const root = await tempDir('holi-573-admission-')
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        starts.push(ctx)
+        return async () => {
+          disposing.resolve()
+          await release.promise
+        }
+      },
+    }
+    const h = rig({ plugins: [plugin], roots: { A: root } })
+    const vault = openVault('A', root)
+    await h.host.reconcile(vault, 'open')
+    const pending = [h.host.stop('A')]
+    try {
+      await disposing.promise
+      pending.push(h.host.reconcile(vault, 'settings'), h.host.reconcile(vault, 'open'))
+      expect(starts).toHaveLength(1)
+      release.resolve()
+      await Promise.all(pending)
+      expect(starts).toHaveLength(2)
+      expect(starts[0]!.activationSignal.aborted).toBe(true)
+      expect(starts[1]!.activationSignal.aborted).toBe(false)
+    } finally {
+      release.resolve()
+      await Promise.allSettled(pending)
+      await h.host.stopAll()
+    }
+  })
+
+  it.each(['settings', 'snapshot'] as const)(
+    'retires stale joining work as soon as a newer %s is admitted, before its read finishes',
+    async (why) => {
+      const disposing = repairGate()
+      const releaseDispose = repairGate()
+      const reading = repairGate()
+      const releaseRead = repairGate()
+      let holdRead = false
+      const started: string[] = []
+      const root = await tempDir('holi-573-admission-')
+      const blocker: MainPlugin = {
+        info: { id: 'blocker', label: 'Blocker', default: true },
+        activate() {
+          return async () => {
+            disposing.resolve()
+            await releaseDispose.promise
+          }
+        },
+      }
+      const joining = (id: string): MainPlugin => ({
+        info: { id, label: id, default: false },
+        activate(ctx) {
+          started.push(id)
+          ctx.register([id], {
+            [`${id}.ping`]: cap({ doors: ['ui'], params: noParams, run: async () => id }),
+          })
+          return () => {}
+        },
+      })
+      const h = rig({
+        plugins: [blocker, joining('agentprobe'), joining('allowed')],
+        roots: { A: root },
+        readSettings: async (at) => {
+          const settings = await readVaultSettings(at)
+          if (holdRead) {
+            holdRead = false
+            reading.resolve()
+            await releaseRead.promise
+          }
+          return settings
+        },
+      })
+      const vault = openVault('A', root)
+      await h.host.reconcile(vault, 'open')
+      await writeVaultSettings(root, {
+        committed: { plugins: { blocker: false, agentprobe: true } },
+      })
+      const older = h.host.reconcile(vault, why)
+      const pending = [older]
+      try {
+        await disposing.promise
+        await writeVaultSettings(root, {
+          committed: { plugins: { blocker: false, agentprobe: false, allowed: true } },
+        })
+        holdRead = true
+        pending.push(h.host.reconcile(vault, why))
+        await reading.promise
+        releaseDispose.resolve()
+        await older
+        expect(started).toEqual([])
+        expect(h.registry.has('agentprobe.ping', 'A')).toBe(false)
+        releaseRead.resolve()
+        await Promise.all(pending)
+        expect(started).toEqual(['allowed'])
+        expect(
+          (
+            await h.capabilities.dispatch({
+              door: 'ui',
+              remote: 'A',
+              name: 'allowed.ping',
+              params: {},
+            })
+          ).value,
+        ).toBe('allowed')
+      } finally {
+        releaseRead.resolve()
+        releaseDispose.resolve()
+        await Promise.allSettled(pending)
+        await h.host.stopAll()
+      }
+    },
+  )
+
+  it('does not let an older same-lifetime configuration read cancel the latest enabled activation', async () => {
+    const reading = repairGate()
+    const release = repairGate()
+    let holdRead = false
+    const root = await tempDir('holi-573-admission-')
+    const h = rig({
+      roots: { A: root },
+      readSettings: async (at) => {
+        const settings = await readVaultSettings(at)
+        if (holdRead) {
+          holdRead = false
+          reading.resolve()
+          await release.promise
+        }
+        return settings
+      },
+    })
+    const vault = openVault('A', root)
+    await h.host.reconcile(vault, 'open')
+    const original = h.ctx()
+    await turn(root, false)
+    holdRead = true
+    const stale = h.host.reconcile(vault, 'settings')
+    try {
+      await reading.promise
+      await turn(root, true)
+      await h.host.reconcile(vault, 'settings')
+      release.resolve()
+      await stale
+      expect(original.activationSignal.aborted).toBe(false)
+      expect(h.ctx()).toBe(original)
+      expect(h.calls).toEqual({ started: 1, stopped: 0 })
+      expect(
+        (await h.capabilities.dispatch({ door: 'ui', remote: 'A', name: 'fake.ping', params: {} }))
+          .value,
+      ).toBe('pong:A')
+    } finally {
+      release.resolve()
+      await Promise.allSettled([stale])
+      await h.host.stopAll()
+    }
+  })
+
+  it('aborts a pending startup at configuration admission without awaiting its settings read', async () => {
+    const starting = repairGate()
+    const releaseStart = repairGate()
+    const reading = repairGate()
+    const releaseRead = repairGate()
+    let holdRead = false
+    let context!: PluginCtx
+    const root = await tempDir('holi-573-admission-')
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      async activate(ctx) {
+        context = ctx
+        starting.resolve()
+        await releaseStart.promise
+        return () => {}
+      },
+    }
+    const h = rig({
+      plugins: [plugin],
+      readSettings: async (at) => {
+        const settings = await readVaultSettings(at)
+        if (holdRead) {
+          holdRead = false
+          reading.resolve()
+          await releaseRead.promise
+        }
+        return settings
+      },
+    })
+    const vault = openVault('A', root)
+    const pending = [h.host.reconcile(vault, 'open')]
+    try {
+      await starting.promise
+      await turn(root, false)
+      holdRead = true
+      pending.push(h.host.reconcile(vault, 'settings'))
+      expect(context.activationSignal.aborted).toBe(true)
+      await reading.promise
+    } finally {
+      releaseRead.resolve()
+      releaseStart.resolve()
+      await Promise.allSettled(pending)
+      await h.host.stopAll()
+    }
+  })
+})
+
+describe('sticky cleanup failure authority', () => {
+  it.each(['stop', 'stopAll'] as const)(
+    '%s revokes retained providers synchronously without unsafe disposal after settings cleanup fails',
+    async (method) => {
+      const contexts = new Map<string, PluginCtx>()
+      const disposed: string[] = []
+      const failure = new Error('dependent cleanup unproven')
+      const provider: MainPlugin = {
+        info: { id: 'provider', label: 'Provider', default: true },
+        activate(ctx) {
+          contexts.set(ctx.remote, ctx)
+          ctx.register(['provider'], {
+            'provider.ping': cap({
+              doors: ['ui', 'cli'],
+              cli: { args: [], summary: 'probe' },
+              params: noParams,
+              run: async () => ctx.head(),
+            }),
+          })
+          return () => {
+            disposed.push(ctx.remote)
+          }
+        },
+      }
+      const dependent: MainPlugin = {
+        info: { id: 'fake', label: 'Dependent', default: true, requires: ['provider'] },
+        activate(ctx) {
+          return () => {
+            if (ctx.remote === 'A') throw failure
+          }
+        },
+      }
+      const a = await tempDir('holi-573-admission-')
+      const b = await tempDir('holi-573-admission-')
+      const h = rig({ plugins: [provider, dependent], roots: { A: a, B: b } })
+      const vault = openVault('A', a)
+      await h.host.reconcile(vault, 'open')
+      await h.host.reconcile(openVault('B', b), 'open')
+      try {
+        await turn(a, false)
+        const sticky = await h.host.reconcile(vault, 'settings').catch((err: unknown) => err)
+        expect(sticky).toMatchObject({ errors: [failure] })
+        const stopping = (method === 'stop' ? h.host.stop('A') : h.host.stopAll()).catch(
+          (err: unknown) => err,
+        )
+        expect(contexts.get('A')!.activationSignal.aborted).toBe(true)
+        const result = await stopping
+        if (method === 'stop') expect(result).toBe(sticky)
+        else expect(result).toMatchObject({ errors: [sticky] })
+        expect(disposed).not.toContain('A')
+        for (const door of ['ui', 'cli'] as const) {
+          await expect(
+            h.capabilities.dispatch({ door, remote: 'A', name: 'provider.ping', params: {} }),
+          ).rejects.toThrow('no such method')
+        }
+        await expect(h.host.stop('A')).rejects.toBe(sticky)
+        if (method === 'stopAll') await h.host.reconcile(openVault('B', b), 'open')
+        expect(
+          (
+            await h.capabilities.dispatch({
+              door: 'ui',
+              remote: 'B',
+              name: 'provider.ping',
+              params: {},
+            })
+          ).value,
+        ).toBe('sha')
+      } finally {
+        await h.host.stop('B')
+        await h.host.stopAll().catch(() => {})
+      }
+    },
+  )
+
+  it.each(['stop', 'stopAll'] as const)(
+    '%s preserves an approved finalization and queued recording output when a drain reports sticky failure',
+    async (method) => {
+      const finalizing = repairGate()
+      const release = repairGate()
+      const failure = new Error('unproven recording drain')
+      const completed: string[] = []
+      let providerCtx!: PluginCtx
+      const provider: MainPlugin = {
+        info: { id: 'provider', label: 'Provider', default: true },
+        activate(ctx) {
+          providerCtx = ctx
+          ctx.register(['provider'], {
+            'provider.final': cap({
+              doors: ['ui'],
+              params: noParams,
+              run: async () => {
+                finalizing.resolve()
+                await release.promise
+                completed.push(await ctx.head())
+                await ctx.commitNow()
+                return 'done'
+              },
+            }),
+          })
+          return () => {
+            throw new Error('unsafe provider disposal')
+          }
+        },
+      }
+      const dependent: MainPlugin = {
+        info: { id: 'fake', label: 'Dependent', default: true, requires: ['provider'] },
+        activate(ctx) {
+          return async () => {
+            ctx.reportDrainFailure(failure)
+            ctx.emit(ctx.remote, 'recording-stop', null)
+            expect(await ctx.call('provider.final', {})).toBe('done')
+            throw failure
+          }
+        },
+      }
+      const root = await tempDir('holi-573-admission-')
+      const h = rig({ plugins: [provider, dependent], roots: { A: root } })
+      const vault = openVault('A', root)
+      await h.host.reconcile(vault, 'open')
+      await turn(root, false)
+      const disabling = h.host.reconcile(vault, 'settings').catch((err: unknown) => err)
+      try {
+        await finalizing.promise
+        const stopping = (method === 'stop' ? h.host.stop('A') : h.host.stopAll()).catch(
+          (err: unknown) => err,
+        )
+        expect(providerCtx.activationSignal.aborted).toBe(true)
+        await stopping
+        await expect(
+          h.capabilities.dispatch({ door: 'ui', remote: 'A', name: 'provider.final', params: {} }),
+        ).rejects.toThrow('no such method')
+        await h.host.stop('A').catch(() => {})
+        release.resolve()
+        await disabling
+        expect(completed).toEqual(['sha'])
+        expect(h.sent.map((item) => item.event.name)).toContain('recording-stop')
+        expect(h.registry.has('provider.final', 'A')).toBe(true)
+      } finally {
+        release.resolve()
+        await disabling
+        await h.host.stopAll().catch(() => {})
+      }
+    },
+  )
 })
 
 describe('work across vaults', () => {

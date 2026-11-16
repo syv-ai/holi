@@ -57,6 +57,108 @@ describe('MailMarkerActions', () => {
     await vi.waitFor(() => expect(writes).toEqual([['thread', 'red-star']]))
   })
 
+  it.each(['reconciliation succeeds', 'reconciliation fails'] as const)(
+    'keeps a newer thread burst after an older write fails and %s',
+    async (failure) => {
+      let rejectWrite!: (cause: Error) => void
+      let resolveReconcile!: (value: ReturnType<typeof state>) => void
+      let rejectReconcile!: (cause: Error) => void
+      let startedReconcile!: () => void
+      const writeFailure = new Promise<void>((_resolve, reject) => (rejectWrite = reject))
+      const failedReconcile = new Promise<ReturnType<typeof state>>((resolve, reject) => {
+        resolveReconcile = resolve
+        rejectReconcile = reject
+      })
+      const reconciliationStarted = new Promise<void>((resolve) => (startedReconcile = resolve))
+      const writes: unknown[][] = []
+      const changed = vi.fn()
+      const action = new MailMarkerActions({
+        write: async (_owner, id, marker) => {
+          writes.push([id, marker])
+          if (id === 'a') await writeFailure
+        },
+        reconcile: async (_owner, id) => {
+          if (id === 'a') {
+            startedReconcile()
+            return failedReconcile
+          }
+          return state(null, false)
+        },
+        changed,
+        now: () => 0,
+      })
+      action.setOwner('owner', ['yellow-star', 'red-star', 'blue-question'])
+      action.activate('a', false, null)
+      action.activate('b', false, null)
+      await vi.waitFor(() => expect(writes).toContainEqual(['b', 'yellow-star']))
+
+      rejectWrite(new Error('refused'))
+      await reconciliationStarted
+      if (failure === 'reconciliation succeeds') resolveReconcile(state(null, false))
+      else rejectReconcile(new Error('read failed'))
+      await vi.waitFor(() =>
+        expect(changed).toHaveBeenCalledWith(
+          'a',
+          failure === 'reconciliation succeeds' ? state(null, false) : state('yellow-star'),
+          failure === 'reconciliation fails',
+        ),
+      )
+
+      action.activate('b', true, 'yellow-star')
+      await vi.waitFor(() => expect(writes).toContainEqual(['b', 'red-star']))
+    },
+  )
+
+  it('keeps a newer thread burst after an older write succeeds', async () => {
+    let releaseWrite!: () => void
+    const delayedWrite = new Promise<void>((resolve) => (releaseWrite = resolve))
+    const writes: unknown[][] = []
+    const changed = vi.fn()
+    const action = new MailMarkerActions({
+      write: async (_owner, id, marker) => {
+        writes.push([id, marker])
+        if (id === 'a') await delayedWrite
+      },
+      reconcile: async () => state(null, false),
+      changed,
+      now: () => 0,
+    })
+    action.setOwner('owner', ['yellow-star', 'red-star', 'blue-question'])
+    action.activate('a', false, null)
+    action.activate('b', false, null)
+    await vi.waitFor(() => expect(writes).toContainEqual(['b', 'yellow-star']))
+
+    releaseWrite()
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledWith('a', state(null, false), false))
+    action.activate('b', true, 'yellow-star')
+    await vi.waitFor(() => expect(writes).toContainEqual(['b', 'red-star']))
+  })
+
+  it('resets the failed thread burst so its next activation toggles off', async () => {
+    let rejectWrite!: (cause: Error) => void
+    const writeFailure = new Promise<void>((_resolve, reject) => (rejectWrite = reject))
+    const writes: unknown[][] = []
+    const changed = vi.fn()
+    const action = new MailMarkerActions({
+      write: async (_owner, id, marker) => {
+        writes.push([id, marker])
+        if (writes.length === 1) await writeFailure
+      },
+      reconcile: async () => state('yellow-star'),
+      changed,
+      now: () => 0,
+    })
+    action.setOwner('owner', ['yellow-star', 'red-star'])
+    action.activate('thread', false, null)
+    rejectWrite(new Error('refused'))
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2))
+    expect(changed).toHaveBeenLastCalledWith('thread', state('yellow-star'), false)
+
+    action.activate('thread', true, 'yellow-star')
+    await vi.waitFor(() => expect(writes).toHaveLength(2))
+    expect(writes.at(-1)).toEqual(['thread', null])
+  })
+
   it('keeps one marker as an ordinary star/unstar toggle', async () => {
     const writes: unknown[][] = []
     const action = new MailMarkerActions({
