@@ -297,7 +297,9 @@ test('folder subscription actions keep a trailing slot and reveal on pointer or 
   expect(short.querySelector('[data-tree-row-action]')).toBe(shortAction)
 })
 
-test('individual file subscription controls persist, align and reveal without changing the row', async () => {
+// Rendered geometry, pointer reveal, and focus visibility are exercised by
+// scripts/run-folder-subscriptions-native-smoke.mjs in native Electron.
+test('individual file subscription controls persist and are keyboard operable', async () => {
   const { store } = mount()
   await screen.findByRole('button', { name: 'Subscribe this vault' })
   act(() =>
@@ -319,9 +321,7 @@ test('individual file subscription controls persist, align and reveal without ch
   const longFileControl = await screen.findByRole('button', {
     name: 'Subscribe a-considerably-longer-filename-to-check-the-trailing-action-slot.md',
   })
-  expect(longFileControl).toHaveClass('ms-auto')
-  expect(longFileControl.parentElement).toHaveClass('flex', 'flex-1', 'min-w-0')
-  expect(longFileRow.querySelector('[data-slot=tree-item-label]')).toHaveClass('w-full')
+  expect(longFileRow).toContainElement(longFileControl)
   expect(subscriptionList.mock.calls.map(([input]) => JSON.parse(input.paths))).toContainEqual(
     expect.arrayContaining(['kunder/brief.md']),
   )
@@ -346,20 +346,7 @@ test('individual file subscription controls persist, align and reveal without ch
     name: 'Unsubscribe brief.md',
   })
   expect(fileControlAfterSubscribe).toHaveAttribute('data-tree-row-action', '')
-  expect(fileControlAfterSubscribe).toHaveClass('ms-auto')
-  const fileLabel = fileControlAfterSubscribe.closest('[data-slot=tree-item-label]')!
-  expect(fileLabel).toHaveClass('w-full')
-  expect(fileLabel.className).toContain('[&_[data-tree-row-action]]:opacity-0')
-  expect(fileLabel.className).toContain('[&:hover_[data-tree-row-action]]:opacity-100')
-  expect(fileLabel.className).toContain('[&:focus-within_[data-tree-row-action]]:opacity-100')
-  expect(fileLabel.className).toContain(
-    'group-focus-within/tree-item:[&_[data-tree-row-action]]:opacity-100',
-  )
-  expect(fileControlAfterSubscribe.parentElement).toHaveClass('flex', 'flex-1', 'min-w-0')
-  const fileName = [...fileLabel.querySelectorAll('.truncate')].find(
-    (element) => element.textContent === 'brief',
-  )
-  expect(fileName?.parentElement).toBe(fileControlAfterSubscribe.parentElement)
+  expect(fileRow).toContainElement(fileControlAfterSubscribe)
   expect(
     [...fileRow.querySelectorAll('.truncate')].find((element) => element.textContent === 'brief'),
   ).toHaveTextContent(fileNameBefore!)
