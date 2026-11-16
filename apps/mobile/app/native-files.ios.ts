@@ -4,9 +4,6 @@ import type { Entry, NativeFiles } from './native-files'
 function checkError(error: interop.Reference<NSError>): void {
   if (error.value) throw new Error(error.value.localizedDescription)
 }
-function normalizedName(value: string): string {
-  return String(NSString.stringWithString(value).decomposedStringWithCanonicalMapping)
-}
 
 function filePath(root: string, relative: string): string {
   if (
@@ -70,7 +67,7 @@ function checkedPath(
         !siblings ||
         !Array.from(siblings).some((name) => {
           const sibling = String(name)
-          return sibling === piece || normalizedName(sibling) === normalizedName(piece)
+          return sibling === piece
         })
       )
         throw new Error('Filesystem spelling alias rejected')
@@ -120,39 +117,6 @@ function removeOwned(path: string): void {
   if (!NSFileManager.defaultManager.removeItemAtPathError(path, error)) checkError(error)
   checkError(error)
 }
-function ownershipPath(staging: string): string {
-  return `${staging}.owner`
-}
-function acquireStageOwnership(staging: string): void {
-  const marker = ownershipPath(staging)
-  const name = staging.substring(staging.lastIndexOf('/') + 1)
-  const data = NSString.stringWithString(name).dataUsingEncoding(NSUTF8StringEncoding)
-  if (!data) throw new Error('Could not encode staging ownership')
-  if (!NSFileManager.defaultManager.createFileAtPathContentsAttributes(marker, data, null))
-    throw new Error('Could not acquire staging ownership')
-  syncAndClose(marker)
-}
-function recoverOwnedStages(directory: string): void {
-  const error = new interop.Reference<NSError>()
-  const names = NSFileManager.defaultManager.contentsOfDirectoryAtPathError(directory, error)
-  checkError(error)
-  for (const name of Array.from(names ?? [])) {
-    if (!name.startsWith('.holi-storage-stage-') || !name.endsWith('.tmp.owner')) continue
-    const marker = `${directory}/${name}`
-    const stageNameValue = NSString.stringWithContentsOfFileEncodingError(
-      marker,
-      NSUTF8StringEncoding,
-      error,
-    )
-    checkError(error)
-    const stageName = stageNameValue?.toString()
-    if (!stageName || !/^\.holi-storage-stage-[A-F0-9-]+\.tmp$/.test(stageName)) continue
-    const stage = `${directory}/${stageName}`
-    const info = attrs(stage)
-    if (info?.objectForKey(NSFileType) === NSFileTypeRegular) removeOwned(stage)
-    removeOwned(marker)
-  }
-}
 async function stagedCheckpoint(stagePath: string): Promise<void> {
   const marker = NSProcessInfo.processInfo.environment.objectForKey(
     'HOLI_STORAGE_STAGED_CHECKPOINT',
@@ -189,7 +153,6 @@ export const nativeFiles: NativeFiles = {
   async list(root) {
     const result: Entry[] = []
     const walk = (directory: string, prefix: string) => {
-      recoverOwnedStages(directory)
       const error = new interop.Reference<NSError>()
       const names = NSFileManager.defaultManager.contentsOfDirectoryAtPathError(directory, error)
       checkError(error)
@@ -213,33 +176,25 @@ export const nativeFiles: NativeFiles = {
   },
   async read(root, relative) {
     const target = checkedPath(root, relative)
-    recoverOwnedStages(target.substring(0, target.lastIndexOf('/')))
     return toBytes(readData(target))
   },
   async create(root, relative, bytes) {
     const target = checkedPath(root, relative, true)
     const directory = target.substring(0, target.lastIndexOf('/'))
-    recoverOwnedStages(directory)
     const staging = `${directory}/.holi-storage-stage-${NSUUID.UUID().UUIDString}.tmp`
     const manager = NSFileManager.defaultManager
     let stageOwned = false
-    let ownerOwned = false
     try {
       if (!manager.createFileAtPathContentsAttributes(staging, toData(bytes), null))
         throw new Error('Exclusive staging creation failed')
       stageOwned = true
-      acquireStageOwnership(staging)
-      ownerOwned = true
       syncAndClose(staging)
       const error = new interop.Reference<NSError>()
       if (!manager.moveItemAtPathToPathError(staging, target, error)) checkError(error)
       checkError(error)
       stageOwned = false
-      removeOwned(ownershipPath(staging))
-      ownerOwned = false
     } finally {
       if (stageOwned) removeOwned(staging)
-      if (ownerOwned) removeOwned(ownershipPath(staging))
     }
   },
   async publish(root, relative, bytes, expected) {
@@ -251,17 +206,13 @@ export const nativeFiles: NativeFiles = {
     )
       throw new Error('Stale bytes')
     const directory = target.substring(0, target.lastIndexOf('/'))
-    recoverOwnedStages(directory)
     const staging = `${directory}/.holi-storage-stage-${NSUUID.UUID().UUIDString}.tmp`
     const manager = NSFileManager.defaultManager
     let stageOwned = false
-    let ownerOwned = false
     try {
       if (!manager.createFileAtPathContentsAttributes(staging, toData(bytes), null))
         throw new Error('Could not create owned staging file')
       stageOwned = true
-      acquireStageOwnership(staging)
-      ownerOwned = true
       syncAndClose(staging)
       await stagedCheckpoint(staging)
       const error = new interop.Reference<NSError>()
@@ -277,11 +228,8 @@ export const nativeFiles: NativeFiles = {
       checkError(error)
       if (!replaced) throw new Error('Atomic staging publish failed')
       stageOwned = false
-      removeOwned(ownershipPath(staging))
-      ownerOwned = false
     } finally {
       if (stageOwned) removeOwned(staging)
-      if (ownerOwned) removeOwned(ownershipPath(staging))
     }
   },
 }
