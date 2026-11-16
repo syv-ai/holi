@@ -473,6 +473,7 @@
     attributes: true,
     attributeFilter: [
       'contenteditable',
+      'href',
       'role',
       'class',
       'data-lexical-editor',

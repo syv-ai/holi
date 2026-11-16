@@ -644,7 +644,8 @@ test('rich host ownership retires for synchronous and asynchronous DOM transitio
   host.setAttribute('contenteditable', 'true')
   host.setAttribute('tabindex', '0')
   host.style.display = 'block'
-  host.innerHTML = '<strong style="display:inline">alpha</strong> beta'
+  host.innerHTML =
+    '<strong style="display:inline">alpha</strong> beta <a href="/next" style="display:inline">link</a>'
   Object.defineProperty(host, 'isContentEditable', { value: true })
   document.body.append(host)
   host.focus()
@@ -674,6 +675,13 @@ test('rich host ownership retires for synchronous and asynchronous DOM transitio
 
   enterNormal()
   host.querySelector('strong')!.firstChild!.textContent = 'changed'
+  nativeAfterInvalidation()
+
+  select()
+  enterNormal()
+  const link = host.querySelector('a')!
+  link.removeAttribute('href')
+  link.setAttribute('href', '/next')
   nativeAfterInvalidation()
 
   select()

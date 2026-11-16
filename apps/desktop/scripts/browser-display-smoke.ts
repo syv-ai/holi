@@ -721,6 +721,26 @@ async function run(): Promise<void> {
   mark('rich-css-loss-and-restoration-retains-native-key-ownership')
   await inPage(a, `document.querySelector('#rich').innerHTML=${JSON.stringify(originalRichMarkup)}`)
   await setLinkStart()
+  await nativePress(a, 'Escape')
+  await inPage(
+    a,
+    `(() => { const link = document.querySelector('#rich a'); link.removeAttribute('href'); link.setAttribute('href', '/next') })()`,
+  )
+  assert.equal(
+    await a.webContents.executeJavaScriptInIsolatedWorld(1017, [
+      { code: '__holiPage.vim.mode().mode' },
+    ]),
+    'insert',
+  )
+  await nativePress(a, 'x')
+  assert.notEqual(
+    await inPage<string>(a, `document.querySelector('#rich').innerHTML`),
+    originalRichMarkup,
+    'link eligibility loss and restoration releases normal-mode key ownership',
+  )
+  mark('rich-href-loss-and-restoration-retains-native-key-ownership')
+  await inPage(a, `document.querySelector('#rich').innerHTML=${JSON.stringify(originalRichMarkup)}`)
+  await setLinkStart()
   if (!a.webContents.debugger.isAttached()) a.webContents.debugger.attach('1.3')
   await a.webContents.debugger.sendCommand('Input.imeSetComposition', {
     text: '日本語',
