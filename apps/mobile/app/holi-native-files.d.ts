@@ -32,8 +32,4 @@ declare class HoliNativeFiles extends NSObject {
     error: interop.Pointer | interop.Reference<NSError>,
   ): boolean
   removeFileError(pathBytes: NSData, error: interop.Pointer | interop.Reference<NSError>): boolean
-  removeDirectoryError(
-    pathBytes: NSData,
-    error: interop.Pointer | interop.Reference<NSError>,
-  ): boolean
 }

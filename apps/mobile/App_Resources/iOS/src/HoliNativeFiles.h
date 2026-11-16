@@ -25,8 +25,6 @@ NS_ASSUME_NONNULL_BEGIN
               error:(NSError *_Nullable __autoreleasing *)error;
 - (BOOL)removeFile:(NSData *)pathBytes
              error:(NSError *_Nullable __autoreleasing *)error;
-- (BOOL)removeDirectory:(NSData *)pathBytes
-                  error:(NSError *_Nullable __autoreleasing *)error;
 @end
 
 NS_ASSUME_NONNULL_END

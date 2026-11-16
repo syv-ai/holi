@@ -331,17 +331,4 @@ static BOOL HNFIsFault(NSString *fault, NSString *stage) {
   return YES;
 }
 
-- (BOOL)removeDirectory:(NSData *)pathBytes error:(NSError **)error {
-  char *path = HNFPath(pathBytes, error);
-  if (!path)
-    return NO;
-  int result = rmdir(path);
-  int saved = errno;
-  free(path);
-  if (result != 0) {
-    HNFSetError(error, @"rmdir", saved);
-    return NO;
-  }
-  return YES;
-}
 @end
