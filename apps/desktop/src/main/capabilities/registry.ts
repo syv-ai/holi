@@ -118,6 +118,8 @@ export interface CliRun {
 
 export interface Capability<P = unknown, R = unknown> {
   doors: readonly Door[]
+  /** Accept only renderer completion input while this registration's disposer drains. */
+  drain?: true
   cli?: CliSpec
   /** Changes the vault, so the open vault's cache is refreshed after it. */
   writes?: true
@@ -184,7 +186,14 @@ export interface CapabilityRegistry {
     table: CapabilityTable,
     plugin?: string,
     remote?: string,
+    /** Host-owned proof, rechecked synchronously at invocation and CLI handoff. */
+    lifetime?: {
+      active(): boolean
+      draining(): boolean
+      finalizing(): boolean
+    },
   ): () => void
+  allowsDrain(name: string, remote: string, door: Door): boolean
   has(name: string, remote?: string): boolean
   /** Every entry that opens `door`, by name. */
   names(door: Door, remote?: string): string[]
@@ -219,7 +228,11 @@ const namespaceOf = (name: string): string | null => {
 }
 
 export function createCapabilityRegistry(): CapabilityRegistry {
-  type Lease = { entry: AnyCapability; plugin?: string }
+  type Lease = {
+    entry: AnyCapability
+    plugin?: string
+    lifetime?: Parameters<CapabilityRegistry['register']>[4]
+  }
   const globals = new Map<string, Lease>()
   const scoped = new Map<string, Map<string, Lease>>()
   // Namespaces are claimed independently of their entries, including empty tables.
@@ -231,7 +244,7 @@ export function createCapabilityRegistry(): CapabilityRegistry {
     (remote === undefined ? undefined : scoped.get(remote)?.get(name)) ?? globals.get(name)
 
   return {
-    register(namespaces, table, plugin, remote) {
+    register(namespaces, table, plugin, remote, lifetime) {
       if (plugin !== undefined && remote === undefined)
         throw new Error(`plugin capability registrations must be scoped to a remote`)
       if (plugin === undefined && remote !== undefined)
@@ -294,7 +307,7 @@ export function createCapabilityRegistry(): CapabilityRegistry {
       const scope = remote === undefined ? globals : (scoped.get(remote) ?? new Map())
       const installed = new Map<string, Lease>()
       for (const [name, entry] of Object.entries(table)) {
-        const installedLease: Lease = { entry, ...(plugin ? { plugin } : {}) }
+        const installedLease: Lease = { entry, lifetime, ...(plugin ? { plugin } : {}) }
         scope.set(name, installedLease)
         installed.set(name, installedLease)
       }
@@ -323,6 +336,11 @@ export function createCapabilityRegistry(): CapabilityRegistry {
         if (remote !== undefined && scope.size === 0 && scoped.get(remote) === scope)
           scoped.delete(remote)
       }
+    },
+
+    allowsDrain(name, remote, door) {
+      const lease = leaseFor(name, remote)
+      return door === 'ui' && lease?.entry.drain === true && lease.lifetime?.draining() === true
     },
 
     has: (name, remote) => leaseFor(name, remote) !== undefined,
@@ -355,7 +373,13 @@ export function createCapabilityRegistry(): CapabilityRegistry {
       const lease = leaseFor(name, ctx.remote)
       const entry = lease?.entry
       const current = () =>
-        lease !== undefined && leaseFor(name, ctx.remote) === lease && isCurrent()
+        lease !== undefined &&
+        leaseFor(name, ctx.remote) === lease &&
+        isCurrent() &&
+        (lease.lifetime === undefined ||
+          lease.lifetime.active() ||
+          lease.lifetime.finalizing() ||
+          (door === 'ui' && lease.entry.drain === true && lease.lifetime.draining()))
       if (entry === undefined || !entry.doors.includes(door)) {
         throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       }
