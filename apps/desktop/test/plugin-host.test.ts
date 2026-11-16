@@ -2310,6 +2310,430 @@ describe('overlapping cancellation cohorts', () => {
   })
 })
 
+describe('stopped lifetimes and superseded configuration admission', () => {
+  it.each([
+    ['settings', 'during'],
+    ['snapshot', 'during'],
+    ['settings', 'after'],
+    ['snapshot', 'after'],
+  ] as const)('does not let %s admitted %s stop reopen a lifetime', async (why, admission) => {
+    const disposing = repairGate()
+    const release = repairGate()
+    const starts: string[] = []
+    const stops: string[] = []
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        starts.push(ctx.remote)
+        ctx.register(['fake'], {
+          'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => ctx.remote }),
+        })
+        return async () => {
+          if (ctx.remote === 'A') {
+            disposing.resolve()
+            await release.promise
+          }
+          stops.push(ctx.remote)
+        }
+      },
+    }
+    const a = await tempDir('holi-573-admission-')
+    const b = await tempDir('holi-573-admission-')
+    const h = rig({ plugins: [plugin], roots: { A: a, B: b } })
+    const vault = openVault('A', a)
+    await h.host.reconcile(vault, 'open')
+    await h.host.reconcile(openVault('B', b), 'open')
+    const pending = [h.host.stop('A')]
+    try {
+      await disposing.promise
+      if (admission === 'after') {
+        release.resolve()
+        await pending[0]
+      }
+      pending.push(h.host.reconcile(vault, why))
+      expect(starts).toEqual(['A', 'B'])
+      expect(
+        (
+          await h.capabilities.dispatch({
+            door: 'ui',
+            remote: 'B',
+            name: 'fake.ping',
+            params: {},
+          })
+        ).value,
+      ).toBe('B')
+      release.resolve()
+      await Promise.all(pending)
+      expect(starts).toEqual(['A', 'B'])
+      expect(stops).toEqual(['A'])
+      await h.host.reconcile(vault, why)
+      expect(starts).toEqual(['A', 'B'])
+      await expect(
+        h.capabilities.dispatch({ door: 'ui', remote: 'A', name: 'fake.ping', params: {} }),
+      ).rejects.toThrow('no such method')
+      await h.host.reconcile(vault, 'open')
+      expect(starts).toEqual(['A', 'B', 'A'])
+    } finally {
+      release.resolve()
+      await Promise.allSettled(pending)
+      await h.host.stopAll()
+    }
+  })
+
+  it('queues explicit reopening behind proven prior cleanup', async () => {
+    const disposing = repairGate()
+    const release = repairGate()
+    const starts: PluginCtx[] = []
+    const root = await tempDir('holi-573-admission-')
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        starts.push(ctx)
+        return async () => {
+          disposing.resolve()
+          await release.promise
+        }
+      },
+    }
+    const h = rig({ plugins: [plugin], roots: { A: root } })
+    const vault = openVault('A', root)
+    await h.host.reconcile(vault, 'open')
+    const pending = [h.host.stop('A')]
+    try {
+      await disposing.promise
+      pending.push(h.host.reconcile(vault, 'settings'), h.host.reconcile(vault, 'open'))
+      expect(starts).toHaveLength(1)
+      release.resolve()
+      await Promise.all(pending)
+      expect(starts).toHaveLength(2)
+      expect(starts[0]!.activationSignal.aborted).toBe(true)
+      expect(starts[1]!.activationSignal.aborted).toBe(false)
+    } finally {
+      release.resolve()
+      await Promise.allSettled(pending)
+      await h.host.stopAll()
+    }
+  })
+
+  it.each(['settings', 'snapshot'] as const)(
+    'retires stale joining work as soon as a newer %s is admitted, before its read finishes',
+    async (why) => {
+      const disposing = repairGate()
+      const releaseDispose = repairGate()
+      const reading = repairGate()
+      const releaseRead = repairGate()
+      let holdRead = false
+      const started: string[] = []
+      const root = await tempDir('holi-573-admission-')
+      const blocker: MainPlugin = {
+        info: { id: 'blocker', label: 'Blocker', default: true },
+        activate() {
+          return async () => {
+            disposing.resolve()
+            await releaseDispose.promise
+          }
+        },
+      }
+      const joining = (id: string): MainPlugin => ({
+        info: { id, label: id, default: false },
+        activate(ctx) {
+          started.push(id)
+          ctx.register([id], {
+            [`${id}.ping`]: cap({ doors: ['ui'], params: noParams, run: async () => id }),
+          })
+          return () => {}
+        },
+      })
+      const h = rig({
+        plugins: [blocker, joining('agentprobe'), joining('allowed')],
+        roots: { A: root },
+        readSettings: async (at) => {
+          const settings = await readVaultSettings(at)
+          if (holdRead) {
+            holdRead = false
+            reading.resolve()
+            await releaseRead.promise
+          }
+          return settings
+        },
+      })
+      const vault = openVault('A', root)
+      await h.host.reconcile(vault, 'open')
+      await writeVaultSettings(root, {
+        committed: { plugins: { blocker: false, agentprobe: true } },
+      })
+      const older = h.host.reconcile(vault, why)
+      const pending = [older]
+      try {
+        await disposing.promise
+        await writeVaultSettings(root, {
+          committed: { plugins: { blocker: false, agentprobe: false, allowed: true } },
+        })
+        holdRead = true
+        pending.push(h.host.reconcile(vault, why))
+        await reading.promise
+        releaseDispose.resolve()
+        await older
+        expect(started).toEqual([])
+        expect(h.registry.has('agentprobe.ping', 'A')).toBe(false)
+        releaseRead.resolve()
+        await Promise.all(pending)
+        expect(started).toEqual(['allowed'])
+        expect(
+          (
+            await h.capabilities.dispatch({
+              door: 'ui',
+              remote: 'A',
+              name: 'allowed.ping',
+              params: {},
+            })
+          ).value,
+        ).toBe('allowed')
+      } finally {
+        releaseRead.resolve()
+        releaseDispose.resolve()
+        await Promise.allSettled(pending)
+        await h.host.stopAll()
+      }
+    },
+  )
+
+  it('does not let an older same-lifetime configuration read cancel the latest enabled activation', async () => {
+    const reading = repairGate()
+    const release = repairGate()
+    let holdRead = false
+    const root = await tempDir('holi-573-admission-')
+    const h = rig({
+      roots: { A: root },
+      readSettings: async (at) => {
+        const settings = await readVaultSettings(at)
+        if (holdRead) {
+          holdRead = false
+          reading.resolve()
+          await release.promise
+        }
+        return settings
+      },
+    })
+    const vault = openVault('A', root)
+    await h.host.reconcile(vault, 'open')
+    const original = h.ctx()
+    await turn(root, false)
+    holdRead = true
+    const stale = h.host.reconcile(vault, 'settings')
+    try {
+      await reading.promise
+      await turn(root, true)
+      await h.host.reconcile(vault, 'settings')
+      release.resolve()
+      await stale
+      expect(original.activationSignal.aborted).toBe(false)
+      expect(h.ctx()).toBe(original)
+      expect(h.calls).toEqual({ started: 1, stopped: 0 })
+      expect(
+        (await h.capabilities.dispatch({ door: 'ui', remote: 'A', name: 'fake.ping', params: {} }))
+          .value,
+      ).toBe('pong:A')
+    } finally {
+      release.resolve()
+      await Promise.allSettled([stale])
+      await h.host.stopAll()
+    }
+  })
+
+  it('aborts a pending startup at configuration admission without awaiting its settings read', async () => {
+    const starting = repairGate()
+    const releaseStart = repairGate()
+    const reading = repairGate()
+    const releaseRead = repairGate()
+    let holdRead = false
+    let context!: PluginCtx
+    const root = await tempDir('holi-573-admission-')
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      async activate(ctx) {
+        context = ctx
+        starting.resolve()
+        await releaseStart.promise
+        return () => {}
+      },
+    }
+    const h = rig({
+      plugins: [plugin],
+      readSettings: async (at) => {
+        const settings = await readVaultSettings(at)
+        if (holdRead) {
+          holdRead = false
+          reading.resolve()
+          await releaseRead.promise
+        }
+        return settings
+      },
+    })
+    const vault = openVault('A', root)
+    const pending = [h.host.reconcile(vault, 'open')]
+    try {
+      await starting.promise
+      await turn(root, false)
+      holdRead = true
+      pending.push(h.host.reconcile(vault, 'settings'))
+      expect(context.activationSignal.aborted).toBe(true)
+      await reading.promise
+    } finally {
+      releaseRead.resolve()
+      releaseStart.resolve()
+      await Promise.allSettled(pending)
+      await h.host.stopAll()
+    }
+  })
+})
+
+describe('sticky cleanup failure authority', () => {
+  it.each(['stop', 'stopAll'] as const)(
+    '%s revokes retained providers synchronously without unsafe disposal after settings cleanup fails',
+    async (method) => {
+      const contexts = new Map<string, PluginCtx>()
+      const disposed: string[] = []
+      const failure = new Error('dependent cleanup unproven')
+      const provider: MainPlugin = {
+        info: { id: 'provider', label: 'Provider', default: true },
+        activate(ctx) {
+          contexts.set(ctx.remote, ctx)
+          ctx.register(['provider'], {
+            'provider.ping': cap({
+              doors: ['ui', 'cli'],
+              cli: { args: [], summary: 'probe' },
+              params: noParams,
+              run: async () => ctx.head(),
+            }),
+          })
+          return () => {
+            disposed.push(ctx.remote)
+          }
+        },
+      }
+      const dependent: MainPlugin = {
+        info: { id: 'fake', label: 'Dependent', default: true, requires: ['provider'] },
+        activate(ctx) {
+          return () => {
+            if (ctx.remote === 'A') throw failure
+          }
+        },
+      }
+      const a = await tempDir('holi-573-admission-')
+      const b = await tempDir('holi-573-admission-')
+      const h = rig({ plugins: [provider, dependent], roots: { A: a, B: b } })
+      const vault = openVault('A', a)
+      await h.host.reconcile(vault, 'open')
+      await h.host.reconcile(openVault('B', b), 'open')
+      try {
+        await turn(a, false)
+        const sticky = await h.host.reconcile(vault, 'settings').catch((err: unknown) => err)
+        expect(sticky).toMatchObject({ errors: [failure] })
+        const stopping = (method === 'stop' ? h.host.stop('A') : h.host.stopAll()).catch(
+          (err: unknown) => err,
+        )
+        expect(contexts.get('A')!.activationSignal.aborted).toBe(true)
+        const result = await stopping
+        if (method === 'stop') expect(result).toBe(sticky)
+        else expect(result).toMatchObject({ errors: [sticky] })
+        expect(disposed).not.toContain('A')
+        for (const door of ['ui', 'cli'] as const) {
+          await expect(
+            h.capabilities.dispatch({ door, remote: 'A', name: 'provider.ping', params: {} }),
+          ).rejects.toThrow('no such method')
+        }
+        await expect(h.host.stop('A')).rejects.toBe(sticky)
+        if (method === 'stopAll') await h.host.reconcile(openVault('B', b), 'open')
+        expect(
+          (
+            await h.capabilities.dispatch({
+              door: 'ui',
+              remote: 'B',
+              name: 'provider.ping',
+              params: {},
+            })
+          ).value,
+        ).toBe('sha')
+      } finally {
+        await h.host.stop('B')
+        await h.host.stopAll().catch(() => {})
+      }
+    },
+  )
+
+  it.each(['stop', 'stopAll'] as const)(
+    '%s preserves an approved finalization and queued recording output when a drain reports sticky failure',
+    async (method) => {
+      const finalizing = repairGate()
+      const release = repairGate()
+      const failure = new Error('unproven recording drain')
+      const completed: string[] = []
+      let providerCtx!: PluginCtx
+      const provider: MainPlugin = {
+        info: { id: 'provider', label: 'Provider', default: true },
+        activate(ctx) {
+          providerCtx = ctx
+          ctx.register(['provider'], {
+            'provider.final': cap({
+              doors: ['ui'],
+              params: noParams,
+              run: async () => {
+                finalizing.resolve()
+                await release.promise
+                completed.push(await ctx.head())
+                await ctx.commitNow()
+                return 'done'
+              },
+            }),
+          })
+          return () => {
+            throw new Error('unsafe provider disposal')
+          }
+        },
+      }
+      const dependent: MainPlugin = {
+        info: { id: 'fake', label: 'Dependent', default: true, requires: ['provider'] },
+        activate(ctx) {
+          return async () => {
+            ctx.reportDrainFailure(failure)
+            ctx.emit(ctx.remote, 'recording-stop', null)
+            expect(await ctx.call('provider.final', {})).toBe('done')
+            throw failure
+          }
+        },
+      }
+      const root = await tempDir('holi-573-admission-')
+      const h = rig({ plugins: [provider, dependent], roots: { A: root } })
+      const vault = openVault('A', root)
+      await h.host.reconcile(vault, 'open')
+      await turn(root, false)
+      const disabling = h.host.reconcile(vault, 'settings').catch((err: unknown) => err)
+      try {
+        await finalizing.promise
+        const stopping = (method === 'stop' ? h.host.stop('A') : h.host.stopAll()).catch(
+          (err: unknown) => err,
+        )
+        expect(providerCtx.activationSignal.aborted).toBe(true)
+        await stopping
+        await expect(
+          h.capabilities.dispatch({ door: 'ui', remote: 'A', name: 'provider.final', params: {} }),
+        ).rejects.toThrow('no such method')
+        await h.host.stop('A').catch(() => {})
+        release.resolve()
+        await disabling
+        expect(completed).toEqual(['sha'])
+        expect(h.sent.map((item) => item.event.name)).toContain('recording-stop')
+        expect(h.registry.has('provider.final', 'A')).toBe(true)
+      } finally {
+        release.resolve()
+        await disabling
+        await h.host.stopAll().catch(() => {})
+      }
+    },
+  )
+})
+
 describe('work across vaults', () => {
   it('runs while some registered vault runs the plugin, and says why', async () => {
     const [a, b] = [await tempDir(), await tempDir()]
