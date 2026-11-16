@@ -39,9 +39,11 @@ async function run() {
   window.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith('file://')) event.preventDefault()
   })
-  window.webContents.on('console-message', (_event, level, message) =>
-    console.log(`renderer[${level}] ${message}`),
-  )
+  window.webContents.on('console-message', (_event, level, message) => {
+    const zoom = /^HOLI_MAIL_SMOKE_ZOOM:(1(?:\.2)?)$/.exec(message)
+    if (zoom) window.webContents.setZoomFactor(Number(zoom[1]))
+    console.log(`renderer[${level}] ${message}`)
+  })
   window.webContents.on('render-process-gone', (_event, details) =>
     writeFileSync(join(evidence, 'renderer-gone.json'), JSON.stringify(details)),
   )
