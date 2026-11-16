@@ -562,6 +562,25 @@ async function run(): Promise<void> {
     plainAfterInsert,
   )
   mark('native-plaintext-only-motion-insert-and-native-undo-redo')
+  await setPlainSelection('#plaintext')
+  await nativePress(a, 'Escape')
+  await nativePress(a, 'Right', 'Right', true)
+  assert.equal(await inPage<boolean>(a, 'getSelection().isCollapsed'), false)
+  await nativePress(a, 'i')
+  assert.equal(await inPage<boolean>(a, 'getSelection().isCollapsed'), true)
+  await nativePress(a, 'X')
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    `X${plainAfterInsert}`,
+    'plaintext i inserts before a normal-mode selection instead of replacing it',
+  )
+  a.webContents.undo()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(
+    await inPage<string>(a, `document.querySelector('#plaintext').textContent`),
+    plainAfterInsert,
+  )
+  mark('native-plaintext-selection-i-keeps-insert-before-selection-behavior')
 
   const originalRichMarkup = await inPage<string>(a, `document.querySelector('#rich').innerHTML`)
   await applyVimConfig(vimSnapshot, false, 7)

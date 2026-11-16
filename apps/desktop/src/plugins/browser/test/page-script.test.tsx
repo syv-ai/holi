@@ -339,6 +339,37 @@ test('plaintext-only single-line hosts use native selection for Vim motions', ()
   expect(host.textContent).toBe('café🙂 two')
 })
 
+test('plaintext-only i collapses a normal-mode selection before native insertion', () => {
+  const host = document.createElement('div')
+  host.setAttribute('contenteditable', 'plaintext-only')
+  host.setAttribute('tabindex', '0')
+  host.textContent = 'alpha beta'
+  document.body.append(host)
+  host.focus()
+  const range = document.createRange()
+  range.setStart(host.firstChild!, 0)
+  range.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(range)
+  holi().vim.configure(true, 48, holi().vim.documentNonce())
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    host.dispatchEvent(event)
+    return event
+  }
+  press('Escape')
+  range.setEnd(host.firstChild!, 5)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(range)
+  expect(getSelection()!.isCollapsed).toBe(false)
+  expect(press('i').defaultPrevented).toBe(true)
+  expect(getSelection()!.isCollapsed).toBe(true)
+  expect(getSelection()!.anchorNode).toBe(host.firstChild)
+  expect(getSelection()!.anchorOffset).toBe(0)
+  expect(holi().vim.mode().mode).toBe('insert')
+  expect(press('X').defaultPrevented).toBe(false)
+})
+
 test('plaintext-only ownership is invalidated by every observed DOM eligibility transition', async () => {
   const host = document.createElement('div')
   host.setAttribute('contenteditable', 'plaintext-only')

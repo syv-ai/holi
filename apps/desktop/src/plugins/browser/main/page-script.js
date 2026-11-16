@@ -743,7 +743,7 @@
     }
     event.preventDefault()
     if (enteringInsert) {
-      if (!(key === 'i' && isNativeHost(target))) setCaret(target, destination)
+      if (!(key === 'i' && richHost(target))) setCaret(target, destination)
       vimMode = 'insert'
       verticalColumn = null
       return

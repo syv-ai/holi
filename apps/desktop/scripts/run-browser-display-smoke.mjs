@@ -278,6 +278,7 @@ try {
     'native-j-k-vertical-column',
     'unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough',
     'native-plaintext-only-motion-insert-and-native-undo-redo',
+    'native-plaintext-selection-i-keeps-insert-before-selection-behavior',
     'native-rich-inline-motion-insert-undo-redo-preserves-formatting-and-link',
     'rich-css-loss-and-restoration-retains-native-key-ownership',
     'native-rich-inline-ime-composition-retains-formatting-and-link',
