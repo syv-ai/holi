@@ -1,8 +1,8 @@
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
@@ -16,6 +16,7 @@ import type { AgentExit, StartArgs } from '../main/host/pty'
 import { agentMain } from '../main/index'
 import type { BridgeRoute } from '../../../main/plugin-api'
 import { openTurnLog } from '../main/host/turn-log'
+import { agentScratchRoots } from '../main/host/scratch-roots'
 
 const adapters = vi.hoisted(() => ({
   version: vi.fn(() => 'test'),
@@ -296,6 +297,43 @@ const customRow = {
     expect.objectContaining({ harness: expect.objectContaining({ id: harness.id }) }),
   ]),
 }
+
+it('keeps real job and fenced scratch cleanup within its activated vault', async () => {
+  const { host, enter, call, userData, roots } = await rig()
+  await enter(A)
+  await enter(B)
+  const owners = await readdir(join(userData, 'agent-scratch'))
+  expect(owners).toHaveLength(2)
+  const scratch = owners.map((owner) => join(userData, 'agent-scratch', owner))
+  const a = await agentScratchRoots(userData, { remote: A, root: roots[A] })
+  const b = await agentScratchRoots(userData, { remote: B, root: roots[B] })
+  expect(dirname(a.jobs)).not.toBe(dirname(b.jobs))
+  expect(scratch).toEqual(expect.arrayContaining([dirname(a.jobs), dirname(b.jobs)]))
+  const legacy = [join(userData, 'agent-jobs'), join(userData, 'agent-fenced')]
+  for (const root of [
+    ...scratch.flatMap((owner) => [join(owner, 'jobs'), join(owner, 'fenced')]),
+    ...legacy,
+  ]) {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'ownership-sentinel'), root)
+  }
+  const contents = async (root: string) => readFile(join(root, 'ownership-sentinel'), 'utf8')
+  await expect(call(B, 'agent.harnesses')).resolves.toMatchObject({ agents: expect.any(Array) })
+
+  await host.stop(A)
+  await expect(contents(b.jobs)).resolves.toBe(b.jobs)
+  await expect(contents(b.fenced)).resolves.toBe(b.fenced)
+  await expect(contents(a.jobs)).rejects.toThrow()
+  await expect(contents(a.fenced)).rejects.toThrow()
+  await expect(contents(legacy[0]!)).resolves.toBe(legacy[0])
+  await expect(contents(legacy[1]!)).resolves.toBe(legacy[1])
+
+  await enter(A)
+  await expect(call(B, 'agent.harnesses')).resolves.toMatchObject({ agents: expect.any(Array) })
+  await expect(contents(b.jobs)).resolves.toBe(b.jobs)
+  await host.stop(A)
+  await expect(contents(b.fenced)).resolves.toBe(b.fenced)
+})
 
 it('serializes overlapping PTY history updates across activations and drains stop A', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'holi-agent-history-'))
