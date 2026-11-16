@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,11 +18,15 @@ import {
   isBrowserRuntimeError,
 } from './native-smoke-browser-errors.mjs'
 import { observeChild, startupDiagnostic } from './native-smoke-process.mjs'
+import { assertExclusiveRowHover, assertStableRowBoxes } from './native-smoke-row-assertions.mjs'
+import { rowSnapshotExpression } from './native-smoke-row-snapshot.mjs'
+import { encodeScreencast } from './native-smoke-recording.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(process.argv[2] ?? '/tmp/holi-564-evidence-final')
 const root = await mkdtemp(join(tmpdir(), 'holi-564-native-'))
 const profile = join(root, 'profile')
+const vault = join(root, 'vault')
 let child
 let processState
 let server
@@ -31,6 +36,7 @@ let logs = ''
 let cdpClient
 const browserErrors = []
 const videoFrames = []
+const captures = []
 try {
   await mkdir(evidence, { recursive: true })
   for (const name of [
@@ -42,11 +48,21 @@ try {
     'name-hover-long.png',
     'assertions.json',
     'electron-smoke.log',
+    'cleanup.json',
+    ...['short', 'long'].flatMap((length) =>
+      ['subscribed', 'unsubscribed'].flatMap((state) =>
+        ['rest', 'hover', 'row-focus', 'bell-focus'].map(
+          (interaction) => `file-${length}-${state}-${interaction}.png`,
+        ),
+      ),
+    ),
   ])
     await rm(join(evidence, name), { force: true })
+  await mkdir(vault, { recursive: true })
   await build({
     configFile: false,
     root: desktop,
+    define: { 'import.meta.env.VITE_FOLDER_BELL_VAULT': JSON.stringify(vault) },
     base: './',
     resolve: { alias: { '@': join(desktop, 'src/renderer/src') } },
     plugins: [
@@ -57,7 +73,7 @@ try {
         enforce: 'pre',
         transform(_code, id) {
           if (id.endsWith('/src/renderer/src/lib/trpc.ts'))
-            return `const calls=()=>window.__folderBellCalls;const subscriptions=new Map();export const trpc={subscriptions:{list:{query:async({paths})=>JSON.parse(paths).map(path=>({path,explicit:subscriptions.get(path)===true,coveredBy:null,baseline:null}))},set:{mutate:async({path,enabled})=>{subscriptions.set(path,enabled);calls().push({path,enabled})}}}}`
+            return `const calls=()=>window.__folderBellCalls;const subscriptions=new Map();export const trpc={subscriptions:{list:{query:async({paths})=>JSON.parse(paths).map(path=>({path,explicit:subscriptions.get(path)===true,coveredBy:null,baseline:subscriptions.get(path)===true?'f'.repeat(40):null}))},set:{mutate:async({path,enabled})=>{subscriptions.set(path,enabled);calls().push({path,enabled})}}}}`
           return null
         },
       },
@@ -162,7 +178,7 @@ try {
       await new Promise((r) => setTimeout(r, 100))
     }
     throw Error(
-      `${startupDiagnostic(label, processState, logs)}; errors=${JSON.stringify(browserErrors)}`,
+      `${startupDiagnostic(label, processState, logs)}; errors=${JSON.stringify(browserErrors)}; focus=${JSON.stringify(await evaluate(`({hasFocus:document.hasFocus(),active:document.activeElement?.getAttribute('aria-label'),focusWithin:[...document.querySelectorAll(':focus-within')].map(e=>e.getAttribute('aria-label'))})`).catch(() => null))}`,
     )
   }
   const port = await wait(
@@ -180,7 +196,10 @@ try {
     onEvent(message) {
       if (isBrowserRuntimeError(message)) browserErrors.push(message)
       if (message.method === 'Page.screencastFrame') {
-        videoFrames.push(Buffer.from(message.params.data, 'base64'))
+        videoFrames.push({
+          image: Buffer.from(message.params.data, 'base64'),
+          timestamp: message.params.metadata.timestamp,
+        })
         void cdpClient
           .call(
             'Page.screencastFrameAck',
@@ -205,6 +224,14 @@ try {
   evaluate = page.evaluate
   const until = (expr, label) => wait(() => evaluate(expr), label)
   const key = async (key, modifiers = 0) => {
+    const expectedRow = ['Home', 'ArrowDown', 'ArrowUp'].includes(key)
+      ? await evaluate(`(() => {
+          const rows = [...document.querySelectorAll('[role="treeitem"]')];
+          const index = rows.indexOf(document.activeElement);
+          if (index < 0) return null;
+          return rows[${JSON.stringify(key)} === 'Home' ? 0 : Math.max(0, Math.min(rows.length - 1, index + (${JSON.stringify(key)} === 'ArrowDown' ? 1 : -1)))].getAttribute('aria-label');
+        })()`)
+      : null
     const code = key.length === 1 ? `Key${key.toUpperCase()}` : key
     const windowsVirtualKeyCode =
       key === 'Enter'
@@ -231,10 +258,25 @@ try {
       modifiers,
       windowsVirtualKeyCode,
     })
+    // Headless-tree commits navigation state before its asynchronous DOM focus
+    // transfer. Wait for that transfer, not merely the CDP input acknowledgement.
+    if (expectedRow !== null)
+      await wait(
+        () =>
+          evaluate(
+            `document.activeElement?.getAttribute('aria-label') === ${JSON.stringify(expectedRow)} && document.activeElement?.getAttribute('data-focus') === 'true'`,
+          ),
+        `native ${key} focus transfer to ${expectedRow}`,
+      )
   }
   const screenshot = async (name) => {
-    const r = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
-    await writeFile(join(evidence, name), Buffer.from(r.data, 'base64'))
+    // Capture the native view rather than its GPU surface: the latter can fail
+    // with UnknownVizError on macOS even while the visible window is healthy.
+    const r = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: false })
+    const image = Buffer.from(r.data, 'base64')
+    assert(image.length > 1000, `${name}: capture must contain rendered content`)
+    await writeFile(join(evidence, name), image)
+    captures.push({ name, method: 'Page.captureScreenshot', fromSurface: false })
   }
   await until(
     '!!window.__folderBellReady && !!document.querySelector(\'[role="tree"] [role="treeitem"]\')',
@@ -257,10 +299,7 @@ try {
     evaluate(
       `(()=>[...document.querySelectorAll('[data-slot="tree-item-label"],[data-tree-row-action]')].every(e=>!e.matches(':hover')))()`,
     )
-  const metrics = () =>
-    evaluate(
-      `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="parent"]');const label=row.querySelector('[data-slot="tree-item-label"]');const action=label.querySelector('[data-tree-row-action]');const name=label.querySelector('.truncate');const nested=document.querySelector('[role="treeitem"][aria-label="nested"]');const nestedAction=nested?.querySelector('[data-tree-row-action]');const box=e=>{const r=e.getBoundingClientRect();return{x:r.x,y:r.y,right:r.right,width:r.width}};return{opacity:getComputedStyle(action).opacity,name:box(name),action:box(action),nestedAction:nestedAction?box(nestedAction):null,focused:document.activeElement===row,hoverLabels:[...document.querySelectorAll('[data-slot="tree-item-label"]')].filter(e=>e.matches(':hover')).length,hoverButtons:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e.matches(':hover')).length}})()`,
-    )
+  const rowSnapshot = (path) => evaluate(rowSnapshotExpression(path))
   // The real pointer is parked in the window's blank lower margin, outside every tree label and button.
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 680, y: 760 })
   assert(
@@ -271,11 +310,16 @@ try {
   const labels = await evaluate(`document.querySelectorAll('[data-slot="tree-item-label"]').length`)
   assert(labels > 0)
   const initialButtons = await assertAllHidden('startup before focus enters tree')
-  const rest = await metrics()
+  const rest = await rowSnapshot('parent')
   assert.equal(rest.opacity, '0', 'action stays hidden at rest outside hover and focus')
   assert(await allNoHover(), 'pointer must remain outside all tree labels and buttons')
-  const initialGeometry = await evaluate(
-    `(()=>Object.fromEntries([...document.querySelectorAll('[role=treeitem]')].map(row=>{const name=row.querySelector('.truncate');const action=row.querySelector('[data-tree-row-action]');return[row.getAttribute('aria-label'),{nameX:name.getBoundingClientRect().x,actionRight:action.getBoundingClientRect().right}]})))()`,
+  const initialGeometry = Object.fromEntries(
+    await Promise.all(
+      ['parent', 'a-long-folder-name-to-test-row-geometry'].map(async (path) => {
+        const snapshot = await rowSnapshot(path)
+        return [path, { nameX: snapshot.boxes.name.x, actionRight: snapshot.boxes.bell.right }]
+      }),
+    ),
   )
   const hoverStates = []
   for (const path of ['parent', 'a-long-folder-name-to-test-row-geometry']) {
@@ -287,23 +331,19 @@ try {
       `getComputedStyle(document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}] [data-tree-row-action]')).opacity==='1'`,
       `hover folder name reveals ${path}`,
     )
-    const state = await evaluate(
-      `(()=>{const row=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}]');const label=row.querySelector('.truncate');const action=row.querySelector('[data-tree-row-action]');const box=e=>{const r=e.getBoundingClientRect();return{x:r.x,right:r.right}};return{path:${JSON.stringify(path)},opacity:getComputedStyle(action).opacity,label:box(label),action:box(action),hoverName:label.matches(':hover'),hoverBell:action.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e!==action).map(e=>({path:e.closest('[role=treeitem]')?.getAttribute('aria-label'),opacity:getComputedStyle(e).opacity}))}})()`,
-    )
+    const state = await rowSnapshot(path)
     assert.equal(state.opacity, '1')
-    assert(state.hoverName, `pointer physically hovers ${path} name text`)
-    assert(!state.hoverBell, `pointer is over ${path} name, not its bell`)
-    assert(
-      state.others.every((button) => button.opacity === '0'),
-      `unrelated bells remain hidden: ${JSON.stringify(state.others)}`,
+    assertExclusiveRowHover(
+      { nameHovered: state.nameHover, bellHovered: state.bellHover, otherActions: state.others },
+      `${path} folder hover`,
     )
-    assert(state.label.x < state.action.x, `name precedes ${path} trailing action`)
+    assert(state.boxes.name.x < state.boxes.bell.x, `name precedes ${path} trailing action`)
     assert(
-      Math.abs(state.label.x - initialGeometry[path].nameX) < 1,
+      Math.abs(state.boxes.name.x - initialGeometry[path].nameX) < 1,
       `${path} name does not shift on hover`,
     )
     assert(
-      Math.abs(state.action.right - initialGeometry[path].actionRight) < 1,
+      Math.abs(state.boxes.bell.right - initialGeometry[path].actionRight) < 1,
       `${path} trailing edge remains fixed on hover`,
     )
     await screenshot(`name-hover-${path === 'parent' ? 'short' : 'long'}.png`)
@@ -311,12 +351,10 @@ try {
       `(()=>{const row=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}]');const name=row.querySelector('.truncate').getBoundingClientRect();const action=row.querySelector('[data-tree-row-action]').getBoundingClientRect();return{x:(name.right+action.left)/2,y:action.y+action.height/2}})()`,
     )
     await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...gapPoint })
-    const gapState = await evaluate(
-      `(()=>{const row=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}]');const action=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(action).opacity,hoverLabel:row.querySelector('[data-slot="tree-item-label"]').matches(':hover'),hoverBell:action.matches(':hover')}})()`,
-    )
+    const gapState = await rowSnapshot(path)
     assert.equal(gapState.opacity, '1', `${path} bell remains usable across the gap`)
-    assert(gapState.hoverLabel, `${path} label retains hover across the gap`)
-    assert(!gapState.hoverBell, `${path} pointer crosses the gap before the bell`)
+    assert(gapState.labelHover, `${path} label retains hover across the gap`)
+    assert(!gapState.bellHover, `${path} pointer crosses the gap before the bell`)
     const bellPoint = await evaluate(
       `(()=>{const r=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}] [data-tree-row-action]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
     )
@@ -325,13 +363,11 @@ try {
       `document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}] [data-tree-row-action]').matches(':hover')`,
       `pointer reaches bell for ${path}`,
     )
-    const bellState = await evaluate(
-      `(()=>{const row=document.querySelector('[role="treeitem"][aria-label=${JSON.stringify(path)}]');const action=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(action).opacity,hoverBell:action.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e!==action).map(e=>getComputedStyle(e).opacity)}})()`,
-    )
+    const bellState = await rowSnapshot(path)
     assert.equal(bellState.opacity, '1')
-    assert(bellState.hoverBell, `pointer reaches ${path} bell from its name`)
+    assert(bellState.bellHover, `pointer reaches ${path} bell from its name`)
     assert(
-      bellState.others.every((opacity) => opacity === '0'),
+      bellState.others.every((action) => action.opacity === '0'),
       `${path} bell hover is exclusive`,
     )
     hoverStates.push({ ...state, gap: gapState, bell: bellState })
@@ -344,7 +380,7 @@ try {
     await assertAllHidden(`after hover exits ${path}`)
   }
   assert(
-    Math.abs(hoverStates[0].action.right - hoverStates[1].action.right) < 1,
+    Math.abs(hoverStates[0].boxes.bell.right - hoverStates[1].boxes.bell.right) < 1,
     'short and long folder trailing action edges align',
   )
   await cdp('Page.stopScreencast')
@@ -359,6 +395,7 @@ try {
     }
   }
   assert(focusedByKeyboard, 'Tab must reach an outer treeitem using native keyboard traversal')
+  await key('Home')
   for (
     let i = 0;
     i < 6 && !(await evaluate(`document.activeElement.getAttribute('aria-label')==='parent'`));
@@ -374,11 +411,11 @@ try {
     'row action fully revealed',
   )
   assert(await allNoHover())
-  const rowBefore = await metrics()
+  const rowBefore = await rowSnapshot('parent')
   assert.equal(rowBefore.opacity, '1', 'outer focused treeitem must reveal its subscription action')
   assert.equal(rowBefore.hoverLabels, 0)
   assert.equal(rowBefore.hoverButtons, 0)
-  assert(rowBefore.name.x < rowBefore.action.x, 'name must remain before trailing action')
+  assert(rowBefore.boxes.name.x < rowBefore.boxes.bell.x, 'name must remain before trailing action')
   await screenshot('row-focus.png')
   // Tab reaches the actual folder button; Enter changes its subscription through the fixture tRPC adapter.
   await key('Tab')
@@ -428,7 +465,7 @@ try {
     `document.querySelector('[role="treeitem"][aria-label="parent"] [data-slot="tree-item-label"] .truncate').getBoundingClientRect().x`,
   )
   assert(
-    Math.abs(buttonFocusedNameX - rowBefore.name.x) < 1,
+    Math.abs(buttonFocusedNameX - rowBefore.boxes.name.x) < 1,
     'button focus does not shift the folder name',
   )
   // Return to the same row through native Tab traversal and use ArrowRight to expand it.
@@ -470,9 +507,7 @@ try {
   )
   await assertAllHidden('nested name hover starts without keyboard focus')
   assert(await allNoHover(), 'nested geometry check must be hover-free')
-  const nestedBeforeHover = await evaluate(
-    `(()=>{const row=document.querySelector('[role=treeitem][aria-label="nested"]');const name=row.querySelector('.truncate').getBoundingClientRect();const action=row.querySelector('[data-tree-row-action]').getBoundingClientRect();return{nameX:name.x,actionRight:action.right}})()`,
-  )
+  const nestedBeforeHover = await rowSnapshot('nested')
   const nestedNamePoint = await evaluate(
     `(()=>{const e=document.querySelector('[role="treeitem"][aria-label="nested"] .truncate');const range=document.createRange();range.selectNodeContents(e);const r=range.getBoundingClientRect();return{x:r.x+Math.min(r.width/2,8),y:r.y+r.height/2}})()`,
   )
@@ -481,27 +516,25 @@ try {
     `getComputedStyle(document.querySelector('[role=treeitem][aria-label="nested"] [data-tree-row-action]')).opacity==='1'`,
     'hover nested folder name reveals action',
   )
-  const nestedHover = await evaluate(
-    `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="nested"]');const e=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(e).opacity,hoverName:row.querySelector('.truncate').matches(':hover'),hoverBell:e.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(x=>x!==e).map(x=>({path:x.closest('[role=treeitem]')?.getAttribute('aria-label'),opacity:getComputedStyle(x).opacity}))}})()`,
-  )
-  assert(nestedHover.hoverName, 'pointer physically hovers nested folder name')
-  assert(!nestedHover.hoverBell, 'nested bell is revealed without pointing at the bell')
-  assert(
-    nestedHover.others.every((button) => button.opacity === '0'),
-    `unrelated bells remain hidden: ${JSON.stringify(nestedHover.others)}`,
+  const nestedHover = await rowSnapshot('nested')
+  assertExclusiveRowHover(
+    {
+      nameHovered: nestedHover.nameHover,
+      bellHovered: nestedHover.bellHover,
+      otherActions: nestedHover.others,
+    },
+    'nested folder hover',
   )
   const nestedGapPoint = await evaluate(
     `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="nested"]');const name=row.querySelector('.truncate').getBoundingClientRect();const action=row.querySelector('[data-tree-row-action]').getBoundingClientRect();return{x:(name.right+action.left)/2,y:action.y+action.height/2}})()`,
   )
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...nestedGapPoint })
-  const nestedGap = await evaluate(
-    `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="nested"]');const action=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(action).opacity,hoverLabel:row.querySelector('[data-slot="tree-item-label"]').matches(':hover'),hoverBell:action.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e!==action).map(e=>getComputedStyle(e).opacity)}})()`,
-  )
+  const nestedGap = await rowSnapshot('nested')
   assert.equal(nestedGap.opacity, '1', 'nested bell stays usable across the name/bell gap')
-  assert(nestedGap.hoverLabel, 'nested label retains hover across the gap')
-  assert(!nestedGap.hoverBell, 'nested pointer is not at the bell while crossing the gap')
+  assert(nestedGap.labelHover, 'nested label retains hover across the gap')
+  assert(!nestedGap.bellHover, 'nested pointer is not at the bell while crossing the gap')
   assert(
-    nestedGap.others.every((opacity) => opacity === '0'),
+    nestedGap.others.every((action) => action.opacity === '0'),
     'nested gap keeps unrelated bells hidden',
   )
   const nestedBellPoint = await evaluate(
@@ -512,24 +545,20 @@ try {
     `document.querySelector('[role="treeitem"][aria-label="nested"] [data-tree-row-action]').matches(':hover')`,
     'pointer reaches nested bell from its name',
   )
-  const nestedBell = await evaluate(
-    `(()=>{const row=document.querySelector('[role="treeitem"][aria-label="nested"]');const action=row.querySelector('[data-tree-row-action]');return{opacity:getComputedStyle(action).opacity,hoverBell:action.matches(':hover'),others:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e!==action).map(e=>getComputedStyle(e).opacity)}})()`,
-  )
+  const nestedBell = await rowSnapshot('nested')
   assert.equal(nestedBell.opacity, '1')
-  assert(nestedBell.hoverBell, 'nested bell is pointer-accessible from its name')
+  assert(nestedBell.bellHover, 'nested bell is pointer-accessible from its name')
   assert(
-    nestedBell.others.every((opacity) => opacity === '0'),
+    nestedBell.others.every((action) => action.opacity === '0'),
     'nested bell hover is exclusive',
   )
-  const nestedDuringHover = await evaluate(
-    `(()=>{const row=document.querySelector('[role=treeitem][aria-label="nested"]');const name=row.querySelector('.truncate').getBoundingClientRect();const action=row.querySelector('[data-tree-row-action]').getBoundingClientRect();return{nameX:name.x,actionRight:action.right}})()`,
-  )
+  const nestedDuringHover = await rowSnapshot('nested')
   assert(
-    Math.abs(nestedDuringHover.nameX - nestedBeforeHover.nameX) < 1,
+    Math.abs(nestedDuringHover.boxes.name.x - nestedBeforeHover.boxes.name.x) < 1,
     'nested name does not shift on hover',
   )
   assert(
-    Math.abs(nestedDuringHover.actionRight - nestedBeforeHover.actionRight) < 1,
+    Math.abs(nestedDuringHover.boxes.bell.right - nestedBeforeHover.boxes.bell.right) < 1,
     'nested trailing edge remains fixed on hover',
   )
   hoverStates.push({
@@ -545,20 +574,19 @@ try {
     'hover exit hides nested folder',
   )
   assert(await allNoHover(), 'pointer is outside before nested row measurements')
-  const nested = await evaluate(
-    `(()=>{const parent=document.querySelector('[role="treeitem"][aria-label="parent"]');const child=document.querySelector('[role="treeitem"][aria-label="nested"]');const box=e=>{const r=e.getBoundingClientRect();return{x:r.x,right:r.right}};return{parentAction:box(parent.querySelector('[data-tree-row-action]')),nestedAction:box(child.querySelector('[data-tree-row-action]')),nestedName:box(child.querySelector('.truncate')),nestedOpacity:getComputedStyle(child.querySelector('[data-tree-row-action]')).opacity,hoverLabels:[...document.querySelectorAll('[data-slot="tree-item-label"]')].filter(e=>e.matches(':hover')).length,hoverButtons:[...document.querySelectorAll('[data-tree-row-action]')].filter(e=>e.matches(':hover')).length}})()`,
-  )
-  assert.equal(nested.nestedOpacity, '0', 'unfocused nested action remains hidden at rest')
+  const parentRest = await rowSnapshot('parent')
+  const nested = await rowSnapshot('nested')
+  assert.equal(nested.opacity, '0', 'unfocused nested action remains hidden at rest')
   assert.equal(nested.hoverLabels, 0)
   assert.equal(nested.hoverButtons, 0)
   assert(
-    Math.abs(nested.parentAction.right - nested.nestedAction.right) < 1,
+    Math.abs(parentRest.boxes.bell.right - nested.boxes.bell.right) < 1,
     'nested/parent trailing action edges align',
   )
-  assert(nested.nestedName.x > rowBefore.name.x, 'nested name has the expected deeper indent')
-  const restored = await metrics()
+  assert(nested.boxes.name.x > rowBefore.boxes.name.x, 'nested name has the expected deeper indent')
+  const restored = await rowSnapshot('parent')
   assert(
-    Math.abs(restored.name.x - rowBefore.name.x) < 1,
+    Math.abs(restored.boxes.name.x - rowBefore.boxes.name.x) < 1,
     'revealing the action cannot shift the name',
   )
   const hoverCheckedNodes = await evaluate(
@@ -603,9 +631,186 @@ try {
   )
   assert(await allNoHover(), 'focus-exit assertion is pointer-free')
   const finalHiddenButtons = await assertAllHidden('after focus exits tree')
+  // These are browser layout/input assertions, not jsdom class-name proxies.
+  // Keep both file lengths beside the directory baseline in the same real tree.
+  const filePaths = [
+    'brief.md',
+    'a-considerably-longer-filename-to-check-the-trailing-action-slot.md',
+  ]
+  const fileStates = []
+  const rowSelector = (path) => `[role="treeitem"][aria-label=${JSON.stringify(path)}]`
+  const exitTree = async () => {
+    await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 680, y: 760 })
+    for (let i = 0; i < 40; i++) {
+      if (
+        await evaluate(
+          `document.activeElement?.matches('button[aria-label="Subscribe this vault"]')`,
+        )
+      )
+        break
+      await key('Tab')
+    }
+    assert(
+      await evaluate(
+        `document.activeElement?.matches('button[aria-label="Subscribe this vault"]')`,
+      ),
+      'Tab exits tree to toolbar',
+    )
+    await until(
+      `[...document.querySelectorAll('[data-tree-row-action]')].every(e => getComputedStyle(e).opacity === '0')`,
+      'all row bells hidden after native focus exit',
+    )
+    assert(await allNoHover())
+  }
+  const focusFile = async (path) => {
+    for (let i = 0; i < 40; i++) {
+      await key('Tab')
+      if (await evaluate(`document.activeElement?.matches('[role="treeitem"]')`)) break
+    }
+    assert(
+      await evaluate(`document.activeElement?.matches('[role="treeitem"]')`),
+      'Tab enters tree',
+    )
+    await key('Home')
+    for (let i = 0; i < 12; i++) {
+      if (await evaluate(`document.activeElement?.matches(${JSON.stringify(rowSelector(path))})`))
+        break
+      await key('ArrowDown')
+    }
+    await until(
+      `document.activeElement?.matches(${JSON.stringify(rowSelector(path))})`,
+      `keyboard reaches ${path}`,
+    )
+    await until(
+      `getComputedStyle(document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})).opacity === '1'`,
+      `keyboard reveals ${path}`,
+    )
+  }
+  for (const [index, path] of filePaths.entries()) {
+    let firstRest
+    for (const subscribed of [false, true]) {
+      const stateName = subscribed ? 'subscribed' : 'unsubscribed'
+      const stem = `file-${index === 0 ? 'short' : 'long'}-${stateName}`
+      await exitTree()
+      const rest = await rowSnapshot(path)
+      firstRest ??= rest
+      assertStableRowBoxes(firstRest, rest, `${path} ${stateName} rest`)
+      assert.equal(rest.opacity, '0', `${path}: even a subscribed bell is hidden at rest`)
+      assert.equal(rest.ariaLabel, `${subscribed ? 'Unsubscribe' : 'Subscribe'} ${path}`)
+      assert(
+        rest.icon?.split(/\s+/).includes(subscribed ? 'lucide-bell-ring' : 'lucide-bell'),
+        `${path}: rendered icon reflects subscription`,
+      )
+      assert.equal(
+        rest.nameTruncated,
+        index === 1,
+        `${path}: fixture exercises short and genuinely truncated names`,
+      )
+      assert(
+        Math.abs(rest.boxes.bell.right - parentRest.boxes.bell.right) < 0.5,
+        `${path}: file bell aligns with directory baseline`,
+      )
+      assert(rest.boxes.bell.right <= rest.boxes.label.right, `${path}: bell stays within its row`)
+      assert(rest.boxes.name.right <= rest.boxes.bell.x, `${path}: filename cannot overlap bell`)
+      await screenshot(`${stem}-rest.png`)
+      const point = { x: rest.boxes.name.x + 8, y: rest.boxes.name.y + rest.boxes.name.height / 2 }
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+      await until(
+        `getComputedStyle(document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})).opacity === '1'`,
+        `${path}: real filename hover reveals bell`,
+      )
+      const hover = await rowSnapshot(path)
+      assertExclusiveRowHover(
+        { nameHovered: hover.nameHover, bellHovered: hover.bellHover, otherActions: hover.others },
+        `${path} filename hover`,
+      )
+      assertStableRowBoxes(rest, hover, `${path} ${stateName} hover`)
+      await screenshot(`${stem}-hover.png`)
+      const bellPoint = { x: rest.boxes.bell.x + rest.boxes.bell.width / 2, y: point.y }
+      await cdp('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: (rest.boxes.name.right + rest.boxes.bell.x) / 2,
+        y: point.y,
+      })
+      assert.equal(
+        (await rowSnapshot(path)).opacity,
+        '1',
+        `${path}: bell remains revealed across gap`,
+      )
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...bellPoint })
+      const bellHover = await rowSnapshot(path)
+      assert(bellHover.bellHover, `${path}: pointer can reach revealed bell`)
+      assert.equal(bellHover.opacity, '1')
+      assertStableRowBoxes(rest, bellHover, `${path} ${stateName} bell hover`)
+      await exitTree()
+      assertStableRowBoxes(rest, await rowSnapshot(path), `${path} ${stateName} hover exit`)
+      await focusFile(path)
+      const rowFocus = await rowSnapshot(path)
+      assert(
+        rowFocus.rowFocused && rowFocus.opacity === '1',
+        `${path}: native row focus reveals bell without hover`,
+      )
+      assert(await allNoHover())
+      assertStableRowBoxes(rest, rowFocus, `${path} ${stateName} row focus`)
+      await screenshot(`${stem}-row-focus.png`)
+      await key('Tab')
+      await until(
+        `document.activeElement?.matches(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})`,
+        `${path}: Tab reaches bell`,
+      )
+      const bellFocus = await rowSnapshot(path)
+      assert(
+        bellFocus.bellFocused && bellFocus.focusVisible && bellFocus.opacity === '1',
+        `${path}: keyboard focus makes bell visible`,
+      )
+      assert(
+        bellFocus.focusShadow !== 'none' && bellFocus.focusShadow !== rest.focusShadow,
+        `${path}: keyboard focus paints a ring: ${bellFocus.focusShadow}`,
+      )
+      assert(
+        bellFocus.others.every((e) => e.opacity === '0'),
+        `${path}: keyboard focus does not reveal unrelated bells`,
+      )
+      assert(await allNoHover())
+      assertStableRowBoxes(rest, bellFocus, `${path} ${stateName} bell focus`)
+      await key('Escape') // Dismiss the real tooltip without hiding the focused bell.
+      assert((await rowSnapshot(path)).focusVisible, `${path}: Escape preserves keyboard focus`)
+      await screenshot(`${stem}-bell-focus.png`)
+      const callCount = await evaluate('window.__folderBellCalls.length')
+      await key('Enter')
+      await until(
+        `window.__folderBellCalls.length === ${callCount + 1}`,
+        `${path}: keyboard toggles ${stateName}`,
+      )
+      assert.deepEqual(await evaluate('window.__folderBellCalls.at(-1)'), {
+        path,
+        enabled: !subscribed,
+      })
+      await until(
+        `document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})?.getAttribute('aria-label') === ${JSON.stringify(`${subscribed ? 'Subscribe' : 'Unsubscribe'} ${path}`)} && !document.querySelector(${JSON.stringify(rowSelector(path) + ' [data-tree-row-action]')})?.disabled`,
+        `${path}: toggle settles`,
+      )
+      assertStableRowBoxes(rest, await rowSnapshot(path), `${path} toggle`)
+      await exitTree()
+      assertStableRowBoxes(rest, await rowSnapshot(path), `${path} focus exit`)
+      fileStates.push({
+        path,
+        subscribed,
+        rest,
+        hover,
+        bellHover,
+        rowFocus,
+        bellFocus,
+        keyboardMutation: { path, enabled: !subscribed },
+      })
+    }
+  }
   assertNoBrowserRuntimeErrors(browserErrors)
   const report = {
     result: 'PASS',
+    fileAcceptance: fileStates,
+    isolatedPaths: { root, profile, vault },
+    captures,
     rendererRuntimeErrors: browserErrors,
     runtimeErrorGuardVerification: {
       uncaughtException: 'fails smoke',
@@ -613,7 +818,7 @@ try {
       cleanCollection: 'passes',
     },
     hoverEvidence:
-      'Native CDP mouse movement over folder-name text, through the name/bell gap, then onto the bell; each matching bell appears exclusively.',
+      'Native CDP mouse movement over folder and file name text, through the name/bell gap, then onto the bell; each matching bell appears exclusively. Files are checked in subscribed and unsubscribed states.',
     actualProductionFilesSection: true,
     actualNativeKeyboard: true,
     hoverFree: true,
@@ -634,42 +839,31 @@ try {
     pointerMutation: await evaluate('window.__folderBellCalls[1]'),
     pointer: { x: 680, y: 760 },
     screenshots: [
+      ...captures
+        .filter((capture) => capture.name.startsWith('file-'))
+        .map((capture) => capture.name),
       'name-hover-short.png',
       'name-hover-long.png',
       'row-focus.png',
       'button-focus.png',
     ],
     recordings: ['folder-subscriptions-hover.webm', 'folder-subscriptions-keyboard.webm'],
+    recordingTiming:
+      'Actual CDP screencast frames with their native timestamps; no staged or synthetic frames',
   }
   await cdp('Page.stopScreencast')
   assert(videoFrames.length > 0, 'native screencast must capture real rendered frames')
   const keyboardFrames = videoFrames.splice(0)
-  const encode = (frames, filename) =>
-    spawnSync(
-      'ffmpeg',
-      [
-        '-y',
-        '-f',
-        'image2pipe',
-        '-vcodec',
-        'png',
-        '-framerate',
-        '3',
-        '-i',
-        'pipe:0',
-        '-an',
-        '-c:v',
-        'libvpx-vp9',
-        '-pix_fmt',
-        'yuv420p',
-        join(evidence, filename),
-      ],
-      { input: Buffer.concat(frames), encoding: 'utf8', timeout: 30000 },
-    )
-  const keyboardEncoded = encode(keyboardFrames, 'folder-subscriptions-keyboard.webm')
-  assert.equal(keyboardEncoded.status, 0, `keyboard video encode failed: ${keyboardEncoded.stderr}`)
-  const hoverEncoded = encode(hoverFrames, 'folder-subscriptions-hover.webm')
-  assert.equal(hoverEncoded.status, 0, `hover video encode failed: ${hoverEncoded.stderr}`)
+  await encodeScreencast(keyboardFrames, {
+    root,
+    evidence,
+    filename: 'folder-subscriptions-keyboard.webm',
+  })
+  await encodeScreencast(hoverFrames, {
+    root,
+    evidence,
+    filename: 'folder-subscriptions-hover.webm',
+  })
   await writeFile(join(evidence, 'assertions.json'), JSON.stringify(report, null, 2) + '\n')
   console.log(JSON.stringify(report, null, 2))
 } catch (error) {
@@ -693,5 +887,19 @@ try {
   if (server?.listening) await new Promise((resolve) => server.close(resolve))
   if (processState?.exit || !child || processState?.spawnFailure)
     await rm(root, { recursive: true, force: true })
-  else console.error(`Preserving owned profile because Electron remains alive: ${root}`)
+  else {
+    console.error(`Preserving owned profile because Electron remains alive: ${root}`)
+    process.exitCode = 1
+  }
+  const cleanup = {
+    root,
+    profile,
+    vault,
+    pid: child?.pid,
+    childExit: processState?.exit,
+    temporaryRootRemoved: !existsSync(root),
+    serverClosed: !server?.listening,
+  }
+  await writeFile(join(evidence, 'cleanup.json'), JSON.stringify(cleanup, null, 2) + '\n')
+  console.log('Native cleanup:', JSON.stringify(cleanup))
 }
