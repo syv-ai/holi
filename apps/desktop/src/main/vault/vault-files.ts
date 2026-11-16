@@ -69,6 +69,14 @@ export function toVaultRel(root: string, absPath: string): VaultRelPath | null {
   }
 }
 
+/** Git Bash's `/c/Users/…` as `C:/Users/…` on Windows, where an agent's shell
+ *  spells a path that way; untouched elsewhere, where `/c/…` is a plain path. */
+function drivePath(path: string, platform: NodeJS.Platform): string {
+  return platform === 'win32'
+    ? path.replace(/^\/([A-Za-z])(?=\/|$)/, (_, drive: string) => `${drive.toUpperCase()}:`)
+    : path
+}
+
 /** `path` with `/` for the separator on Windows, and untouched elsewhere,
  *  where a backslash is a character in a name. */
 function toSlashes(path: string, platform: NodeJS.Platform = process.platform): string {
@@ -85,7 +93,7 @@ export function pathUnderRoot(
   typed: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const path = toSlashes(typed, platform)
+  const path = toSlashes(drivePath(typed, platform), platform)
   const top = `${toSlashes(root, platform).replace(/\/+$/, '')}/`
   const fold = (text: string) => (platform === 'win32' ? text.toLowerCase() : text)
   return fold(path).startsWith(fold(top)) ? path.slice(top.length) : path
@@ -105,7 +113,8 @@ export function typedVaultPath(
   platform: NodeJS.Platform = process.platform,
 ): string {
   const api = platform === 'win32' ? win32 : posix
-  const rel = api.isAbsolute(typed) ? api.relative(root, typed) : typed
+  const spelled = drivePath(typed, platform)
+  const rel = api.isAbsolute(spelled) ? api.relative(root, spelled) : spelled
   return toSlashes(rel, platform).replace(/^\.\//, '')
 }
 

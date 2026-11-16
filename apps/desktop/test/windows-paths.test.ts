@@ -26,6 +26,15 @@ describe('typedVaultPath', () => {
     expect(vaultRelPath(win(String.raw`C:\Users\ada\Holi\o\r\a.pdf`))).toBe('a.pdf')
   })
 
+  it("reads Git Bash's /c/ spelling of a path inside the vault", () => {
+    expect(win('/c/Users/ada/Holi/o/r/tasks/task.x.md')).toBe('tasks/task.x.md')
+    expect(win('/C/Users/ada/Holi/o/r/tasks/task.x.md')).toBe('tasks/task.x.md')
+    // Another drive is still no path of the vault.
+    expect(() => vaultRelPath(win('/d/Users/ada/Holi/o/r/a.md'))).toThrow()
+    // On POSIX `/c/…` is just an absolute path.
+    expect(typedVaultPath('/c/Users/ada', '/c/Users/ada/a.md', 'linux')).toBe('a.md')
+  })
+
   it('reads a relative path with either separator', () => {
     expect(win(String.raw`tasks\task.x.md`)).toBe('tasks/task.x.md')
     expect(win(String.raw`.\tasks\task.x.md`)).toBe('tasks/task.x.md')
@@ -55,6 +64,14 @@ describe('typedVaultPath', () => {
 })
 
 describe('pathUnderRoot', () => {
+  it("cuts the vault off Git Bash's /c/ spelling on Windows, and not elsewhere", () => {
+    expect(pathUnderRoot(WIN_ROOT, '/c/Users/ada/Holi/o/r/Work/X.app', 'win32')).toBe('Work/X.app')
+    expect(pathUnderRoot(WIN_ROOT, '/d/Users/ada/Holi/o/r/Work/X.app', 'win32')).toBe(
+      'D:/Users/ada/Holi/o/r/Work/X.app',
+    )
+    expect(pathUnderRoot('/r', '/c/Users/a.md', 'linux')).toBe('/c/Users/a.md')
+  })
+
   it('cuts the vault off a Windows path in either spelling', () => {
     const rel = String.raw`Work\Tracker.app\data\items\h.json`
     expect(pathUnderRoot(WIN_ROOT, `${WIN_ROOT}\\${rel}`, 'win32')).toBe(
