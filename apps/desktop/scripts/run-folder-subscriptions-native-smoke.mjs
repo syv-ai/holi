@@ -566,13 +566,36 @@ try {
   )
   for (
     let i = 0;
-    i < 10 && (await evaluate(`!!document.activeElement?.closest('[data-slot="tree-item"]')`));
+    i < 40 && !(await evaluate(`document.activeElement?.matches('[role="treeitem"]')`));
     i++
   )
     await key('Tab')
+  assert(
+    await evaluate(`document.activeElement?.matches('[role="treeitem"]')`),
+    'native Tab traversal must re-enter a folder row before testing focus exit',
+  )
   await until(
-    `!document.activeElement?.closest('[data-slot="tree-item"]')`,
-    'Tab focus exits folder row to toolbar',
+    `getComputedStyle(document.activeElement.querySelector('[data-tree-row-action]')).opacity==='1'`,
+    're-entered folder row reveals its bell before focus exit',
+  )
+  assert(await allNoHover(), 're-entered row is focused without pointer hover')
+  let focusExitTabCount = 0
+  for (; focusExitTabCount < 40; focusExitTabCount++) {
+    await key('Tab')
+    if (
+      await evaluate(`document.activeElement?.matches('button[aria-label="Subscribe this vault"]')`)
+    ) {
+      focusExitTabCount++
+      break
+    }
+  }
+  const focusExitDestination = await evaluate(
+    `({tag:document.activeElement?.tagName,label:document.activeElement?.getAttribute('aria-label'),insideTree:!!document.activeElement?.closest('[role="tree"]')})`,
+  )
+  assert.deepEqual(
+    focusExitDestination,
+    { tag: 'BUTTON', label: 'Subscribe this vault', insideTree: false },
+    'native Tab traversal must leave the tree and reach the vault toolbar button',
   )
   await until(
     `([...document.querySelectorAll('[data-tree-row-action]')].every(e=>getComputedStyle(e).opacity==='0'))`,
@@ -597,7 +620,9 @@ try {
     initialFolderActions: initialButtons,
     finalFolderActions: finalHiddenButtons,
     actualPointerHover: hoverStates,
-    focusExit: 'toolbar; all visible folder actions opacity 0',
+    focusExit: 'native Tab from focused folder row to vault toolbar; all folder actions opacity 0',
+    focusExitDestination,
+    focusExitTabCount,
     hoverCheckedNodes,
     rowFocusOpacity: rowBefore.opacity,
     buttonFocusOpacity,
