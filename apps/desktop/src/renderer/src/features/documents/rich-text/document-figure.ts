@@ -265,6 +265,36 @@ export const DocumentFigure = Node.create({
           return transaction
         },
         props: {
+          clipboardTextSerializer(slice) {
+            let hasFigure = false
+            slice.content.descendants((node) => {
+              if (node.type.name === 'documentFigure') hasFigure = true
+            })
+            // A falsy result lets other serializers and ProseMirror's ordinary
+            // textBetween fallback keep handling selections outside figures.
+            if (!hasFigure || !editor.markdown) return ''
+            const portable = (node: any): any => ({
+              ...node,
+              ...(node.type === 'image' || node.type === 'documentFigure'
+                ? {
+                    attrs: {
+                      ...node.attrs,
+                      sourceBody: null,
+                      sourceImageAttrs: null,
+                      sourceMarkdown: null,
+                      sourceMarkdownImageAttrs: null,
+                    },
+                  }
+                : {}),
+              ...(node.content ? { content: node.content.map(portable) } : {}),
+            })
+            // References belong to the source document, not the clipboard.
+            // Materialize visible image attrs while retaining caption marks.
+            return editor.markdown.serialize({
+              type: 'doc',
+              content: slice.content.toJSON().map(portable),
+            })
+          },
           handleDOMEvents: {
             dragstart(view) {
               const { selection } = view.state
@@ -302,6 +332,14 @@ export const DocumentFigure = Node.create({
             }
             if (!editor.isEditable || !markdown || !readMarkdownCaptionEnvelopes(markdown).length)
               return false
+            // Native HTML carries validated folder provenance. Prefer it over
+            // the portable plain-text alternative so cross-folder paste rebases.
+            const html = event.clipboardData?.getData('text/html')
+            if (html) {
+              const container = document.createElement('div')
+              container.innerHTML = html
+              if (container.querySelector('figure[data-holi-code-figure]')) return false
+            }
             const manager = editor.markdown
             if (!manager) return false
             const parsed = editor.schema.nodeFromJSON(manager.parse(markdown))

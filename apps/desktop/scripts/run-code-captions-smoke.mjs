@@ -237,11 +237,33 @@ try {
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   assert.equal(result.electron.split('.')[0], '43')
-  assert(result.checks.length >= 14, 'missing native acceptance assertions')
+  assert(result.checks.length >= 47, 'missing native acceptance assertions')
+  for (const name of [
+    'native-same-alt-and-protected-examples-survive-unrelated-save-reopen',
+    'native-image-copy-os-clipboard-plain-markdown-save-reopen',
+    'native-image-cut-os-clipboard-plain-markdown-save-reopen',
+    'native-documentFigure-copy-os-clipboard-plain-markdown-save-reopen',
+    'native-documentFigure-cut-os-clipboard-plain-markdown-save-reopen',
+    'native-root-to-nested-copy-paste-save-reopen-real-typst-pdf',
+    'native-root-to-root-copy-paste-save-reopen-real-typst-pdf',
+    'native-nested-to-root-copy-paste-save-reopen-real-typst-pdf',
+  ])
+    assert(result.checks.includes(name), `missing native acceptance: ${name}`)
   for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)
   assert.deepEqual(result.rendererErrors, [])
   assert.deepEqual(result.denied, [])
-  for (const file of ['native-ui.pdf', 'native-cli.pdf', 'pdf-proof.json'])
+  for (const file of [
+    'native-ui.pdf',
+    'native-cli.pdf',
+    'pdf-proof.json',
+    'root-to-nested.pdf',
+    'root-to-root.pdf',
+    'nested-to-root.pdf',
+    'plain-image-copy-clipboard.json',
+    'plain-image-cut-clipboard.json',
+    'plain-documentFigure-copy-clipboard.json',
+    'plain-documentFigure-cut-clipboard.json',
+  ])
     assert((await stat(join(evidence, file))).size > 0)
 } finally {
   if (child && child.exitCode === null) {
