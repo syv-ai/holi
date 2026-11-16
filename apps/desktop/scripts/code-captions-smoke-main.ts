@@ -48,9 +48,12 @@ const fixtureImagePaths = new Set([
   'assets/smoke.png',
   'assets/second.png',
   'assets/smoke photo.png',
+  ...['+', '&', '#', '?', '%20'].map((character) => `assets/smoke${character}one.png`),
 ])
 const fixtureImageUrls = new Set(
-  [...fixtureImagePaths].map((imagePath) => `holi-vault://vault/${encodeURI(imagePath)}`),
+  [...fixtureImagePaths].map(
+    (imagePath) => `holi-vault://vault/${imagePath.split('/').map(encodeURIComponent).join('/')}`,
+  ),
 )
 const head = '---\ntitle:  Byte-sensitive caption\n# Keep this comment\ntags: [kept]\n---\n\n'
 const originalFence = '~~~typescript extra-info\nconst value = 1\n~~~'
@@ -378,20 +381,22 @@ function createEditorDriver(win: BrowserWindow, cli: string) {
         clearTimeout(timeout)
       }
     } finally {
-      win.webContents.sendInputEvent({
-        type: 'mouseUp',
-        ...destination,
-        button: 'left',
-        clickCount: 1,
-      })
-      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
-        type: 'mouseReleased',
-        ...destination,
-        button: 'left',
-        buttons: 0,
-        clickCount: 1,
-      })
-      await win.webContents.debugger.sendCommand('Input.setInterceptDrags', { enabled: false })
+      if (!win.webContents.isCrashed()) {
+        win.webContents.sendInputEvent({
+          type: 'mouseUp',
+          ...destination,
+          button: 'left',
+          clickCount: 1,
+        })
+        await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          ...destination,
+          button: 'left',
+          buttons: 0,
+          clickCount: 1,
+        })
+        await win.webContents.debugger.sendCommand('Input.setInterceptDrags', { enabled: false })
+      }
       win.webContents.debugger.removeListener('message', intercepted)
     }
     await wait(
@@ -542,7 +547,8 @@ async function recordInteraction(win: BrowserWindow) {
     resume,
     async stop() {
       clearInterval(timer)
-      await win.webContents.debugger.sendCommand('Page.stopScreencast')
+      if (!win.webContents.isDestroyed() && !win.webContents.isCrashed())
+        await win.webContents.debugger.sendCommand('Page.stopScreencast')
       win.webContents.debugger.removeListener('message', frame)
       await Promise.all(writes)
       assert.deepEqual(errors, [], 'native recording failed')
@@ -665,7 +671,15 @@ async function verifyParserSource({
   const frame = `<!-- holi:figure -->\n\n![Smoke photo][photo]\n\n<!-- holi:caption -->\n\nParser source portable caption.\n\n<!-- /holi:figure -->`
   const opaque =
     '<!-- holi:figure -->\n\nUnsupported body.\n\n[ref]: https://example.com/right\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->'
+  const nestedOpaque =
+    '<!-- holi:figure -->\n\nOuter.\n\n<!-- holi:figure -->\n\nUnsupported inner.\n\n<!-- holi:caption -->\n\nInner caption\n\n<!-- /holi:figure -->\n\nOuter tail.\n\n[photo]: ../assets/smoke.png "Photo title"\n\n<!-- /holi:figure -->'
   const cases = [
+    {
+      name: 'nested-opaque-tail',
+      body: `${nestedOpaque}\n\nAfter important prose.\n\n![Trailing][photo]\n\n${frame}\n\n[photo]: ../assets/second.png\n\nEnd.`,
+      opaque: nestedOpaque,
+      imageCount: 2,
+    },
     {
       name: 'adjacent',
       body: `${definition}\n[second]: ../assets/second.png\nFollowing paragraph.\n\n${frame}`,
@@ -724,6 +738,12 @@ ${scenario.body}
             saved.includes('Following paragraph.'),
         )
       if (scenario.name === 'nested-html') assert(saved.includes('</pre>'))
+      if (scenario.opaque) {
+        assert(saved.includes(scenario.opaque))
+        assert(saved.includes('After important prose.') && saved.includes('End.'))
+        assert(saved.includes('![Trailing][photo]') && saved.includes(frame))
+        assert.equal(saved.match(/\[photo\]:/g)?.length, 2)
+      }
       if (scenario.name === 'opaque')
         assert(saved.includes(opaque) && saved.match(/\[ref\]:/g)?.length === 2)
       await js('await window.captionFixture.reopen(); return true')
@@ -742,7 +762,7 @@ ${scenario.body}
       visit(state.json.content)
       assert.deepEqual(
         nodes.filter((node) => node.type === 'image').map((node) => node.attrs.src),
-        ['../assets/smoke.png'],
+        Array(scenario.imageCount ?? 1).fill('../assets/smoke.png'),
       )
       if (scenario.native) assert(nodes.some((node) => node.type === scenario.native))
       if (scenario.href)
@@ -1013,8 +1033,17 @@ async function verifyImageTransfers(
       src: 'assets/smoke photo.png',
       expected: '../../assets/smoke photo.png',
     },
+    ...['+', '&', '#', '?', '%20'].map((character, index) => ({
+      name: `reserved-image-path-${index}`,
+      source: `Root-reserved-${index}.md`,
+      target: `notes/deep/Reserved-${index}.md`,
+      src: `assets/smoke${character === '%20' ? '%2520' : character}one.png`,
+      expected: `../../assets/smoke${character}one.png`,
+    })),
   ]
   await copyFile(join(vault, 'assets/smoke.png'), join(vault, 'assets/smoke photo.png'))
+  for (const character of ['+', '&', '#', '?', '%20'])
+    await copyFile(join(vault, 'assets/smoke.png'), join(vault, `assets/smoke${character}one.png`))
   await mkdir(join(vault, 'notes/deep'), { recursive: true })
   for (const transfer of transfers) {
     await js('await window.captionFixture.flush(); return true')
@@ -1031,6 +1060,9 @@ async function verifyImageTransfers(
       'folder transfer editors mounted',
     )
     await setRightFocus(false)
+    const displayedAsset = await js<string>(
+      `const image=document.querySelector('[data-pane="primary"] figure img'); if(!image?.complete || !image.naturalWidth)throw Error('Source image did not load'); return image.src`,
+    )
     await js(`window.captionFixture.select('image'); return true`)
     win.webContents.copy()
     await sleep(150)
@@ -1053,7 +1085,7 @@ async function verifyImageTransfers(
     )
     await js('await window.captionFixture.flush(); return true')
     const saved = await readFile(join(vault, transfer.target), 'utf8')
-    const encodedExpected = transfer.expected.replaceAll(' ', '%20')
+    const encodedExpected = transfer.expected.split('/').map(encodeURIComponent).join('/')
     const expectedImageMarkdown = [transfer.expected, encodedExpected].flatMap((destination) => [
       `![Smoke photo](${destination} "Photo title")`,
       `![Smoke photo](<${destination}> "Photo title")`,
@@ -1073,6 +1105,10 @@ async function verifyImageTransfers(
       join(evidence, `${transfer.name}-reopened.json`),
       JSON.stringify(await js('return window.captionFixture.state()'), null, 2),
     )
+    await wait(
+      `Array.from(document.querySelectorAll('[data-pane="primary"] figure img')).some(image=>image.src===${JSON.stringify(displayedAsset)} && image.complete && image.naturalWidth>0)`,
+      'identical actual asset URL loads after paste and reopen',
+    )
     await capture(`${transfer.name}-reopened.png`)
     const pdfOut = `notes/${transfer.name}.pdf`
     const rendered = await exec(
@@ -1086,6 +1122,48 @@ async function verifyImageTransfers(
     await writeFile(join(evidence, `${transfer.name}-pdf.json`), JSON.stringify(proof, null, 2))
     mark(`native-${transfer.name}-copy-paste-save-reopen-real-typst-pdf`)
   }
+
+  // Untrusted provenance must not abort the real native HTML paste. Keep the
+  // visible local asset valid so the check proves fallback, not just no throw.
+  for (const source of ['bad%', 'bad%2', 'bad%GG', 'bad%C3%28']) {
+    await js('await window.captionFixture.flush(); return true')
+    await writeFile(join(vault, 'notes/Malformed-paste.md'), '')
+    await js(
+      `await window.captionFixture.openPaths('notes/Malformed-paste.md', 'notes/Clipboard.md'); window.captionFixture.split(false); window.captionFixture.rightFocused(false); return true`,
+    )
+    await wait(
+      `window.captionFixture.state().editable && !window.captionFixture.state().markdown`,
+      'empty malformed provenance destination',
+    )
+    const html = `<figure data-holi-code-figure><img src="holi-vault://vault/assets/smoke.png" data-holi-source-src="${source}" data-holi-source-folder="notes" alt="Visible photo"><figcaption>Kept paste caption</figcaption></figure><p>Kept trailing prose.</p>`
+    clipboard.write({ html, text: 'Kept paste caption' })
+    await js(
+      `document.querySelector('[data-pane="primary"] [role="textbox"]').editor.view.focus(); return true`,
+    )
+    win.webContents.paste()
+    await wait(
+      `window.captionFixture.state().markdown.includes('Kept trailing prose.')`,
+      'malformed provenance native paste retained',
+    )
+    await js('await window.captionFixture.flush(); return true')
+    await js('await window.captionFixture.reopen(); return true')
+    await wait(
+      `window.captionFixture.state().markdown.includes('Kept paste caption')`,
+      'malformed provenance disk reopen',
+    )
+    const state = await js<{ json: { content: any[] } }>('return window.captionFixture.state()')
+    assert.equal(collectImageAttrs(state)[0].src, 'holi-vault://vault/assets/smoke.png')
+    await wait(
+      `document.querySelector('[data-pane="primary"] figure img')?.naturalWidth>0`,
+      'visible fallback image loaded',
+    )
+    await writeFile(
+      join(evidence, `malformed-paste-${encodeURIComponent(source)}.json`),
+      JSON.stringify(state, null, 2),
+    )
+    mark(`native-malformed-provenance-${encodeURIComponent(source)}-paste-flush-reopen`)
+  }
+  await capture('malformed-provenance-visible-fallback.png')
 }
 
 async function seedVault() {
@@ -1272,6 +1350,9 @@ async function run() {
       details.url.startsWith('data:')
     if (!allowed) denied.push(details.url)
     done({ cancel: !allowed })
+  })
+  win.webContents.on('render-process-gone', (_event, details) => {
+    rendererErrors.push(`Renderer exited: ${details.reason} (${details.exitCode})`)
   })
   win.webContents.on('console-message', (event) => {
     if (event.level === 'error') rendererErrors.push(event.message)
@@ -1986,7 +2067,7 @@ async function run() {
     try {
       await dragImageDirect()
     } finally {
-      await recording.resume()
+      if (!win.webContents.isCrashed()) await recording.resume()
     }
     await capture('image-direct-drag-result.png')
     mark('native-direct-image-drag-moves-whole-figure-and-undo-restores-it')
@@ -2412,7 +2493,12 @@ async function run() {
     ok = true
   } finally {
     await recording?.stop()
-    if (!ok && !win.isDestroyed() && win.webContents.debugger.isAttached())
+    if (
+      !ok &&
+      !win.isDestroyed() &&
+      !win.webContents.isCrashed() &&
+      win.webContents.debugger.isAttached()
+    )
       await capture('failure.png').catch(() => {})
     await writeFile(
       join(evidence, 'result.json'),

@@ -43,9 +43,15 @@ const DocumentImage = Image.extend<{ folder: string }>({
           const source = element.getAttribute('data-holi-source-src')
           const sourceFolder = element.getAttribute('data-holi-source-folder')
           const visible = element.getAttribute('src') ?? ''
-          if (!source || sourceFolder === null || displaySrc(source, sourceFolder) !== visible)
-            return visible
-          return portableImageSrc(source, sourceFolder, folder)
+          if (!source || sourceFolder === null) return visible
+          try {
+            if (displaySrc(source, sourceFolder) === visible)
+              return portableImageSrc(source, sourceFolder, folder)
+          } catch {
+            // Clipboard provenance is untrusted. A malformed encoded path must
+            // not prevent the visible image (and the rest of the paste) loading.
+          }
+          return visible
         },
       },
       sourceMarkdown: {

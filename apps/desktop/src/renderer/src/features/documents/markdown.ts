@@ -140,9 +140,19 @@ function unhandledCaptionRanges(
       ranges.push({ from: open.pop()!, to: from + token.raw.trimEnd().length })
   }
   for (const from of open) ranges.push({ from, to: source.length })
-  return ranges.filter(
-    (range) => !supported.some((frame) => frame.from >= range.from && frame.from < range.to),
-  )
+  // Substitution uses original source offsets. Nested opaque envelopes must
+  // become one outermost range: replacing an inner range first would shift the
+  // outer end and consume unrelated following blocks.
+  const outermost: typeof ranges = []
+  for (const range of ranges
+    .filter(
+      (range) => !supported.some((frame) => frame.from >= range.from && frame.from < range.to),
+    )
+    .sort((left, right) => left.from - right.from || right.to - left.to)) {
+    const previous = outermost.at(-1)
+    if (!previous || range.from >= previous.to) outermost.push(range)
+  }
+  return outermost
 }
 
 /** The extension the editor needs to read and write markdown. */
