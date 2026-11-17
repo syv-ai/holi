@@ -33,6 +33,7 @@ import {
   interruptionArtifacts,
   stagingDirectory,
 } from '../app/storage-staging.ts'
+import { moveFixtureBytes as moveBytes } from '../app/move-fixtures.ts'
 
 assert.equal(process.platform, 'darwin', 'test:ios requires macOS and Xcode')
 const cwd = fileURLToPath(new URL('..', import.meta.url))
@@ -291,14 +292,6 @@ try {
   activeProcess = undefined
   const moveEvidence = []
   const moveRootFor = (ordinal) => join(documents, `holi-move-${runId}-${ordinal}`)
-  const moveBytes = {
-    source: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[from.md| self ]]\r\n',
-    moved: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[to.md| self ]]\r\n',
-    backA: 'first [[from.md| label ]] then [[from.md#Heading]]\r\n',
-    movedA: 'first [[to.md| label ]] then [[from.md#Heading]]\r\n',
-    backB: '😀 [[from.md|another label]] and [[from.md]]\n',
-    movedB: '😀 [[to.md|another label]] and [[to.md]]\n',
-  }
   const verifyMoveBoundary = async (caseInfo, marker) => {
     const root = moveRootFor(caseInfo.ordinal)
     const privatePath = stagingDirectory(library, root)
@@ -399,6 +392,47 @@ try {
     assert.equal(moveReport.moveRestart.recovered, caseInfo.phase !== 'journal-before')
     assert.equal(moveReport.moveRestart.malformedJournalRefused, true)
     assert.equal(moveReport.moveRestart.conflictJournalRefused, true)
+    const wrongRootId = `20000000-0000-4000-8000-${String(caseInfo.ordinal).padStart(12, '0')}`
+    const wrongRoot = join(documents, `holi-move-wrong-root-${runId}-${caseInfo.ordinal}`)
+    const namedRoot = join(documents, `holi-move-named-root-${runId}-${caseInfo.ordinal}`)
+    const wrongRootPrivate = stagingDirectory(library, wrongRoot)
+    const wrongRootName = `move-${wrongRootId}.json`
+    const wrongRootReceipt = moveReport.moveRestart.wrongRootRefusal
+    assert.deepEqual(
+      { ...wrongRootReceipt, error: undefined },
+      {
+        receivingRoot: wrongRoot,
+        namedRoot,
+        journalName: wrongRootName,
+        error: undefined,
+        sourceUnchanged: true,
+        destinationAbsent: true,
+        namedRootUnchanged: true,
+        journalBytesPreserved: true,
+      },
+    )
+    assert.match(wrongRootReceipt.error, /Invalid move recovery journal identity/)
+    assert.equal(await realpath(wrongRoot), wrongRoot)
+    assert.equal(await realpath(namedRoot), namedRoot)
+    assert.equal(await realpath(wrongRootPrivate), wrongRootPrivate)
+    assert.equal(await readFile(join(wrongRoot, 'from.md'), 'utf8'), '[[from.md]]')
+    await assert.rejects(readFile(join(wrongRoot, 'to.md')), { code: 'ENOENT' })
+    assert.equal(await readFile(join(namedRoot, 'keep.md'), 'utf8'), 'named root preserved')
+    const wrongRootJournal = {
+      schema: 2,
+      root: namedRoot,
+      operationId: wrongRootId,
+      from: 'from.md',
+      to: 'to.md',
+      changes: [
+        { path: 'from.md', before: [...new TextEncoder().encode('[[from.md]]')], after: null },
+        { path: 'to.md', before: null, after: [...new TextEncoder().encode('[[to.md]]')] },
+      ],
+    }
+    assert.equal(
+      await readFile(join(wrongRootPrivate, wrongRootName), 'utf8'),
+      JSON.stringify(wrongRootJournal),
+    )
     const expectedSource = caseInfo.phase === 'journal-before' ? moveBytes.source : null
     const expectedDestination = caseInfo.phase === 'journal-before' ? null : moveBytes.moved
     const expectedBackA = caseInfo.phase === 'journal-before' ? moveBytes.backA : moveBytes.movedA

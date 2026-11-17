@@ -47,6 +47,14 @@ const rewriteDocumentLinks = (text: string, from: string, to: string) => {
   return { ...rewritten, text: `${bom ? '\uFEFF' : ''}${rewritten.text}` }
 }
 const journalName = (id: string) => `${prefix}${id}${suffix}`
+const comparePaths = (left: string, right: string) => {
+  const a = Array.from(left, (character) => character.codePointAt(0)!)
+  const b = Array.from(right, (character) => character.codePointAt(0)!)
+  for (let index = 0; index < Math.min(a.length, b.length); index++) {
+    if (a[index] !== b[index]) return a[index]! - b[index]!
+  }
+  return a.length - b.length
+}
 const isPublicNote = (path: string) =>
   !path.split('/').some((segment) => segment.startsWith('.')) &&
   !isLocalOnlyPath(path) &&
@@ -300,7 +308,9 @@ export async function moveNote(
   const sourceBytes = await adapter.read(root, source)
   if (revision(sourceBytes) !== expectedRevision) throw new Error('Stale document revision')
   const entries = await adapter.list(root)
-  const files = entries.filter((entry) => entry.kind === 'file' && isPublicNote(entry.path))
+  const files = entries
+    .filter((entry) => entry.kind === 'file' && isPublicNote(entry.path))
+    .sort((left, right) => comparePaths(left.path, right.path))
   const folded = (path: string) => path.normalize('NFD').toLowerCase()
   const directories = new Set(
     entries.filter((entry) => entry.kind === 'directory').map((entry) => entry.path),
@@ -332,10 +342,12 @@ export async function moveNote(
   }
   const operationId = adapter.operationId()
   const journal: Journal = { schema: 2, root, operationId, from: source, to: target, changes }
+  const name = journalName(operationId)
   const journalBytes = utf8Encode(JSON.stringify(journal))
   if (journalBytes.length > maxJournalBytes) throw new Error('Move recovery journal is too large')
+  // Validate the exact serialized evidence before publishing anything recoverMoves cannot accept.
+  validateJournal(journalBytes, root, name)
   await checkpoint(callback, 'journal', 'before', operationId)
-  const name = journalName(operationId)
   await adapter.privatePublish(root, name, journalBytes, null)
   await adapter.privateConfirm(root, name, journalBytes)
   await checkpoint(callback, 'journal', 'after', operationId)
