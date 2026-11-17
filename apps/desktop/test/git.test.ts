@@ -1162,6 +1162,36 @@ describe('changedFiles', () => {
     expect((await repo.changedFiles(root.sha)).length).toBeGreaterThan(0)
   })
 
+  it('returns every reachable per-revision path change between exact endpoints', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await commitChanges(dir, 'scope/a.md', 1)
+    const first = await repo.head()
+    await commitChanges(dir, 'scope/a.md', 2)
+    const tip = await repo.head()
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toEqual({
+      complete: true,
+      reason: 'ok',
+      changes: [
+        { sha: tip, path: 'scope/a.md' },
+        { sha: first, path: 'scope/a.md' },
+      ],
+    })
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope/a.md')).toMatchObject({
+      complete: true,
+    })
+  })
+
+  it('does not report unavailable endpoints as an empty complete history', async () => {
+    const repo = openRepo(await makeClone(await makeRemote()))
+    expect(await repo.revisionChanges('0'.repeat(40), 'f'.repeat(40), 'note.md')).toEqual({
+      complete: false,
+      reason: 'history-unavailable',
+      changes: [],
+    })
+  })
+
   it('looks up exact commit metadata outside the recent history window', async () => {
     const dir = await makeClone(await makeRemote())
     const repo = openRepo(dir)

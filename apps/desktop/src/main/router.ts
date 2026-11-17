@@ -2244,6 +2244,49 @@ export function createRouter(deps: RouterDeps) {
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid subscription paths.' })
           return subscriptions.list(remote, root, paths)
         }),
+      changes: t.procedure
+        .input(fields({ remote: 'string', path: 'string' }))
+        .query(async ({ input }) => {
+          if (subscriptions === null)
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Subscriptions are unavailable.',
+            })
+          const active = activeOrThrow()
+          if (active.remote !== input.remote)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault changed; retry in the active vault.',
+            })
+          const { remote, repo } = active
+          const scope = await subscriptions.scope(remote, input.path)
+          if (scope === null)
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: 'This path is not explicitly subscribed.',
+            })
+          const tip = await repo.head()
+          if (scope.baseline === null || tip === null)
+            return {
+              baseline: scope.baseline,
+              tip,
+              complete: false,
+              history: 'pending-baseline' as const,
+              changes: [],
+            }
+          const history = await repo.revisionChanges(scope.baseline, tip, scope.path)
+          return {
+            baseline: scope.baseline,
+            tip,
+            complete: history.complete,
+            history: history.reason,
+            changes: history.changes.map((change) => ({
+              ...change,
+              ownership: 'unknown' as const,
+              reviewed: false as const,
+            })),
+          }
+        }),
       set: t.procedure
         .input(fields({ remote: 'string', path: 'string', enabled: 'boolean' }))
         .mutation(async ({ input }) => {

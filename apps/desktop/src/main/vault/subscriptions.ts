@@ -94,13 +94,28 @@ export function createSubscriptions(file: string) {
         return false
       }
     },
+    async scope(remote: string, path: string): Promise<SubscriptionScope | null> {
+      if (!isRemote(remote)) throw new Error('Invalid vault remote.')
+      const normalized = path === '' ? '' : vaultRelPath(path)
+      if (normalized !== path || isSecretPath(normalized))
+        throw new Error('This path cannot be subscribed.')
+      return (
+        (await store.read()).remotes[remote]?.find((scope) => scope.path === normalized) ?? null
+      )
+    },
     async hasExplicit(remote: string): Promise<boolean> {
       if (!isRemote(remote)) return false
       return ((await store.read()).remotes[remote]?.length ?? 0) > 0
     },
-    async list(remote: string, root: string, paths: string[]) {
+    async list(remote: string, _root: string, paths: string[]) {
       if (!isRemote(remote)) throw new Error('Invalid vault remote.')
-      const valid = await Promise.all(paths.map((path) => validateScope(root, path)))
+      const valid = paths.map((path) => {
+        if (path === '') return ''
+        const normalized = vaultRelPath(path)
+        if (normalized !== path || isSecretPath(normalized))
+          throw new Error('This path cannot be subscribed.')
+        return normalized
+      })
       const saved = (await store.read()).remotes[remote] ?? []
       return valid.map((path): SubscriptionView => {
         const own = saved.find((scope) => scope.path === path)
