@@ -12,8 +12,6 @@ import {
   unlink,
 } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
-import { homedir } from 'node:os'
-import { createHash } from 'node:crypto'
 import { isInIgnoredDir, isLocalOnlyPath, isSecretPath } from '@holi/shared/mobile-path-safety'
 import type { Entry, NativeFiles } from '../app/native-files'
 import { stageNamePattern } from '../app/storage-staging'
@@ -91,12 +89,7 @@ async function writeStage(
 export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
   const privateRoot = async (root: string) => {
     const canonical = await realpath(root)
-    const path = join(
-      homedir(),
-      'Library',
-      'HoliVaultStorage',
-      createHash('sha256').update(canonical).digest('hex'),
-    )
+    const path = join(canonical, '.holi-storage-private')
     await mkdir(path, { recursive: true, mode: 0o700 })
     const info = await lstat(path)
     if (!info.isDirectory() || info.isSymbolicLink())
@@ -119,6 +112,7 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
     }
   }
   return {
+    operationId: () => randomUUID().toLowerCase(),
     async canonicalRoot(root) {
       return realpath(root)
     },

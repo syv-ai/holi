@@ -116,6 +116,7 @@ export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
     }
   }
   return {
+    operationId: () => NSUUID.UUID().UUIDString.toLowerCase(),
     async canonicalRoot(root) {
       return nativeIO.canonical(root)
     },

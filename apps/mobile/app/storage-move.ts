@@ -1,4 +1,9 @@
-import { isLocalOnlyPath, vaultRelPath } from '@holi/shared/mobile-path-safety'
+import {
+  isInIgnoredDir,
+  isLocalOnlyPath,
+  isSecretPath,
+  vaultRelPath,
+} from '@holi/shared/mobile-path-safety'
 import { rewriteWikiLinksLosslessly } from '@holi/shared/wiki-links'
 import type { NativeFiles, StorageCheckpointCallback } from './native-files'
 
@@ -9,13 +14,11 @@ function utf8Encode(value: string): Uint8Array {
 }
 
 function utf8Decode(value: Uint8Array): string {
-  return decodeURIComponent(
-    Array.from(value, (byte) => `%${byte.toString(16).padStart(2, '0')}`).join(''),
-  )
-}
-
-function createOperationId(): string {
-  return globalThis.crypto.randomUUID()
+  const hasBom = value[0] === 0xef && value[1] === 0xbb && value[2] === 0xbf
+  const content = hasBom ? value.subarray(3) : value
+  return `${hasBom ? '\uFEFF' : ''}${decodeURIComponent(
+    Array.from(content, (byte) => `%${byte.toString(16).padStart(2, '0')}`).join(''),
+  )}`
 }
 
 const prefix = 'move-'
@@ -38,6 +41,11 @@ const equal = (a: Uint8Array | null, b: Uint8Array | null) =>
   a === null
     ? b === null
     : b !== null && a.length === b.length && a.every((byte, i) => byte === b[i])
+const rewriteDocumentLinks = (text: string, from: string, to: string) => {
+  const bom = text.startsWith('\uFEFF')
+  const rewritten = rewriteWikiLinksLosslessly(bom ? text.slice(1) : text, from, to)
+  return { ...rewritten, text: `${bom ? '\uFEFF' : ''}${rewritten.text}` }
+}
 const journalName = (id: string) => `${prefix}${id}${suffix}`
 
 function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
@@ -53,7 +61,7 @@ function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
     throw new Error('Malformed move recovery journal')
   const candidate = value as Partial<Journal>
   if (
-    Object.keys(value).sort().join(',') !== 'changes,from,operationId,root,schema' ||
+    Object.keys(value).sort().join(',') !== 'changes,from,operationId,root,schema,to' ||
     candidate.schema !== 2 ||
     candidate.root !== root ||
     typeof candidate.operationId !== 'string' ||
@@ -77,6 +85,10 @@ function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
     from.normalize('NFD').toLowerCase() === to.normalize('NFD').toLowerCase() ||
     isLocalOnlyPath(from) ||
     isLocalOnlyPath(to) ||
+    isSecretPath(from) ||
+    isSecretPath(to) ||
+    isInIgnoredDir(from) ||
+    isInIgnoredDir(to) ||
     !from.toLowerCase().endsWith('.md') ||
     !to.toLowerCase().endsWith('.md')
   )
@@ -98,7 +110,13 @@ function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
       throw new Error('Invalid move recovery paths')
     const canonical = vaultRelPath(change.path)
     const folded = canonical.normalize('NFD').toLowerCase()
-    if (canonical !== change.path || isLocalOnlyPath(canonical) || foldedPaths.has(folded))
+    if (
+      canonical !== change.path ||
+      isLocalOnlyPath(canonical) ||
+      isSecretPath(canonical) ||
+      isInIgnoredDir(canonical) ||
+      foldedPaths.has(folded)
+    )
       throw new Error('Invalid move recovery path spelling')
     seen.add(change.path)
     foldedPaths.add(folded)
@@ -125,13 +143,13 @@ function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
     throw new Error('Invalid move source/destination plan')
   const sourceBefore = decode((changes[0] as Change).before!)!
   const sourceText = utf8Decode(sourceBefore)
-  const moved = rewriteWikiLinksLosslessly(sourceText, from, to)
+  const moved = rewriteDocumentLinks(sourceText, from, to)
   if (!equal(decode((changes[1] as Change).after), utf8Encode(moved.text)))
     throw new Error('Invalid moved-note postimage')
   for (const item of changes.slice(2) as Change[]) {
     if (!item.path.toLowerCase().endsWith('.md') || item.before === null || item.after === null)
       throw new Error('Invalid backlink plan')
-    const rewritten = rewriteWikiLinksLosslessly(utf8Decode(decode(item.before)!), from, to)
+    const rewritten = rewriteDocumentLinks(utf8Decode(decode(item.before)!), from, to)
     if (!rewritten.count || !equal(decode(item.after), utf8Encode(rewritten.text)))
       throw new Error('Invalid backlink postimage')
   }
@@ -215,7 +233,7 @@ export async function recoverMoves(
       )
         continue
       const current = await adapter.read(root, entry.path)
-      if (rewriteWikiLinksLosslessly(utf8Decode(current), journal.from, journal.to).count)
+      if (rewriteDocumentLinks(utf8Decode(current), journal.from, journal.to).count)
         throw new Error(`Move recovery omitted backlink at ${entry.path}`)
     }
     // Check every operation's precondition before any recovery mutation.
@@ -251,6 +269,12 @@ export async function moveNote(
   const source = validatePath(from)
   const target = validatePath(to)
   if (
+    isLocalOnlyPath(source) ||
+    isLocalOnlyPath(target) ||
+    isSecretPath(source) ||
+    isSecretPath(target) ||
+    isInIgnoredDir(source) ||
+    isInIgnoredDir(target) ||
     source === target ||
     !source.toLowerCase().endsWith('.md') ||
     !target.toLowerCase().endsWith('.md')
@@ -282,7 +306,7 @@ export async function moveNote(
   )
     throw new Error('Move destination already exists or aliases an existing path')
   const sourceText = utf8Decode(sourceBytes)
-  const movedSource = rewriteWikiLinksLosslessly(sourceText, source, target)
+  const movedSource = rewriteDocumentLinks(sourceText, source, target)
   const changes: Change[] = [
     { path: source, before: bytes(sourceBytes), after: null },
     { path: target, before: null, after: bytes(utf8Encode(movedSource.text)) },
@@ -290,7 +314,7 @@ export async function moveNote(
   for (const entry of files) {
     if (entry.path === source) continue
     const before = await adapter.read(root, entry.path)
-    const rewritten = rewriteWikiLinksLosslessly(utf8Decode(before), source, target)
+    const rewritten = rewriteDocumentLinks(utf8Decode(before), source, target)
     if (rewritten.count)
       changes.push({
         path: entry.path,
@@ -298,7 +322,7 @@ export async function moveNote(
         after: bytes(utf8Encode(rewritten.text)),
       })
   }
-  const operationId = createOperationId()
+  const operationId = adapter.operationId()
   const journal: Journal = { schema: 2, root, operationId, from: source, to: target, changes }
   const journalBytes = utf8Encode(JSON.stringify(journal))
   if (journalBytes.length > maxJournalBytes) throw new Error('Move recovery journal is too large')
