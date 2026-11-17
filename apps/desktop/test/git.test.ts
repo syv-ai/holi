@@ -216,6 +216,52 @@ describe('commitAll', () => {
     expect((await repo.status()).dirtyPaths).toEqual(['b.md'])
   })
 
+  it('records only the exact managed invocation commit from its reflog action', async () => {
+    const dir = await makeClone(await makeRemote())
+    const records: Array<{ root: string; oid: string | null }> = []
+    const repo = openRepo(dir, {
+      commitProvenance: {
+        begin: () => ({ accountId: 7, generation: 2 }),
+        record: async (_ticket, root, oid) => {
+          records.push({ root, oid })
+        },
+      },
+    })
+    await writeFile(join(dir, 'managed.md'), 'managed\n')
+    const sha = await repo.commitAll('Update managed.md', ['managed.md'])
+    expect(sha).toMatch(/^[0-9a-f]{40}$/)
+    expect(records).toEqual([{ root: dir, oid: sha }])
+
+    await writeFile(join(dir, 'held.bin'), 'held\n')
+    const noVerifySha = await repo.commitFileNoVerify('held.bin')
+    expect(records[1]).toEqual({ root: dir, oid: noVerifySha })
+  })
+
+  it('leaves provenance unknown when marker-inheriting hook commits exceed the reflog window', async () => {
+    const dir = await makeClone(await makeRemote())
+    const records: Array<string | null> = []
+    const repo = openRepo(dir, {
+      commitProvenance: {
+        begin: () => ({ accountId: 7, generation: 2 }),
+        record: async (_ticket, _root, oid) => {
+          records.push(oid)
+        },
+      },
+    })
+    const hooks = join(dir, '.git', 'hooks')
+    await mkdir(hooks, { recursive: true })
+    const hook = join(hooks, 'post-commit')
+    await writeFile(
+      hook,
+      '#!/bin/sh\nif [ ! -f .git/hook-fired ]; then touch .git/hook-fired; for i in $(seq 1 40); do git -c core.hooksPath=/dev/null -c user.name=hook -c user.email=hook@localhost commit --allow-empty -m hook-$i || exit 1; done; fi\n',
+    )
+    const { chmod } = await import('node:fs/promises')
+    await chmod(hook, 0o755)
+    await writeFile(join(dir, 'managed.md'), 'managed\n')
+    await repo.commitAll('Update managed.md', ['managed.md'])
+    expect(records).toEqual([null])
+  })
+
   it('returns null when the pathspec is empty', async () => {
     // The idle timer fires on untouched vaults constantly, and an all-held-back
     // tree has nothing to stage. This is the normal path, not an error.

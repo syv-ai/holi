@@ -79,6 +79,8 @@ import { guardNavigation } from './window-guard'
 import { createRouter } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
+import { createSubscriptions } from './vault/subscriptions'
+import { createManagedCommitProvenance } from './managed-commit-provenance'
 import { prepareManagedClone } from './vault/prepare-clone'
 import { createSelectedRuntimeGate } from './vault/selected-runtime'
 import { drainShutdown, settleVaultForQuit } from './shutdown'
@@ -481,6 +483,7 @@ async function main(): Promise<void> {
     },
   })
 
+  const subscriptions = createSubscriptions(join(app.getPath('userData'), 'subscriptions.json'))
   const host = createVaultHost({
     registry,
     // Do not initialise vault tools or agent sessions until the login shell's
@@ -495,6 +498,19 @@ async function main(): Promise<void> {
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },
+    commitProvenance: (remote, _root) =>
+      createManagedCommitProvenance({
+        file: join(userDataDir, 'managed-commit-provenance.json'),
+        remote,
+        identity: () => {
+          const accountId = session.viewer?.accountId
+          return accountId !== undefined && accountId > 0
+            ? { accountId, generation: session.generation }
+            : null
+        },
+        subscribed: () => subscriptions.hasExplicit(remote),
+        subscribedNow: () => subscriptions.hasExplicitNow(remote),
+      }),
     claims: (root) => plugins.scanClaimsFor(root),
     onSnapshot: (remote, snapshot) => {
       const runtime = gate.capture(remote)

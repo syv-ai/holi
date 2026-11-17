@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { isRemote, isSecretPath, vaultRelPath } from '@holi/shared'
@@ -83,6 +84,20 @@ export function createSubscriptions(file: string) {
   }
 
   return {
+    /** Fail closed at a synchronous publication point, never from an async snapshot. */
+    hasExplicitNow(remote: string): boolean {
+      if (!isRemote(remote)) return false
+      try {
+        const text = readFileSync(file, 'utf8')
+        return (parseSubscription(JSON.parse(text), text).remotes[remote]?.length ?? 0) > 0
+      } catch {
+        return false
+      }
+    },
+    async hasExplicit(remote: string): Promise<boolean> {
+      if (!isRemote(remote)) return false
+      return ((await store.read()).remotes[remote]?.length ?? 0) > 0
+    },
     async list(remote: string, root: string, paths: string[]) {
       if (!isRemote(remote)) throw new Error('Invalid vault remote.')
       const valid = await Promise.all(paths.map((path) => validateScope(root, path)))

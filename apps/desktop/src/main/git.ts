@@ -11,6 +11,7 @@
  * `--porcelain=v2`. Human-readable output is not a stable interface.
  */
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { appendFile, lstat, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -83,6 +84,11 @@ export interface GitDeps {
   /** Extra environment for the git child process. Tests use it to simulate a
    * machine with no global config; nothing in the app needs it. */
   env?: Record<string, string>
+  /** Optional machine-local recorder used only by managed vault commits. */
+  commitProvenance?: {
+    begin(root: string): Promise<unknown> | unknown
+    record(ticket: unknown, root: string, oid: string | null): Promise<void>
+  }
 }
 
 /** Bounded so a large `git log` cannot silently truncate: execFile's default is
@@ -1080,6 +1086,111 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     )
   }
 
+  async function commitWithProvenance(args: string[]): Promise<string> {
+    const recorder = deps.commitProvenance
+    let ticket: unknown = null
+    if (recorder !== undefined) {
+      try {
+        ticket = await recorder.begin(root)
+      } catch (error) {
+        console.error('[git] commit provenance capture failed:', error)
+      }
+    }
+    let marker: string | null = null
+    let before: string[] | null = null
+    let beforeHead: string | null = null
+    // Separate budgets either side of the commit: native hooks keep their normal
+    // permissions and duration. Only provenance reads get a deadline/output cap.
+    let deadline = Date.now() + 1000
+    const evidenceOpts = (): RunOpts => {
+      const timeout = deadline - Date.now()
+      if (timeout <= 0) throw new GitResourceError('time')
+      return {
+        ...opts,
+        env: { ...opts.env, GIT_NO_REPLACE_OBJECTS: '1' },
+        executionBudget: { maxBuffer: 65536, timeout },
+      }
+    }
+    // These are reads, not index mutations: never retry an evidence process.
+    const probe = (command: string[]) =>
+      runGitOnce(root, ['--no-replace-objects', ...command], evidenceOpts())
+    const evidence = async (command: string[]) => {
+      const outcome = await probe(command)
+      if (!outcome.ok)
+        throw new GitError('Commit evidence read failed', outcome.code, outcome.stderr)
+      return outcome.stdout.trim()
+    }
+    if (recorder !== undefined && ticket !== null) {
+      marker = `holi-managed-commit:${randomUUID()}`
+      try {
+        if (!(await probe(['rev-parse', '--verify', 'MERGE_HEAD'])).ok) {
+          const head = await probe(['rev-parse', '--verify', 'HEAD'])
+          beforeHead = head.ok ? head.stdout.trim() : null
+          // One previous entry and its exact parent are enough to anchor a
+          // single new entry. Never scan or materialize the historical reflog.
+          before =
+            beforeHead === null
+              ? []
+              : (await evidence(['reflog', 'show', '-n1', '--format=%H%x00%gs', 'HEAD']))
+                  .split('\n')
+                  .filter(Boolean)
+          if (beforeHead !== null && before.length !== 1) throw new Error('Missing reflog anchor')
+        }
+      } catch (error) {
+        before = null
+        console.error('[git] commit reflog anchor unavailable:', error)
+      }
+    }
+    await runGit(root, args, {
+      ...opts,
+      ...(marker === null ? {} : { env: { ...opts.env, GIT_REFLOG_ACTION: marker } }),
+    })
+    let exactOid: string | null = null
+    if (marker !== null && before !== null) {
+      deadline = Date.now() + 1000
+      try {
+        const after = (await evidence(['reflog', 'show', '-n2', '--format=%H%x00%gs', 'HEAD']))
+          .split('\n')
+          .filter(Boolean)
+        if (after.length !== before.length + 1 || (before.length === 1 && after[1] !== before[0]))
+          throw new Error('Missing or ambiguous commit reflog interval')
+        const [oid, action] = after[0]!.split('\0')
+        if (
+          !oid ||
+          !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid) ||
+          !action?.startsWith(`${marker}:`)
+        )
+          throw new Error('Missing invocation marker')
+        const type = await evidence(['cat-file', '-t', oid])
+        const object = await evidence(['cat-file', '-p', oid])
+        const headers = object.split('\n\n', 1)[0]!.split('\n')
+        const parents = headers.filter((line) => line.startsWith('parent '))
+        if (
+          type !== 'commit' ||
+          !/^tree (?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headers[0]!) ||
+          parents.length > 1 ||
+          (parents[0]?.slice('parent '.length) ?? null) !== beforeHead ||
+          (await probe(['rev-parse', '--verify', 'MERGE_HEAD'])).ok
+        )
+          throw new Error('Commit object is not the managed non-merge invocation')
+        exactOid = oid
+      } catch (error) {
+        console.error('[git] commit reflog evidence unavailable:', error)
+      }
+    }
+    if (recorder !== undefined && ticket !== null) {
+      try {
+        // Null is an explicit evidence gap, including pre-commit read failure.
+        await recorder.record(ticket, root, exactOid)
+      } catch (error) {
+        console.error('[git] commit provenance write failed:', error)
+      }
+    }
+    // Preserve the historical API: return the current HEAD after hooks, even
+    // when exact invocation evidence is unavailable. Only exactOid is recorded.
+    return runGit(root, ['rev-parse', 'HEAD'], opts)
+  }
+
   async function commitAll(message: string, paths: string[]): Promise<string | null> {
     // The caller decides what commits (the large-file gate holds oversized files
     // out by simply not naming them); an empty pathspec is the idle/all-held-back
@@ -1108,8 +1219,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     // Nothing actually got staged (e.g. the named paths were already clean): not
     // an error, just the idle path — do not create an empty commit.
     if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
-    await runGit(root, [...(await identityArgs()), 'commit', '-m', message], opts)
-    return runGit(root, ['rev-parse', 'HEAD'], opts)
+    return commitWithProvenance([...(await identityArgs()), 'commit', '-m', message])
   }
 
   async function commitFileNoVerify(path: string): Promise<string | null> {
@@ -1117,22 +1227,17 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     // staged entries. Literal pathspecs keep bracketed names exact.
     if (!(await status()).dirtyPaths.includes(path)) return null
     await runGit(root, ['--literal-pathspecs', 'add', '-A', '--', path], opts)
-    await runGit(
-      root,
-      [
-        '--literal-pathspecs',
-        ...(await identityArgs()),
-        'commit',
-        '--only',
-        '--no-verify',
-        '-m',
-        `Add ${path}`,
-        '--',
-        path,
-      ],
-      opts,
-    )
-    return runGit(root, ['rev-parse', 'HEAD'], opts)
+    return commitWithProvenance([
+      '--literal-pathspecs',
+      ...(await identityArgs()),
+      'commit',
+      '--only',
+      '--no-verify',
+      '-m',
+      `Add ${path}`,
+      '--',
+      path,
+    ])
   }
 
   /** Uses `.git/info/exclude`, not the shared `.gitignore`: another clone

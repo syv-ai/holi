@@ -1579,6 +1579,8 @@ export function createVaultHost(args: {
   /** Default cold-clone preparation when the caller does not supply seeding work. */
   prepareClone?: (remote: string) => Promise<void>
   gitDeps?: GitDeps
+  /** Per-managed-vault provenance recorder; absent means no records are made. */
+  commitProvenance?: (remote: string, root: string) => NonNullable<GitDeps['commitProvenance']>
   /** What the scanner claims in the vault at `root` (`openActiveVault`). */
   claims: (root: string) => Promise<readonly ScanClaim[]>
   onSnapshot: (remote: string, snapshot: VaultSnapshot) => void
@@ -1744,7 +1746,12 @@ export function createVaultHost(args: {
       }
       const vault = await openActiveVault({
         remote,
-        repo: openRepo(entry.path, args.gitDeps),
+        repo: openRepo(entry.path, {
+          ...args.gitDeps,
+          ...(args.commitProvenance === undefined
+            ? {}
+            : { commitProvenance: args.commitProvenance(remote, entry.path) }),
+        }),
         claims: () => args.claims(entry.path),
         onSnapshot: (snapshot) => {
           if (callbacksEnabled) safely(() => args.onSnapshot(remote, snapshot))
