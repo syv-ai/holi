@@ -68,6 +68,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       source: Element | null = document.activeElement,
       adapter?: HostHintAdapter,
       scoped = false,
+      guestOnly = false,
     ) => {
       const root =
         (scoped ? source?.closest<HTMLElement>('[data-panel-terminal]') : null) ??
@@ -78,7 +79,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         ) ??
         document.body
       const adapters = adapter === undefined ? captureHostHintAdapters(root) : [adapter]
-      const targets = discoverHostHintTargets(root, adapter)
+      const targets = discoverHostHintTargets(root, adapter, guestOnly)
       change(
         targets.length || adapters.length ? { targets, prefix: '', adapter, root, adapters } : null,
       )
@@ -154,9 +155,10 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
           source?: HTMLElement
           adapter?: HostHintAdapter
           scoped?: boolean
+          guestOnly?: boolean
         }>
       ).detail
-      start(detail?.source ?? null, detail?.adapter, detail?.scoped)
+      start(detail?.source ?? null, detail?.adapter, detail?.scoped, detail?.guestOnly)
     }
     const onKey = (event: KeyboardEvent): boolean => {
       const active = current.current

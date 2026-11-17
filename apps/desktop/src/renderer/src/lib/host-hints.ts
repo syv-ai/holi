@@ -44,6 +44,8 @@ export function registerHostHintSurface(root: ShadowRoot, owner: HTMLElement): (
 
 /** A request-scoped target source. It exists only for the active hint session. */
 export interface HostHintAdapter {
+  /** This source is a guest surface; its request must never enumerate host chrome. */
+  guestOnly?: boolean
   discover(): readonly HostHintAdapterTarget[]
   /** Validate the request lifetime as well as target geometry; called even with no links. */
   unchanged(targets: readonly HostHintTarget[]): boolean
@@ -109,10 +111,16 @@ export function requestHostHints(source: HTMLElement): void {
 }
 
 /** Explicitly request hints for a shell surface, independent of document focus. */
-export function requestAdaptedHostHints(source: HTMLElement, adapter: HostHintAdapter): void {
+export function requestAdaptedHostHints(
+  source: HTMLElement,
+  adapter: HostHintAdapter,
+  options: { guestOnly?: boolean } = {},
+): void {
   adapter.capture?.()
   window.dispatchEvent(
-    new CustomEvent(HOST_HINT_REQUEST, { detail: { source, adapter, scoped: true } }),
+    new CustomEvent(HOST_HINT_REQUEST, {
+      detail: { source, adapter, scoped: true, guestOnly: options.guestOnly === true },
+    }),
   )
 }
 
@@ -136,11 +144,13 @@ export interface HostHintTarget {
 export function discoverHostHintTargets(
   root: HTMLElement,
   adapter?: HostHintAdapter,
+  guestOnly = false,
 ): HostHintTarget[] {
   const hostOverlay = topOverlay()
   const ownedOverlay = hostOverlay ? null : topOwnedOverlay(root)
   const overlay = hostOverlay ?? ownedOverlay?.element ?? null
   const targets: HostHintTarget[] = []
+  if (guestOnly && overlay) return targets
   const collect = (candidate: ParentNode, surface: ShadowRoot | null) => {
     for (const element of candidate.querySelectorAll<Element>(PRESSABLE)) {
       const owner = surface ? [...ownedSurfaces].find((item) => item.root === surface)?.owner : null
@@ -167,12 +177,18 @@ export function discoverHostHintTargets(
   if (hostOverlay) collect(hostOverlay, null)
   else if (ownedOverlay) collect(ownedOverlay.element, ownedOverlay.surface)
   else {
-    collect(document.body, null)
-    for (const surface of ownedSurfaces) {
-      if (surface.owner.closest('[data-pane]') !== root) continue
-      collect(surface.root, surface.root)
+    if (!guestOnly) {
+      collect(document.body, null)
+      for (const surface of ownedSurfaces) {
+        if (surface.owner.closest('[data-pane]') !== root) continue
+        collect(surface.root, surface.root)
+      }
     }
-    const sources = [...new Set([...adaptersFor(root), ...(adapter ? [adapter] : [])])]
+    const sources = guestOnly
+      ? adapter
+        ? [adapter]
+        : []
+      : [...new Set([...adaptersFor(root), ...(adapter ? [adapter] : [])])]
     for (const source of sources) {
       for (const target of source.discover()) {
         if (!target.element.isConnected || target.element.closest('[hidden],[inert]')) continue
@@ -222,7 +238,7 @@ export function hostHintsUnchanged(
     if (!source.unchanged(adapted)) return false
   }
   const ordinary = targets.filter((target) => !target.adapter)
-  const next = discoverHostHintTargets(root, requestAdapter)
+  const next = discoverHostHintTargets(root, requestAdapter, requestAdapter?.guestOnly === true)
   const ordinaryNext = next.filter((target) => !target.adapter)
   if (
     ordinaryNext.length !== ordinary.length ||

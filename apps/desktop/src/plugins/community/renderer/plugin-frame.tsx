@@ -8,7 +8,7 @@
  * fails or stops, the output and a way to start it again.
  */
 import { useAtomValue, useStore } from 'jotai'
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { pluginServerOrigin, servedFile } from '@holi/shared'
 import {
   activeRemoteAtom,
@@ -82,6 +82,8 @@ export function PluginFrame({
   const [loadedKey, setLoadedKey] = useState<string | null>(null)
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null)
   const [focusEpoch, setFocusEpoch] = useState(0)
+  const [documentGeneration, setDocumentGeneration] = useState(0)
+  const adapterRef = useRef<ReturnType<typeof createCommunityHintAdapter> | null>(null)
 
   const running =
     phase.kind === 'running' &&
@@ -116,17 +118,30 @@ export function PluginFrame({
       !visible ||
       !running ||
       !remote ||
-      frame.closest('[data-pane-focused]') === null
+      !communityFramePaneFocused(frame)
     )
       return
     const adapter = createCommunityHintAdapter(frame)
+    adapterRef.current = adapter
     adapter.capture?.()
     const unregister = registerHostHintAdapter(frame, adapter)
     return () => {
       adapter.invalidate?.()
       unregister()
+      if (adapterRef.current === adapter) adapterRef.current = null
     }
-  }, [frame, loaded, vimEnabled, visible, running, remote, path, remoteRevision, focusEpoch])
+  }, [
+    frame,
+    loaded,
+    vimEnabled,
+    visible,
+    running,
+    remote,
+    path,
+    remoteRevision,
+    focusEpoch,
+    documentGeneration,
+  ])
 
   useEffect(() => {
     if (remote === null || !eligible || rowId === undefined) {
@@ -185,7 +200,13 @@ export function PluginFrame({
         // server's module scripts fail CORS from an opaque origin.
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
         allow="fullscreen; clipboard-read; clipboard-write"
-        onLoad={() => setLoadedKey(documentKey)}
+        onLoad={() => {
+          // Invalidate synchronously at every document replacement, even when
+          // the lease key is unchanged (reload and same-URL navigation).
+          adapterRef.current?.invalidate?.()
+          setDocumentGeneration((generation) => generation + 1)
+          setLoadedKey(documentKey)
+        }}
         className={cn('size-full border-0', loaded ? 'motion-in-fade' : 'opacity-0')}
       />
     )
@@ -253,6 +274,13 @@ export function PluginFrame({
 }
 
 /** Use a non-running claim only to explain the next step, not to select a server. */
+function communityFramePaneFocused(frame: HTMLIFrameElement): boolean {
+  const pane = frame.closest<HTMLElement>('[data-pane]')
+  if (!pane) return false
+  const panes = document.querySelectorAll('[data-pane]')
+  return panes.length <= 1 || pane.getAttribute('data-pane-focused') === 'true'
+}
+
 function unavailableReason(row: PluginRow | null): string {
   if (row === null) return 'No installed or pinned plugin claims this file.'
   if (!row.on) return `${row.name} is turned off in this vault.`
