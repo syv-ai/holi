@@ -1,7 +1,11 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { createStore } from 'jotai'
-import { Provider } from 'jotai/react'
+import { createStore, useAtomValue } from 'jotai'
+import { Provider, useSetAtom } from 'jotai/react'
+import { activeModeAtom, vimCodeEditingAtom } from './app-frame-renderer-fixture-api'
+import { HostHintLayer } from '../src/renderer/src/features/shell/host-hint-layer'
+import { useShortcutDispatcher } from '../src/renderer/src/hooks/use-shortcuts'
+import './app-frame-renderer-fixture.css'
 import * as fixtureApi from './app-frame-renderer-fixture-api'
 
 const { activeRemoteAtom, snapshotAtom } = fixtureApi
@@ -23,6 +27,17 @@ function Fixture() {
   const [remote, setRemote] = React.useState('ada/a')
   const [visible, setVisible] = React.useState(true)
   const [reload, setReload] = React.useState(0)
+  const [mode, setMode] = React.useState<'light' | 'dark'>('dark')
+  const [focused, setFocused] = React.useState(true)
+  const setVim = useSetAtom(vimCodeEditingAtom)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
+  useShortcutDispatcher()
+  React.useEffect(() => {
+    ;(window as Window & { fixtureVimEnabled?: boolean }).fixtureVimEnabled = vimEnabled
+  }, [vimEnabled])
+  React.useEffect(() => {
+    document.documentElement.dataset.theme = mode
+  }, [mode])
   React.useEffect(() => {
     const state = window as Window & { fixtureNonces?: Record<string, string> }
     state.fixtureNonces ??= {}
@@ -33,12 +48,54 @@ function Fixture() {
       }
       if (event.data?.kind === 'fixture-visible') setVisible(event.data.visible)
       if (event.data?.kind === 'fixture-reload') setReload((value) => value + 1)
+      if (event.data?.kind === 'fixture-vim') setVim(Boolean(event.data.enabled))
+      if (event.data?.kind === 'fixture-mode') {
+        const nextMode = event.data.mode === 'light' ? 'light' : 'dark'
+        store.set(activeModeAtom, nextMode)
+        setMode(nextMode)
+      }
+      if (event.data?.kind === 'fixture-focused') setFocused(Boolean(event.data.focused))
+      if (event.data?.kind === 'fixture-overlay') {
+        document.querySelector('#fixture-host-overlay')?.remove()
+        if (event.data.show) {
+          const overlay = document.createElement('div')
+          overlay.id = 'fixture-host-overlay'
+          Object.assign(overlay.style, {
+            position: 'fixed',
+            inset: '0',
+            zIndex: '1000',
+            background: 'transparent',
+          })
+          document.body.append(overlay)
+        }
+      }
       if (event.data?.kind === 'bridge-read-result') {
         const output = document.querySelector('#bridge-read-result')
         if (output) output.textContent = event.data.text
         if (typeof event.data.owner === 'string' && typeof event.data.nonce === 'string') {
           state.fixtureNonces![event.data.owner.toLowerCase()] = event.data.nonce
         }
+      }
+      if (
+        event.data?.kind === 'guest-action-count' &&
+        event.source === document.querySelector('iframe')?.contentWindow &&
+        event.data.nonce === state.fixtureNonces?.a
+      ) {
+        const output = document.querySelector('#guest-action-count')
+        if (output) output.textContent = String(event.data.count)
+      }
+      if (
+        event.data?.kind === 'fixture-input-focused' &&
+        event.source === document.querySelector('iframe')?.contentWindow &&
+        event.data.nonce === state.fixtureNonces?.a
+      ) {
+        ;(window as Window & { fixtureInputFocused?: boolean }).fixtureInputFocused = Boolean(
+          event.data.value,
+        )
+      }
+      if (event.data?.kind === 'guest-input-value') {
+        const output = document.querySelector('#guest-input-value')
+        if (output) output.textContent = String(event.data.value)
       }
       if (event.data?.kind === 'stale-result' || event.data?.kind === 'replacement-result') {
         const output = document.querySelector('#stale-result')
@@ -47,13 +104,18 @@ function Fixture() {
     }
     addEventListener('message', change)
     return () => removeEventListener('message', change)
-  }, [])
+  }, [setVim])
   return (
-    <main style={{ width: '760px', height: '500px', background: '#fff' }}>
+    <main className={`fixture ${mode}`} style={{ width: '760px', height: '500px' }}>
       <output id="active-vault">{remote}</output>
       <pre id="bridge-read-result">waiting</pre>
       <output id="stale-result"></output>
-      <AppFrame key={reload} path={bundle} visible={visible} />
+      <output id="guest-action-count">0</output>
+      <output id="guest-input-value"></output>
+      <section data-pane data-pane-focused={focused ? '' : undefined} aria-label="App pane">
+        <AppFrame key={reload} path={bundle} visible={visible} />
+      </section>
+      <HostHintLayer scopeKey={`app-frame-smoke:${remote}:${visible}:${reload}:${focused}`} />
     </main>
   )
 }

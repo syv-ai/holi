@@ -71,6 +71,34 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+test('async adapter preparation is request-scoped and cannot replace a newer hint session', async () => {
+  let finish!: () => void
+  const element = document.createElement('button')
+  element.textContent = 'Prepared'
+  const owner = document.createElement('div')
+  const activate = vi.fn(() => true)
+  const adapter: HostHintAdapter = {
+    prepare: () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      }),
+    discover: () => [{ element, label: 'Prepared', x: 100, y: 100, token: 'one' }],
+    unchanged: () => true,
+    activate,
+  }
+  const view = setup(<div data-pane-focused data-pane="pane" />)
+  const root = document.querySelector<HTMLElement>('[data-pane-focused]')!
+  root.append(element, owner)
+  registerHostHintAdapter(owner, adapter)
+  act(() => requestAdaptedHostHints(owner, adapter))
+  expect(hints()).toHaveLength(0)
+  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+  await act(async () => finish())
+  expect(hints()).toHaveLength(0)
+  expect(activate).not.toHaveBeenCalled()
+  view.unmount()
+})
+
 test('normal host f discovers actual buttons including chrome and only the focused split', async () => {
   const click = vi.fn()
   setup(
