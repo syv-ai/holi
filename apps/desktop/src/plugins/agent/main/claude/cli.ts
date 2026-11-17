@@ -176,7 +176,8 @@ export interface ClaudeCliDeps {
 }
 
 type ActionResult = { ok: true } | { ok: false; message: string }
-type StartResult = { ok: true; id: string } | { ok: false; message: string }
+type StartResult =
+  { ok: true; id: string } | { ok: false; message: string; cleanupUnconfirmed?: true }
 
 export interface ClaudeCli {
   /** `claude agents --json`, raw. Null for every failure: no binary, a
@@ -361,7 +362,15 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     }
     const id = parseBackgrounded(stdout)
     if (id === null)
-      return { ok: false, message: 'Claude Code did not say which session it started.' }
+      // The successful command deliberately retained its descendants. Without a
+      // native receipt we cannot identify ownership by name or listing absence,
+      // and must not kill the run (or offer another launch) speculatively.
+      return {
+        ok: false,
+        cleanupUnconfirmed: true,
+        message:
+          'Cleanup unconfirmed: Claude Code started a session but did not report its id. Holi cannot safely confirm cleanup until native session ownership is known; identify the run in Claude Code before stopping it.',
+      }
     return { ok: true, id }
   }
 

@@ -54,7 +54,8 @@ interface LifecycleState {
   cancelRequests: Set<() => void>
 }
 
-const refreshNonceAtom = atom(0)
+/** Invalidates in-flight account-scoped actions even across A→B→A refreshes. */
+export const googleAccountRevisionAtom = atom(0)
 const lifecycleAtom = atom<LifecycleState | null>(null)
 interface CachedConnection {
   connection: Connection
@@ -89,7 +90,9 @@ const retryDelays = [250, 1_000]
  * Ask main again: after a connect, a disconnect or a change of account.
  * @public exported for its test
  */
-export const refreshGoogleAtom = atom(null, (_get, set) => set(refreshNonceAtom, (n) => n + 1))
+export const refreshGoogleAtom = atom(null, (_get, set) =>
+  set(googleAccountRevisionAtom, (n) => n + 1),
+)
 
 interface ConnectionRead {
   remote: string | null
@@ -101,7 +104,7 @@ interface ConnectionRead {
 const connectionAtom = atom(
   async (get, { signal, setSelf }): Promise<ConnectionRead> => {
     const remote = get(activeRemoteAtom)
-    const request = get(refreshNonceAtom)
+    const request = get(googleAccountRevisionAtom)
     const lifecycle = get(lifecycleAtom)
     const cached = get(lastGoodConnectionAtom)
     if (
@@ -245,7 +248,7 @@ export function useGoogleAccount(): GoogleAccountState {
     store.set(refreshGoogleAtom)
     await store.get(connectionAtom)
   }
-  const request = useAtomValue(refreshNonceAtom)
+  const request = useAtomValue(googleAccountRevisionAtom)
   const connection = result?.connection
   return {
     account: connection?.account,

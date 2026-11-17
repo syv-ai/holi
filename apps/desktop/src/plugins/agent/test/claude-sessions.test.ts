@@ -12,6 +12,7 @@ import {
   sessionName,
   type RunOptions,
 } from '../main/claude/cli'
+import { fakeClaudeCommand } from './fake-claude-command'
 import { POSIX_STATUS_LINE } from '../main/claude/seed'
 import {
   isLive,
@@ -550,7 +551,7 @@ describe('claude-cli', () => {
     expect(await ok.startBg(target, {})).toEqual({ ok: true, id: '1234abcd' })
 
     const silent = createClaudeCli({ resolveBin: () => '/c', run: async () => '', log: () => {} })
-    expect((await silent.startBg(target, {})).ok).toBe(false)
+    expect(await silent.startBg(target, {})).toMatchObject({ ok: false, cleanupUnconfirmed: true })
 
     const failing = createClaudeCli({
       resolveBin: () => '/c',
@@ -623,4 +624,34 @@ describe('watchConfigDir', () => {
     await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 3_000 })
     stop()
   })
+})
+
+describe('native Claude launch receipt uncertainty', () => {
+  it.each(['', 'started but no native id\n'])(
+    'retains a successful child with unparseable receipt %j and reports typed uncertainty',
+    async (output) => {
+      const command = await fakeClaudeCommand(output)
+      try {
+        const result = await command.cli.startBg(command.target, {
+          name: 'Mail catch-up',
+          prompt: 'Read only',
+        })
+        expect(result).toMatchObject({ ok: false, cleanupUnconfirmed: true })
+        expect(result).not.toHaveProperty('id')
+        if (result.ok) throw new Error('unparseable launch unexpectedly succeeded')
+        expect(result.message).toContain('native session ownership is known')
+        const pid = await command.childPid()
+        expect(pid).toBeGreaterThan(1)
+        expect(() => process.kill(pid, 0)).not.toThrow()
+        // Even an empty supported listing is not proof that the child is gone.
+        expect(await command.cli.list(command.target)).toBe('[]')
+        expect(() => process.kill(pid, 0)).not.toThrow()
+        const beat = await command.heartbeat()
+        await vi.waitFor(async () => expect(await command.heartbeat()).toBeGreaterThan(beat))
+        expect((await command.calls()).map((args) => args[0])).toEqual(['--bg', 'agents'])
+      } finally {
+        await command.close()
+      }
+    },
+  )
 })
