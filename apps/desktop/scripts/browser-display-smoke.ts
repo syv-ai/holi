@@ -77,7 +77,7 @@ async function run(): Promise<void> {
       <label>Graphemes <textarea aria-label="Graphemes" id="graphemes">a café🙂 z</textarea></label>
       <label>Rows <textarea aria-label="Rows" id="rows">  alpha beta\n  gamma delta\n  omega</textarea></label>
       <div id="shadow-host"></div><iframe title="frame" srcdoc="<input id='frame-input' value='frame'>"></iframe>
-      <p>Local fixture, no accounts</p></main><script>
+      <p>Local fixture, no accounts</p><div aria-hidden="true" style="height:1200px"></div></main><script>
       const shadow = document.querySelector('#shadow-host').attachShadow({mode:'open'});
       shadow.innerHTML = '<input id="shadow-input" value="shadow">';
       </script>`)
