@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { fileKind } from '@holi/shared'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
+import { lintGutter } from '@codemirror/lint'
 import { findNext, findPrevious } from '@codemirror/search'
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -266,6 +267,7 @@ function TextEditor({
           // The code block's look: no soft wrap, as in the block.
           ...plainTextExtensions(path).filter((extension) => extension !== EditorView.lineWrapping),
           lineNumbers(),
+          ...(path.toLowerCase().endsWith('.mdx') ? [lintGutter()] : []),
           highlightActiveLineGutter(),
           ...codeLook(path),
           codeFind(),

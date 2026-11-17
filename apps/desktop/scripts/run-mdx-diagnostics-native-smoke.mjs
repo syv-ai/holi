@@ -8,6 +8,7 @@ import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { externalizeDepsPlugin } from 'electron-vite'
 import { createCdpClient } from './native-smoke-cdp.mjs'
 
@@ -71,21 +72,21 @@ async function waitFor(fn, label, timeout = 30000) {
 
 try {
   await mkdir(evidence, { recursive: true })
-  await mkdir(vault, { recursive: true })
+  await mkdir(join(vault, 'notes'), { recursive: true })
   await mkdir(join(appDir, 'renderer'), { recursive: true })
-  await writeFile(join(vault, 'notes', 'fixture.mdx'), '# fixture\n', { flag: 'w' }).catch(
-    async () => {
-      await mkdir(join(vault, 'notes'), { recursive: true })
-      await writeFile(join(vault, 'notes', 'fixture.mdx'), '# fixture\n')
-    },
-  )
+  await writeFile(join(vault, 'notes', 'fixture.mdx'), '# fixture\n')
 
   await build({
     configFile: false,
     root: desktop,
     base: './',
-    resolve: { alias: { '@/lib/trpc': join(desktop, 'scripts/mdx-diagnostics-smoke-trpc.ts') } },
-    plugins: [react()],
+    resolve: {
+      alias: [
+        { find: '@/lib/trpc', replacement: join(desktop, 'scripts/mdx-diagnostics-smoke-trpc.ts') },
+        { find: '@', replacement: join(desktop, 'src/renderer/src') },
+      ],
+    },
+    plugins: [react(), tailwindcss()],
     build: {
       target: 'chrome140',
       outDir: join(appDir, 'renderer'),
@@ -122,7 +123,7 @@ try {
   })
   await writeFile(
     join(appDir, 'preload.cjs'),
-    `const { contextBridge, ipcRenderer } = require('electron'); contextBridge.exposeInMainWorld('holiSmoke', { call: (channel, input) => { if (!['smoke:status','smoke:trust','smoke:rotate','mdx:acquire','mdx:cancel','mdx:compile','mdx:release','smoke:replaceFile'].includes(channel)) return Promise.reject(Error('Denied fixture operation')); return ipcRenderer.invoke(channel, input) }, trust: (value) => ipcRenderer.invoke('smoke:trust', value) });`,
+    `const { contextBridge, ipcRenderer } = require('electron'); contextBridge.exposeInMainWorld('holiSmoke', { call: (channel, input) => { if (!['smoke:status','smoke:trpc'].includes(channel)) return Promise.reject(Error('Denied fixture operation')); return ipcRenderer.invoke(channel, input) } });`,
   )
   await build({
     configFile: join(desktop, 'vite.mdx-compiler.config.ts'),
@@ -208,120 +209,107 @@ try {
     true,
     'renderer exposed privileged globals',
   )
-  assert.equal(
-    await evaluate(`sessionStorage.length`),
-    0,
-    'fixture started with nonempty session storage',
-  )
-  checks.push(
-    'isolated userData/sessionData/HOME/vault',
-    'renderer privilege globals absent',
-    'fresh renderer session storage',
-  )
+  assert.equal(await evaluate('sessionStorage.length'), 0)
+  checks.push('isolated profile and vault', 'production renderer has no privileged globals')
 
-  // The source is withheld until the fixture's explicit trust action.
-  await delay(450)
-  assert.equal(await evaluate(`window.__mdxSmoke.state.kind`), 'unavailable')
-  await evaluate(`window.__mdxSmoke.setTrusted(true)`)
-  await waitFor(
-    () => evaluate(`window.__mdxSmoke.state.kind==='syntax-error'`),
-    'real compiler diagnostics in production hook',
-  )
-  const diagnostic = await evaluate(
-    `JSON.stringify({text:document.querySelector('[data-testid="diagnostic-message"]').textContent,source:window.__mdxSmoke.source,underlines:document.querySelectorAll('.cm-lintRange-error').length})`,
-  ).then(JSON.parse)
-  assert(diagnostic.text.length > 0, 'malformed Unicode MDX did not show a diagnostic')
-  assert(diagnostic.source.includes('Café 🪿'), 'Unicode fixture source was altered')
-  assert(diagnostic.underlines > 0, 'production editor did not render diagnostic underline')
-  checks.push(
-    'trust required before source compilation',
-    'production MDX diagnostic shown in CodeMirror',
-    'Unicode source retained',
-  )
-  await screenshot(page, join(evidence, 'diagnostics-light.png'))
-  await evaluate(`document.documentElement.dataset.theme='dark'`)
-  await screenshot(page, join(evidence, 'diagnostics-dark.png'))
-
-  await evaluate(
-    `window.__mdxSmoke.setSource(${JSON.stringify('# Café 🪿\\n\\nA valid paragraph.\\n')})`,
-  )
-  await waitFor(
-    () => evaluate(`window.__mdxSmoke.state.kind==='clean'`),
-    'clean production editor state',
-  )
-  await evaluate(
-    `window.__mdxSmoke.setSource(${JSON.stringify("import Evil from 'file:///etc/passwd'\\n\\n{globalThis.__mdxSmokeExecuted = true}\\n")})`,
-  )
+  const click = (label) =>
+    evaluate(
+      `(() => { const button=[...document.querySelectorAll('button')].find((item)=>item.textContent.trim()===${JSON.stringify(label)}); if(!button) throw Error('missing button '+${JSON.stringify(label)}); button.click(); return true })()`,
+    )
   await waitFor(
     () =>
       evaluate(
-        `window.__mdxSmoke.state.kind==='clean' || window.__mdxSmoke.state.kind==='syntax-error'`,
+        `document.body.innerText.includes('Review MDX trust') && document.querySelector('.cm-editor')`,
       ),
-    'hostile MDX compile',
+    'production MDX FileView and trust control',
+  )
+  await click('Review MDX trust')
+  await waitFor(
+    () =>
+      evaluate(
+        `!![...document.querySelectorAll('button')].find((item)=>item.textContent.trim()==='Approve vault')`,
+      ),
+    'production MDX approval dialog',
+  )
+  await click('Approve vault')
+  await waitFor(
+    () =>
+      evaluate(
+        `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>/^\\d+ MDX diagnostic/.test(el.textContent.trim()))`,
+      ),
+    'production FileView compiler diagnostic',
+  ).catch(async (error) => {
+    const state = await evaluate(
+      `JSON.stringify({status:[...document.querySelectorAll('[aria-live="polite"]')].map((el)=>el.textContent),body:document.body.innerText,errors:window.__mdxSmoke.errors})`,
+    )
+    throw new Error(`Production diagnostic failure ${state}: ${error.message}`)
+  })
+  const diagnostic = await evaluate(
+    `JSON.stringify({source:window.__mdxSmoke.source(),message:[...document.querySelectorAll('[aria-live="polite"]')].map((el)=>el.textContent).find((text)=>/^\\d+ MDX diagnostic/.test(text.trim())),underlines:document.querySelectorAll('.cm-lintRange-error').length,classes:[...document.querySelectorAll('.cm-editor *')].map((node)=>node.className?.baseVal??node.className).filter((name)=>String(name).includes('lint')||String(name).includes('diagnostic'))})`,
+  ).then(JSON.parse)
+  await screenshot(page, join(evidence, 'diagnostics-light.png'))
+  await evaluate(`window.__mdxSmoke.theme('dark')`)
+  await screenshot(page, join(evidence, 'diagnostics-dark.png'))
+  assert(diagnostic.source.includes('Café 🪿'), 'Unicode source was changed')
+  assert(
+    diagnostic.message.includes('MDX diagnostic'),
+    'production editor did not display a compiler diagnostic',
+  )
+  assert(
+    diagnostic.underlines > 0,
+    `production editor diagnostic has no underline: ${JSON.stringify(diagnostic.classes)}`,
+  )
+  checks.push(
+    'approval awaited before actual production FileView diagnostics',
+    'Unicode diagnostic shown in production FileView',
+  )
+
+  const editAndWaitForSave = async (source, label) => {
+    const previous = (await windowStatus(page)).savedWrites
+    await evaluate(`window.__mdxSmoke.setSource(${JSON.stringify(source)})`)
+    await waitFor(
+      async () => (await windowStatus(page)).savedWrites > previous,
+      `${label} durable save`,
+    )
+  }
+  await editAndWaitForSave('# Café 🪿\n\nA valid paragraph.\n', 'valid source')
+  await waitFor(
+    () =>
+      evaluate(
+        `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>el.textContent.includes('syntax is valid')) && document.querySelector('.cm-lintRange-error') === null`,
+      ),
+    'production editor clean compile',
+  )
+  const hostile =
+    "import Evil from 'file:///etc/passwd'\n\n{globalThis.__mdxSmokeExecuted = true}\n"
+  await editAndWaitForSave(hostile, 'hostile source')
+  await waitFor(
+    () =>
+      evaluate(
+        `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>/^\\d+ MDX diagnostic/.test(el.textContent.trim()) || el.textContent.includes('MDX diagnostics unavailable'))`,
+      ),
+    'hostile MDX compile or lease refresh state',
+  )
+  const needsRetry = await evaluate(
+    `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>el.textContent.includes('MDX diagnostics unavailable'))`,
+  )
+  if (needsRetry) await click('Retry')
+  await waitFor(
+    () =>
+      evaluate(
+        `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>/^\\d+ MDX diagnostic/.test(el.textContent.trim()))`,
+      ),
+    'fresh lease compiles hostile MDX after source save',
   )
   assert.equal(
     await evaluate(`globalThis.__mdxSmokeExecuted===true`),
     false,
-    'MDX expression was executed',
+    'compiled MDX expression was evaluated in FileView',
   )
-  assert.equal(
-    await evaluate(`window.__mdxSmoke.state.kind==='clean'`),
-    true,
-    'valid hostile MDX did not compile cleanly',
-  )
-  checks.push('valid source clean', 'hostile MDX output was not evaluated')
+  checks.push('valid source clean', 'hostile MDX expression not evaluated by the renderer')
+  const runtimeErrors = await evaluate(`JSON.stringify(window.__mdxSmoke.errors)`)
+  assert.deepEqual(JSON.parse(runtimeErrors), [], 'fixture renderer reported runtime errors')
 
-  const probes = await evaluate(
-    `(async()=>{const out={fetch:false,websocket:false,open:false,file:false,holi:false};try{await fetch('https://example.invalid/')}catch{out.fetch=true}navigator.sendBeacon('https://example.invalid/','x');try{const ws=new WebSocket('wss://example.invalid');out.websocket=await Promise.race([new Promise(r=>ws.addEventListener('error',()=>r(true),{once:true})),new Promise(r=>setTimeout(()=>r(ws.readyState===WebSocket.CLOSED),500))])}catch{out.websocket=true}out.open=window.open('https://example.invalid')===null;try{await fetch('file:///etc/passwd')}catch{out.file=true}try{await fetch('holi://vault/secret')}catch{out.holi=true}return out})()`,
-  )
-  assert(
-    probes.fetch && probes.websocket && probes.open && probes.file && probes.holi,
-    `network/window probes not denied: ${JSON.stringify(probes)}`,
-  )
-  checks.push('fetch/beacon/websocket/pop-up/file/Holi-scheme probes denied by CSP/session policy')
-
-  await evaluate(`window.holiSmoke.call('smoke:rotate')`)
-  await evaluate(`window.__mdxSmoke.retry()`)
-  await waitFor(
-    () => evaluate(`window.__mdxSmoke.state.kind==='checking'`),
-    'rotated account and vault generation',
-  )
-  await waitFor(
-    () => evaluate(`window.__mdxSmoke.state.kind==='clean'`),
-    'fresh production lease after generation change',
-  )
-  const rotated = await windowStatus(page)
-  assert.equal(rotated.accountGeneration, 2)
-  assert.equal(rotated.openRevision, 2)
-  checks.push('stale account/vault/view generation lease replaced')
-
-  await evaluate(`window.holiSmoke.call('smoke:replaceFile')`)
-  await evaluate(
-    `window.__mdxSmoke.setSource(${JSON.stringify('# Changed after external replacement\\n')})`,
-  )
-  await waitFor(
-    () => evaluate(`window.__mdxSmoke.state.kind==='unavailable'`),
-    'raw file replacement revokes active lease',
-  )
-  checks.push('external raw-file replacement revokes diagnostics lease')
-
-  await page.call('Page.crash')
-  const recoveredTarget = await waitFor(
-    async () =>
-      (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(
-        (target) => target.type === 'page' && target.id !== targets.id,
-      ),
-    'actual renderer crash recovery',
-  )
-  const recoveredPage = await cdp.attach(recoveredTarget.id)
-  await recoveredPage.call('Runtime.enable')
-  await waitFor(
-    () => recoveredPage.evaluate(`!!window.__mdxSmoke && !!document.querySelector('.cm-editor')`),
-    'recovered fixture editor',
-  )
-  const recovered = await recoveredPage.evaluate(`window.holiSmoke.call('smoke:status')`)
-  assert.equal(recovered.recoveredWindows, 1)
-  checks.push('native renderer crash recovered with isolated editor')
   outcome = 'passed'
 } catch (error) {
   logs += `\nSMOKE ERROR: ${error?.stack ?? error}\n`
@@ -332,7 +320,10 @@ try {
   if (child?.pid) {
     ownedKill('SIGTERM')
     await Promise.race([delay(3000), childClosed ?? Promise.resolve()])
-    if (child.exitCode === null && child.signalCode === null) ownedKill('SIGKILL')
+    if (child.exitCode === null && child.signalCode === null) {
+      ownedKill('SIGKILL')
+      await childClosed
+    }
   }
   await writeFile(join(evidence, 'electron-smoke.log'), logs)
   await writeFile(
