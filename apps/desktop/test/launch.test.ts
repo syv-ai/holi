@@ -834,21 +834,51 @@ describe('execProgram', () => {
       const shim = join(dir, 'tool.cmd')
       await writeFile(shim, `@ECHO off\r\n"${process.execPath}" "%~dp0hang.js" %*\r\n`)
       const { execProgram } = await import('../src/main/launch')
-      const result = await new Promise<{ err: Error | null; out: string }>((resolve) => {
-        const child = execProgram(
-          shim,
-          [],
-          { env: process.env, timeoutMs: 1500, maxBuffer: 65536, encoding: 'utf8' },
-          (err, out) => resolve({ err, out }),
+      const timeout = controlledTimeout(1500)
+      let child: ReturnType<typeof execProgram> | undefined
+      let result: Promise<{ err: Error | null; out: string }> | undefined
+      let output = ''
+      let behind = 0
+      try {
+        result = new Promise<{ err: Error | null; out: string }>((resolve) => {
+          child = execProgram(
+            shim,
+            [],
+            { env: process.env, timeoutMs: 1500, maxBuffer: 65536, encoding: 'utf8' },
+            (err, out) => resolve({ err, out }),
+          )
+          child.stdout!.on('data', (chunk: Buffer | string) => (output += chunk.toString()))
+          child.stdin?.end()
+        })
+        // Reuse the process-settling guard, not the execution deadline, for startup.
+        await vi.waitFor(
+          () => {
+            expect(output).toContain('\n')
+            behind = Number(output.trim())
+            expect(behind).toBeGreaterThan(1)
+            expect(defaultProbePid(behind, 'win32')).toBe('group-leader')
+          },
+          { timeout: 10_000 },
         )
-        child.stdin?.end()
-      })
-      expect(result.err).not.toBeNull()
-      const behind = Number(result.out.trim())
-      expect(behind).toBeGreaterThan(1)
-      await vi.waitFor(() => expect(defaultProbePid(behind, 'win32')).toBe('gone'), {
-        timeout: 10_000,
-      })
+        timeout.expire()
+        const { err, out } = await result
+        expect(err).not.toBeNull()
+        expect(err?.code).toBe('ETIMEDOUT')
+        expect(Number(out.trim())).toBe(behind)
+        await vi.waitFor(() => expect(defaultProbePid(behind, 'win32')).toBe('gone'), {
+          timeout: 10_000,
+        })
+      } finally {
+        try {
+          if (child && child.exitCode === null && child.signalCode === null) timeout.expire()
+          if (result) await result
+        } finally {
+          timeout.restore()
+          if (behind > 1 && defaultProbePid(behind, 'win32') !== 'gone') {
+            killTree(behind, 'SIGKILL', 'win32')
+          }
+        }
+      }
     },
     30_000,
   )
