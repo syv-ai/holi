@@ -87,6 +87,7 @@ export async function syncThreads(
   cache: GoogleCache,
   options: ListThreadsOptions = {},
   knownAddresses?: string[],
+  context?: { freshPage?: boolean },
 ): Promise<MailPage> {
   // Recipient classification depends on the resolved account identities. Keep
   // summaries from an outage/previous identity from becoming authoritative once
@@ -103,10 +104,13 @@ export async function syncThreads(
   const key = `${cacheKey(options)}${identityKey}`
 
   // "Load more" asks for what is past the tail: the one thing a last-N cache
-  // does not hold. An explicit search also goes to Gmail: mailbox history cannot
-  // evaluate arbitrary Gmail query grammar or reproduce a current search page's
-  // pagination token. Unfiltered/category/unread/mailbox lists remain delta-backed.
-  if (options.pageToken !== undefined) return listThreads(api, options, knownAddresses)
+  // does not hold. Explicit searches go to Gmail because mailbox history cannot
+  // evaluate arbitrary Gmail query grammar or reproduce a current page token.
+  // Needs-reply also always fetches one fresh Gmail page: filtering a cached
+  // slice would lose a valid continuation when that slice has no matches. Ordinary
+  // unfiltered/category/unread/mailbox lists remain delta-backed.
+  if (options.pageToken !== undefined || options.needsReply === true || context?.freshPage === true)
+    return listThreads(api, options, knownAddresses)
   if (options.query?.trim()) return fullSync(api, cache, options, key, knownAddresses)
   const cached = cache.readThreads(key)
   // The cursor THIS list was written at. Gmail's cursor is mailbox-wide, but
