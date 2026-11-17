@@ -23,7 +23,7 @@ test('reporting reconciles after checker failures when discovery succeeded', () 
       ),
     )
   }
-  assert.match(workflow, /name: pi-probe-results\n\s+path: \$\{\{ runner\.temp \}\/pi-results\//)
+  assert.match(workflow, /name: pi-probe-results\n\s+path: \$\{\{ runner\.temp \}\}\/pi-results\//)
   assert.match(workflow, /Only this reporting job receives the issue-write token/)
 })
 
