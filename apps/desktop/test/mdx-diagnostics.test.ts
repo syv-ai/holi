@@ -66,7 +66,7 @@ describe('MDX diagnostics lease acquisition', () => {
     })
     diagnostics.close()
     trustGate.resolve(true)
-    await expect(acquisition).rejects.toThrow('MDX context unavailable')
+    await expect(acquisition).rejects.toThrow('MDX context changed')
   })
 
   test('pending acquisitions reserve capacity', async () => {

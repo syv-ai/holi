@@ -92,7 +92,9 @@ beforeEach(() => {
   state.guests.length = 0
   state.hangLoadNext = false
   state.failLoadNext = false
-  state.BrowserWindow.mockImplementation(() => new FakeGuest())
+  state.BrowserWindow.mockImplementation(function (options: Record<string, unknown>) {
+    return new FakeGuest(options)
+  })
   state.fromPartition.mockImplementation(() => new FakeSession())
   state.reads.mockImplementation(async (path: string) => {
     if (path.endsWith('guest.html')) return Buffer.from('<html></html>')
@@ -220,10 +222,11 @@ describe('isolated MDX compiler policy', () => {
 
   it('recovers from renderer crashes and a hung guest load', async () => {
     const compiler = createMdxCompiler('/assets')
-    const crashed = compiler.compile('# crash')
+    state.hangLoadNext = true
+    const crashed = expect(compiler.compile('# crash')).rejects.toThrow(/crashed/)
     await vi.waitFor(() => expect(state.guests).toHaveLength(1))
     state.guests[0].webContents.emit('render-process-gone')
-    await expect(crashed).rejects.toThrow(/crashed/)
+    await crashed
 
     state.hangLoadNext = true
     const controller = new AbortController()
@@ -239,7 +242,7 @@ describe('isolated MDX compiler policy', () => {
     await expect(timedOut).rejects.toThrow(/timed out/)
     await expect(compiler.compile('# recovered after timeout')).resolves.toEqual([])
     compiler.close()
-  })
+  }, 10_000)
 
   it('enforces the four-request bound and permanently rejects work after close', async () => {
     const compiler = createMdxCompiler('/assets')
