@@ -10,6 +10,7 @@ import { emptyVaultSnapshot, resolveVaultSettings } from '@holi/shared'
 import { DocumentView } from '../src/renderer/src/features/documents/document-view'
 import { HostHintLayer } from '../src/renderer/src/features/shell/host-hint-layer'
 import { useShortcutDispatcher } from '../src/renderer/src/hooks/use-shortcuts'
+import { stampPlatform } from '../src/renderer/src/lib/platform'
 import {
   placeThreads,
   setCommentRanges,
@@ -66,6 +67,7 @@ const path = 'notes/acceptance.md'
 const secondaryPath = 'notes/secondary.md'
 let activeDocumentPath = path
 const initial = `---\ntitle: Native Vim fixture\ntags: [kept]\n---\n\n# Heading\n\nalpha beta alpha\n\n**bold mark** and [link](https://example.test) plus [[Wiki note]]\n\n\`\`\`ts\nconst value = 1\n\`\`\`\n\n- parent\n  - child\n- [ ] task\n\n1. ordered item\n\n| left | right |\n| --- | --- |\n| one | two |\n\n~~~mermaid\nA --> B\n~~~\n`
+stampPlatform()
 const store = createStore()
 let lastLeaveResult: { left: boolean; error?: string } | null = null
 let releaseFreeze: (() => void) | null = null
@@ -161,7 +163,7 @@ function App() {
         async focus(which: 'primary' | 'secondary' = 'primary') {
           setFocused(which)
           await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
           )
           editor(which).commands.focus()
         },
@@ -322,72 +324,68 @@ function App() {
     })
   })
   return (
-    <Provider store={store}>
-      <TooltipProvider>
-        <main
-          className="flex h-screen flex-col gap-2 bg-background p-4 text-foreground"
-          onFocusCapture={(event) => {
-            const section = (event.target as HTMLElement).closest<HTMLElement>(
-              '[data-fixture-editor]',
-            )
-            if (
-              section?.dataset.fixtureEditor === 'primary' ||
-              section?.dataset.fixtureEditor === 'secondary'
-            )
-              setFocused(section.dataset.fixtureEditor)
-          }}
-        >
-          <header className="text-sm">Production DocumentView · disposable fixture</header>
-          <button type="button" aria-label="Native hint target">
-            Hint target
+    <TooltipProvider>
+      <main
+        className="flex h-screen flex-col gap-2 bg-background p-4 text-foreground"
+        onFocusCapture={(event) => {
+          const section = (event.target as HTMLElement).closest<HTMLElement>(
+            '[data-fixture-editor]',
+          )
+          if (
+            section?.dataset.fixtureEditor === 'primary' ||
+            section?.dataset.fixtureEditor === 'secondary'
+          )
+            setFocused(section.dataset.fixtureEditor)
+        }}
+      >
+        <header className="text-sm">Production DocumentView · disposable fixture</header>
+        <button type="button" aria-label="Native hint target">
+          Hint target
+        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            data-fixture-action="leave"
+            onClick={() => void window.richTextVimFixture.leave()}
+          >
+            Switch away
           </button>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              data-fixture-action="leave"
-              onClick={() => void window.richTextVimFixture.leave()}
-            >
-              Switch away
-            </button>
-            <button
-              type="button"
-              data-fixture-action="retry"
-              onClick={() => void window.richTextVimFixture.leave()}
-            >
-              Retry switch
-            </button>
-            {leaveError ? <span role="alert">{leaveError}</span> : null}
-          </div>
-          <section className="grid min-h-0 flex-1 grid-cols-2 gap-2">
-            <section data-fixture-editor="primary" hidden={!visible.primary} className="min-h-0">
-              <DocumentView
-                path={documentPath}
-                onOpen={() => undefined}
-                visible={visible.primary}
-                focused={focused === 'primary'}
-              />
-            </section>
-            <section
-              data-fixture-editor="secondary"
-              hidden={!visible.secondary}
-              className="min-h-0"
-            >
-              <DocumentView
-                path={secondaryPath}
-                onOpen={() => undefined}
-                visible={visible.secondary}
-                focused={focused === 'secondary'}
-              />
-            </section>
+          <button
+            type="button"
+            data-fixture-action="retry"
+            onClick={() => void window.richTextVimFixture.leave()}
+          >
+            Retry switch
+          </button>
+          {leaveError ? <span role="alert">{leaveError}</span> : null}
+        </div>
+        <section className="grid min-h-0 flex-1 grid-cols-2 gap-2">
+          <section data-fixture-editor="primary" hidden={!visible.primary} className="min-h-0">
+            <DocumentView
+              path={documentPath}
+              onOpen={() => undefined}
+              visible={visible.primary}
+              focused={focused === 'primary'}
+            />
           </section>
-          <HostHintLayer
-            scopeKey={`${remoteValue}:${documentPath}:${visible.primary}:${focused}`}
-          />
-          <Toaster />
-        </main>
-      </TooltipProvider>
-    </Provider>
+          <section data-fixture-editor="secondary" hidden={!visible.secondary} className="min-h-0">
+            <DocumentView
+              path={secondaryPath}
+              onOpen={() => undefined}
+              visible={visible.secondary}
+              focused={focused === 'secondary'}
+            />
+          </section>
+        </section>
+        <HostHintLayer scopeKey={`${remoteValue}:${documentPath}:${visible.primary}:${focused}`} />
+        <Toaster />
+      </main>
+    </TooltipProvider>
   )
 }
 
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(
+  <Provider store={store}>
+    <App />
+  </Provider>,
+)

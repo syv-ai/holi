@@ -20,8 +20,15 @@ const fixtureFiles = new Map([
 ])
 assert.equal(process.env.HOLI_VAULT_ROOT, vault)
 const markdown = `---\ntitle: Native Vim fixture\ntags: [kept]\n---\n\n# Heading\n\nalpha beta alpha\n\n**bold mark** and [link](https://example.test) plus [[Wiki note]]\n\n\`\`\`ts\nconst value = 1\n\`\`\`\n\n- parent\n  - child\n- [ ] task\n\n1. ordered item\n\n| left | right |\n| --- | --- |\n| one | two |\n\n~~~mermaid\nA --> B\n~~~\n`
-type NativeNode = { type: string; attrs?: Record<string, unknown>; content?: NativeNode[] }
+type NativeNode = {
+  type: string
+  attrs?: Record<string, unknown>
+  content?: NativeNode[]
+  text?: string
+  marks?: { type: string; attrs?: Record<string, unknown> }[]
+}
 type NativeState = {
+  textContent: string
   markdown: string
   selectedText: string
   json: { content: NativeNode[] }
