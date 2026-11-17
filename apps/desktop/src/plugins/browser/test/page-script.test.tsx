@@ -224,6 +224,32 @@ test('visible hint targets are separate from CLI refs and activation rechecks ge
   expect(holi().hints.activate(owner, targets[0]!.id)).toBeNull()
 })
 
+test('hint badges do not intercept native target activation', () => {
+  const button = document.querySelector('button[type=submit]')!
+  button.setAttribute('aria-label', 'Submit')
+  button.getBoundingClientRect = () =>
+    ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+  const attachShadow = Element.prototype.attachShadow
+  let hintShadow: ShadowRoot | null = null
+  const attachSpy = vi.spyOn(Element.prototype, 'attachShadow').mockImplementation(function (init) {
+    hintShadow = attachShadow.call(this, init)
+    return hintShadow
+  })
+  document.elementFromPoint = vi.fn(() => {
+    const badge = hintShadow?.querySelector('span')
+    return badge && badge.style.pointerEvents !== 'none' ? badge : button
+  })
+  try {
+    const owner = hintOwner(304)
+    const target = holi().hints.discover(owner)![0]!
+    expect(holi().hints.present(owner, 1, [{ id: target.id, key: 'a' }])).toBe(true)
+    expect(hintShadow?.querySelector('span')?.style.pointerEvents).toBe('none')
+    expect(holi().hints.activate(owner, target.id)).toEqual({ x: 30, y: 30, field: false })
+  } finally {
+    attachSpy.mockRestore()
+  }
+})
+
 test('hint labels use host key case and update in place', () => {
   const button = document.querySelector('button[type=submit]')!
   button.setAttribute('aria-label', 'Sign in')
