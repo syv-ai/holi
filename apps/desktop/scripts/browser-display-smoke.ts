@@ -55,7 +55,11 @@ async function run(): Promise<void> {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body { color: CanvasText; background: Canvas; font: 16px sans-serif; }</style><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
       <main><h1>Browser page owned by vault ${request.url === '/b' ? 'B' : 'A'}</h1>
-      <label>Search <input aria-label="Search" id="search"></label><button>Submit</button>
+      <label>Search <input aria-label="Search" id="search"></label><button id="trusted-button">Submit</button><a id="trusted-link" href="#clicked">Trusted link</a>
+      <button id="disabled-hint" disabled>Disabled exclusion</button><button id="hidden-hint" hidden>Hidden exclusion</button>
+      <div style="position:relative"><button>Occluded exclusion</button><span style="position:absolute;inset:0;z-index:1"></span></div>
+      <div style="width:1px;height:1px;overflow:hidden"><button style="margin-left:50px">Clipped exclusion</button></div>
+      <div id="hint-targets">${Array.from({ length: 30 }, (_, index) => `<button type="button">Target ${index + 1}</button>`).join('')}</div>
       <label>Text <input aria-label="Text" id="text" value="one two three"></label>
       <label>Lines <textarea aria-label="Lines" id="lines">first line\nsecond line</textarea></label>
       <label>Password <input aria-label="Password" type="password" id="password"></label>

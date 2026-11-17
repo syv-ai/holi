@@ -841,6 +841,8 @@
   let hintRevision = 0
   let hintSnapshot = new Map()
   let hintRoot = null
+  let hintShadow = null
+  let visibleHintLabels = []
   const hintEvents = []
   let hintGeometry = 0
   const hintSelector =
@@ -995,19 +997,25 @@
         return false
       if (theme !== 'light' && theme !== 'dark') return false
       hintRevision = revision
-      hintRoot?.remove()
-      const root = document.createElement('div')
-      root.setAttribute('aria-hidden', 'true')
-      root.style.cssText =
-        'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;'
-      const shadow = root.attachShadow({ mode: 'closed' })
+      if (!hintRoot || !hintShadow) {
+        const root = document.createElement('div')
+        root.setAttribute('aria-hidden', 'true')
+        root.style.cssText =
+          'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;'
+        hintShadow = root.attachShadow({ mode: 'closed' })
+        document.documentElement.append(root)
+        hintRoot = root
+      } else {
+        hintShadow.replaceChildren()
+      }
+      const shadow = hintShadow
       for (const item of labels) {
         const target = hintSnapshot.get(item.id)
         if (
           !target ||
           target.request !== request ||
           typeof item.key !== 'string' ||
-          !/^[A-Z]{1,4}$/.test(item.key)
+          !/^[a-z]{1,4}$/.test(item.key)
         )
           return false
         const badge = document.createElement('span')
@@ -1015,14 +1023,25 @@
         badge.style.cssText = `all:initial;position:fixed;left:${Math.round(target.x)}px;top:${Math.round(target.y)}px;transform:translate(-50%,-50%);padding:2px 5px;background:${theme === 'dark' ? '#facc15' : '#1d4ed8'};color:${theme === 'dark' ? '#111827' : '#ffffff'};font:600 12px monospace;border-radius:3px;box-shadow:0 1px 4px #0008;`
         shadow.append(badge)
       }
-      document.documentElement.append(root)
-      hintRoot = root
+      visibleHintLabels = labels.map((item) => ({
+        key: item.key,
+        label:
+          hintSnapshot.get(item.id)?.element?.getAttribute('aria-label') ||
+          hintSnapshot.get(item.id)?.element?.innerText ||
+          '',
+      }))
       return true
     },
     clear(request) {
       if (!Number.isSafeInteger(request) || request < hintRequest) return false
       hintRequest = request
       return clearHints(request)
+    },
+    // Read-only isolated-world evidence for the native acceptance fixture. The
+    // closed shadow root remains inaccessible to page scripts and web content.
+    inspect() {
+      if (!hintRoot || !hintShadow) return []
+      return visibleHintLabels.map((item) => ({ ...item }))
     },
     activate(request, id) {
       if (request !== hintRequest) return null
