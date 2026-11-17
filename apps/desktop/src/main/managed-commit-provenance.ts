@@ -429,32 +429,15 @@ export function createManagedCommitProvenance(args: {
               current.generation !== started.generation
             )
               return false
-            const git = (command: string[]) =>
-              execFileSync('git', ['--no-replace-objects', ...command], {
-                cwd: root,
-                encoding: 'utf8',
-                timeout: 250,
-                maxBuffer: 65536,
-                env: {
-                  ...process.env,
-                  LC_ALL: 'C',
-                  GIT_NO_REPLACE_OBJECTS: '1',
-                  GIT_TERMINAL_PROMPT: '0',
-                },
-                stdio: ['ignore', 'pipe', 'pipe'],
-              }).trim()
-            if (canonicalGitHubRemote(git(['remote', 'get-url', 'origin'])) !== remote) return false
-            const gitDir = realpathSync(git(['rev-parse', '--absolute-git-dir']))
-            const info = statSync(gitDir)
+            const snapshot = repositoryPublicationSnapshot(root)
             return (
-              realpathSync(root) === started.root &&
-              gitDir === started.gitDir &&
-              Number(info.dev) === started.device &&
-              Number(info.ino) === started.inode &&
-              readBoundedRegularFile(
-                `${gitDir}/holi-managed-provenance-id`,
-                MAX_MARKER_BYTES,
-              ).trim() === started.lifetime &&
+              snapshot !== null &&
+              snapshot.remote === remote &&
+              snapshot.root === started.root &&
+              snapshot.gitDir === started.gitDir &&
+              snapshot.device === started.device &&
+              snapshot.inode === started.inode &&
+              snapshot.lifetime === started.lifetime &&
               args.subscribedNow()
             )
           } catch {
