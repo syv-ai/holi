@@ -93,12 +93,9 @@ export function pasteVimRegister(
       pasteRegister.linewiseTextblock === 'codeBlock' &&
       line.block.node.type.name === 'codeBlock'
     ) {
-      const value = pasteRegister.content.content.textBetween(
-        0,
-        pasteRegister.content.content.size,
-        '\n',
-      )
-      const insertion = key === 'p' ? `\n${value}` : `${value}\n`
+      const value = register.content.content.textBetween(0, register.content.content.size, '\n')
+      const repeated = Array.from({ length: repetitions }, () => value).join('\n')
+      const insertion = key === 'p' ? `\n${repeated}` : `${repeated}\n`
       const atLine = key === 'p' ? line.to : line.from
       const tr = closeHistory(view.state.tr.insertText(insertion, atLine))
       if (tr.docChanged) {
@@ -114,9 +111,13 @@ export function pasteVimRegister(
       line.block.node.type.name !== 'codeBlock'
     ) {
       const hardBreak = view.state.schema.nodes.hardBreak
-      const content = pasteRegister.content.content
       const separator = hardBreak?.create()
       if (separator) {
+        const content = Array.from({ length: repetitions }, () => register.content.content).reduce(
+          (combined, fragment, index) =>
+            index === 0 ? fragment : combined.append(Fragment.from(separator)).append(fragment),
+          Fragment.empty,
+        )
         const fragment =
           key === 'p'
             ? Fragment.from(separator).append(content)

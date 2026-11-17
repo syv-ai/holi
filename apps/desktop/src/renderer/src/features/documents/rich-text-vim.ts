@@ -12,6 +12,7 @@ import {
   graphemeBoundaries,
   graphemeParts as segments,
   logicalLineAt as lineAt,
+  logicalLineChange,
   logicalLineDeletion,
   logicalLines,
   safeRange,
@@ -98,6 +99,15 @@ function setMode(view: EditorView, mode: RichTextVimMode, enabled?: boolean) {
 
 function closeHistoryBoundary(view: EditorView) {
   view.dispatch(closeHistory(view.state.tr))
+}
+
+function dispatchChange(view: EditorView, transaction: Transaction, position: number) {
+  transaction.setMeta('vimChangeInsert', true)
+  const safePosition = Math.min(position, transaction.doc.content.size)
+  view.dispatch(
+    transaction.setSelection(TextSelection.near(transaction.doc.resolve(safePosition), 1)),
+  )
+  setMode(view, 'insert', true)
 }
 
 function clearTransient(view: EditorView) {
@@ -491,6 +501,11 @@ function handleNormal(
     view.dispatch(
       view.state.tr.setMeta(KEY, { ...current, ...patch }).setMeta('addToHistory', false),
     )
+  if (current.visualAnchor !== null && /^[0-9]$/.test(key) && (current.count > 0 || key !== '0')) {
+    update({ count: Math.min(999, current.count * 10 + Number(key)) })
+    event.preventDefault()
+    return true
+  }
   if (
     current.visualAnchor !== null &&
     (key === 'h' ||
@@ -646,9 +661,11 @@ function handleNormal(
                 const replacement = first.copy(Fragment.fromArray(children))
                 tr.replaceWith(item.pos, to, replacement)
               } else tr.delete(item.pos, to)
-              view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(item.pos), 1)))
-              closeHistoryBoundary(view)
-              if (operator === 'c') setMode(view, 'insert', true)
+              if (operator === 'c') dispatchChange(view, tr, item.pos)
+              else {
+                view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(item.pos), 1)))
+                closeHistoryBoundary(view)
+              }
             }
             event.preventDefault()
             return true
@@ -666,8 +683,9 @@ function handleNormal(
             logicalIndex + cappedCount(current.operatorCount * (current.count || 1)) - 1,
           )
           const deletion = logicalLineDeletion(logical, logicalIndex, lastIndex, operator === 'd')!
-          const from = deletion.from
-          const to = deletion.to
+          const change = logicalLineChange(logical, logicalIndex, lastIndex)!
+          const from = operator === 'c' ? change.from : deletion.from
+          const to = operator === 'c' ? change.to : deletion.to
           const content = view.state.doc.slice(deletion.contentFrom, deletion.contentTo)
           let isHardBreakLine = false
           if (block.node.type.name !== 'codeBlock')
@@ -691,7 +709,6 @@ function handleNormal(
           })
           if (operator !== 'y' && settings.editable()) {
             const tr = closeHistory(view.state.tr)
-            if (operator === 'c') tr.setMeta('vimChangeInsert', true)
             if (from === block.from && to === block.to) {
               tr.replaceWith(
                 block.from - 1,
@@ -699,9 +716,11 @@ function handleNormal(
                 block.node.type.create(block.node.attrs, null, block.node.marks),
               )
             } else tr.delete(from, to)
-            view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
-            closeHistoryBoundary(view)
-            if (operator === 'c') setMode(view, 'insert', true)
+            if (operator === 'c') dispatchChange(view, tr, from)
+            else {
+              view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
+              closeHistoryBoundary(view)
+            }
           }
           event.preventDefault()
           return true
@@ -723,26 +742,40 @@ function handleNormal(
           operator === 'y' && (nested?.type === 'tableCell' || nested?.type === 'tableHeader')
             ? view.state.doc.slice(block.from - 1, lastBlock.to + 1)
             : view.state.doc.slice(from, to)
+        let hasHardBreak = false
+        block.node.descendants((node) => {
+          if (node.type.name === 'hardBreak') hasHardBreak = true
+        })
         update({
           operator: null,
           count: 0,
           operatorCount: 1,
-          register: { content, linewise: true },
+          register: {
+            content,
+            linewise: true,
+            linewiseTextblock:
+              block.node.type.name === 'codeBlock'
+                ? 'codeBlock'
+                : hasHardBreak
+                  ? 'hardBreak'
+                  : undefined,
+          },
         })
         if (operator !== 'y' && settings.editable()) {
           const tr = closeHistory(view.state.tr)
-          if (operator === 'c') tr.setMeta('vimChangeInsert', true)
           if (operator === 'c' && line.from === block.from && line.to === block.to) {
             const empty = block.node.type.create(block.node.attrs, null, block.node.marks)
             tr.replaceWith(block.from - 1, lastBlock.to + 1, empty)
           } else tr.delete(from, to)
-          view.dispatch(
-            tr.setSelection(
-              TextSelection.near(tr.doc.resolve(Math.min(from, tr.doc.content.size)), 1),
-            ),
-          )
-          closeHistoryBoundary(view)
-          if (operator === 'c') setMode(view, 'insert', true)
+          if (operator === 'c') dispatchChange(view, tr, from)
+          else {
+            view.dispatch(
+              tr.setSelection(
+                TextSelection.near(tr.doc.resolve(Math.min(from, tr.doc.content.size)), 1),
+              ),
+            )
+            closeHistoryBoundary(view)
+          }
         }
       }
       event.preventDefault()
@@ -781,8 +814,10 @@ function handleNormal(
         ? Math.min(sourceLine.block.from, destinationLine.block.from) - 1
         : range.from
       const line = sourceLine
-      const boundaries = line ? graphemeBoundaries(view.state, line.from, line.to) : []
-      const afterDestination = boundaries.find((at) => at > destination)
+      const destinationBoundaries = destinationLine
+        ? graphemeBoundaries(view.state, destinationLine.from, destinationLine.to)
+        : []
+      const afterDestination = destinationBoundaries.find((at) => at > destination)
       let to = key === 'e' || key === '$' ? (afterDestination ?? range.to) : range.to
       let safeFrom = from
       if (key === 'w' && line) {
@@ -876,7 +911,6 @@ function handleNormal(
           const deleteFrom = previousLine && !nextLine ? previousLine.to : inlineFirst.from
           const deleteTo = nextLine ? nextLine.from : inlineLast.to
           const tr = closeHistory(view.state.tr)
-          if (operator === 'c') tr.setMeta('vimChangeInsert', true)
           if (deleteFrom === sourceLine.block.from && deleteTo === sourceLine.block.to) {
             tr.replaceWith(
               sourceLine.block.from - 1,
@@ -888,14 +922,14 @@ function handleNormal(
               ),
             )
           } else tr.delete(deleteFrom, deleteTo)
-          view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
+          if (operator === 'c') dispatchChange(view, tr, deleteFrom)
+          else view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
         } else {
           const tr = closeHistory(view.state.tr).delete(rangeFrom, safeTo)
-          if (operator === 'c') tr.setMeta('vimChangeInsert', true)
-          view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(rangeFrom), 1)))
+          if (operator === 'c') dispatchChange(view, tr, rangeFrom)
+          else view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(rangeFrom), 1)))
         }
-        if (operator === 'c') setMode(view, 'insert', true)
-        else closeHistoryBoundary(view)
+        if (operator !== 'c') closeHistoryBoundary(view)
       }
       event.preventDefault()
       return true
@@ -989,7 +1023,6 @@ function handleNormal(
       select(view, Math.min(current.visualAnchor, view.state.doc.content.size))
     } else if (settings.editable() && range.to > range.from) {
       const tr = closeHistory(view.state.tr)
-      if (key === 'c') tr.setMeta('vimChangeInsert', true)
       let deleteFrom = range.from
       if (visualContainer && visualContainerNode) {
         const item = visualContainerNode
@@ -1016,7 +1049,12 @@ function handleNormal(
         const previousLine = inlineVisual.lines[low - 1]
         const nextLine = inlineVisual.lines[high + 1]
         deleteFrom = previousLine && !nextLine ? previousLine.to : inlineVisual.lines[low]!.from
-        const deleteTo = nextLine ? nextLine.from : inlineVisual.lines[high]!.to
+        const deleteTo =
+          key === 'c'
+            ? inlineVisual.lines[high]!.to
+            : nextLine
+              ? nextLine.from
+              : inlineVisual.lines[high]!.to
         if (deleteFrom === inlineVisual.block.from && deleteTo === inlineVisual.block.to) {
           tr.replaceWith(
             inlineVisual.block.from - 1,
@@ -1029,9 +1067,11 @@ function handleNormal(
           )
         } else tr.delete(deleteFrom, deleteTo)
       } else tr.delete(deleteFrom, range.to)
-      view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
-      if (key === 'c') setMode(view, 'insert', true)
-      else closeHistoryBoundary(view)
+      if (key === 'c') dispatchChange(view, tr, deleteFrom)
+      else {
+        view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
+        closeHistoryBoundary(view)
+      }
     }
     event.preventDefault()
     return true
