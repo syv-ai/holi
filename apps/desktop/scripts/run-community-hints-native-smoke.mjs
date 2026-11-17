@@ -319,6 +319,10 @@ try {
   }
   await start()
   const first = await hints()
+  const realSnapshot = await evaluate(
+    'window.smokeMessages.map(message=>message.data).filter(message=>message?.type==="holi-hints:snapshot").at(-1)',
+  )
+  assert(realSnapshot?.nonce && Number.isSafeInteger(realSnapshot.revision))
   assert.equal(
     first.some((hint) => hint.target === 'Host action'),
     false,
@@ -334,6 +338,12 @@ try {
   assert(addTarget?.key, 'dynamic-target trigger label absent')
   for (const letter of addTarget.key) await key(letter)
   await wait('!document.querySelector("[data-host-hints]")', 'target mutation invalidation')
+  await evaluate(`window.frames[0].postMessage(${JSON.stringify(realSnapshot)}, "*")`)
+  await evaluate(
+    `(()=>{const frame=document.querySelector("iframe");const snapshot=${JSON.stringify(realSnapshot)};for(const [source,origin,data] of [[window,location.origin,snapshot],[frame.contentWindow,"https://wrong-origin.invalid",snapshot],[frame.contentWindow,location.origin,{...snapshot,nonce:snapshot.nonce+"stale"}],[frame.contentWindow,location.origin,{...snapshot,revision:Math.max(0,snapshot.revision-1)}]])window.dispatchEvent(new MessageEvent("message",{source,origin,data}))})()`,
+  )
+  await sleep(100)
+  assert.equal(await evaluate('!!document.querySelector("[data-host-hints]")'), false)
   await start()
   assert(
     (await hints()).some((hint) => hint.target === 'Dynamic target'),
@@ -341,7 +351,7 @@ try {
   )
   await key('Escape')
   assertions.push(
-    'native activation adds a live target; DOM mutation invalidates old labels and the next snapshot includes the new target',
+    'native activation adds a live target; mutation invalidates labels, real stale snapshots and source/origin/nonce/revision replays are rejected, and fresh labels include the new target',
   )
   const shot = async (name) => {
     await sleep(100)
