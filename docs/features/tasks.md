@@ -122,16 +122,24 @@ the [planning](planning.md) view shows every task in the vault by them.
   `nextDueCatchup`, keeping its time; the reminder shifts by the same whole-day delta, keeping its
   own time; status returns to the vault's first `unstarted` status. Otherwise it takes the
   completed status it was set to (`holi tasks complete` uses the first one).
-- **Reminders.** While some registered vault runs tasks, closing the window leaves Holi in the
-  tray, and Settings > Updates > Open at login starts it at login. Every 60s, and once at launch
-  as catch-up, main sweeps every registered vault that runs tasks, open or not, and fires each
-  reminder that is due and newer than its watermark. Every notification names the vault its task
-  is in. More than 3 in one sweep become a summary per vault ("3 reminders in notes"), never one
-  across vaults, and a vault with a single fire keeps its own. A timeless reminder fires at 09:00.
+- **Reminders and overdue fallback.** While some registered vault runs tasks, closing the window
+  leaves Holi in the tray, and Settings > Updates > Open at login starts it at login. Every 60s,
+  and once at launch as catch-up, main sweeps every registered vault that runs tasks, open or not.
+  An explicit `reminder` fires when due and newer than its per-path watermark; a timeless reminder
+  fires at 09:00. Separately, a task with no explicit reminder gets one overdue notification when
+  its valid due occurrence becomes overdue, provided the vault's statuses were read and its status
+  is not in the vault-defined `completed` category. The fallback is not an additional fire for a
+  task with an explicit reminder. Both paths apply the assignee rule below: assigned tasks notify
+  only when this machine's signed-in login is among the assignees, and are not marked delivered
+  otherwise; unassigned tasks can notify every member running Holi. Each notification names the
+  vault its task is in. More than 3 fires in one sweep become a summary per vault, never one across
+  vaults; up to 3 titles are named, and a vault with a single fire keeps its own notification.
   Clicking a notification opens the task through the same arrival as a Holi link, switching vault
   if needed; that is the only way the sweep reaches the open window. Each vault's tasks are read
-  from its own clone at every sweep and kept nowhere, and the per-path watermark lives under
-  `reminders` in that vault's machine-local `.holi/settings/app.local.yaml`.
+  from its own clone at every sweep and kept nowhere. Explicit reminder watermarks are per task
+  path under `reminders`; overdue fallback receipts are keyed by vault, task path and due
+  occurrence, so a changed due occurrence can notify again. Both are stored in that vault's
+  machine-local `.holi/settings/app.local.yaml`.
 - **Assignees** are GitHub logins (`assignees: [ada]`), the identity a vault already has:
   its members are its repo's collaborators. Like `tags`, a task's assignees are always a list,
   empty when the task is no one's, and an empty list is no key at all. A hand-written `@login` or
@@ -180,9 +188,10 @@ the [planning](planning.md) view shows every task in the vault by them.
   read the same text, and two creates with one title take two names.
 - A status is never rewritten for not being listed: showing a task somewhere is display, and only
   a person moving it writes a new status.
-- The reminder sweep, `archive-done` and the editor's status row still know only Holi's default
-  ids: a vault whose completed status is not `done` keeps reminding of finished tasks and does not
-  archive them.
+- The explicit-reminder predicate and `archive-done` still recognize Holi's default `done` id:
+  an explicit reminder on a task using another vault-defined completed status may still fire, and
+  `archive-done` does not archive that task. The overdue fallback notification instead reads the
+  vault's status definitions and skips tasks in its `completed` category.
 - A reminder is an absolute moment. A non-stamp reminder is inert, never an error, so a legacy
   `1d` costs a notification rather than the task. `due` is strict.
 - Virtual labels are never stored: `overdue` would be a commit per task at midnight.
