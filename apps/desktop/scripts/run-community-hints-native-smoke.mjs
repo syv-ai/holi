@@ -338,12 +338,22 @@ try {
   assert(addTarget?.key, 'dynamic-target trigger label absent')
   for (const letter of addTarget.key) await key(letter)
   await wait('!document.querySelector("[data-host-hints]")', 'target mutation invalidation')
-  await evaluate(`window.frames[0].postMessage(${JSON.stringify(realSnapshot)}, "*")`)
-  await evaluate(
-    `(()=>{const frame=document.querySelector("iframe");const snapshot=${JSON.stringify(realSnapshot)};for(const [source,origin,data] of [[window,location.origin,snapshot],[frame.contentWindow,"https://wrong-origin.invalid",snapshot],[frame.contentWindow,location.origin,{...snapshot,nonce:snapshot.nonce+"stale"}],[frame.contentWindow,location.origin,{...snapshot,revision:Math.max(0,snapshot.revision-1)}]])window.dispatchEvent(new MessageEvent("message",{source,origin,data}))})()`,
-  )
+  const replayFromGuest = async (snapshot) =>
+    evaluate(`window.parent.postMessage(${JSON.stringify(snapshot)}, "*")`, true)
+  const replayBaseline = realSnapshot
+  assert(replayBaseline?.nonce && Number.isSafeInteger(replayBaseline.revision))
+  await replayFromGuest({ ...replayBaseline, nonce: replayBaseline.nonce + 'forged' })
+  await replayFromGuest({ ...replayBaseline, revision: replayBaseline.revision + 1 })
+  await replayFromGuest({ ...replayBaseline, revision: Math.max(0, replayBaseline.revision - 1) })
   await sleep(100)
   assert.equal(await evaluate('!!document.querySelector("[data-host-hints]")'), false)
+  await start()
+  const validReplaySnapshot = await evaluate(
+    'window.smokeMessages.map(message=>message.data).filter(message=>message?.type==="holi-hints:snapshot").at(-1)',
+  )
+  await replayFromGuest(validReplaySnapshot)
+  await wait('!!document.querySelector("[data-host-hints]")', 'valid guest replay remains accepted')
+  await key('Escape')
   await start()
   assert(
     (await hints()).some((hint) => hint.target === 'Dynamic target'),
@@ -351,10 +361,9 @@ try {
   )
   await key('Escape')
   assertions.push(
-    'native activation adds a live target; mutation invalidates labels, real stale snapshots and source/origin/nonce/revision replays are rejected, and fresh labels include the new target',
+    'native activation adds a live target; mutation invalidates labels, stale nonce/revision snapshots are rejected, and fresh labels include the new target',
   )
   const shot = async (name) => {
-    await sleep(100)
     const result = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
     await writeFile(join(evidence, name), Buffer.from(result.data, 'base64'))
   }
@@ -472,6 +481,13 @@ try {
     'new exact guest document generation',
     true,
   )
+  await replayFromGuest(realSnapshot)
+  await sleep(100)
+  assert.equal(
+    await evaluate('!!document.querySelector("[data-host-hints]")'),
+    false,
+    'prior document nonce must not authorize a snapshot in the replacement guest',
+  )
   await focusGuest()
   await key('f')
   await wait('!!document.querySelector("[data-host-hints]")', 'reloaded guest recovery')
@@ -557,34 +573,87 @@ try {
   assertions.push(
     'split panes restrict guest hints to the exact focused pane; focus changes cancel and a hidden pane does not interfere with the primary pane',
   )
+  await evaluate(
+    '(()=>{const activate=document.querySelector("#activate");const prefixes=document.createElement("div");prefixes.className="key-padding";prefixes.setAttribute("aria-label","Native hint prefix fixtures");prefixes.style.cssText="display:flex;flex-wrap:wrap;gap:1px;margin:4px 0";for(let index=1;index<=40;index++){const button=document.createElement("button");button.type="button";button.textContent="Prefix fixture "+String(index).padStart(2,"0");button.style.cssText="font-size:10px;margin:1px;padding:2px";prefixes.append(button)}activate.before(prefixes)})()',
+    true,
+  )
   await focusGuest()
   const recordingStartedAt = process.hrtime.bigint()
-  const recordFrame = async () => {
+  const recordFrame = async (stage, expectedTarget) => {
+    const hostState = await evaluate(
+      `(()=>{const overlay=document.querySelector("[data-host-hints]");if(!overlay)return null;const labels=[...overlay.querySelectorAll("[data-hint-key]")].map(e=>({key:e.getAttribute("data-hint-key"),target:e.getAttribute("data-hint-target"),visible:!!(e.getClientRects().length&&getComputedStyle(e).visibility!=="hidden")}));return {visible:!!(overlay.getClientRects().length&&getComputedStyle(overlay).visibility!=="hidden"),labels}})()`,
+    )
+    const guestState = await evaluate(
+      `(()=>{const target=[...document.querySelectorAll("button")].find(e=>e.textContent.trim()===${JSON.stringify(expectedTarget)});return target?{text:target.textContent.trim(),visible:!!(target.getClientRects().length&&getComputedStyle(target).visibility!=="hidden")}:null})()`,
+      true,
+    )
+    assert(hostState?.visible, `${stage}: host hint overlay is not visible`)
+    assert(
+      hostState.labels.some((label) => label.target === expectedTarget && label.visible),
+      `${stage}: host label missing`,
+    )
+    assert(
+      guestState?.visible && guestState.text === expectedTarget,
+      `${stage}: guest target is not visible`,
+    )
     const frame = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
+    const capturedAt = process.hrtime.bigint()
+    const afterHost = await evaluate('!!document.querySelector("[data-host-hints]")')
+    const afterGuest = await evaluate(
+      `(()=>{const e=[...document.querySelectorAll("button")].find(x=>x.textContent.trim()===${JSON.stringify(expectedTarget)});return !!(e&&e.getClientRects().length&&getComputedStyle(e).visibility!=="hidden")})()`,
+      true,
+    )
+    assert(afterHost && afterGuest, `${stage}: labels invalidated during capture`)
+    const image = Buffer.from(frame.data, 'base64')
     screencastFrames.push({
-      image: Buffer.from(frame.data, 'base64'),
-      timestamp: Number(process.hrtime.bigint() - recordingStartedAt) / 1e9,
+      image,
+      timestamp: Number(capturedAt - recordingStartedAt) / 1e9,
+      stage,
+      labels: hostState.labels,
+      guestTarget: guestState.text,
     })
+    return image
   }
-  for (let index = 0; index < 4; index++) {
-    await recordFrame()
-    if (index < 3) await sleep(500)
-  }
+  const initial = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
+  screencastFrames.push({
+    image: Buffer.from(initial.data, 'base64'),
+    timestamp: 0,
+    stage: 'initial',
+  })
+  await sleep(500)
   await key('f')
   await wait('!!document.querySelector("[data-host-hints]")', 'final light proof session')
-  await shot('light.png')
+  await sleep(500)
+  await writeFile(join(evidence, 'light.png'), await recordFrame('light-hints', 'Native button'))
   const finalButton = (await hints()).find((hint) => hint.target === 'Native button')
-  assert(finalButton?.key, 'native final activation label absent')
-  for (const letter of finalButton.key) await key(letter)
+  assert(
+    finalButton?.key && finalButton.key.length > 1,
+    'native final target needs a visible key-selection prefix',
+  )
+  await key(finalButton.key[0])
+  await wait(
+    `!!document.querySelector("[data-host-hints] [data-hint-target=\\"Native button\\"]")`,
+    'native key prefix remains visibly selected',
+  )
+  await sleep(500)
+  await recordFrame('key-selection', 'Native button')
+  for (const letter of finalButton.key.slice(1)) await key(letter)
   await wait('window.fixtureClicks===1', 'final native button activation', true)
+  await sleep(500)
+  const resultFrame = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
+  screencastFrames.push({
+    image: Buffer.from(resultFrame.data, 'base64'),
+    timestamp: Number(process.hrtime.bigint() - recordingStartedAt) / 1e9,
+    stage: 'activation-result',
+  })
   await evaluate('document.documentElement.dataset.theme="dark"')
-  await shot('dark.png')
-  // Keep recording actual frames for two seconds after native activation; the last
-  // captured screenshot is the video's final frame in the same monotonic domain.
-  for (let index = 0; index < 5; index++) {
-    await recordFrame()
-    if (index < 4) await sleep(500)
-  }
+  await focusGuest()
+  await key('f')
+  await wait('!!document.querySelector("[data-host-hints]")', 'dark theme proof session')
+  await sleep(500)
+  await writeFile(join(evidence, 'dark.png'), await recordFrame('dark-hints', 'Native button'))
+  await sleep(500)
+  await key('Escape')
   assert(screencastFrames.length > 0, 'native screenshot recording produced no frames')
   assert(
     screencastFrames.every(
