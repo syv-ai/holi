@@ -1035,70 +1035,90 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       })
   }
 
+  async function probeHead(readOpts: RunOpts): Promise<{
+    kind: 'commit' | 'unborn' | 'unavailable'
+    sha?: string
+    ref: GitOutcome
+  }> {
+    const budget = readOpts.executionBudget
+    const deadline = budget === undefined ? undefined : Date.now() + budget.timeout
+    let outputRemaining = budget?.maxBuffer
+    const run = async (args: string[]): Promise<GitOutcome> => {
+      let commandOpts = readOpts
+      if (budget !== undefined) {
+        const timeout = (deadline ?? 0) - Date.now()
+        if (timeout <= 0) throw new GitResourceError('time')
+        commandOpts = {
+          ...readOpts,
+          executionBudget: {
+            timeout,
+            maxBuffer: Math.max(1, outputRemaining ?? budget.maxBuffer),
+          },
+        }
+      }
+      const result = await tryGit(root, args, commandOpts)
+      if (outputRemaining !== undefined) {
+        outputRemaining -= Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)
+        if (outputRemaining < 0) throw new GitResourceError('output')
+      }
+      return result
+    }
+
+    const ref = await run(['rev-parse', '--verify', 'HEAD'])
+    if (ref.ok) {
+      const sha = ref.stdout.trim()
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) return { kind: 'unavailable', ref }
+      const object = await run(['cat-file', '-e', `${sha}^{commit}`])
+      return object.ok ? { kind: 'commit', sha, ref } : { kind: 'unavailable', ref }
+    }
+
+    // A missing HEAD is a pending baseline only for a valid symbolic branch
+    // whose ref does not exist yet. All other rev-parse failures are unavailable.
+    const symbolic = await run(['symbolic-ref', '--quiet', 'HEAD'])
+    const workTree = await run(['rev-parse', '--is-inside-work-tree'])
+    if (!symbolic.ok || !workTree.ok || workTree.stdout.trim() !== 'true')
+      return { kind: 'unavailable', ref }
+    const branch = symbolic.stdout.trim()
+    if (!/^refs\/heads\/[^\s]+$/.test(branch)) return { kind: 'unavailable', ref }
+    const valid = await run(['check-ref-format', branch])
+    const refExists = await run(['show-ref', '--verify', '--quiet', branch])
+    return valid.ok && !refExists.ok && refExists.code === 1
+      ? { kind: 'unborn', ref }
+      : { kind: 'unavailable', ref }
+  }
+
   async function historicalHead(): Promise<
     { kind: 'commit'; sha: string } | { kind: 'unborn' } | { kind: 'unavailable' }
   > {
-    const localOpts: RunOpts = {
-      ...opts,
-      env: {
-        ...opts.env,
-        GIT_NO_REPLACE_OBJECTS: '1',
-        GIT_NO_LAZY_FETCH: '1',
-        GIT_TERMINAL_PROMPT: '0',
-      },
-      executionBudget: { maxBuffer: 65536, timeout: 250 },
-    }
-    const ref = await tryGit(root, ['rev-parse', '--verify', 'HEAD'], localOpts)
-    if (ref.ok) {
-      const sha = ref.stdout.trim()
-      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) return { kind: 'unavailable' }
-      const object = await tryGit(root, ['cat-file', '-e', `${sha}^{commit}`], localOpts)
-      return object.ok ? { kind: 'commit', sha } : { kind: 'unavailable' }
-    }
-    const symbolic = await tryGit(root, ['symbolic-ref', '--quiet', 'HEAD'], localOpts)
-    const workTree = await tryGit(root, ['rev-parse', '--is-inside-work-tree'], localOpts)
-    if (!symbolic.ok || !workTree.ok || workTree.stdout.trim() !== 'true')
+    try {
+      const result = await probeHead({
+        ...opts,
+        env: {
+          ...opts.env,
+          GIT_NO_REPLACE_OBJECTS: '1',
+          GIT_NO_LAZY_FETCH: '1',
+          GIT_TERMINAL_PROMPT: '0',
+        },
+        executionBudget: { maxBuffer: 65536, timeout: 1000 },
+      })
+      return result.kind === 'commit' ? { kind: 'commit', sha: result.sha! } : { kind: result.kind }
+    } catch {
       return { kind: 'unavailable' }
-    const branch = symbolic.stdout.trim()
-    if (!/^refs\/heads\/[^\s]+$/.test(branch)) return { kind: 'unavailable' }
-    const valid = await tryGit(root, ['check-ref-format', branch], localOpts)
-    const refExists = await tryGit(root, ['show-ref', '--verify', '--quiet', branch], localOpts)
-    return valid.ok && !refExists.ok && refExists.code === 1
-      ? { kind: 'unborn' }
-      : { kind: 'unavailable' }
+    }
   }
 
   async function head(): Promise<string | null> {
-    const res = await tryGit(root, ['rev-parse', '--verify', 'HEAD'], opts)
-    if (res.ok) {
-      const sha = res.stdout.trim()
-      if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
-        const object = await tryGit(root, ['cat-file', '-e', `${sha}^{commit}`], opts)
-        if (object.ok) return sha
-      }
+    const result = await probeHead(opts)
+    if (result.kind === 'commit') return result.sha!
+    if (result.kind === 'unborn') return null
+    if (result.ref.ok) {
       throw new GitError(
         'Could not read repository HEAD.',
         1,
         'HEAD does not name an available commit.',
       )
     }
-
-    // A missing HEAD is a pending baseline only for a valid symbolic branch
-    // whose ref does not exist yet. All other rev-parse failures are errors.
-    const symbolic = await tryGit(root, ['symbolic-ref', '--quiet', 'HEAD'], opts)
-    const workTree = await tryGit(root, ['rev-parse', '--is-inside-work-tree'], opts)
-    if (
-      symbolic.ok &&
-      workTree.ok &&
-      workTree.stdout.trim() === 'true' &&
-      /^refs\/heads\/[^\s]+$/.test(symbolic.stdout.trim())
-    ) {
-      const branch = symbolic.stdout.trim()
-      const valid = await tryGit(root, ['check-ref-format', branch], opts)
-      const ref = await tryGit(root, ['show-ref', '--verify', '--quiet', branch], opts)
-      if (valid.ok && !ref.ok && ref.code === 1) return null
-    }
-    throw new GitError('Could not read repository HEAD.', res.code, res.stderr)
+    throw new GitError('Could not read repository HEAD.', result.ref.code, result.ref.stderr)
   }
 
   async function gitObjectType(id: string, readOpts: RunOpts): Promise<'commit' | 'tree' | null> {
