@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -160,6 +160,22 @@ describe('MDX diagnostics lease acquisition', () => {
     diagnostics.cancel({ lease: lease.lease, generation: 2 })
     finalTrust.resolve(true)
     await expect(compiling).rejects.toThrow(/superseded|cancelled/i)
+    diagnostics.close()
+  })
+
+  test('replacement of the leased file fails closed', async () => {
+    const { diagnostics, root } = await fixture()
+    const lease = await diagnostics.acquire({
+      remote: identity.remote,
+      path: 'docs/page.mdx',
+      context: 'token',
+    })
+    const replacement = join(root, 'docs/replacement.mdx')
+    await writeFile(replacement, '# Page')
+    await rename(replacement, join(root, 'docs/page.mdx'))
+    await expect(
+      diagnostics.compile({ lease: lease.lease, generation: 1, source: '# page' }),
+    ).rejects.toThrow('MDX context changed')
     diagnostics.close()
   })
 

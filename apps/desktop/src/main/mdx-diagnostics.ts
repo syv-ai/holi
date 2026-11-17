@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { watch, type FSWatcher } from 'node:fs'
+import { realpathSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { exactPath } from '@holi/shared/path-safety-node'
@@ -192,7 +192,22 @@ export function createMdxDiagnostics(options: {
         }
         try {
           lease.watcher = watch(dirname(canonical), { persistent: false }, (_event, name) => {
-            if (name === null || name.toString() === basename(canonical)) drop(lease)
+            if (name !== null && name.toString() !== basename(canonical)) return
+            try {
+              const currentRoot = realpathSync(lease.root)
+              const currentPath = realpathSync(canonical)
+              const currentInfo = statSync(currentPath)
+              const currentFingerprint = `${currentInfo.dev}:${currentInfo.ino}:${currentInfo.size}:${currentInfo.mtimeMs}:${currentInfo.ctimeMs}`
+              if (
+                currentRoot !== lease.root ||
+                currentPath !== join(currentRoot, vaultRelPath(lease.path)) ||
+                !currentInfo.isFile() ||
+                currentFingerprint !== lease.fingerprint
+              )
+                drop(lease)
+            } catch {
+              drop(lease)
+            }
           })
           lease.watcher.on('error', () => drop(lease))
         } catch {
