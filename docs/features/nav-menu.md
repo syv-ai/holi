@@ -13,9 +13,13 @@ settings, and, once Google is connected, email and the agenda.
   sorted by `order` among core's own Search (10) and Sync (70), with Apps (20) the apps plugin's rail item,
   Board (30) the tasks plugin's and Agents (60) the agent's; `visible` and `badge` (a count and a tone,
   or null for none) are atoms, read by one derived atom. Home goes Home (below); Search opens the command menu
-  ([command palette](command-palette.md)); Board opens the board and carries its badge, the open-task count,
-  red while any task is overdue (the board's own `overdue` label); Mail, Agenda and Settings open
-  their tabs. Agents goes to Claude Code's agent list, the tab ⌘J goes to, and is green while any
+  ([command palette](command-palette.md)); Board opens the board. Its attention count combines
+  open tasks due today and overdue, regardless of board filters; the expanded row shows that count
+  as `N due`, and the collapsed rail shows the
+  same number. The Board tooltip breaks it down into overdue, due today and total open tasks. When
+  nothing is due or overdue, the expanded row falls back to the open-task count; the collapsed rail
+  has no count badge. Mail, Agenda and Settings open their tabs. Agents goes to Claude Code's
+  agent list, the tab ⌘J goes to, and is green while any
   of the vault's sessions is running ([agent sessions](agent-sessions.md)). Sync is the vault's sync state as a glyph whose colour and turning carry it, and opens
   a panel with the state in words, its action and the history ([vaults and sync](vaults-sync.md)).
   Update (75) is there only while an update to Holi is ready or failed to download, or this release

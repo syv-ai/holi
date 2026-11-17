@@ -286,26 +286,8 @@ function TextEditor({
             if (update.selectionSet) {
               const { anchor, head } = update.state.selection.main
               memory.note(remote, path, { anchor, head })
-              // The lines selected, for the agent's per-turn context; a
-              // caret clears what this file reported, never another's.
-              const { from, to } = update.state.selection.main
-              const doc = update.state.doc
-              const start = doc.lineAt(from)
-              const end = doc.lineAt(to)
-              const endLine =
-                to > from && to === end.from && end.number > start.number
-                  ? end.number - 1
-                  : end.number
-              if (focusState.current) {
-                reportSelection.current((was) => {
-                  if (from === to) return was?.path === path ? null : was
-                  const same =
-                    was?.path === path &&
-                    was.lines.startLine === start.number &&
-                    was.lines.endLine === endLine
-                  return same ? was : { path, lines: { startLine: start.number, endLine } }
-                })
-              }
+              // A caret clears this file's report, never another's.
+              if (focusState.current) publishCurrentSelection(update.view)
             }
             if (!update.docChanged) return
             mdxSourceChanged(update.view, update.state.doc.toString())
@@ -359,7 +341,7 @@ function TextEditor({
       setView(null)
       setFind(null)
     }
-  }, [remote, path, memory, vim.extension, mdxSourceChanged])
+  }, [remote, path, memory, vim.extension, mdxSourceChanged, publishCurrentSelection])
 
   useEffect(() => {
     const wasVisible = visibility.current

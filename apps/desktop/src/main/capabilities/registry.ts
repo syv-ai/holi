@@ -34,6 +34,8 @@ import type { CoreServices } from './services'
 export type Door = 'app' | 'cli' | 'ui'
 
 export interface CapabilityContext {
+  /** The trusted dispatch door; never inferred from caller-supplied params. */
+  door?: Door
   remote: string
   /** The vault clone's root on this machine. */
   root: string
@@ -396,11 +398,12 @@ export function createCapabilityRegistry(): CapabilityRegistry {
         door === 'app'
           ? {
               ...ctx,
+              door,
               assertCurrent: () => {
                 if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
               },
             }
-          : ctx
+          : { ...ctx, door }
       const result = await entry.run(runContext, params)
       const value = door === 'cli' && entry.cliValue !== undefined ? entry.cliValue(result) : result
       const run = door === 'cli' ? (entry.cliRun?.(value) ?? null) : null
