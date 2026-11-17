@@ -8,7 +8,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, realpath, readdir, readFile, rm, rmdir } from 'node:fs/promises'
+import { lstat, mkdir, realpath, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   isCommunityPluginId,
@@ -839,8 +839,22 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             ensureLive()
           }
           await guardAfterUnpin()
-          await writeVaultSettings(ctx.root, { committed: { plugins: { [id]: true } } })
-          await guardAfterUnpin()
+          try {
+            await writeVaultSettings(
+              ctx.root,
+              { committed: { plugins: { [id]: true } } },
+              { beforeWrite: guardAfterUnpin },
+            )
+          } catch (error) {
+            await withFileLock(resolve(pinPath), async () => {
+              await assertSafeVaultPath(ctx.root, pinPath)
+              const currentPin = await readOptionalPublicationText(pinPath, 'plugin pin')
+              if (currentPin !== null) return
+              await mkdir(dirname(pinPath), { recursive: true })
+              await writeFile(pinPath, originalPin, { flag: 'wx' })
+            })
+            throw error
+          }
           await linkRunningCommands(ctx.root, deps)
           return [...skills, ...apps]
         }),
@@ -1303,7 +1317,7 @@ export async function seedRunningApps(
         current === null ||
         JSON.stringify(current.source) !== JSON.stringify(install.source) ||
         canonicalJson(current.manifest) !== canonicalJson(install.manifest) ||
-        current.setup !== 'ok' ||
+        (install.source.kind === 'release' && current.setup !== 'ok') ||
         !consented ||
         settings.plugins.vault[row.id] !== true ||
         settings.plugins.localOff.includes(row.id) ||

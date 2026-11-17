@@ -1,6 +1,7 @@
-import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { deflateSync } from 'node:zlib'
 import { execFileSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
 import { seedApps } from '../main/skills'
@@ -105,6 +106,144 @@ describe('seedApps publication', () => {
         release: { root: code, commit, sourcePath: '' },
       }),
     ).rejects.toThrow('differs from authenticated release')
+  })
+
+  it('rejects a forged loose blob stored under the authenticated object name', async () => {
+    const { code, vault, app } = await fixture()
+    const trusted = Buffer.from('trusted\n')
+    await writeFile(join(app, 'index.html'), trusted)
+    execFileSync('git', ['init', code], { stdio: 'ignore' })
+    execFileSync('git', ['-C', code, 'add', '.'])
+    execFileSync(
+      'git',
+      [
+        '-C',
+        code,
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.invalid',
+        'commit',
+        '-m',
+        'fixture',
+      ],
+      { stdio: 'ignore' },
+    )
+    const commit = execFileSync('git', ['-C', code, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    const oid = execFileSync(
+      'git',
+      ['-C', code, 'rev-parse', `${commit}:apps/Demo.app/index.html`],
+      {
+        encoding: 'utf8',
+      },
+    ).trim()
+    const objectPath = join(code, '.git', 'objects', oid.slice(0, 2), oid.slice(2))
+    const forged = Buffer.from('forged!\n')
+    await unlink(objectPath)
+    await writeFile(
+      objectPath,
+      deflateSync(Buffer.concat([Buffer.from(`blob ${forged.length}\0`), forged])),
+    )
+    await expect(
+      seedApps({ apps: ['apps/Demo.app'] }, code, vault, {
+        release: { root: code, commit, sourcePath: '' },
+      }),
+    ).rejects.toThrow('invalid Git blob object')
+  })
+
+  it('rejects authenticated aggregate blob bytes before retaining an oversized app', async () => {
+    const { code, vault, app } = await fixture()
+    const payload = Buffer.alloc(2 * 1024 * 1024, 7)
+    for (let i = 0; i < 17; i++) await writeFile(join(app, `file-${i}.bin`), payload)
+    execFileSync('git', ['init', code], { stdio: 'ignore' })
+    execFileSync('git', ['-C', code, 'add', '.'])
+    execFileSync(
+      'git',
+      [
+        '-C',
+        code,
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.invalid',
+        'commit',
+        '-m',
+        'fixture',
+      ],
+      { stdio: 'ignore' },
+    )
+    const commit = execFileSync('git', ['-C', code, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    await expect(
+      seedApps({ apps: ['apps/Demo.app'] }, code, vault, {
+        release: { root: code, commit, sourcePath: '' },
+      }),
+    ).rejects.toThrow('app exceeds filesystem limits')
+  })
+
+  it('rejects authenticated app trees exceeding entry and depth budgets', async () => {
+    const { code, vault, app } = await fixture()
+    for (let i = 0; i < 2049; i++) await writeFile(join(app, `entry-${i}`), '')
+    execFileSync('git', ['init', code], { stdio: 'ignore' })
+    execFileSync('git', ['-C', code, 'add', '.'])
+    execFileSync(
+      'git',
+      [
+        '-C',
+        code,
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.invalid',
+        'commit',
+        '-m',
+        'fixture',
+      ],
+      { stdio: 'ignore' },
+    )
+    const commit = execFileSync('git', ['-C', code, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    await expect(
+      seedApps({ apps: ['apps/Demo.app'] }, code, vault, {
+        release: { root: code, commit, sourcePath: '' },
+      }),
+    ).rejects.toThrow('invalid authenticated app tree')
+  })
+
+  it('rejects an authenticated tree beyond the depth budget before reading blobs', async () => {
+    const { code, vault, app } = await fixture()
+    const nested = Array.from({ length: 34 }, (_, index) => `level-${index}`).join('/')
+    await mkdir(join(app, nested), { recursive: true })
+    await writeFile(join(app, nested, 'deep.txt'), '')
+    execFileSync('git', ['init', code], { stdio: 'ignore' })
+    execFileSync('git', ['-C', code, 'add', '.'])
+    execFileSync(
+      'git',
+      [
+        '-C',
+        code,
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.invalid',
+        'commit',
+        '-m',
+        'fixture',
+      ],
+      { stdio: 'ignore' },
+    )
+    const commit = execFileSync('git', ['-C', code, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    await expect(
+      seedApps({ apps: ['apps/Demo.app'] }, code, vault, {
+        release: { root: code, commit, sourcePath: '' },
+      }),
+    ).rejects.toThrow('unsafe Git tree path')
   })
 
   it('rejects staged-file mutation introduced by the final authorization guard', async () => {

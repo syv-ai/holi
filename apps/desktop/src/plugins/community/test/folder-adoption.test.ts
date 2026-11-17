@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as vaultSettings from '../../../main/vault/settings'
 import type { PluginManifest, PluginPin } from '@holi/shared'
 import type { CapabilityContext } from '../../../main/plugin-api'
-import { communityCapabilities } from '../main/capabilities'
+import { communityCapabilities, listPlugins, seedRunningApps } from '../main/capabilities'
 import { createChecks } from '../main/checks'
 import { createConsentStore } from '../main/consent'
 import { createInstallStore } from '../main/store'
@@ -84,6 +85,7 @@ async function fixture() {
     alternate,
     pinPath,
     store,
+    consent,
     call,
     setLive(value: boolean) {
       live = value
@@ -95,11 +97,34 @@ async function fixture() {
   }
 }
 
-afterEach(async () =>
-  Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))),
-)
+afterEach(async () => {
+  vi.restoreAllMocks()
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
 
 describe('folder adoption snapshot authorization', () => {
+  it('seeds enabled dev-plugin apps without release setup state', async () => {
+    const f = await fixture()
+    await mkdir(join(f.folder, 'apps', 'Demo.app'), { recursive: true })
+    await writeFile(join(f.folder, 'apps', 'Demo.app', 'index.html'), 'dev app')
+    await rm(f.pinPath)
+    const manifest = { ...f.manifest, apps: ['apps/Demo.app'] }
+    await f.store.put({
+      id: 'demo',
+      source: { kind: 'dev', folder: f.folder },
+      manifest,
+      setup: 'none',
+    })
+    await writeFile(join(f.vault, '.holi/settings/plugins.yaml'), 'plugins:\n  demo: true\n')
+    expect(await listPlugins(f.vault, { store: f.store, consent: f.consent })).toMatchObject([
+      { id: 'demo', on: true, running: true, apps: ['apps/Demo.app'] },
+    ])
+    expect(await seedRunningApps(f.vault, { store: f.store, consent: f.consent })).toEqual([
+      'Demo.app',
+    ])
+    expect(await readFile(join(f.vault, 'Demo.app/index.html'), 'utf8')).toBe('dev app')
+  })
+
   it('rejects a displayed token after the folder install is replaced', async () => {
     const f = await fixture()
     const row = (
@@ -141,6 +166,109 @@ describe('folder adoption snapshot authorization', () => {
     await expect(pending).rejects.toThrow(/changed/)
     expect(await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')).toContain(
       'demo: false',
+    )
+  })
+
+  it('restores the pin after a settings write failure and allows retry', async () => {
+    const f = await fixture()
+    const row = (
+      (await f.call('community.list')) as { id: string; folderAdoptionToken: string }[]
+    )[0]!
+    const write = vi
+      .spyOn(vaultSettings, 'writeVaultSettings')
+      .mockRejectedValueOnce(new Error('injected settings write failure'))
+    await expect(
+      f.call('community.adoptFolder', { id: 'demo', token: row.folderAdoptionToken }),
+    ).rejects.toThrow('injected settings write failure')
+    expect(await readFile(f.pinPath, 'utf8')).toContain('owner/demo')
+    expect(await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')).toContain(
+      'demo: false',
+    )
+    await f.call('community.adoptFolder', { id: 'demo', token: row.folderAdoptionToken })
+    expect(await readFile(f.pinPath, 'utf8').catch(() => null)).toBeNull()
+    expect(await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')).toContain(
+      'demo: true',
+    )
+    write.mockRestore()
+  })
+
+  it('checks lifetime inside queued settings publication and preserves concurrent edits', async () => {
+    const f = await fixture()
+    const row = (
+      (await f.call('community.list')) as { id: string; folderAdoptionToken: string }[]
+    )[0]!
+    let entered!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const concurrent = vaultSettings.writeVaultSettings(
+      f.vault,
+      { committed: { plugins: { other: true } } },
+      {
+        beforeWrite: async () => {
+          entered()
+          await gate
+        },
+      },
+    )
+    await started
+    const pending = f.call('community.adoptFolder', {
+      id: 'demo',
+      token: row.folderAdoptionToken,
+    })
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await readFile(f.pinPath, 'utf8').catch(() => null)) === null) break
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(await readFile(f.pinPath, 'utf8').catch(() => null)).toBeNull()
+    f.setLive(false)
+    release()
+    await concurrent
+    await expect(pending).rejects.toThrow(/attachment is closed/)
+    expect(await readFile(f.pinPath, 'utf8')).toContain('owner/demo')
+    const settings = await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')
+    expect(settings).toContain('demo: false')
+    expect(settings).toContain('other: true')
+  })
+
+  it('does not restore over a concurrent pin written during queued enablement', async () => {
+    const f = await fixture()
+    const row = (
+      (await f.call('community.list')) as { id: string; folderAdoptionToken: string }[]
+    )[0]!
+    let entered!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const concurrent = vaultSettings.writeVaultSettings(
+      f.vault,
+      { committed: { plugins: { other: true } } },
+      {
+        beforeWrite: async () => {
+          entered()
+          await gate
+        },
+      },
+    )
+    await started
+    const replacement = `${await readFile(f.pinPath, 'utf8')} `
+    const pending = f.call('community.adoptFolder', {
+      id: 'demo',
+      token: row.folderAdoptionToken,
+    })
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await readFile(f.pinPath, 'utf8').catch(() => null)) === null) break
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(await readFile(f.pinPath, 'utf8').catch(() => null)).toBeNull()
+    await mkdir(join(f.vault, '.holi/plugins/demo'), { recursive: true })
+    await writeFile(f.pinPath, replacement)
+    release()
+    await concurrent
+    await expect(pending).rejects.toThrow(/changed/)
+    expect(await readFile(f.pinPath, 'utf8')).toBe(replacement)
+    expect(await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')).toContain(
+      'other: true',
     )
   })
 

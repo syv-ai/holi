@@ -61,9 +61,15 @@ async function mergeInto(
   patch: Record<string, unknown>,
   target: SettingTarget,
   file: 'app' | 'plugins',
+  beforeWrite?: () => void | Promise<void>,
 ): Promise<void> {
   const previous = settingsWriteQueues.get(abs) ?? Promise.resolve()
-  const write = previous.catch(() => undefined).then(() => mergeIntoNow(abs, patch, target, file))
+  const write = previous
+    .catch(() => undefined)
+    .then(async () => {
+      await beforeWrite?.()
+      await mergeIntoNow(abs, patch, target, file)
+    })
   settingsWriteQueues.set(abs, write)
   try {
     await write
@@ -133,7 +139,11 @@ async function mergeIntoNow(
  * cannot leave a vault half-configured. Keys this module does not know (the
  * local file's `reminders`) survive because the merge is over the values as read.
  */
-export async function writeVaultSettings(root: string, write: VaultSettingsWrite): Promise<void> {
+export async function writeVaultSettings(
+  root: string,
+  write: VaultSettingsWrite,
+  options: { beforeWrite?: () => void | Promise<void> } = {},
+): Promise<void> {
   const known = installedInfos()
   const files = {
     committed: { app: SETTINGS_FILE, plugins: PLUGINS_FILE },
@@ -150,7 +160,9 @@ export async function writeVaultSettings(root: string, write: VaultSettingsWrite
     }
     for (const file of ['app', 'plugins'] as const) {
       if (Object.keys(split[file]).length === 0) continue
-      jobs.push(mergeInto(join(root, files[target][file]), split[file], target, file))
+      jobs.push(
+        mergeInto(join(root, files[target][file]), split[file], target, file, options.beforeWrite),
+      )
     }
   }
   await Promise.all(jobs)
