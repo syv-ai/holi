@@ -836,5 +836,149 @@
       return { revision: vimRevision, mode: eligibleNow() ? vimMode : 'insert' }
     },
   }
-  globalThis.__holiPage = { refs: [null], read, point, click, focus, valueOf, fill, scroll, vim }
+  // Browser hints own a separate target snapshot; CLI refs above are never reused.
+  let hintRequest = 0
+  let hintRevision = 0
+  let hintSnapshot = new Map()
+  let hintRoot = null
+  const hintSelector =
+    'a[href],button,input[type="button"],input[type="submit"],input[type="reset"],[role="button"],[role="link"],[role="tab"],[role="menuitem"],summary'
+  function hintTargets() {
+    const result = []
+    for (const element of document.querySelectorAll(hintSelector)) {
+      if (
+        !element.isConnected ||
+        hidden(element) ||
+        element.matches(':disabled,[aria-disabled="true"]')
+      )
+        continue
+      const rect = element.getBoundingClientRect()
+      const style = getComputedStyle(element)
+      if (rect.width < 2 || rect.height < 2 || style.pointerEvents === 'none') continue
+      let left = Math.max(0, rect.left),
+        top = Math.max(0, rect.top)
+      let right = Math.min(innerWidth, rect.right),
+        bottom = Math.min(innerHeight, rect.bottom)
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        const s = getComputedStyle(parent)
+        if (/(hidden|clip|scroll|auto)/.test(`${s.overflow} ${s.overflowX} ${s.overflowY}`)) {
+          const clip = parent.getBoundingClientRect()
+          left = Math.max(left, clip.left)
+          top = Math.max(top, clip.top)
+          right = Math.min(right, clip.right)
+          bottom = Math.min(bottom, clip.bottom)
+        }
+      }
+      if (right - left < 2 || bottom - top < 2) continue
+      const x = Math.round((left + right) / 2),
+        y = Math.round((top + bottom) / 2)
+      const hit = document.elementFromPoint(x, y)
+      if (!hit || !(hit === element || element.contains(hit))) continue
+      const label = (
+        element.getAttribute('aria-label') ||
+        element.innerText ||
+        element.getAttribute('title') ||
+        element.getAttribute('alt') ||
+        element.tagName
+      )
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, 120)
+      result.push({
+        id: String(result.length),
+        label,
+        x,
+        y,
+        element,
+        rect: [rect.x, rect.y, rect.width, rect.height],
+      })
+    }
+    return result
+  }
+  function clearHints(request) {
+    if (request !== hintRequest) return false
+    hintSnapshot.clear()
+    hintRoot?.remove()
+    hintRoot = null
+    return true
+  }
+  const hints = {
+    discover(request) {
+      if (!Number.isSafeInteger(request) || request < 1) return null
+      clearHints(hintRequest)
+      hintRequest = request
+      hintRevision = 0
+      return hintTargets().map(({ id, label, x, y, element, rect }) => {
+        hintSnapshot.set(id, { element, rect, x, y, request })
+        return { id, label, x, y }
+      })
+    },
+    present(request, revision, labels) {
+      if (
+        request !== hintRequest ||
+        !Number.isSafeInteger(revision) ||
+        revision <= hintRevision ||
+        !Array.isArray(labels) ||
+        labels.length > 200
+      )
+        return false
+      hintRevision = revision
+      hintRoot?.remove()
+      const root = document.createElement('div')
+      root.setAttribute('aria-hidden', 'true')
+      root.style.cssText =
+        'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;'
+      const shadow = root.attachShadow({ mode: 'closed' })
+      for (const item of labels) {
+        const target = hintSnapshot.get(item.id)
+        if (
+          !target ||
+          target.request !== request ||
+          typeof item.key !== 'string' ||
+          !/^[A-Z]{1,4}$/.test(item.key)
+        )
+          return false
+        const badge = document.createElement('span')
+        badge.textContent = item.key
+        badge.style.cssText = `all:initial;position:fixed;left:${Math.round(target.x)}px;top:${Math.round(target.y)}px;transform:translate(-50%,-50%);padding:2px 5px;background:#facc15;color:#111;font:600 12px monospace;border-radius:3px;box-shadow:0 1px 4px #0008;`
+        shadow.append(badge)
+      }
+      document.documentElement.append(root)
+      hintRoot = root
+      return true
+    },
+    clear: clearHints,
+    activate(request, id) {
+      if (request !== hintRequest) return null
+      const target = hintSnapshot.get(id)
+      if (!target || !target.element.isConnected) return null
+      const rect = target.element.getBoundingClientRect()
+      if (
+        Math.abs(rect.x - target.rect[0]) > 1 ||
+        Math.abs(rect.y - target.rect[1]) > 1 ||
+        Math.abs(rect.width - target.rect[2]) > 1 ||
+        Math.abs(rect.height - target.rect[3]) > 1
+      )
+        return null
+      const hit = document.elementFromPoint(target.x, target.y)
+      if (!hit || !(hit === target.element || target.element.contains(hit))) return null
+      return {
+        x: target.x,
+        y: target.y,
+        field: target.element.matches('input,textarea,[contenteditable="true"]'),
+      }
+    },
+  }
+  globalThis.__holiPage = {
+    refs: [null],
+    read,
+    point,
+    click,
+    focus,
+    valueOf,
+    fill,
+    scroll,
+    vim,
+    hints,
+  }
 })()
