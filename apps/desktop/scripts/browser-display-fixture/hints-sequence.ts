@@ -559,12 +559,17 @@
         .map((event) => event.payload as any)
     const requestEvent = eventsForRequest().find((event) => event.type === 'request')
     assert(requestEvent, 'production did not emit native capture request')
-    const ownerIdentity = (owner: any) => ({
+    const scopeIdentity = (owner: any) => ({
       tab: owner.tab,
       nonce: owner.nonce,
       attachment: owner.attachment,
       request: owner.request,
       origin: owner.origin,
+    })
+    const ownerIdentity = (owner: any) => ({
+      ...scopeIdentity(owner),
+      snapshot: owner.snapshot,
+      geometry: owner.geometry,
     })
     assert.deepEqual(
       {
@@ -607,9 +612,28 @@
       ownerIdentity(discoverOwner),
       'late prefix must retain exact discovered owner',
     )
+    const expectedPrefixKeys = labelsBeforePrefix
+      .filter((label: any) => label.key.startsWith('a'))
+      .map((label: any) => label.key)
+      .sort()
+    assert(
+      expectedPrefixKeys.length > 0 && expectedPrefixKeys.length < labelsBeforePrefix.length,
+      'prefix must select a nonempty strict subset',
+    )
     await until(
-      async () => JSON.stringify(await pageLabelsFor(page)) !== JSON.stringify(labelsBeforePrefix),
-      'late prefix updates page hint presentation',
+      async () =>
+        JSON.stringify((await pageLabelsFor(page)).map((label: any) => label.key).sort()) ===
+          JSON.stringify(expectedPrefixKeys) &&
+        hintUiCalls.some(
+          (call) =>
+            call.name === 'browser.hints-present' &&
+            call.params.p.revision > presentation.params.p.revision &&
+            JSON.stringify(ownerIdentity(call.params.owner)) ===
+              JSON.stringify(ownerIdentity(discoverOwner)) &&
+            JSON.stringify(call.params.p.labels.map((label: any) => label.key).sort()) ===
+              JSON.stringify(expectedPrefixKeys),
+        ),
+      'late prefix successfully presents the exact nonempty subset at a higher revision',
     )
     assert.equal(
       eventsForRequest().filter((event) => event.type === 'key' && event.key === 'a').length,
@@ -620,23 +644,47 @@
       { code: `qaDelayedRaw.map(event=>event.type+':'+(event.key||''))` },
     ])
     assert(!remainingRaw.includes('key:a'), 'delayed wrapper retained an already forwarded key')
+    const beforeEscapeEvents = eventsForRequest().length
+    await page.executeJavaScriptInIsolatedWorld(1017, [{ code: 'qaReleaseKeys=false;true' }])
     await pageNativePress('Escape')
     await until(
       async () => (await pageLabelsFor(page)).length === 0,
       'Escape immediately clears page labels',
     )
+    // Force source cleanup before polling its genuine queued owner-based revoke.
+    const sourceClear = await ui(
+      `holi.trpc(${JSON.stringify({ path: 'cap.run', input: { remote: 'A', name: 'browser.hints-clear', paramsJson: JSON.stringify(discoverScope) } })})`,
+    )
+    assert.equal(sourceClear.ok, true, 'source cleanup must use the UI-only capability')
+    await page.executeJavaScriptInIsolatedWorld(1017, [{ code: 'qaReleaseKeys=true;true' }])
     await until(
-      () => eventsForRequest().some((event) => event.type === 'cancel' || event.type === 'revoke'),
-      'production emits delayed-handoff cancellation or revoke',
+      () =>
+        eventsForRequest()
+          .slice(beforeEscapeEvents)
+          .some((event) => event.type === 'cancel' || event.type === 'revoke'),
+      'production emits delayed-handoff cancellation after Escape and source cleanup',
     )
-    const lateCancel = eventsForRequest().find(
-      (event) => event.type === 'cancel' || event.type === 'revoke',
-    )
+    const lateCancel = eventsForRequest()
+      .slice(beforeEscapeEvents)
+      .find((event) => event.type === 'cancel' || event.type === 'revoke')
     assert(lateCancel, 'Escape cancellation or revoke was lost')
     assert.deepEqual(
-      ownerIdentity(lateCancel),
-      ownerIdentity(discoverOwner),
+      scopeIdentity(lateCancel),
+      scopeIdentity(discoverOwner),
       'native cancellation or revoke must retain exact discovered request identity',
+    )
+    if (lateCancel.type === 'revoke')
+      assert.deepEqual(
+        ownerIdentity(lateCancel),
+        ownerIdentity(discoverOwner),
+        'owner revocation must retain exact snapshot and geometry',
+      )
+    assert.equal(
+      eventsForRequest()
+        .slice(beforeEscapeEvents)
+        .filter((event) => event.type === 'cancel' || event.type === 'revoke').length,
+      1,
+      'owner cancellation must be emitted once',
     )
     await until(
       async () => (await hostHintCount()) === 0,

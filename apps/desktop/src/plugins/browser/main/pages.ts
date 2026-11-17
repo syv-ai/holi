@@ -123,7 +123,7 @@ interface Tab {
   hintRequestOrigin: string | null
   hintRequestCapture: number | null
   hintCaptureOwner: { capture: number; owner: PageHintOwner } | null
-  hintRetiredCapture: { capture: number; owner: PageHintOwner } | null
+  hintRetiredCapture: { capture: number | null; owner: PageHintOwner } | null
   hintPendingKeys: Map<
     number,
     {
@@ -448,15 +448,22 @@ export function createPages(deps: PagesDeps): Pages & {
             tab.hintSnapshot++
           } else if (
             value.type === 'revoke' &&
-            value.capture !== undefined &&
-            value.capture === tab.hintRetiredCapture?.capture
+            tab.hintRetiredCapture !== null &&
+            ((value.capture !== undefined && value.capture === tab.hintRetiredCapture.capture) ||
+              (value.owner !== undefined &&
+                value.owner.tab === tab.hintRetiredCapture.owner.tab &&
+                value.owner.nonce === tab.hintRetiredCapture.owner.nonce &&
+                value.owner.attachment === tab.hintRetiredCapture.owner.attachment &&
+                value.owner.request === tab.hintRetiredCapture.owner.request &&
+                value.owner.origin === tab.hintRetiredCapture.owner.origin &&
+                value.owner.snapshot === tab.hintRetiredCapture.owner.snapshot &&
+                value.owner.geometry === tab.hintRetiredCapture.owner.geometry))
           ) {
             const retired = tab.hintRetiredCapture
             tab.hintRetiredCapture = null
             tab.hintCaptureOwner = null
-            const { type: _type, ...retiredOwner } = retired.owner
             emitHint(
-              { ...retiredOwner, type: 'cancel' },
+              { ...retired.owner, type: 'cancel' },
               () =>
                 isPresented(tab) &&
                 tab.vimNonce === nonce &&
@@ -470,7 +477,7 @@ export function createPages(deps: PagesDeps): Pages & {
           } else if (value.type === 'key' && value.capture !== undefined) {
             const captureOwner = tab.hintCaptureOwner
             if (captureOwner?.capture === value.capture && hintOwns(tab, captureOwner.owner)) {
-              const { capture: _capture, ...rawKey } = value
+              const { capture: _capture, type: _type, owner: _owner, ...rawKey } = value
               emitHint({ ...captureOwner.owner, type: 'key', ...rawKey }, () =>
                 hintOwns(tab, captureOwner.owner),
               )
@@ -728,14 +735,11 @@ export function createPages(deps: PagesDeps): Pages & {
     const owner = tab.hintOwner ?? tab.hintPendingOwner
     tab.hintOwner = null
     tab.hintPendingOwner = null
-    if (tab.hintRequestCapture !== null && tab.hintRequestOrigin !== null) {
-      const captureOwner = tab.hintCaptureOwner
-      const retiredOwner = captureOwner?.owner ?? owner
-      if (retiredOwner) {
-        tab.hintRetiredCapture = {
-          capture: tab.hintRequestCapture,
-          owner: retiredOwner,
-        }
+    const retiredOwner = tab.hintCaptureOwner?.owner ?? owner
+    if (retiredOwner) {
+      tab.hintRetiredCapture = {
+        capture: tab.hintRequestCapture,
+        owner: retiredOwner,
       }
     }
     tab.hintCaptureOwner = null

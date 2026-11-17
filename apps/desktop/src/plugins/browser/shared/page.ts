@@ -73,7 +73,7 @@ export interface PageHintLabel {
 }
 
 export type PageHintEvent =
-  | (PageHintScope & { origin: string; type: 'request' | 'cancel' })
+  | (PageHintScope & { origin: string } & ({ type: 'request' } | { type: 'cancel' }))
   | (PageHintOwner & {
       type: 'key' | 'revoke'
       key?: string

@@ -67,6 +67,11 @@ export function createBrowserHintAdapter(
   const retired = new WeakSet<Pending>()
   let generation = 0
   const requestScopeKey = requestKey(context)
+  const tabScopePrefix = `${key}\u0000`
+  for (const scope of requestHighWater.keys()) {
+    if (scope.startsWith(tabScopePrefix) && scope !== requestScopeKey)
+      requestHighWater.delete(scope)
+  }
   let wireRequest = requestHighWater.get(requestScopeKey) ?? 0
   let snapshot: PageHintSnapshot | null = null
   let revision = 0
