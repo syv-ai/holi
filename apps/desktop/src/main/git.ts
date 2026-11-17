@@ -826,12 +826,15 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       env: { ...opts.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
       executionBudget: { maxBuffer: 8 * 1024 * 1024, timeout: 5000 },
     }
-    const git = (args: string[]) => runGitOnce(root, ['--no-replace-objects', ...args], budget)
-    const [base, tip] = await Promise.all([
+    const git = (args: string[]) =>
+      runGitOnce(root, ['--no-replace-objects', '--literal-pathspecs', ...args], budget)
+    const [base, tip, shallow] = await Promise.all([
       git(['cat-file', '-e', `${from}^{commit}`]),
       git(['cat-file', '-e', `${to}^{commit}`]),
+      git(['rev-parse', '--is-shallow-repository']),
     ])
-    if (!base.ok || !tip.ok) return incomplete('history-unavailable')
+    if (!base.ok || !tip.ok || !shallow.ok || shallow.stdout.trim() !== 'false')
+      return incomplete('history-unavailable')
     const ancestry = await git(['merge-base', '--is-ancestor', from, to])
     if (!ancestry.ok) return incomplete('history-unavailable')
     const list = await git(['rev-list', '--topo-order', to, `^${from}`])
@@ -848,6 +851,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
         '--name-only',
         '-z',
         '--no-renames',
+        '-m',
         '-r',
         '--root',
         sha,
@@ -855,7 +859,8 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
         path,
       ])
       if (!result.ok) return incomplete('history-unavailable')
-      for (const changed of result.stdout.split('\0').filter(Boolean)) {
+      const commitPaths = new Set(result.stdout.split('\0').filter(Boolean))
+      for (const changed of commitPaths) {
         changes.push({ sha, path: changed })
         bytes += Buffer.byteLength(sha) + Buffer.byteLength(changed) + 2
         if (changes.length > 2000 || bytes > 8 * 1024 * 1024) return incomplete('limit')

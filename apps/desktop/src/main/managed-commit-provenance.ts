@@ -65,6 +65,41 @@ function parse(raw: unknown, text: string | null): ProvenanceFile {
   return { version: 1, records }
 }
 
+export function ownedCommitOids(args: {
+  file: string
+  remote: string
+  identity: Pick<ProvenanceRecord, 'root' | 'gitDir' | 'device' | 'inode'> & {
+    lifetime: string | null
+  }
+  accountId: number
+  oids: readonly string[]
+}): ReadonlySet<string> {
+  if (args.identity.lifetime === null) return new Set()
+  try {
+    const text = readFileSync(args.file, 'utf8')
+    const state = parse(JSON.parse(text), text)
+    const wanted = new Set(args.oids)
+    return new Set(
+      state.records
+        .filter(
+          (record) =>
+            wanted.has(record.oid) &&
+            !record.conflicted &&
+            record.accountId === args.accountId &&
+            record.remote === args.remote &&
+            record.root === args.identity.root &&
+            record.gitDir === args.identity.gitDir &&
+            record.device === args.identity.device &&
+            record.inode === args.identity.inode &&
+            record.lifetime === args.identity.lifetime,
+        )
+        .map((record) => record.oid),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
 function isRecord(value: unknown): value is ProvenanceRecord {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
   const r = value as Record<string, unknown>
@@ -96,9 +131,12 @@ function isRecord(value: unknown): value is ProvenanceRecord {
   )
 }
 
-async function repositoryIdentity(
+export async function repositoryIdentity(
   root: string,
-): Promise<Pick<ProvenanceRecord, 'root' | 'gitDir' | 'device' | 'inode' | 'lifetime'>> {
+  options: { createLifetime?: boolean } = {},
+): Promise<
+  Pick<ProvenanceRecord, 'root' | 'gitDir' | 'device' | 'inode'> & { lifetime: string | null }
+> {
   const canonicalRoot = await realpath(root)
   const gitDirRaw = await (
     await import('./git')
@@ -113,23 +151,43 @@ async function repositoryIdentity(
     lifetime = (await readFile(lifetimeFile, 'utf8')).trim()
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    const candidate = randomUUID()
-    try {
-      const handle = await open(lifetimeFile, 'wx', 0o600)
+    if (options.createLifetime === false) lifetime = ''
+    else {
+      const candidate = randomUUID()
       try {
-        await handle.writeFile(`${candidate}\n`, 'utf8')
-        await handle.sync()
-      } finally {
-        await handle.close()
+        const handle = await open(lifetimeFile, 'wx', 0o600)
+        try {
+          await handle.writeFile(`${candidate}\n`, 'utf8')
+          await handle.sync()
+        } finally {
+          await handle.close()
+        }
+        lifetime = candidate
+      } catch (createError) {
+        if ((createError as NodeJS.ErrnoException).code !== 'EEXIST') throw createError
+        lifetime = (await readFile(lifetimeFile, 'utf8')).trim()
       }
-      lifetime = candidate
-    } catch (createError) {
-      if ((createError as NodeJS.ErrnoException).code !== 'EEXIST') throw createError
-      lifetime = (await readFile(lifetimeFile, 'utf8')).trim()
     }
   }
-  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(lifetime))
+  if (lifetime === '')
+    return {
+      root: canonicalRoot,
+      gitDir,
+      device: Number(gitStat.dev),
+      inode: Number(gitStat.ino),
+      lifetime: null,
+    }
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(lifetime)) {
+    if (options.createLifetime === false)
+      return {
+        root: canonicalRoot,
+        gitDir,
+        device: Number(gitStat.dev),
+        inode: Number(gitStat.ino),
+        lifetime: null,
+      }
     throw new Error('Invalid repository lifetime marker')
+  }
   return {
     root: canonicalRoot,
     gitDir,
@@ -165,6 +223,7 @@ export function createManagedCommitProvenance(args: {
         return null
       try {
         const repo = await repositoryIdentity(root)
+        if (repo.lifetime === null) return null
         const origin = await (
           await import('./git')
         ).runGit(root, ['--no-replace-objects', 'remote', 'get-url', 'origin'], {
@@ -240,8 +299,10 @@ export function createManagedCommitProvenance(args: {
       } catch {
         return
       }
+      if (now.lifetime === null) return
+      const repository = { ...now, lifetime: now.lifetime }
       if (
-        JSON.stringify(now) !==
+        JSON.stringify(repository) !==
         JSON.stringify({
           root: started.root,
           gitDir: started.gitDir,
@@ -253,7 +314,7 @@ export function createManagedCommitProvenance(args: {
         return
       await store.update(
         (state) => {
-          const key = provenanceKey({ remote, ...now, oid })
+          const key = provenanceKey({ remote, ...repository, oid })
           const existing = state.records.find((record) => provenanceKey(record) === key)
           if (existing) {
             if (existing.conflicted) return state
@@ -265,7 +326,7 @@ export function createManagedCommitProvenance(args: {
             return {
               version: 1,
               records: state.records.map((record) =>
-                record === existing ? { remote, ...now, oid, conflicted: true } : record,
+                record === existing ? { remote, ...repository, oid, conflicted: true } : record,
               ),
             }
           }
@@ -277,7 +338,7 @@ export function createManagedCommitProvenance(args: {
               ...state.records,
               {
                 remote,
-                ...now,
+                ...repository,
                 oid,
                 accountId: started.accountId,
                 generation: started.generation,
