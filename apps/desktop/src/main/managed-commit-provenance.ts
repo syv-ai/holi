@@ -131,6 +131,58 @@ function isRecord(value: unknown): value is ProvenanceRecord {
   )
 }
 
+export type RepositoryPublicationSnapshot = Pick<
+  ProvenanceRecord,
+  'root' | 'gitDir' | 'device' | 'inode'
+> & { lifetime: string | null; marker: string; remote: string }
+
+/** Bounded synchronous observation used as the final publication guard. */
+export function repositoryPublicationSnapshot(root: string): RepositoryPublicationSnapshot | null {
+  try {
+    const git = (command: string[]) =>
+      execFileSync('git', ['--no-replace-objects', ...command], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 250,
+        maxBuffer: 65536,
+        env: {
+          ...process.env,
+          LC_ALL: 'C',
+          GIT_NO_REPLACE_OBJECTS: '1',
+          GIT_NO_LAZY_FETCH: '1',
+          GIT_TERMINAL_PROMPT: '0',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim()
+    const canonicalRoot = realpathSync(root)
+    const gitDir = realpathSync(git(['rev-parse', '--absolute-git-dir']))
+    const info = statSync(gitDir)
+    const markerFile = `${gitDir}/holi-managed-provenance-id`
+    let marker: string
+    try {
+      marker = `present:${readFileSync(markerFile, 'utf8')}`
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      marker = 'absent'
+    }
+    const rawLifetime = marker.startsWith('present:') ? marker.slice('present:'.length).trim() : ''
+    const lifetime = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(rawLifetime)
+      ? rawLifetime
+      : null
+    return {
+      root: canonicalRoot,
+      gitDir,
+      device: Number(info.dev),
+      inode: Number(info.ino),
+      lifetime,
+      marker,
+      remote: canonicalGitHubRemote(git(['remote', 'get-url', 'origin'])),
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function repositoryIdentity(
   root: string,
   options: { createLifetime?: boolean } = {},
