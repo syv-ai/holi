@@ -1,7 +1,8 @@
-import { chmod, readFile, writeFile } from 'node:fs/promises'
+import { access, chmod, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { openRepo } from '../src/main/git'
+import { traceHasOnlyManagedBuiltins } from '../src/main/git-provenance-evidence'
 import {
   cleanupFixtures,
   commitFile,
@@ -13,7 +14,36 @@ import {
 
 afterAll(cleanupFixtures)
 
+function maintenanceTrace(option: string | null): string {
+  const argv = ['git', 'maintenance', 'run', '--auto', '--no-quiet', ...(option ? [option] : [])]
+  return (
+    [
+      { event: 'start', sid: 'root' },
+      { event: 'cmd_name', sid: 'root', name: 'merge' },
+      { event: 'child_start', sid: 'root', child_id: 1, use_shell: false, argv },
+      { event: 'start', sid: 'root/1' },
+      { event: 'cmd_name', sid: 'root/1', name: 'maintenance' },
+      { event: 'exit', sid: 'root/1', code: 0 },
+      { event: 'child_exit', sid: 'root', child_id: 1, code: 0 },
+      { event: 'exit', sid: 'root', code: 0 },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n') + '\n'
+  )
+}
+
 describe('managed merge evidence', () => {
+  it.each([['--detach'], ['--no-detach'], [null]] as const)(
+    'accepts parser fixture maintenance argv variant %s',
+    (option) => {
+      expect(traceHasOnlyManagedBuiltins(maintenanceTrace(option), 'merge', 0)).toBe(true)
+    },
+  )
+
+  it('rejects detached incomplete maintenance evidence without waiting', () => {
+    const trace = maintenanceTrace('--detach').split('\n').slice(0, -3).join('\n') + '\n'
+    expect(traceHasOnlyManagedBuiltins(trace, 'merge', 0)).toBe(false)
+  })
   it('fails closed when a post-merge hook amends HEAD and deletes the evidence reflog', async () => {
     const remote = await makeRemote()
     const local = await makeClone(remote, 'local')
@@ -98,13 +128,13 @@ describe('managed merge evidence', () => {
       const calls = join(dir, 'calls')
       await writeFile(
         script,
-        `#!/bin/sh\nprintf '%s\n' "$*" >> "$EVIDENCE_CALLS"\ncase " $* " in\n  ${probe === 'reflog' ? '*" reflog "*' : '*" cat-file -p "*'}) exit 1 ;;\nesac\nexec git "$@"\n`,
+        `#!/bin/sh\nprintf '%s\n' "$*" >> "$EVIDENCE_CALLS"\ncase " $* " in\n  ${probe === 'reflog' ? '*" reflog "*' : '*" cat-file -p "*'}) touch "$EVIDENCE_FIRED"; exit 1 ;;\nesac\nexec git "$@"\n`,
       )
       await chmod(script, 0o755)
       const records: Array<string | null> = []
       const result = await openRepo(local, {
         gitPath: script,
-        env: { EVIDENCE_CALLS: calls },
+        env: { EVIDENCE_CALLS: calls, EVIDENCE_FIRED: join(dir, 'fired') },
         commitProvenance: {
           begin: () => ({}),
           record: async (_ticket, _root, oid) => {
@@ -114,6 +144,7 @@ describe('managed merge evidence', () => {
       }).pull()
       expect(result.kind).toBe('merged')
       expect(records).toEqual([null])
+      await expect(access(join(dir, 'fired'))).resolves.toBeUndefined()
       const commands = (await readFile(calls, 'utf8')).trim().split('\n')
       expect(commands.filter((line) => /(?:^| )merge(?: |$)/.test(line))).toHaveLength(1)
     },
@@ -133,7 +164,7 @@ describe('managed merge evidence', () => {
       const calls = join(dir, 'calls')
       await writeFile(
         script,
-        `#!/bin/sh\nprintf '%s\n' "$*" >> "$EVIDENCE_CALLS"\nif [ "$1" = merge ]; then git "$@"; status=$?; touch "$EVIDENCE_ROOT/.git/merge-landed"; exit "$status"; fi\ncase " $* " in\n  *--no-replace-objects*${probe === 'reflog' ? '*reflog*' : probe === 'object' ? '*"cat-file -p"*' : '*rev-parse*'})\n    if [ -f "$EVIDENCE_ROOT/.git/merge-landed" ]; then head -c 2097152 /dev/zero | tr '\\000' x; exit 0; fi\n    ;;\nesac\nexec git "$@"\n`,
+        `#!/bin/sh\nprintf '%s\n' "$*" >> "$EVIDENCE_CALLS"\nif [ "$1" = merge ]; then git "$@"; status=$?; touch "$EVIDENCE_ROOT/.git/merge-landed"; exit "$status"; fi\ncase " $* " in\n  *--no-replace-objects*${probe === 'reflog' ? '*reflog*' : probe === 'object' ? '*"cat-file -p"*' : '*rev-parse*'})\n    if [ -f "$EVIDENCE_ROOT/.git/merge-landed" ]; then touch "$EVIDENCE_FIRED"; head -c 2097152 /dev/zero | tr '\\000' x; exit 0; fi\n    ;;\nesac\nexec git "$@"\n`,
       )
       await chmod(script, 0o755)
       const records: Array<string | null> = []
@@ -141,7 +172,11 @@ describe('managed merge evidence', () => {
         (
           await openRepo(local, {
             gitPath: script,
-            env: { EVIDENCE_ROOT: local, EVIDENCE_CALLS: calls },
+            env: {
+              EVIDENCE_ROOT: local,
+              EVIDENCE_CALLS: calls,
+              EVIDENCE_FIRED: join(dir, 'fired'),
+            },
             commitProvenance: {
               begin: () => ({}),
               record: async (_ticket, _root, oid) => {
@@ -152,6 +187,7 @@ describe('managed merge evidence', () => {
         ).kind,
       ).toBe('merged')
       expect(records).toEqual([null])
+      await expect(access(join(dir, 'fired'))).resolves.toBeUndefined()
       expect(
         (await readFile(calls, 'utf8'))
           .split('\n')
@@ -209,7 +245,7 @@ describe('managed merge evidence', () => {
     const script = join(dir, 'git')
     await writeFile(
       script,
-      '#!/bin/sh\nif [ "$1" = merge ]; then git "$@"; status=$?; touch "$EVIDENCE_ROOT/.git/merge-landed"; exit "$status"; fi\ncase " $* " in *--no-replace-objects*rev-parse*) if [ -f "$EVIDENCE_ROOT/.git/merge-landed" ]; then exec sleep 10; fi;; esac\nexec git "$@"\n',
+      '#!/bin/sh\nif [ "$1" = merge ]; then git "$@"; status=$?; touch "$EVIDENCE_ROOT/.git/merge-landed"; exit "$status"; fi\ncase " $* " in *--no-replace-objects*rev-parse*) if [ -f "$EVIDENCE_ROOT/.git/merge-landed" ]; then touch "$EVIDENCE_FIRED"; exec sleep 10; fi;; esac\nexec git "$@"\n',
     )
     await chmod(script, 0o755)
     const records: Array<string | null> = []
@@ -218,7 +254,7 @@ describe('managed merge evidence', () => {
       (
         await openRepo(local, {
           gitPath: script,
-          env: { EVIDENCE_ROOT: local },
+          env: { EVIDENCE_ROOT: local, EVIDENCE_FIRED: join(dir, 'fired') },
           commitProvenance: {
             begin: () => ({}),
             record: async (_ticket, _root, oid) => {
@@ -229,6 +265,7 @@ describe('managed merge evidence', () => {
       ).kind,
     ).toBe('merged')
     expect(records).toEqual([null])
+    await expect(access(join(dir, 'fired'))).resolves.toBeUndefined()
     expect(Date.now() - started).toBeLessThan(8000)
   }, 15000)
 
@@ -246,8 +283,8 @@ describe('managed merge evidence', () => {
       const calls = join(dir, 'calls')
       const traceOut =
         trace === 'missing'
-          ? 'unset GIT_TRACE2_EVENT; exec git "$@"'
-          : `git "$@"\nstatus=$?\n${trace === 'truncated' ? 'printf \'{\\"event\\":\\"start\\"\' >&2' : 'printf \'{\\"event\\":\\"start\\",\\"sid\\":\\"forged\\"}\n\' >&2'}\nexit $status`
+          ? 'unset GIT_TRACE2_EVENT; exec git "$@" 3>&-'
+          : `git "$@" 3>&3\nstatus=$?\n${trace === 'truncated' ? 'printf \'{\\"event\\":\\"start\\"\' >&3' : 'printf \'{\\"event\\":\\"start\\",\\"sid\\":\\"forged\\"}\n\' >&3'}\nexit $status`
       await writeFile(script, `#!/bin/sh\nprintf '%s\n' "$*" >> "$EVIDENCE_CALLS"\n${traceOut}\n`)
       await chmod(script, 0o755)
       const records: Array<string | null> = []
@@ -278,7 +315,7 @@ describe('managed merge evidence', () => {
     await plainGit(teammate, ['push', 'origin', 'HEAD:main'])
     await writeFile(
       join(local, '.git/hooks/post-merge'),
-      `#!/bin/sh\nset -eu\n[ "$GIT_TRACE2_EVENT" = 2 ]\nprintf '{"event":"start","sid":"forged"}\n{"event":"cmd_name","sid":"forged","name":"merge"}\n{"event":"exit","sid":"forged","code":0}\n' >&2\n`,
+      `#!/bin/sh\nset -eu\n[ "$GIT_TRACE2_EVENT" = 3 ]\nprintf '{"event":"start","sid":"forged"}\n{"event":"cmd_name","sid":"forged","name":"merge"}\n{"event":"exit","sid":"forged","code":0}\n' >&3\n`,
       { mode: 0o755 },
     )
     const records: Array<string | null> = []
