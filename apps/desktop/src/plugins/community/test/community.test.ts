@@ -203,6 +203,42 @@ describe('installing', () => {
     expect((await call('community.list'))[0]!.status).toBe('ready')
   })
 
+  test('updating a pinned release advances the current vault pin and bundled skills', async () => {
+    await makeRepo()
+    await mkdir(join(repoDir, 'skills/prezzi'), { recursive: true })
+    await writeFile(join(repoDir, 'skills/prezzi/SKILL.md'), 'old guide\n')
+    const initial = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...initial, skills: ['skills/prezzi'] }),
+    )
+    commitAll('initial guide')
+    git(repoDir, 'tag', '-f', 'v0.1.0')
+    const { call } = setup()
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    await call('community.pin', { id: 'prezzi' })
+    const oldPin = JSON.parse(
+      await readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8'),
+    )
+
+    await writeFile(join(repoDir, 'skills/prezzi/SKILL.md'), 'updated guide\n')
+    const updated = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...updated, version: '0.2.0' }),
+    )
+    commitAll('updated guide')
+    git(repoDir, 'tag', 'v0.2.0')
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.2.0' })
+
+    expect(
+      JSON.parse(await readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8')).commit,
+    ).not.toBe(oldPin.commit)
+    expect(await readFile(join(vault, '.claude/skills/prezzi/SKILL.md'), 'utf8')).toBe(
+      'updated guide\n',
+    )
+  })
+
   test('offers a newer release of what is installed, and nothing once it is', async () => {
     await makeRepo()
     const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
