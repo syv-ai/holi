@@ -210,8 +210,28 @@ try {
   const normalProcess = await launchPhase('normal')
   const report = await waitJson(reportPath, normalProcess)
   await writeFile(join(artifacts, 'report.json'), JSON.stringify(report, null, 2))
-  const context = { runId, now: Date.now(), osVersion: runtime.version, storageRoot: documents }
+  const context = {
+    runId,
+    now: Date.now(),
+    osVersion: runtime.version,
+    storageRoot: documents,
+    library,
+  }
   validateReport(report, { ...context, ...normalProcess, phase: 'normal' })
+  const prefixProof = report.prefixNamespace
+  assert.equal(await realpath(prefixProof.rootA), prefixProof.rootA)
+  assert.equal(await realpath(prefixProof.rootB), prefixProof.rootB)
+  assert.equal(await realpath(prefixProof.privateA), prefixProof.privateA)
+  assert.equal(await realpath(prefixProof.privateB), prefixProof.privateB)
+  assert.ok(!prefixProof.privateB.startsWith(`${prefixProof.privateA}/`))
+  assert.ok(!prefixProof.privateA.startsWith(`${prefixProof.privateB}/`))
+  assert.equal(await readFile(join(prefixProof.rootA, 'same/note.md'), 'utf8'), prefixProof.bytesA)
+  assert.equal(await readFile(join(prefixProof.rootB, 'same/note.md'), 'utf8'), prefixProof.bytesB)
+  assert.equal(
+    await readFile(join(prefixProof.privateB, prefixProof.poisonName), 'utf8'),
+    prefixProof.poisonBytes,
+  )
+  assert.deepEqual(await readdir(prefixProof.privateA), [])
   const durableNote = join(documents, `holi-storage-check-${runId}`, 'same/note.md')
   const durableBefore = await readFile(durableNote)
   for (const [index, name] of ['Café.md', 'Cafe\u0301.md'].entries()) {

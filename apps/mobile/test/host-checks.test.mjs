@@ -13,6 +13,7 @@ import {
 
 import { storageFaultPhases, storageFixturePaths } from '../app/vault-storage-check'
 import { moveFixtureBytes as images } from '../app/move-fixtures'
+import { stagingDirectory } from '../app/storage-staging'
 
 const runId = '11111111-1111-1111-1111-111111111111'
 const corpus = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
@@ -22,6 +23,7 @@ const context = {
   now: 200,
   osVersion: '26.2',
   storageRoot: '/sandbox/Documents',
+  library: '/sandbox/Library',
 }
 const rawNames = ['Café.md', 'Cafe\u0301.md'].map((name, index) => ({
   root: `/sandbox/Documents/holi-raw-${runId}-${index}`,
@@ -61,6 +63,22 @@ const report = {
     finalBytes: 'winner A',
   },
   storageRoot: `/sandbox/Documents/holi-storage-check-${runId}`,
+  prefixNamespace: (() => {
+    const prefix = `/sandbox/Documents/holi-prefix-${runId}-`
+    const rootA = `${prefix}${'a'.repeat((32 - (Buffer.byteLength(prefix) % 32)) % 32)}`
+    const rootB = `${rootA}x`
+    return {
+      rootA,
+      rootB,
+      privateA: stagingDirectory('/sandbox/Library', rootA),
+      privateB: stagingDirectory('/sandbox/Library', rootB),
+      bytesA: 'root A saved',
+      bytesB: 'root B bytes',
+      poisonName: 'move-00000000-0000-4000-8000-000000000589.json',
+      poisonBytes: '{malformed B journal',
+      poisonRetained: true,
+    }
+  })(),
 }
 
 test('host accepts only fresh complete native evidence for every bundled case', () => {

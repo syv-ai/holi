@@ -1,7 +1,7 @@
 import { knownFolders } from '@nativescript/core'
 import { isInIgnoredDir, isLocalOnlyPath, isSecretPath } from '@holi/shared/mobile-path-safety'
 import { nativeIO } from './native-posix.ios'
-import { stagingDirectory, stageNamePattern } from './storage-staging'
+import { legacyStagingDirectory, stagingDirectory, stageNamePattern } from './storage-staging'
 import type { Entry, NativeFiles } from './native-files'
 
 type Fault = 'stage-open' | 'stage-write' | 'stage-sync' | 'stage-close' | 'publish'
@@ -83,7 +83,33 @@ function privateStages(root: string): string {
     nativeIO.syncDirectory(parent)
     nativeIO.syncDirectory(stageRoot)
   }
+  migrateLegacyArtifacts(legacyStagingDirectory(library, root), stageRoot)
   return stageRoot
+}
+
+/** Move only direct, recognized legacy artifacts; unknown entries (including sibling-root
+ * hex directories) remain untouched. A conflicting destination refuses recovery. */
+function migrateLegacyArtifacts(legacy: string, target: string): void {
+  if (legacy === target || nativeIO.kind(legacy) !== 'directory') return
+  for (const name of nativeIO.names(legacy)) {
+    if (!stageNamePattern.test(name) && !/^move-[0-9a-f-]+\.json$/i.test(name)) continue
+    const source = `${legacy}/${name}`
+    if (nativeIO.kind(source) !== 'regular') throw new Error('Invalid legacy private artifact')
+    const destination = `${target}/${name}`
+    const targetKind = nativeIO.kind(destination)
+    const bytes = nativeIO.read(source)
+    if (targetKind === null) {
+      const temporary = `${target}/stage-${NSUUID.UUID().UUIDString}.tmp`
+      nativeIO.writeExclusive(temporary, bytes)
+      nativeIO.publish(temporary, destination, true)
+    } else if (targetKind !== 'regular' || !equal(nativeIO.read(destination), bytes)) {
+      throw new Error('Conflicting legacy private artifact')
+    }
+    nativeIO.syncFile(destination)
+    nativeIO.syncDirectory(target)
+    nativeIO.removeFile(source)
+    nativeIO.syncDirectory(legacy)
+  }
 }
 
 /** The store serializes operations per canonical root, including first-use recovery. */
