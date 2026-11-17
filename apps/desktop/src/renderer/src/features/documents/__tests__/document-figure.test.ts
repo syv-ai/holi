@@ -1,10 +1,17 @@
 import { Editor } from '@tiptap/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { NodeSelection } from '@tiptap/pm/state'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createDocumentExtensions } from '../document-extensions'
 import { applyReload } from '../apply-reload'
 import { readMarkdownCodeCaptions } from '@holi/shared'
-import { addCodeCaption, removeCodeCaption } from '../rich-text/document-figure'
+import {
+  addCodeCaption,
+  addImageCaption,
+  removeCodeCaption,
+  renderImageMarkdown,
+} from '../rich-text/document-figure'
+import { blockTargetAtPos, duplicateBlock } from '../rich-text/rich-text-block-actions'
 
 let editor: Editor | null = null
 afterEach(() => {
@@ -31,6 +38,25 @@ const mermaidCaptioned =
   '<!-- holi:figure -->\n\n~~~mermaid extra-info\nflowchart TD\n  A[Start] --> B[End]\n~~~\n\n<!-- holi:caption -->\n\nA **portable** diagram caption.\n\n<!-- /holi:figure -->'
 
 describe('document code captions', () => {
+  it('adds and removes a caption with the complete image block', () => {
+    const source = '![A cat](../assets/cat.png "A cat")'
+    const instance = open(source)
+    let imagePos = -1
+    instance.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'image') imagePos = pos
+    })
+    expect(imagePos).toBeGreaterThanOrEqual(0)
+    expect(addImageCaption(instance, imagePos)).toBe(true)
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(instance.getMarkdown()).toContain(source)
+    expect(removeCodeCaption(instance, 0)).toBe(true)
+    let remainingImages = 0
+    instance.state.doc.descendants((node) => {
+      if (node.type.name === 'image') remainingImages++
+    })
+    expect(remainingImages).toBe(1)
+    expect(instance.getMarkdown()).toContain(source)
+  })
   it('parses and serializes Mermaid captions without changing their source fence', () => {
     expect(readMarkdownCodeCaptions(mermaidCaptioned)).toHaveLength(1)
     const instance = open(mermaidCaptioned)
@@ -61,12 +87,390 @@ describe('document code captions', () => {
     expect(readMarkdownCodeCaptions(instance.getMarkdown())).toHaveLength(0)
   })
 
+  describe('parser-owned image reference source', () => {
+    const frame = (body: string) =>
+      `<!-- holi:figure -->\n\n${body}\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->`
+    const imageSources = (instance: Editor) => {
+      const sources: string[] = []
+      instance.state.doc.descendants((node) => {
+        if (node.type.name === 'image') sources.push(node.attrs.src)
+      })
+      return sources
+    }
+    const hrefs = (instance: Editor) => {
+      const links: string[] = []
+      instance.state.doc.descendants((node) => {
+        for (const mark of node.marks) if (mark.type.name === 'link') links.push(mark.attrs.href)
+      })
+      return links
+    }
+    const roundtrip = (source: string, check: (instance: Editor, saved: string) => void) => {
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const instance = open(source)
+        const saved = instance.getMarkdown().trimEnd()
+        expect(saved).not.toContain('holi-private')
+        check(instance, saved)
+        instance.destroy()
+        source = saved
+      }
+    }
+
+    it.each([
+      '```md\n[ref]: ../photo.png\n```',
+      '<pre>\n[ref]: ../photo.png\n</pre>',
+      '<!--\n[ref]: ../photo.png\n-->',
+    ])('keeps the live definition after identical protected source: %s', (sample) => {
+      roundtrip(
+        `${sample}\n\n${frame('![Photo][ref]')}\n\n[ref]: ../photo.png`,
+        (instance, saved) => {
+          expect(imageSources(instance)).toEqual(['../photo.png'])
+          expect(saved).toContain(sample)
+          expect(saved.match(/\[ref\]:/g)).toHaveLength(2)
+        },
+      )
+    })
+
+    it.each([
+      '[ref]: ../photo.png\nFollowing paragraph.\n\n' + frame('![Photo][ref]'),
+      '![Photo][ref]\n\n[ref]: ../photo.png\nFollowing paragraph.',
+      '[ref]: ../photo.png\n[second]: ../second.png\n\n' + frame('![Photo][ref]'),
+      frame('![Photo][ref]') + '\n\n[ref]: ../photo.png\n[second]: ../second.png',
+    ])('keeps adjacent definitions and prose separate: %s', (source) => {
+      roundtrip(source, (instance, saved) => {
+        expect(imageSources(instance)).toEqual(['../photo.png'])
+        expect(saved).toContain('[ref]: ../photo.png')
+        if (source.includes('[second]')) expect(saved).toContain('[second]: ../second.png')
+        if (source.includes('Following')) expect(saved).toContain('Following paragraph.')
+      })
+    })
+
+    it.each([
+      ['bulletList', '- Important **editable** item\n\n  [ref]: ../photo.png'],
+      ['blockquote', '> Important **editable** quote\n>\n> [ref]: ../photo.png'],
+    ])('keeps reference-bearing %s content native and editable', (kind, container) => {
+      const instance = open(frame('![Photo][ref]') + '\n\n' + container)
+      expect(instance.state.doc.content.content.some((node) => node.type.name === kind)).toBe(true)
+      let edit = -1
+      instance.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === 'editable') edit = pos
+      })
+      expect(edit).toBeGreaterThan(0)
+      instance.view.dispatch(instance.state.tr.insertText('still ', edit))
+      const saved = instance.getMarkdown()
+      expect(saved).toContain('still ')
+      instance.destroy()
+      roundtrip(saved, (reopened) => {
+        expect(reopened.state.doc.content.content.some((node) => node.type.name === kind)).toBe(
+          true,
+        )
+        expect(imageSources(reopened)).toEqual(['../photo.png'])
+      })
+    })
+
+    it.each([false, true])(
+      'keeps first-definition precedence in opaque source, closed=%s',
+      (closed) => {
+        const opaque =
+          '<!-- holi:figure -->\n\nUnsupported body.\n\n[ref]: https://example.com/right' +
+          (closed ? '\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->' : '\n\nAfter.')
+        const source =
+          '[Label][ref]\n\n' +
+          frame('![Photo](../photo.png)') +
+          '\n\n' +
+          opaque +
+          '\n\n[ref]: https://example.com/wrong'
+        roundtrip(source, (instance, saved) => {
+          expect(hrefs(instance)).toEqual(['https://example.com/right'])
+          expect(saved).toContain(opaque)
+          expect(saved.match(/\[ref\]:/g)).toHaveLength(2)
+        })
+      },
+    )
+
+    it.each([false, true])(
+      'binds image ranges after duplicate definitions, captioned=%s',
+      (captioned) => {
+        const body = captioned ? frame('![Photo][ref]') : '![Photo][ref]'
+        const source =
+          '[ref]: ../photo.png\n[ref]: ../wrong.png\n\n' +
+          body +
+          '\n\n[ref]: ../third.png\n\n![Second](../second.png)'
+        roundtrip(source, (instance, saved) => {
+          expect(imageSources(instance)).toEqual(['../photo.png', '../second.png'])
+          expect(saved.match(/\[ref\]:/g)).toHaveLength(3)
+          expect(saved).toContain(body)
+        })
+      },
+    )
+
+    it.each(['pre', 'script', 'style'])(
+      'preserves closing tags in nested protected <%s>',
+      (tag) => {
+        const nested = `<${tag}>\n${frame('![Photo](../protected.png)')}\n</${tag}>`
+        const source =
+          '![First](../first.png)\n\n- Before\n\n' +
+          nested
+            .split('\n')
+            .map((line) => '  ' + line)
+            .join('\n')
+        roundtrip(source, (instance, saved) => {
+          expect(saved).toContain(`</${tag}>`)
+          expect(imageSources(instance)).toEqual(['../first.png'])
+          expect(saved).toContain('../protected.png')
+          expect(
+            instance.state.doc.content.content.some((node) => node.type.name === 'bulletList'),
+          ).toBe(true)
+        })
+      },
+    )
+  })
+
   it('parses and serializes a portable code caption without changing its fence', () => {
     expect(readMarkdownCodeCaptions(captioned)).toHaveLength(1)
     const instance = open(captioned)
     expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
     expect(instance.state.doc.firstChild?.childCount).toBe(2)
     expect(instance.getMarkdown()).toBe(captioned)
+  })
+
+  it.each([
+    ['image', 1],
+    ['whole figure', 0],
+  ] as const)(
+    'blocks readonly %s cuts without changing content or clipboard, but allows copy',
+    (_selection, position) => {
+      const instance = open(
+        '<!-- holi:figure -->\n\n![Photo](../photo.png)\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->',
+      )
+      const initial = instance.getMarkdown()
+      const selectedPosition =
+        position === 0
+          ? 0
+          : (() => {
+              let imagePosition = -1
+              instance.state.doc.descendants((node, pos) => {
+                if (node.type.name === 'image') imagePosition = pos
+              })
+              return imagePosition
+            })()
+      instance.commands.setNodeSelection(selectedPosition)
+      instance.setEditable(false)
+      expect(instance.view.editable).toBe(false)
+      const initialDoc = instance.state.doc.toJSON()
+      const setData = vi.fn()
+      const clipboardData = { clearData: vi.fn(), setData }
+      const cut = new Event('cut', { bubbles: true, cancelable: true })
+      Object.defineProperty(cut, 'clipboardData', { value: clipboardData })
+      instance.view.dom.dispatchEvent(cut)
+      expect(cut.defaultPrevented).toBe(true)
+      expect(setData).not.toHaveBeenCalled()
+      expect(instance.state.doc.toJSON()).toEqual(initialDoc)
+      expect(instance.getMarkdown().trimEnd()).toBe(initial.trimEnd())
+
+      const copy = new Event('copy', { bubbles: true, cancelable: true })
+      Object.defineProperty(copy, 'clipboardData', { value: clipboardData })
+      instance.view.dom.dispatchEvent(copy)
+      expect(copy.defaultPrevented).toBe(true)
+      expect(setData).toHaveBeenCalledWith('text/html', expect.any(String))
+      expect(setData).toHaveBeenCalledWith('text/plain', expect.any(String))
+      expect(instance.getMarkdown().trimEnd()).toBe(initial.trimEnd())
+    },
+  )
+
+  it('opens and saves image captions with inline syntax and document-wide reference definitions', () => {
+    const cases = [
+      ['![A cat](../assets/cat%20one.png "Title")', '![A cat](../assets/cat%20one.png "Title")'],
+      ['![A cat][cat]', '![A cat][cat]'],
+      ['![cat][]', '![cat][]'],
+      ['![cat]', '![cat]'],
+    ] as const
+    for (const [body, expected] of cases) {
+      const definitions = body.includes('(') ? '' : '\n\n[cat]: ../assets/cat.png "Title"'
+      const source = `<!-- holi:figure -->\n\n${body}\n\n<!-- holi:caption -->\n\nA **bold** and _italic_ [label](https://example.com/a).\n\n<!-- /holi:figure -->${definitions}`
+      const instance = open(source)
+      expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+      expect(instance.state.doc.firstChild?.firstChild?.type.name).toBe('image')
+      expect(instance.state.doc.firstChild?.firstChild?.attrs.src).toContain('cat')
+      const saved = instance.getMarkdown()
+      expect(saved).toContain(expected)
+      expect(saved).toContain('A **bold** and *italic* [label](https://example.com/a).')
+      const reopened = open(saved)
+      expect(reopened.state.doc.firstChild?.type.name, saved).toBe('documentFigure')
+      expect(reopened.state.doc.firstChild?.lastChild?.textContent).toBe('A bold and italic label.')
+      expect(reopened.getMarkdown().trimEnd()).toBe(saved.trimEnd())
+      reopened.destroy()
+      instance.destroy()
+      editor = null
+    }
+  })
+
+  it('adds captions to reference images without replacing reference syntax or definitions', () => {
+    const source = '  ![Photo][photo]\n\n[photo]: ../assets/photo%20one.png "Photo title"'
+    const instance = open(source)
+    expect(instance.state.doc.firstChild?.type.name).toBe('image')
+    expect(instance.state.doc.firstChild?.attrs.sourceMarkdown).toBe('  ![Photo][photo]')
+    expect(addImageCaption(instance, 0)).toBe(true)
+    instance.commands.insertContent('Photo caption')
+    const saved = instance.getMarkdown()
+    expect(saved).toContain('  ![Photo][photo]')
+    expect(saved).toContain('[photo]: ../assets/photo%20one.png "Photo title"')
+    const reopened = open(saved)
+    expect(reopened.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(reopened.state.doc.firstChild?.firstChild?.attrs.src).toContain('photo%20one.png')
+  })
+
+  it('keeps reference image spelling through add and remove when its attributes are unchanged', () => {
+    const source = '  ![Photo][photo]\n\n[photo]: ../assets/photo%20one.png "Photo title"'
+    const instance = open(source)
+    expect(instance.getMarkdown().trimEnd()).toBe(source)
+    expect(addImageCaption(instance, 0)).toBe(true)
+    instance.commands.insertContent('Photo caption')
+    const captionedSource = instance.getMarkdown()
+    expect(captionedSource).toContain('  ![Photo][photo]')
+    expect(captionedSource).toContain('[photo]: ../assets/photo%20one.png "Photo title"')
+    expect(removeCodeCaption(instance, 0)).toBe(true)
+    expect(instance.getMarkdown().trimEnd()).toBe(source)
+    const image = instance.state.doc.firstChild!
+    instance.view.dispatch(
+      instance.state.tr.setNodeMarkup(0, undefined, { ...image.attrs, alt: 'Edited photo' }),
+    )
+    expect(instance.getMarkdown()).toContain(
+      '![Edited photo](../assets/photo%20one.png "Photo title")',
+    )
+  })
+
+  it('adds and removes captions for remote images without rebuilding their visible attrs', () => {
+    const instance = open('![A cat](https://example.com/cat.png "remote title")')
+    const image = instance.state.doc.firstChild!
+    expect(image.type.name).toBe('image')
+    const imagePos = 0
+    expect(addImageCaption(instance, imagePos)).toBe(true)
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(instance.state.doc.firstChild?.firstChild?.attrs).toMatchObject({
+      src: 'https://example.com/cat.png',
+      alt: 'A cat',
+      title: 'remote title',
+    })
+    expect(instance.getMarkdown()).toContain('![A cat](https://example.com/cat.png "remote title")')
+    instance.commands.undo()
+    expect(instance.state.doc.firstChild?.type.name).toBe('image')
+    instance.commands.redo()
+    expect(instance.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(removeCodeCaption(instance, 0)).toBe(true)
+    expect(instance.state.doc.firstChild?.type.name).toBe('image')
+  })
+
+  it('keeps an image and its caption together through duplicate, undo, redo, delete, and clipboard paste', () => {
+    const source =
+      '<!-- holi:figure -->\n\n![cat](../assets/cat.png)\n\n<!-- holi:caption -->\n\nA **cat**\n\n<!-- /holi:figure -->'
+    const instance = open(source)
+    const target = blockTargetAtPos(instance.state.doc, 0)!
+    instance.view.dispatch(duplicateBlock(instance.state, target)!)
+    expect(
+      instance.state.doc.content.content.filter((node) => node.type.name === 'documentFigure'),
+    ).toHaveLength(2)
+    const images: string[] = []
+    const captions: string[] = []
+    instance.state.doc.descendants((node) => {
+      if (node.type.name === 'image') images.push(node.type.name)
+      if (node.type.name === 'documentCaption') captions.push(node.type.name)
+    })
+    expect(images).toHaveLength(2)
+    expect(captions).toHaveLength(2)
+    instance.commands.undo()
+    expect(
+      instance.state.doc.content.content.filter((node) => node.type.name === 'documentFigure'),
+    ).toHaveLength(1)
+    instance.commands.redo()
+    expect(
+      instance.state.doc.content.content.filter((node) => node.type.name === 'documentFigure'),
+    ).toHaveLength(2)
+    const slice = instance.state.doc.slice(0, instance.state.doc.firstChild!.nodeSize)
+    const clipboard = instance.view.serializeForClipboard(slice)
+    const pasted = open('')
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: {
+        getData: (type: string) =>
+          type === 'text/html'
+            ? clipboard.dom.innerHTML
+            : type === 'text/plain'
+              ? 'clipboard fallback'
+              : '',
+      },
+    })
+    pasted.view.dom.dispatchEvent(event)
+    expect(pasted.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(pasted.state.doc.firstChild?.childCount).toBe(2)
+    expect(pasted.getMarkdown()).toContain('A **cat**')
+    expect(pasted.getMarkdown()).toContain('![cat](../assets/cat.png)')
+    instance.view.dispatch(
+      instance.state.tr.setSelection(NodeSelection.create(instance.state.doc, 1)),
+    )
+    instance.view.dom.dispatchEvent(new Event('dragstart', { bubbles: true, cancelable: true }))
+    expect(instance.state.selection).toBeInstanceOf(NodeSelection)
+    expect((instance.state.selection as NodeSelection).node.type.name).toBe('documentFigure')
+    instance.view.dispatch(
+      instance.state.tr.setSelection(NodeSelection.create(instance.state.doc, 1)),
+    )
+    expect((instance.state.selection as NodeSelection).node.type.name).toBe('image')
+    expect(instance.commands.deleteSelection()).toBe(true)
+    expect(
+      instance.state.doc.content.content.filter((node) => node.type.name === 'documentFigure'),
+    ).toHaveLength(1)
+    const remainingCaptions: string[] = []
+    instance.state.doc.descendants((node) => {
+      if (node.type.name === 'documentCaption') remainingCaptions.push(node.textContent)
+    })
+    expect(remainingCaptions).toEqual(['A cat'])
+    expect(removeCodeCaption(instance, 0)).toBe(true)
+    expect(instance.state.doc.firstChild?.type.name).toBe('image')
+  })
+
+  it('leaves empty and malformed image captions as their original image source', () => {
+    const empty = open('![empty](../assets/empty.png)')
+    expect(addImageCaption(empty, 0)).toBe(true)
+    expect(empty.getMarkdown()).toContain('![empty](../assets/empty.png)')
+    expect(empty.getMarkdown()).not.toContain('holi:figure')
+
+    const malformed =
+      '<!-- holi:figure -->\n\n![missing][not-defined]\n\n<!-- holi:caption -->\n\ncaption\n\n<!-- /holi:figure -->\n\nAfter.'
+    const preserved = open(malformed)
+    expect(preserved.state.doc.firstChild?.type.name).not.toBe('documentFigure')
+    expect(preserved.getMarkdown()).toContain('![missing][not-defined]')
+    expect(preserved.getMarkdown()).toContain('<!-- holi:caption -->')
+    preserved.commands.setTextSelection(preserved.state.doc.content.size - 2)
+    preserved.commands.insertContent('!')
+    expect(preserved.getMarkdown()).toContain('<!-- /holi:figure -->')
+    expect(preserved.getMarkdown()).toContain('After!')
+  })
+
+  it('parses captioned images through markdown insertion, paste, and external reload', () => {
+    const source =
+      '<!-- holi:figure -->\n\n![ref][asset]\n\n<!-- holi:caption -->\n\nFigure caption\n\n<!-- /holi:figure -->\n\n[asset]: ../assets/photo.png'
+    const inserted = open('')
+    inserted.commands.insertContent(source, { contentType: 'markdown' })
+    expect(inserted.state.doc.firstChild?.type.name).toBe('documentFigure')
+    const pasted = open('')
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { getData: (type: string) => (type === 'text/plain' ? source : '') },
+    })
+    pasted.view.dom.dispatchEvent(event)
+    expect(pasted.state.doc.firstChild?.type.name).toBe('documentFigure')
+    const reloaded = open('old')
+    expect(applyReload(reloaded, source)).toBe(true)
+    expect(reloaded.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(reloaded.getMarkdown().trimEnd()).toBe(source.trimEnd())
+  })
+
+  it('rejects stale image source metadata from HTML clipboard when visible attrs differ', () => {
+    const instance = open('')
+    instance.commands.setContent(
+      '<figure data-holi-code-figure="" data-source-body="![hidden](../assets/hidden.png)" data-holi-source-image="[&quot;../assets/hidden.png&quot;,&quot;hidden&quot;,null]"><img src="https://example.com/visible.png" alt="visible"><figcaption>Caption</figcaption></figure>',
+    )
+    expect(instance.getMarkdown()).toContain('https://example.com/visible.png')
+    expect(instance.getMarkdown()).not.toContain('hidden.png')
   })
 
   it('parses indented source fences on open, insertion, and reload without changing their bytes', () => {
@@ -473,6 +877,13 @@ const value = 1
     instance.setEditable(false)
     expect(addCodeCaption(instance, 0)).toBe(false)
     expect(removeCodeCaption(instance, 0)).toBe(false)
+    const image = open('![image](../image.png)')
+    image.setEditable(false)
+    expect(addImageCaption(image, 0)).toBe(false)
+    image.setEditable(true)
+    expect(addImageCaption(image, 1000)).toBe(false)
+    image.destroy()
+    editor = instance
     instance.setEditable(true)
     expect(removeCodeCaption(instance, 0)).toBe(false)
     expect(addCodeCaption(instance, 1000)).toBe(false)
@@ -555,6 +966,175 @@ const value = 1
     expect(pasted.getMarkdown()).toContain('A **portable** caption.')
   })
 
+  it('preserves full multiline reference definitions without activating protected examples', () => {
+    const source = [
+      '![Photo][photo]',
+      '',
+      '[photo]:',
+      '  ../right.png',
+      '  "right title"',
+      '',
+      '```md',
+      '[photo]: ../wrong.png "wrong title"',
+      '```',
+    ].join('\n')
+    const instance = open(source)
+    expect(instance.state.doc.firstChild?.type.name).toBe('image')
+    expect(instance.state.doc.firstChild?.attrs.src).toBe('../right.png')
+    const saved = instance.getMarkdown()
+    expect(saved).toContain('[photo]:\n  ../right.png\n  "right title"')
+    expect(saved).toContain('[photo]: ../wrong.png "wrong title"')
+    const reopened = open(saved)
+    expect(reopened.state.doc.firstChild?.attrs.src).toBe('../right.png')
+  })
+
+  it('keeps envelopes in raw HTML opaque and restores their original bytes after edits', () => {
+    const source = `<pre>\n${captioned}\n</pre>\n\nAfter.`
+    const instance = open(source)
+    expect(JSON.stringify(instance.state.doc.toJSON())).not.toContain('documentFigure')
+    expect(instance.getMarkdown()).toContain(source)
+    instance.commands.setTextSelection(instance.state.doc.content.size - 2)
+    instance.commands.insertContent('!')
+    expect(instance.getMarkdown()).toContain(`<pre>\n${captioned}\n</pre>`)
+    expect(instance.getMarkdown()).not.toContain('holi-private-caption')
+  })
+
+  it('leaves envelopes with multiple body blocks entirely opaque', () => {
+    const malformed = [
+      '<!-- holi:figure -->',
+      '',
+      '![Photo](../photo.png)',
+      '',
+      'Important text that must survive.',
+      '',
+      '<!-- holi:caption -->',
+      '',
+      'Caption',
+      '',
+      '<!-- /holi:figure -->',
+    ].join('\n')
+    const instance = open(malformed)
+    expect(JSON.stringify(instance.state.doc.toJSON())).not.toContain('documentFigure')
+    expect(instance.getMarkdown()).toContain('Important text that must survive.')
+  })
+
+  it('promotes direct image copy and cut to the containing figure selection', () => {
+    const instance = open(
+      '<!-- holi:figure -->\n\n![Photo](../photo.png)\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->',
+    )
+    instance.view.dispatch(
+      instance.state.tr.setSelection(NodeSelection.create(instance.state.doc, 1)),
+    )
+    instance.view.dom.dispatchEvent(new Event('copy', { bubbles: true, cancelable: true }))
+    expect(instance.state.selection).toBeInstanceOf(NodeSelection)
+    expect((instance.state.selection as NodeSelection).node.type.name).toBe('documentFigure')
+    const copied = instance.view.serializeForClipboard(instance.state.selection.content())
+    expect(copied.dom.innerHTML).toContain('figcaption')
+    expect(copied.text).toContain('Caption')
+    instance.view.dispatch(
+      instance.state.tr.setSelection(NodeSelection.create(instance.state.doc, 1)),
+    )
+    instance.view.dom.dispatchEvent(new Event('cut', { bubbles: true, cancelable: true }))
+    expect(
+      instance.state.doc.content.content.some((node) => node.type.name === 'documentFigure'),
+    ).toBe(false)
+    expect(instance.getMarkdown()).not.toContain('Caption')
+  })
+
+  it('rebases copied vault image URLs from the source note folder to the destination folder', () => {
+    const source = open(
+      '<!-- holi:figure -->\n\n![Photo](../assets/photo%20one.png "Title")\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->',
+    )
+    const html = source.getHTML()
+    const target = new Editor({
+      extensions: createDocumentExtensions({
+        folder: 'notes/deep',
+        placeholder: '',
+        onOpenLink: () => undefined,
+      }),
+      content: '',
+      contentType: 'markdown',
+    })
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { getData: (type: string) => (type === 'text/html' ? html : '') },
+    })
+    target.view.dom.dispatchEvent(event)
+    const markdown = target.getMarkdown()
+    expect(markdown).toContain('![Photo](../../assets/photo%20one.png "Title")')
+    expect(markdown).not.toContain('holi-vault:')
+    const reopened = new Editor({
+      extensions: createDocumentExtensions({
+        folder: 'notes/deep',
+        placeholder: '',
+        onOpenLink: () => undefined,
+      }),
+      content: markdown,
+      contentType: 'markdown',
+    })
+    expect(reopened.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(reopened.state.doc.firstChild?.firstChild?.attrs.src).toBe(
+      '../../assets/photo%20one.png',
+    )
+    reopened.destroy()
+    target.destroy()
+  })
+
+  it('materializes copied references so an empty document reopens the whole figure', () => {
+    const source =
+      '<!-- holi:figure -->\n\n![Photo][photo]\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->\n\n[photo]: ../photo.png "Title"'
+    const instance = open(source)
+    const clipboard = instance.view.serializeForClipboard(
+      instance.state.doc.slice(0, instance.state.doc.firstChild!.nodeSize),
+    )
+    const target = open('')
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { getData: (type: string) => (type === 'text/html' ? clipboard.dom.innerHTML : '') },
+    })
+    target.view.dom.dispatchEvent(event)
+    const saved = target.getMarkdown()
+    expect(saved).toContain('![Photo](../photo.png "Title")')
+    expect(saved).not.toContain('![Photo][photo]')
+    expect(saved).not.toContain('[photo]:')
+    const reopened = open(saved)
+    expect(reopened.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(reopened.state.doc.firstChild?.firstChild?.attrs.src).toBe('../photo.png')
+  })
+
+  it('retains validated reference metadata when removing a caption after reopen', () => {
+    const source =
+      '<!-- holi:figure -->\n\n  ![Photo][photo]\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->\n\n[photo]: ../photo.png "Title"'
+    const reopened = open(open(source).getMarkdown())
+    expect(removeCodeCaption(reopened, 0)).toBe(true)
+    expect(reopened.getMarkdown()).toContain('  ![Photo][photo]')
+    expect(reopened.getMarkdown()).toContain('[photo]: ../photo.png "Title"')
+  })
+
+  it('does not reuse image provenance after image attributes change', () => {
+    const instance = open('![Old](../old.png)')
+    instance.view.dispatch(
+      instance.state.tr.setNodeMarkup(0, undefined, {
+        ...instance.state.doc.firstChild!.attrs,
+        src: '../new.png',
+        alt: 'New',
+      }),
+    )
+    expect(addImageCaption(instance, 0)).toBe(true)
+    instance.commands.insertContent('Caption')
+    expect(instance.getMarkdown()).toContain('![New](../new.png)')
+    expect(instance.getMarkdown()).not.toContain('old.png')
+  })
+
+  it('rejects conflicting source-body claims in clipboard HTML', () => {
+    const instance = open('')
+    instance.commands.setContent(
+      '<figure data-holi-code-figure="" data-source-body="![Hidden](../hidden.png)" data-holi-source-image="[&quot;../hidden.png&quot;,&quot;Hidden&quot;,null]"><img src="https://example.com/visible.png" alt="Visible"><figcaption>Caption</figcaption></figure>',
+    )
+    expect(instance.getMarkdown()).toContain('https://example.com/visible.png')
+    expect(instance.getMarkdown()).not.toContain('hidden.png')
+  })
+
   it('retains portable caption formatting through HTML clipboard serialization', () => {
     const instance = open(captioned)
     const html = instance.getHTML()
@@ -575,5 +1155,74 @@ const value = 1
     expect(reparsed.getMarkdown()).not.toContain('const value = 1')
     expect(readMarkdownCodeCaptions(reparsed.getMarkdown())).toHaveLength(1)
     reparsed.destroy()
+  })
+})
+
+describe('image markdown destinations', () => {
+  it('delimits valid destinations with spaces and encodes angle delimiters', () => {
+    expect(renderImageMarkdown({ src: 'assets/my image (draft).png', alt: 'chart' })).toBe(
+      '![chart](<assets/my image (draft).png>)',
+    )
+    expect(renderImageMarkdown({ src: 'assets/a<b>.png' })).toBe('![](<assets/a%3Cb%3E.png>)')
+    expect(renderImageMarkdown({ src: 'assets/chart.png' })).toBe('![](assets/chart.png)')
+  })
+})
+
+describe('figure clipboard markdown', () => {
+  it('keeps partial caption text, marks, and following paragraphs', () => {
+    const instance = open(
+      '<!-- holi:figure -->\n\n![first](first.png)\n\n<!-- holi:caption -->\n\nA **bold** caption.\n\n<!-- /holi:figure -->\n\nFollowing paragraph.',
+    )
+    let captionPos = -1
+    instance.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'documentCaption') captionPos = pos
+    })
+    const start = captionPos + 1 + 'A '.length
+    const end = instance.state.doc.content.size
+    const clipboard = instance.view.serializeForClipboard(instance.state.doc.slice(start, end))
+
+    expect(clipboard.text).toContain('**bold** caption.')
+    expect(clipboard.text).toContain('Following paragraph.')
+    expect(clipboard.text).not.toContain('holi:figure')
+  })
+
+  it('copies complete images with spaced paths as portable markdown and reopens them', () => {
+    const source =
+      '<!-- holi:figure -->\n\n![Photo](<assets/my photo (draft).png> "Title")\n\n<!-- holi:caption -->\n\nCaption\n\n<!-- /holi:figure -->'
+    const instance = open(source)
+    const figure = instance.state.doc.firstChild!
+    const clipboard = instance.view.serializeForClipboard(
+      instance.state.doc.slice(0, figure.nodeSize),
+    )
+
+    expect(clipboard.text).toContain('![Photo](<assets/my photo (draft).png> "Title")')
+    expect(clipboard.text).not.toContain('data-holi-')
+    const reopened = open(clipboard.text)
+    expect(reopened.state.doc.firstChild?.type.name).toBe('documentFigure')
+    expect(reopened.state.doc.firstChild?.firstChild?.attrs).toMatchObject({
+      src: 'assets/my photo (draft).png',
+      alt: 'Photo',
+      title: 'Title',
+    })
+  })
+
+  it('keeps complete figures whole in a mixed slice with a partial figure edge', () => {
+    const instance = open(
+      '<!-- holi:figure -->\n\n![first](first.png)\n\n<!-- holi:caption -->\n\nFirst caption.\n\n<!-- /holi:figure -->\n\n<!-- holi:figure -->\n\n![second](second.png)\n\n<!-- holi:caption -->\n\nSecond **bold** caption.\n\n<!-- /holi:figure -->',
+    )
+    const figures: Array<{ pos: number; nodeSize: number }> = []
+    let captionPos = -1
+    instance.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'documentFigure') figures.push({ pos, nodeSize: node.nodeSize })
+      if (node.type.name === 'documentCaption' && captionPos < 0) captionPos = pos
+    })
+    const from = captionPos + 1 + 'First '.length
+    const to = figures[1]!.pos + figures[1]!.nodeSize
+    const clipboard = instance.view.serializeForClipboard(instance.state.doc.slice(from, to))
+
+    expect(clipboard.text).toContain('caption.')
+    expect(clipboard.text).toContain('<!-- holi:figure -->')
+    expect(clipboard.text).toContain('![second](second.png)')
+    expect(clipboard.text).toContain('Second **bold** caption.')
   })
 })

@@ -11,65 +11,101 @@ const simulator = '11111111-1111-4111-8111-111111111111'
 const readEvents = async (root, name) =>
   (await readFile(join(root, name), 'utf8')).trim().split('\n').map(JSON.parse)
 
-// Substitute executable/arguments, not process execution: every command still crosses
-// the production spawn/stream/process-group/deadline adapter.
-function adapter(events, root, mode) {
+// Projection and ordering cross the public command seam without paying for a host
+// process per probe. The real spawn/deadline/reaping adapter is exercised separately.
+function adapter(events, root, mode, onHang) {
   return async (exe, args, options) => {
     const action = args[0] === 'simctl' ? args[1] : exe
     events.push(action)
-    let source = 'process.stdout.write("ok")'
+    if (exe === 'xcrun') {
+      assert.deepEqual(args, [
+        'simctl',
+        action,
+        simulator,
+        ...(action === 'bootstatus' ? ['-b'] : []),
+      ])
+      assert.ok(['boot', 'bootstatus', 'shutdown', 'delete'].includes(action))
+    }
+    if (options.signal?.aborted) throw new Error('Simulator check interrupted')
+    const emit = (output, stream = 'stdout') => {
+      options.onOutput?.(Buffer.from(output), stream)
+      return output.trim()
+    }
     if (action === 'bootstatus') {
-      source =
-        mode === 'success'
-          ? 'process.stdout.write("Waiting on System App\\nFinished\\n")'
-          : 'process.stdout.write("Waiting on Data Migration\\n"); process.exitCode = 7'
+      if (mode === 'success') return emit('Waiting on System App\nFinished\n')
+      emit(
+        mode === 'noisy'
+          ? 'Status=2\nWaiting on Data Migration SECRET /Users/private/account\n'.repeat(3000)
+          : 'Waiting on Data Migration\n',
+      )
+      const progress = await readEvents(root, 'boot-progress.jsonl')
+      assert.ok(
+        progress.some((entry) => entry.event === 'output'),
+        'progress must be written while the command is running, not after rejection',
+      )
+      events.bootError = Object.assign(new Error('Exit 7: bootstatus'), { exitCode: 7 })
+      throw events.bootError
     }
     if (exe === '/usr/bin/sw_vers') {
       assert.equal(events.includes('shutdown'), false, 'evidence must precede teardown')
       const progress = await readEvents(root, 'boot-progress.jsonl')
       assert.equal(progress.at(-1).event, 'failed')
-      if (mode === 'hang') source = 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'
-      else if (mode === 'diagnostic-error')
-        source = 'process.stderr.write("secret /Users/private/account"); process.exit(9)'
+      if (mode === 'hang') {
+        return new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => reject(Object.assign(new Error('Timed out: host probe'), { timedOut: true })),
+            { once: true },
+          )
+          onHang()
+        })
+      }
+      if (mode === 'diagnostic-error') {
+        emit('secret /Users/private/account', 'stderr')
+        throw Object.assign(new Error('secret /Users/private/account'), { exitCode: 9 })
+      }
     }
     if (exe === '/bin/ps') {
-      source =
-        'process.stdout.write("123 1 0.1 0.2 4321 55:00 S /private/com.apple.CoreSimulator.CoreSimulatorService\\n124 1 0.0 0.0 1234 55:00 Ss /private/simdiskimaged\\n125 1 1.0 2.0 9876 55:00 S /Users/private/unrelated\\n")'
+      return emit(
+        '123 1 0.1 0.2 4321 55:00 S /private/com.apple.CoreSimulator.CoreSimulatorService\n124 1 0.0 0.0 1234 55:00 Ss /private/simdiskimaged\n125 1 1.0 2.0 9876 55:00 S /Users/private/unrelated\n',
+      )
     }
     if (exe === '/usr/bin/log') {
-      assert.ok(args.at(-1).includes(simulator))
-      assert.ok(args.at(-1).includes('com.apple.CoreSimulator.CoreSimulatorService'))
-      source = `process.stdout.write(${JSON.stringify(
+      assert.equal(
+        args.at(-1),
+        `(process == "com.apple.CoreSimulator.CoreSimulatorService" OR process == "CoreSimulatorService" OR process == "simdiskimaged") AND eventMessage CONTAINS[c] "${simulator}"`,
+      )
+      const entry = {
+        timestamp: '2026-11-17 10:00:00.000+0000',
+        processImagePath: '/private/com.apple.CoreSimulator.CoreSimulatorService',
+        eventMessage: `Device ${simulator} boot failed NSCocoaErrorDomain Code=4099 token=SECRET /Users/private/account`,
+        messageType: 'Error',
+      }
+      // Neither another device nor another process may enter the owned evidence.
+      emit(
         JSON.stringify({
-          timestamp: '2026-11-17 10:00:00.000+0000',
-          processImagePath: '/private/com.apple.CoreSimulator.CoreSimulatorService',
-          eventMessage: `Device ${simulator} boot failed NSCocoaErrorDomain Code=4099 token=SECRET /Users/private/account`,
-          messageType: 'Error',
+          ...entry,
+          eventMessage: 'Device 22222222-2222-4222-8222-222222222222 watchdog',
         }) + '\n',
-      )}.repeat(${mode === 'noisy' ? 3000 : 1}))`
+      )
+      emit(
+        JSON.stringify({
+          ...entry,
+          processImagePath: '/Users/private/unrelated',
+          eventMessage: `Device ${simulator} launchd`,
+        }) + '\n',
+      )
+      return emit((JSON.stringify(entry) + '\n').repeat(mode === 'noisy' ? 3000 : 1))
     }
     if (action === 'shutdown') {
       const evidence = await readEvents(root, 'boot-host-diagnostics.jsonl')
       assert.equal(evidence.at(-1).event, 'finished')
-      source = mode === 'cleanup-timeout' ? 'setInterval(() => {}, 1000)' : 'process.exit(8)'
+      throw Object.assign(
+        new Error(mode === 'cleanup-timeout' ? 'Timed out: shutdown' : 'Exit 8: shutdown'),
+        { exitCode: mode === 'cleanup-timeout' ? null : 8, timedOut: mode === 'cleanup-timeout' },
+      )
     }
-    try {
-      return await runCommand(process.execPath, ['-e', source], {
-        ...options,
-        timeout: mode === 'cleanup-timeout' && action === 'shutdown' ? 100 : options.timeout,
-        killGrace: 50,
-      })
-    } catch (error) {
-      if (action === 'bootstatus') {
-        const progress = await readEvents(root, 'boot-progress.jsonl')
-        assert.ok(
-          progress.some((entry) => entry.event === 'output'),
-          'progress must be written while the command is running, not after rejection',
-        )
-        events.bootError = error
-      }
-      throw error
-    }
+    return emit('ok')
   }
 }
 
@@ -77,10 +113,17 @@ for (const mode of ['failure', 'diagnostic-error', 'hang', 'cleanup-timeout']) {
   test(`boot ${mode} preserves failure and evidence before cleanup, then deletes after shutdown failure`, async () => {
     const root = await mkdtemp(join(tmpdir(), 'holi-boot-test-'))
     const events = []
-    const command = adapter(events, root, mode)
+    let probeStarted
+    const hanging = new Promise((resolve) => {
+      probeStarted = resolve
+    })
+    const command = adapter(events, root, mode, probeStarted)
+    // A suspended CI worker cannot consume the projection budget. Only the hang
+    // case advances it, after the probe has installed its abort listener.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
     const started = performance.now()
     try {
-      await assert.rejects(
+      const rejected = assert.rejects(
         bootSimulator({
           simulator,
           artifacts: root,
@@ -91,23 +134,53 @@ for (const mode of ['failure', 'diagnostic-error', 'hang', 'cleanup-timeout']) {
         }),
         (error) => error === events.bootError && error.exitCode === 7,
       )
+      if (mode === 'hang') {
+        await Promise.race([
+          hanging,
+          rejected.then(() => assert.fail('the hanging host probe must be reached')),
+        ])
+        vi.advanceTimersByTime(180)
+      }
+      await rejected
       const diagnostics = await readEvents(root, 'boot-host-diagnostics.jsonl')
       assert.equal(diagnostics[0].event, 'started')
       assert.equal(diagnostics.at(-1).event, 'finished')
       assert.ok(diagnostics.some((entry) => entry.event === 'command-started'))
       if (mode === 'hang') {
         assert.ok(diagnostics.some((entry) => entry.status === 'timeout'))
-        assert.ok(performance.now() - started < 1500)
+        assert.equal(performance.now() - started, 180)
+        assert.equal(diagnostics.at(-1).budgetExhausted, true)
         assert.ok(diagnostics.some((entry) => entry.status === 'budget-exhausted'))
+        assert.deepEqual([...events], ['boot', 'bootstatus', '/usr/bin/sw_vers'])
       } else {
         assert.ok(
           diagnostics.some(
-            (entry) => entry.probe === 'host-log' && entry.event === 'command-finished',
+            (entry) =>
+              entry.probe === 'host-log' &&
+              entry.event === 'command-finished' &&
+              entry.status === 'ok',
           ),
         )
         const content = await readFile(join(root, 'boot-host-diagnostics.jsonl'), 'utf8')
         assert.equal(/SECRET|\/Users\/|private\/account/.test(content), false)
         assert.match(content, /NSCocoaErrorDomain/)
+        assert.deepEqual(
+          diagnostics
+            .filter((entry) => entry.event === 'command-started')
+            .map((entry) => entry.probe),
+          ['os', 'resources', 'memory', 'disk', 'services', 'host-log'],
+        )
+        assert.equal(
+          diagnostics.find((entry) => entry.probe === 'os' && entry.event === 'command-finished')
+            .status,
+          mode === 'diagnostic-error' ? 'error' : 'ok',
+        )
+        const logs = diagnostics.filter(
+          (entry) => entry.probe === 'host-log' && entry.event === 'output',
+        )
+        assert.equal(logs.length, 1)
+        assert.deepEqual(logs[0].value.codes, [{ domain: 'NSCocoaErrorDomain', code: 4099 }])
+        assert.deepEqual(logs[0].value.signals, ['boot', 'failed'])
         const processes = diagnostics
           .filter((entry) => entry.event === 'output' && entry.probe === 'services')
           .flatMap((entry) => entry.value.processes)
@@ -130,6 +203,7 @@ for (const mode of ['failure', 'diagnostic-error', 'hang', 'cleanup-timeout']) {
         progress.every((entry) => Number.isFinite(Date.parse(entry.at)) && entry.elapsedMs >= 0),
       )
     } finally {
+      vi.useRealTimers()
       await rm(root, { recursive: true, force: true })
     }
   })
@@ -217,19 +291,7 @@ test('process adapter caps noisy stdout, streams both pipes, and reaps a TERM-re
 test('noisy output is projected and capped without losing the terminal failure', async () => {
   const root = await mkdtemp(join(tmpdir(), 'holi-boot-test-'))
   const events = []
-  const fallback = adapter(events, root, 'noisy')
-  const command = (exe, args, options) => {
-    if (args[1] === 'bootstatus')
-      return runCommand(
-        process.execPath,
-        [
-          '-e',
-          'process.stdout.write(("Status=2\\nWaiting on Data Migration SECRET /Users/private/account\\n").repeat(3000)); process.exitCode = 7',
-        ],
-        options,
-      )
-    return fallback(exe, args, options)
-  }
+  const command = adapter(events, root, 'noisy')
   try {
     await assert.rejects(
       bootSimulator({

@@ -30,7 +30,7 @@ import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { forgetAgentLabelsAtom } from '@/state/document-runs'
 import { duplicateBlock, selectionBlockTarget } from '../rich-text/rich-text-block-actions'
-import { addCodeCaption, focusCodeCaption } from '../rich-text/document-figure'
+import { addCodeCaption, addImageCaption, focusCodeCaption } from '../rich-text/document-figure'
 import { vimCodeEditingAtom } from '@/state/preferences'
 
 import { DocumentView } from '../document-view'
@@ -281,6 +281,40 @@ test('ordinary code captions autosave, flush, and reopen without changing frontm
   const reopened = ((await editorBox()) as WithEditor).editor
   expect(reopened.getMarkdown()).toContain('A portable caption pending')
   expect(reopened.getMarkdown()).toContain('~~~typescript extra-info\nconst value = 1\n~~~')
+})
+
+test('image captions autosave, flush, and reopen reference syntax with byte-stable frontmatter', async () => {
+  const original =
+    '---\ntitle: Caption persistence\ntags: [kept]\n---\n\n![Photo][photo]\n\n[photo]: ../assets/photo%20one.png "Photo title"\n'
+  const view = open(original)
+  const editor = ((await editorBox()) as WithEditor).editor
+  const image = editor.state.doc.firstChild
+  expect(image?.type.name).toBe('image')
+  expect(write).not.toHaveBeenCalled()
+  act(() => {
+    expect(addImageCaption(editor, 0)).toBe(true)
+    editor.commands.insertContent('A saved caption')
+  })
+  await waitFor(() => expect(write).toHaveBeenCalledOnce(), { timeout: 2000 })
+  expect(files.get(PATH)).toContain('---\ntitle: Caption persistence\ntags: [kept]\n---')
+  expect(files.get(PATH)).toContain('![Photo][photo]')
+  expect(files.get(PATH)).toContain('[photo]: ../assets/photo%20one.png "Photo title"')
+  expect(files.get(PATH)).toContain('A saved caption')
+
+  act(() => editor.commands.insertContent(' pending'))
+  await act(() => flushAllBuffers())
+  const flushed = files.get(PATH)!
+  expect(flushed).toContain('A saved caption pending')
+  view.unmount()
+  const reopenedView = open(flushed)
+  const reopened = ((await editorBox()) as WithEditor).editor
+  expect(reopened.state.doc.firstChild?.type.name).toBe('documentFigure')
+  expect(reopened.getMarkdown()).toContain('![Photo][photo]')
+  expect(reopened.getMarkdown()).toContain('[photo]: ../assets/photo%20one.png "Photo title"')
+  const external = flushed.replace('A saved caption pending', 'Reloaded image caption')
+  changeOnDisk(external, '2026-10-23T10:00:03Z')
+  await waitFor(() => expect(reopened.getMarkdown()).toContain('Reloaded image caption'))
+  reopenedView.unmount()
 })
 
 test('a clean captioned note adopts external reloads while dirty caption edits win', async () => {

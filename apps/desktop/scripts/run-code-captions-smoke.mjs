@@ -91,37 +91,19 @@ function run(argv) {
 `
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const evidence = resolve(process.argv[2] ?? '/tmp/holi-502/native')
-const typst = process.env.HOLI_502_TYPST ?? process.argv[3]
-assert(typst, 'Provide a Typst executable as argument 3 or HOLI_502_TYPST')
+const evidence = resolve(process.argv[2] ?? '/tmp/holi-535/native')
+const typst = process.env.HOLI_535_TYPST ?? process.argv[3]
+assert(typst, 'Provide a Typst executable as argument 3 or HOLI_535_TYPST')
 await access(typst)
-const root = await mkdtemp(join(tmpdir(), 'holi-502-native-'))
+await assert.rejects(access(evidence), {
+  code: 'ENOENT',
+})
+await mkdir(evidence, { mode: 0o700 })
+const root = await mkdtemp(join(tmpdir(), 'holi-535-native-'))
 await chmod(root, 0o700)
 const clipboardBackup = join(root, 'clipboard-snapshot.json')
 const clipboardScript = join(root, 'clipboard.jxa')
 await writeFile(clipboardScript, clipboardJxa, { mode: 0o600 })
-await mkdir(evidence, { recursive: true })
-await rm(join(evidence, 'frames'), { recursive: true, force: true })
-for (const name of [
-  'result.json',
-  'electron-smoke.log',
-  'light.png',
-  'dark.png',
-  'mermaid-light.png',
-  'mermaid-dark.png',
-  'native-ui.pdf',
-  'native-cli.pdf',
-  'pdf-proof.json',
-  'mermaid-ui-valid.pdf',
-  'mermaid-cli-valid.pdf',
-  'mermaid-ui-fallback.pdf',
-  'mermaid-cli-fallback.pdf',
-  'mermaid-pdf-proof.json',
-  'failure.png',
-  'interaction.mp4',
-  'ffmpeg.log',
-])
-  await rm(join(evidence, name), { force: true })
 let child
 let closed
 let log = ''
@@ -169,7 +151,7 @@ try {
   })
   await writeFile(
     join(root, 'renderer.html'),
-    '<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; script-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src data:; font-src &#39;self&#39;; connect-src &#39;none&#39;"><title>Holi code captions native acceptance</title><link rel="stylesheet" href="renderer/renderer.css"></head><body><div id="root"></div><script type="module" src="renderer/renderer.js"></script></body></html>',
+    '<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; script-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src data: holi-vault:; font-src &#39;self&#39;; connect-src &#39;none&#39;"><title>Holi code captions native acceptance</title><link rel="stylesheet" href="renderer/renderer.css"></head><body><div id="root"></div><script type="module" src="renderer/renderer.js"></script></body></html>',
   )
   await writeFile(
     join(root, 'preload.cjs'),
@@ -177,7 +159,7 @@ try {
   )
   await writeFile(
     join(root, 'package.json'),
-    JSON.stringify({ name: 'holi-code-captions-smoke-503', main: 'main.cjs' }),
+    JSON.stringify({ name: 'holi-image-captions-smoke-535', main: 'main.cjs' }),
   )
   await mkdir(join(root, 'node_modules'), { recursive: true })
   await symlink(join(desktop, 'node_modules/mermaid'), join(root, 'node_modules/mermaid'))
@@ -189,10 +171,10 @@ try {
   const electron = createRequire(import.meta.url)('electron')
   const env = {
     ...process.env,
-    HOLI_502_ROOT: root,
-    HOLI_502_EVIDENCE: evidence,
-    HOLI_502_TYPST: resolve(typst),
-    HOLI_502_DESKTOP: desktop,
+    HOLI_535_ROOT: root,
+    HOLI_535_EVIDENCE: evidence,
+    HOLI_535_TYPST: resolve(typst),
+    HOLI_535_DESKTOP: desktop,
     HOLI_VAULT_ROOT: join(root, 'vault'),
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)
@@ -219,44 +201,83 @@ try {
       timeout = setTimeout(() => {
         child.kill()
         reject(new Error('Electron smoke timed out'))
-      }, 180_000)
+      }, 300_000)
     }),
   ]).finally(() => clearTimeout(timeout))
   assert.equal(code, 0, 'native code caption acceptance failed')
   assert(!log.includes('Error occurred in handler'), 'native IPC handler failed')
-  const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
-  assert.equal(result.ok, true)
-  assert.equal(result.electron.split('.')[0], '43')
-  assert(result.checks.length >= 14, 'missing native acceptance assertions')
-  for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)
-  assert.deepEqual(result.rendererErrors, [])
-  assert.deepEqual(result.denied, [])
-  const recording = spawnSync(
+  const frames = join(evidence, 'frames', 'frame-%04d.png')
+  const video = join(evidence, 'native-interaction.mp4')
+  const encode = spawnSync(
     'ffmpeg',
     [
-      '-hide_banner',
-      '-loglevel',
-      'error',
       '-y',
       '-framerate',
-      '2',
+      '5',
       '-i',
-      join(evidence, 'frames/frame-%04d.png'),
+      frames,
       '-c:v',
       'libx264',
       '-pix_fmt',
       'yuv420p',
-      join(evidence, 'interaction.mp4'),
+      '-movflags',
+      '+faststart',
+      video,
     ],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', timeout: 120000 },
   )
-  await writeFile(join(evidence, 'ffmpeg.log'), recording.stderr ?? '')
-  assert.equal(recording.status, 0, 'interactive Electron recording must encode')
-  assert((await stat(join(evidence, 'interaction.mp4'))).size > 0)
+  assert.equal(encode.status, 0, `interaction video encoding failed: ${encode.stderr}`)
+  const probe = spawnSync(
+    'ffprobe',
+    [
+      '-v',
+      'error',
+      '-show_entries',
+      'format=duration:stream=codec_name,nb_frames',
+      '-of',
+      'json',
+      video,
+    ],
+    { encoding: 'utf8', timeout: 30000 },
+  )
+  assert.equal(probe.status, 0, `interaction video probe failed: ${probe.stderr}`)
+  const videoInfo = JSON.parse(probe.stdout)
+  assert.equal(videoInfo.streams?.[0]?.codec_name, 'h264')
+  assert(
+    Number(videoInfo.format?.duration) >= 10,
+    'interaction video must show the full native flow',
+  )
+  await writeFile(join(evidence, 'video-proof.json'), JSON.stringify(videoInfo, null, 2))
+  const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
+  assert.equal(result.ok, true)
+  assert.equal(result.electron.split('.')[0], '43')
+  assert(result.checks.length >= 47, 'missing native acceptance assertions')
+  for (const name of [
+    'native-same-alt-and-protected-examples-survive-unrelated-save-reopen',
+    'native-image-copy-os-clipboard-plain-markdown-save-reopen',
+    'native-image-cut-os-clipboard-plain-markdown-save-reopen',
+    'native-documentFigure-copy-os-clipboard-plain-markdown-save-reopen',
+    'native-documentFigure-cut-os-clipboard-plain-markdown-save-reopen',
+    'native-root-to-nested-copy-paste-save-reopen-real-typst-pdf',
+    'native-root-to-root-copy-paste-save-reopen-real-typst-pdf',
+    'native-nested-to-root-copy-paste-save-reopen-real-typst-pdf',
+    'native-spaced-image-path-copy-paste-save-reopen-real-typst-pdf',
+  ])
+    assert(result.checks.includes(name), `missing native acceptance: ${name}`)
+  for (const capture of result.captures) assert((await stat(join(evidence, capture))).size > 0)
+  assert.deepEqual(result.rendererErrors, [])
+  assert.deepEqual(result.denied, [])
   for (const file of [
     'native-ui.pdf',
     'native-cli.pdf',
     'pdf-proof.json',
+    'root-to-nested.pdf',
+    'root-to-root.pdf',
+    'nested-to-root.pdf',
+    'plain-image-copy-clipboard.json',
+    'plain-image-cut-clipboard.json',
+    'plain-documentFigure-copy-clipboard.json',
+    'plain-documentFigure-cut-clipboard.json',
     'mermaid-ui-valid.pdf',
     'mermaid-cli-valid.pdf',
     'mermaid-ui-fallback.pdf',

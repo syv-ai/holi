@@ -10,7 +10,7 @@ import Image from '@tiptap/extension-image'
 import { createElement } from 'react'
 import { mergeAttributes, Node, ReactNodeViewRenderer } from '@tiptap/react'
 import { DocumentImageView } from './rich-text/document-image-view'
-import { displaySrc } from './media-src'
+import { displaySrc, portableImageSrc } from './media-src'
 
 import { createRichTextExtensions } from '@/features/documents/rich-text/rich-text-extensions'
 
@@ -20,7 +20,7 @@ import { AGENT_MARKER, DocumentMarkdown } from './markdown'
 import { MultiCursor } from './multi-cursor'
 import { WikiLink } from './wiki-link'
 import { MermaidCodeBlock } from './rich-text/mermaid-code-block'
-import { DocumentCaption, DocumentFigure } from './rich-text/document-figure'
+import { DocumentCaption, DocumentFigure, renderImageMarkdown } from './rich-text/document-figure'
 
 /** An image at its natural size up to the column's width, never scaled up.
  *  Its height is capped at 70% of the window but never below the column's
@@ -31,6 +31,41 @@ const DocumentImage = Image.extend<{ folder: string }>({
   addOptions() {
     return { ...this.parent!(), folder: '' }
   },
+  addAttributes() {
+    const folder = this.options.folder
+    const parent = this.parent?.() ?? {}
+    const sourceAttribute = (parent as { src?: Record<string, unknown> }).src ?? {}
+    return {
+      ...parent,
+      src: {
+        ...sourceAttribute,
+        parseHTML: (element: HTMLElement) => {
+          const source = element.getAttribute('data-holi-source-src')
+          const sourceFolder = element.getAttribute('data-holi-source-folder')
+          const visible = element.getAttribute('src') ?? ''
+          if (!source || sourceFolder === null) return visible
+          try {
+            if (displaySrc(source, sourceFolder) === visible)
+              return portableImageSrc(source, sourceFolder, folder)
+          } catch {
+            // Clipboard provenance is untrusted. A malformed encoded path must
+            // not prevent the visible image (and the rest of the paste) loading.
+          }
+          return visible
+        },
+      },
+      sourceMarkdown: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: () => ({}),
+      },
+      sourceMarkdownImageAttrs: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: () => ({}),
+      },
+    }
+  },
   addNodeView() {
     const folder = this.options.folder
     return ReactNodeViewRenderer((props) => createElement(DocumentImageView, { ...props, folder }))
@@ -39,9 +74,22 @@ const DocumentImage = Image.extend<{ folder: string }>({
     return [
       'img',
       mergeAttributes(HTMLAttributes, {
+        'data-holi-source-src': String(HTMLAttributes.src ?? ''),
+        'data-holi-source-folder': this.options.folder,
         src: displaySrc(String(HTMLAttributes.src ?? ''), this.options.folder),
       }),
     ]
+  },
+  renderMarkdown(node) {
+    const source = node.attrs?.sourceMarkdown
+    const sourceAttrs = node.attrs?.sourceMarkdownImageAttrs
+    const currentAttrs = JSON.stringify([
+      node.attrs?.src ?? '',
+      node.attrs?.alt ?? null,
+      node.attrs?.title ?? null,
+    ])
+    if (typeof source === 'string' && sourceAttrs === currentAttrs) return source
+    return renderImageMarkdown(node.attrs ?? {})
   },
 })
 
@@ -127,8 +175,15 @@ const HtmlBlock = Node.create({
     if (!token.block) return { type: 'text', text: token.raw ?? '' }
     return { type: 'htmlBlock', attrs: { html: (token.raw ?? '').trimEnd() } }
   },
-  renderMarkdown(node) {
-    return node.attrs?.html ?? ''
+  renderMarkdown(node, _helpers, context) {
+    const source = String(node.attrs?.html ?? '')
+    // List items join blocks with a single newline. A reference definition
+    // cannot interrupt a paragraph, so keep a blank separator before it.
+    const needsSeparator =
+      (context.parentType === 'listItem' || context.parentType === 'taskItem') &&
+      context.index > 0 &&
+      /^ {0,3}\[/.test(source)
+    return needsSeparator ? `\n${source}` : source
   },
 })
 

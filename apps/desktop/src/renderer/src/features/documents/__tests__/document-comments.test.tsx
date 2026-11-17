@@ -73,6 +73,20 @@ describe('selectionAnchor', () => {
     expect(anchor?.prefix.endsWith('Ship ')).toBe(true)
   })
 
+  it('quotes and restores passages inside a native image caption', () => {
+    const body =
+      '<!-- holi:figure -->\n\n![cat](../assets/cat.png)\n\n<!-- holi:caption -->\n\nA **bold** caption\n\n<!-- /holi:figure -->'
+    const ed = open(body)
+    expect(ed.state.doc.firstChild?.type.name).toBe('documentFigure')
+    const { from, to } = rangeOf(ed, 'bold')
+    ed.commands.setTextSelection({ from, to })
+    const anchor = selectionAnchor(ed, '')!
+    const markdown = ed.getMarkdown()
+    expect(markdown).toContain(anchor.quote)
+    expect(anchor.quote.replace(/\*/g, '')).toBe('bold')
+    expect(placeThreads(ed, '', [thread('caption', markdown, anchor.quote)])).toHaveLength(1)
+  })
+
   it('quotes through formatting, so the quote is in the file', () => {
     const body = 'Ship **the beta** on Friday.\n'
     const ed = open(body)

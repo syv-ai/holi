@@ -2,11 +2,14 @@ import { Provider, createStore } from 'jotai'
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Editor } from '@tiptap/react'
+import { DOMSerializer } from '@tiptap/pm/model'
+import { EditorView } from '@codemirror/view'
 import { emptyVaultSnapshot, resolveVaultSettings } from '@holi/shared'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { DocumentView } from '@/features/documents/document-view'
+import { FileView } from '@/features/files/file-view'
 import { selectionAnchor, selectionLines } from '@/features/documents/document-comments'
 import { splitDocument } from '@/features/documents/markdown'
 import { flushAllBuffers } from '@/lib/buffer-registry'
@@ -67,7 +70,7 @@ function select(kind: string, which = 'primary', whole = false) {
     }
   })
   if (at < 0) throw new Error(`Missing ${kind}`)
-  if (kind === 'documentFigure') current.commands.setNodeSelection(at)
+  if (kind === 'documentFigure' || kind === 'image') current.commands.setNodeSelection(at)
   else
     current.commands.setTextSelection(whole ? { from: at + 1, to: at + 1 + size } : at + 1 + size)
   current.view.focus()
@@ -98,6 +101,8 @@ function App() {
   const [split, setSplit] = useState(false)
   const [rightFocused, setRightFocused] = useState(false)
   const [pdf, setPdf] = useState(false)
+  const [paths, setPaths] = useState({ primary: path, secondary: other })
+  const [plain, setPlain] = useState(false)
   async function reopen() {
     await flushAllBuffers()
     setMounted(false)
@@ -116,6 +121,23 @@ function App() {
       captionFixture: {
         errors,
         select,
+        async openPaths(primary: string, secondary: string, plain = false) {
+          await flushAllBuffers()
+          setMounted(false)
+          setPaths({ primary, secondary })
+          setPlain(plain)
+          window.setTimeout(() => {
+            setRevision((n) => n + 1)
+            setMounted(true)
+          }, 20)
+        },
+        plainState(focus = false) {
+          const host = document.querySelector('[data-pane="secondary"] .cm-editor')
+          const view = host ? EditorView.findFromDOM(host as HTMLElement) : null
+          if (!view) return null
+          if (focus) view.focus()
+          return { text: view.state.doc.toString() }
+        },
         reload,
         flush: flushAllBuffers,
         theme,
@@ -146,6 +168,15 @@ function App() {
         async anchor() {
           const { head } = splitDocument(await trpc.notes.read.query({ remote, path }))
           return { anchor: selectionAnchor(editor(), head), lines: selectionLines(editor(), head) }
+        },
+        htmlSelection() {
+          const current = editor()
+          const fragment = DOMSerializer.fromSchema(current.schema).serializeFragment(
+            current.state.selection.content().content,
+          )
+          const container = document.createElement('div')
+          container.append(fragment)
+          return container.innerHTML
         },
       },
     })
@@ -189,26 +220,36 @@ function App() {
             >
               {mounted && (
                 <DocumentView
-                  key={revision}
-                  path={path}
+                  key={`${revision}:${paths.primary}`}
+                  path={paths.primary}
                   onOpen={() => {}}
                   visible={!hidden}
                   focused={!hidden && !rightFocused}
                 />
               )}
             </section>
-            {split && (
+            {split && mounted && (
               <section
                 data-pane="secondary"
                 className="min-w-0 flex-1"
                 onPointerDown={() => setRightFocused(true)}
               >
-                <DocumentView
-                  path={other}
-                  onOpen={() => {}}
-                  visible
-                  focused={rightFocused || hidden}
-                />
+                {plain ? (
+                  <FileView
+                    key={`${revision}:${paths.secondary}`}
+                    path={paths.secondary}
+                    visible
+                    focused={rightFocused || hidden}
+                  />
+                ) : (
+                  <DocumentView
+                    key={`${revision}:${paths.secondary}`}
+                    path={paths.secondary}
+                    onOpen={() => {}}
+                    visible
+                    focused={rightFocused || hidden}
+                  />
+                )}
               </section>
             )}
           </div>

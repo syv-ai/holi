@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   install: vi.fn(),
   ask: vi.fn(),
   list: vi.fn(),
+  search: vi.fn(),
   updates: vi.fn(),
   remove: vi.fn(),
 }))
@@ -20,7 +21,12 @@ vi.mock('../renderer/install-flow', () => ({
   askToRun: mocks.ask,
 }))
 vi.mock('../renderer/community-cap', () => ({
-  communityCap: { list: mocks.list, updates: mocks.updates, remove: mocks.remove },
+  communityCap: {
+    list: mocks.list,
+    search: mocks.search,
+    updates: mocks.updates,
+    remove: mocks.remove,
+  },
   setPluginSwitch: vi.fn(),
 }))
 
@@ -76,6 +82,7 @@ function openNotice() {
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.list.mockResolvedValue([row()])
+  mocks.search.mockResolvedValue([])
   mocks.updates.mockResolvedValue({ dash: '2.0.0' })
   mocks.update.mockReturnValue(
     new Promise<null>((resolve, reject) => {
@@ -102,23 +109,44 @@ afterEach(() => {
 })
 
 test('hiding Settings dismisses plugin search results and does not reopen them on return', async () => {
-  const { store, rerender } = openSettings()
-  const input = screen.getByPlaceholderText('Search GitHub, or type owner/repo')
-  fireEvent.change(input, { target: { value: 'synthetic/plugin' } })
-  await screen.findByText('Searching…')
+  const { store, rerender, unmount } = openSettings()
+  await act(async () => {})
+  vi.useFakeTimers()
+  try {
+    const input = screen.getByPlaceholderText('Search GitHub, or type owner/repo')
+    fireEvent.change(input, { target: { value: 'synthetic/plugin' } })
+    expect(screen.getByText('Searching…')).toBeInTheDocument()
 
-  rerender(
-    <Provider store={store}>
-      <PluginsSettings remote="synthetic/vault" visible={false} />
-    </Provider>,
-  )
-  expect(screen.queryByText('Searching…')).toBeNull()
-  rerender(
-    <Provider store={store}>
-      <PluginsSettings remote="synthetic/vault" visible />
-    </Provider>,
-  )
-  expect(screen.queryByText('Searching…')).toBeNull()
+    rerender(
+      <Provider store={store}>
+        <PluginsSettings remote="synthetic/vault" visible={false} />
+      </Provider>,
+    )
+    expect(screen.queryByText('Searching…')).toBeNull()
+    await act(async () => vi.advanceTimersByTime(300))
+    expect(mocks.search).not.toHaveBeenCalled()
+    rerender(
+      <Provider store={store}>
+        <PluginsSettings remote="synthetic/vault" visible />
+      </Provider>,
+    )
+    expect(screen.queryByText('Searching…')).toBeNull()
+    // Returning restarts the retained query's debounce without reopening its
+    // popover. Exercise that callback rather than racing real-time teardown.
+    await act(async () => vi.advanceTimersByTime(300))
+    expect(mocks.search).toHaveBeenCalledExactlyOnceWith('synthetic/vault', {
+      query: 'synthetic/plugin',
+    })
+    expect(screen.queryByText('Searching…')).toBeNull()
+    expect(screen.queryByText('No repositories match.')).toBeNull()
+    fireEvent.change(input, { target: { value: 'synthetic/another' } })
+    unmount()
+    await act(async () => vi.advanceTimersByTime(300))
+    expect(mocks.search).toHaveBeenCalledTimes(1)
+  } finally {
+    unmount()
+    vi.useRealTimers()
+  }
 })
 
 test('hiding Settings closes its already-open consent dialog', async () => {

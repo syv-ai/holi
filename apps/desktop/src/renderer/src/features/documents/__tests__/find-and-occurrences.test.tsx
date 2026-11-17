@@ -17,6 +17,7 @@ import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { DocumentView } from '../document-view'
 import { extraSelections } from '../multi-cursor'
+import { addImageCaption } from '../rich-text/document-figure'
 
 Element.prototype.getAnimations ??= () => []
 // ProseMirror measures the caret; jsdom has no layout.
@@ -154,6 +155,20 @@ test('a selection over two blocks does not seed, and No results says so', async 
   expect(field).toHaveValue('')
   await user.type(field, 'three')
   expect(await screen.findByText('No results')).toBeInTheDocument()
+})
+
+test('find searches text inside a native image caption in the document view', async () => {
+  const user = userEvent.setup()
+  const { box, editor } = await open('![cat](../assets/cat.png)\n')
+  act(() => {
+    expect(addImageCaption(editor, 0)).toBe(true)
+    editor.commands.insertContent('searchable caption')
+  })
+  press(box, 'f', { ctrlKey: true })
+  const field = await screen.findByRole('textbox', { name: 'Find' })
+  await user.type(field, 'searchable')
+  expect(await screen.findByText('1 of 1')).toBeInTheDocument()
+  expect(box.querySelector('.ProseMirror-active-search-match')).toHaveTextContent('searchable')
 })
 
 test('Enter and Shift+Enter step through matches; Escape gives the match back', async () => {

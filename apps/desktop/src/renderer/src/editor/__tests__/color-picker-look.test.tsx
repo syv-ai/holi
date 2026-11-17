@@ -7,10 +7,11 @@
  * exactly the kind of thing that looks right in the source and is wrong on
  * screen, so it is pinned here rather than eyeballed.
  */
-import { render, waitFor } from '@/test/render'
+import { render } from '@/test/render'
 import { useEffect, useRef } from 'react'
 import { expect, test } from 'vitest'
 import { EditorState } from '@codemirror/state'
+import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorView } from '@codemirror/view'
 import { THEME_FILE } from '@holi/shared'
 import { plainTextExtensions } from '../extensions'
@@ -20,8 +21,13 @@ function mount(doc: string): EditorView {
   function Host(): React.JSX.Element {
     const host = useRef<HTMLDivElement | null>(null)
     useEffect(() => {
+      const state = EditorState.create({ doc, extensions: plainTextExtensions(THEME_FILE) })
+      // The swatch plugin rebuilds on document/viewport changes, not a late
+      // parser-only update. Start this look fixture with fully parsed CSS so
+      // its constructor sees the colour even if initial parsing yielded.
+      expect(ensureSyntaxTree(state, state.doc.length)).not.toBeNull()
       view = new EditorView({
-        state: EditorState.create({ doc, extensions: plainTextExtensions(THEME_FILE) }),
+        state: state.update({}).state,
         parent: host.current!,
       })
       return () => view?.destroy()
@@ -32,10 +38,9 @@ function mount(doc: string): EditorView {
   return view!
 }
 
-test('a hex in a CSS file gets the published swatch', async () => {
+test('a hex in a CSS file gets the published swatch', () => {
   const view = mount("[data-theme='dark'] {\n  --primary: #8b5cf6;\n}\n")
-  // CodeMirror can finish parsing on its scheduled work under suite load.
-  await waitFor(() => expect(view.dom.querySelector('.cm-css-color-picker-wrapper')).not.toBeNull())
+  expect(view.dom.querySelector('.cm-css-color-picker-wrapper')).not.toBeNull()
   view.destroy()
 })
 

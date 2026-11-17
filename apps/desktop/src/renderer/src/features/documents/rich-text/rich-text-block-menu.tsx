@@ -25,7 +25,12 @@ import {
   type BlockTarget,
 } from './rich-text-block-actions'
 import { RICH_TEXT_BASIC_SLASH_ITEMS } from './rich-text-slash-menu'
-import { addCodeCaption, focusCodeCaption, removeCodeCaption } from './document-figure'
+import {
+  addCodeCaption,
+  addImageCaption,
+  focusCodeCaption,
+  removeCodeCaption,
+} from './document-figure'
 import { RICH_TEXT_TABLE_SLASH_ITEM } from './rich-text-table'
 import { useShortcutLabel } from '@/composites/shortcut-keys'
 import {
@@ -57,7 +62,7 @@ const TURN_INTO = RICH_TEXT_BASIC_SLASH_ITEMS.filter((item) => TURN_INTO_IDS.has
 const BLOCK_TITLES = new Map(
   [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM].map((item) => [item.id, item.title]),
 )
-BLOCK_TITLES.set('documentFigure', 'Code with caption')
+BLOCK_TITLES.set('documentFigure', 'Figure with caption')
 
 const LIST_KINDS: Record<string, string> = {
   bulletList: 'bullet-list',
@@ -191,6 +196,12 @@ export function RichTextBlockMenuItems({
     <>
       <DropdownMenuGroup>
         <DropdownMenuLabel>{BLOCK_TITLES.get(menu.kind) ?? 'Block'}</DropdownMenuLabel>
+        {menu.kind === 'image' ? (
+          <DropdownMenuItem onClick={() => addImageCaption(editor, menu.pos)}>
+            <CaptionsIcon aria-hidden="true" />
+            Add caption
+          </DropdownMenuItem>
+        ) : null}
         {menu.kind === 'code-block' ? (
           <DropdownMenuItem onClick={() => addCodeCaption(editor, menu.pos)}>
             <CaptionsIcon aria-hidden="true" />
