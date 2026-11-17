@@ -182,6 +182,37 @@ test('creates one explicitly unverified issue per provider on first observation'
   }
 })
 
+test('Pi help details containing angle-bracket arguments keep stable report markers', async () => {
+  const adapter = fakeAdapter()
+  const first = report('pi')
+  await reconcile(first, adapter)
+  const second = structuredClone(first)
+  second.runNumber = 2
+  second.sha = 'sha-2'
+  second.runUrl = 'https://example.test/runs/2'
+  second.providers[0].checks = [
+    {
+      name: 'cli-contract',
+      outcome: 'pass',
+      detail: 'Usage: pi --model <model> [--session <path>]',
+    },
+    { name: 'rpc-consumer', outcome: 'pass', detail: 'consumer fixtures passed' },
+    { name: 'rpc-producer', outcome: 'pass', detail: 'producer fixture passed' },
+  ]
+  await reconcile(second, adapter)
+  const third = structuredClone(second)
+  third.runNumber = 3
+  third.sha = 'sha-3'
+  third.runUrl = 'https://example.test/runs/3'
+  await reconcile(third, adapter)
+  const issue = [...adapter.issues.values()][0]
+  assert.equal(adapter.issues.size, 1)
+  assert.equal(adapter.comments.length, 1)
+  assert.match(adapter.comments[0].body, /<!-- holi-harness-report:v2-[a-f0-9]{64} -->/)
+  assert.match(issue.body, /<model>/)
+  assert.match(issue.body, /<!-- holi-harness-run:3 -->/)
+})
+
 test('version changes update the existing provider issue without duplicate issues', async () => {
   const adapter = fakeAdapter()
   await reconcile(report('pi'), adapter)
@@ -360,6 +391,39 @@ test('Pi producer outcomes propagate through workflow projection without issue w
     adapter,
   )
   assert.equal([...adapter.issues.values()][0].state, 'open')
+})
+
+test('missing Pi checker results remain unverified and cannot close an issue', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'holi-pi-missing-results-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const input = { ...report('pi', '1.0.0', 2), providers: [observation('pi', '1.0.0', 2, 'pass')] }
+  const files = ['report.json', 'cli.json', 'consumer.json', 'producer.json'].map((file) =>
+    join(dir, file),
+  )
+  await writeFile(files[0], JSON.stringify(input))
+  for (const file of files.slice(1)) {
+    await writeFile(
+      file,
+      JSON.stringify({
+        outcome: 'unverified',
+        detail: 'Checker failed or produced no result; required coverage is unavailable.',
+      }),
+    )
+  }
+  const merged = spawnSync(
+    process.execPath,
+    ['scripts/harness-monitor.mjs', 'merge-pi', ...files],
+    { encoding: 'utf8' },
+  )
+  assert.equal(merged.status, 0, merged.stderr)
+  const adapter = fakeAdapter()
+  await reconcile(JSON.parse(merged.stdout), adapter)
+  const issue = [...adapter.issues.values()][0]
+  assert.equal(issue.state, 'open')
+  assert.match(issue.body, /cli-contract: unverified/)
+  assert.match(issue.body, /rpc-consumer: unverified/)
+  assert.match(issue.body, /rpc-producer: unverified/)
+  assert.match(issue.body, /Checker failed or produced no result/)
 })
 
 test('malformed runner checks cannot become a pass', () => {
