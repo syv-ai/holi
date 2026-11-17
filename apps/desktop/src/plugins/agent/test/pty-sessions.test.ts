@@ -536,13 +536,15 @@ describe('sessions Holi runs', () => {
     expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
   })
 
-  it('keeps a failed history append visible after an unrelated append succeeds', async () => {
+  it('commits a failed append before a later append and retains a failed teardown owner', async () => {
     let writes = 0
+    let history: import('../main/claude/listing').SessionSummary[] = []
     const store = {
-      read: async () => [] as import('../main/claude/listing').SessionSummary[],
-      write: async () => {
+      read: async () => history,
+      write: async (rows: typeof history) => {
         writes += 1
-        if (writes === 1 || writes === 3) throw new Error(`write ${writes} failed`)
+        if (writes === 1) throw new Error('write failed')
+        history = rows
       },
     }
     const t = setup('pi', store)
@@ -551,8 +553,11 @@ describe('sessions Holi runs', () => {
     if (!first.ok || !second.ok) throw new Error('Pi session did not start')
 
     await expect(t.sessions.leave()).rejects.toThrow(/PTY sessions did not drain/)
-    expect(writes).toBe(3)
+    expect(writes).toBe(2)
+    expect(history.map((row) => row.id)).toEqual([second.sessionId, first.sessionId])
     expect(t.sessions.has(first.sessionId)).toBe(true)
+    await t.sessions.leave()
+    expect(t.sessions.has(first.sessionId)).toBe(false)
   })
 
   it('persists active and already-exited Pi sessions when leaving the vault', async () => {

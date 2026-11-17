@@ -418,11 +418,16 @@ const collision = (rel: string): string =>
  * into place, which fails when the name is taken (on a case-blind disk too)
  * however late that name came, then unlinked. False when it was taken.
  */
-async function createExclusive(abs: string, data: Buffer): Promise<boolean> {
+async function createExclusive(
+  abs: string,
+  data: Buffer,
+  stopped: () => boolean,
+): Promise<boolean> {
   await mkdir(dirname(abs), { recursive: true })
   const tmp = join(dirname(abs), `.holi-tmp-${randomBytes(6).toString('hex')}`)
-  await writeFile(tmp, data)
   try {
+    await writeFile(tmp, data)
+    if (stopped()) throw new Error('Copy-back was cancelled.')
     await link(tmp, abs)
     return true
   } catch (err) {
@@ -519,6 +524,23 @@ export function createJobs(deps: JobsDeps): Jobs {
   const maxMs = deps.maxMs ?? 30 * 60_000
   const jobs = new Map<string, Job>()
   let lastPushed = ''
+  // A timeout bounds the caller, never the lifetime of the operation it owns.
+  async function bounded<T>(work: Promise<T>, label: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`${label} did not finish before teardown timed out.`)),
+            5_000,
+          )
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
 
   const summaries = (): SessionSummary[] =>
     [...jobs.values()].map((j) => ({
@@ -651,7 +673,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       const after = await readRegular(previous)
       if (after === null || hashOf(after) !== before) throw new Error(collision(rel))
       if (stopped()) throw new Error('Copy-back was cancelled.')
-      if (!(await createExclusive(abs, data))) throw new Error(collision(rel))
+      if (!(await createExclusive(abs, data, stopped))) throw new Error(collision(rel))
     } catch (err) {
       if (moved) {
         const old = await readRegular(previous)
@@ -769,7 +791,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         // A new file: written only where nothing is, even something that
         // arrived after the checks above (a sync bringing the same app).
         if (stopped()) break
-        if (!(await createExclusive(abs, data))) throw new Error(collision(rel))
+        if (!(await createExclusive(abs, data, stopped))) throw new Error(collision(rel))
       } else {
         // What this run was given or wrote before: written over only while
         // the vault still holds exactly that, read again just before.
@@ -798,34 +820,24 @@ export function createJobs(deps: JobsDeps): Jobs {
     job.retiring = true
     job.queue = []
     clearTimeout(job.dropTimer)
-    if (job.retirement !== undefined) return job.retirement
-    const retirement = (async () => {
-      await job.exited
-      await job.pidWrite
-      await rm(job.state, { recursive: true, force: true })
-      if (jobs.get(job.id) === job) jobs.delete(job.id)
-      push()
-    })()
-    job.retirement = retirement
-    let timer: ReturnType<typeof setTimeout> | undefined
-    try {
-      await Promise.race([
-        retirement,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`Could not clean up job ${job.id} before teardown timed out.`)),
-            5_000,
-          )
-        }),
-      ])
-    } catch (error) {
-      // Keep the map entry; clear only the completed attempt so a later leave
-      // or stop can retry its cleanup without mistaking it for success.
-      if (job.retirement === retirement) job.retirement = undefined
-      throw error
-    } finally {
-      if (timer !== undefined) clearTimeout(timer)
+    if (job.finalizationError !== undefined) throw job.finalizationError
+    if (job.retirement === undefined) {
+      const retirement = (async () => {
+        await job.exited
+        if (job.finalizationError !== undefined) throw job.finalizationError
+        await job.pidWrite
+        await rm(job.state, { recursive: true, force: true })
+        if (jobs.get(job.id) === job) jobs.delete(job.id)
+        push()
+      })()
+      job.retirement = retirement
+      // Only a settled failure permits another attempt. A timed-out deletion
+      // still owns the namespace and every retry joins that same operation.
+      void retirement.catch(() => {
+        if (job.retirement === retirement) job.retirement = undefined
+      })
     }
+    await bounded(job.retirement, `Cleanup of job ${job.id}`)
   }
 
   /** The job's turn ended: its outcome stands until a follow-up starts
@@ -1062,16 +1074,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       }
       job.finalizing = false
       job.busy = false
-      if (job.finalizationError === undefined && !job.retiring) {
-        job.dropTimer = setTimeout(() => {
-          if (jobs.get(job.id) === job) {
-            void drop(job).catch((err: unknown) =>
-              log(`${job.id}: could not clean up: ${String(err)}`),
-            )
-          }
-        }, keepMs)
-        job.dropTimer.unref?.()
-      }
+      scheduleDrop(job)
       push()
       // A stopped or failed job takes nothing more, whatever was queued.
       if (
@@ -1095,6 +1098,17 @@ export function createJobs(deps: JobsDeps): Jobs {
     return { ok: true }
   }
 
+  function scheduleDrop(job: Job): void {
+    if (job.finalizationError !== undefined || job.retiring) return
+    clearTimeout(job.dropTimer)
+    job.dropTimer = setTimeout(() => {
+      if (jobs.get(job.id) === job) {
+        void drop(job).catch((err: unknown) => log(`${job.id}: could not clean up: ${String(err)}`))
+      }
+    }, keepMs)
+    job.dropTimer.unref?.()
+  }
+
   /** Send what is queued as one turn on the job's thread. */
   function followUp(job: Job): void {
     const place = job.place
@@ -1102,6 +1116,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       closing ||
       job.retiring ||
       job.stopped !== undefined ||
+      job.finalizationError !== undefined ||
       place === null ||
       job.thread === undefined ||
       job.queue.length === 0
@@ -1125,7 +1140,29 @@ export function createJobs(deps: JobsDeps): Jobs {
       },
       [],
     )
-    if (!started.ok) finish(job, 'failed', started.message)
+    if (!started.ok) {
+      // No process was spawned, but command preparation may still own state.
+      // This turn gets its own settlement marker; never reuse the last turn's.
+      job.finalizing = true
+      job.exited = (async () => {
+        try {
+          await job.provider.release?.(job.state)
+        } catch (err) {
+          job.finalizationError = new Error(`Could not release agent state: ${String(err)}`)
+        }
+        try {
+          await finish(job, 'failed', started.message)
+        } catch (err) {
+          job.finalizationError = new Error(`Could not finalize job turn: ${String(err)}`)
+        } finally {
+          job.finalizing = false
+          job.busy = false
+          job.queue = []
+          scheduleDrop(job)
+          push()
+        }
+      })()
+    }
   }
 
   /** The vault folders a job may write, made where missing, each checked to
@@ -1164,18 +1201,8 @@ export function createJobs(deps: JobsDeps): Jobs {
     }
     await rm(deps.scratchRoot, { recursive: true, force: true })
   }
-  let sweepTimer: ReturnType<typeof setTimeout> | undefined
-  const swept = Promise.race([
-    sweep(),
-    new Promise<never>((_, reject) => {
-      sweepTimer = setTimeout(
-        () => reject(new Error('Agent job state sweep did not finish before startup timed out.')),
-        5_000,
-      )
-    }),
-  ]).finally(() => {
-    if (sweepTimer !== undefined) clearTimeout(sweepTimer)
-  })
+  const sweeping = sweep()
+  const swept = bounded(sweeping, 'Agent job state sweep')
   void swept.catch(() => {})
 
   /** Leaving the vault bumps it: a start that began before sees it changed
@@ -1304,6 +1331,43 @@ export function createJobs(deps: JobsDeps): Jobs {
     return { ok: true, sessionId: id }
   }
 
+  let leaving: Promise<void> | undefined
+  let rootRetirement: Promise<void> | undefined
+  let drained = false
+
+  async function leave(): Promise<void> {
+    closing = true
+    generation += 1
+    // The startup deadline may have expired while the actual sweep or a start
+    // is still mutating disk. Neither can outlive a successful teardown.
+    await bounded(sweeping, 'Agent job state sweep')
+    await bounded(Promise.all([...starting]), 'Agent job starts')
+    const all = [...jobs.values()]
+    for (const job of all) {
+      job.retiring = true
+      job.queue = []
+      clearTimeout(job.dropTimer)
+    }
+    const results = await Promise.allSettled(all.map((job) => kill(job, 'Stopped.')))
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : [],
+    )
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'One or more agent jobs did not drain.')
+    }
+    await Promise.all(all.map((job) => drop(job)))
+    if (rootRetirement === undefined) {
+      const retirement = rm(deps.scratchRoot, { recursive: true, force: true })
+      rootRetirement = retirement
+      void retirement.catch(() => {
+        if (rootRetirement === retirement) rootRetirement = undefined
+      })
+    }
+    await bounded(rootRetirement, 'Agent job root cleanup')
+    drained = true
+    push()
+  }
+
   return {
     sessions: summaries,
     has: (id) => jobs.has(id),
@@ -1321,7 +1385,13 @@ export function createJobs(deps: JobsDeps): Jobs {
 
     message(id, text) {
       const job = jobs.get(id)
-      if (job === undefined || job.retiring || job.finalizing || closing)
+      if (
+        job === undefined ||
+        job.retiring ||
+        job.finalizing ||
+        job.finalizationError !== undefined ||
+        closing
+      )
         throw new CapabilityError('UNAVAILABLE', 'That job has ended.')
       if (job.place === null) {
         throw new CapabilityError(
@@ -1352,6 +1422,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       if (job.busy) await kill(job, 'Stopped.')
       // A finished one leaves the list.
       else {
+        if (job.finalizationError !== undefined) throw job.finalizationError
         clearTimeout(job.dropTimer)
         await drop(job)
         push()
@@ -1360,27 +1431,13 @@ export function createJobs(deps: JobsDeps): Jobs {
     },
 
     async leave() {
-      // A start under way spawns nothing now; once each has stopped or
-      // spawned, every job there is is in the list, and stopped below.
-      closing = true
-      generation += 1
-      await Promise.allSettled([...starting])
-      const all = [...jobs.values()]
-      for (const job of all) {
-        job.retiring = true
-        job.queue = []
+      if (drained) return
+      if (leaving === undefined) {
+        leaving = leave().finally(() => {
+          leaving = undefined
+        })
       }
-      const results = await Promise.allSettled(all.map((job) => kill(job, 'Stopped.')))
-      const failures = results.flatMap((result) =>
-        result.status === 'rejected' ? [result.reason] : [],
-      )
-      for (const job of all) clearTimeout(job.dropTimer)
-      if (failures.length > 0) {
-        throw new AggregateError(failures, 'One or more agent jobs did not drain.')
-      }
-      await Promise.all(all.map((job) => drop(job)))
-      await rm(deps.scratchRoot, { recursive: true, force: true })
-      push()
+      await leaving
     },
 
     copyBack: (dir, write, made, signal) => copyBack({ signal }, dir, write, made),

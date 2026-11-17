@@ -243,35 +243,32 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const pastStore = deps.past ?? memoryPast
   let pastQueue: Promise<unknown> = Promise.resolve()
   let pastFailure: unknown
-  const failedPast = new Set<(rows: SessionSummary[]) => SessionSummary[]>()
-  const changePast = (change: (rows: SessionSummary[]) => SessionSummary[]): Promise<void> => {
+  // Keep mutations in their original order until a write commits the whole
+  // prefix. Replaying just an older failed removal after a newer append would
+  // delete the conversation that has since closed again.
+  const pendingPast: Array<(rows: SessionSummary[]) => SessionSummary[]> = []
+  const flushPast = (): Promise<void> => {
     const next = pastQueue.then(async () => {
-      const rows = change(await pastStore.read())
+      const batch = pendingPast.slice()
+      if (batch.length === 0) return
+      const rows = batch.reduce((rows, change) => change(rows), await pastStore.read())
       await pastStore.write(rows)
+      pendingPast.splice(0, batch.length)
+      pastFailure = undefined
       deps.onPast?.(rows)
     })
     pastQueue = next.catch((err: unknown) => {
       pastFailure = err
-      failedPast.add(change)
       log(`closed sessions: ${String(err)}`)
     })
     return next
   }
+  const changePast = (change: (rows: SessionSummary[]) => SessionSummary[]): Promise<void> => {
+    pendingPast.push(change)
+    return flushPast()
+  }
   async function retryPastFailures(): Promise<void> {
-    for (const change of [...failedPast]) {
-      const retry = pastQueue.then(async () => {
-        const rows = change(await pastStore.read())
-        await pastStore.write(rows)
-        deps.onPast?.(rows)
-      })
-      pastQueue = retry.catch((err: unknown) => {
-        pastFailure = err
-        log(`closed sessions retry: ${String(err)}`)
-      })
-      await bounded(retry, 'PTY history retry')
-      failedPast.delete(change)
-    }
-    if (failedPast.size === 0) pastFailure = undefined
+    await bounded(flushPast(), 'PTY history retry')
   }
 
   const reopening = new Set<string>()
@@ -639,6 +636,25 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     return { ok: true, sessionId: id, terminalId: opened.id }
   }
 
+  const closing = new Map<Session, { work: Promise<void>; failed: boolean }>()
+  function closeSession(session: Session): Promise<void> {
+    let close = closing.get(session)
+    if (close === undefined || close.failed) {
+      const operation = {
+        work: Promise.resolve().then(() => deps.terminals.close(session.terminalId)),
+        failed: false,
+      }
+      close = operation
+      closing.set(session, operation)
+      // Keep the captured session even if onExit removed its live row before
+      // close rejected. Only a settled failure can start a retry.
+      void operation.work.catch(() => {
+        operation.failed = true
+      })
+    }
+    return close.work
+  }
+
   const api: PtySessions = {
     sessions: summaries,
     async past() {
@@ -728,10 +744,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     async stop(id) {
       const s = sessions.get(id)
       if (s === undefined) return gone
-      await bounded(
-        Promise.resolve().then(() => deps.terminals.close(s.terminalId)),
-        'PTY close',
-      )
+      await bounded(closeSession(s), 'PTY close')
       while (finalizing.size > 0) await bounded(Promise.all([...finalizing]), 'PTY finalization')
       await bounded(
         pastQueue.then(() => undefined),
@@ -805,10 +818,15 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       // into the vault after leave has returned.
       const starts = Promise.all([...starting])
       const signIns = Promise.all([...signingIn.values()])
-      const closes = Promise.all(
-        [...sessions.values()].map((s) =>
-          Promise.resolve().then(() => deps.terminals.close(s.terminalId)),
-        ),
+      for (const session of new Set([...sessions.values(), ...closing.keys()]))
+        closeSession(session)
+      const closes = Promise.allSettled([...closing.values()].map((close) => close.work)).then(
+        (results) => {
+          const failures = results.flatMap((result) =>
+            result.status === 'rejected' ? [result.reason] : [],
+          )
+          if (failures.length > 0) throw new AggregateError(failures, 'PTY close failed.')
+        },
       )
       const errors: unknown[] = []
       const boundedWork: Array<[Promise<unknown>, string]> = [
@@ -816,13 +834,17 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         [signIns, 'PTY sign-ins'],
         [closes, 'PTY close'],
       ]
-      for (const [work, label] of boundedWork) {
-        try {
-          await bounded(work, label)
-        } catch (err) {
-          errors.push(err)
-        }
-      }
+      // Observe every concurrent branch immediately, even while another branch
+      // is still configuring. Each retains its real operation beyond timeout.
+      await Promise.all(
+        boundedWork.map(async ([work, label]) => {
+          try {
+            await bounded(work, label)
+          } catch (err) {
+            errors.push(err)
+          }
+        }),
+      )
       while (finalizing.size > 0) {
         try {
           await bounded(Promise.allSettled([...finalizing]), 'PTY finalization')
@@ -885,6 +907,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       errors.push(...finalizerFailures)
       if (errors.length > 0) throw new AggregateError(errors, 'PTY sessions did not drain.')
       sessions.clear()
+      closing.clear()
       for (const { timer } of finishedFences.values()) if (timer) clearTimeout(timer)
       finishedFences.clear()
       push()
