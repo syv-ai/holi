@@ -26,6 +26,7 @@ const native = vi.hoisted(() => ({
         env: NodeJS.ProcessEnv,
       ) => ChildProcess),
   removals: [] as { path: string; done: Promise<void> }[],
+  heldExit: null as null | { cwd: string; entered: () => void; wait: Promise<void> },
 }))
 
 vi.mock('electron', () => ({
@@ -76,7 +77,15 @@ vi.mock('../../../main/plugin-api', async (original) => {
         child.stdout!.on('data', (bytes: Buffer) => cb(bytes.toString()))
       },
       onExit: (cb) => {
-        child.on('close', (code) => cb({ exitCode: code ?? -1 }))
+        child.on('close', async (code) => {
+          const hold = native.heldExit
+          if (hold !== null && hold.cwd === opts.cwd) {
+            native.heldExit = null
+            hold.entered()
+            await hold.wait
+          }
+          cb({ exitCode: code ?? -1 })
+        })
       },
       write: (data) => {
         child.stdin!.write(data)
@@ -128,6 +137,8 @@ it('keeps live job and fenced data planes independent through another vault star
   }[] = []
   const fixture = fileURLToPath(new URL('./fixtures/scratch-provider.mjs', import.meta.url))
   native.removals.length = 0
+  native.heldExit = null
+  let releaseHeldExit: (() => void) | null = null
   native.start = (kind, bin, args, cwd, env) => {
     // Never execute a real provider or inherit keys/config from this machine.
     expect(bin).toBe(process.execPath)
@@ -345,10 +356,31 @@ it('keeps live job and fenced data planes independent through another vault star
     expect(bFence.entry.home).toBe(join(`${bFence.entry.cwd}.agent`, 'codex-home'))
     expect(aJob.entry.home).not.toBe(bJob.entry.home)
     expect(aFence.entry.home).not.toBe(bFence.entry.home)
-    // Stop A with both finalizers still owning live work. Its admission closes
-    // immediately, while teardown must reap the children and remove only A's
-    // scratch; B's same-id owners remain operational.
-    await host.stop(A)
+    // Hold A's real PTY exit callback after the operating-system child closes.
+    // Teardown must keep waiting for the production finalizer, while B's same-id
+    // job and fenced session remain operational.
+    const heldExit = deferred<void>()
+    releaseHeldExit = heldExit.resolve
+    const exitEntered = deferred<void>()
+    native.heldExit = {
+      cwd: aFence.entry.cwd,
+      entered: exitEntered.resolve,
+      wait: heldExit.promise,
+    }
+    let stoppedA = false
+    const stoppingA = host.stop(A).then(() => {
+      stoppedA = true
+    })
+    await exitEntered.promise
+    expect(stoppedA).toBe(false)
+    await expect(call(A, 'agent.sessions')).rejects.toThrow('no such method')
+    expect(await rows(B)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: bJob.sessionId, state: 'working' })]),
+    )
+    await intact(B, bJob.entry)
+    await intact(B, bFence.entry)
+    heldExit.resolve()
+    await stoppingA
     await Promise.all([aJob.entry.closed, aFence.entry.closed])
     await removed(aJob.entry.cwd)
     await removed(dirname(aJob.entry.home))
@@ -379,6 +411,8 @@ it('keeps live job and fenced data planes independent through another vault star
     await removed(join(b.jobs, `${bJob.sessionId}.pid`))
     expect(children).toHaveLength(5)
   } finally {
+    releaseHeldExit?.()
+    native.heldExit = null
     // Explicit ownership ledger: close activations, reap every synthetic child,
     // join provider/host finalizer deletions, then (and only then) remove roots.
     await host.stopAll()
