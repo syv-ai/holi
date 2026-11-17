@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
-import { runCommand, validateReport, validateSharedGraph } from '../scripts/host-checks.mjs'
+import {
+  moveCrashCases,
+  runCommand,
+  validateMoveCheckpoint,
+  validateReport,
+  validateSharedGraph,
+} from '../scripts/host-checks.mjs'
 
 import { storageFaultPhases, storageFixturePaths } from '../app/vault-storage-check'
 
@@ -227,6 +233,7 @@ test('host rejects absent, incomplete or nonportable shared graph evidence', () 
       'path-safety.ts',
       'vault-format.ts',
       'vault-format.v1.json',
+      'wiki-links.ts',
     ],
     edges: [
       { from: 'mobile-path-safety.ts', request: './path-safety', to: 'path-safety.ts' },
@@ -243,6 +250,64 @@ test('host rejects absent, incomplete or nonportable shared graph evidence', () 
     { edges: [...graph.edges, { from: 'vault-format.ts', request: 'node:fs', to: 'polyfill.js' }] },
   ])
     assert.throws(() => validateSharedGraph({ ...graph, ...patch }))
+})
+
+test('native move crash matrix covers every durable event and rejects forged checkpoint evidence', () => {
+  const cases = moveCrashCases()
+  assert.equal(cases.length, 13)
+  assert.deepEqual(
+    cases.map(({ phase, direction }) => `${phase}:${direction}`),
+    [
+      'journal-before:before',
+      'journal-after:after',
+      ...Array.from({ length: 4 }, () => ['file-before:before', 'file-after:after']).flat(),
+      'cleanup-before:before',
+      'cleanup-after:after',
+      'recovery-file-before:before',
+    ],
+  )
+  const caseInfo = cases[10]
+  const marker = {
+    schemaVersion: 1,
+    runId,
+    ordinal: caseInfo.ordinal,
+    phase: caseInfo.phase,
+    direction: caseInfo.direction,
+    path: 'move-22222222-2222-4222-8222-222222222222.json',
+    root: '/sandbox/Documents/holi-move-run-10',
+    privatePath: '/sandbox/Library/HoliVaultStorage/test-root',
+    pid: 42,
+    startedAt: 110,
+    readyAt: 120,
+    operationId: '22222222-2222-4222-8222-222222222222',
+  }
+  const context = {
+    runId,
+    caseInfo,
+    pid: 42,
+    launchedAt: 100,
+    now: 130,
+    root: marker.root,
+    privatePath: marker.privatePath,
+  }
+  assert.equal(validateMoveCheckpoint(marker, context), marker)
+  for (const patch of [
+    { pid: 43 },
+    { operationId: 'not-an-id' },
+    { root: '/outside' },
+    { privatePath: '/outside' },
+    { readyAt: 99 },
+    { phase: 'file-after' },
+    { path: '../outside' },
+  ])
+    assert.throws(() => validateMoveCheckpoint({ ...marker, ...patch }, context))
+  const journalBefore = cases[0]
+  assert.throws(() =>
+    validateMoveCheckpoint(
+      { ...marker, ordinal: 0, phase: journalBefore.phase, direction: journalBefore.direction },
+      { ...context, caseInfo: journalBefore },
+    ),
+  )
 })
 
 test('host command failures and timeouts cannot pass', async () => {

@@ -5,6 +5,7 @@ import { runVaultStorageCheck } from './vault-storage-check'
 import { nativeIO } from './native-posix.ios'
 import { createVaultStorage } from './vault-storage'
 import { runRestartPhase } from './storage-restart.ios'
+import { runMoveRestart } from './move-restart.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -47,9 +48,24 @@ export async function checkCompatibility(): Promise<string> {
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
-    if (!['normal', 'stage', 'recovery'].includes(launchPhase))
+    if (!['normal', 'stage', 'recovery', 'move-stage', 'move-recovery'].includes(launchPhase))
       throw new Error('Invalid storage phase')
     const corpus = runVaultFormatCorpus(nativeUtf8)
+    if (launchPhase === 'move-stage' || launchPhase === 'move-recovery') {
+      phase = launchPhase
+      operation = 'runMoveRestart'
+      const ordinal = Number(
+        NSProcessInfo.processInfo.environment.objectForKey('HOLI_MOVE_CASE') ?? '-1',
+      )
+      const moveRestart = await runMoveRestart(
+        launchPhase === 'move-stage' ? 'stage' : 'recovery',
+        runId,
+        ordinal,
+        startedAt,
+      )
+      persist({ corpus, moveRestart })
+      return 'Native move recovery passed'
+    }
     if (launchPhase === 'stage' || launchPhase === 'recovery') {
       phase = launchPhase
       operation = 'runRestartPhase'

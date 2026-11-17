@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -9,6 +9,8 @@ import {
   validateReport,
   validateSharedGraph,
   validateCheckpoint,
+  moveCrashCases,
+  validateMoveCheckpoint,
 } from './host-checks.mjs'
 import { captureStorageEvidence, readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
@@ -130,7 +132,7 @@ try {
   const library = await realpath(join(canonicalContainer, 'Library'))
   const installedApp = await realpath(await simctl('get_app_container', simulator, bundleId, 'app'))
   const installedBinary = join(installedApp, await plist('CFBundleExecutable'))
-  const launchPhase = async (phase) => {
+  const launchPhase = async (phase, moveCase) => {
     await rm(reportPath, { force: true })
     const launchedAt = Date.now()
     const output = await command('xcrun', ['simctl', 'launch', simulator, bundleId], {
@@ -138,6 +140,7 @@ try {
         ...process.env,
         SIMCTL_CHILD_HOLI_COMPAT_RUN_ID: runId,
         SIMCTL_CHILD_HOLI_STORAGE_PHASE: phase,
+        ...(moveCase ? { SIMCTL_CHILD_HOLI_MOVE_CASE: String(moveCase.ordinal) } : {}),
       },
     })
     const pid = Number(output.match(/: (\d+)$/)?.[1])
@@ -241,6 +244,206 @@ try {
   for (const [name, value] of interruptionArtifacts)
     assert.equal(await readFile(join(interruptionRoot, name), 'utf8'), value)
   process.kill(recoveryProcess.pid, 0)
+  const moveEvidence = []
+  const moveRootFor = (ordinal) => join(documents, `holi-move-${runId}-${ordinal}`)
+  const moveBytes = {
+    source: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[from.md| self ]]\r\n',
+    moved: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[to.md| self ]]\r\n',
+    backA: 'first [[from.md|  label ]] then [[from.md#Heading]]\r\n',
+    movedA: 'first [[to.md|  label ]] then [[from.md#Heading]]\r\n',
+    backB: '😀 [[from.md|another label]] and [[from.md]]\n',
+    movedB: '😀 [[to.md|another label]] and [[to.md]]\n',
+  }
+  for (const caseInfo of moveCrashCases()) {
+    const root = moveRootFor(caseInfo.ordinal)
+    const markerPath = join(documents, `holi-move-checkpoint-${runId}-${caseInfo.ordinal}.json`)
+    const stagedMove = await launchPhase('move-stage', caseInfo)
+    const marker = await waitJson(markerPath, stagedMove, 30_000)
+    validateMoveCheckpoint(marker, {
+      runId,
+      caseInfo,
+      ...stagedMove,
+      now: Date.now(),
+      root,
+      privatePath: stagingDirectory(library, root),
+    })
+    assert.equal(await realpath(root), root)
+    assert.equal(await realpath(marker.privatePath), marker.privatePath)
+    const current = await Promise.all(
+      ['from.md', 'to.md', 'back-a.md', 'back-b.md'].map(async (path) => {
+        try {
+          return [path, await readFile(join(root, path), 'utf8')]
+        } catch (error) {
+          if (error.code === 'ENOENT') return [path, null]
+          throw error
+        }
+      }),
+    )
+    const currentMap = Object.fromEntries(current)
+    const beforeImages = {
+      'from.md': moveBytes.source,
+      'to.md': null,
+      'back-a.md': moveBytes.backA,
+      'back-b.md': moveBytes.backB,
+    }
+    const afterImages = {
+      'from.md': null,
+      'to.md': moveBytes.moved,
+      'back-a.md': moveBytes.movedA,
+      'back-b.md': moveBytes.movedB,
+    }
+    if (caseInfo.phase === 'journal-before') {
+      assert.deepEqual(currentMap, beforeImages)
+    } else if (caseInfo.phase === 'cleanup-after') {
+      assert.deepEqual(currentMap, afterImages)
+    } else {
+      const privatePath = stagingDirectory(library, root)
+      assert.equal(await realpath(privatePath), privatePath)
+      const journal = JSON.parse(
+        await readFile(join(privatePath, `move-${marker.operationId}.json`), 'utf8'),
+      )
+      assert.equal(journal.schema, 2)
+      assert.equal(journal.root, root)
+      assert.equal(journal.operationId, marker.operationId)
+      assert.equal(journal.from, 'from.md')
+      assert.equal(journal.to, 'to.md')
+      const journalChanges = Object.fromEntries(
+        journal.changes.map((change) => [change.path, change]),
+      )
+      assert.deepEqual(Object.keys(journalChanges).sort(), Object.keys(beforeImages).sort())
+      for (const path of Object.keys(beforeImages)) {
+        const change = journalChanges[path]
+        const decodeImage = (image) => (image === null ? null : Buffer.from(image).toString('utf8'))
+        assert.equal(decodeImage(change.before), beforeImages[path])
+        assert.equal(decodeImage(change.after), afterImages[path])
+        assert.ok(
+          currentMap[path] === beforeImages[path] || currentMap[path] === afterImages[path],
+          `Unexpected bytes at ${path} on checkpoint ${caseInfo.ordinal}`,
+        )
+      }
+    }
+    const runningBinary = await command('ps', ['-p', String(stagedMove.pid), '-o', 'comm='])
+    assert.equal(await realpath(runningBinary), installedBinary)
+    process.kill(stagedMove.pid, 'SIGKILL')
+    let moveGone = false
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try {
+        process.kill(stagedMove.pid, 0)
+      } catch (error) {
+        if (error.code === 'ESRCH') {
+          moveGone = true
+          break
+        }
+        throw error
+      }
+      await sleep(50)
+    }
+    assert.ok(moveGone, `Move process ${caseInfo.ordinal} did not terminate`)
+    const receipt = {
+      runId,
+      ordinal: caseInfo.ordinal,
+      pid: stagedMove.pid,
+      container: canonicalContainer,
+      root,
+      marker,
+      bytesAtKill: currentMap,
+      killedAt: Date.now(),
+      signal: 'SIGKILL',
+      executable: installedBinary,
+    }
+    await writeFile(
+      join(artifacts, `move-${caseInfo.ordinal}-kill.json`),
+      JSON.stringify(receipt, null, 2),
+    )
+    const moveRecovery = await launchPhase('move-recovery', caseInfo)
+    assert.equal(
+      await realpath(await simctl('get_app_container', simulator, bundleId, 'data')),
+      canonicalContainer,
+    )
+    const moveReport = await waitJson(reportPath, moveRecovery, 30_000)
+    assert.equal(moveReport.runId, runId)
+    assert.equal(moveReport.phase, 'move-recovery')
+    assert.equal(moveReport.moveRestart.root, root)
+    assert.equal(moveReport.moveRestart.recovered, caseInfo.phase !== 'journal-before')
+    assert.equal(moveReport.moveRestart.malformedJournalRefused, true)
+    assert.equal(moveReport.moveRestart.conflictJournalRefused, true)
+    const expectedSource = caseInfo.phase === 'journal-before' ? moveBytes.source : null
+    const expectedDestination = caseInfo.phase === 'journal-before' ? null : moveBytes.moved
+    const expectedBackA = caseInfo.phase === 'journal-before' ? moveBytes.backA : moveBytes.movedA
+    const expectedBackB = caseInfo.phase === 'journal-before' ? moveBytes.backB : moveBytes.movedB
+    assert.equal(
+      await readFile(join(root, 'from.md'), 'utf8').catch((error) =>
+        error.code === 'ENOENT' ? null : Promise.reject(error),
+      ),
+      expectedSource,
+    )
+    assert.equal(
+      await readFile(join(root, 'to.md'), 'utf8').catch((error) =>
+        error.code === 'ENOENT' ? null : Promise.reject(error),
+      ),
+      expectedDestination,
+    )
+    assert.equal(await readFile(join(root, 'back-a.md'), 'utf8'), expectedBackA)
+    assert.equal(await readFile(join(root, 'back-b.md'), 'utf8'), expectedBackB)
+    assert.deepEqual(await readFile(join(root, 'occupied.md'), 'utf8'), 'occupied')
+    assert.equal(await readFile(join(root, 'Case.md'), 'utf8'), 'case alias fixture')
+    assert.equal(await readFile(join(root, 'private.local.md'), 'utf8'), 'local source')
+    assert.equal(
+      await readFile(
+        join(documents, `holi-move-other-${runId}-${caseInfo.ordinal}`, 'from.md'),
+        'utf8',
+      ),
+      'other root',
+    )
+    const malformedRoot = join(documents, `holi-move-malformed-${runId}-${caseInfo.ordinal}`)
+    const conflictRoot = join(documents, `holi-move-conflict-${runId}-${caseInfo.ordinal}`)
+    assert.equal(
+      await readFile(join(malformedRoot, 'keep.md'), 'utf8'),
+      'malformed fixture preserved',
+    )
+    assert.equal(await readFile(join(conflictRoot, 'from.md'), 'utf8'), 'newer user bytes')
+    const malformedPrivate = stagingDirectory(library, malformedRoot)
+    const conflictPrivate = stagingDirectory(library, conflictRoot)
+    assert.equal(await realpath(malformedPrivate), malformedPrivate)
+    assert.equal(await realpath(conflictPrivate), conflictPrivate)
+    const malformedId = `00000000-0000-4000-8000-${String(caseInfo.ordinal).padStart(12, '0')}`
+    const conflictId = `10000000-0000-4000-8000-${String(caseInfo.ordinal).padStart(12, '0')}`
+    assert.equal(await readFile(join(malformedPrivate, `move-${malformedId}.json`), 'utf8'), '{bad')
+    const retainedConflict = JSON.parse(
+      await readFile(join(conflictPrivate, `move-${conflictId}.json`), 'utf8'),
+    )
+    assert.equal(retainedConflict.operationId, conflictId)
+    assert.equal(retainedConflict.from, 'from.md')
+    assert.deepEqual(
+      await readdir(join(root, '.holi-storage-private')).catch((error) =>
+        error.code === 'ENOENT' ? [] : Promise.reject(error),
+      ),
+      [],
+    )
+    moveEvidence.push(receipt)
+    await writeFile(
+      join(artifacts, `move-${caseInfo.ordinal}-evidence.json`),
+      JSON.stringify(
+        {
+          ...receipt,
+          recovered: true,
+          expectedSource,
+          expectedDestination,
+          expectedBackA,
+          expectedBackB,
+          malformedRoot,
+          conflictRoot,
+        },
+        null,
+        2,
+      ),
+    )
+    await simctl('terminate', simulator, bundleId)
+  }
+  await writeFile(
+    join(artifacts, 'move-matrix.json'),
+    JSON.stringify({ cases: moveEvidence.length, evidence: moveEvidence }, null, 2),
+  )
   await writeFile(
     join(artifacts, 'acceptance.json'),
     JSON.stringify(
@@ -251,6 +454,7 @@ try {
         normal: true,
         stagedKill: true,
         recovery: true,
+        moveCrashCases: moveEvidence.length,
         faultOperations: 10,
         rawSpellings: 2,
       },
@@ -259,7 +463,7 @@ try {
     ),
   )
   console.log(
-    `iOS ${runtime.version}: ${report.corpus.passed}/${report.corpus.total} format cases, 10 native failure cases, raw NFC/NFD and staged-kill recovery passed. Evidence: ${artifacts}`,
+    `iOS ${runtime.version}: ${report.corpus.passed}/${report.corpus.total} format cases, 10 storage faults, ${moveEvidence.length} move crash cases, raw NFC/NFD and staged-kill recovery passed. Evidence: ${artifacts}`,
   )
 } catch (error) {
   await writeFile(
@@ -302,7 +506,23 @@ try {
     const documents = join(canonicalContainer, 'Documents')
     const root = join(documents, `holi-storage-interruption-${runId}`)
     await captureStorageEvidence(
-      [documents, stagingDirectory(join(canonicalContainer, 'Library'), root)],
+      [
+        documents,
+        stagingDirectory(join(canonicalContainer, 'Library'), root),
+        ...moveCrashCases().flatMap(({ ordinal }) => {
+          const moveRoot = join(documents, `holi-move-${runId}-${ordinal}`)
+          const malformedRoot = join(documents, `holi-move-malformed-${runId}-${ordinal}`)
+          const conflictRoot = join(documents, `holi-move-conflict-${runId}-${ordinal}`)
+          return [
+            moveRoot,
+            malformedRoot,
+            conflictRoot,
+            stagingDirectory(join(canonicalContainer, 'Library'), moveRoot),
+            stagingDirectory(join(canonicalContainer, 'Library'), malformedRoot),
+            stagingDirectory(join(canonicalContainer, 'Library'), conflictRoot),
+          ]
+        }),
+      ],
       join(artifacts, 'failure-files.json'),
     )
   }
