@@ -551,7 +551,12 @@ try {
     true,
   )
   await evaluate('document.documentElement.dataset.theme="light"')
+  await evaluate('document.documentElement.style.colorScheme="light"', true)
   assert.equal(await evaluate('document.documentElement.dataset.theme'), 'light')
+  assert.equal(
+    await evaluate('getComputedStyle(document.documentElement).colorScheme', true),
+    'light',
+  )
   await focusGuest()
   const recordingStartedAt = process.hrtime.bigint()
   const recorder = createNativeProofRecorder({
@@ -586,6 +591,11 @@ try {
   await sleep(500)
   await recorder.recordUnassertedFrame('activation-result')
   await evaluate('document.documentElement.dataset.theme="dark"')
+  await evaluate('document.documentElement.style.colorScheme="dark"', true)
+  assert.equal(
+    await evaluate('getComputedStyle(document.documentElement).colorScheme', true),
+    'dark',
+  )
   await focusGuest()
   await key('f')
   await wait('!!document.querySelector("[data-host-hints]")', 'dark theme proof session')
