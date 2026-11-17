@@ -1334,7 +1334,7 @@ describe('rich-text Vim extension', () => {
 
   it('changes only selected logical-line content and groups the change with delayed typing', () => {
     for (const [html, expected] of [
-      ['<pre><code>first\nmiddle\nlast</code></pre>', 'firstX\nlast'],
+      ['<pre><code>first\nmiddle\nlast</code></pre>', 'first\nX\nlast'],
       ['<p>first<br>middle<br>last</p>', 'firstXlast'],
     ] as const) {
       const ed = open(html)
@@ -1368,11 +1368,11 @@ describe('rich-text Vim extension', () => {
   it('changes first, middle and last logical lines with counts one and two', () => {
     const cases = [
       { index: 0, count: 1, code: 'X\nmiddle\nlast', hardBreak: 'X<br>middle<br>last' },
-      { index: 1, count: 1, code: 'firstX\nlast', hardBreak: 'firstX<br>last' },
-      { index: 2, count: 1, code: 'first\nmiddleX', hardBreak: 'first<br>middleX' },
+      { index: 1, count: 1, code: 'first\nX\nlast', hardBreak: 'first<br>X<br>last' },
+      { index: 2, count: 1, code: 'first\nmiddle\nX', hardBreak: 'first<br>middle<br>X' },
       { index: 0, count: 2, code: 'X\nlast', hardBreak: 'X<br>last' },
-      { index: 1, count: 2, code: 'firstX', hardBreak: 'firstX' },
-      { index: 2, count: 2, code: 'first\nmiddleX', hardBreak: 'first<br>middleX' },
+      { index: 1, count: 2, code: 'first\nX', hardBreak: 'first<br>X' },
+      { index: 2, count: 2, code: 'first\nmiddle\nX', hardBreak: 'first<br>middle<br>X' },
     ] as const
     for (const { index, count, code, hardBreak } of cases) {
       for (const schema of ['code', 'hardBreak'] as const) {
