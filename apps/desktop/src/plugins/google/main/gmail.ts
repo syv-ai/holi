@@ -756,7 +756,7 @@ async function fetchLatestIncomingInvitations(
       const message = await api.get<RawMessage>(
         `${BASE}/messages/${encodeURIComponent(messageId)}`,
         {
-          format: 'metadata',
+          format: 'full',
           fields: `id,threadId,payload(${mimeEvidenceFields(MIME_EVIDENCE_DEPTH)})`,
         },
       )

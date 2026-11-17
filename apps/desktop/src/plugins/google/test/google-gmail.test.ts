@@ -80,7 +80,7 @@ function gmail(
     seen.push(url)
     const path = new URL(url).pathname
     const isIcs = queryParam(url).includes('filename:ics')
-    const body = path.endsWith('/labels')
+    let body = path.endsWith('/labels')
       ? { labels }
       : path.endsWith('/threads')
         ? isIcs
@@ -93,6 +93,17 @@ function gmail(
               .find((message) => (message as { id?: string }).id === path.split('/').pop()) ??
             {})
           : (threads[path.split('/').pop()!] ?? {})
+    if (path.includes('/messages/') && new URL(url).searchParams.get('format') === 'metadata') {
+      const message = body as Record<string, unknown>
+      const payload = message.payload as Record<string, unknown> | undefined
+      // Gmail metadata never includes MIME children, even when fields requests them.
+      body = {
+        ...message,
+        ...(payload === undefined
+          ? {}
+          : { payload: { ...payload, parts: undefined, body: undefined } }),
+      }
+    }
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   }) as unknown as typeof globalThis.fetch
 
@@ -336,7 +347,7 @@ describe('listThreads', () => {
     const mimeProbe = seen
       .map((value) => new URL(value))
       .find((url) => url.pathname.endsWith('/messages/invite-message'))
-    expect(mimeProbe?.searchParams.get('format')).toBe('metadata')
+    expect(mimeProbe?.searchParams.get('format')).toBe('full')
     expect(mimeProbe?.searchParams.get('fields')).toMatch(/^id,threadId,payload\(/)
     expect(mimeProbe?.searchParams.get('fields')).not.toMatch(/body|data|attachmentId/i)
   })
