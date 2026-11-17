@@ -4,7 +4,7 @@ import {
   isSecretPath,
   vaultRelPath,
 } from '@holi/shared/mobile-path-safety'
-import { rewriteWikiLinksLosslessly } from '@holi/shared/wiki-links'
+import { formatWikiLink, parseWikiLinks, rewriteWikiLinksLosslessly } from '@holi/shared/wiki-links'
 import type { NativeFiles, StorageCheckpointCallback } from './native-files'
 
 function utf8Encode(value: string): Uint8Array {
@@ -47,6 +47,16 @@ const rewriteDocumentLinks = (text: string, from: string, to: string) => {
   return { ...rewritten, text: `${bom ? '\uFEFF' : ''}${rewritten.text}` }
 }
 const journalName = (id: string) => `${prefix}${id}${suffix}`
+const isPublicNote = (path: string) =>
+  !path.split('/').some((segment) => segment.startsWith('.')) &&
+  !isLocalOnlyPath(path) &&
+  !isSecretPath(path) &&
+  !isInIgnoredDir(path) &&
+  path.toLowerCase().endsWith('.md')
+const isRoundTripTarget = (path: string) => {
+  const parsed = parseWikiLinks(formatWikiLink(path))
+  return parsed.length === 1 && parsed[0]?.target === path && parsed[0]?.label === undefined
+}
 
 function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
   if (!(raw instanceof Uint8Array) || raw.length > maxJournalBytes)
@@ -83,14 +93,10 @@ function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
     to !== candidate.to ||
     from === to ||
     from.normalize('NFD').toLowerCase() === to.normalize('NFD').toLowerCase() ||
-    isLocalOnlyPath(from) ||
-    isLocalOnlyPath(to) ||
-    isSecretPath(from) ||
-    isSecretPath(to) ||
-    isInIgnoredDir(from) ||
-    isInIgnoredDir(to) ||
-    !from.toLowerCase().endsWith('.md') ||
-    !to.toLowerCase().endsWith('.md')
+    !isPublicNote(from) ||
+    !isPublicNote(to) ||
+    !isRoundTripTarget(from) ||
+    !isRoundTripTarget(to)
   )
     throw new Error('Invalid move recovery identity paths')
   const changes = candidate.changes as unknown[]
@@ -112,9 +118,8 @@ function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
     const folded = canonical.normalize('NFD').toLowerCase()
     if (
       canonical !== change.path ||
-      isLocalOnlyPath(canonical) ||
-      isSecretPath(canonical) ||
-      isInIgnoredDir(canonical) ||
+      !isPublicNote(canonical) ||
+      !isRoundTripTarget(canonical) ||
       foldedPaths.has(folded)
     )
       throw new Error('Invalid move recovery path spelling')
@@ -187,7 +192,10 @@ async function apply(
 ) {
   const wanted = decode(change.after)
   const current = await adapter.readOptional(root, change.path)
-  if (equal(current, wanted)) return
+  if (equal(current, wanted)) {
+    await adapter.confirm(root, change.path, wanted)
+    return
+  }
   if (!equal(current, decode(change.before)))
     throw new Error(`Move recovery conflict at ${change.path}`)
   await checkpoint(callback, 'file', 'before', journal.operationId, change.path)
@@ -196,6 +204,7 @@ async function apply(
   else await adapter.publish(root, change.path, wanted, current)
   const verified = await adapter.readOptional(root, change.path)
   if (!equal(verified, wanted)) throw new Error(`Move publication did not verify at ${change.path}`)
+  await adapter.confirm(root, change.path, wanted)
   await checkpoint(callback, 'file', 'after', journal.operationId, change.path)
 }
 
@@ -207,12 +216,14 @@ export async function recoverMoves(
   callback?: StorageCheckpointCallback,
 ): Promise<void> {
   const names = await adapter.privateList(root)
-  const pending: { name: string; journal: Journal }[] = []
+  const pending: { name: string; journal: Journal; raw: Uint8Array }[] = []
   const paths = new Set<string>()
   for (const name of names.sort()) {
     if (!name.startsWith(prefix) || !name.endsWith(suffix))
       throw new Error('Unknown private vault storage artifact')
-    const journal = validateJournal(await adapter.privateRead(root, name), root, name)
+    const raw = await adapter.privateRead(root, name)
+    const journal = validateJournal(raw, root, name)
+    await adapter.privateConfirm(root, name, raw)
     const validatedPaths = new Set<string>()
     for (const change of journal.changes) {
       const validated = validatePath(change.path)
@@ -226,7 +237,7 @@ export async function recoverMoves(
     for (const entry of await adapter.list(root)) {
       if (
         entry.kind !== 'file' ||
-        !entry.path.toLowerCase().endsWith('.md') ||
+        !isPublicNote(entry.path) ||
         entry.path === journal.from ||
         entry.path === journal.to ||
         changedPaths.has(entry.path)
@@ -245,12 +256,22 @@ export async function recoverMoves(
       if (!equal(state, decode(change.before)) && !equal(state, decode(change.after)))
         throw new Error(`Move recovery conflict at ${change.path}`)
     })
-    pending.push({ name, journal })
+    pending.push({ name, journal, raw })
   }
-  for (const { name, journal } of pending) {
+  for (const { name, journal, raw } of pending) {
     for (const change of journal.changes) await apply(adapter, root, change, journal, callback)
+    const verifyPostimages = async () => {
+      await adapter.privateConfirm(root, name, raw)
+      for (const change of journal.changes) {
+        const current = await adapter.readOptional(root, change.path)
+        if (!equal(current, decode(change.after)))
+          throw new Error(`Move recovery postimage changed at ${change.path}`)
+        await adapter.confirm(root, change.path, decode(change.after))
+      }
+    }
+    await verifyPostimages()
     await checkpoint(callback, 'cleanup', 'before', journal.operationId, name)
-    const raw = await adapter.privateRead(root, name)
+    await verifyPostimages()
     await adapter.privateRemove(root, name, raw)
     await checkpoint(callback, 'cleanup', 'after', journal.operationId, name)
   }
@@ -269,30 +290,17 @@ export async function moveNote(
   const source = validatePath(from)
   const target = validatePath(to)
   if (
-    isLocalOnlyPath(source) ||
-    isLocalOnlyPath(target) ||
-    isSecretPath(source) ||
-    isSecretPath(target) ||
-    isInIgnoredDir(source) ||
-    isInIgnoredDir(target) ||
-    source === target ||
-    !source.toLowerCase().endsWith('.md') ||
-    !target.toLowerCase().endsWith('.md')
+    !isPublicNote(source) ||
+    !isPublicNote(target) ||
+    !isRoundTripTarget(source) ||
+    !isRoundTripTarget(target) ||
+    source === target
   )
     throw new Error('Move requires two distinct markdown notes')
-  if (
-    source.startsWith('.') ||
-    target.startsWith('.') ||
-    source.split('/').some((part) => part.startsWith('.')) ||
-    target.split('/').some((part) => part.startsWith('.'))
-  )
-    throw new Error('Move note path is not public')
   const sourceBytes = await adapter.read(root, source)
   if (revision(sourceBytes) !== expectedRevision) throw new Error('Stale document revision')
   const entries = await adapter.list(root)
-  const files = entries.filter(
-    (entry) => entry.kind === 'file' && entry.path.toLowerCase().endsWith('.md'),
-  )
+  const files = entries.filter((entry) => entry.kind === 'file' && isPublicNote(entry.path))
   const folded = (path: string) => path.normalize('NFD').toLowerCase()
   const directories = new Set(
     entries.filter((entry) => entry.kind === 'directory').map((entry) => entry.path),
@@ -327,7 +335,9 @@ export async function moveNote(
   const journalBytes = utf8Encode(JSON.stringify(journal))
   if (journalBytes.length > maxJournalBytes) throw new Error('Move recovery journal is too large')
   await checkpoint(callback, 'journal', 'before', operationId)
-  await adapter.privatePublish(root, journalName(operationId), journalBytes, null)
+  const name = journalName(operationId)
+  await adapter.privatePublish(root, name, journalBytes, null)
+  await adapter.privateConfirm(root, name, journalBytes)
   await checkpoint(callback, 'journal', 'after', operationId)
   // Revalidate the complete plan immediately before mutation.
   for (const change of changes) {
@@ -336,6 +346,6 @@ export async function moveNote(
       throw new Error(`Move precondition changed at ${change.path}`)
   }
   await recoverMoves(adapter, root, validatePath, callback)
-  const movedBytes = utf8Encode(movedSource.text)
+  const movedBytes = await adapter.read(root, target)
   return { path: target, bytes: movedBytes, revision: revision(movedBytes) }
 }

@@ -106,7 +106,7 @@ describe('rewriteWikiLinksLosslessly', () => {
 
   it('matches only the parser target exactly and returns the original text on no match', () => {
     const text = '[[folder/old.md]] [[old.md]] [[folder/old.md|label]]'
-    expect(rewriteWikiLinksLosslessly(text, 'old.md', 'new.md')).toEqual({ text, count: 0 })
+    expect(rewriteWikiLinksLosslessly(text, 'absent.md', 'new.md')).toEqual({ text, count: 0 })
     expect(rewriteWikiLinksLosslessly(text, 'folder/old.md', 'new.md')).toEqual({
       text: '[[new.md]] [[old.md]] [[new.md|label]]',
       count: 2,
