@@ -907,9 +907,9 @@ function handleNormal(
       if (operator !== 'y' && settings.editable() && safeTo > rangeFrom) {
         if (inlineLinewise && inlineFirst && inlineLast) {
           const nextLine = inlineLines[Math.max(firstInlineIndex, lastInlineIndex) + 1]
-          const previousLine = inlineLines[Math.min(firstInlineIndex, lastInlineIndex) - 1]
-          const deleteFrom = previousLine && !nextLine ? previousLine.to : inlineFirst.from
-          const deleteTo = nextLine ? nextLine.from : inlineLast.to
+          const deleteFrom = inlineFirst.from
+          const deleteTo =
+            operator === 'c' ? inlineLast.to : nextLine ? nextLine.from : inlineLast.to
           const tr = closeHistory(view.state.tr)
           if (deleteFrom === sourceLine.block.from && deleteTo === sourceLine.block.to) {
             tr.replaceWith(
@@ -922,11 +922,47 @@ function handleNormal(
               ),
             )
           } else tr.delete(deleteFrom, deleteTo)
+          if (
+            operator === 'c' &&
+            sourceLine.block.node.type.name === 'codeBlock' &&
+            tr.doc.lastChild?.type.name === 'paragraph' &&
+            tr.doc.lastChild.content.size === 0
+          ) {
+            const paragraphFrom = tr.doc.content.size - tr.doc.lastChild.nodeSize
+            tr.delete(paragraphFrom, tr.doc.content.size)
+          }
           if (operator === 'c') dispatchChange(view, tr, deleteFrom)
           else view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
         } else {
-          const tr = closeHistory(view.state.tr).delete(rangeFrom, safeTo)
-          if (operator === 'c') dispatchChange(view, tr, rangeFrom)
+          const tr = closeHistory(view.state.tr)
+          let changePosition = rangeFrom
+          if (operator === 'c' && linewiseMotion && sourceLine && destinationLine) {
+            const firstBlock =
+              sourceLine.block.from <= destinationLine.block.from
+                ? sourceLine.block
+                : destinationLine.block
+            const lastBlock =
+              sourceLine.block.from <= destinationLine.block.from
+                ? destinationLine.block
+                : sourceLine.block
+            changePosition = firstBlock.from - 1
+            tr.replaceWith(
+              firstBlock.from - 1,
+              lastBlock.to + 1,
+              firstBlock.node.type.create(firstBlock.node.attrs, null, firstBlock.node.marks),
+            )
+          } else tr.delete(rangeFrom, safeTo)
+          if (
+            operator === 'c' &&
+            linewiseMotion &&
+            sourceLine?.block.node.type.name === 'codeBlock' &&
+            tr.doc.lastChild?.type.name === 'paragraph' &&
+            tr.doc.lastChild.content.size === 0
+          ) {
+            const paragraphFrom = tr.doc.content.size - tr.doc.lastChild.nodeSize
+            tr.delete(paragraphFrom, tr.doc.content.size)
+          }
+          if (operator === 'c') dispatchChange(view, tr, changePosition)
           else view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(rangeFrom), 1)))
         }
         if (operator !== 'c') closeHistoryBoundary(view)
@@ -1046,9 +1082,8 @@ function handleNormal(
           inlineVisual.lines.findIndex((item) => item.from === inlineVisual.first.from),
           inlineVisual.lines.findIndex((item) => item.from === inlineVisual.last.from),
         )
-        const previousLine = inlineVisual.lines[low - 1]
         const nextLine = inlineVisual.lines[high + 1]
-        deleteFrom = previousLine && !nextLine ? previousLine.to : inlineVisual.lines[low]!.from
+        deleteFrom = inlineVisual.lines[low]!.from
         const deleteTo =
           key === 'c'
             ? inlineVisual.lines[high]!.to
@@ -1066,6 +1101,21 @@ function handleNormal(
             ),
           )
         } else tr.delete(deleteFrom, deleteTo)
+      } else if (key === 'c' && current.visualLinewise && firstVisualLine && lastVisualLine) {
+        const firstBlock =
+          firstVisualLine.block.from <= lastVisualLine.block.from
+            ? firstVisualLine.block
+            : lastVisualLine.block
+        const lastBlock =
+          firstVisualLine.block.from <= lastVisualLine.block.from
+            ? lastVisualLine.block
+            : firstVisualLine.block
+        deleteFrom = firstBlock.from - 1
+        tr.replaceWith(
+          firstBlock.from - 1,
+          lastBlock.to + 1,
+          firstBlock.node.type.create(firstBlock.node.attrs, null, firstBlock.node.marks),
+        )
       } else tr.delete(deleteFrom, range.to)
       if (key === 'c') dispatchChange(view, tr, deleteFrom)
       else {
