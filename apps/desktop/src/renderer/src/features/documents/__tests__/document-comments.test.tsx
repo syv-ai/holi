@@ -179,6 +179,67 @@ describe('placeThreads', () => {
     expect(threadsAt(ed.state, from + 5)).toEqual(['a'])
   })
 
+  it.each([
+    { label: 'paragraph', body: 'alpha beta\n', expectedBlock: 'paragraph' },
+    { label: 'heading', body: '## alpha beta\n', expectedBlock: 'heading' },
+    { label: 'checked task', body: '- [x] alpha beta\n', expectedBlock: 'task' },
+  ])('tracks a Vim line change from its insertion point in a $label', ({ body, expectedBlock }) => {
+    const ed = open(body)
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('c')
+
+    if (expectedBlock === 'heading') expect(ed.state.doc.firstChild?.type.name).toBe('heading')
+    if (expectedBlock === 'heading') expect(ed.state.doc.firstChild?.attrs.level).toBe(2)
+    if (expectedBlock === 'task') {
+      expect(ed.state.doc.firstChild?.firstChild?.type.name).toBe('taskItem')
+      expect(ed.state.doc.firstChild?.firstChild?.attrs.checked).toBe(true)
+    }
+    for (const character of 'omega') {
+      ed.view.dispatch(ed.state.tr.insertText(character))
+      const { head } = ed.state.selection
+      expect(ed.state.doc.textBetween(head - 1, head)).toBe(character)
+      expect(threadsAt(ed.state, head - 1)).toEqual(['a'])
+    }
+    expect(ed.state.doc.textContent).toContain('omega')
+  })
+
+  it.each(['move', 'blur'] as const)(
+    'cancels Vim line-change comment tracking after %s',
+    (cancel) => {
+      const ed = open('alpha beta\n')
+      const markdown = ed.getMarkdown()
+      const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+      setCommentRanges(ed, { ranges: [range!] })
+      configureRichTextVim(ed.view, true, true, () => true)
+      ed.commands.setTextSelection(range!.from)
+      const press = (value: string) =>
+        ed.view.dom.dispatchEvent(
+          new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+        )
+
+      press('c')
+      press('c')
+      ed.view.dispatch(ed.state.tr.insertText('a'))
+      const { head } = ed.state.selection
+      if (cancel === 'move') ed.commands.setTextSelection(head - 1)
+      else ed.view.dom.dispatchEvent(new FocusEvent('blur'))
+      ed.view.dispatch(ed.state.tr.insertText('!'))
+
+      const inserted = rangeOf(ed, '!')
+      expect(threadsAt(ed.state, inserted.from)).toEqual([])
+    },
+  )
+
   it('keeps a Vim change comment over character-by-character insertions', () => {
     const ed = open('alpha beta\n')
     const markdown = ed.getMarkdown()
@@ -199,6 +260,29 @@ describe('placeThreads', () => {
     expect(ed.state.doc.textBetween(from, to)).toBe('omega')
     expect(threadsAt(ed.state, from)).toEqual(['a'])
     expect(threadsAt(ed.state, to - 1)).toEqual(['a'])
+  })
+
+  it.each([
+    { operation: ['d', 'w'], body: 'alpha beta\n' },
+    { operation: ['d', 'd'], body: 'alpha\nbeta\n' },
+  ])('does not reanchor a comment after destructive Vim $operation', ({ operation, body }) => {
+    const ed = open(body)
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    for (const key of operation) press(key)
+    press('i')
+    ed.view.dispatch(ed.state.tr.insertText('!'))
+
+    const inserted = rangeOf(ed, '!')
+    expect(threadsAt(ed.state, inserted.from)).toEqual([])
   })
 
   it('does not extend a replacement comment after deleting at its end', () => {
