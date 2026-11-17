@@ -69,8 +69,8 @@ export interface GoogleData {
   fetchAgenda(window: AgendaWindow, overrides: CalendarOverrides): Promise<CalendarEvent[]>
   /** The last agenda for this exact question, or `null`. Never a request. */
   cachedAgenda(window: AgendaWindow, overrides: CalendarOverrides): CalendarEvent[] | null
-  /** Ordinary lists use a delta; explicit searches fetch a fresh page. */
-  threads(options: ListThreadsOptions): Promise<MailPage>
+  /** Ordinary lists use a delta; CLI reads can request an independent fresh page. */
+  threads(options: ListThreadsOptions, context?: { freshPage?: boolean }): Promise<MailPage>
   /**
    * The address book, fetched **once per connected account**.
    *
@@ -292,7 +292,7 @@ export function createGoogleData({
       return cache.readAgenda(agendaKey(window, overrides))
     },
 
-    async threads(options) {
+    async threads(options, context) {
       assertActive()
       let knownAddresses: string[] | undefined
       try {
@@ -303,7 +303,7 @@ export function createGoogleData({
       } catch {
         // Without account-authenticated addresses, classifying a message as neither would be false certainty.
       }
-      const result = await syncThreads(api(), cache, options, knownAddresses)
+      const result = await syncThreads(api(), cache, options, knownAddresses, context)
       assertActive()
       if (options.needsReply !== true) return result
       return {

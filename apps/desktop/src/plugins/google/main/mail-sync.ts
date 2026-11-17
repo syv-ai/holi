@@ -87,6 +87,7 @@ export async function syncThreads(
   cache: GoogleCache,
   options: ListThreadsOptions = {},
   knownAddresses?: string[],
+  context?: { freshPage?: boolean },
 ): Promise<MailPage> {
   // Recipient classification depends on the resolved account identities. Keep
   // summaries from an outage/previous identity from becoming authoritative once
@@ -108,7 +109,7 @@ export async function syncThreads(
   // Needs-reply also always fetches one fresh Gmail page: filtering a cached
   // slice would lose a valid continuation when that slice has no matches. Ordinary
   // unfiltered/category/unread/mailbox lists remain delta-backed.
-  if (options.pageToken !== undefined || options.needsReply === true)
+  if (options.pageToken !== undefined || options.needsReply === true || context?.freshPage === true)
     return listThreads(api, options, knownAddresses)
   if (options.query?.trim()) return fullSync(api, cache, options, key, knownAddresses)
   const cached = cache.readThreads(key)
