@@ -29,7 +29,7 @@ asarUnpack:
   - '**/node_modules/@img/**'
   # The PDF plugin hands pdfium's wasm to the engine by path.
   # Community plugin servers read the ?asset script by filesystem path.
-  - 'out/main/assets/**'
+  - 'out/main/chunks/**'
   - '**/node_modules/@embedpdf/pdfium/**'
   # The meeting VAD imports onnxruntime-web's wasm loader by path.
   - '**/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.*'

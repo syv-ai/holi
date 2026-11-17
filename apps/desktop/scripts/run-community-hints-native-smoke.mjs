@@ -4,11 +4,11 @@ import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, copyFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { externalizeDepsPlugin } from 'electron-vite'
+import { build as electronBuild } from 'electron-vite'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(
@@ -21,6 +21,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const assertions = []
 let child
 let closed
+let closeResult
+let screencastFrames = []
+const mainBuildConfig = join(desktop, 'scripts/community-hints-native-smoke.electron.config.mjs')
 let ws
 let quit
 let log = ''
@@ -97,26 +100,23 @@ try {
       rollupOptions: { input: join(desktop, 'scripts/community-hints-native-smoke.html') },
     },
   })
-  await build({
-    configFile: false,
-    root: desktop,
-    plugins: [externalizeDepsPlugin({ exclude: ['@holi/shared'] })],
-    build: {
-      ssr: true,
-      target: 'node24',
-      outDir: root,
-      emptyOutDir: false,
-      rollupOptions: {
-        input: join(desktop, 'scripts/community-hints-native-smoke-main.ts'),
-        external: ['electron'],
-        output: {
-          format: 'cjs',
-          entryFileNames: 'main.cjs',
-          banner: `module.paths.unshift(${JSON.stringify(join(desktop, 'node_modules'))});`,
-        },
-      },
-    },
-  })
+  await writeFile(
+    mainBuildConfig,
+    `import { defineConfig, externalizeDepsPlugin } from ${JSON.stringify(pathToFileURL(join(desktop, 'node_modules/electron-vite/dist/index.js')).href)}\nexport default defineConfig({main:{plugins:[externalizeDepsPlugin({exclude:['@holi/shared']})],build:{outDir:${JSON.stringify(root)},emptyOutDir:false,rollupOptions:{input:${JSON.stringify(join(desktop, 'scripts/community-hints-native-smoke-main.ts'))},external:['electron'],output:{format:'cjs',entryFileNames:'main.cjs',banner:${JSON.stringify(`module.paths.unshift(${JSON.stringify(join(desktop, 'node_modules'))});`)}}}}}})\n`,
+  )
+  await electronBuild({ configFile: mainBuildConfig })
+  assert((await readFile(join(root, 'main.cjs'), 'utf8')).includes('app.asar.unpacked'))
+  const emittedBridge = (await readdir(join(root, 'chunks'))).find((name) =>
+    name.startsWith('hint-bridge-'),
+  )
+  assert(emittedBridge, 'electron-vite did not emit the bridge asset')
+  await readFile(join(root, 'chunks', emittedBridge), 'utf8')
+  assert(
+    (await readFile(join(desktop, 'electron-builder.yml'), 'utf8')).includes(
+      "'out/main/chunks/**'",
+    ),
+    'electron-builder does not unpack the emitted bridge asset directory',
+  )
   await writeFile(
     join(root, 'package.json'),
     JSON.stringify({ name: 'holi-community-hints-native-510', main: 'main.cjs' }),
@@ -148,11 +148,15 @@ try {
     })
   closed = new Promise((resolve, reject) => {
     child.once('error', reject)
-    child.once('close', resolve)
+    child.once('close', (code, signal) => {
+      closeResult = { code, signal }
+      resolve(closeResult)
+    })
   })
   let target
   for (let n = 0; n < 120; n++) {
-    if (child.exitCode !== null) throw new Error(`fixture exited ${child.exitCode}`)
+    if (child.exitCode !== null || child.signalCode !== null)
+      throw new Error(`fixture exited ${child.exitCode ?? child.signalCode}`)
     const targets = await fetch(`http://127.0.0.1:${debugPort}/json/list`)
       .then((r) => r.json())
       .catch(() => [])
@@ -171,6 +175,16 @@ try {
   const contexts = new Map()
   ws.addEventListener('message', (event) => {
     const message = JSON.parse(event.data)
+    if (message.method === 'Page.screencastFrame') {
+      screencastFrames.push(Buffer.from(message.params.data, 'base64'))
+      ws.send(
+        JSON.stringify({
+          id: ++id,
+          method: 'Page.screencastFrameAck',
+          params: { sessionId: message.params.sessionId },
+        }),
+      )
+    }
     if (message.method === 'Runtime.executionContextCreated' && !message.sessionId)
       contexts.set(message.params.context.id, message.params.context)
     if (message.method === 'Runtime.executionContextDestroyed')
@@ -228,7 +242,8 @@ try {
   }
   const wait = async (expression, description, guest = false) => {
     for (let n = 0; n < 100; n++) {
-      if (child.exitCode !== null) throw new Error('Electron stopped while waiting')
+      if (child.exitCode !== null || child.signalCode !== null)
+        throw new Error('Electron stopped while waiting')
       if (await evaluate(expression, guest)) return
       await sleep(100)
     }
@@ -274,21 +289,41 @@ try {
       guest,
     )
   assert.equal(await evaluate('window.holi', true), undefined, 'no harness bridge in guest')
+  const setupInstall = JSON.parse(
+    await readFile(join(root, 'profile/plugins/installed.json'), 'utf8'),
+  ).find((item) => item.id === 'smoke-plugin')
+  const installedCode = join(
+    root,
+    'profile/plugins/smoke-plugin',
+    setupInstall.source.commit,
+    setupInstall.source.path,
+  )
+  const supervisedServerPid = Number(await readFile(join(installedCode, '.hint-smoke-pid'), 'utf8'))
   assertions.push(
-    'real release install requires consent; setup/pin/acquire start actual supervised server',
+    'real release install requires consent; setup marker is verified in installed release checkout; pin/acquire start supervised server and emitted production bridge asset is readable',
   )
   const focusGuest = async () => {
     const rect = await evaluate(
       '(()=>{const r=document.querySelector("iframe").getBoundingClientRect();return {x:r.x+10,y:r.y+10}})()',
     )
     await click(rect.x, rect.y)
-    await wait('document.activeElement===document.querySelector("iframe")', 'guest focus')
-    await sleep(100)
+    await wait('document.activeElement===document.querySelector("iframe")', 'guest frame focus')
+    await wait('document.hasFocus()', 'native guest keyboard focus', true)
   }
   const hints = () =>
     evaluate(
       '[...document.querySelectorAll("[data-host-hints] [data-hint-key]")].map(e=>({key:e.getAttribute("data-hint-key"),target:e.getAttribute("data-hint-target")}))',
     )
+  const clickGuestSelector = async (selector) => {
+    const point = await evaluate(
+      `(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+      true,
+    )
+    const frame = await evaluate(
+      '(()=>{const r=document.querySelector("iframe").getBoundingClientRect();return {x:r.x,y:r.y}})()',
+    )
+    await click(frame.x + point.x, frame.y + point.y)
+  }
   const start = async () => {
     await focusGuest()
     await key('f')
@@ -305,33 +340,78 @@ try {
     'guest-started labels must exclude host chrome',
   )
   assert(
-    first.some((hint) => hint.target === 'Ordinary typing') === false,
-    'editable target exposed',
-  )
-  assert(
     first.some((hint) => hint.target === 'Offscreen fixture') === false,
     'offscreen target exposed',
   )
   const button = first.find((hint) => hint.target === 'Native button')
   assert(button?.key, 'guest native button label absent')
+  const addTarget = first.find((hint) => hint.target === 'Temporary target')
+  assert(addTarget?.key, 'dynamic-target trigger label absent')
+  for (const letter of addTarget.key) await key(letter)
+  await wait('!document.querySelector("[data-host-hints]")', 'target mutation invalidation')
+  await start()
+  assert(
+    (await hints()).some((hint) => hint.target === 'Dynamic target'),
+    'new target missing from fresh snapshot',
+  )
+  await key('Escape')
+  assertions.push(
+    'native activation adds a live target; DOM mutation invalidates old labels and the next snapshot includes the new target',
+  )
   const shot = async (name) => {
     await sleep(100)
     const result = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
     await writeFile(join(evidence, name), Buffer.from(result.data, 'base64'))
   }
-  await evaluate('document.documentElement.dataset.theme="dark"')
+  await start()
   await key('Escape')
+  await wait('!document.querySelector("[data-host-hints]")', 'Escape cancellation')
+  await start()
+  await key('Escape')
+  await wait('!document.querySelector("[data-host-hints]")', 'repeated Escape cancellation')
+  await evaluate('document.querySelector("button").focus()')
+  await key('f')
+  await wait('!!document.querySelector("[data-host-hints]")', 'ordinary single-pane host start')
+  const hostLabels = await hints()
+  assert(
+    hostLabels.some((hint) => hint.target === 'Host action'),
+    'ordinary host start omitted pane chrome',
+  )
+  assert(
+    !hostLabels.some((hint) => hint.target === 'Native button'),
+    'ordinary host start included guest targets',
+  )
+  const viewport = await evaluate('({width:innerWidth,height:innerHeight})')
+  await cdp('Emulation.setDeviceMetricsOverride', {
+    width: viewport.width - 80,
+    height: viewport.height - 60,
+    deviceScaleFactor: 1,
+    mobile: false,
+  })
+  await wait(
+    '!document.querySelector("[data-host-hints]")',
+    'native CDP viewport resize invalidation',
+  )
+  await cdp('Emulation.clearDeviceMetricsOverride')
+  await key('Escape')
+  assertions.push(
+    'repeated Escape recovers; ordinary single-pane host starts host-only; native viewport resize invalidates labels',
+  )
+  assertions.push('actual cross-origin f produces shared host/guest labels; Escape cancels')
+  await evaluate('document.documentElement.dataset.theme="dark"')
   await start()
   await shot('dark.png')
   await key('Escape')
-  await wait('!document.querySelector("[data-host-hints]")', 'Escape cancellation')
-  assertions.push('actual cross-origin f produces shared host/guest labels; Escape cancels')
+  await wait('!document.querySelector("[data-host-hints]")', 'dark screenshot hint cancellation')
   await evaluate('document.documentElement.dataset.theme="light"')
+  await cdp('Page.startScreencast', { format: 'png', everyNthFrame: 1 })
   await start()
   await shot('light.png')
   const current = (await hints()).find((hint) => hint.target === 'Native button')
   for (const letter of current.key) await key(letter)
   await wait('window.fixtureClicks===1', 'guest default button activation', true)
+  await cdp('Page.stopScreencast')
+  assert(screencastFrames.length > 0, 'CDP screencast produced no activation video frames')
   assertions.push('actual native keyboard prefix activates guest button through shared coordinator')
   await start()
   await evaluate('document.querySelector("#activate").remove()', true)
@@ -354,35 +434,121 @@ try {
   await key('f')
   await wait('!!document.querySelector("[data-host-hints]")', 'new visible presentation')
   await key('Escape')
-  assertions.push('Vim disable and hide invalidate; new presentation recovers')
-  await evaluate('document.querySelector("input").focus()', true)
+  const oldGeneration = await evaluate('window.fixtureGeneration', true)
+  await start()
+  await evaluate('location.reload()', true)
+  await wait(
+    '!document.querySelector("[data-host-hints]")',
+    'exact guest document reload invalidation',
+  )
+  await wait(
+    'window.fixtureGeneration !== ' + oldGeneration,
+    'new exact guest document generation',
+    true,
+  )
+  await focusGuest()
   await key('f')
-  assert.equal(await evaluate('document.querySelector("input").value', true), 'f')
+  await wait('!!document.querySelector("[data-host-hints]")', 'reloaded guest recovery')
+  await key('Escape')
+  assertions.push(
+    'Vim disable, hide/show and exact guest document reload invalidate; the new document generation recovers',
+  )
+  await clickGuestSelector('input[aria-label="Editable fixture"]')
+  await key('f')
+  assert.equal(
+    await evaluate(
+      'document.querySelector("input[aria-label=\\"Editable fixture\\"]").value',
+      true,
+    ),
+    'f',
+  )
   assert.equal(await evaluate('!!document.querySelector("[data-host-hints]")'), false)
-  assertions.push('editable native typing is not intercepted')
+  await start()
+  const overlayHint = (await hints()).find((hint) => hint.target === 'Open overlay')
+  assert(overlayHint?.key, 'overlay trigger label absent')
+  for (const letter of overlayHint.key) await key(letter)
+  await wait('!document.querySelector("[data-host-hints]")', 'overlay activation invalidation')
+  await focusGuest()
+  await key('f')
+  assert.equal(
+    await evaluate('!!document.querySelector("[data-host-hints]")'),
+    false,
+    'overlay must suppress hints',
+  )
+  await clickGuestSelector('#overlay-toggle')
+  await clickGuestSelector('input[aria-label="Composition fixture"]')
+  await cdp('Input.imeSetComposition', { text: '漢', selectionStart: 1, selectionEnd: 1 })
+  assert.equal(
+    await evaluate(
+      'document.querySelector("input[aria-label=\\"Composition fixture\\"]").value',
+      true,
+    ),
+    '漢',
+  )
+  await key('f')
+  assert.equal(
+    await evaluate(
+      'document.querySelector("input[aria-label=\\"Composition fixture\\"]").value.startsWith("漢")',
+      true,
+    ),
+    true,
+    'native typing changed in-progress IME composition',
+  )
+  assert.equal(
+    await evaluate('!!document.querySelector("[data-host-hints]")'),
+    false,
+    'native composition input must not start hints',
+  )
+  assertions.push(
+    'active editable typing is unchanged; overlay and composing input suppress hint activation',
+  )
   await evaluate(
     'window.holiSmoke.call("community.remove",{id:"smoke-plugin"}).then(()=>window.communitySmoke.refresh())',
   )
   await wait('!document.querySelector("iframe")', 'consent/install removal detaches frame')
-  assertions.push('real community removal stops process and removes eligible frame')
+  let removedProcess = false
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      process.kill(supervisedServerPid, 0)
+    } catch (error) {
+      if (error.code === 'ESRCH') {
+        removedProcess = true
+        break
+      }
+      throw error
+    }
+    await sleep(100)
+  }
+  assert(removedProcess, 'community removal left the actual fixture process alive')
+  assertions.push('real community removal stops supervised process and removes eligible frame')
 } catch (error) {
   failure = error
 } finally {
   try {
-    if (child && child.exitCode === null) {
+    if (child && child.exitCode === null && child.signalCode === null) {
       await quit?.().catch(() => undefined)
       await Promise.race([closed, sleep(8000)])
-      if (child.exitCode === null) {
+      if (child.exitCode === null && child.signalCode === null) {
         child.kill('SIGTERM')
         await Promise.race([closed, sleep(5000)])
       }
-      if (child.exitCode === null) {
+      if (child.exitCode === null && child.signalCode === null) {
         child.kill('SIGKILL')
         await closed
       }
     }
+    if (closeResult && (closeResult.code !== 0 || closeResult.signal !== null))
+      failure ??= new Error(`Electron did not exit cleanly: ${JSON.stringify(closeResult)}`)
     ws?.close()
-    const pid = Number(await readFile(join(root, 'vault/.hint-smoke-pid'), 'utf8').catch(() => '0'))
+    const install = JSON.parse(
+      await readFile(join(root, 'profile/plugins/installed.json'), 'utf8').catch(() => '[]'),
+    ).find((item) => item.id === 'smoke-plugin')
+    const installedCode = install
+      ? join(root, 'profile/plugins/smoke-plugin', install.source.commit, install.source.path)
+      : ''
+    const marker = installedCode ? join(installedCode, '.hint-smoke-pid') : ''
+    const pid = marker ? Number(await readFile(marker, 'utf8').catch(() => '0')) : 0
+    let fixturePid = pid
     if (pid > 0) {
       try {
         process.kill(pid, 0)
@@ -395,10 +561,10 @@ try {
           .split('\n')
           .find((line) => line.startsWith('n'))
           ?.slice(1)
-        const marker = join(root, 'vault/.hint-smoke-pid')
+        const expectedCommand = `${process.execPath} serve.cjs slides.md --port ${pluginPort}`
         const exact =
-          command.includes(join(root, 'plugin/serve.cjs')) &&
-          cwd === join(root, 'plugin') &&
+          command.includes(expectedCommand) &&
+          cwd === installedCode &&
           (await readFile(marker, 'utf8')) === String(pid)
         if (!exact) throw new Error(`refusing to signal unverified fixture PID ${pid}`)
         process.kill(pid, 'SIGTERM')
@@ -414,6 +580,15 @@ try {
         try {
           process.kill(pid, 0)
           process.kill(pid, 'SIGKILL')
+          for (let attempt = 0; attempt < 40; attempt++) {
+            try {
+              process.kill(pid, 0)
+            } catch (error) {
+              if (error.code === 'ESRCH') break
+              throw error
+            }
+            await sleep(100)
+          }
         } catch (error) {
           if (error.code !== 'ESRCH') throw error
         }
@@ -421,19 +596,45 @@ try {
         if (error.code !== 'ESRCH') throw error
       }
     }
+    if (fixturePid > 0) {
+      try {
+        process.kill(fixturePid, 0)
+        throw new Error(`fixture process ${fixturePid} still alive`)
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error
+      }
+    }
     await rm(root, { recursive: true, force: true })
+    await rm(mainBuildConfig, { force: true })
+    for (let index = 0; index < screencastFrames.length; index++)
+      await writeFile(
+        join(evidence, `frame-${String(index).padStart(5, '0')}.png`),
+        screencastFrames[index],
+      )
     await writeFile(join(evidence, 'electron.log'), log)
     await writeFile(
       join(evidence, 'result.json'),
       JSON.stringify(
         {
           passed: !failure,
+          command: `node apps/desktop/scripts/run-community-hints-native-smoke.mjs ${evidence}`,
           assertions,
+          artifacts: ['dark.png', 'light.png', 'activation.mp4'],
           failure: failure?.stack,
           cleanup: {
             runtimeRemoved: true,
-            electronStopped: !child || child.exitCode !== null,
-            fixtureServerStopped: true,
+            electronStopped: !child || child.exitCode !== null || child.signalCode !== null,
+            electronClose: closeResult,
+            fixtureServerStopped:
+              fixturePid === 0 ||
+              (() => {
+                try {
+                  process.kill(fixturePid, 0)
+                  return false
+                } catch (error) {
+                  return error.code === 'ESRCH'
+                }
+              })(),
           },
         },
         null,
@@ -446,4 +647,22 @@ try {
   }
 }
 if (failure) throw failure
+if (screencastFrames.length) {
+  execFileSync(
+    'ffmpeg',
+    [
+      '-y',
+      '-framerate',
+      '12',
+      '-i',
+      join(evidence, 'frame-%05d.png'),
+      '-pix_fmt',
+      'yuv420p',
+      join(evidence, 'activation.mp4'),
+    ],
+    { stdio: 'ignore' },
+  )
+  for (const name of await readdir(evidence))
+    if (/^frame-\d+\.png$/.test(name)) await rm(join(evidence, name))
+}
 console.log(`Community hints native proof passed: ${evidence}`)
