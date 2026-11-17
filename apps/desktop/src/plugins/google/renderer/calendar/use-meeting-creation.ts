@@ -15,6 +15,7 @@ export interface MeetingIdentity {
 
 export function useMeetingCreation(identity: MeetingIdentity | null, onCreated: () => void) {
   const [loading, setLoading] = useState(identity !== null)
+  const [resolved, setResolved] = useState(false)
   const [busy, setBusy] = useState(false)
   const [supported, setSupported] = useState(false)
   const [operation, setOperation] = useState<MeetingOperation | null>(null)
@@ -38,6 +39,7 @@ export function useMeetingCreation(identity: MeetingIdentity | null, onCreated: 
     try {
       const state = await googleCap.meetingState(remote, { sub })
       if (!current()) return
+      setResolved(true)
       setSupported(state.meetSupported)
       setOperation(state.operation)
       setSubmitted(state.operation?.input ?? null)
@@ -79,6 +81,7 @@ export function useMeetingCreation(identity: MeetingIdentity | null, onCreated: 
       try {
         const state = await googleCap.meetingState(remote, { sub })
         if (live.current) {
+          setResolved(true)
           setOperation(state.operation)
           setSubmitted(state.operation?.input ?? null)
         }
@@ -100,6 +103,7 @@ export function useMeetingCreation(identity: MeetingIdentity | null, onCreated: 
     try {
       const result = await googleCap.checkMeeting(remote, { sub })
       if (!live.current) return
+      setResolved(true)
       setOperation(result)
       setSubmitted(result?.input ?? null)
       if (result?.accepted) onCreatedRef.current()
@@ -126,5 +130,17 @@ export function useMeetingCreation(identity: MeetingIdentity | null, onCreated: 
       if (live.current) setBusy(false)
     }
   }
-  return { loading, busy, supported, operation, submitted, error, load, submit, check, finish }
+  return {
+    loading,
+    resolved,
+    busy,
+    supported,
+    operation,
+    submitted,
+    error,
+    load,
+    submit,
+    check,
+    finish,
+  }
 }

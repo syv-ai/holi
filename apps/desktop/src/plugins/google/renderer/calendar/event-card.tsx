@@ -955,7 +955,7 @@ function EventForm({
           onClick={onClose}
           disabled={saving}
         >
-          Cancel
+          {meeting.submitted ? 'Close' : 'Cancel'}
         </Button>
         {meeting.operation?.accepted ? (
           <Button type="button" disabled={disabled} onClick={() => void meeting.finish(onClose)}>
@@ -968,7 +968,7 @@ function EventForm({
             disabled={
               disabled ||
               (mode === 'create' && identity === null) ||
-              (identity !== null && meeting.error !== null && !meeting.submitted)
+              (mode === 'create' && !meeting.resolved && !meeting.submitted)
             }
           >
             {saving || meeting.busy
