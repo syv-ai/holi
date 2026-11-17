@@ -301,6 +301,12 @@ describe('community refresh through real owner attachments', () => {
     if (install.source.kind !== 'release') throw new Error('fixture must be a release')
     const oldDir = f.owner.store.releaseDir('demo', install.source.commit)
     const codeDir = f.owner.store.codeDir(install)
+    for (const vault of f.vaults) {
+      const destination = join(vault.root, '.claude/skills/demo')
+      await mkdir(destination, { recursive: true })
+      await writeFile(join(destination, 'SKILL.md'), 'old guide\n')
+    }
+    await writeFile(join(codeDir, 'skills/demo/SKILL.md'), 'new guide\n')
     await writeFile(
       join(codeDir, 'holi-plugin.json'),
       JSON.stringify({ ...manifest, version: '1.1.0' }),
@@ -326,12 +332,42 @@ describe('community refresh through real owner attachments', () => {
     }
     await f.owner.store.put(newer)
     await f.owner.consent.grant('demo', commit)
+    const originalRename = skillTransactionFs.rename
+    skillTransactionFs.rename = async (from, to) => {
+      if (String(from).endsWith('/vault-b/.claude/skills/demo'))
+        throw new Error('simulated guide backup failure')
+      return originalRename(from, to)
+    }
+    try {
+      await f.owner.mutate(async () => undefined)
+    } finally {
+      skillTransactionFs.rename = originalRename
+    }
+    const [a, b] = f.vaults
+    const pinA = JSON.parse(await readFile(join(a!.root, pluginPinPath('demo')), 'utf8'))
+    const pinB = JSON.parse(await readFile(join(b!.root, pluginPinPath('demo')), 'utf8'))
+    expect(pinA).toMatchObject({ version: '1.1.0', commit })
+    expect(pinB).toMatchObject({ version: '1.0.0' })
+    expect(await readFile(join(a!.root, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
+      'new guide\n',
+    )
+    expect(await readFile(join(b!.root, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
+      'old guide\n',
+    )
+    const failedRow = (
+      (await f.activations[1]!.table['community.list']!.run(
+        { root: b!.root, remote: b!.remote } as CapabilityContext,
+        {},
+      )) as { id: string; syncError?: string }[]
+    ).find((item) => item.id === 'demo')
+    expect(failedRow?.syncError).toMatch(/simulated guide backup failure/)
+
     await f.owner.mutate(async () => undefined)
     for (const vault of f.vaults) {
       const pin = JSON.parse(await readFile(join(vault.root, pluginPinPath('demo')), 'utf8'))
       expect(pin).toMatchObject({ version: '1.1.0', commit })
       expect(await readFile(join(vault.root, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
-        'pinned skill\n',
+        'new guide\n',
       )
     }
     await f.owner.store.put({ ...newer, manifest: { ...manifest, version: '0.9.0' } })
