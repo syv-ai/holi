@@ -38,7 +38,10 @@ function setup() {
       height: 300,
     }),
   })
-  vi.spyOn(document, 'elementFromPoint').mockReturnValue(frame)
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    value: vi.fn(() => frame),
+  })
   messages = []
   vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation((message) => {
     const sentMessage = message as FrameHintsMessage
@@ -87,7 +90,12 @@ afterEach(() => {
 describe('community host hint adapter', () => {
   it('validates source, fixed origin, fresh nonce, schema, and monotonic snapshots', () => {
     setup()
-    guest({ type: 'holi-hints:snapshot', nonce, revision: 1, targets: [] }, window)
+    const foreignFrame = document.createElement('iframe')
+    document.body.append(foreignFrame)
+    guest(
+      { type: 'holi-hints:snapshot', nonce, revision: 1, targets: [] },
+      foreignFrame.contentWindow,
+    )
     guest(
       { type: 'holi-hints:snapshot', nonce, revision: 1, targets: [] },
       frame.contentWindow,
