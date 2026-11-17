@@ -79,8 +79,14 @@ it('uses the returned tokens on successful highlighting', async () => {
               {
                 type: 'element',
                 tagName: 'span',
-                properties: { style: 'color: red' },
-                children: [{ type: 'text', value: 'const' }],
+                children: [
+                  {
+                    type: 'element',
+                    tagName: 'span',
+                    properties: { style: 'color: red' },
+                    children: [{ type: 'text', value: 'const' }],
+                  },
+                ],
               },
             ],
           },

@@ -11,7 +11,9 @@ vi.mock('../code-block-highlight', async (importOriginal) => ({
 import { CodeBlock, CodeBlockContent } from '../code-block'
 import { render, screen, waitFor } from '@/test/render'
 
-beforeEach(() => highlightCode.mockReset())
+beforeEach(() => {
+  highlightCode.mockReset()
+})
 
 describe('code block diff state', () => {
   it('renders diff state through CodeBlockContent and forwards it to the highlighter', async () => {
@@ -32,7 +34,7 @@ describe('code block diff state', () => {
 
     render(
       <CodeBlock
-        code="before\nold\ncontext\nnew"
+        code={'before\nold\ncontext\nnew'}
         language="javascript"
         diff={{ removed: [2], added: [4] }}
       >
@@ -84,7 +86,7 @@ describe('code block diff state', () => {
     { language: 'typescript', highlight: false },
   ])('renders markers without tokenizing $language (highlight=$highlight)', (props) => {
     const { container } = render(
-      <CodeBlock code="before\nold\ncontext\nnew" {...props} diff={{ removed: [2], added: [4] }}>
+      <CodeBlock code={'before\nold\ncontext\nnew'} {...props} diff={{ removed: [2], added: [4] }}>
         <CodeBlockContent />
       </CodeBlock>,
     )

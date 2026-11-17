@@ -6,7 +6,9 @@ vi.mock('@/lib/trpc', () => ({ trpc: { history: { fileDiff: { query: fileDiffQue
 import { render, screen } from '@/test/render'
 import { CommitView } from '../commit-view'
 
-beforeEach(() => fileDiffQuery.mockReset())
+beforeEach(() => {
+  fileDiffQuery.mockReset()
+})
 
 it('renders added and removed diff rows through CommitView and CodeBlockContent', async () => {
   fileDiffQuery.mockResolvedValue({ before: 'before\nold\ncontext', after: 'before\nnew\ncontext' })
