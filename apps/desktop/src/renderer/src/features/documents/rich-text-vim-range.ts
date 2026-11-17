@@ -105,15 +105,15 @@ export function logicalLineChange(
   const first = lines[firstIndex]
   const last = lines[lastIndex]
   if (!first || !last) return null
-  const previous = lines[firstIndex - 1]
-  return { from: previous ? previous.to : first.from, to: last.to }
+  return { from: first.from, to: last.to }
 }
 
 export function containerAt(state: EditorState, pos: number, names = STRUCTURAL_CONTAINERS) {
   const $pos = state.doc.resolve(Math.max(0, Math.min(pos, state.doc.content.size)))
   for (let depth = $pos.depth; depth > 0; depth--) {
     const node = $pos.node(depth)
-    if (names.includes(node.type.name)) return { type: node.type.name, pos: $pos.before(depth) }
+    if (!STRUCTURAL_CONTAINERS.includes(node.type.name)) continue
+    return names.includes(node.type.name) ? { type: node.type.name, pos: $pos.before(depth) } : null
   }
   return null
 }

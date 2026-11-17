@@ -1054,7 +1054,7 @@ describe('rich-text Vim extension', () => {
     key(ed, 'c')
     key(ed, 'c')
     expect(ed.state.doc.firstChild?.type.name).toBe('codeBlock')
-    expect(ed.state.doc.firstChild?.textContent).toBe('first\nmiddle\nlast')
+    expect(ed.state.doc.firstChild?.textContent).toBe('first\n\nmiddle\nlast')
     expect(ed.view.dom.dataset.vimMode).toBe('insert')
     key(ed, 'Escape')
 
@@ -1302,6 +1302,36 @@ describe('rich-text Vim extension', () => {
     expect(ed.state.doc.check()).toBeUndefined()
   })
 
+  it('uses the nearest table cell rather than an enclosing list item', () => {
+    for (const sequence of [
+      ['d', 'd'],
+      ['V', 'd'],
+    ]) {
+      const ed = new Editor({
+        extensions: [
+          StarterKit,
+          TableKit,
+          RichTextVim.configure({ enabled: false, editable: () => true }),
+        ],
+        content:
+          '<ul><li><p>outer</p><table><tbody><tr><td><p>cell</p></td><td><p>other</p></td></tr></tbody></table><p>tail</p></li><li><p>sibling</p></li></ul>',
+      })
+      own(ed)
+      configureRichTextVim(ed.view, true, true, () => true)
+      let cell = 0
+      ed.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === 'cell') cell = pos
+      })
+      ed.commands.setTextSelection(cell)
+      for (const value of sequence) key(ed, value)
+      expect(ed.state.doc.textContent).toContain('outer')
+      expect(ed.state.doc.textContent).toContain('sibling')
+      expect(ed.state.doc.textContent).toContain('other')
+      expect(ed.state.doc.textContent).toContain('tail')
+      expect(ed.state.doc.check()).toBeUndefined()
+    }
+  })
+
   it('preserves heading schema on cc and linewise intent for vertical operators', () => {
     const ed = open('<h2>Heading</h2><p>next</p>')
     ed.commands.setTextSelection(2)
@@ -1335,7 +1365,7 @@ describe('rich-text Vim extension', () => {
   it('changes only selected logical-line content and groups the change with delayed typing', () => {
     for (const [html, expected] of [
       ['<pre><code>first\nmiddle\nlast</code></pre>', 'first\nX\nlast'],
-      ['<p>first<br>middle<br>last</p>', 'firstXlast'],
+      ['<p>first<br>middle<br>last</p>', '<p>first<br>X<br>last</p>'],
     ] as const) {
       const ed = open(html)
       const initial = ed.state.doc.toJSON()
@@ -1348,7 +1378,7 @@ describe('rich-text Vim extension', () => {
       key(ed, 'c')
       expect(ed.view.dom.dataset.vimMode).toBe('insert')
       ed.view.dispatch(ed.state.tr.insertText('X'))
-      expect(text(ed)).toBe(expected)
+      expect(html.startsWith('<p>') ? ed.getHTML() : text(ed)).toBe(expected)
       key(ed, 'Escape')
       key(ed, 'u')
       expect(ed.state.doc.toJSON()).toEqual(initial)
@@ -1390,6 +1420,38 @@ describe('rich-text Vim extension', () => {
           schema === 'code' ? ed.state.doc.firstChild?.textContent : ed.getHTML().slice(3, -4),
         ).toBe(schema === 'code' ? code : hardBreak)
       }
+    }
+  })
+
+  it('changes linewise block selections and vertical motions to a replacement block', () => {
+    for (const [html, start, sequence, expected] of [
+      ['<p>first</p><p>middle</p><p>last</p>', 1, ['V', 'c'], '<p>X</p><p>middle</p><p>last</p>'],
+      ['<p>first</p><p>middle</p><p>last</p>', 1, ['c', 'j'], '<p>X</p><p>last</p>'],
+      ['<p>first</p><p>middle</p><p>last</p>', 8, ['c', 'k'], '<p>X</p><p>last</p>'],
+      ['<p>first</p><p>middle</p><p>last</p>', 16, ['V', 'c'], '<p>first</p><p>middle</p><p>X</p>'],
+      ['<p>first<br>middle<br>last</p>', 1, ['V', 'c'], '<p>X<br>middle<br>last</p>'],
+      [
+        '<pre><code>first\nmiddle\nlast</code></pre>',
+        1,
+        ['c', 'j'],
+        '<pre><code>X\nlast</code></pre>',
+      ],
+      [
+        '<pre><code>first\nmiddle\nlast</code></pre>',
+        7,
+        ['c', 'k'],
+        '<pre><code>X\nlast</code></pre>',
+      ],
+    ] as const) {
+      const ed = open(html)
+      ed.commands.setTextSelection(start)
+      for (const value of sequence) key(ed, value)
+      ed.view.dispatch(ed.state.tr.insertText('X'))
+      expect(ed.getHTML(), `${html} :: ${sequence.join('')}`).toBe(expected)
+      expect(ed.state.doc.check()).toBeUndefined()
+      key(ed, 'Escape')
+      key(ed, 'u')
+      expect(ed.getHTML()).toBe(html)
     }
   })
 
