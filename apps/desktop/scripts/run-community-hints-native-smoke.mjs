@@ -9,6 +9,8 @@ import { build } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { build as electronBuild } from 'electron-vite'
+import { createCdpClient } from './native-smoke-cdp.mjs'
+import { encodeScreencast } from './native-smoke-recording.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(
@@ -23,7 +25,8 @@ let child
 let closed
 let closeResult
 let screencastFrames = []
-const mainBuildConfig = join(desktop, 'scripts/community-hints-native-smoke.electron.config.mjs')
+let cdpClient
+const mainBuildConfig = join(root, 'community-hints-native-smoke.electron.config.mjs')
 let ws
 let quit
 let log = ''
@@ -170,43 +173,26 @@ try {
     ws.addEventListener('open', resolve, { once: true })
     ws.addEventListener('error', reject, { once: true })
   })
-  let id = 0
-  const pending = new Map()
   const contexts = new Map()
-  ws.addEventListener('message', (event) => {
-    const message = JSON.parse(event.data)
-    if (message.method === 'Page.screencastFrame') {
-      screencastFrames.push(Buffer.from(message.params.data, 'base64'))
-      ws.send(
-        JSON.stringify({
-          id: ++id,
-          method: 'Page.screencastFrameAck',
-          params: { sessionId: message.params.sessionId },
-        }),
-      )
-    }
-    if (message.method === 'Runtime.executionContextCreated' && !message.sessionId)
-      contexts.set(message.params.context.id, message.params.context)
-    if (message.method === 'Runtime.executionContextDestroyed')
-      contexts.delete(message.params.executionContextId)
-    if (message.method === 'Runtime.executionContextsCleared') contexts.clear()
-    if (!message.id) return
-    const call = pending.get(message.id)
-    if (!call) return
-    pending.delete(message.id)
-    clearTimeout(call.timer)
-    message.error ? call.reject(new Error(message.error.message)) : call.resolve(message.result)
+  cdpClient = createCdpClient(ws, {
+    onEvent(message) {
+      if (message.method === 'Page.screencastFrame') {
+        screencastFrames.push({
+          image: Buffer.from(message.params.data, 'base64'),
+          timestamp: message.params.metadata.timestamp,
+        })
+        void cdpClient.call('Page.screencastFrameAck', {
+          sessionId: message.params.sessionId,
+        })
+      }
+      if (message.method === 'Runtime.executionContextCreated' && !message.sessionId)
+        contexts.set(message.params.context.id, message.params.context)
+      if (message.method === 'Runtime.executionContextDestroyed')
+        contexts.delete(message.params.executionContextId)
+      if (message.method === 'Runtime.executionContextsCleared') contexts.clear()
+    },
   })
-  const cdp = (method, params = {}, sessionId) =>
-    new Promise((resolve, reject) => {
-      const callId = ++id
-      const timer = setTimeout(() => {
-        pending.delete(callId)
-        reject(new Error(`CDP deadline: ${method}`))
-      }, 10000)
-      pending.set(callId, { resolve, reject, timer })
-      ws.send(JSON.stringify({ id: callId, method, params, sessionId }))
-    })
+  const cdp = (method, params = {}, sessionId) => cdpClient.call(method, params, sessionId)
   await cdp('Page.enable')
   await cdp('Runtime.enable')
   const guestContext = () =>
@@ -407,6 +393,7 @@ try {
   await cdp('Page.startScreencast', { format: 'png', everyNthFrame: 1 })
   await start()
   await shot('light.png')
+  await sleep(3200)
   const current = (await hints()).find((hint) => hint.target === 'Native button')
   for (const letter of current.key) await key(letter)
   await wait('window.fixtureClicks===1', 'guest default button activation', true)
@@ -605,22 +592,62 @@ try {
       }
     }
     await rm(root, { recursive: true, force: true })
-    await rm(mainBuildConfig, { force: true })
-    for (let index = 0; index < screencastFrames.length; index++)
-      await writeFile(
-        join(evidence, `frame-${String(index).padStart(5, '0')}.png`),
-        screencastFrames[index],
-      )
+    cdpClient?.close()
     await writeFile(join(evidence, 'electron.log'), log)
+    const artifactNames = ['dark.png', 'light.png', 'activation.webm']
+    try {
+      if (screencastFrames.length) {
+        await encodeScreencast(screencastFrames, {
+          root: evidence,
+          evidence,
+          filename: 'activation.webm',
+        })
+        const stat = await import('node:fs/promises').then(({ stat }) =>
+          stat(join(evidence, 'activation.webm')),
+        )
+        assert(stat.size > 0, 'activation video is empty')
+        const probe = execFileSync(
+          'ffprobe',
+          [
+            '-v',
+            'error',
+            '-show_entries',
+            'format=duration',
+            '-of',
+            'default=noprint_wrappers=1:nokey=1',
+            join(evidence, 'activation.webm'),
+          ],
+          { encoding: 'utf8' },
+        )
+        assert(Number(probe) >= 2.5, `activation video is too short: ${probe.trim()}s`)
+      }
+    } catch (error) {
+      failure ??= error
+    }
+    const exists = []
+    for (const name of artifactNames) {
+      try {
+        const stat = await import('node:fs/promises').then(({ stat }) => stat(join(evidence, name)))
+        if (stat.isFile() && stat.size > 0) exists.push(name)
+      } catch {}
+    }
     await writeFile(
       join(evidence, 'result.json'),
       JSON.stringify(
         {
-          passed: !failure,
+          passed: !failure && exists.length === artifactNames.length,
           command: `node apps/desktop/scripts/run-community-hints-native-smoke.mjs ${evidence}`,
+          source: {
+            commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+            dirty:
+              execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length >
+              0,
+          },
           assertions,
-          artifacts: ['dark.png', 'light.png', 'activation.mp4'],
-          failure: failure?.stack,
+          artifacts: exists,
+          failure:
+            failure?.stack ??
+            (exists.length !== artifactNames.length ? 'Required artifacts missing' : undefined),
           cleanup: {
             runtimeRemoved: true,
             electronStopped: !child || child.exitCode !== null || child.signalCode !== null,
@@ -647,22 +674,6 @@ try {
   }
 }
 if (failure) throw failure
-if (screencastFrames.length) {
-  execFileSync(
-    'ffmpeg',
-    [
-      '-y',
-      '-framerate',
-      '12',
-      '-i',
-      join(evidence, 'frame-%05d.png'),
-      '-pix_fmt',
-      'yuv420p',
-      join(evidence, 'activation.mp4'),
-    ],
-    { stdio: 'ignore' },
-  )
-  for (const name of await readdir(evidence))
-    if (/^frame-\d+\.png$/.test(name)) await rm(join(evidence, name))
-}
+const report = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
+assert(report.passed, 'native proof report did not pass')
 console.log(`Community hints native proof passed: ${evidence}`)
