@@ -8,7 +8,6 @@ export interface BrowserHintContext {
   tab: string
   nonce: string
   attachment: string
-  origin: string
   ownerElement: HTMLElement
   current(): boolean
 }
@@ -16,6 +15,8 @@ export interface BrowserHintContext {
 interface Pending {
   wire: PageHintScope
   generation: number
+  requestOrigin?: string
+  owner?: PageHintOwner
 }
 
 const listeners = new Map<string, Set<(event: PageHintEvent) => void>>()
@@ -33,13 +34,18 @@ export function dispatchBrowserHintEvent(remote: string, value: unknown): void {
     typeof event.attachment !== 'string' ||
     typeof event.origin !== 'string' ||
     !Number.isSafeInteger(event.request) ||
-    !['request', 'key', 'revoke'].includes(event.type)
+    !['request', 'key', 'revoke'].includes(event.type) ||
+    (event.type !== 'request' &&
+      (!Number.isSafeInteger(event.snapshot) ||
+        !Number.isSafeInteger(event.geometry) ||
+        event.snapshot < 1 ||
+        event.geometry < 0))
   )
     return
   for (const listener of listeners.get(idFor(remote, event.tab)) ?? []) listener(event)
 }
 
-/** Bridges the page-owned hint protocol to the shell's request-scoped host-hint coordinator. */
+/** Bridges page-owned requests to the shell coordinator without treating opaque owner origins as URLs. */
 export function createBrowserHintAdapter(
   context: BrowserHintContext,
 ): AsyncHostHintAdapter & { dispose(): void } {
@@ -47,6 +53,8 @@ export function createBrowserHintAdapter(
   const subscriptions = new Set<() => void>()
   const pending = new Map<number, Pending>()
   const controllers = new Map<number, AbortController>()
+  const invalidators = new Map<number, () => void>()
+  const retired = new WeakSet<Pending>()
   let generation = 0
   const requestScopeKey = requestKey(context)
   let wireRequest = requestHighWater.get(requestScopeKey) ?? 0
@@ -58,32 +66,40 @@ export function createBrowserHintAdapter(
   const clearWire = (wire: PageHintScope) => {
     void browserHintCap['hints-clear'](context.remote, wire).catch(() => undefined)
   }
-  const clearCurrent = () => {
-    const old = [...pending.values()]
-    pending.clear()
-    snapshot = null
-    for (const item of old) clearWire(item.wire)
+  const retire = (request: number, item: Pending, clear = true) => {
+    if (retired.has(item)) return
+    retired.add(item)
+    if (pending.get(request) === item) pending.delete(request)
+    if (item.owner !== undefined && snapshot?.owner === item.owner) snapshot = null
+    invalidators.delete(request)
+    if (clear) clearWire(item.wire)
+  }
+  const matches = (event: PageHintEvent, item: Pending) => {
+    if (event.request !== item.wire.request) return false
+    if (event.type === 'request') return item.requestOrigin === event.origin
+    const owner = item.owner
+    return owner
+      ? owner.tab === event.tab &&
+          owner.nonce === event.nonce &&
+          owner.attachment === event.attachment &&
+          owner.request === event.request &&
+          owner.origin === event.origin &&
+          owner.snapshot === event.snapshot &&
+          owner.geometry === event.geometry
+      : item.requestOrigin === event.origin
   }
   const onPageEvent = (event: PageHintEvent) => {
     if (
       !alive() ||
       event.tab !== context.tab ||
       event.nonce !== context.nonce ||
-      event.attachment !== context.attachment ||
-      event.origin !== context.origin
+      event.attachment !== context.attachment
     )
       return
     wireRequest = Math.max(wireRequest, event.request)
     requestHighWater.set(requestScopeKey, wireRequest)
-    if (event.type === 'revoke') {
-      generation++
-      clearCurrent()
-      for (const controller of controllers.values()) controller.abort()
-      controllers.clear()
-      return
-    }
     if (event.type === 'request') {
-      pending.set(-event.request, {
+      const item: Pending = {
         wire: {
           tab: context.tab,
           nonce: context.nonce,
@@ -91,8 +107,21 @@ export function createBrowserHintAdapter(
           request: event.request,
         },
         generation,
-      })
+        requestOrigin: event.origin,
+      }
+      pending.set(-event.request, item)
       requestHostHints(context.ownerElement)
+      return
+    }
+    const match = [...pending.entries()].find(([request, item]) => {
+      return (event.type === 'revoke' || request > 0) && matches(event, item)
+    })
+    if (!match) return
+    const [request, item] = match
+    if (event.type === 'revoke') {
+      // Let the owning coordinator observe this request while its scope is still live.
+      if (request > 0) invalidators.get(request)?.()
+      retire(request, item)
       return
     }
   }
@@ -110,6 +139,7 @@ export function createBrowserHintAdapter(
         attachment: context.attachment,
         request: (wireRequest = wireRequest + 1),
       }
+      const requestOrigin = pagePending?.[1].requestOrigin
       if (pagePending) pending.delete(pagePending[0])
       wireRequest = Math.max(wireRequest, wire.request)
       requestHighWater.set(requestScopeKey, wireRequest)
@@ -117,17 +147,19 @@ export function createBrowserHintAdapter(
       const controller = new AbortController()
       controllers.set(request, controller)
       signal.addEventListener('abort', () => controller.abort(), { once: true })
-      pending.set(request, { wire, generation: gen })
+      const item: Pending = { wire, generation: gen, requestOrigin }
+      pending.set(request, item)
       try {
         const found = await browserHintCap['hints-discover'](context.remote, wire)
         if (
           !alive(gen) ||
           signal.aborted ||
           controller.signal.aborted ||
-          pending.get(request)?.wire !== wire ||
+          pending.get(request) !== item ||
           found === null
         )
           return null
+        item.owner = found.owner as PageHintOwner
         snapshot = found
         revision = 0
         return found.targets.map(({ id, label, x, y }) => ({ id, label, x, y }))
@@ -143,32 +175,30 @@ export function createBrowserHintAdapter(
       if (
         !item ||
         !found ||
+        !item.owner ||
         !alive(item.generation) ||
-        found.owner.request !== item.wire.request ||
+        found.owner !== item.owner ||
         nextRevision <= revision
       )
         return false
       revision = nextRevision
       try {
         const presented = await browserHintCap['hints-present'](context.remote, {
-          owner: found.owner as PageHintOwner,
+          owner: item.owner,
           p: {
             revision: nextRevision,
             labels,
             theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
           },
         })
-        return presented && alive(item.generation)
+        return presented && alive(item.generation) && pending.get(request) === item
       } catch {
         return false
       }
     },
     clear(request) {
       const item = pending.get(request)
-      if (!item) return
-      pending.delete(request)
-      if (snapshot?.owner.request === item.wire.request) snapshot = null
-      clearWire(item.wire)
+      if (item) retire(request, item)
     },
     async activate(request, id) {
       const item = pending.get(request)
@@ -176,40 +206,31 @@ export function createBrowserHintAdapter(
       if (
         !item ||
         !found ||
+        !item.owner ||
         !alive(item.generation) ||
-        found.owner.request !== item.wire.request ||
+        found.owner !== item.owner ||
         !found.targets.some((target) => target.id === id)
       )
         return false
-      pending.delete(request)
-      snapshot = null
       try {
-        const generationAtActivation = item.generation
         const activated = await browserHintCap['hints-activate'](context.remote, {
-          owner: found.owner as PageHintOwner,
+          owner: item.owner,
           p: { id },
         })
-        return activated && alive(generationAtActivation)
+        return activated && alive(item.generation) && pending.get(request) === item
       } catch {
         return false
+      } finally {
+        // Keep the captured wire alive until settlement; a rotated request must not
+        // prevent cleanup of this one, including when activation rejects.
+        retire(request, item)
       }
     },
     subscribe(request, invalidate, routeKey) {
+      invalidators.set(request, invalidate)
       const handler = (event: PageHintEvent) => {
         const item = pending.get(request)
-        if (
-          !item ||
-          event.tab !== context.tab ||
-          event.nonce !== context.nonce ||
-          event.attachment !== context.attachment ||
-          event.origin !== context.origin ||
-          event.request !== item.wire.request
-        )
-          return
-        if (event.type === 'revoke') {
-          invalidate()
-          return
-        }
+        if (!item || !matches(event, item)) return
         if (event.type !== 'key' || !event.key) return
         const keyEvent = new KeyboardEvent('keydown', {
           key: event.key,
@@ -225,7 +246,7 @@ export function createBrowserHintAdapter(
         })
         routeKey(keyEvent)
       }
-      const eventSet = listeners.get(key) ?? new Set()
+      const eventSet = listeners.get(key) ?? new Set<(event: PageHintEvent) => void>()
       eventSet.add(handler)
       listeners.set(key, eventSet)
       const requestHandler = (event: Event) => {
@@ -236,6 +257,7 @@ export function createBrowserHintAdapter(
       const off = () => {
         eventSet.delete(handler)
         window.removeEventListener(HOST_HINT_REQUEST, requestHandler)
+        if (invalidators.get(request) === invalidate) invalidators.delete(request)
       }
       subscriptions.add(off)
       return () => {
@@ -253,7 +275,11 @@ export function createBrowserHintAdapter(
       subscriptions.clear()
       set.delete(onPageEvent)
       if (set.size === 0) listeners.delete(key)
-      clearCurrent()
+      for (const [request, item] of pending) {
+        if (request > 0) retire(request, item)
+      }
+      pending.clear()
+      snapshot = null
     },
   }
   return adapter

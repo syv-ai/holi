@@ -87,6 +87,7 @@ await build({
   },
 })
 await rm(join(evidence, 'frames'), { recursive: true, force: true })
+await rm(join(evidence, 'hints-frames'), { recursive: true, force: true })
 for (const name of [
   'result.json',
   'electron-smoke.log',
@@ -107,6 +108,7 @@ for (const name of [
   'hints-page-light.png',
   'hints-page-dark.png',
   'hints-shell-light.png',
+  'hints-interaction.mp4',
 ])
   await rm(join(evidence, name), { force: true })
 let child
@@ -136,10 +138,12 @@ try {
   const hintsSequence = readFileSync(join(fixture, 'hints-sequence.ts'), 'utf8')
   const sequence = hintsAcceptance
     ? toolbarSequence.replace(
-        '  await host.stopAll()\n',
-        `${hintsSequence}\n  await host.stopAll()\n`,
+        "  await pref(true)\n  await badge('insert')\n",
+        `  await pref(true)\n  await badge('insert')\n${hintsSequence}\n`,
       )
     : toolbarSequence
+  if (hintsAcceptance)
+    assert.notEqual(sequence, toolbarSequence, 'hints must run before toolbar actions')
   await build({
     configFile: false,
     root: desktop,
@@ -366,6 +370,7 @@ try {
           'preference-off-insert-and-modified-keys-pass-through',
           'page-label-activation-produces-trusted-native-link-click',
           'native-page-light-dark-and-shell-evidence-captured',
+          'hint-owned-navigation-replacement-rearms-current-document',
         ]
       : []),
     'root-renderer-reload-revokes-old-lease-and-fresh-frame-reads-own-note',
@@ -447,6 +452,29 @@ try {
     for (const name of hints.evidence) {
       assert((await stat(join(evidence, name))).size > 0, `missing hints evidence: ${name}`)
     }
+    const hintVideo = spawnSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-framerate',
+        '8',
+        '-i',
+        join(evidence, 'hints-frames/%05d.png'),
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-movflags',
+        '+faststart',
+        join(evidence, 'hints-interaction.mp4'),
+      ],
+      { encoding: 'utf8' },
+    )
+    assert.equal(hintVideo.status, 0, `hints video encoding failed: ${hintVideo.stderr}`)
+    assert(
+      (await stat(join(evidence, 'hints-interaction.mp4'))).size > 0,
+      'missing hint interaction video',
+    )
     assert((await stat(recordingPath)).size > 0, 'missing native interaction video')
   }
   if (toolbarAcceptance) {
