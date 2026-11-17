@@ -46,11 +46,11 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/contacts.readonly',
   'https://www.googleapis.com/auth/contacts.other.readonly',
-  // Calendar WRITE, for time-blocking on the user's own calendar.
-  // Narrower than it looks: Holi refuses any event carrying attendees, so this
-  // scope never sends an invitation or a cancellation. `calendar.readonly`
-  // stays alongside it because reading the full calendar list is not implied
-  // by the events scope.
+  // Calendar writes: the UI can explicitly create a meeting with guests and
+  // send invitations. The agent's `google.schedule` stays silent and solo;
+  // raw API writes that reach people stay behind its ask gate. Main refuses
+  // edits or deletions of attendee events. `calendar.readonly` stays alongside
+  // this scope because the events scope does not read the full list.
   'https://www.googleapis.com/auth/calendar.events',
 ]
 
