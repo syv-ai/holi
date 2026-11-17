@@ -283,11 +283,19 @@ test('retained ordinary app views receive display and focus lifecycle updates', 
 })
 
 test('Mail, session and code-file hosts retain and dispose independently', async () => {
+  let deliverThread!: (value: typeof thread) => void
+  threadMock.mockReturnValueOnce(
+    new Promise<typeof thread>((resolve) => {
+      deliverThread = resolve
+    }),
+  )
   const { store, show } = mountMailTabs()
   const list = await screen.findByRole('list', { name: 'Inbox' })
   fireEvent.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
-  const frame = document.querySelector('iframe')!
+  // The subject is available from the list before the message body arrives.
+  deliverThread(thread)
+  const frame = await screen.findByLabelText<HTMLIFrameElement>('Message from Jane Doe')
   show(sessionKey)
   const terminal = await screen.findByRole('textbox', { name: 'Retained agent terminal' })
   expect(list.isConnected).toBe(true)
@@ -329,7 +337,7 @@ test('shell switch and back retains real Mail list, selection and scroll without
   const list = await screen.findByRole('list', { name: 'Inbox' })
   fireEvent.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
-  const frame = document.querySelector('iframe')!
+  const frame = await screen.findByLabelText<HTMLIFrameElement>('Message from Jane Doe')
   const listScroller = list.closest('[data-slot="scroll-area-viewport"]') as HTMLElement
   const readerScroller = frame.closest('.overflow-y-auto') as HTMLElement
   expect(frame).not.toBeNull()
@@ -419,7 +427,7 @@ test('switching Google accounts releases the previous account’s Mail state', a
   const list = await screen.findByRole('list', { name: 'Inbox' })
   await user.click(within(list).getByText('Q2 budget'))
   await screen.findByRole('heading', { name: 'Q2 budget' })
-  const frame = document.querySelector('iframe')!
+  const frame = await screen.findByLabelText<HTMLIFrameElement>('Message from Jane Doe')
   searchMock.mockResolvedValue(page([summary({ id: 'second', subject: 'Second account mail' })]))
 
   await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
