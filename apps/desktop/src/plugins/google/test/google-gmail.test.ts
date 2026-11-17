@@ -257,13 +257,13 @@ describe('htmlToText', () => {
 
 describe('listThreads', () => {
   it.each([
-    ['new incoming after a reply', ['INBOX'], ['SENT'], ['INBOX'], true],
-    ['draft after incoming', ['INBOX'], ['DRAFT'], undefined, true],
-    ['draft after sent reply', ['INBOX'], ['SENT'], ['DRAFT'], false],
-    ['sent-only', ['SENT'], undefined, ['DRAFT'], false],
+    ['new incoming after a reply', ['INBOX'], ['SENT'], ['INBOX'], true, false],
+    ['draft after incoming', ['INBOX'], ['DRAFT'], undefined, true, false],
+    ['draft after sent reply', ['INBOX'], ['SENT'], ['DRAFT'], false, true],
+    ['sent-only', ['SENT'], undefined, ['DRAFT'], false, true],
   ])(
     'classifies %s from real message order',
-    async (_name, firstLabels, secondLabels, thirdLabels, expected) => {
+    async (_name, firstLabels, secondLabels, thirdLabels, expectedNeedsReply, expectedAnswered) => {
       const messages = [firstLabels, secondLabels, thirdLabels].flatMap((labels, index) =>
         labels === undefined
           ? []
@@ -278,9 +278,8 @@ describe('listThreads', () => {
       )
       const { api } = gmail([{ id: 't' }], { t: { id: 't', messages } })
       const result = (await listThreads(api, {}, ['me@example.com'])).threads[0]!
-      expect(result.needsReply).toBe(expected)
-      if (thirdLabels?.includes('DRAFT'))
-        expect(result.answered).toBe(secondLabels?.includes('SENT'))
+      expect(result.needsReply).toBe(expectedNeedsReply)
+      expect(result.answered).toBe(expectedAnswered)
     },
   )
 
