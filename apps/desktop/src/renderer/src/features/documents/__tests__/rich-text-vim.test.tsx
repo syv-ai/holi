@@ -613,7 +613,7 @@ describe('rich-text Vim extension', () => {
     table.commands.setTextSelection(firstCellPos + 2)
     key(table, 'd')
     key(table, 'j')
-    expect(table.state.doc.textContent).toBe('secondother')
+    expect(table.state.doc.textContent).toBe('other')
     expect(table.state.doc.firstChild?.check()).toBeUndefined()
 
     table.commands.setContent('<table><tbody><tr><td><p></p></td></tr></tbody></table>')
@@ -735,6 +735,47 @@ describe('rich-text Vim extension', () => {
     expect(text(history)).toBe('two three')
     key(history, 'u')
     expect(text(history)).toBe('one two three')
+  })
+
+  it('preserves grapheme boundaries and operator-specific final-word ranges', () => {
+    const ed = open('<p>A👩‍💻B</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '$')
+    expect(text(ed)).toBe('')
+    expect(ed.state.doc.firstChild?.textContent).toBe('')
+
+    ed.commands.setContent('<p>alpha</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, 'w')
+    expect(text(ed)).toBe('')
+
+    ed.commands.setContent('<p>alpha beta</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'c')
+    key(ed, 'w')
+    expect(text(ed)).toBe(' beta')
+    expect(ed.view.dom.dataset.vimMode).toBe('insert')
+  })
+
+  it('preserves heading schema on cc and linewise intent for vertical operators', () => {
+    const ed = open('<h2>Heading</h2><p>next</p>')
+    ed.commands.setTextSelection(2)
+    key(ed, 'c')
+    key(ed, 'c')
+    expect(ed.state.doc.firstChild?.type.name).toBe('heading')
+    expect(ed.state.doc.firstChild?.attrs.level).toBe(2)
+    expect(ed.state.doc.childCount).toBe(2)
+
+    ed.commands.setContent('<p>first</p><p>second</p><p>third</p>')
+    ed.commands.setTextSelection(2)
+    key(ed, 'y')
+    key(ed, 'j')
+    ed.commands.setTextSelection(ed.state.doc.content.size - 1)
+    key(ed, 'p')
+    expect(ed.state.doc.childCount).toBe(4)
+    expect(ed.state.doc.check()).toBeUndefined()
   })
 
   it('keeps composition and modified shortcuts out of Vim routing and requests hints for normal f', () => {
