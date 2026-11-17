@@ -491,71 +491,165 @@
   await pageNativePress('Escape')
   hintMark('native-prediscovery-overflow-releases-escape-input-and-fresh-capture')
 
-  await requestPageHints()
-  await until(
-    async () => (await pageLabelsFor(page)).length > 0,
-    'settled capture before delayed poll',
-  )
+  // Hold genuine native events across capture discovery, releasing requests
+  // first and pre-owner keys only after the production owner exists.
+  await pageEval(`document.body.tabIndex=-1;document.body.focus()`)
+  await captureFrame(page)
+  assert.equal(await pageOverlayCount(), 0, 'delayed handoff must start before discovery')
   const delayedPollStart = sent.filter(
     (event) => event.remote === 'A' && event.name === 'hints',
+  ).length
+  const delayedDiscoverStart = hintUiCalls.filter(
+    (call) => call.name === 'browser.hints-discover',
+  ).length
+  const delayedPresentStart = hintUiCalls.filter(
+    (call) => call.name === 'browser.hints-present',
   ).length
   await pageEval(`(() => {
     window.qaDelayedKeyUps=[]
     window.addEventListener('keyup',event=>{if(event.isTrusted)window.qaDelayedKeyUps.push(event.key)},true)
   })()`)
   await page.executeJavaScriptInIsolatedWorld(1017, [
-    { code: `globalThis.qaSavedHintPoll=__holiPage.hints.poll;__holiPage.hints.poll=()=>[];true` },
+    {
+      code: `globalThis.qaSavedHintPoll=__holiPage.hints.poll;globalThis.qaDelayedRaw=[];globalThis.qaReleaseRequests=false;globalThis.qaReleaseKeys=false;__holiPage.hints.poll=()=>{qaDelayedRaw.push(...qaSavedHintPoll());const allowed=qaDelayedRaw.filter(event=>(qaReleaseRequests&&event.type==='request')||(qaReleaseKeys&&event.type!=='request'));for(const event of allowed)qaDelayedRaw.splice(qaDelayedRaw.indexOf(event),1);return allowed};true`,
+    },
   ])
   try {
-    for (const key of ['a', 'Escape']) {
-      const keyCode = key.length === 1 ? key.toLowerCase() : key
-      page.sendInputEvent({ type: 'keyDown', keyCode })
-      if (key.length === 1) page.sendInputEvent({ type: 'char', keyCode: key })
-      page.sendInputEvent({ type: 'keyUp', keyCode })
-    }
+    await pageNativePress('f')
+    await pageNativePress('a')
     await until(
-      async () => (await pageEval<string[]>('window.qaDelayedKeyUps')).length >= 2,
-      'trusted delayed-poll key acknowledgements',
+      async () => (await pageEval<string[]>('window.qaDelayedKeyUps')).includes('a'),
+      'trusted native prefix key acknowledgement',
     )
-    await wait(350)
-    assert((await pageOverlayCount()) > 0, 'fixture did not hold more than two production polls')
+    const rawBeforeOwner = async () =>
+      page.executeJavaScriptInIsolatedWorld(1017, [
+        {
+          code: `qaDelayedRaw.map(event=>({type:event.type,key:event.key,capture:event.capture,owner:!!event.owner}))`,
+        },
+      ])
+    await until(
+      async () =>
+        (await rawBeforeOwner()).some((event: any) => event.type === 'key' && event.key === 'a'),
+      'isolated poll captures native prefix key',
+    )
+    const capturedPrefix = (await rawBeforeOwner()).find(
+      (event: any) => event.type === 'key' && event.key === 'a',
+    )
+    assert(
+      Number.isSafeInteger(capturedPrefix.capture) && !capturedPrefix.owner,
+      'fixture did not capture an ownerless native prefix before discovery',
+    )
+    await page.executeJavaScriptInIsolatedWorld(1017, [
+      { code: `globalThis.qaReleaseRequests=true;true` },
+    ])
+    await until(
+      async () => (await pageLabelsFor(page)).length > 0,
+      'discovery while prefix remains delayed',
+    )
+    const discover = hintUiCalls
+      .filter((call) => call.name === 'browser.hints-discover')
+      .slice(delayedDiscoverStart)
+      .at(-1)
+    assert(discover, 'production discovery did not reach the browser capability')
+    const discoverScope = discover.params
+    const eventsForRequest = () =>
+      sent
+        .filter((event) => event.remote === 'A' && event.name === 'hints')
+        .slice(delayedPollStart)
+        .map((event) => event.payload as any)
+    const requestEvent = eventsForRequest().find((event) => event.type === 'request')
+    assert(requestEvent, 'production did not emit native capture request')
+    const ownerIdentity = (owner: any) => ({
+      tab: owner.tab,
+      nonce: owner.nonce,
+      attachment: owner.attachment,
+      request: owner.request,
+      origin: owner.origin,
+    })
+    assert.deepEqual(
+      {
+        tab: discoverScope.tab,
+        nonce: discoverScope.nonce,
+        attachment: discoverScope.attachment,
+        request: discoverScope.request,
+      },
+      {
+        tab: requestEvent.tab,
+        nonce: requestEvent.nonce,
+        attachment: requestEvent.attachment,
+        request: requestEvent.request,
+      },
+      'discovery must retain native request identity',
+    )
+    const presentation = hintUiCalls
+      .filter((call) => call.name === 'browser.hints-present')
+      .slice(delayedPresentStart)
+      .at(-1)
+    assert(presentation, 'production did not present its discovered snapshot')
+    const discoverOwner = presentation.params.owner
+    assert.equal(
+      discoverOwner.origin,
+      requestEvent.origin,
+      'discovered snapshot lost native request origin',
+    )
+    const labelsBeforePrefix = await pageLabelsFor(page)
+    await page.executeJavaScriptInIsolatedWorld(1017, [
+      { code: `globalThis.qaReleaseKeys=true;true` },
+    ])
+    await until(
+      () => eventsForRequest().some((event) => event.type === 'key' && event.key === 'a'),
+      'production forwards buffered prefix key to discovered owner',
+    )
+    const latePrefix = eventsForRequest().find((event) => event.type === 'key' && event.key === 'a')
+    assert(latePrefix, 'late capture prefix key was lost')
+    assert.deepEqual(
+      ownerIdentity(latePrefix),
+      ownerIdentity(discoverOwner),
+      'late prefix must retain exact discovered owner',
+    )
+    await until(
+      async () => (await pageLabelsFor(page)).length <= labelsBeforePrefix.length,
+      'late prefix updates page hint presentation',
+    )
+    assert.equal(
+      eventsForRequest().filter((event) => event.type === 'key' && event.key === 'a').length,
+      1,
+      'buffered native prefix was emitted more than once',
+    )
+    const remainingRaw = await page.executeJavaScriptInIsolatedWorld(1017, [
+      { code: `qaDelayedRaw.map(event=>event.type+':'+(event.key||''))` },
+    ])
+    assert(!remainingRaw.includes('key:a'), 'delayed wrapper retained an already forwarded key')
+    await pageNativePress('Escape')
+    await until(
+      async () => (await pageLabelsFor(page)).length === 0,
+      'Escape immediately clears page labels',
+    )
+    await until(
+      () => eventsForRequest().some((event) => event.type === 'cancel' || event.type === 'revoke'),
+      'production emits delayed-handoff cancellation or revoke',
+    )
+    const lateCancel = eventsForRequest().find(
+      (event) => event.type === 'cancel' || event.type === 'revoke',
+    )
+    assert(lateCancel, 'Escape cancellation or revoke was lost')
+    assert.deepEqual(
+      ownerIdentity(lateCancel),
+      ownerIdentity(discoverOwner),
+      'native cancellation or revoke must retain exact discovered request identity',
+    )
+    await until(
+      async () => (await hostHintCount()) === 0,
+      'host labels clear after delayed cancellation',
+    )
+    hintMark('native-delayed-poll-forwards-prefix-and-escape-through-discovered-owner')
   } finally {
     await page.executeJavaScriptInIsolatedWorld(1017, [
-      { code: `__holiPage.hints.poll=qaSavedHintPoll;delete globalThis.qaSavedHintPoll` },
+      {
+        code: `__holiPage.hints.poll=qaSavedHintPoll;delete globalThis.qaSavedHintPoll;delete globalThis.qaDelayedRaw;delete globalThis.qaReleaseRequests;delete globalThis.qaReleaseKeys`,
+      },
     ])
   }
-  await until(
-    () =>
-      sent.filter((event) => event.remote === 'A' && event.name === 'hints').length >=
-      delayedPollStart + 2,
-    'production emits buffered prefix key and Escape cancellation',
-  )
-  const delayedEvents = sent
-    .filter((event) => event.remote === 'A' && event.name === 'hints')
-    .slice(delayedPollStart)
-    .map((event) => event.payload as any)
-  const latePrefix = delayedEvents.find((event) => event.type === 'key' && event.key === 'a')
-  const lateCancel = delayedEvents.find((event) => event.type === 'cancel')
-  assert(latePrefix && lateCancel, 'late capture key or Escape cancellation was lost')
-  assert.deepEqual(
-    {
-      tab: latePrefix.tab,
-      nonce: latePrefix.nonce,
-      attachment: latePrefix.attachment,
-      request: latePrefix.request,
-      origin: latePrefix.origin,
-    },
-    {
-      tab: lateCancel.tab,
-      nonce: lateCancel.nonce,
-      attachment: lateCancel.attachment,
-      request: lateCancel.request,
-      origin: lateCancel.origin,
-    },
-    'late captured keys and cancellation must retain exact owner identity',
-  )
-  hintMark('native-delayed-poll-forwards-prefix-and-escape-through-settled-owner')
-
   await pageEval(`document.querySelector('#search').focus()`)
   await requestPageHints('#search')
   await until(async () => (await pageLabelsFor(page)).length > 0, 'field hints')
