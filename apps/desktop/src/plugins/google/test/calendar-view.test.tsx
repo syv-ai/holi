@@ -399,8 +399,11 @@ describe('the calendar view', () => {
       '[data-slot="event-calendar-event"][aria-label^="Team sync"]',
     )!
     const columns = container.querySelectorAll<HTMLElement>('[data-ec-day][data-ec-bounds-start]')
+    const focusDay = new Date(FOCUS.start).setHours(0, 0, 0, 0)
     for (const column of columns) {
-      vi.spyOn(column, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 0, 100, 1440))
+      // Only the event's actual day sits under the pointer, regardless of weekday.
+      const left = Number(column.dataset.ecDay) === focusDay ? 100 : 1000
+      vi.spyOn(column, 'getBoundingClientRect').mockReturnValue(new DOMRect(left, 0, 100, 1440))
     }
     vi.spyOn(focus, 'getBoundingClientRect').mockReturnValue(new DOMRect(120, 540, 80, 60))
     const dispatchPointer = (
