@@ -1430,17 +1430,18 @@ describe('rich-text Vim extension', () => {
       ['<p>first</p><p>middle</p><p>last</p>', 8, ['c', 'k'], '<p>X</p><p>last</p>'],
       ['<p>first</p><p>middle</p><p>last</p>', 16, ['V', 'c'], '<p>first</p><p>middle</p><p>X</p>'],
       ['<p>first<br>middle<br>last</p>', 1, ['V', 'c'], '<p>X<br>middle<br>last</p>'],
+      // StarterKit's trailingNode keeps an editable paragraph after a final code block.
       [
-        '<pre><code>first\nmiddle\nlast</code></pre>',
+        '<pre><code>first\nmiddle\nlast</code></pre><p></p>',
         1,
         ['c', 'j'],
-        '<pre><code>X\nlast</code></pre>',
+        '<pre><code>X\nlast</code></pre><p></p>',
       ],
       [
-        '<pre><code>first\nmiddle\nlast</code></pre>',
+        '<pre><code>first\nmiddle\nlast</code></pre><p></p>',
         7,
         ['c', 'k'],
-        '<pre><code>X\nlast</code></pre>',
+        '<pre><code>X\nlast</code></pre><p></p>',
       ],
     ] as const) {
       const ed = open(html)
