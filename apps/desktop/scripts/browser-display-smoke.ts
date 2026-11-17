@@ -254,10 +254,62 @@ async function run(): Promise<void> {
     const shift = shiftOverride ?? (key.length === 1 && key !== key.toLowerCase())
     const keyCode = code ?? (shift ? key.toLowerCase() : key)
     const modifiers = shift ? ['shift'] : []
-    view.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
-    if (key.length === 1) view.webContents.sendInputEvent({ type: 'char', keyCode: key, modifiers })
-    view.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    const caretTarget = await inPage<boolean>(
+      view,
+      `document.activeElement?.matches('#text, #graphemes') ?? false`,
+    )
+    const expectedKey =
+      (
+        { Right: 'ArrowRight', Left: 'ArrowLeft', Up: 'ArrowUp', Down: 'ArrowDown' } as Record<
+          string,
+          string
+        >
+      )[key] ?? key
+    const pageKey = JSON.stringify(expectedKey)
+    const eventStart = await inPage<number>(view, `window.__holiSmokeNativeEvents?.length ?? 0`)
+    const nativeInput = [
+      { type: 'keyDown', keyCode, modifiers },
+      ...(key.length === 1 ? [{ type: 'char', keyCode: key, modifiers }] : []),
+      { type: 'keyUp', keyCode, modifiers },
+    ] as const
+    for (const input of nativeInput) view.webContents.sendInputEvent(input)
+    if (!caretTarget) {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      return
+    }
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const acknowledged = await inPage<boolean>(
+        view,
+        `window.__holiSmokeNativeEvents?.slice(${eventStart}).some(event => event.type === 'keyup' && event.key === ${pageKey} && event.trusted) ?? false`,
+      )
+      if (acknowledged) {
+        const target = await inPage<string | null>(
+          view,
+          `document.activeElement?.matches('#text, #graphemes') ? document.activeElement.id : null`,
+        )
+        if (target) {
+          const diagnostic = await inPage<unknown>(
+            view,
+            `(() => { const element=document.activeElement; return {key:${pageKey},target:element.id,value:element.value,codepoints:[...element.value].map(char=>char.codePointAt(0).toString(16)),selection:[element.selectionStart,element.selectionEnd],events:window.__holiSmokeNativeEvents.slice(${eventStart})} })()`,
+          )
+          const state = await view.webContents.executeJavaScriptInIsolatedWorld(1017, [
+            { code: `({ nonce: __holiPage.vim.documentNonce(), ...__holiPage.vim.mode() })` },
+          ])
+          console.log(
+            `[DEBUG-524-caret] ${JSON.stringify({ ...(diagnostic as object), nativeInput, state })}`,
+          )
+        }
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    const diagnostic = await inPage<unknown>(
+      view,
+      `({key:${pageKey},active:document.activeElement?.id,events:window.__holiSmokeNativeEvents?.slice(${eventStart}) ?? []})`,
+    )
+    throw new Error(
+      `[DEBUG-524-caret] native keyup was not observed: ${JSON.stringify(diagnostic)}`,
+    )
   }
   const inPage = <T>(view: WebContentsView, expression: string) =>
     view.webContents.executeJavaScript(expression) as Promise<T>
@@ -316,6 +368,10 @@ async function run(): Promise<void> {
   }
   const selection = async (selector: string, start: number, end = start) =>
     inPage(a, `document.querySelector('${selector}').setSelectionRange(${start}, ${end})`)
+  await inPage(
+    a,
+    `(() => { window.__holiSmokeNativeEvents=[]; for (const type of ['keydown','beforeinput','input','keyup']) document.addEventListener(type,event => { const target=event.target; window.__holiSmokeNativeEvents.push({type,key:event.key,inputType:event.inputType ?? null,data:event.data ?? null,trusted:event.isTrusted,target:target?.id ?? null,value:target?.value ?? null,selection:target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? [target.selectionStart,target.selectionEnd] : null}) },true) })()`,
+  )
   const vimSnapshot = await waitFor(
     () =>
       sent.find((event) => event.remote === 'A' && event.name === 'vim-mode')?.payload as
