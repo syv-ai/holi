@@ -551,17 +551,50 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
       if (!res.ok) return res
-      if (deps.activationSignal?.aborted || current !== c) {
-        await bg.cli.stop(targetOf(c), res.id)
-        return { ok: false, message: 'The vault closed as the session started.' }
+      const cleanup = async () => {
+        try {
+          await bg.cli.stop(targetOf(c), res.id)
+          return true
+        } catch {
+          return false
+        }
+      }
+      const cleanupFailure = () => ({
+        ok: false as const,
+        message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+      })
+      if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
+        return (await cleanup())
+          ? { ok: false, message: 'The vault closed as the session started.' }
+          : cleanupFailure()
       }
       if (prompt === undefined) unprompted.add(res.id)
-      await refresh()
-      const opened = await openOn(c, { attach: res.id, cols, rows: r })
+      let opened: Awaited<ReturnType<typeof openOn>>
+      try {
+        await refresh()
+        if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
+          return (await cleanup())
+            ? { ok: false, message: 'The vault closed as the session started.' }
+            : cleanupFailure()
+        }
+        opened = await openOn(c, { attach: res.id, cols, rows: r })
+      } catch (error) {
+        if (!(await cleanup())) return cleanupFailure()
+        await refresh().catch(() => {})
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : 'Could not open session.',
+        }
+      }
+      if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
+        return (await cleanup())
+          ? { ok: false, message: 'The vault closed as the session started.' }
+          : cleanupFailure()
+      }
       if (!opened.ok) {
         // A failed terminal open must not leave a hidden background run that a
         // caller will retry as a second conversation.
-        await bg.cli.stop(targetOf(c), res.id)
+        if (!(await cleanup())) return cleanupFailure()
         await refresh()
         return opened
       }

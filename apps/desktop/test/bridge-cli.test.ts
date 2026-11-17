@@ -187,13 +187,29 @@ describe('the installed script', () => {
     const registry = createCapabilityRegistry()
     registry.register(['tasks'], taskCapabilities({ today: () => '2026-09-30' }))
     const commands = registry.commands('owner/repo')
-    for (const args of [
-      ['tasks', 'list', '--due', 'today'],
-      ['tasks', 'list', '--assignee', 'Ada', '--open'],
-      ['tasks', 'list', '--due', 'today', '--assignee', 'Ada', '--open'],
-    ]) {
-      expect(resolveArgv(args, commands, null)).toMatchObject({ kind: 'run', name: 'tasks.list' })
-    }
+    expect(resolveArgv(['tasks', 'list', '--due', 'today'], commands, null)).toMatchObject({
+      kind: 'run',
+      name: 'tasks.list',
+      params: { due: 'today' },
+    })
+    expect(
+      resolveArgv(['tasks', 'list', '--assignee', 'Ada', '--open'], commands, null),
+    ).toMatchObject({
+      kind: 'run',
+      name: 'tasks.list',
+      params: { assignee: 'Ada', open: true },
+    })
+    expect(
+      resolveArgv(
+        ['tasks', 'list', '--due', 'today', '--assignee', 'Ada', '--open'],
+        commands,
+        null,
+      ),
+    ).toMatchObject({
+      kind: 'run',
+      name: 'tasks.list',
+      params: { due: 'today', assignee: 'Ada', open: true },
+    })
   })
 })
 
