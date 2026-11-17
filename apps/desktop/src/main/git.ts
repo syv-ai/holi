@@ -252,6 +252,16 @@ export interface GitRepo {
    * `path` follows a file through renames; a `folder` is every commit under it,
    * which `--follow` (one file only) cannot walk. */
   log(opts?: { path?: string; folder?: boolean; limit?: number }): Promise<Commit[]>
+  /** Bounded reachable commit/path changes between exact endpoints. */
+  revisionChanges(
+    from: string,
+    to: string,
+    path: string,
+  ): Promise<{
+    complete: boolean
+    reason: 'ok' | 'history-unavailable' | 'limit'
+    changes: { sha: string; path: string }[]
+  }>
   /** A file's content at a past commit, for the history preview/restore
    * (`features/history.md`). Rejects when `path` is absent at `sha` —
    * e.g. a commit from before the file was renamed (`show` reads the given name,
@@ -797,6 +807,61 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
      */
     const birth = commits.findIndex((c) => c.copied)
     return (birth === -1 ? commits : commits.slice(0, birth + 1)).map((c) => c.commit)
+  }
+
+  async function revisionChanges(from: string, to: string, path: string) {
+    const incomplete = (reason: 'history-unavailable' | 'limit') => ({
+      complete: false,
+      reason,
+      changes: [] as { sha: string; path: string }[],
+    })
+    if (
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(from) ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(to)
+    )
+      return incomplete('history-unavailable')
+    const started = Date.now()
+    const budget = {
+      ...opts,
+      env: { ...opts.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
+      executionBudget: { maxBuffer: 8 * 1024 * 1024, timeout: 5000 },
+    }
+    const git = (args: string[]) => runGitOnce(root, ['--no-replace-objects', ...args], budget)
+    const [base, tip] = await Promise.all([
+      git(['cat-file', '-e', `${from}^{commit}`]),
+      git(['cat-file', '-e', `${to}^{commit}`]),
+    ])
+    if (!base.ok || !tip.ok) return incomplete('history-unavailable')
+    const ancestry = await git(['merge-base', '--is-ancestor', from, to])
+    if (!ancestry.ok) return incomplete('history-unavailable')
+    const list = await git(['rev-list', '--topo-order', to, `^${from}`])
+    if (!list.ok) return incomplete('history-unavailable')
+    const commits = list.stdout.trim().split(/\r?\n/).filter(Boolean)
+    if (commits.length > 200) return incomplete('limit')
+    const changes: { sha: string; path: string }[] = []
+    let bytes = 0
+    for (const sha of commits) {
+      if (Date.now() - started >= 5000) return incomplete('limit')
+      const result = await git([
+        'diff-tree',
+        '--no-commit-id',
+        '--name-only',
+        '-z',
+        '--no-renames',
+        '-r',
+        '--root',
+        sha,
+        '--',
+        path,
+      ])
+      if (!result.ok) return incomplete('history-unavailable')
+      for (const changed of result.stdout.split('\0').filter(Boolean)) {
+        changes.push({ sha, path: changed })
+        bytes += Buffer.byteLength(sha) + Buffer.byteLength(changed) + 2
+        if (changes.length > 2000 || bytes > 8 * 1024 * 1024) return incomplete('limit')
+      }
+    }
+    return { complete: true, reason: 'ok' as const, changes }
   }
 
   /** A file's content at a commit. Unlike `runGit`, this must **not** trim:
@@ -1497,6 +1562,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     commitFiles,
     head,
     rangeFiles,
+    revisionChanges,
     commitAll,
     commitFileNoVerify,
     excludeLocally,
