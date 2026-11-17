@@ -8,7 +8,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { randomUUID } from 'node:crypto'
-import { lstat, realpath, readdir, readFile, rm, rmdir } from 'node:fs/promises'
+import { lstat, realpath, readdir, readFile, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   isCommunityPluginId,
@@ -28,14 +28,12 @@ import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   cap,
   CapabilityError,
-  gitignoreWith,
   noParams,
   paramsObject,
   flagParam,
   readVaultSettings,
   stringParam,
   toolPath,
-  writeAtomic,
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { Checks, CheckResult } from './checks'
@@ -52,6 +50,7 @@ import {
 } from './fetch'
 import { searchPlugins } from './search'
 import { refreshSkills, seedApps, writeSkills } from './skills'
+import { publishPin } from './pin-publication'
 import {
   assertCheckoutIdentity,
   assertManifestPinned,
@@ -163,8 +162,10 @@ async function readOptionalBoundedRegularText(path: string, label: string): Prom
 }
 
 /** The vault's pins, by id; an unreadable one is left out. */
-async function readPins(root: string): Promise<Map<string, PluginPin>> {
-  const pins = new Map<string, PluginPin>()
+async function readPinRecords(
+  root: string,
+): Promise<Map<string, { pin: PluginPin; text: string }>> {
+  const pins = new Map<string, { pin: PluginPin; text: string }>()
   const dirs = await readdir(join(root, PLUGIN_PINS_DIR)).catch(() => [] as string[])
   for (const id of dirs) {
     const text = await readBoundedRegularText(join(root, pluginPinPath(id)), 'plugin pin').catch(
@@ -173,12 +174,18 @@ async function readPins(root: string): Promise<Map<string, PluginPin>> {
     if (text === null) continue
     try {
       const parsed = parsePluginPin(JSON.parse(text))
-      if (parsed.ok && parsed.value.id === id) pins.set(id, parsed.value)
+      if (parsed.ok && parsed.value.id === id) pins.set(id, { pin: parsed.value, text })
     } catch {
       // Not JSON: not a pin.
     }
   }
   return pins
+}
+
+async function readPins(root: string): Promise<Map<string, PluginPin>> {
+  return new Map(
+    [...(await readPinRecords(root)).entries()].map(([id, record]) => [id, record.pin]),
+  )
 }
 
 const installCommit = (i: Install) => (i.source.kind === 'release' ? i.source.commit : null)
@@ -366,18 +373,12 @@ export async function refreshInstalledPins(
   root: string,
   deps: Pick<CommunityDeps, 'store' | 'consent' | 'git' | 'signal' | 'live'>,
 ): Promise<void> {
-  const [pins, installs, settings] = await Promise.all([
-    readPins(root),
+  const [records, installs, settings] = await Promise.all([
+    readPinRecords(root),
     deps.store.list(),
     readVaultSettings(root),
   ])
-  const originalPinTexts = new Map<string, string | null>()
-  for (const pin of pins.values())
-    originalPinTexts.set(
-      pin.id,
-      await readOptionalBoundedRegularText(join(root, pluginPinPath(pin.id)), 'plugin pin'),
-    )
-  for (const pin of pins.values()) {
+  for (const { pin, text } of records.values()) {
     const install = installs.find((item) => item.id === pin.id)
     if (
       !settings.plugins.vault[pin.id] ||
@@ -399,56 +400,14 @@ export async function refreshInstalledPins(
         path: source.path,
         commit: source.commit,
       }
-      const codeDir = resolve(deps.store.codeDir(install))
-      const expectedRoot = await realpath(
-        resolve(deps.store.releaseDir(install.id, source.commit)),
-      ).catch(() => null)
-      const codeReal = await realpath(codeDir).catch(() => null)
-      if (
-        expectedRoot === null ||
-        codeReal === null ||
-        codeReal !== resolve(expectedRoot, source.path) ||
-        !insidePath(expectedRoot, codeReal)
-      )
-        throw new Error('installed release paths do not match their canonical source')
-      const checkoutManifest = await readManifest(codeDir, source.path)
-      await assertCheckoutIdentity(
-        expectedRoot,
-        source.commit,
-        deps.git.url(source.repo),
-        deps.signal,
-      )
-      await assertManifestPinned(
-        expectedRoot,
-        source.commit,
-        source.path,
-        checkoutManifest,
-        deps.signal,
-      )
-      if (canonicalJson(checkoutManifest) !== canonicalJson(install.manifest))
-        throw new Error('installed release manifest does not match its source')
-      const pinPath = join(root, pluginPinPath(pin.id))
-      await assertSafeVaultPath(root, pinPath)
-      const expectedSnapshots = await prepareAuthenticatedRelease({
-        root: expectedRoot,
-        commit: source.commit,
-        sourcePath: source.path,
-        originUrl: deps.git.url(source.repo),
-        manifest: install.manifest,
-        skills: install.manifest.skills ?? [],
-        signal: deps.signal,
-      })
-      const originalPinText = originalPinTexts.get(pin.id) ?? null
-      if (originalPinText === null) throw new Error('automatic community update pin changed')
       const guard = async () => {
         if (deps.live?.() === false || deps.signal?.aborted)
           throw new Error('community attachment is closed')
-        await assertSafeVaultPath(root, pinPath)
         const [currentInstall, consented, currentSettings, currentPinText] = await Promise.all([
           deps.store.get(install.id),
           deps.consent.has(install.id, source.commit),
           readVaultSettings(root),
-          readBoundedRegularText(pinPath, 'plugin pin').catch(() => null),
+          readOptionalBoundedRegularText(join(root, pluginPinPath(pin.id)), 'plugin pin'),
         ])
         if (
           currentInstall === null ||
@@ -458,54 +417,26 @@ export async function refreshInstalledPins(
           currentInstall.setup !== 'ok' ||
           !consented ||
           currentSettings.plugins.vault[install.id] !== true ||
-          currentPinText !== originalPinText
+          currentPinText !== text
         )
           throw new Error('automatic community update authorization changed')
         await assertNoCompetingSkillClaims(root, install.id, install.manifest.skills ?? [])
         if (deps.live?.() === false || deps.signal?.aborted)
           throw new Error('community attachment is closed')
       }
-      const validateSnapshot = async (snapshots: Parameters<typeof validateSkillSnapshot>[4]) => {
-        await guard()
-        await validateSkillSnapshot(
-          expectedRoot,
-          source.commit,
-          source.path,
-          install.manifest.skills ?? [],
-          snapshots,
-          deps.signal,
-        )
-        await guard()
-      }
-      await guard()
-      const ignorePath = join(root, '.gitignore')
-      const originalIgnoreText = await readOptionalBoundedRegularText(ignorePath, 'vault .gitignore')
-      const writtenGuides = await writeSkills(install.manifest, codeDir, root, {
-        guard,
-        expectedSnapshots,
-        validateSnapshot,
-      })
-      const retainedBackups = writtenGuides.filter((path) => path.endsWith('(guide backups)'))
-      if (retainedBackups.length)
-        syncBackups.set(key, [...new Set([...(syncBackups.get(key) ?? []), ...retainedBackups])])
-      await seedApps(install.manifest, codeDir, root, { guard })
-      await guard()
-      const lines = install.manifest.ignore ?? []
-      if (lines.length > 0) {
-        const updated = gitignoreWith(originalIgnoreText, lines)
-        if (updated !== null)
-          await writeAtomic(root, vaultRelPath('.gitignore'), updated, async () => {
-            await guard()
-            if ((await readOptionalBoundedRegularText(ignorePath, 'vault .gitignore')) !== originalIgnoreText)
-              throw new Error('vault .gitignore changed during publication')
-          })
-      }
-      await writeAtomic(
+      await publishPin({
         root,
-        vaultRelPath(pluginPinPath(pin.id)),
-        `${JSON.stringify(next, null, 2)}\n`,
+        install,
+        pin: next,
+        originalPinText: text,
+        store: deps.store,
+        git: deps.git,
+        signal: deps.signal,
+        live: deps.live,
         guard,
-      )
+        onBackups: (paths) =>
+          syncBackups.set(key, [...new Set([...(syncBackups.get(key) ?? []), ...paths])]),
+      })
       syncErrors.delete(key)
     } catch (error) {
       syncErrors.set(key, `Could not update guides for ${pin.name}: ${String(error)}`)
@@ -777,143 +708,34 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             path: source.path,
             commit: source.commit,
           }
-          const codeDir = resolve(deps.store.codeDir(install))
-          const expectedRoot = await realpath(
-            resolve(deps.store.releaseDir(id, source.commit)),
-          ).catch(() => null)
-          const codeReal = await realpath(codeDir).catch(() => null)
-          if (
-            expectedRoot === null ||
-            codeReal === null ||
-            codeReal !== resolve(expectedRoot, source.path) ||
-            !insidePath(expectedRoot, codeReal)
-          )
-            throw new CapabilityError('FORBIDDEN', `${id} release paths do not match its source`)
-          const validateSource = async () => {
-            const manifest = await readManifest(codeDir, source.path)
-            await assertCheckoutIdentity(
-              expectedRoot,
-              source.commit,
-              deps.git.url(source.repo),
-              deps.signal,
-            )
-            await assertManifestPinned(
-              expectedRoot,
-              source.commit,
-              source.path,
-              manifest,
-              deps.signal,
-            )
-            if (canonicalJson(manifest) !== canonicalJson(install.manifest))
-              throw new CapabilityError('FORBIDDEN', `${id} manifest does not match its source`)
-          }
           const pinPath = join(ctx.root, pluginPinPath(id))
           await assertSafeVaultPath(ctx.root, pinPath)
-          const originalPinText = await readBoundedRegularText(pinPath, 'plugin pin').catch(
-            (error) => {
-              if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-              throw error
-            },
-          )
-          const expectedSnapshots = await prepareAuthenticatedRelease({
-            root: expectedRoot,
-            commit: source.commit,
-            sourcePath: source.path,
-            originUrl: deps.git.url(source.repo),
-            manifest: install.manifest,
-            skills: install.manifest.skills ?? [],
-            signal: deps.signal,
-          })
-          let publishingOwnPinDirectory = false
+          const originalPinText = await readOptionalBoundedRegularText(pinPath, 'plugin pin')
           const guard = async () => {
             ensureLive()
-            await assertSafeVaultPath(ctx.root, pinPath)
-            await validateSource()
-            const currentPinText = await readBoundedRegularText(pinPath, 'plugin pin').catch(
-              (error) => {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-                throw error
-              },
-            )
-            if (currentPinText !== originalPinText)
-              throw new CapabilityError('CONFLICT', `${id} vault pin changed during pin`)
-            const current = await deps.store.get(id)
-            if (
-              current === null ||
-              current.source.kind !== 'release' ||
-              JSON.stringify(current.source) !== JSON.stringify(source) ||
-              canonicalJson(current.manifest) !== canonicalJson(install.manifest)
-            )
-              throw new CapabilityError('CONFLICT', `${id} changed during pin`)
             await assertNoCompetingSkillClaims(ctx.root, id, install.manifest.skills ?? [], {
-              allowIncompleteOwnPin: publishingOwnPinDirectory,
+              allowIncompleteOwnPin: originalPinText === null,
             })
             ensureLive()
           }
-          await guard()
-          // Publish vault assets first. In particular, a failed guide refresh must
-          // leave the old pin truthful so the operation can be retried.
-          const validateSnapshot = async (
-            snapshots: Parameters<typeof validateSkillSnapshot>[4],
-          ) => {
-            await guard()
-            await validateSkillSnapshot(
-              expectedRoot,
-              source.commit,
-              source.path,
-              install.manifest.skills ?? [],
-              snapshots,
-              deps.signal,
-            )
-            await guard()
-          }
-          const writtenGuides = await writeSkills(install.manifest, codeDir, ctx.root, {
-            guard,
-            expectedSnapshots,
-            validateSnapshot,
-          })
           const backupKey = `${ctx.root}\0${id}`
-          const retainedBackups = writtenGuides.filter((path) => path.endsWith('(guide backups)'))
-          if (retainedBackups.length)
-            syncBackups.set(backupKey, [...new Set([...(syncBackups.get(backupKey) ?? []), ...retainedBackups])])
-          await seedApps(install.manifest, codeDir, ctx.root, { guard })
+          await publishPin({
+            root: ctx.root,
+            install,
+            pin,
+            originalPinText,
+            store: deps.store,
+            git: deps.git,
+            signal: deps.signal,
+            live: deps.live,
+            guard,
+            onBackups: (paths) =>
+              syncBackups.set(backupKey, [
+                ...new Set([...(syncBackups.get(backupKey) ?? []), ...paths]),
+              ]),
+          })
           await linkRunningCommands(ctx.root, deps)
-          await guard()
-          const lines = install.manifest.ignore ?? []
-          if (lines.length > 0) {
-            let existing: string | null
-            try {
-              existing = await readBoundedRegularText(
-                join(ctx.root, '.gitignore'),
-                'vault .gitignore',
-              )
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code === 'ENOENT') existing = null
-              else throw error
-            }
-            const next = gitignoreWith(existing, lines)
-            if (next !== null) await writeAtomic(ctx.root, vaultRelPath('.gitignore'), next, guard)
-          }
-          const pinDir = join(ctx.root, PLUGIN_PINS_DIR, id)
-          const pinDirWasAbsent = (await lstat(pinDir).catch(() => null)) === null
-          publishingOwnPinDirectory = pinDirWasAbsent
-          try {
-            await writeAtomic(
-              ctx.root,
-              vaultRelPath(pluginPinPath(id)),
-              `${JSON.stringify(pin, null, 2)}\n`,
-              guard,
-            )
-          } catch (error) {
-            publishingOwnPinDirectory = false
-            if (pinDirWasAbsent) {
-              const contents = await readdir(pinDir).catch(() => null)
-              if (contents?.length === 0) await rmdir(pinDir).catch(() => {})
-            }
-            throw error
-          }
-          publishingOwnPinDirectory = false
-          syncErrors.delete(`${ctx.root}\0${id}`)
+          syncErrors.delete(backupKey)
         }),
     }),
 
@@ -937,14 +759,18 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
               current.source.kind !== 'dev' ||
               JSON.stringify(current.source) !== JSON.stringify(install.source) ||
               canonicalJson(current.manifest) !== canonicalJson(install.manifest)
-            ) throw new CapabilityError('CONFLICT', `${id} folder installation changed`)
+            )
+              throw new CapabilityError('CONFLICT', `${id} folder installation changed`)
             await assertNoCompetingSkillClaims(ctx.root, id, install.manifest.skills ?? [])
             ensureLive()
           }
           await guard()
           const result = [
             ...(await writeSkills(install.manifest, codeDir, ctx.root, { guard })),
-            ...(await seedApps(install.manifest, codeDir, ctx.root, { guard, signal: deps.signal })),
+            ...(await seedApps(install.manifest, codeDir, ctx.root, {
+              guard,
+              signal: deps.signal,
+            })),
           ]
           await guard()
           return result
