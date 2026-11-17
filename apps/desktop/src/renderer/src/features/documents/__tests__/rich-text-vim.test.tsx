@@ -1652,12 +1652,12 @@ describe('rich-text Vim extension', () => {
     for (const [markup, expectedFor, textPos] of [
       [
         '<pre><code>one\ntwo\nthree</code></pre>',
-        (count: number) => (count === 2 ? 'three' : ''),
+        (count: number) => (count === 2 ? '\nthree' : ''),
         1,
       ],
       [
         '<p>one<br>two<br>three</p>',
-        (count: number) => (count === 2 ? '<p>three</p>' : '<p></p>'),
+        (count: number) => (count === 2 ? '<p><br>three</p>' : '<p></p>'),
         1,
       ],
     ] as const) {
@@ -1678,7 +1678,7 @@ describe('rich-text Vim extension', () => {
     key(code, '2')
     key(code, 'd')
     key(code, '$')
-    expect(code.state.doc.firstChild?.textContent).toBe('three')
+    expect(code.state.doc.firstChild?.textContent).toBe('\nthree')
 
     code.commands.setContent('<pre><code>one\n👩‍💻two\nthree</code></pre>')
     code.commands.setTextSelection(5)
@@ -1694,7 +1694,7 @@ describe('rich-text Vim extension', () => {
     key(code, '$')
     code.commands.setTextSelection(9)
     key(code, 'P')
-    expect(code.state.doc.firstChild?.textContent).toBe('one\ntwo\none\ntwo\nthree')
+    expect(code.state.doc.firstChild?.textContent).toBe('one\ntwo\none\ntwothree')
 
     code.commands.setContent('<pre><code>one\ntwo\nthree</code></pre>')
     code.commands.setTextSelection(1)
@@ -1706,6 +1706,99 @@ describe('rich-text Vim extension', () => {
     key(code, 'Escape')
     key(code, 'u')
     expect(code.state.doc.firstChild?.textContent).toBe('one\ntwo\nthree')
+  })
+
+  it('deletes logical lines without leaving separators or phantom lines', () => {
+    for (const markup of [
+      '<pre><code>first\nmiddle\nlast</code></pre>',
+      '<p>first<br>middle<br>last</p>',
+    ]) {
+      const isCode = markup.startsWith('<pre>')
+      const cases = [
+        {
+          start: 1,
+          keys: ['d', 'd'],
+          expectedCode: 'middle\nlast',
+          expectedHtml: '<p>middle<br>last</p>',
+        },
+        {
+          start: 8,
+          keys: ['d', 'd'],
+          expectedCode: 'first\nlast',
+          expectedHtml: '<p>first<br>last</p>',
+        },
+        {
+          start: 14,
+          keys: ['d', 'd'],
+          expectedCode: 'first\nmiddle',
+          expectedHtml: '<p>first<br>middle</p>',
+        },
+        {
+          start: 1,
+          keys: ['V', 'd'],
+          expectedCode: 'middle\nlast',
+          expectedHtml: '<p>middle<br>last</p>',
+        },
+        {
+          start: 8,
+          keys: ['V', 'd'],
+          expectedCode: 'first\nlast',
+          expectedHtml: '<p>first<br>last</p>',
+        },
+        {
+          start: 14,
+          keys: ['V', 'd'],
+          expectedCode: 'first\nmiddle',
+          expectedHtml: '<p>first<br>middle</p>',
+        },
+      ] as const
+      for (const { start, keys, expectedCode, expectedHtml } of cases) {
+        const ed = open(markup)
+        ed.commands.setTextSelection(start)
+        for (const value of keys) key(ed, value)
+        expect(isCode ? ed.state.doc.firstChild?.textContent : ed.getHTML()).toBe(
+          isCode ? expectedCode : expectedHtml,
+        )
+        expect(ed.state.doc.check()).toBeUndefined()
+      }
+    }
+
+    const counted = open('<pre><code>first\nmiddle\nlast</code></pre>')
+    counted.commands.setTextSelection(1)
+    key(counted, '2')
+    key(counted, 'd')
+    key(counted, 'd')
+    expect(counted.state.doc.firstChild?.textContent).toBe('last')
+  })
+
+  it('removes a table-cell paragraph when sibling content remains', () => {
+    const ed = openTable()
+    ed.commands.setContent(
+      '<table><tbody><tr><td><p>first</p><p>second</p></td></tr></tbody></table>',
+    )
+    let first = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'first') first = pos
+    })
+    ed.commands.setTextSelection(first)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(ed.state.doc.firstChild?.type.name).toBe('table')
+    expect(ed.state.doc.firstChild?.firstChild?.firstChild?.firstChild?.textContent).toBe('second')
+    expect(ed.state.doc.check()).toBeUndefined()
+  })
+
+  it('moves counted dollar motions across logical lines inside their container', () => {
+    for (const sequence of [
+      ['2', '$'],
+      ['v', '2', '$'],
+    ] as const) {
+      const ed = open('<pre><code>first\nmiddle\nlast</code></pre>')
+      ed.commands.setTextSelection(1)
+      for (const value of sequence) key(ed, value)
+      expect(ed.state.selection.$head.parentOffset).toBeGreaterThan(6)
+      expect(ed.state.selection.$head.parentOffset).toBeLessThan(13)
+    }
   })
 
   it('keeps composition and modified shortcuts out of Vim routing and requests hints for normal f', () => {
