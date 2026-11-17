@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { app, BrowserWindow, ipcMain, session } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, session } from 'electron'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -8,6 +8,7 @@ const evidence = process.env.HOLI_516_EVIDENCE!
 const vault = join(root, 'vault')
 const note = join(vault, 'notes/acceptance.md')
 const secondaryNote = join(vault, 'notes/secondary.md')
+const commentsSidecar = join(vault, '.holi/comments/notes/acceptance.md.json')
 const fixtureFiles = new Map([
   ['notes/acceptance.md', note],
   ['notes/secondary.md', secondaryNote],
@@ -88,6 +89,15 @@ async function run() {
       heldRead = undefined
       held.resolve(held.text)
     } else throw new Error(`Unexpected fixture control: ${name}`)
+  })
+  ipcMain.handle('rich-text-vim:comments', async (_event, operation: string, text?: string) => {
+    if (operation === 'read') return readFile(commentsSidecar, 'utf8')
+    if (operation === 'write' && typeof text === 'string') {
+      await mkdir(join(vault, '.holi/comments/notes'), { recursive: true })
+      await writeFile(commentsSidecar, text)
+      return
+    }
+    throw new Error(`Unexpected comments fixture operation: ${operation}`)
   })
   ipcMain.handle('rich-text-vim:write', async (event, requested: string, text: string) => {
     assert.equal(event.senderFrame?.url, `file://${join(root, 'renderer/index.html')}`)
@@ -189,6 +199,24 @@ async function run() {
   const capture = async (name: string) => {
     const image = await win.webContents.capturePage()
     await writeFile(join(evidence, name), image.toPNG())
+  }
+  const preserveClipboard = async (operation: () => Promise<void>) => {
+    const formats = clipboard.availableFormats()
+    const saved = formats.map((format) => [format, clipboard.readBuffer(format)] as const)
+    assert.equal(saved.length, formats.length, 'capture every advertised clipboard format')
+    try {
+      await operation()
+    } finally {
+      clipboard.clear()
+      for (const [format, bytes] of saved) clipboard.writeBuffer(format, bytes)
+      assert.deepEqual(
+        clipboard.availableFormats().sort(),
+        [...formats].sort(),
+        'restore every original clipboard format',
+      )
+      for (const [format, bytes] of saved)
+        assert.deepEqual(clipboard.readBuffer(format), bytes, `restore clipboard ${format} exactly`)
+    }
   }
   await wait(`document.querySelector('[role="textbox"]')?.editor`, 'production DocumentView editor')
   await evaluate(`document.querySelector('[role="textbox"]').editor.commands.focus()`)
@@ -410,6 +438,20 @@ async function run() {
   mark('native-nested-list-line-delete-preserves-parent')
 
   await evaluate(
+    `window.richTextVimFixture.setup('<ul><li><p>parent</p><ul><li><p>child</p></li></ul></li><li><p>second</p></li></ul>',1);window.richTextVimFixture.atText('child')`,
+  )
+  await key('Escape')
+  await key('y')
+  await key('y')
+  await key('p')
+  const nestedAfterPut = await state()
+  assert.equal(nestedAfterPut.markdown, '- parent\n  - child\n  - child\n- second')
+  assert.equal(nestedAfterPut.json.content[0]?.type, 'bulletList')
+  assert.equal(nestedAfterPut.json.content[0]?.content?.[0]?.content?.[1]?.type, 'bulletList')
+  assert.equal(nestedAfterPut.json.content[0]?.content?.[0]?.content?.[1]?.content?.length, 2)
+  mark('native-nested-list-operator-put-preserves-sibling-and-container')
+
+  await evaluate(
     `window.richTextVimFixture.setup('<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>first</p></li><li data-type="taskItem" data-checked="true"><p>second</p></li></ul>',1);window.richTextVimFixture.atText('first')`,
   )
   await key('Escape')
@@ -420,6 +462,40 @@ async function run() {
   assert.equal(taskAfterDelete.json.content[0]?.type, 'taskList')
   assert.equal(taskAfterDelete.json.content[0]?.content?.[0]?.attrs?.checked, true)
   mark('native-task-list-delete-retains-checked-attribute')
+
+  await evaluate(
+    `window.richTextVimFixture.setup('<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>first</p></li><li data-type="taskItem" data-checked="true"><p>second</p></li></ul>',1);window.richTextVimFixture.atText('first')`,
+  )
+  await key('Escape')
+  await key('y')
+  await key('y')
+  await key('p')
+  const taskAfterPut = await state()
+  assert.equal(taskAfterPut.json.content[0]?.content?.length, 3)
+  assert.equal(taskAfterPut.json.content[0]?.content?.[0]?.attrs?.checked, false)
+  assert.equal(taskAfterPut.json.content[0]?.content?.[1]?.attrs?.checked, false)
+  assert.equal(taskAfterPut.json.content[0]?.content?.[2]?.attrs?.checked, true)
+  assert.equal(taskAfterPut.markdown, '- [ ] first\n- [ ] first\n- [x] second')
+  mark('native-task-list-operator-put-preserves-attrs-and-sibling-order')
+
+  await evaluate(
+    `window.richTextVimFixture.setup('<p><span data-wiki-link="Wiki note" data-target="notes/Wiki note.md">Wiki note</span> after</p>',1)`,
+  )
+  await key('Escape')
+  await key('y')
+  await key('w')
+  await key('p')
+  const wikiAfterPut = await state()
+  const wikiNodes: NativeNode[] = []
+  const collectWiki = (node: NativeNode) => {
+    if (node.type === 'wikiLink') wikiNodes.push(node)
+    for (const child of node.content ?? []) collectWiki(child)
+  }
+  for (const node of wikiAfterPut.json.content) collectWiki(node)
+  assert.equal(wikiNodes.length, 2)
+  assert.equal(wikiNodes[0]?.attrs?.target, wikiNodes[1]?.attrs?.target)
+  assert.equal(wikiAfterPut.markdown, '[[Wiki note]] [[Wiki note]] after')
+  mark('native-wiki-link-yank-put-retains-structured-target')
 
   await evaluate(
     `window.richTextVimFixture.setup(${JSON.stringify('<pre><code class="language-ts">first\nsecond</code></pre>')},1);window.richTextVimFixture.atText('first')`,
@@ -433,6 +509,63 @@ async function run() {
   mark('native-codeblock-logical-line-delete')
 
   await evaluate(
+    `window.richTextVimFixture.setup('<p>first<br>second</p>',1);window.richTextVimFixture.atText('first')`,
+  )
+  await key('Escape')
+  await key('d')
+  await key('d')
+  assert.equal(
+    (await state()).markdown,
+    'second',
+    'dd deletes only the first hardbreak-delimited line',
+  )
+  await key('u')
+  const restoredHardbreak = await state()
+  assert(restoredHardbreak.markdown.includes('first'))
+  assert(restoredHardbreak.markdown.includes('second'))
+  assert.equal(
+    restoredHardbreak.json.content[0]?.content?.filter((node) => node.type === 'hardBreak').length,
+    1,
+    'undo restores the structured hardBreak atom',
+  )
+  mark('native-hardbreak-logical-line-delete-and-undo')
+
+  await evaluate(
+    `window.richTextVimFixture.setup('<p>before</p><pre><code class="language-mermaid">A --&gt; B</code></pre><p>after</p>',1);window.richTextVimFixture.atText('A --&gt; B')`,
+  )
+  const mermaidBefore = await state()
+  const sourceBefore = mermaidBefore.json.content[1]
+  assert.equal(sourceBefore?.type, 'codeBlock')
+  assert.equal(sourceBefore?.attrs?.language, 'mermaid')
+  await key('Escape')
+  await key('y')
+  await key('y')
+  await key('p')
+  const mermaidPasted = await state()
+  const pastedNodes = mermaidPasted.json.content.filter((node) => node.type === 'codeBlock')
+  assert.equal(pastedNodes.length, 2)
+  assert(pastedNodes.every((node) => node.attrs?.language === 'mermaid'))
+  assert.equal(mermaidPasted.json.content[0]?.type, 'paragraph')
+  assert.equal(mermaidPasted.json.content.at(-1)?.type, 'paragraph')
+  await key('d')
+  await key('d')
+  const mermaidDeleted = await state()
+  assert.equal(mermaidDeleted.json.content.filter((node) => node.type === 'codeBlock').length, 1)
+  assert.equal(mermaidDeleted.markdown.includes('before'), true)
+  assert.equal(mermaidDeleted.markdown.includes('after'), true)
+  await key('u')
+  const mermaidUndone = await state()
+  assert.equal(mermaidUndone.json.content.filter((node) => node.type === 'codeBlock').length, 2)
+  assert(
+    mermaidUndone.json.content
+      .filter((node) => node.type === 'codeBlock')
+      .every((node) => node.attrs?.language === 'mermaid'),
+  )
+  assert.equal(mermaidUndone.markdown.includes('before'), true)
+  assert.equal(mermaidUndone.markdown.includes('after'), true)
+  mark('native-mermaid-line-yank-put-delete-undo-preserves-source-and-attrs')
+
+  await evaluate(
     `window.richTextVimFixture.setup('<table><tbody><tr><td><p>one</p></td></tr><tr><td><p>last</p></td></tr></tbody></table>',3)`,
   )
   await key('Escape')
@@ -442,6 +575,73 @@ async function run() {
   assert.equal(tableAfterDelete.json.content[0]?.type, 'table')
   assert(tableAfterDelete.markdown.includes('last'))
   mark('native-line-delete-retains-table-container')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  const commentBefore = await evaluate<{ id: string; from: number; to: number } | null>(
+    `window.richTextVimFixture.placeComment('thread-alpha','alpha')`,
+  )
+  assert(commentBefore, 'production comment bridge places the synthetic sidecar anchor')
+  await key('Escape')
+  await key('d')
+  await key('w')
+  const commentAfterDelete = await evaluate<{
+    id: string
+    from: number
+    to: number
+    text: string
+  } | null>(`window.richTextVimFixture.commentRange('thread-alpha')`)
+  assert.equal((await state()).markdown, 'beta')
+  assert.equal(commentAfterDelete, null, 'deleting anchored text marks its thread orphaned')
+  assert.equal(
+    await evaluate<string>(`window.richTextVimFixture.commentText('thread-alpha')`),
+    'Review this passage',
+    'orphaning retains sidecar comment text',
+  )
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  await evaluate(`window.richTextVimFixture.placeComment('thread-alpha','alpha')`)
+  await key('Escape')
+  await key('c')
+  await key('w')
+  win.webContents.insertText('omega')
+  await key('Escape')
+  const commentAfterChange = await evaluate<{
+    id: string
+    from: number
+    to: number
+    text: string
+  } | null>(`window.richTextVimFixture.commentRange('thread-alpha')`)
+  assert(commentAfterChange, 'changed anchor maps through the production comment decoration')
+  assert.equal((await state()).markdown, 'omega beta')
+  assert.equal(commentAfterChange.to - commentAfterChange.from, 5)
+  assert.equal(
+    commentAfterChange.text,
+    'omega',
+    'comment range follows the changed passage through ProseMirror mapping',
+  )
+  assert.equal(
+    await evaluate<string>(`window.richTextVimFixture.commentText('thread-alpha')`),
+    'Review this passage',
+  )
+  mark('native-comment-sidecar-anchor-maps-through-delete-and-change')
+
+  const shortcut = process.platform === 'darwin' ? 'meta' : 'control'
+  await preserveClipboard(async () => {
+    await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+    await key('Escape')
+    await key('v')
+    for (let i = 0; i < 5; i++) await key('l')
+    await key('c', [shortcut])
+    assert.equal(clipboard.readText(), 'alpha', 'native copy shortcut writes the selected text')
+    await evaluate(`window.richTextVimFixture.setup('<p>target</p>',7)`)
+    await key('Escape')
+    await key('v', [shortcut])
+    assert.equal(
+      (await state()).markdown,
+      'targetalpha',
+      'native paste shortcut inserts copied text',
+    )
+  })
+  mark('native-platform-copy-paste-shortcuts-preserve-existing-clipboard')
 
   // Production schema samples include marks, links, wiki links, code, lists, tables, and Mermaid.
   const schema = initialState.json.content.map((node: { type: string }) => node.type)
@@ -456,6 +656,43 @@ async function run() {
   ])
     assert(schema.includes(type), `fixture schema must include ${type}`)
   mark('rich-schema-list-table-code-and-native-blocks-present')
+
+  const crossRangeNotice = 'Vim selection crosses a list or table; no text was changed'
+  await evaluate(
+    `window.richTextVimFixture.setup('<table><tbody><tr><td><p>left</p></td><td><p>right</p></td></tr></tbody></table>',1);window.richTextVimFixture.atText('left')`,
+  )
+  const tableBeforeCross = (await state()).markdown
+  await key('Escape')
+  await key('v')
+  await key('j')
+  await key('d')
+  assert.equal(
+    (await state()).markdown,
+    tableBeforeCross,
+    'cross-cell destructive visual range leaves both cells intact',
+  )
+  await wait(
+    `document.body.innerText.includes(${JSON.stringify(crossRangeNotice)})`,
+    'discoverable cross-cell Vim feedback',
+  )
+  await evaluate(
+    `window.richTextVimFixture.setup('<p>outside</p><ul><li><p>inside</p></li></ul>',1);window.richTextVimFixture.atText('outside')`,
+  )
+  const boundaryBeforeCross = (await state()).markdown
+  await key('Escape')
+  await key('v')
+  await key('j')
+  await key('d')
+  assert.equal(
+    (await state()).markdown,
+    boundaryBeforeCross,
+    'list/paragraph boundary range leaves both containers intact',
+  )
+  await wait(
+    `document.body.innerText.includes(${JSON.stringify(crossRangeNotice)})`,
+    'discoverable list-boundary Vim feedback',
+  )
+  mark('native-unsupported-cross-container-visual-operations-feedback-and-no-change')
 
   await evaluate(`window.richTextVimFixture.mode(false)`)
   await key('a')
@@ -540,6 +777,12 @@ async function run() {
   )
   mark('dirty-departure-refusal-retains-document-and-retry-flushes-before-switch')
 
+  await evaluate(
+    `window.richTextVimFixture.setup('<p>alpha beta</p>',1);window.richTextVimFixture.focus('primary')`,
+  )
+  await key('Escape')
+  await key('v')
+  await key('l')
   await capture('light.png')
   await evaluate(
     `document.documentElement.dataset.theme='dark';document.documentElement.classList.add('dark')`,
@@ -549,6 +792,40 @@ async function run() {
     ok: true,
     issue: 516,
     checks,
+    nativeAssertions: [
+      {
+        name: 'native-comment-sidecar-anchor-maps-through-delete-and-change',
+        deletion:
+          'alpha is deleted; its production decoration is absent and sidecar text remains Review this passage',
+        change: 'alpha is replaced with omega; the mapped decoration still covers exactly omega',
+      },
+      {
+        name: 'native-platform-copy-paste-shortcuts-preserve-existing-clipboard',
+        copy: 'selected alpha through native platform copy shortcut',
+        paste: 'native platform paste inserts alpha after target',
+        clipboard:
+          'all advertised formats and bytes restored and verified; clipboard contents omitted',
+      },
+      {
+        name: 'native-mermaid-line-yank-put-delete-undo-preserves-source-and-attrs',
+        paste: 'Mermaid codeBlock duplicated with language=mermaid; before/after paragraphs remain',
+        delete: 'one diagram node removed without touching neighboring nodes',
+        undo: 'diagram restored with language=mermaid and source untouched',
+      },
+      {
+        name: 'native-unsupported-cross-container-visual-operations-feedback-and-no-change',
+        cases: ['table-cell to table-cell', 'paragraph to list item'],
+        feedback: 'Vim selection crosses a list or table; no text was changed',
+      },
+      {
+        name: 'native-task-and-nested-list-put-retains-structure',
+        assertions: [
+          'exact markdown and order',
+          'task checked attributes',
+          'nested list hierarchy',
+        ],
+      },
+    ],
     expectedScenarios: [
       {
         name: 'native-ime-composition-start-update-end-preserves-input',
@@ -585,7 +862,9 @@ async function run() {
     coverageNotes: [
       'Keyboard input is delivered by Electron webContents.sendInputEvent, not synthetic DOM KeyboardEvents.',
       'The fixture uses the production DocumentView and complete document extension schema with a fixed notes.read/notes.write adapter.',
-      'The fixture controls a bounded two-document focus/switch surface; it does not represent shell tab routing, native comment persistence, clipboard, Mermaid rendering, or cross-container content transfer.',
+      'Comment anchors use production placeThreads and DocumentComments transaction mapping; native copy/paste preserves and byte-verifies all pre-existing clipboard formats.',
+      'Mermaid node content, ordered/task lists, wiki-link atoms, code blocks and table structures are exercised through native Vim keyboard input.',
+      'The fixture controls a bounded two-document focus/switch surface; it does not represent shell tab routing.',
     ],
   }
   await writeFile(join(evidence, 'result.json'), JSON.stringify(result, null, 2))
