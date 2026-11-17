@@ -57,11 +57,13 @@
   const pressLabel = async (label: string) => {
     for (const key of label) await pageNativePress(key)
   }
-  const requestPageHints = async () => {
+  const requestPageHints = async (selector = 'body') => {
     page.focus()
-    await pageEval(`document.querySelector('#search').focus()`)
+    await pageEval(
+      `(() => { const target=document.querySelector(${JSON.stringify(selector)});target.tabIndex=-1;target.focus() })()`,
+    )
     await captureFrame(page)
-    await pageNativePress('Escape')
+    if (selector === '#search') await pageNativePress('Escape')
     await pageNativePress('f')
   }
   const hostHintCount = () =>
@@ -137,7 +139,7 @@
   )
   assert(
     !pageLabels.some((item: any) =>
-      /Disabled exclusion|Hidden exclusion|Occluded exclusion|Clipped exclusion|frame/i.test(
+      /Disabled exclusion|Hidden exclusion|Occluded exclusion|Clipped exclusion|Transparent exclusion|Inert exclusion|Aria hidden exclusion|frame/i.test(
         item.label,
       ),
     ),
@@ -165,8 +167,134 @@
   )
   hintMark('page-label-activation-produces-trusted-native-button-click')
 
-  await pageEval(`document.querySelector('#search').focus()`)
+  for (const selector of ['#trusted-button', '#trusted-link']) {
+    await requestPageHints(selector)
+    await until(
+      async () => (await pageLabelsFor(page)).length > 0,
+      `focused ${selector} requests hints`,
+    )
+    const chosen = (await pageLabelsFor(page)).find((item: any) => /Submit/.test(item.label))
+    assert(chosen)
+    const before = (await pageEval<any[]>('window.qaHintEvents')).length
+    await pressLabel(chosen.key)
+    await until(
+      async () => (await pageEval<any[]>('window.qaHintEvents')).length > before,
+      `trusted activation from ${selector}`,
+    )
+    assert.equal((await pageEval<any[]>('window.qaHintEvents')).at(-1).trusted, true)
+  }
+  hintMark('body-button-link-focus-request-hints-with-trusted-activation')
+
+  // Delay only the selected browser UI capability. Escape must retire the page
+  // snapshot immediately AND reach the retained selected host cancellation route.
   await requestPageHints()
+  await until(async () => (await pageLabelsFor(page)).length > 0, 'delayed activation hints')
+  const delayedTarget = (await pageLabelsFor(page)).find((item: any) => /Submit/.test(item.label))
+  assert(delayedTarget)
+  const clicksBeforeDelay = (await pageEval<any[]>('window.qaHintEvents')).length
+  let releaseHintActivation!: () => void
+  let hintActivationEntered!: () => void
+  const activationEntered = new Promise<void>((resolve) => {
+    hintActivationEntered = resolve
+  })
+  hintActivationGate = {
+    wait: new Promise<void>((resolve) => {
+      releaseHintActivation = resolve
+    }),
+    entered: hintActivationEntered,
+  }
+  try {
+    await pressLabel(delayedTarget.key)
+    await activationEntered
+    const queued = hintUiCalls.filter((call) => call.name === 'browser.hints-activate').at(-1)!
+      .params.owner
+    await pageNativePress('Escape')
+    assert.equal(
+      (await pageLabelsFor(page)).length,
+      0,
+      'Escape did not synchronously retire the page snapshot',
+    )
+    await until(
+      () =>
+        hintUiCalls.some(
+          (call) =>
+            call.name === 'browser.hints-clear' &&
+            call.params.request === queued.request &&
+            call.params.nonce === queued.nonce &&
+            call.params.attachment === queued.attachment,
+        ),
+      'selected host cancellation route clears exact request',
+    )
+    hintMark('native-escape-retires-delayed-action-and-routes-exact-host-cancellation')
+  } finally {
+    hintActivationGate = undefined
+    releaseHintActivation()
+  }
+  await wait(300)
+  assert.equal(
+    (await pageEval<any[]>('window.qaHintEvents')).length,
+    clicksBeforeDelay,
+    'cancelled delayed activation clicked',
+  )
+
+  await requestPageHints()
+  await until(async () => (await pageLabelsFor(page)).length > 0, 'opacity invalidation hints')
+  await pageEval(`document.querySelector('#trusted-button').style.opacity='0'`)
+  await until(
+    async () => (await pageLabelsFor(page)).length === 0 && (await hostHintCount()) === 0,
+    'opacity mutation revokes snapshot',
+  )
+  await requestPageHints()
+  await until(async () => (await pageLabelsFor(page)).length > 0, 'transparent target rediscovery')
+  assert(
+    !(await pageLabelsFor(page)).some((item: any) => /Submit/.test(item.label)),
+    'newly transparent target still discoverable',
+  )
+  await pageNativePress('Escape')
+  await pageEval(`document.querySelector('#trusted-button').style.opacity=''`)
+  hintMark('transparent-targets-and-ancestors-excluded-and-opacity-mutation-revokes')
+
+  // Hold only this fixture's isolated-world poll while genuine native keys fill
+  // the pre-discovery queue. No synthetic/trust override or production test door.
+  await pageEval(
+    `document.body.tabIndex=-1;document.body.focus();window.qaReleasedKeys=[];window.addEventListener('keydown',event=>{if(event.isTrusted)qaReleasedKeys.push({key:event.key,prevented:event.defaultPrevented})})`,
+  )
+  await captureFrame(page)
+  await page.executeJavaScriptInIsolatedWorld(1017, [
+    { code: `globalThis.qaSavedHintPoll=__holiPage.hints.poll;__holiPage.hints.poll=()=>[];true` },
+  ])
+  try {
+    await pageNativePress('f')
+    for (let index = 0; index < 35; index++) await pageNativePress('a')
+    await pageNativePress('Escape')
+    await pageNativePress('x')
+    const pendingEvents = await page.executeJavaScriptInIsolatedWorld(1017, [
+      { code: `qaSavedHintPoll()` },
+    ])
+    assert.equal(pendingEvents.length, 1, 'overflow retained old request or queued keys')
+    assert.equal(pendingEvents[0].type, 'revoke')
+    assert(Number.isSafeInteger(pendingEvents[0].capture))
+    const released = await pageEval<any[]>('window.qaReleasedKeys')
+    assert(
+      released.some((event) => event.key === 'Escape' && !event.prevented),
+      'overflow stuck intercepting Escape',
+    )
+    assert(
+      released.some((event) => event.key === 'x' && !event.prevented),
+      'overflow stuck intercepting ordinary body input',
+    )
+  } finally {
+    await page.executeJavaScriptInIsolatedWorld(1017, [
+      { code: `__holiPage.hints.poll=qaSavedHintPoll;delete globalThis.qaSavedHintPoll` },
+    ])
+  }
+  await requestPageHints()
+  await until(async () => (await pageLabelsFor(page)).length > 0, 'fresh capture after overflow')
+  await pageNativePress('Escape')
+  hintMark('native-prediscovery-overflow-releases-escape-input-and-fresh-capture')
+
+  await pageEval(`document.querySelector('#search').focus()`)
+  await requestPageHints('#search')
   await until(async () => (await pageLabelsFor(page)).length > 0, 'field hints')
   const fieldLabels = await pageLabelsFor(page)
   const search = fieldLabels.find((item: any) => /Search/.test(item.label))
@@ -281,6 +409,7 @@
   await wait(250)
   assert.equal((await pageLabelsFor(page)).length, 0, 'preference off exposed page hints')
   assert.equal(await hostHintCount(), 0, 'preference off exposed host hints')
+  assert.equal(await pageEval<boolean>('document.activeElement === document.body'), true)
   await ui('qa.setVim(true)')
   await wait(350)
   await pageEval(
@@ -311,28 +440,85 @@
   assert.equal(linkEvents.at(-1).trusted, true, 'link action must be trusted')
   hintMark('page-label-activation-produces-trusted-native-link-click')
 
-  // Screenshot the native child page itself, including its page-local shadow
-  // overlay; the host capture separately records the shell's HostHintLayer.
-  await requestPageHints()
-  await until(async () => (await pageLabelsFor(page)).length > 0, 'light page screenshot labels')
-  const light = await page.capturePage()
-  assert(!light.isEmpty(), 'native browser page screenshot is empty')
-  writeFileSync(join(evidence, 'hints-page-light.png'), light.toPNG())
-  const hostLight = await win.capturePage()
-  assert(!hostLight.isEmpty(), 'native shell screenshot is empty')
-  writeFileSync(join(evidence, 'hints-shell-light.png'), hostLight.toPNG())
-  await pageEval(`document.documentElement.style.colorScheme='dark'`)
-  await ui(
-    `document.documentElement.dataset.theme='dark';document.documentElement.classList.add('dark')`,
+  // Clear stale CDP media emulation left by earlier native captures. Production
+  // uses data-theme, never a manually invented .dark class contract.
+  const themeEvidence: any[] = []
+  const setActualTheme = async (theme: 'light' | 'dark') => {
+    for (const wc of [page, win.webContents]) {
+      if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
+      await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+    }
+    await ui(
+      `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(theme)}`,
+    )
+    await pageEval(`document.documentElement.style.colorScheme=${JSON.stringify(theme)}`)
+    await captureFrame(page)
+    await captureFrame(win.webContents)
+    const host = await ui(
+      `({theme:document.documentElement.dataset.theme,scheme:getComputedStyle(document.documentElement).colorScheme,bg:getComputedStyle(document.body).backgroundColor})`,
+    )
+    const guest = await pageEval<any>(
+      `({scheme:getComputedStyle(document.documentElement).colorScheme,bg:getComputedStyle(document.body).backgroundColor})`,
+    )
+    assert.equal(host.theme, theme)
+    assert.equal(host.scheme, theme)
+    assert.equal(guest.scheme, theme)
+    assert.equal(
+      guest.bg,
+      theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(18, 18, 18)',
+      'Canvas did not resolve to actual requested scheme',
+    )
+    return { theme, host, guest }
+  }
+  const assertInstalledPresentation = async () => {
+    const host = await ui(
+      `(() => {const s=getComputedStyle(document.querySelector('[data-host-hint-presentation]'));return Object.fromEntries(['backgroundColor','color','fontFamily','fontSize','fontWeight','lineHeight','height','minWidth','paddingInline','paddingBlock','borderRadius','letterSpacing','pointerEvents'].map(name=>[name,s[name]]))})()`,
+    )
+    const labels = await pageLabelsFor(page)
+    assert(labels.length > 0)
+    for (const label of labels)
+      assert.deepEqual(label.presentation, host, 'isolated page label differs from installed Kbd')
+    return host
+  }
+  for (const theme of ['light', 'dark'] as const) {
+    const actual = await setActualTheme(theme)
+    await requestPageHints()
+    await until(
+      async () => (await pageLabelsFor(page)).length > 0,
+      `${theme} page screenshot labels`,
+    )
+    const presentation = await assertInstalledPresentation()
+    themeEvidence.push({ ...actual, presentation })
+    const image = await page.capturePage()
+    assert(!image.isEmpty())
+    writeFileSync(join(evidence, `hints-page-${theme}.png`), image.toPNG())
+    const shell = await win.capturePage()
+    assert(!shell.isEmpty())
+    writeFileSync(join(evidence, `hints-shell-${theme}.png`), shell.toPNG())
+    await pageNativePress('Escape')
+  }
+  assert.notEqual(
+    themeEvidence[0].presentation.backgroundColor,
+    themeEvidence[1].presentation.backgroundColor,
   )
-  await wait(250)
+  assert.notEqual(themeEvidence[0].host.bg, themeEvidence[1].host.bg)
+  // A custom semantic theme is consumed from the same installed Kbd, not from a
+  // hard-coded light/dark palette in the browser adapter or the page.
+  await ui(
+    `document.documentElement.style.setProperty('--muted','rgb(211, 223, 231)');document.documentElement.style.setProperty('--muted-foreground','rgb(31, 47, 59)')`,
+  )
   await requestPageHints()
-  await until(async () => (await pageLabelsFor(page)).length > 0, 'dark page labels')
-  const dark = await page.capturePage()
-  assert(!dark.isEmpty(), 'dark native page screenshot is empty')
-  writeFileSync(join(evidence, 'hints-page-dark.png'), dark.toPNG())
+  await until(async () => (await pageLabelsFor(page)).length > 0, 'custom semantic labels')
+  const custom = await assertInstalledPresentation()
+  assert.equal(custom.backgroundColor, 'rgb(211, 223, 231)')
+  assert.equal(custom.color, 'rgb(31, 47, 59)')
+  themeEvidence.push({ theme: 'custom', presentation: custom })
   await pageNativePress('Escape')
+  await ui(
+    `document.documentElement.style.removeProperty('--muted');document.documentElement.style.removeProperty('--muted-foreground')`,
+  )
   hintMark('native-page-light-dark-and-shell-evidence-captured')
+  hintMark('installed-kbd-light-dark-and-custom-theme-presentation-matches-page')
 
   await stopHintRecording()
   assert(hintFrame > 0, 'hint interaction recording has no native page frames')
@@ -349,18 +535,22 @@
         trustedLink: linkEvents.at(-1),
         pageTargets: pageLabels.map((item: any) => item.label),
         hostTargets: hostLabels.map((item: any) => item.label),
-        evidence: ['hints-page-light.png', 'hints-page-dark.png', 'hints-shell-light.png'],
+        evidence: [
+          'hints-page-light.png',
+          'hints-page-dark.png',
+          'hints-shell-light.png',
+          'hints-shell-dark.png',
+        ],
         interactionFrames: hintFrame,
         captureWarnings,
+        themeEvidence,
       },
       null,
       2,
     ),
   )
   // Return the shared fixture to the default toolbar sequence's starting state.
-  await ui(
-    `document.documentElement.dataset.theme='light';document.documentElement.classList.remove('dark')`,
-  )
+  await setActualTheme('light')
   await invoke('A', 'open', { tab: 'same', url: `${url}/a` })
   await until(() => page.getURL().endsWith('/a'), 'toolbar starting document restored')
   await captureFrame(page)

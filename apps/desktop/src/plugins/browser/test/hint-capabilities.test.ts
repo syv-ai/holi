@@ -1,3 +1,4 @@
+import { presentation } from './hint-presentation'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { browserHintCapabilities, type BrowserHintPages } from '../main/capabilities'
 
@@ -40,10 +41,16 @@ test('routes parsed scope and nested owner operation arguments to actual handler
   expect(
     await call('browser.hints-present', {
       owner,
-      p: { revision: 1, labels: [{ id: '0', key: 'next' }], theme: 'light' },
+      p: { revision: 1, labels: [{ id: '0', key: 'next' }], theme: 'light', presentation },
     }),
   ).toBe(true)
-  expect(pages.presentHints).toHaveBeenCalledWith(owner, 1, [{ id: '0', key: 'next' }], 'light')
+  expect(pages.presentHints).toHaveBeenCalledWith(
+    owner,
+    1,
+    [{ id: '0', key: 'next' }],
+    'light',
+    presentation,
+  )
   expect(await call('browser.hints-activate', { owner, p: { id: '0' } })).toBe(true)
   expect(pages.activateHint).toHaveBeenCalledWith(owner, '0')
   expect(await call('browser.hints-clear', scope)).toEqual({ cleared: true })
@@ -54,7 +61,7 @@ test('rejects uppercase labels and oversized nested DTOs before handlers', async
   await expect(
     call('browser.hints-present', {
       owner,
-      p: { revision: 1, labels: [{ id: '0', key: 'A' }], theme: 'light' },
+      p: { revision: 1, labels: [{ id: '0', key: 'A' }], theme: 'light', presentation },
     }),
   ).rejects.toThrow()
   await expect(
@@ -64,7 +71,26 @@ test('rejects uppercase labels and oversized nested DTOs before handlers', async
         revision: 1,
         labels: Array.from({ length: 201 }, (_, i) => ({ id: String(i), key: 'a' })),
         theme: 'light',
+        presentation,
       },
+    }),
+  ).rejects.toThrow()
+  expect(pages.presentHints).not.toHaveBeenCalled()
+})
+
+test.each([
+  { ...presentation, fontSize: Infinity },
+  { ...presentation, height: -1 },
+  { ...presentation, color: 'red;position:fixed' },
+  { ...presentation, backgroundColor: 'url(https://evil.example)' },
+  { ...presentation, fontFamily: 'Arial; background:red' },
+  { ...presentation, borderRadius: 1000 },
+  { ...presentation, extra: 'arbitrary css' },
+])('rejects unbounded or CSS-bearing presentation DTOs', async (invalid) => {
+  await expect(
+    call('browser.hints-present', {
+      owner,
+      p: { revision: 1, labels: [], theme: 'light', presentation: invalid },
     }),
   ).rejects.toThrow()
   expect(pages.presentHints).not.toHaveBeenCalled()

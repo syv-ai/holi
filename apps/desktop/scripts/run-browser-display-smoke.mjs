@@ -109,6 +109,7 @@ for (const name of [
   'hints-page-light.png',
   'hints-page-dark.png',
   'hints-shell-light.png',
+  'hints-shell-dark.png',
   'hints-interaction.mp4',
 ])
   await rm(join(evidence, name), { force: true })
@@ -217,6 +218,12 @@ try {
       .update(
         [
           'apps/desktop/src/plugins/browser/main/page-script.js',
+          'apps/desktop/src/plugins/browser/main/pages.ts',
+          'apps/desktop/src/plugins/browser/main/capabilities.ts',
+          'apps/desktop/src/plugins/browser/renderer/browser-hints.ts',
+          'apps/desktop/src/renderer/src/features/shell/host-hint-layer.tsx',
+          'apps/desktop/src/renderer/src/lib/host-hints.ts',
+          'packages/shared/src/hint-presentation.ts',
           'apps/desktop/scripts/browser-display-fixture/entry.tsx',
           'apps/desktop/scripts/browser-display-smoke.ts',
           'apps/desktop/scripts/browser-display-fixture/toolbar-sequence.ts',
@@ -360,6 +367,11 @@ try {
     ...(hintsAcceptance
       ? [
           'native-page-f-discovers-production-page-and-host-labels',
+          'body-button-link-focus-request-hints-with-trusted-activation',
+          'native-escape-retires-delayed-action-and-routes-exact-host-cancellation',
+          'transparent-targets-and-ancestors-excluded-and-opacity-mutation-revokes',
+          'installed-kbd-light-dark-and-custom-theme-presentation-matches-page',
+          'native-prediscovery-overflow-releases-escape-input-and-fresh-capture',
           'page-label-activation-produces-trusted-native-button-click',
           'supported-field-handoff-enters-insert-and-receives-native-typing',
           'native-prefix-backspace-and-escape-clear-request-scoped-labels',

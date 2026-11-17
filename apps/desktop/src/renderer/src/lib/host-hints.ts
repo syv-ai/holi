@@ -1,3 +1,4 @@
+import type { HintPresentation } from '@holi/shared'
 import { flushSync } from 'react-dom'
 
 const PRESSABLE = [
@@ -77,6 +78,7 @@ export interface AsyncHostHintAdapter {
     request: number,
     revision: number,
     labels: readonly { id: string; key: string }[],
+    presentation?: HintPresentation,
   ): Promise<boolean>
   clear(request: number): void
   activate(request: number, id: string): Promise<boolean>

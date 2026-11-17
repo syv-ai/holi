@@ -169,7 +169,7 @@ export function createBrowserHintAdapter(
         controllers.delete(request)
       }
     },
-    async present(request, nextRevision, labels) {
+    async present(request, nextRevision, labels, presentation) {
       const item = pending.get(request)
       const found = snapshot
       if (
@@ -188,7 +188,8 @@ export function createBrowserHintAdapter(
           p: {
             revision: nextRevision,
             labels,
-            theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
+            theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
+            presentation,
           },
         })
         return presented && alive(item.generation) && pending.get(request) === item
