@@ -8,7 +8,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "vite build --config vite.mdx-compiler.config.ts && electron-vite dev",
-    "dev:debug": "electron-vite dev -- --remote-debugging-port=9333",
+    "dev:debug": "vite build --config vite.mdx-compiler.config.ts && electron-vite dev -- --remote-debugging-port=9333",
     "build": "vite build --config vite.mdx-compiler.config.ts && electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

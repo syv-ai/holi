@@ -38,6 +38,8 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
       const candidate = error as {
         message?: unknown
         position?: { start?: { line?: unknown; column?: unknown } }
+        line?: unknown
+        column?: unknown
       }
       const start = candidate.position?.start
       root.__holiMdxResult = {
@@ -45,8 +47,18 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
         diagnostics: [
           {
             message: typeof candidate.message === 'string' ? candidate.message : 'Invalid MDX',
-            line: typeof start?.line === 'number' ? start.line : 1,
-            column: typeof start?.column === 'number' ? start.column : 1,
+            line:
+              typeof start?.line === 'number'
+                ? start.line
+                : typeof candidate.line === 'number'
+                  ? candidate.line
+                  : 1,
+            column:
+              typeof start?.column === 'number'
+                ? start.column
+                : typeof candidate.column === 'number'
+                  ? candidate.column
+                  : 1,
           },
         ],
       }

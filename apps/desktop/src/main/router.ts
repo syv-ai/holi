@@ -1259,10 +1259,16 @@ export function createRouter(deps: RouterDeps) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust was revoked' })
         const active = context.active
         const root = await rootFor(input.remote)
+        if (!trustContextCurrent(context, input.remote) || deps.host.active() !== active)
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX context changed' })
         const absolute = absPathFor(root, rel)
         const before = await stat(absolute).catch(() => null)
+        if (!trustContextCurrent(context, input.remote) || deps.host.active() !== active)
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX context changed' })
         if (!before?.isFile())
           throw new TRPCError({ code: 'NOT_FOUND', message: 'MDX source is no longer a file' })
+        if (!(await deps.mdxTrust.status(owner)) || !trustContextCurrent(context, input.remote))
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust was revoked' })
         const result = await deps.mdxCompiler.compile(input.source)
         const after = await stat(absolute).catch(() => null)
         if (
