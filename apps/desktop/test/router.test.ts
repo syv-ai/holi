@@ -204,6 +204,49 @@ describe('pasted Holi links', () => {
 })
 
 describe('subscriptions IPC', () => {
+  async function realRepo(path = '') {
+    const fixture = await rig()
+    const { root, caller, host, userData, session } = fixture
+    await exec('git', ['init', '-b', 'main', root])
+    await exec('git', ['-C', root, 'config', 'user.name', 'Test'])
+    await exec('git', ['-C', root, 'config', 'user.email', 'test@example.invalid'])
+    await exec('git', [
+      '-C',
+      root,
+      'remote',
+      'add',
+      'origin',
+      'https://github.com/syv-ai/1brain.git',
+    ])
+    await writeFile(join(root, 'seed.md'), 'seed\\n', 'utf8')
+    await gitCommit(root, ['seed.md'], 'seed')
+    await caller.vaults.open({ remote: REMOTE })
+    await caller.subscriptions.set({ remote: REMOTE, path, enabled: true })
+    return { ...fixture, active: host.active()!, session }
+  }
+
+  async function gitCommit(root: string, paths: string[], message: string, author?: string) {
+    await exec('git', ['-C', root, 'add', '-f', '--', ...paths])
+    await exec('git', [
+      '-C',
+      root,
+      '-c',
+      'core.hooksPath=/dev/null',
+      ...(author
+        ? ['-c', `user.name=${author}`, '-c', `user.email=${author}@example.invalid`]
+        : []),
+      'commit',
+      '-m',
+      message,
+    ])
+    return (await exec('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()
+  }
+
+  async function addFile(root: string, path: string, text = `${path}\\n`) {
+    await mkdir(join(root, path, '..'), { recursive: true })
+    await writeFile(join(root, path), text, 'utf8')
+  }
+
   it('returns exact explicit-scope history with conservative ownership through IPC', async () => {
     const { caller, host } = await rig()
     await caller.vaults.open({ remote: REMOTE })
@@ -254,6 +297,242 @@ describe('subscriptions IPC', () => {
       {
         baseline,
         changes: [],
+      },
+    )
+  })
+
+  it('suppresses only a recorded commit, regardless of matching or changed authorship', async () => {
+    const { caller, active, userData, session } = await realRepo()
+    const baseline = await active.repo.head()
+    const recorder = createManagedCommitProvenance({
+      file: join(userData, 'managed-commit-provenance.json'),
+      remote: REMOTE,
+      identity: () => ({ accountId: 42, generation: 0 }),
+      subscribed: async () => true,
+      subscribedNow: () => true,
+    })
+    await addFile(active.root, 'same.md', 'managed\\n')
+    const ticket = await recorder.begin(active.root)
+    const ownSha = await gitCommit(active.root, ['same.md'], 'managed')
+    await recorder.record(ticket, active.root, ownSha)
+    await addFile(active.root, 'same.md', 'manual same author\\n')
+    const sameAuthorSha = await gitCommit(active.root, ['same.md'], 'manual same author')
+    await addFile(active.root, 'same.md', 'manual other author\\n')
+    const otherAuthorSha = await gitCommit(active.root, ['same.md'], 'manual other author', 'Agent')
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+
+    const result = await caller.subscriptions.changes({ remote: REMOTE, path: '' })
+    expect(result.changes.map(({ sha }) => sha)).toEqual([otherAuthorSha, sameAuthorSha])
+    expect(result.changes).toEqual([
+      { sha: otherAuthorSha, path: 'same.md', ownership: 'unknown', reviewed: false },
+      { sha: sameAuthorSha, path: 'same.md', ownership: 'unknown', reviewed: false },
+    ])
+  })
+
+  it('keeps ownership tied to repository lifetime and account, not auth generation', async () => {
+    const { caller, active, userData, session } = await realRepo()
+    const recorder = createManagedCommitProvenance({
+      file: join(userData, 'managed-commit-provenance.json'),
+      remote: REMOTE,
+      identity: () => ({ accountId: 42, generation: 2 }),
+      subscribed: async () => true,
+      subscribedNow: () => true,
+    })
+    const ticket = await recorder.begin(active.root)
+    await addFile(active.root, 'owned.md')
+    const sha = await gitCommit(active.root, ['owned.md'], 'managed')
+    await recorder.record(ticket, active.root, sha)
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        changes: [],
+      },
+    )
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 43 } })
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        changes: [{ sha, path: 'owned.md', ownership: 'unknown', reviewed: false }],
+      },
+    )
+  })
+
+  it('retains unknown branch commits and the merge commit in the graph', async () => {
+    const { caller, active } = await realRepo()
+    const base = await active.repo.head()
+    await exec('git', ['-C', active.root, 'checkout', '-b', 'side'])
+    await addFile(active.root, 'branch.md')
+    const branch = await gitCommit(active.root, ['branch.md'], 'branch')
+    await exec('git', ['-C', active.root, 'checkout', 'main'])
+    await addFile(active.root, 'main.md')
+    await gitCommit(active.root, ['main.md'], 'main')
+    await exec('git', [
+      '-C',
+      active.root,
+      '-c',
+      'core.hooksPath=/dev/null',
+      'merge',
+      '--no-ff',
+      'side',
+      '-m',
+      'merge',
+    ])
+    const merge = await active.repo.head()
+    const result = await caller.subscriptions.changes({ remote: REMOTE, path: '' })
+    expect(result).toMatchObject({ baseline: base, complete: true, history: 'ok' })
+    expect(result.changes.map(({ sha }) => sha)).toContain(branch)
+    expect(result.changes.map(({ sha }) => sha)).toContain(merge)
+  })
+
+  it('reports null and missing baselines as explicitly incomplete', async () => {
+    const { caller, active, userData } = await realRepo()
+    const scopeFile = join(userData, 'subscriptions.json')
+    const saved = JSON.parse(await readFile(scopeFile, 'utf8'))
+    saved.remotes[REMOTE][0].baseline = null
+    await writeFile(scopeFile, JSON.stringify(saved), 'utf8')
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        baseline: null,
+        tip: null,
+        complete: false,
+        history: 'pending-baseline',
+        changes: [],
+      },
+    )
+    saved.remotes[REMOTE][0].baseline = '0'.repeat(40)
+    await writeFile(scopeFile, JSON.stringify(saved), 'utf8')
+    const missing = await caller.subscriptions.changes({ remote: REMOTE, path: '' })
+    expect(missing).toMatchObject({ complete: false, history: 'history-unavailable', changes: [] })
+    expect(missing.tip).toBe(await active.repo.head())
+    saved.remotes[REMOTE][0].baseline = await active.repo.head()
+    await writeFile(scopeFile, JSON.stringify(saved), 'utf8')
+    await exec('git', ['-C', active.root, 'checkout', '--orphan', 'rewritten'])
+    await exec('git', ['-C', active.root, 'rm', '-rf', '.'])
+    await addFile(active.root, 'rewritten.md')
+    await gitCommit(active.root, ['rewritten.md'], 'rewritten root')
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        complete: false,
+        history: 'history-unavailable',
+        changes: [],
+      },
+    )
+  })
+
+  it('returns a pending baseline for an unborn repository', async () => {
+    const { caller, root } = await rig()
+    await exec('git', ['init', '-b', 'main', root])
+    await exec('git', [
+      '-C',
+      root,
+      'remote',
+      'add',
+      'origin',
+      'https://github.com/syv-ai/1brain.git',
+    ])
+    await caller.vaults.open({ remote: REMOTE })
+    await caller.subscriptions.set({ remote: REMOTE, path: '', enabled: true })
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        baseline: null,
+        tip: null,
+        complete: false,
+        history: 'pending-baseline',
+        changes: [],
+      },
+    )
+  })
+
+  it('keeps overlapping scopes on their independently captured baselines', async () => {
+    const { caller, active } = await realRepo('folder')
+    await addFile(active.root, 'folder/first.md')
+    const first = await gitCommit(active.root, ['folder/first.md'], 'first')
+    await caller.subscriptions.set({ remote: REMOTE, path: 'folder/first.md', enabled: true })
+    const later = await active.repo.head()
+    await addFile(active.root, 'folder/second.md')
+    const second = await gitCommit(active.root, ['folder/second.md'], 'second')
+    const folder = await caller.subscriptions.changes({ remote: REMOTE, path: 'folder' })
+    const file = await caller.subscriptions.changes({ remote: REMOTE, path: 'folder/first.md' })
+    expect(folder.baseline).not.toBe(later)
+    expect(folder.changes.map(({ sha }) => sha)).toContain(second)
+    expect(file.baseline).toBe(later)
+    expect(file.changes).toEqual([])
+    expect(first).not.toBe(second)
+  })
+
+  it('includes deleted, renamed and literal wildcard-character paths', async () => {
+    const { caller, active } = await realRepo()
+    await addFile(active.root, 'gone.md')
+    await addFile(active.root, 'old.md')
+    await addFile(active.root, 'literal[?].md')
+    await gitCommit(active.root, ['gone.md', 'old.md', 'literal[?].md'], 'add paths')
+    await caller.subscriptions.set({ remote: REMOTE, path: 'literal[?].md', enabled: true })
+    await exec('git', ['-C', active.root, 'rm', 'gone.md', 'old.md'])
+    await addFile(active.root, 'new.md')
+    const changed = await gitCommit(active.root, ['new.md'], 'rename and delete')
+    await exec('git', ['-C', active.root, 'mv', 'new.md', 'old.md'])
+    await addFile(active.root, 'literal[?].md', 'changed\\n')
+    const renamed = await gitCommit(active.root, ['old.md', 'literal[?].md'], 'rename and literal')
+    const result = await caller.subscriptions.changes({ remote: REMOTE, path: '' })
+    expect(result.changes.map(({ sha, path }) => [sha, path])).toContainEqual([changed, 'gone.md'])
+    expect(result.changes.map(({ sha, path }) => [sha, path])).toContainEqual([renamed, 'old.md'])
+    expect(result.changes.map(({ sha, path }) => [sha, path])).toContainEqual([
+      renamed,
+      'literal[?].md',
+    ])
+    const literal = await caller.subscriptions.changes({ remote: REMOTE, path: 'literal[?].md' })
+    expect(literal.changes).toEqual([
+      { sha: renamed, path: 'literal[?].md', ownership: 'unknown', reviewed: false },
+    ])
+  })
+
+  it('fences secret, local, ignored and current symlink history paths', async () => {
+    const { caller, active } = await realRepo()
+    await exec('git', ['-C', active.root, 'config', 'core.excludesFile', '/dev/null'])
+    await writeFile(join(active.root, '.gitignore'), 'node_modules/\\n', 'utf8')
+    await symlink(tmpdir(), join(active.root, 'outside-link'))
+    for (const path of ['safe.md', 'USER.local.md', '.env.token', 'node_modules/ignored.md'])
+      await addFile(active.root, path)
+    await gitCommit(
+      active.root,
+      ['.gitignore', 'safe.md', 'USER.local.md', '.env.token', 'node_modules/ignored.md'],
+      'fenced',
+    )
+    await exec('git', ['-C', active.root, 'add', '-f', 'outside-link'])
+    await exec('git', [
+      '-C',
+      active.root,
+      '-c',
+      'core.hooksPath=/dev/null',
+      'commit',
+      '-m',
+      'symlink',
+    ])
+    const result = await caller.subscriptions.changes({ remote: REMOTE, path: '' })
+    expect(result.changes.map(({ path }) => path)).toContain('safe.md')
+    for (const path of ['USER.local.md', '.env.token', 'node_modules/ignored.md', 'outside-link'])
+      expect(result.changes.map(({ path }) => path)).not.toContain(path)
+  })
+
+  it('does not create provenance or mutate scope state and treats absent/corrupt records as unknown', async () => {
+    const { caller, active, userData } = await realRepo()
+    await addFile(active.root, 'unknown.md')
+    const sha = await gitCommit(active.root, ['unknown.md'], 'manual')
+    const scopeFile = join(userData, 'subscriptions.json')
+    const before = await readFile(scopeFile, 'utf8')
+    const lifetime = join(active.root, '.git', 'holi-managed-provenance-id')
+    expect(await readFile(lifetime, 'utf8').catch(() => null)).toBeNull()
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        changes: [{ sha, ownership: 'unknown' }],
+      },
+    )
+    expect(await readFile(scopeFile, 'utf8')).toBe(before)
+    expect(await readFile(lifetime, 'utf8').catch(() => null)).toBeNull()
+    await mkdir(userData, { recursive: true })
+    await writeFile(join(userData, 'managed-commit-provenance.json'), '{broken', 'utf8')
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        changes: [{ sha, ownership: 'unknown', reviewed: false }],
       },
     )
   })
