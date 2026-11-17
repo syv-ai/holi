@@ -6,7 +6,7 @@ import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
 import { shrinkImage } from '../src/main/vault/hooks/shrink-images'
 
-/** Build reproducible raw pixels with a fixture-local pseudo-random stream. */
+/** Build raw RGB data from the pixel callback. */
 function noisy(width: number, height: number, pixel: (x: number, y: number) => number[]) {
   const data = Buffer.alloc(width * height * 3)
   for (let y = 0; y < height; y++)
@@ -14,7 +14,7 @@ function noisy(width: number, height: number, pixel: (x: number, y: number) => n
   return sharp(data, { raw: { width, height, channels: 3 } })
 }
 
-function randomPixel(seed: number) {
+function seededRandom(seed: number) {
   let state = seed >>> 0
   return () => {
     state ^= state << 13
@@ -48,7 +48,7 @@ describe('shrinkImage', () => {
   })
 
   it('keeps a smooth gradient in full colour, where a palette would band', async () => {
-    const random = randomPixel(0x457)
+    const random = seededRandom(0x457)
     const png = await noisy(720, 480, (x, y) => [
       Math.round((x / 720) * 255),
       Math.round((y / 480) * 255),
@@ -65,7 +65,7 @@ describe('shrinkImage', () => {
   })
 
   it('brings an image wider than 4K down to 3840, and never enlarges', async () => {
-    const wideRandom = randomPixel(0x458)
+    const wideRandom = seededRandom(0x458)
     const jpg = await noisy(4000, 160, () => [
       wideRandom() % 256,
       wideRandom() % 256,
@@ -80,7 +80,7 @@ describe('shrinkImage', () => {
     expect(resized.width).toBe(3840)
     expect(resized.height).toBeLessThan(160)
 
-    const smallRandom = randomPixel(0x459)
+    const smallRandom = seededRandom(0x459)
     const small = await noisy(1200, 300, () => [
       smallRandom() % 256,
       smallRandom() % 256,
@@ -95,7 +95,7 @@ describe('shrinkImage', () => {
   })
 
   it('leaves a small file, another format, and its own output alone', async () => {
-    const tinyRandom = randomPixel(0x45a)
+    const tinyRandom = seededRandom(0x45a)
     const tiny = await noisy(50, 50, () => [tinyRandom() % 256, 0, 0])
       .png()
       .toBuffer()
@@ -103,7 +103,7 @@ describe('shrinkImage', () => {
     const gif = Buffer.alloc(300 * 1024)
     expect(await shrinkImage(gif, 'anim.gif')).toBeNull()
 
-    const idempotenceRandom = randomPixel(0x45b)
+    const idempotenceRandom = seededRandom(0x45b)
     const jpg = await noisy(900, 600, () => [
       idempotenceRandom() % 256,
       idempotenceRandom() % 256,
