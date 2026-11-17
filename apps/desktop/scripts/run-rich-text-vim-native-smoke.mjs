@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { createInterface } from 'node:readline'
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
@@ -19,7 +20,28 @@ const evidence = requestedEvidence
 const root = await mkdtemp(join(tmpdir(), 'holi-516-native-'))
 let child
 let childState
+let guard
+let guardState
+let guardLines
+let guardLineQueue = []
+let guardLineWaiters = []
+let guardCleanup = { started: false, restoreConfirmed: false, exited: false }
 let log = ''
+
+function nextGuardStatus(timeoutMs = 10000) {
+  if (guardLineQueue.length) return Promise.resolve(guardLineQueue.shift())
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('Timed out waiting for clipboard guard')),
+      timeoutMs,
+    )
+    timer.unref()
+    guardLineWaiters.push((status) => {
+      clearTimeout(timer)
+      resolve(status)
+    })
+  })
+}
 let timedOut = false
 let cancelled = false
 let evidenceOwned = !requestedEvidence
@@ -92,6 +114,8 @@ async function encodeInteractionVideo() {
 }
 
 try {
+  if (process.platform !== 'darwin')
+    throw new Error('Native clipboard-safe Vim acceptance is supported only on macOS')
   timeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 240000
   if (requestedEvidence) {
     await mkdir(dirname(evidence), { recursive: true })
@@ -169,6 +193,51 @@ try {
     join(root, 'package.json'),
     JSON.stringify({ name: 'holi-rich-text-vim-native-smoke-516', main: 'main.cjs' }),
   )
+  const guardExecutable = join(root, 'clipboard-guard')
+  const compiledGuard = spawnSync(
+    'swiftc',
+    [join(desktop, 'scripts/rich-text-vim-clipboard-guard.swift'), '-o', guardExecutable],
+    { encoding: 'utf8' },
+  )
+  if (compiledGuard.error) throw compiledGuard.error
+  assert.equal(
+    compiledGuard.status,
+    0,
+    `Clipboard guard compilation failed: ${compiledGuard.stderr}`,
+  )
+  guard = spawn(guardExecutable, [], { stdio: ['pipe', 'pipe', 'pipe'] })
+  guardState = observeChild(guard)
+  guardCleanup.started = true
+  guard.stdin.on('error', () => {})
+  guardLines = createInterface({ input: guard.stdout })
+  guardLines.on('line', (line) => {
+    let status
+    try {
+      status = JSON.parse(line)
+    } catch {
+      return
+    }
+    if (status.event === 'ready' || status.event === 'restored') {
+      const waiter = guardLineWaiters.shift()
+      if (waiter) waiter(status)
+      else guardLineQueue.push(status)
+    }
+  })
+  guard.stderr.on('data', (chunk) => {
+    // The helper is designed to emit only sanitized status; retain no native diagnostics.
+    if (chunk.length) process.stderr.write('Clipboard guard emitted a diagnostic.\n')
+  })
+  const ready = await Promise.race([
+    nextGuardStatus(),
+    guardState.closed.then((outcome) => {
+      throw new Error(`Clipboard guard exited before readiness: ${JSON.stringify(outcome)}`)
+    }),
+  ])
+  assert.equal(ready.event, 'ready', 'Clipboard guard did not snapshot the pasteboard')
+  console.log(
+    `Clipboard guard ready: ${JSON.stringify({ itemCount: ready.itemCount, typeCount: ready.typeCount })}`,
+  )
+
   const electron = createRequire(import.meta.url)('electron')
   const env = {
     ...process.env,
@@ -229,6 +298,61 @@ try {
   process.off('SIGTERM', cancel)
   clearTimeout(timer)
   const processExit = await terminateOwnedProcess()
+  let guardExit = null
+  if (guard) {
+    try {
+      if (guard.exitCode === null && guard.signalCode === null) {
+        guard.stdin.write('restore\n')
+        const restored = await nextGuardStatus()
+        assert.equal(restored.event, 'restored', 'Clipboard guard did not confirm restoration')
+        assert.equal(restored.verified, true, 'Clipboard guard could not verify a safe final state')
+        guardCleanup.restoreConfirmed = true
+        guardCleanup.restoration = {
+          restored: restored.restored,
+          preservedExternalChange: restored.preservedExternalChange,
+          unchanged: restored.unchanged,
+          itemCount: restored.itemCount,
+          typeCount: restored.typeCount,
+          verified: restored.verified,
+        }
+      }
+    } catch (error) {
+      guardCleanup.restoreError = String(error)
+      guard.stdin.end()
+      try {
+        const fallback = await nextGuardStatus(5000)
+        if (fallback.event === 'restored' && fallback.verified === true) {
+          guardCleanup.restoreConfirmed = true
+          guardCleanup.restoration = {
+            restored: fallback.restored,
+            preservedExternalChange: fallback.preservedExternalChange,
+            unchanged: fallback.unchanged,
+            itemCount: fallback.itemCount,
+            typeCount: fallback.typeCount,
+            verified: fallback.verified,
+          }
+        }
+      } catch (fallbackError) {
+        guardCleanup.fallbackRestoreError = String(fallbackError)
+      }
+    }
+    try {
+      guardExit = await Promise.race([
+        guardState.closed,
+        new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+      ])
+      if (!guardExit) {
+        guard.kill('SIGKILL')
+        guardExit = await Promise.race([
+          guardState.closed,
+          new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+        ])
+      }
+      guardCleanup.exited = guardExit !== null
+    } catch (error) {
+      guardCleanup.exitError = String(error)
+    }
+  }
   if (evidenceOwned)
     await writeFile(join(evidence, 'electron-smoke.log'), log).catch(() => undefined)
   await rm(root, { recursive: true, force: true })
@@ -238,10 +362,12 @@ try {
   } catch (error) {
     rootRemoved = error.code === 'ENOENT'
   }
+  guardLines?.close()
   if (evidenceOwned) {
     const cleanup = {
       isolatedRootRemoved: rootRemoved,
-      childTerminated: !child || processExit !== null,
+      electronTerminated: !child || processExit !== null,
+      clipboardGuard: guardCleanup,
     }
     for (const name of ['result.json', 'failure.json']) {
       const path = join(evidence, name)
@@ -254,5 +380,11 @@ try {
       }
     }
   }
+  if (!guardCleanup.restoreConfirmed && guardCleanup.started)
+    throw new Error(
+      `Clipboard guard restoration was not confirmed: ${JSON.stringify(guardCleanup)}`,
+    )
+  if (!guardCleanup.exited && guardCleanup.started)
+    throw new Error(`Clipboard guard did not exit cleanly: ${JSON.stringify(guardCleanup)}`)
   if (!rootRemoved) throw new Error(`Isolated native-smoke root remains after cleanup: ${root}`)
 }
