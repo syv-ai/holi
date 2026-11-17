@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
-import { StrictMode } from 'react'
+import { StrictMode, useCallback, useState } from 'react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import {
   EventCard,
@@ -182,6 +182,84 @@ it('restores unresolved intent on reopen, checks read-only, and explicitly retri
   expect(screen.getByLabelText('Title')).toHaveValue(draft.title)
   await user.click(screen.getByRole('button', { name: 'Retry same meeting' }))
   await waitFor(() => expect(cap.createMeeting).toHaveBeenCalledWith(identity.remote, op.input))
+})
+
+it('retains restored event fields after status clears a refusal and the card is parked', async () => {
+  const restoredOperation: MeetingOperation = {
+    ...op,
+    input: {
+      ...op.input,
+      title: 'Recovered planning',
+      location: 'Synthetic room',
+      allDay: true,
+      start: '2027-01-12',
+      end: '2027-01-14',
+      guests: ['guest@example.com'],
+      meet: true,
+    },
+  }
+  cap.meetingState.mockResolvedValueOnce({ meetSupported: true, operation: restoredOperation })
+  cap.checkMeeting.mockResolvedValueOnce(null)
+
+  function RetainedDraftHarness() {
+    const [retainedDraft, setRetainedDraft] = useState(draft)
+    const [retainedMeetingDraft, setRetainedMeetingDraft] = useState({ guests: '', meet: false })
+    const [parked, setParked] = useState(false)
+    const retainDraft = useCallback((next: EventDraft) => setRetainedDraft(next), [])
+    const retainMeetingDraft = useCallback((next: { guests: string; meet: boolean }) => {
+      setRetainedMeetingDraft(next)
+    }, [])
+    const state: EventCardState = { mode: 'create', draft: retainedDraft, identity: 1 }
+    const anchor: EventCardAnchor = { rect: new DOMRect(40, 40, 1, 1), element: null }
+    return (
+      <>
+        <button type="button" onClick={() => setParked((value) => !value)}>
+          {parked ? 'Return to Calendar' : 'Park Calendar'}
+        </button>
+        {!parked && (
+          <EventCard
+            meetingIdentity={identity}
+            meetingDraft={retainedMeetingDraft}
+            onMeetingDraftChange={retainMeetingDraft}
+            onCreated={vi.fn()}
+            state={state}
+            anchor={anchor}
+            error={null}
+            saving={false}
+            canCreateTask={false}
+            onOpenChange={vi.fn()}
+            onEdit={vi.fn()}
+            onDraftChange={retainDraft}
+            onSave={vi.fn().mockResolvedValue(true)}
+            onDelete={vi.fn()}
+            onCreateTask={vi.fn()}
+            onOpenExternal={vi.fn()}
+          />
+        )}
+      </>
+    )
+  }
+
+  const user = userEvent.setup()
+  render(<RetainedDraftHarness />)
+  expect(await screen.findByText(/Delivery is uncertain/)).toBeInTheDocument()
+  expect(screen.getByLabelText('Title')).toHaveValue('Recovered planning')
+  expect(screen.getByLabelText('Location')).toHaveValue('Synthetic room')
+  expect(screen.getByLabelText('Starts')).toHaveValue('2027-01-12')
+  expect(screen.getByLabelText('Ends')).toHaveValue('2027-01-13')
+
+  await user.click(screen.getByRole('button', { name: 'Check status' }))
+  await waitFor(() => expect(screen.getByLabelText('Title')).toBeEnabled())
+  expect(screen.getByRole('button', { name: 'Create and send invitations' })).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: 'Park Calendar' }))
+  await user.click(screen.getByRole('button', { name: 'Return to Calendar' }))
+
+  await ready()
+  expect(screen.getByLabelText('Title')).toHaveValue('Recovered planning')
+  expect(screen.getByLabelText('Location')).toHaveValue('Synthetic room')
+  expect(screen.getByLabelText('Starts')).toHaveValue('2027-01-12')
+  expect(screen.getByLabelText('Ends')).toHaveValue('2027-01-13')
+  expect(screen.getByRole('button', { name: 'Create and send invitations' })).toBeEnabled()
 })
 
 it('allows corrected submission after a definitive refusal with no unresolved operation', async () => {
