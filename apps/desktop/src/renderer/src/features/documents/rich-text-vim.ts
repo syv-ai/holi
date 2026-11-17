@@ -1,4 +1,5 @@
 import { Extension } from '@tiptap/react'
+import { Fragment } from '@tiptap/pm/model'
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
@@ -10,6 +11,7 @@ import {
   graphemeBoundaries,
   graphemeParts as segments,
   logicalLineAt as lineAt,
+  logicalLines,
   safeRange,
   STRUCTURAL_CONTAINERS,
   textBlocks as blocks,
@@ -38,7 +40,12 @@ type VimState = {
   visualCursor: number | null
   visualLinewise: boolean
   operatorAnchor: number | null
-  register: { content: import('@tiptap/pm/model').Slice; linewise: boolean } | null
+  register: {
+    content: import('@tiptap/pm/model').Slice
+    linewise: boolean
+    linewiseTextblock?: 'codeBlock' | 'hardBreak'
+    linewiseContainer?: 'listItem' | 'taskItem'
+  } | null
 }
 const KEY = new PluginKey<VimState>('richTextVim')
 const EMPTY: VimState = {
@@ -120,14 +127,37 @@ function visualRange(state: EditorState, anchor: number, head: number, linewise:
       head: head >= anchor ? (end ?? high) : low,
       from: low,
       to: end ?? high,
+      linewiseTextblock: undefined,
     }
   }
   const first = lineAt(state, Math.min(anchor, head))
   const last = lineAt(state, Math.max(anchor, head))
   if (!first || !last) return null
-  const from = first.from
-  const to = last.to
-  return { anchor: head >= anchor ? from : to, head: head >= anchor ? to : from, from, to }
+  if (first.block.from === last.block.from && logicalLines(first.block).length > 1) {
+    const from = first.from
+    const to = last.to
+    return {
+      anchor: head >= anchor ? from : to,
+      head: head >= anchor ? to : from,
+      from,
+      to,
+      linewiseTextblock:
+        logicalLines(first.block).length > 1
+          ? first.block.node.type.name === 'codeBlock'
+            ? ('codeBlock' as const)
+            : ('hardBreak' as const)
+          : undefined,
+    }
+  }
+  const from = first.block.from - 1
+  const to = last.block.to + 1
+  return {
+    anchor: head >= anchor ? first.from : last.to,
+    head: head >= anchor ? last.to : first.from,
+    from,
+    to,
+    linewiseTextblock: undefined,
+  }
 }
 
 function setVisualSelection(view: EditorView, anchor: number, head: number, linewise: boolean) {
@@ -522,9 +552,9 @@ function handleNormal(
     const anchor = view.state.selection.head
     let visualHead = anchor
     if (key === 'V' && current.count > 1) {
-      const all = blocks(view.state)
+      const all = blocks(view.state).flatMap((block) => logicalLines(block))
       const line = lineAt(view.state, anchor)
-      const index = all.findIndex((block) => block.from === line?.block.from)
+      const index = all.findIndex((candidate) => candidate.from === line?.from)
       const target = all[Math.min(all.length - 1, index + current.count - 1)]
       if (target) visualHead = target.from
       const range = visualRange(view.state, anchor, visualHead, true)
@@ -558,6 +588,96 @@ function handleNormal(
       const line = lineAt(view.state, view.state.selection.head)
       if (line) {
         const { block } = line
+        const item = containerAt(view.state, block.from, ['listItem', 'taskItem'])
+        if (item && operator === 'y') {
+          const $item = view.state.doc.resolve(item.pos)
+          const index = $item.index()
+          const count = cappedCount(current.operatorCount * (current.count || 1))
+          const siblings = Array.from({ length: count }, (_, offset) =>
+            $item.parent.maybeChild(index + offset),
+          )
+          const items = siblings.filter((candidate) => candidate?.type.name === item.type)
+          if (items.length === count) {
+            const to = item.pos + items.reduce((size, node) => size + node!.nodeSize, 0)
+            const content = view.state.doc.slice(item.pos, to)
+            update({
+              operator: null,
+              count: 0,
+              operatorCount: 1,
+              register: {
+                content,
+                linewise: true,
+                linewiseContainer: item.type as 'listItem' | 'taskItem',
+              },
+            })
+            if (operator !== 'y' && settings.editable()) {
+              const tr = closeHistory(view.state.tr)
+              if (operator === 'c') {
+                const empty = block.node.type.create(block.node.attrs, null, block.node.marks)
+                tr.replaceWith(block.from - 1, block.to + 1, empty)
+              } else tr.delete(item.pos, to)
+              view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(item.pos), 1)))
+              closeHistoryBoundary(view)
+              if (operator === 'c') setMode(view, 'insert', true)
+            }
+            event.preventDefault()
+            return true
+          }
+          update({ operator: null, count: 0, operatorCount: 1 })
+          settings.onFeedback?.('Vim line range does not fit in this list; no text was changed')
+          event.preventDefault()
+          return true
+        }
+        const logical = logicalLines(block)
+        const logicalIndex = logical.findIndex((candidate) => candidate.from === line.from)
+        if (logical.length > 1 && logicalIndex >= 0) {
+          const lastIndex = Math.min(
+            logical.length - 1,
+            logicalIndex + cappedCount(current.operatorCount * (current.count || 1)) - 1,
+          )
+          const firstLine = logical[logicalIndex]!
+          const lastLine = logical[lastIndex]!
+          const nextLine = logical[lastIndex + 1]
+          const previousLine = logical[logicalIndex - 1]
+          const from = previousLine && !nextLine ? previousLine.to : firstLine.from
+          const to = nextLine ? nextLine.from : lastLine.to
+          const content = view.state.doc.slice(firstLine.from, lastLine.to)
+          let isHardBreakLine = false
+          if (block.node.type.name !== 'codeBlock')
+            block.node.descendants((node) => {
+              if (node.type.name === 'hardBreak') isHardBreakLine = true
+            })
+          update({
+            operator: null,
+            count: 0,
+            operatorCount: 1,
+            register: {
+              content,
+              linewise: true,
+              linewiseTextblock:
+                block.node.type.name === 'codeBlock'
+                  ? 'codeBlock'
+                  : isHardBreakLine
+                    ? 'hardBreak'
+                    : undefined,
+            },
+          })
+          if (operator !== 'y' && settings.editable()) {
+            const tr = closeHistory(view.state.tr)
+            if (from === block.from && to === block.to) {
+              tr.replaceWith(
+                block.from - 1,
+                block.to + 1,
+                block.node.type.create(block.node.attrs, null, block.node.marks),
+              )
+            } else tr.delete(from, to)
+            view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
+            closeHistoryBoundary(view)
+            if (operator === 'c') setMode(view, 'insert', true)
+          }
+          event.preventDefault()
+          return true
+        }
         const nested = containerAt(view.state, block.from, [
           'tableCell',
           'tableHeader',
@@ -576,7 +696,10 @@ function handleNormal(
           event.preventDefault()
           return true
         }
-        const content = view.state.doc.slice(from, to)
+        const content =
+          operator === 'y' && (nested?.type === 'tableCell' || nested?.type === 'tableHeader')
+            ? view.state.doc.slice(block.from - 1, lastBlock.to + 1)
+            : view.state.doc.slice(from, to)
         update({
           operator: null,
           count: 0,
@@ -687,18 +810,59 @@ function handleNormal(
         event.preventDefault()
         return true
       }
-      const content = view.state.doc.slice(rangeFrom, safeTo)
+      const inlineLinewise =
+        linewiseMotion &&
+        sourceLine?.block.from === destinationLine?.block.from &&
+        logicalLines(sourceLine.block).length > 1
+      const inlineLines = inlineLinewise ? logicalLines(sourceLine.block) : []
+      const firstInlineIndex = inlineLinewise
+        ? inlineLines.findIndex((item) => item.from === sourceLine.from)
+        : -1
+      const lastInlineIndex = inlineLinewise
+        ? inlineLines.findIndex((item) => item.from === destinationLine.from)
+        : -1
+      const inlineFirst = inlineLines[Math.min(firstInlineIndex, lastInlineIndex)]
+      const inlineLast = inlineLines[Math.max(firstInlineIndex, lastInlineIndex)]
+      const content =
+        inlineLinewise && inlineFirst && inlineLast
+          ? view.state.doc.slice(inlineFirst.from, inlineLast.to)
+          : view.state.doc.slice(rangeFrom, safeTo)
+      const inlineLineType = inlineLinewise
+        ? sourceLine.block.node.type.name === 'codeBlock'
+          ? 'codeBlock'
+          : 'hardBreak'
+        : undefined
       if (operator === 'y') select(view, origin)
       update({
         operator: null,
         operatorAnchor: null,
         count: 0,
         operatorCount: 1,
-        register: { content, linewise: linewiseMotion },
+        register: { content, linewise: linewiseMotion, linewiseTextblock: inlineLineType },
       })
       if (operator !== 'y' && settings.editable() && safeTo > rangeFrom) {
-        const tr = closeHistory(view.state.tr).delete(rangeFrom, safeTo)
-        view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(rangeFrom), 1)))
+        if (inlineLinewise && inlineFirst && inlineLast) {
+          const nextLine = inlineLines[Math.max(firstInlineIndex, lastInlineIndex) + 1]
+          const previousLine = inlineLines[Math.min(firstInlineIndex, lastInlineIndex) - 1]
+          const deleteFrom = previousLine && !nextLine ? previousLine.to : inlineFirst.from
+          const deleteTo = nextLine ? nextLine.from : inlineLast.to
+          const tr = closeHistory(view.state.tr)
+          if (deleteFrom === sourceLine.block.from && deleteTo === sourceLine.block.to) {
+            tr.replaceWith(
+              sourceLine.block.from - 1,
+              sourceLine.block.to + 1,
+              sourceLine.block.node.type.create(
+                sourceLine.block.node.attrs,
+                null,
+                sourceLine.block.node.marks,
+              ),
+            )
+          } else tr.delete(deleteFrom, deleteTo)
+          view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
+        } else {
+          const tr = closeHistory(view.state.tr).delete(rangeFrom, safeTo)
+          view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(rangeFrom), 1)))
+        }
         if (operator === 'c') setMode(view, 'insert', true)
         else closeHistoryBoundary(view)
       }
@@ -715,6 +879,7 @@ function handleNormal(
           to: view.state.selection.to,
           anchor: view.state.selection.anchor,
           head: view.state.selection.head,
+          linewiseTextblock: undefined,
         }
     if (!range || !safeRange(view.state, range.from, range.to)) {
       update({ visualAnchor: null, visualCursor: null, visualLinewise: false, count: 0 })
@@ -723,17 +888,85 @@ function handleNormal(
       return true
     }
     const content = view.state.doc.slice(range.from, range.to)
+    const firstVisualLine = current.visualLinewise
+      ? lineAt(view.state, Math.min(current.visualAnchor, view.state.selection.head))
+      : null
+    const lastVisualLine = current.visualLinewise
+      ? lineAt(view.state, Math.max(current.visualAnchor, view.state.selection.head))
+      : null
+    const visualContainer =
+      current.visualLinewise && firstVisualLine
+        ? containerAt(view.state, firstVisualLine.block.from, ['listItem', 'taskItem'])
+        : null
+    const visualContainerNode = visualContainer ? view.state.doc.nodeAt(visualContainer.pos) : null
+    const registerContent =
+      visualContainer &&
+      visualContainerNode &&
+      visualContainer.type ===
+        containerAt(view.state, lastVisualLine?.block.from ?? firstVisualLine?.block.from ?? 0, [
+          'listItem',
+          'taskItem',
+        ])?.type
+        ? view.state.doc.slice(
+            visualContainer.pos,
+            visualContainer.pos + visualContainerNode.nodeSize,
+          )
+        : content
+    const inlineVisual =
+      range.linewiseTextblock &&
+      firstVisualLine &&
+      lastVisualLine &&
+      firstVisualLine.block.from === lastVisualLine.block.from
+        ? {
+            type: range.linewiseTextblock,
+            block: firstVisualLine.block,
+            lines: logicalLines(firstVisualLine.block),
+            first: firstVisualLine,
+            last: lastVisualLine,
+          }
+        : null
     update({
       visualAnchor: null,
       visualCursor: null,
       visualLinewise: false,
-      register: { content, linewise: current.visualLinewise },
+      register: {
+        content: registerContent,
+        linewise: current.visualLinewise,
+        linewiseTextblock: inlineVisual?.type,
+        linewiseContainer: visualContainer?.type as 'listItem' | 'taskItem' | undefined,
+      },
     })
     if (key === 'y') {
       select(view, Math.min(current.visualAnchor, view.state.doc.content.size))
     } else if (settings.editable() && range.to > range.from) {
-      const tr = closeHistory(view.state.tr).delete(range.from, range.to)
-      view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(range.from), 1)))
+      const tr = closeHistory(view.state.tr)
+      let deleteFrom = range.from
+      if (inlineVisual) {
+        const low = Math.min(
+          inlineVisual.lines.findIndex((item) => item.from === inlineVisual.first.from),
+          inlineVisual.lines.findIndex((item) => item.from === inlineVisual.last.from),
+        )
+        const high = Math.max(
+          inlineVisual.lines.findIndex((item) => item.from === inlineVisual.first.from),
+          inlineVisual.lines.findIndex((item) => item.from === inlineVisual.last.from),
+        )
+        const previousLine = inlineVisual.lines[low - 1]
+        const nextLine = inlineVisual.lines[high + 1]
+        deleteFrom = previousLine && !nextLine ? previousLine.to : inlineVisual.lines[low]!.from
+        const deleteTo = nextLine ? nextLine.from : inlineVisual.lines[high]!.to
+        if (deleteFrom === inlineVisual.block.from && deleteTo === inlineVisual.block.to) {
+          tr.replaceWith(
+            inlineVisual.block.from - 1,
+            inlineVisual.block.to + 1,
+            inlineVisual.block.node.type.create(
+              inlineVisual.block.node.attrs,
+              null,
+              inlineVisual.block.node.marks,
+            ),
+          )
+        } else tr.delete(deleteFrom, deleteTo)
+      } else tr.delete(deleteFrom, range.to)
+      view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
       if (key === 'c') setMode(view, 'insert', true)
       else closeHistoryBoundary(view)
     }
@@ -764,9 +997,13 @@ function handleNormal(
       const at =
         current.register.linewise && line
           ? nested
-            ? key === 'p'
-              ? line.block.to
-              : line.block.from
+            ? nested.type === 'tableCell' || nested.type === 'tableHeader'
+              ? key === 'p'
+                ? line.block.to + 1
+                : line.block.from - 1
+              : key === 'p'
+                ? line.block.to
+                : line.block.from
             : key === 'p'
               ? line.block.to + 1
               : line.block.from - 1
@@ -776,8 +1013,78 @@ function handleNormal(
               ) ?? view.state.selection.head)
             : view.state.selection.head
       const pos = Math.max(0, Math.min(at, view.state.doc.content.size))
-      if (line && current.register.linewise && nested) {
-        const tr = closeHistory(view.state.tr).replaceRange(pos, pos, current.register.content)
+      if (current.register.linewiseContainer) {
+        const item = line && containerAt(view.state, line.block.from, ['listItem', 'taskItem'])
+        const node = item ? view.state.doc.nodeAt(item.pos) : null
+        if (!item || item.type !== current.register.linewiseContainer || !node) {
+          settings.onFeedback?.(
+            'Vim list register must be pasted into a matching list; no text was changed',
+          )
+        } else {
+          const insertAt = key === 'p' ? item.pos + node.nodeSize : item.pos
+          const tr = closeHistory(
+            view.state.tr.replaceRange(insertAt, insertAt, current.register.content),
+          )
+          try {
+            tr.doc.check()
+            if (!tr.docChanged) throw new Error('empty replacement')
+            view.dispatch(
+              tr.setSelection(TextSelection.near(tr.doc.resolve(insertAt), 1)).scrollIntoView(),
+            )
+            closeHistoryBoundary(view)
+            update({ count: 0 })
+          } catch {
+            settings.onFeedback?.('Vim register does not fit at this position; no text was changed')
+          }
+        }
+      } else if (
+        line &&
+        current.register.linewiseTextblock === 'codeBlock' &&
+        line.block.node.type.name === 'codeBlock'
+      ) {
+        const value = current.register.content.content.textBetween(
+          0,
+          current.register.content.content.size,
+          '\n',
+        )
+        const insertion = key === 'p' ? `\n${value}` : `${value}\n`
+        const atLine = key === 'p' ? line.to : line.from
+        const tr = closeHistory(view.state.tr.insertText(insertion, atLine))
+        if (tr.docChanged) {
+          view.dispatch(
+            tr.setSelection(TextSelection.near(tr.doc.resolve(atLine), 1)).scrollIntoView(),
+          )
+          closeHistoryBoundary(view)
+          update({ count: 0 })
+        }
+      } else if (
+        line &&
+        current.register.linewiseTextblock === 'hardBreak' &&
+        line.block.node.type.name !== 'codeBlock'
+      ) {
+        const hardBreak = view.state.schema.nodes.hardBreak
+        const content = current.register.content.content
+        const separator = hardBreak?.create()
+        if (separator) {
+          const fragment =
+            key === 'p'
+              ? Fragment.from(separator).append(content)
+              : content.append(Fragment.from(separator))
+          const atLine = key === 'p' ? line.to : line.from
+          const tr = closeHistory(view.state.tr.insert(atLine, fragment))
+          try {
+            tr.doc.check()
+            view.dispatch(
+              tr.setSelection(TextSelection.near(tr.doc.resolve(atLine), 1)).scrollIntoView(),
+            )
+            closeHistoryBoundary(view)
+            update({ count: 0 })
+          } catch {
+            settings.onFeedback?.('Vim register does not fit at this position; no text was changed')
+          }
+        }
+      } else if (line && current.register.linewise && nested) {
+        const tr = closeHistory(view.state.tr.replaceRange(pos, pos, current.register.content))
         try {
           tr.doc.check()
           if (!tr.docChanged) throw new Error('empty replacement')
@@ -795,10 +1102,7 @@ function handleNormal(
         }
       } else {
         closeHistoryBoundary(view)
-        const insertion =
-          current.register.linewise && !nested
-            ? view.state.tr.insert(pos, current.register.content.content)
-            : view.state.tr.replaceRange(pos, pos, current.register.content)
+        const insertion = view.state.tr.replaceRange(pos, pos, current.register.content)
         const tr = closeHistory(insertion)
         try {
           tr.doc.check()

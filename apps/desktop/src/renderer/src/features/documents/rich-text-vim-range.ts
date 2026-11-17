@@ -49,9 +49,7 @@ export function graphemeBoundaries(state: EditorState, from: number, to: number)
   return [...positions].filter((pos) => pos >= from && pos <= to).sort((a, b) => a - b)
 }
 
-export function logicalLineAt(state: EditorState, pos: number) {
-  const block = textBlocks(state).find(({ from, to }) => pos >= from && pos <= to)
-  if (!block) return null
+export function logicalLines(block: ReturnType<typeof textBlocks>[number]) {
   const breaks: number[] = []
   block.node.descendants((node, offset) => {
     if (node.type.name === 'hardBreak') breaks.push(block.from + offset)
@@ -60,13 +58,21 @@ export function logicalLineAt(state: EditorState, pos: number) {
         if (node.text?.[index] === '\n') breaks.push(block.from + offset + index)
     }
   })
-  const before = breaks.filter((at) => at < pos).at(-1)
-  const after = breaks.find((at) => at >= pos)
-  return {
-    block,
-    from: before === undefined ? block.from : before + 1,
-    to: after === undefined ? block.to : after,
+  const lines: { block: typeof block; from: number; to: number }[] = []
+  let from = block.from
+  for (const at of breaks) {
+    lines.push({ block, from, to: at })
+    from = at + 1
   }
+  lines.push({ block, from, to: block.to })
+  return lines
+}
+
+export function logicalLineAt(state: EditorState, pos: number) {
+  const block = textBlocks(state).find(({ from, to }) => pos >= from && pos <= to)
+  return block
+    ? (logicalLines(block).find((line) => pos >= line.from && pos <= line.to) ?? null)
+    : null
 }
 
 export function containerAt(state: EditorState, pos: number, names = STRUCTURAL_CONTAINERS) {
