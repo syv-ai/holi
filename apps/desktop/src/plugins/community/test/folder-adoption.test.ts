@@ -272,6 +272,127 @@ describe('folder adoption snapshot authorization', () => {
     )
   })
 
+  it('restores the pin when its owner closes immediately after unpin', async () => {
+    const f = await fixture()
+    const row = (
+      (await f.call('community.list')) as { id: string; folderAdoptionToken: string }[]
+    )[0]!
+    const get = f.store.get.bind(f.store)
+    const closeAfterUnpin = vi.spyOn(f.store, 'get').mockImplementation(async (id) => {
+      const install = await get(id)
+      if ((await readFile(f.pinPath, 'utf8').catch(() => null)) === null) f.setLive(false)
+      return install
+    })
+    await expect(
+      f.call('community.adoptFolder', { id: 'demo', token: row.folderAdoptionToken }),
+    ).rejects.toThrow(/attachment is closed/)
+    expect(await readFile(f.pinPath, 'utf8')).toContain('owner/demo')
+    expect(await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')).toContain(
+      'demo: false',
+    )
+
+    closeAfterUnpin.mockRestore()
+    f.setLive(true)
+    await f.call('community.adoptFolder', { id: 'demo', token: row.folderAdoptionToken })
+    expect(await readFile(f.pinPath, 'utf8').catch(() => null)).toBeNull()
+  })
+
+  it('restores the pin when the owner closes during final settings publication', async () => {
+    const f = await fixture()
+    const row = (
+      (await f.call('community.list')) as { id: string; folderAdoptionToken: string }[]
+    )[0]!
+    const write = vaultSettings.writeVaultSettings
+    let publicationStarted!: () => void
+    let releasePublication!: () => void
+    const started = new Promise<void>((resolve) => (publicationStarted = resolve))
+    const gate = new Promise<void>((resolve) => (releasePublication = resolve))
+    let guardCalls = 0
+    const spy = vi
+      .spyOn(vaultSettings, 'writeVaultSettings')
+      .mockImplementation(async (root, settings, options) =>
+        write(root, settings, {
+          beforeWrite: async () => {
+            guardCalls++
+            if (guardCalls === 2) {
+              publicationStarted()
+              await gate
+            }
+            await options?.beforeWrite?.()
+          },
+        }),
+      )
+    const pending = f.call('community.adoptFolder', {
+      id: 'demo',
+      token: row.folderAdoptionToken,
+    })
+    await started
+    f.setLive(false)
+    releasePublication()
+    await expect(pending).rejects.toThrow(/attachment is closed/)
+    expect(await readFile(f.pinPath, 'utf8')).toContain('owner/demo')
+    expect(await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')).toContain(
+      'demo: false',
+    )
+    expect(
+      await readFile(join(f.vault, '.holi/settings/plugins.yaml.tmp'), 'utf8').catch(() => null),
+    ).toBeNull()
+
+    spy.mockRestore()
+    f.setLive(true)
+    await f.call('community.adoptFolder', { id: 'demo', token: row.folderAdoptionToken })
+    expect(await readFile(f.pinPath, 'utf8').catch(() => null)).toBeNull()
+    expect(await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')).toContain(
+      'demo: true',
+    )
+  })
+
+  it('does not publish over a pin replaced during final settings publication', async () => {
+    const f = await fixture()
+    const row = (
+      (await f.call('community.list')) as { id: string; folderAdoptionToken: string }[]
+    )[0]!
+    const write = vaultSettings.writeVaultSettings
+    let publicationStarted!: () => void
+    let releasePublication!: () => void
+    const started = new Promise<void>((resolve) => (publicationStarted = resolve))
+    const gate = new Promise<void>((resolve) => (releasePublication = resolve))
+    let guardCalls = 0
+    const spy = vi
+      .spyOn(vaultSettings, 'writeVaultSettings')
+      .mockImplementation(async (root, settings, options) =>
+        write(root, settings, {
+          beforeWrite: async () => {
+            guardCalls++
+            if (guardCalls === 2) {
+              publicationStarted()
+              await gate
+            }
+            await options?.beforeWrite?.()
+          },
+        }),
+      )
+    const originalPin = await readFile(f.pinPath, 'utf8')
+    const pending = f.call('community.adoptFolder', {
+      id: 'demo',
+      token: row.folderAdoptionToken,
+    })
+    await started
+    const replacement = `${originalPin} `
+    await mkdir(join(f.vault, '.holi/plugins/demo'), { recursive: true })
+    await writeFile(f.pinPath, replacement)
+    releasePublication()
+    await expect(pending).rejects.toThrow(/folder installation changed during adoption/)
+    expect(await readFile(f.pinPath, 'utf8')).toBe(replacement)
+    expect(await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')).toContain(
+      'demo: false',
+    )
+    expect(
+      await readFile(join(f.vault, '.holi/settings/plugins.yaml.tmp'), 'utf8').catch(() => null),
+    ).toBeNull()
+    spy.mockRestore()
+  })
+
   it('does not publish or enable when its attachment closes before admission', async () => {
     const f = await fixture()
     const row = (

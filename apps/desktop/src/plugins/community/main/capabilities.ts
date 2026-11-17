@@ -812,15 +812,6 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             signal: deps.signal,
           })
           await guard()
-          await withFileLock(resolve(pinPath), async () => {
-            await guard()
-            const finalPin = await readOptionalPublicationText(pinPath, 'plugin pin')
-            ensureLive()
-            if (finalPin !== originalPin)
-              throw new CapabilityError('CONFLICT', `${id} folder pin changed before adoption`)
-            await rm(pinPath, { force: true })
-            await rmdir(dirname(pinPath)).catch(() => {})
-          })
           const guardAfterUnpin = async () => {
             ensureLive()
             const current = await deps.store.get(id)
@@ -838,8 +829,17 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
               )
             ensureLive()
           }
-          await guardAfterUnpin()
           try {
+            await withFileLock(resolve(pinPath), async () => {
+              await guard()
+              const finalPin = await readOptionalPublicationText(pinPath, 'plugin pin')
+              ensureLive()
+              if (finalPin !== originalPin)
+                throw new CapabilityError('CONFLICT', `${id} folder pin changed before adoption`)
+              await rm(pinPath, { force: true })
+              await rmdir(dirname(pinPath)).catch(() => {})
+            })
+            await guardAfterUnpin()
             await writeVaultSettings(
               ctx.root,
               { committed: { plugins: { [id]: true } } },

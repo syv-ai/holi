@@ -7,7 +7,7 @@
  * half, where a missing or unreadable file degrades to `null`, never an error.
  * Deliberately the same shape as `vault/theme.ts`.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   isPluginsFileKey,
@@ -68,7 +68,7 @@ async function mergeInto(
     .catch(() => undefined)
     .then(async () => {
       await beforeWrite?.()
-      await mergeIntoNow(abs, patch, target, file)
+      await mergeIntoNow(abs, patch, target, file, beforeWrite)
     })
   settingsWriteQueues.set(abs, write)
   try {
@@ -83,6 +83,7 @@ async function mergeIntoNow(
   patch: Record<string, unknown>,
   target: SettingTarget,
   file: 'app' | 'plugins',
+  beforeWrite?: () => void | Promise<void>,
 ): Promise<void> {
   const text = await readFile(abs, 'utf8').catch(() => null)
   // A file that is unusable reads as `{}` rather than refusing the write forever.
@@ -128,8 +129,14 @@ async function mergeIntoNow(
     file === 'app'
       ? writeSettingsText(next, target, installedInfos())
       : writePluginSettingsText(next, target, installedInfos())
-  await writeFile(tmp, written, 'utf8')
-  await rename(tmp, abs)
+  try {
+    await writeFile(tmp, written, 'utf8')
+    await beforeWrite?.()
+    await rename(tmp, abs)
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => {})
+    throw error
+  }
 }
 
 /**
