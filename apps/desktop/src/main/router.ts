@@ -147,6 +147,11 @@ export interface RouterDeps {
   session: GitHubSession
   /** The one machine-local MDX trust store, composed by main. */
   mdxTrust?: MdxTrustStore
+  mdxCompiler?: {
+    compile(source: string, signal?: AbortSignal): Promise<import('@holi/shared').MdxDiagnostic[]>
+    invalidate(): void
+    close(): void
+  }
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /**
@@ -692,6 +697,7 @@ export function createRouter(deps: RouterDeps) {
    * clone that will not move stays listed rather than orphaned.
    */
   async function removeClone(remote: string): Promise<void> {
+    deps.mdxCompiler?.invalidate()
     const root = await rootFor(remote)
     await deps.host.close(remote)
     await deps.trashItem(root)
@@ -831,6 +837,7 @@ export function createRouter(deps: RouterDeps) {
     open: t.procedure
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
+        deps.mdxCompiler?.invalidate()
         const revision = ++vaultOpenRevision
         // Opening is what starts the watcher and the sync loop — the snapshot
         // is a by-product, and comes from the vault that is now live rather
@@ -914,6 +921,7 @@ export function createRouter(deps: RouterDeps) {
       // Deregisters the vault; the clone stays on disk. Deleting someone's files
       // — which may hold unpushed commits — is never a side effect here.
       .mutation(async ({ input }) => {
+        deps.mdxCompiler?.invalidate()
         await deps.registry.remove(input.remote)
         await deps.plugins.syncBackground()
       }),
@@ -948,6 +956,7 @@ export function createRouter(deps: RouterDeps) {
     // best-effort: one that won't trash stays on disk AND in the registry, never
     // orphaned.
     deleteClones: t.procedure.mutation(async (): Promise<{ ok: true }> => {
+      deps.mdxCompiler?.invalidate()
       // Every registered clone may have a runtime: background runtimes keep
       // their own watcher and timers even when another vault is selected.
       await deps.host.closeAll()
@@ -1230,6 +1239,47 @@ export function createRouter(deps: RouterDeps) {
     revoke: t.procedure
       .input(fields({ remote: 'string', context: 'string' }))
       .mutation(({ input }) => mutateTrust(input, false)),
+    compile: t.procedure
+      .input(fields({ remote: 'string', path: 'string', context: 'string', source: 'string' }))
+      .mutation(async ({ input }) => {
+        const context = trustContext?.token === input.context ? trustContext : null
+        const rel = safe(input.path)
+        if (
+          !context ||
+          !deps.mdxCompiler ||
+          !deps.mdxTrust ||
+          !trustContextCurrent(context, input.remote) ||
+          context.remote !== canonicalGitHubRemote(input.remote) ||
+          !/\.mdx$/i.test(rel) ||
+          Buffer.byteLength(input.source, 'utf8') > 256 * 1024
+        )
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX context unavailable' })
+        const owner = { accountId: context.accountId, remote: context.remote }
+        if (!(await deps.mdxTrust.status(owner)) || !trustContextCurrent(context, input.remote))
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust was revoked' })
+        const active = context.active
+        const root = await rootFor(input.remote)
+        const absolute = absPathFor(root, rel)
+        const before = await stat(absolute).catch(() => null)
+        if (!before?.isFile())
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'MDX source is no longer a file' })
+        const result = await deps.mdxCompiler.compile(input.source)
+        const after = await stat(absolute).catch(() => null)
+        if (
+          !after?.isFile() ||
+          before.dev !== after.dev ||
+          before.ino !== after.ino ||
+          before.mtimeMs !== after.mtimeMs ||
+          before.ctimeMs !== after.ctimeMs ||
+          before.size !== after.size ||
+          !trustContextCurrent(context, input.remote) ||
+          deps.host.active() !== active
+        )
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX context changed' })
+        if (!(await deps.mdxTrust.status(owner)) || !trustContextCurrent(context, input.remote))
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust was revoked' })
+        return result
+      }),
   })
 
   async function mutateTrust(
@@ -1246,6 +1296,7 @@ export function createRouter(deps: RouterDeps) {
     if (!registered || !trustContextCurrent(context, input.remote))
       throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
     const stillOwned = () => trustContextCurrent(context, input.remote)
+    if (!approve) deps.mdxCompiler?.invalidate()
     await (approve ? deps.mdxTrust.approve : deps.mdxTrust.revoke)(
       { accountId: context.accountId, remote },
       stillOwned,

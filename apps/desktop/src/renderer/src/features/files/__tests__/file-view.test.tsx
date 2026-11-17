@@ -33,6 +33,7 @@ const fileDiff = vi.fn()
 const mdxStatus = vi.fn()
 const mdxApprove = vi.fn()
 const mdxRevoke = vi.fn()
+const mdxCompile = vi.fn()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -51,6 +52,7 @@ vi.mock('@/lib/trpc', () => ({
       status: { query: (input: unknown) => mdxStatus(input) },
       approve: { mutate: (input: unknown) => mdxApprove(input) },
       revoke: { mutate: (input: unknown) => mdxRevoke(input) },
+      compile: { mutate: (input: unknown) => mdxCompile(input) },
     },
   },
 }))
@@ -63,6 +65,7 @@ afterEach(() => {
   mdxStatus.mockReset()
   mdxApprove.mockReset()
   mdxRevoke.mockReset()
+  mdxCompile.mockReset()
 })
 
 function HintKeys() {
@@ -863,6 +866,27 @@ test('MDX trust requires explicit confirmation and can be cancelled or approved'
   await waitFor(() =>
     expect(mdxApprove).toHaveBeenCalledWith({ remote: 'syv-ai/site', context: 'consent-1' }),
   )
+})
+
+test('trusted MDX diagnostics consume the current source without changing save behavior', async () => {
+  const hostile = '# source\\n{globalThis.__mdxShouldNotRun = true}'
+  read.mockResolvedValue(hostile)
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
+  mdxCompile.mockResolvedValue([{ message: 'unexpected token', line: 2, column: 1 }])
+  setup('content/page.mdx')
+  await waitFor(() => expect(mdxCompile).toHaveBeenCalled())
+  expect(mdxCompile).toHaveBeenCalledWith({
+    remote: 'syv-ai/site',
+    path: 'content/page.mdx',
+    context: 'consent-1',
+    source: hostile,
+  })
+  expect(await screen.findByText('1 MDX diagnostic')).toBeInTheDocument()
+  expect((globalThis as Record<string, unknown>).__mdxShouldNotRun).toBeUndefined()
+
+  await typeInto('# fixed source')
+  await waitFor(() => expect(write).toHaveBeenCalled())
 })
 
 test('MDX trust can be revoked from a source view', async () => {

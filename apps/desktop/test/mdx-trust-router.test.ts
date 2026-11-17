@@ -49,6 +49,7 @@ async function fixture(
       }) as typeof fetch),
   })
   const mdxTrust = createMdxTrustStore(join(dir, 'mdx-trust.json'))
+  const compile = vi.fn(async () => [{ message: 'unexpected token', line: 2, column: 4 }])
   let selected: ActiveVault | null = null
   const makeActive = (remote: string): ActiveVault =>
     ({
@@ -80,6 +81,7 @@ async function fixture(
     registry,
     session,
     mdxTrust: options.trust?.(mdxTrust) ?? mdxTrust,
+    mdxCompiler: { compile, invalidate: vi.fn(), close: vi.fn() },
     host,
     vaultRoot: join(dir, 'clones'),
     seed: async () => ({ written: [], merged: [], unchanged: [] }),
@@ -90,7 +92,7 @@ async function fixture(
     showItemInFolder: () => {},
   }).createCaller({})
   await caller.vaults.open({ remote: REMOTE })
-  return { dir, registry, session, mdxTrust, caller, host, selected: () => selected }
+  return { dir, registry, session, mdxTrust, caller, host, selected: () => selected, compile }
 }
 
 const dirs: string[] = []
@@ -127,6 +129,39 @@ describe('MDX trust through the router', () => {
     const trusted = await caller.mdxTrust.status({ remote: REMOTE })
     await caller.mdxTrust.revoke({ remote: REMOTE, context: trusted.context! })
     expect(await caller.mdxTrust.status({ remote: REMOTE })).toMatchObject({ trusted: false })
+  })
+
+  it('only compiles approved MDX in the current trusted vault context', async () => {
+    const { caller, compile } = await rig({ signedIn: auth(42, 'alice') })
+    const status = await caller.mdxTrust.status({ remote: REMOTE })
+    await expect(
+      caller.mdxTrust.compile({
+        remote: REMOTE,
+        path: 'page.mdx',
+        context: status.context!,
+        source: '# Source',
+      }),
+    ).rejects.toThrow(/context unavailable/)
+    expect(compile).not.toHaveBeenCalled()
+    await caller.mdxTrust.approve({ remote: REMOTE, context: status.context! })
+    const trusted = await caller.mdxTrust.status({ remote: REMOTE })
+    await expect(
+      caller.mdxTrust.compile({
+        remote: REMOTE,
+        path: 'page.mdx',
+        context: trusted.context!,
+        source: '# Source',
+      }),
+    ).resolves.toEqual([{ message: 'unexpected token', line: 2, column: 4 }])
+    expect(compile).toHaveBeenCalledWith('# Source')
+    await expect(
+      caller.mdxTrust.compile({
+        remote: REMOTE,
+        path: 'page.md',
+        context: trusted.context!,
+        source: '# Source',
+      }),
+    ).rejects.toThrow(/context unavailable/)
   })
 
   it('rejects unregistered remotes', async () => {
