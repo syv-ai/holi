@@ -3,7 +3,12 @@ import { constants } from 'node:fs'
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import { CapabilityError } from '../../../main/plugin-api'
-import { createGitReader, gitModeMatches } from './skill-release'
+import {
+  authenticatedTree,
+  createGitReader,
+  gitModeMatches,
+  makeAuthenticatedBlobReader,
+} from './skill-release'
 const MAX_ENTRIES = 2048
 const MAX_DEPTH = 32
 const MAX_BYTES = 32 * 1024 * 1024
@@ -65,20 +70,28 @@ async function authenticatedFiles(
   const source = release.sourcePath.replace(/\\/g, '/')
   const treePath = source ? `${source}/${app}` : app
   const git = createGitReader(release.root, signal)
-  const output = await git.read(['ls-tree', '-rz', '--full-tree', release.commit, '--', treePath])
+  const tree = await authenticatedTree(release.root, release.commit, signal)
+  const readBlob = makeAuthenticatedBlobReader(git, {
+    fileBytes: MAX_BYTES,
+    totalBytes: MAX_BYTES,
+  })
   const expected = new Map<string, { mode: string; oid: string; bytes: Buffer }>()
-  for (const record of output.toString('utf8').split('\0').filter(Boolean)) {
-    const tab = record.indexOf('\t')
-    const [rawMode, rawType, rawOid] = record.slice(0, tab).split(' ')
-    const path = record.slice(tab + 1)
-    if (!rawMode || !rawType || !rawOid) fail(`invalid authenticated app tree: ${app}`)
-    const mode = rawMode!
-    const type = rawType!
-    const oid = rawOid!
-    const prefix = `${treePath}/`
-    if (type !== 'blob' || !path.startsWith(prefix)) fail(`invalid authenticated app tree: ${app}`)
-    const bytes = await git.read(['cat-file', 'blob', oid], MAX_BYTES)
-    expected.set(path.slice(prefix.length), { mode, oid, bytes })
+  const prefix = `${treePath}/`
+  let aggregateBytes = 0
+  for (const [path, entry] of tree) {
+    if (!path.startsWith(prefix)) continue
+    const rel = path.slice(prefix.length)
+    const depth = rel.split('/').length
+    if (
+      expected.size >= MAX_ENTRIES ||
+      depth > MAX_DEPTH ||
+      (entry.mode !== '100644' && entry.mode !== '100755')
+    )
+      fail(`invalid authenticated app tree: ${app}`)
+    const bytes = await readBlob(entry)
+    aggregateBytes += bytes.length
+    if (aggregateBytes > MAX_BYTES) fail(`app exceeds filesystem limits: ${app}`)
+    expected.set(rel, { mode: entry.mode, oid: entry.oid, bytes })
   }
   if (!expected.size) fail(`missing authenticated app tree: ${app}`)
   return expected
