@@ -25,6 +25,7 @@ import { vimCodeEditingAtom } from '@/state/preferences'
 import { liveShortcutIdsAtom } from '@/state/shortcuts'
 import { HostHintLayer } from '../host-hint-layer'
 import {
+  HOST_HINT_REQUEST,
   HOST_HINT_SURFACE,
   registerHostHintAdapter,
   registerAsyncHostHintAdapter,
@@ -657,6 +658,240 @@ test('failed async presentation never exposes or activates its target', async ()
   expect(adapter.activate).not.toHaveBeenCalled()
   expect(adapter.clear).toHaveBeenCalledOnce()
 })
+
+test('pending async discovery retains chrome targets and replays bounded typeahead', async () => {
+  let resolve!: (targets: readonly { id: string; label: string; x: number; y: number }[]) => void
+  const click = vi.fn()
+  const adapter: AsyncHostHintAdapter = {
+    discover: () =>
+      new Promise((done) => {
+        resolve = done
+      }),
+    present: vi.fn(async () => true),
+    clear: vi.fn(),
+    activate: vi.fn(async () => true),
+    subscribe: () => vi.fn(),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      {Array.from({ length: 30 }, (_, index) => (
+        <Button key={index} onClick={() => click(index)}>
+          Action {index}
+        </Button>
+      ))}
+      <div data-testid="owner" />
+    </section>,
+  )
+  registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+  screen.getByRole('button', { name: 'Action 0' }).focus()
+  await userEvent.keyboard('fsa')
+  expect(hints()).toHaveLength(0)
+  await act(async () => resolve([]))
+  expect(click).toHaveBeenCalledExactlyOnceWith(26)
+  expect(hints()).toHaveLength(0)
+})
+
+test('a stalled initial presentation times out without hiding native hints', async () => {
+  const adapter: AsyncHostHintAdapter = {
+    discover: async () => [{ id: 'remote', label: 'Remote', x: 200, y: 100 }],
+    present: vi.fn(() => new Promise<boolean>(() => {})),
+    clear: vi.fn(),
+    activate: vi.fn(async () => true),
+    subscribe: () => vi.fn(),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <Button>Local</Button>
+      <div data-testid="owner" />
+    </section>,
+  )
+  registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+  screen.getByRole('button', { name: 'Local' }).focus()
+  await userEvent.keyboard('f')
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 140)))
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['Local'])
+  expect(adapter.clear).toHaveBeenCalledOnce()
+})
+
+test('pending typeahead overflow cancels discovery without presenting', async () => {
+  let resolve!: (targets: readonly { id: string; label: string; x: number; y: number }[]) => void
+  const adapter: AsyncHostHintAdapter = {
+    discover: () =>
+      new Promise((done) => {
+        resolve = done
+      }),
+    present: vi.fn(async () => true),
+    clear: vi.fn(),
+    activate: vi.fn(async () => true),
+    subscribe: () => vi.fn(),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <Button>Local</Button>
+      <div data-testid="owner" />
+    </section>,
+  )
+  registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+  screen.getByRole('button', { name: 'Local' }).focus()
+  await userEvent.keyboard('f123456789')
+  await act(async () => resolve([{ id: 'late', label: 'Late', x: 200, y: 100 }]))
+  expect(hints()).toHaveLength(0)
+  expect(adapter.present).not.toHaveBeenCalled()
+  expect(adapter.clear).toHaveBeenCalledOnce()
+})
+
+test.each(['blur', 'pointer', 'request', 'preference', 'escape', 'surface'] as const)(
+  'selected delayed async activation retires on %s',
+  async (reason) => {
+    let finish!: (value: boolean) => void
+    let remoteKey = ''
+    const adapter: AsyncHostHintAdapter = {
+      discover: async () =>
+        Array.from({ length: 30 }, (_, index) => ({
+          id: index === 0 ? 'remote' : `remote-${index}`,
+          label: `Remote ${index}`,
+          x: 200 + index,
+          y: 100,
+        })),
+      present: vi.fn(
+        async (_request, _revision, labels: readonly { id: string; key: string }[]) => {
+          remoteKey = labels.find((label) => label.id === 'remote')?.key ?? remoteKey
+          return true
+        },
+      ),
+      clear: vi.fn(),
+      activate: vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finish = resolve
+          }),
+      ),
+      subscribe: () => vi.fn(),
+    }
+    setup(
+      <section data-pane="one" data-pane-focused>
+        <Button>Local</Button>
+        <div data-testid="owner" />
+      </section>,
+    )
+    registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+    const button = screen.getByRole('button', { name: 'Local' })
+    button.focus()
+    await userEvent.keyboard('f')
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    await userEvent.keyboard(remoteKey)
+    expect(adapter.activate).toHaveBeenCalledOnce()
+    if (reason === 'blur') fireEvent.blur(window)
+    if (reason === 'pointer') fireEvent.pointerDown(window)
+    if (reason === 'request') {
+      act(() =>
+        window.dispatchEvent(new CustomEvent(HOST_HINT_REQUEST, { detail: { source: button } })),
+      )
+    }
+    if (reason === 'preference') await act(async () => store.set(vimCodeEditingAtom, false))
+    if (reason === 'escape') await userEvent.keyboard('{Escape}')
+    if (reason === 'surface') {
+      const owner = screen.getByTestId('owner')
+      const shadow = owner.attachShadow({ mode: 'open' })
+      act(() =>
+        window.dispatchEvent(
+          new CustomEvent(HOST_HINT_SURFACE, {
+            detail: { root: shadow, owner, registered: false },
+          }),
+        ),
+      )
+    }
+    expect(adapter.clear).toHaveBeenCalledOnce()
+    await act(async () => finish(true))
+    expect(adapter.clear).toHaveBeenCalledOnce()
+  },
+)
+
+test('a stale async prefix failure cannot cancel a newer request', async () => {
+  let failOldPrefix!: (value: boolean) => void
+  let remoteKey = ''
+  let requestNumber = 0
+  const adapter: AsyncHostHintAdapter = {
+    discover: async () => {
+      const request = ++requestNumber
+      return Array.from({ length: 30 }, (_, index) => ({
+        id: `remote-${request}-${index}`,
+        label: `Remote ${index}`,
+        x: 200 + index,
+        y: 100,
+      }))
+    },
+    present: vi.fn((request, revision, labels: readonly { id: string; key: string }[]) => {
+      remoteKey = labels.find((label) => label.id.endsWith('-26'))?.key ?? remoteKey
+      if (request === 1 && revision > 1)
+        return new Promise<boolean>((resolve) => {
+          failOldPrefix = resolve
+        })
+      return Promise.resolve(true)
+    }),
+    clear: vi.fn(),
+    activate: vi.fn(async () => true),
+    subscribe: () => vi.fn(),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <Button>Local</Button>
+      <div data-testid="owner" />
+    </section>,
+  )
+  registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+  const button = screen.getByRole('button', { name: 'Local' })
+  button.focus()
+  await userEvent.keyboard('f')
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+  await userEvent.keyboard(remoteKey[0]!)
+  act(() =>
+    window.dispatchEvent(new CustomEvent(HOST_HINT_REQUEST, { detail: { source: button } })),
+  )
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+  await act(async () => failOldPrefix(false))
+  await userEvent.keyboard(remoteKey)
+  expect(adapter.activate).toHaveBeenCalledWith(2, 'remote-2-26')
+})
+
+test.each(['false', 'reject'] as const)(
+  'failed async prefix presentation (%s) retires its session',
+  async (failure) => {
+    const adapter: AsyncHostHintAdapter = {
+      discover: async () =>
+        Array.from({ length: 30 }, (_, index) => ({
+          id: `remote-${index}`,
+          label: `Remote ${index}`,
+          x: 200 + index,
+          y: 100,
+        })),
+      present: vi.fn(async (_request, _revision, labels) => {
+        if (labels.length === 30) return true
+        if (failure === 'reject') throw new Error('presentation failed')
+        return false
+      }),
+      clear: vi.fn(),
+      activate: vi.fn(async () => true),
+      subscribe: () => vi.fn(),
+    }
+    setup(
+      <section data-pane="one" data-pane-focused>
+        <Button>Local</Button>
+        <div data-testid="owner" />
+      </section>,
+    )
+    registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+    screen.getByRole('button', { name: 'Local' }).focus()
+    await userEvent.keyboard('f')
+    await act(async () => await new Promise((resolve) => setTimeout(resolve, 0)))
+    await userEvent.keyboard('a')
+    await act(async () => await new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(adapter.present).toHaveBeenCalledTimes(2)
+    expect(hints()).toHaveLength(0)
+    expect(adapter.activate).not.toHaveBeenCalled()
+    expect(adapter.clear).toHaveBeenCalledOnce()
+  },
+)
 
 test('async discovery errors leave native host hints usable and clear once on cancellation', async () => {
   const adapter: AsyncHostHintAdapter = {
