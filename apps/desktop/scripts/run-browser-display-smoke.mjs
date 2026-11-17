@@ -367,7 +367,9 @@ try {
     ...(hintsAcceptance
       ? [
           'native-page-f-discovers-production-page-and-host-labels',
+          'native-checkbox-and-aria-switch-discovery-with-trusted-activation',
           'body-button-link-focus-request-hints-with-trusted-activation',
+          'waapi-target-movement-revokes-page-and-host-labels',
           'native-escape-retires-delayed-action-and-routes-exact-host-cancellation',
           'native-host-escape-cancels-selected-delayed-browser-action',
           'transparent-targets-and-ancestors-excluded-and-opacity-mutation-revokes',

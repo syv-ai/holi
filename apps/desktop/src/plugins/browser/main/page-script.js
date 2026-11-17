@@ -882,7 +882,7 @@
     return true
   }
   const hintSelector =
-    'a[href],button,input[type="button"],input[type="submit"],input[type="reset"],[role="button"],[role="link"],[role="tab"],[role="menuitem"],summary'
+    'a[href],button,input[type="button"],input[type="submit"],input[type="reset"],input[type="checkbox"],input[type="radio"],select,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="switch"],summary'
   function hintVisible(element) {
     if (!element.isConnected || element.matches(':disabled')) return false
     for (let node = element; node; node = node.parentElement) {
@@ -945,8 +945,44 @@
     }
     return result
   }
+  let hintMonitorFrame = null
+  function stopHintMonitor() {
+    if (hintMonitorFrame !== null) cancelAnimationFrame(hintMonitorFrame)
+    hintMonitorFrame = null
+  }
+  function monitorHintSnapshot(owner) {
+    if (!sameHintOwner(owner, hintOwner) || hintClosed) return
+    hintMonitorFrame = requestAnimationFrame(() => {
+      hintMonitorFrame = null
+      if (!sameHintOwner(owner, hintOwner) || hintClosed) return
+      for (const target of hintSnapshot.values()) {
+        const element = target.element
+        if (!hintVisible(element) || getComputedStyle(element).pointerEvents === 'none') {
+          invalidateHints()
+          return
+        }
+        const rect = element.getBoundingClientRect()
+        if (
+          Math.abs(rect.x - target.rect[0]) > 1 ||
+          Math.abs(rect.y - target.rect[1]) > 1 ||
+          Math.abs(rect.width - target.rect[2]) > 1 ||
+          Math.abs(rect.height - target.rect[3]) > 1
+        ) {
+          invalidateHints()
+          return
+        }
+        const hit = document.elementFromPoint(target.x, target.y)
+        if (!hit || !(hit === element || element.contains(hit))) {
+          invalidateHints()
+          return
+        }
+      }
+      monitorHintSnapshot(owner)
+    })
+  }
   function clearHints(owner) {
     if (!sameHintOwner(owner, hintOwner)) return false
+    stopHintMonitor()
     hintClosed = true
     hintSnapshot.clear()
     hintRoot?.remove()
@@ -954,6 +990,7 @@
     return true
   }
   const invalidateHints = () => {
+    stopHintMonitor()
     hintGeometry++
     hintSnapshotGeometry = -1
     if (hintPendingCapture !== null) {
@@ -1075,6 +1112,7 @@
     a.geometry === b.geometry
   const hints = {
     reset() {
+      stopHintMonitor()
       hintOwner = null
       hintClosed = true
       hintRevision = 0
@@ -1136,10 +1174,12 @@
       // A synchronous focus/scroll change while collecting targets invalidates
       // the snapshot before it can become actionable.
       if (geometry !== hintGeometry) return null
-      return targets.slice(0, 200).map(({ id, label, x, y, element, rect }) => {
+      const snapshot = targets.slice(0, 200).map(({ id, label, x, y, element, rect }) => {
         hintSnapshot.set(id, { element, rect, x, y, owner: { ...owner } })
         return { id, label, x, y }
       })
+      monitorHintSnapshot({ ...owner })
+      return snapshot
     },
     present(owner, revision, labels, theme = 'light', presentation) {
       if (
