@@ -297,15 +297,44 @@ test('folder subscription actions keep a trailing slot and reveal on pointer or 
   expect(short.querySelector('[data-tree-row-action]')).toBe(shortAction)
 })
 
-test('individual file subscription controls persist the file scope without subscribing its folder', async () => {
-  mount()
+// Rendered geometry, pointer reveal, and focus visibility are exercised by
+// scripts/run-folder-subscriptions-native-smoke.mjs in native Electron.
+test('individual file subscription controls persist and are keyboard operable', async () => {
+  const { store } = mount()
   await screen.findByRole('button', { name: 'Subscribe this vault' })
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      docs: [
+        ...store.get(snapshotAtom)!.docs,
+        {
+          path: 'a-considerably-longer-filename-to-check-the-trailing-action-slot.md',
+          title: 'long filename',
+          updatedAt: '2026-10-23T10:00:00Z',
+        },
+      ] as never,
+    }),
+  )
+  const longFileRow = await screen.findByRole('treeitem', {
+    name: 'a-considerably-longer-filename-to-check-the-trailing-action-slot.md',
+  })
+  const longFileControl = await screen.findByRole('button', {
+    name: 'Subscribe a-considerably-longer-filename-to-check-the-trailing-action-slot.md',
+  })
+  expect(longFileRow).toContainElement(longFileControl)
   expect(subscriptionList.mock.calls.map(([input]) => JSON.parse(input.paths))).toContainEqual(
     expect.arrayContaining(['kunder/brief.md']),
   )
   fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'kunder' }), { key: ' ' })
   const fileControl = await screen.findByRole('button', { name: 'Subscribe brief.md' })
-  await userEvent.click(fileControl)
+  const fileRow = screen.getByRole('treeitem', { name: 'brief.md' })
+  const fileNameBefore = [...fileRow.querySelectorAll('.truncate')].find(
+    (element) => element.textContent === 'brief',
+  )?.textContent
+  fileRow.focus()
+  await userEvent.tab()
+  expect(document.activeElement).toBe(fileControl)
+  await userEvent.keyboard('{Enter}')
   await waitFor(() =>
     expect(subscriptionSet).toHaveBeenCalledWith({
       remote: 'mara/notes',
@@ -316,8 +345,11 @@ test('individual file subscription controls persist the file scope without subsc
   const fileControlAfterSubscribe = await screen.findByRole('button', {
     name: 'Unsubscribe brief.md',
   })
-  expect(fileControlAfterSubscribe).not.toHaveAttribute('data-tree-row-action')
-  expect(fileControlAfterSubscribe).not.toHaveClass('ms-auto')
+  expect(fileControlAfterSubscribe).toHaveAttribute('data-tree-row-action', '')
+  expect(fileRow).toContainElement(fileControlAfterSubscribe)
+  expect(
+    [...fileRow.querySelectorAll('.truncate')].find((element) => element.textContent === 'brief'),
+  ).toHaveTextContent(fileNameBefore!)
   expect(screen.getByRole('button', { name: 'Subscribe kunder' })).toBeInTheDocument()
 })
 
