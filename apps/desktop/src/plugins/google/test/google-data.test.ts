@@ -139,7 +139,154 @@ describe('createGoogleData', () => {
     expect(existsSync(path)).toBe(false)
   })
 
+  it('filters each bounded Gmail page without consuming its continuation token', async () => {
+    const seen: string[] = []
+    const fetchImpl = vi.fn(async (url: string) => {
+      seen.push(url)
+      const path_ = new URL(url).pathname
+      const body = path_.endsWith('/settings/sendAs')
+        ? { sendAs: [{ sendAsEmail: 'me@example.com' }, { sendAsEmail: 'alias@example.com' }] }
+        : path_.endsWith('/threads')
+          ? { threads: [{ id: 'cc' }, { id: 'auto' }], nextPageToken: 'more' }
+          : path_.includes('/threads/auto')
+            ? {
+                id: 'auto',
+                messages: [
+                  {
+                    id: 'incoming-auto',
+                    internalDate: '1000',
+                    labelIds: ['INBOX', 'UNREAD'],
+                    payload: {
+                      headers: [
+                        { name: 'To', value: 'me@example.com' },
+                        { name: 'List-Id', value: '<news.example.org>' },
+                      ],
+                    },
+                  },
+                ],
+              }
+            : path_.includes('/threads/cc')
+              ? {
+                  id: 'cc',
+                  messages: [
+                    {
+                      id: 'incoming',
+                      internalDate: '1000',
+                      labelIds: ['INBOX', 'UNREAD'],
+                      payload: {
+                        headers: [
+                          { name: 'To', value: 'someone@example.com' },
+                          { name: 'Cc', value: 'alias@example.com' },
+                        ],
+                      },
+                    },
+                  ],
+                }
+              : path_.endsWith('/labels')
+                ? { labels: [] }
+                : path_.endsWith('/profile')
+                  ? { historyId: '1' }
+                  : {}
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }
+    }) as unknown as typeof globalThis.fetch
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache,
+    })
+    subject.ensureShape()
+
+    const defaultPage = await subject.threads({
+      query: 'from:friend@example.com',
+      category: 'primary',
+      unread: true,
+      needsReply: true,
+    })
+    expect(defaultPage.threads).toEqual([])
+    expect(defaultPage.nextPageToken).toBe('more')
+    const includeCcPage = await subject.threads({
+      query: 'from:friend@example.com',
+      category: 'primary',
+      unread: true,
+      needsReply: true,
+      includeCc: true,
+    })
+    expect(includeCcPage.threads).toMatchObject([{ id: 'cc', addressedAs: 'cc', needsReply: true }])
+    expect(includeCcPage.nextPageToken).toBe('more')
+    const includeBothPage = await subject.threads({
+      query: 'from:friend@example.com',
+      category: 'primary',
+      unread: true,
+      needsReply: true,
+      includeCc: true,
+      includeAutomated: true,
+    })
+    expect(includeBothPage.threads.map((thread) => thread.id)).toEqual(['cc', 'auto'])
+    expect(includeBothPage.threads[1]!.automated).toBe(true)
+    expect(includeBothPage.nextPageToken).toBe('more')
+    expect(new URL(seen.find((url) => url.includes('/threads?'))!).searchParams.get('q')).toBe(
+      'from:friend@example.com category:primary is:unread',
+    )
+  })
+
   it('reclassifies cached mail when send-as identity lookup recovers', async () => {
+    let identitiesAvailable = false
+    let threadFetches = 0
+    const fetchImpl = vi.fn(async (url: string) => {
+      const path_ = new URL(url).pathname
+      if (path_.includes('/threads/t1')) threadFetches++
+      const body = path_.endsWith('/settings/sendAs')
+        ? identitiesAvailable
+          ? { sendAs: [{ sendAsEmail: 'me@example.com' }] }
+          : null
+        : path_.endsWith('/labels')
+          ? { labels: [] }
+          : path_.endsWith('/profile')
+            ? { historyId: '1' }
+            : path_.endsWith('/threads')
+              ? { threads: [{ id: 't1' }] }
+              : path_.includes('/threads/')
+                ? {
+                    id: 't1',
+                    messages: [
+                      {
+                        id: 'm1',
+                        internalDate: '1000',
+                        labelIds: ['INBOX'],
+                        payload: { headers: [{ name: 'To', value: 'me@example.com' }] },
+                      },
+                    ],
+                  }
+                : {}
+      return {
+        ok: identitiesAvailable || !path_.endsWith('/settings/sendAs'),
+        status: identitiesAvailable || !path_.endsWith('/settings/sendAs') ? 200 : 503,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }
+    }) as unknown as typeof globalThis.fetch
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache,
+    })
+    subject.ensureShape()
+
+    expect((await subject.threads({})).threads[0]!.addressedAs).toBe('unknown')
+    expect(await subject.threads({ needsReply: true })).toMatchObject({
+      threads: [{ addressedAs: 'unknown', needsReply: true }],
+    })
+    identitiesAvailable = true
+    expect(await subject.threads({ needsReply: true })).toMatchObject({
+      threads: [{ addressedAs: 'to', needsReply: true }],
+    })
+    expect(threadFetches).toBe(3)
+  })
+
+  it('keeps ordinary cache identity lookup failures recoverable', async () => {
     let identitiesAvailable = false
     let threadFetches = 0
     const fetchImpl = vi.fn(async (url: string) => {
