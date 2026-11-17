@@ -48,9 +48,10 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/contacts.other.readonly',
   // Calendar writes: the UI can explicitly create a meeting with guests and
   // send invitations. The agent's `google.schedule` stays silent and solo;
-  // raw API writes that reach people stay behind its ask gate. Main refuses
-  // edits or deletions of attendee events. `calendar.readonly` stays alongside
-  // this scope because the events scope does not read the full list.
+  // raw API writes that reach people stay behind its ask gate. The dedicated
+  // reschedule/unschedule capabilities refuse attendee events; approved raw
+  // API writes can modify them. `calendar.readonly` stays alongside this scope
+  // because the events scope does not read the full list.
   'https://www.googleapis.com/auth/calendar.events',
 ]
 
