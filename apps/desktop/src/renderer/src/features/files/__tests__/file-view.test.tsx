@@ -900,7 +900,7 @@ test('MDX teardown preserves another linter’s diagnostics in a mounted non-MDX
     return node!
   })
   const { EditorView } = await import('@codemirror/view')
-  const { setDiagnostics } = await import('@codemirror/lint')
+  const { diagnosticCount, setDiagnostics } = await import('@codemirror/lint')
   const { jsonParseLinter } = await import('@codemirror/lang-json')
   const editor = EditorView.findFromDOM(content)!
   // The JSON editor gates saves, but installs no background linter. Populate
@@ -908,19 +908,19 @@ test('MDX teardown preserves another linter’s diagnostics in a mounted non-MDX
   const diagnostics = await jsonParseLinter()(editor)
   expect(diagnostics.length).toBeGreaterThan(0)
   act(() => editor.dispatch(setDiagnostics(editor.state, diagnostics)))
-  expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument()
+  expect(diagnosticCount(editor.state)).toBe(diagnostics.length)
   rendered.rerender(
     <Provider store={store}>
       <FileView path="config.json" visible={false} />
     </Provider>,
   )
-  expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument()
+  expect(diagnosticCount(editor.state)).toBe(diagnostics.length)
   rendered.rerender(
     <Provider store={store}>
       <FileView path="config.json" visible />
     </Provider>,
   )
-  expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument()
+  expect(diagnosticCount(editor.state)).toBe(diagnostics.length)
   act(() =>
     store.set(snapshotAtom, {
       ...emptyVaultSnapshot(),
@@ -928,7 +928,8 @@ test('MDX teardown preserves another linter’s diagnostics in a mounted non-MDX
     }),
   )
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
-  expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument()
+  expect(EditorView.findFromDOM(content)).toBe(editor)
+  expect(diagnosticCount(editor.state)).toBe(diagnostics.length)
 })
 
 test('trusted MDX diagnostics consume the current source without changing save behavior', async () => {
