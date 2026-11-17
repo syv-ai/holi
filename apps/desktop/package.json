@@ -22,6 +22,8 @@
     "smoke:mail-vim:typecheck": "tsc --noEmit --project tsconfig.mail-vim-native-smoke.json",
     "smoke:files-subscriptions:native": "node scripts/run-files-subscriptions-smoke.mjs",
     "smoke:files-subscriptions:typecheck": "tsc --noEmit --project tsconfig.files-subscriptions-native-smoke.json",
+    "smoke:mdx-diagnostics:native": "node scripts/run-mdx-diagnostics-native-smoke.mjs",
+    "smoke:mdx-diagnostics:typecheck": "tsc --noEmit --project tsconfig.mdx-diagnostics-native-smoke.json",
     "package:mac": "electron-vite build && electron-builder --mac --publish never",
     "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\""
   },
@@ -131,6 +133,7 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^3.7.0",
     "@shadcn/lint": "0.2.3",
     "@tailwindcss/vite": "^4.3.2",
