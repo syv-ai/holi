@@ -308,13 +308,32 @@ function wordMotion(view: EditorView, motion: 'w' | 'b' | 'e') {
   if (target !== undefined) select(view, target)
 }
 
-function lineMotion(view: EditorView, key: '0' | '^' | '$') {
+function lineMotion(view: EditorView, key: '0' | '^' | '$', count = 1) {
   const line = lineAt(view.state, view.state.selection.head)
   if (!line) return
-  const positions = graphemeBoundaries(view.state, line.from, line.to)
+  let targetLine = line
+  if (key === '$' && count > 1) {
+    const all = blocks(view.state).flatMap((block) => logicalLines(block))
+    const container = containerAt(view.state, line.block.from, STRUCTURAL_CONTAINERS)
+    const candidates = all.filter((candidate) => {
+      const candidateContainer = containerAt(
+        view.state,
+        candidate.block.from,
+        STRUCTURAL_CONTAINERS,
+      )
+      return container
+        ? candidateContainer?.pos === container.pos && candidateContainer.type === container.type
+        : !candidateContainer
+    })
+    const index = candidates.findIndex(
+      (candidate) => candidate.block.from === line.block.from && candidate.from === line.from,
+    )
+    targetLine = candidates[Math.min(candidates.length - 1, index + count - 1)] ?? line
+  }
+  const positions = graphemeBoundaries(view.state, targetLine.from, targetLine.to)
   const target =
     key === '0'
-      ? line.from
+      ? targetLine.from
       : key === '$'
         ? positions.length > 1
           ? positions.at(-2)!
@@ -323,7 +342,7 @@ function lineMotion(view: EditorView, key: '0' | '^' | '$') {
             (at) =>
               view.state.doc.textBetween(at, positions.find((next) => next > at) ?? at).trim() !==
               '',
-          ) ?? line.to)
+          ) ?? targetLine.to)
   select(view, target)
 }
 
@@ -437,6 +456,10 @@ function previewMotion(view: EditorView, start: number, motion: Motion, count: n
     },
   } as EditorView
   select(preview, start)
+  if (motion === '$') {
+    lineMotion(preview, motion, count)
+    return state.selection.head
+  }
   for (let index = 0; index < count; index++) {
     const previous = state.selection.head
     if (motion === 'w' || motion === 'b' || motion === 'e') wordMotion(preview, motion)
@@ -548,7 +571,8 @@ function handleNormal(
     }
     select(view, visualOrigin)
     let previous = visualOrigin
-    for (let index = 0; index < count; index++) {
+    if (key === '$') lineMotion(view, key, count)
+    for (let index = 0; key !== '$' && index < count; index++) {
       if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
       else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
       else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
@@ -664,7 +688,6 @@ function handleNormal(
               } else tr.delete(item.pos, to)
               if (operator === 'c') dispatchChange(view, tr, item.pos)
               else {
-                tr.setMeta('vimChangeInsert', true)
                 view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(item.pos), 1)))
                 closeHistoryBoundary(view)
               }
@@ -721,7 +744,6 @@ function handleNormal(
             } else tr.delete(from, to)
             if (operator === 'c') dispatchChange(view, tr, from)
             else {
-              tr.setMeta('vimChangeInsert', true)
               view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
               closeHistoryBoundary(view)
             }
@@ -734,6 +756,12 @@ function handleNormal(
         const blockIndex = all.findIndex((candidate) => candidate.from === block.from)
         const lineCount = cappedCount(current.operatorCount * (current.count || 1))
         const lastBlock = all[Math.min(all.length - 1, blockIndex + lineCount - 1)] ?? block
+        const nestedNode = nested ? view.state.doc.nodeAt(nested.pos) : null
+        const removeTableParagraph =
+          operator === 'd' &&
+          (nested?.type === 'tableCell' || nested?.type === 'tableHeader') &&
+          nestedNode !== null &&
+          nestedNode.childCount > lineCount
         const from = nested ? block.from : block.from - 1
         const to = nested ? lastBlock.to : lastBlock.to + 1
         if (!safeRange(view.state, from, to)) {
@@ -771,7 +799,8 @@ function handleNormal(
           if (operator === 'c' && line.from === block.from && line.to === block.to) {
             const empty = block.node.type.create(block.node.attrs, null, block.node.marks)
             tr.replaceWith(block.from - 1, lastBlock.to + 1, empty)
-          } else tr.delete(from, to)
+          } else if (removeTableParagraph) tr.delete(block.from - 1, lastBlock.to + 1)
+          else tr.delete(from, to)
           if (operator === 'c') {
             tr.setMeta('vimChangeInsert', true)
             dispatchChange(view, tr, from)
@@ -845,8 +874,7 @@ function handleNormal(
             if (targetLine) {
               const boundaries = graphemeBoundaries(view.state, targetLine.from, targetLine.to)
               destination = boundaries.length > 1 ? boundaries.at(-2)! : targetLine.from
-              dollarTo =
-                targetLine.to + (operator !== 'c' && targetIndex < candidates.length - 1 ? 1 : 0)
+              dollarTo = targetLine.to
             }
           }
         }
@@ -953,10 +981,14 @@ function handleNormal(
       })
       if (operator !== 'y' && settings.editable() && safeTo > rangeFrom) {
         if (inlineLinewise && inlineFirst && inlineLast) {
-          const nextLine = inlineLines[Math.max(firstInlineIndex, lastInlineIndex) + 1]
-          const deleteFrom = inlineFirst.from
-          const deleteTo =
-            operator === 'c' ? inlineLast.to : nextLine ? nextLine.from : inlineLast.to
+          const deletion = logicalLineDeletion(
+            inlineLines,
+            Math.min(firstInlineIndex, lastInlineIndex),
+            Math.max(firstInlineIndex, lastInlineIndex),
+            operator === 'd',
+          )!
+          const deleteFrom = operator === 'c' ? inlineFirst.from : deletion.from
+          const deleteTo = operator === 'c' ? inlineLast.to : deletion.to
           if (operator === 'c') closeHistoryBoundary(view)
           const tr = operator === 'c' ? view.state.tr : closeHistory(view.state.tr)
           if (deleteFrom === sourceLine.block.from && deleteTo === sourceLine.block.to) {
@@ -974,7 +1006,6 @@ function handleNormal(
             tr.setMeta('vimChangeInsert', true)
             dispatchChange(view, tr, deleteFrom)
           } else {
-            tr.setMeta('vimChangeInsert', true)
             view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
           }
         } else {
@@ -1001,7 +1032,6 @@ function handleNormal(
             tr.setMeta('vimChangeInsert', true)
             dispatchChange(view, tr, changePosition)
           } else {
-            tr.setMeta('vimChangeInsert', true)
             view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(rangeFrom), 1)))
           }
         }
@@ -1123,14 +1153,9 @@ function handleNormal(
           inlineVisual.lines.findIndex((item) => item.from === inlineVisual.first.from),
           inlineVisual.lines.findIndex((item) => item.from === inlineVisual.last.from),
         )
-        const nextLine = inlineVisual.lines[high + 1]
-        deleteFrom = inlineVisual.lines[low]!.from
-        const deleteTo =
-          key === 'c'
-            ? inlineVisual.lines[high]!.to
-            : nextLine
-              ? nextLine.from
-              : inlineVisual.lines[high]!.to
+        const deletion = logicalLineDeletion(inlineVisual.lines, low, high, key === 'd')!
+        deleteFrom = key === 'c' ? inlineVisual.lines[low]!.from : deletion.from
+        const deleteTo = key === 'c' ? inlineVisual.lines[high]!.to : deletion.to
         if (deleteFrom === inlineVisual.block.from && deleteTo === inlineVisual.block.to) {
           tr.replaceWith(
             inlineVisual.block.from - 1,
@@ -1160,7 +1185,6 @@ function handleNormal(
       } else tr.delete(deleteFrom, range.to)
       if (key === 'c') dispatchChange(view, tr, deleteFrom)
       else {
-        tr.setMeta('vimChangeInsert', true)
         view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
         closeHistoryBoundary(view)
       }
@@ -1233,7 +1257,8 @@ function handleNormal(
     key === '$'
   ) {
     let previous = view.state.selection.head
-    for (let index = 0; index < cappedCount(current.count); index++) {
+    if (key === '$') lineMotion(view, key, cappedCount(current.count))
+    for (let index = 0; key !== '$' && index < cappedCount(current.count); index++) {
       if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
       else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
       else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
