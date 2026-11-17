@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { createInterface } from 'node:readline'
@@ -18,6 +19,7 @@ const evidence = requestedEvidence
   ? resolve(requestedEvidence)
   : await mkdtemp(join(tmpdir(), 'holi-516-evidence-'))
 const root = await mkdtemp(join(tmpdir(), 'holi-516-native-'))
+const clipboardToken = `holi-516-${randomBytes(32).toString('hex')}`
 let child
 let childState
 let guard
@@ -205,7 +207,7 @@ try {
     0,
     `Clipboard guard compilation failed: ${compiledGuard.stderr}`,
   )
-  guard = spawn(guardExecutable, [], { stdio: ['pipe', 'pipe', 'pipe'] })
+  guard = spawn(guardExecutable, [clipboardToken], { stdio: ['pipe', 'pipe', 'pipe'] })
   guardState = observeChild(guard)
   guardCleanup.started = true
   guard.stdin.on('error', () => {})
@@ -245,6 +247,7 @@ try {
     USERPROFILE: join(root, 'home'),
     HOLI_516_ROOT: root,
     HOLI_516_EVIDENCE: evidence,
+    HOLI_516_CLIPBOARD_TOKEN: clipboardToken,
     HOLI_VAULT_ROOT: join(root, 'vault'),
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
       .filter(Boolean)

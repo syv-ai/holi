@@ -8,6 +8,8 @@ const root = process.env.HOLI_516_ROOT!
 const remote = 'fixture/rich-text-vim'
 const alternateRemote = 'fixture/rich-text-vim-alternate'
 const evidence = process.env.HOLI_516_EVIDENCE!
+const clipboardToken = process.env.HOLI_516_CLIPBOARD_TOKEN!
+assert(clipboardToken, 'native clipboard fixture requires a unique token')
 const vault = join(root, 'vault')
 const note = join(vault, 'notes/acceptance.md')
 const secondaryNote = join(vault, 'notes/secondary.md')
@@ -666,24 +668,29 @@ async function run() {
   mark('native-comment-list-paste-mapping-deletion-orphan-and-source-retention')
 
   const shortcut = process.platform === 'darwin' ? 'meta' : 'control'
-  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  clipboard.writeText(clipboardToken)
+  await evaluate(`window.richTextVimFixture.setup('<p>${clipboardToken}</p>',1)`)
   await key('Escape')
   await key('v')
-  for (let i = 0; i < 5; i++) await key('l')
+  for (let i = 0; i < clipboardToken.length - 1; i++) await key('l')
   await key('c', [shortcut])
-  assert.equal(clipboard.readText(), 'alpha', 'native copy shortcut writes the synthetic selection')
+  assert.equal(
+    clipboard.readText(),
+    clipboardToken,
+    'native copy shortcut writes the complete synthetic selection',
+  )
   await evaluate(`window.richTextVimFixture.setup('<p>target</p>',7)`)
   await key('Escape')
   await key('v', [shortcut])
   assert.equal(
     (await state()).markdown,
-    'targetalpha',
+    `target${clipboardToken}`,
     'native paste shortcut inserts the known synthetic text',
   )
   mark('native-platform-copy-paste-shortcuts-use-synthetic-text-under-runner-guard')
   nativeResults.push({
     scenario: 'synthetic clipboard copy and paste',
-    copied: 'alpha',
+    copyVerified: true,
     pastedDocument: (await state()).markdown,
   })
 

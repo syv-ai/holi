@@ -21,7 +21,13 @@ signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 
 let pasteboard = NSPasteboard.general
-let fixtureTexts: Set<String> = ["alpha"]
+guard CommandLine.arguments.count == 2,
+      let fixtureToken = CommandLine.arguments.dropFirst().first,
+      !fixtureToken.isEmpty
+else {
+  fputs("Clipboard guard requires a non-empty fixture token.\n", stderr)
+  exit(2)
+}
 
 func snapshot() throws -> [SavedItem] {
   try (pasteboard.pasteboardItems ?? []).map { item in
@@ -45,11 +51,10 @@ func currentItems() -> [NSPasteboardItem] {
 
 func isFixtureOwned() -> Bool {
   let items = currentItems()
-  guard items.count == 1,
-        let text = items[0].string(forType: .string),
-        fixtureTexts.contains(text)
-  else { return false }
-  return true
+  items.contains { item in
+    guard let text = item.string(forType: .string) else { return false }
+    return text.contains(fixtureToken)
+  }
 }
 
 func matches(_ saved: [SavedItem]) -> Bool {
@@ -92,8 +97,13 @@ func restore() -> Bool {
     for (type, bytes) in savedItem.values { item.setData(bytes, forType: type) }
     return item
   }
-  pasteboard.clearContents()
-  let wrote = restoredItems.isEmpty || pasteboard.writeObjects(restoredItems)
+  let wrote: Bool
+  if restoredItems.isEmpty {
+    pasteboard.clearContents()
+    wrote = true
+  } else {
+    wrote = pasteboard.writeObjects(restoredItems)
+  }
   let verified = wrote && matches(saved)
   emit(GuardStatus(event: "restored", itemCount: saved.count, typeCount: countTypes(saved), restored: wrote, verified: verified, preservedExternalChange: false, unchanged: false))
   return verified
