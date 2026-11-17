@@ -430,9 +430,33 @@ test('a failed stale-session cleanup is reported without landing its terminal', 
     ok: false,
     message:
       'Cleanup unconfirmed: the vault changed and session p0123456789ab may still be running. cleanup refused',
+    cleanupUnconfirmed: true,
+    sessionId: 'p0123456789ab',
   })
   expect(store.get(viewTerminalsAtom)).toEqual({})
   expect(store.get(agentsViewAtom)).toEqual({ kind: 'home' })
+})
+
+test('a resolved stale-session stop refusal remains unconfirmed', async () => {
+  const started = deferred<{
+    ok: true
+    sessionId: string
+    terminalId: string
+  }>()
+  start.mockReturnValueOnce(started.promise)
+  const store = storeWith()
+  const opening = store.set(startSessionAtom, { name: 'Catch-up' })
+
+  store.set(activeRemoteAtom, 'o/other')
+  stop.mockResolvedValueOnce({ ok: false, message: 'cleanup refused' })
+  started.resolve({ ok: true, sessionId: 'p0123456789ab', terminalId: 'stale-terminal' })
+
+  await expect(opening).resolves.toMatchObject({
+    ok: false,
+    cleanupUnconfirmed: true,
+    sessionId: 'p0123456789ab',
+  })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
 })
 
 test('stop goes to main and answers what it said', async () => {

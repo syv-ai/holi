@@ -204,6 +204,7 @@ beforeEach(() => {
   agentStartMock.mockReset().mockResolvedValue({ ok: true })
   agentServiceMock.mockReset().mockReturnValue({
     start: agentStartMock,
+    show: vi.fn().mockResolvedValue({ ok: true }),
     ask: vi.fn(),
     targets: atom({ default: 'new' }),
   })
@@ -896,17 +897,56 @@ test('catch-up confirms disabled tasks and lets an unresolved lookup degrade hon
   )
 })
 
-test('catch-up does not offer retry when stale-session cleanup is unconfirmed', async () => {
+test('catch-up offers existing-session recovery and blocks another launch after uncertain cleanup', async () => {
   const user = userEvent.setup()
+  const show = vi.fn().mockResolvedValue({ ok: true })
+  agentServiceMock.mockReturnValue({
+    start: agentStartMock,
+    show,
+    ask: vi.fn(),
+    targets: atom({ default: 'new' }),
+  })
   agentStartMock.mockResolvedValueOnce({
     ok: false,
     message: 'Cleanup unconfirmed: session may still be running.',
+    cleanupUnconfirmed: true,
+    sessionId: 'session-survivor',
   })
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
   await user.click(screen.getByRole('button', { name: 'Catch me up' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('Cleanup unconfirmed')
   expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  const catchUp = screen.getByRole('button', { name: 'Catch me up' })
+  expect(catchUp).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Open surviving session' }))
+  expect(show).toHaveBeenCalledWith({ session: 'session-survivor', live: true })
+  expect(agentStartMock).toHaveBeenCalledTimes(1)
+})
+
+test('catch-up admission survives Google account A-B-A while startup is pending', async () => {
+  const user = userEvent.setup()
+  let finish!: (value: { ok: false; message: string }) => void
+  agentStartMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
+
+  for (const email of ['ada@home.test', 'ada@syv.ai']) {
+    await user.click(screen.getByRole('button', { name: /Google account/ }))
+    await user.click(await screen.findByRole('menuitem', { name: email }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Starting catch-up' })).toBeDisabled(),
+    )
+  }
+  await user.click(screen.getByRole('button', { name: 'Starting catch-up' }))
+  expect(agentStartMock).toHaveBeenCalledTimes(1)
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/other')
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  finish({ ok: false, message: 'stale startup result' })
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Catch me up' })).toBeEnabled())
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 test('catch-up ignores a stale A-B-A completion', async () => {

@@ -31,7 +31,8 @@ import { newSessionProviderAtom } from './providers'
 import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
 
 /** What an action answers: done, or why not, in words the caller can print. */
-export type AgentResult = { ok: true } | { ok: false; message: string }
+export type AgentResult =
+  { ok: true } | { ok: false; message: string; cleanupUnconfirmed?: true; sessionId?: string }
 
 /** Show a terminal's tab and give it the keyboard. A miss on the focus is
  *  fine: a terminal not built yet focuses itself when it is. */
@@ -173,12 +174,22 @@ export const startSessionAtom = atom(
       get(activeRemoteRevisionValueAtom) !== revision
     ) {
       try {
-        await agentCap.stop(remote!, { id: res.sessionId })
+        const stopped = await agentCap.stop(remote!, { id: res.sessionId })
+        if (!stopped.ok) {
+          return {
+            ok: false,
+            message: `Cleanup unconfirmed: the vault changed and session ${res.sessionId} may still be running. ${stopped.message}`,
+            cleanupUnconfirmed: true,
+            sessionId: res.sessionId,
+          }
+        }
       } catch (error) {
         const detail = error instanceof Error ? ` ${error.message}` : ''
         return {
           ok: false,
           message: `Cleanup unconfirmed: the vault changed and session ${res.sessionId} may still be running.${detail}`,
+          cleanupUnconfirmed: true,
+          sessionId: res.sessionId,
         }
       }
       return { ok: false, message: 'The vault changed before the session opened.' }

@@ -197,7 +197,7 @@ describe('the installed script', () => {
     ).toMatchObject({
       kind: 'run',
       name: 'tasks.list',
-      params: { assignee: 'Ada', open: true },
+      params: { assignee: 'Ada', open: 'true' },
     })
     expect(
       resolveArgv(
@@ -208,7 +208,7 @@ describe('the installed script', () => {
     ).toMatchObject({
       kind: 'run',
       name: 'tasks.list',
-      params: { due: 'today', assignee: 'Ada', open: true },
+      params: { due: 'today', assignee: 'Ada', open: 'true' },
     })
   })
 })
