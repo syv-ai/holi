@@ -401,6 +401,7 @@ function DocumentEditor({
         editable: () => editorRef.current?.isEditable ?? false,
         onModeChange: (mode) => queueMicrotask(() => vimModeCallback.current(mode)),
         escapeOwned: () => findOpenRef.current,
+        onFeedback: (message) => toast.error(message),
       }),
       Extension.create({
         name: 'saveFreeze',
