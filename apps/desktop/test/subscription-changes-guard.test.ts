@@ -1,5 +1,4 @@
 import { mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { repositoryPublicationSnapshot } from '../src/main/managed-commit-provenance'

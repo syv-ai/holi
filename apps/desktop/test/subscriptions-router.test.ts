@@ -12,7 +12,7 @@ const exec = promisify(execFile)
 describe('subscriptions IPC', () => {
   async function realRepo(path = '') {
     const fixture = await rig()
-    const { root, caller, host, userData, session } = fixture
+    const { root, caller, host, session } = fixture
     if (path !== '') await mkdir(join(root, path), { recursive: true })
     await exec('git', ['init', '-b', 'main', root])
     await exec('git', ['-C', root, 'config', '--local', 'commit.gpgsign', 'false'])
@@ -27,7 +27,7 @@ describe('subscriptions IPC', () => {
       'origin',
       'https://github.com/syv-ai/1brain.git',
     ])
-    await writeFile(join(root, 'seed.md'), 'seed\\n', 'utf8')
+    await writeFile(join(root, 'seed.md'), 'seed\n', 'utf8')
     await gitCommit(root, ['seed.md'], 'seed')
     // Keep origin canonical for identity checks. A push-only local URL and a
     // local protocol policy prevent fixture lifecycle sync from reaching a network.
@@ -71,7 +71,7 @@ describe('subscriptions IPC', () => {
     return (await exec('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()
   }
 
-  async function addFile(root: string, path: string, text = `${path}\\n`) {
+  async function addFile(root: string, path: string, text = `${path}\n`) {
     await mkdir(join(root, path, '..'), { recursive: true })
     await writeFile(join(root, path), text, 'utf8')
   }
@@ -132,7 +132,6 @@ describe('subscriptions IPC', () => {
 
   it('suppresses only a recorded commit, regardless of matching or changed authorship', async () => {
     const { caller, active, userData, session } = await realRepo()
-    const baseline = await active.repo.head()
     const recorder = createManagedCommitProvenance({
       file: join(userData, 'managed-commit-provenance.json'),
       remote: REMOTE,
@@ -140,13 +139,13 @@ describe('subscriptions IPC', () => {
       subscribed: async () => true,
       subscribedNow: () => true,
     })
-    await addFile(active.root, 'same.md', 'managed\\n')
+    await addFile(active.root, 'same.md', 'managed\n')
     const ticket = await recorder.begin(active.root)
     const ownSha = await gitCommit(active.root, ['same.md'], 'managed')
     await recorder.record(ticket, active.root, ownSha)
-    await addFile(active.root, 'same.md', 'manual same author\\n')
+    await addFile(active.root, 'same.md', 'manual same author\n')
     const sameAuthorSha = await gitCommit(active.root, ['same.md'], 'manual same author')
-    await addFile(active.root, 'same.md', 'manual other author\\n')
+    await addFile(active.root, 'same.md', 'manual other author\n')
     const otherAuthorSha = await gitCommit(active.root, ['same.md'], 'manual other author', 'Agent')
     Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
 
@@ -335,12 +334,12 @@ describe('subscriptions IPC', () => {
       'the repository lifetime marker changes',
       async ({ active }: Awaited<ReturnType<typeof realRepo>>) => {
         const marker = join(active.root, '.git', 'holi-managed-provenance-id')
-        await writeFile(marker, 'replacement-lifetime\\n', 'utf8')
+        await writeFile(marker, 'replacement-lifetime\n', 'utf8')
       },
     ],
     [
       'the saved baseline changes',
-      async ({ caller, userData }: Awaited<ReturnType<typeof realRepo>>) => {
+      async ({ userData }: Awaited<ReturnType<typeof realRepo>>) => {
         const file = join(userData, 'subscriptions.json')
         const saved = JSON.parse(await readFile(file, 'utf8'))
         saved.remotes[REMOTE][0].baseline = 'f'.repeat(40)
@@ -474,7 +473,7 @@ describe('subscriptions IPC', () => {
   })
 
   it('returns a pending baseline when the subscription has none', async () => {
-    const { caller, active, userData } = await realRepo()
+    const { caller, userData } = await realRepo()
     const scopeFile = join(userData, 'subscriptions.json')
     const saved = JSON.parse(await readFile(scopeFile, 'utf8'))
     saved.remotes[REMOTE][0].baseline = null
@@ -518,7 +517,7 @@ describe('subscriptions IPC', () => {
     await addFile(active.root, 'new.md')
     const changed = await gitCommit(active.root, ['new.md'], 'rename and delete')
     await exec('git', ['-C', active.root, 'mv', 'new.md', 'old.md'])
-    await addFile(active.root, 'literal[?].md', 'changed\\n')
+    await addFile(active.root, 'literal[?].md', 'changed\n')
     const renamed = await gitCommit(active.root, ['old.md', 'literal[?].md'], 'rename and literal')
     const result = await caller.subscriptions.changes({ remote: REMOTE, path: '' })
     expect(result.changes.map(({ sha, path }) => [sha, path])).toContainEqual([changed, 'gone.md'])
@@ -536,7 +535,7 @@ describe('subscriptions IPC', () => {
   it('fences secret, local, ignored and current symlink history paths', async () => {
     const { caller, active, base } = await realRepo()
     await exec('git', ['-C', active.root, 'config', 'core.excludesFile', '/dev/null'])
-    await writeFile(join(active.root, '.gitignore'), 'node_modules/\\n', 'utf8')
+    await writeFile(join(active.root, '.gitignore'), 'node_modules/\n', 'utf8')
     const outside = join(base, 'outside')
     await mkdir(outside)
     await symlink(outside, join(active.root, 'outside-link'))
