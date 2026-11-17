@@ -13,8 +13,8 @@ interface Result {
 type Location = { line?: unknown; column?: unknown }
 type ParserError = {
   message?: unknown
-  position?: { start?: Location } | Location
-  place?: { start?: Location } | Location
+  position?: Location & { start?: Location }
+  place?: Location & { start?: Location }
   line?: unknown
   column?: unknown
 }

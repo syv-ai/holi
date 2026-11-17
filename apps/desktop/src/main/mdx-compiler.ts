@@ -51,13 +51,13 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
   let webRequestListener:
     | ((
         details: Electron.OnBeforeRequestListenerDetails,
-        callback: (response: Electron.OnBeforeRequestListenerResponse) => void,
+        callback: (response: Electron.CallbackResponse) => void,
       ) => void)
     | undefined
   let headersListener:
     | ((
         details: Electron.OnHeadersReceivedListenerDetails,
-        callback: (response: Electron.OnHeadersReceivedListenerResponse) => void,
+        callback: (response: Electron.HeadersReceivedResponse) => void,
       ) => void)
     | undefined
 
@@ -225,9 +225,8 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
       if (initialNavigation && url === HTML_URL) initialNavigation = false
       else event.preventDefault()
     })
-    guest.webContents.on('will-frame-navigate', (event, details) => {
-      if (!details.isMainFrame || details.url !== HTML_URL || !initialNavigation)
-        event.preventDefault()
+    guest.webContents.on('will-frame-navigate', (event) => {
+      if (!event.isMainFrame || event.url !== HTML_URL || !initialNavigation) event.preventDefault()
     })
 
     const finish = async (error?: Error, result?: MdxDiagnostic[]) => {
