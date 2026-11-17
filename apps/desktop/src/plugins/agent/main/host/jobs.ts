@@ -844,8 +844,14 @@ export function createJobs(deps: JobsDeps): Jobs {
         await job.pidWrite
         await rm(pidFile(job.id), { force: true })
       })(),
-      ...(job.dir === null ? [] : [rm(job.dir, { recursive: true, force: true })]),
-      ...(job.dir === null ? [] : [rm(job.state, { recursive: true, force: true })]),
+      // A failed provider release still owns this state. Retain both folders
+      // with the captured job rather than destroying what could not be drained.
+      ...(job.dir === null || job.finalizationError !== undefined
+        ? []
+        : [
+            rm(job.dir, { recursive: true, force: true }),
+            rm(job.state, { recursive: true, force: true }),
+          ]),
     ]
     const results = await Promise.allSettled(cleanups)
     const errors = results.flatMap((result) =>

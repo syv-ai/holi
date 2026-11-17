@@ -26,10 +26,19 @@ import { PRESETS } from '../main/harness/record'
 import type { SessionSummary } from '../main/claude/listing'
 
 const native = vi.hoisted(() => ({
+  heldRelease: null as null | { state: string; entered: () => void; wait: Promise<void> },
+  released: [] as { state: string; outcome: 'resolved' | 'rejected' }[],
+  heldFs: [] as {
+    method: 'link' | 'rename' | 'writeFile'
+    matches: (args: string[]) => boolean
+    entered: () => void
+    wait: Promise<void>
+  }[],
+  operations: new Set<Promise<unknown>>(),
   start: null as
     | null
     | ((
-        kind: 'job' | 'fenced',
+        kind: 'job' | 'fenced' | 'pty',
         bin: string,
         args: readonly string[],
         cwd: string,
@@ -54,8 +63,8 @@ vi.mock('../main/claude/cli', async (original) => {
       cli.createClaudeCli({ ...deps, run: async () => '[]' }),
   }
 })
-// Delay only the provider adapter's configure seam, not the host or its
-// cancellation checks. Successful releases still invoke Codex's real configure.
+// Gate only provider configure/release adapters, never host lifecycle checks.
+// Successful gates always continue through the original Codex implementation.
 vi.mock('../main/codex', async (original) => {
   const codex = await original<typeof import('../main/codex')>()
   return {
@@ -63,8 +72,31 @@ vi.mock('../main/codex', async (original) => {
     codexProvider: (deps: Parameters<typeof codex.codexProvider>[0]) => {
       const provider = codex.codexProvider(deps)
       const configure = provider.configure
+      const release = provider.release!
       return {
         ...provider,
+        release: async (state: string) => {
+          const work = (async () => {
+            try {
+              const hold = native.heldRelease
+              if (hold !== null && hold.state === state) {
+                hold.entered()
+                await hold.wait
+              }
+              await release(state)
+              native.released.push({ state, outcome: 'resolved' })
+            } catch (err) {
+              native.released.push({ state, outcome: 'rejected' })
+              throw err
+            }
+          })()
+          native.operations.add(work)
+          try {
+            await work
+          } finally {
+            native.operations.delete(work)
+          }
+        },
         configure: async (vault: Parameters<typeof configure>[0]) => {
           try {
             const hold = native.heldConfigure
@@ -101,8 +133,36 @@ vi.mock('node:crypto', async (original) => {
 // so the fixture never removes its parent while a host is still writing to it.
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
+  const gated = async <T>(
+    method: 'link' | 'rename' | 'writeFile',
+    args: unknown[],
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    const hold = native.heldFs.find(
+      (gate) => gate.method === method && gate.matches(args.map(String)),
+    )
+    const work = (async () => {
+      if (hold !== undefined) {
+        native.heldFs.splice(native.heldFs.indexOf(hold), 1)
+        hold.entered()
+        await hold.wait
+      }
+      return run()
+    })()
+    native.operations.add(work)
+    try {
+      return await work
+    } finally {
+      native.operations.delete(work)
+    }
+  }
   return {
     ...fs,
+    link: (...args: Parameters<typeof fs.link>) => gated('link', args, () => fs.link(...args)),
+    rename: (...args: Parameters<typeof fs.rename>) =>
+      gated('rename', args, () => fs.rename(...args)),
+    writeFile: (...args: Parameters<typeof fs.writeFile>) =>
+      gated('writeFile', args, () => fs.writeFile(...args)),
     rm: (...args: Parameters<typeof fs.rm>) => {
       const done = fs.rm(...args)
       native.removals.push({ path: String(args[0]), done })
@@ -110,13 +170,19 @@ vi.mock('node:fs/promises', async (original) => {
     },
   }
 })
-// Only native launch and the configure delay adapters vary. AgentRuntime, all four hosts,
+// Only native process/filesystem and provider delay adapters vary. AgentRuntime, all four hosts,
 // providers (including command construction/home preparation), dispatcher and
 // plugin activation/teardown are production implementations.
 vi.mock('../../../main/plugin-api', async (original) => {
   const api = await original<typeof import('../../../main/plugin-api')>()
   const defaultSpawnPty: SpawnPty = (bin, args, opts) => {
-    const child = native.start!('fenced', bin, args, opts.cwd, opts.env)
+    const child = native.start!(
+      opts.env.CODEX_HOME === undefined ? 'pty' : 'fenced',
+      bin,
+      args,
+      opts.cwd,
+      opts.env,
+    )
     return {
       pid: child.pid!,
       onData: (cb) => {
@@ -163,6 +229,26 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+function within<T>(work: Promise<T>): Promise<T> {
+  const done = (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Fixture operation did not settle')), 3_000)
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  })()
+  // A preceding assertion can fail before its gate is awaited. Still observe
+  // the bounded admission promise while finally releases/drains the fixture.
+  void done.catch(() => {})
+  return done
+}
+
 async function createScratchFixture() {
   const userData = await realpath(await mkdtemp(join(tmpdir(), 'holi-scratch-activation-')))
   const roots = { 'fixture/a': join(userData, 'vault-a'), 'fixture/b': join(userData, 'vault-b') }
@@ -170,7 +256,7 @@ async function createScratchFixture() {
   const A: Remote = 'fixture/a'
   const B: Remote = 'fixture/b'
   const children: {
-    kind: 'job' | 'fenced'
+    kind: 'job' | 'fenced' | 'pty'
     bin: string
     args: readonly string[]
     cwd: string
@@ -186,26 +272,49 @@ async function createScratchFixture() {
   native.heldExit = null
   native.heldConfigure = null
   native.configured.length = 0
+  native.released.length = 0
+  native.heldRelease = null
+  native.heldFs.length = 0
+  expect(native.operations.size).toBe(0)
   const releases: (() => void)[] = []
   const holdExit = (cwd: string) => {
     const heldExit = deferred<void>()
     const exitEntered = deferred<void>()
     releases.push(heldExit.resolve)
     native.heldExit = { cwd, entered: exitEntered.resolve, wait: heldExit.promise }
-    return { heldExit, exitEntered }
+    return { heldExit, exitEntered: { ...exitEntered, promise: within(exitEntered.promise) } }
   }
   const holdConfigure = (remote: Remote) => {
     const gate = deferred<void>()
     const entered = deferred<void>()
     releases.push(gate.resolve)
     native.heldConfigure = { root: roots[remote], entered: entered.resolve, wait: gate.promise }
-    return { gate, entered: entered.promise }
+    return { gate, entered: within(entered.promise) }
+  }
+  const holdRelease = (state: string) => {
+    const gate = deferred<void>()
+    const entered = deferred<void>()
+    releases.push(gate.resolve)
+    native.heldRelease = { state, entered: entered.resolve, wait: gate.promise }
+    return { gate, entered: within(entered.promise) }
+  }
+  const holdFs = (
+    method: 'link' | 'rename' | 'writeFile',
+    matches: (args: string[]) => boolean,
+  ) => {
+    const gate = deferred<void>()
+    const entered = deferred<void>()
+    releases.push(gate.resolve)
+    native.heldFs.push({ method, matches, entered: entered.resolve, wait: gate.promise })
+    return { gate, entered: within(entered.promise) }
   }
   native.start = (kind, bin, args, cwd, env) => {
     // Never execute a real provider or inherit keys/config from this machine.
     expect(bin).toBe(process.execPath)
-    expect(args).toContain(cwd)
-    expect(env.CODEX_HOME).toBeTypeOf('string')
+    if (kind !== 'pty') {
+      expect(args).toContain(cwd)
+      expect(env.CODEX_HOME).toBeTypeOf('string')
+    }
     // Include cwd in the command line, as Codex does, so the real startup
     // PID ownership check can identify this process if shared roots regress.
     const child = spawn(process.execPath, [fixture, kind, cwd], {
@@ -221,7 +330,7 @@ async function createScratchFixture() {
       bin,
       args,
       cwd,
-      home: env.CODEX_HOME!,
+      home: env.CODEX_HOME ?? '',
       child,
       ready: ready.promise,
       closed: closed.promise,
@@ -308,6 +417,23 @@ async function createScratchFixture() {
       pending.delete(work)
     }
   }
+  const stop = (remote: Remote) => {
+    const work = host.stop(remote)
+    pending.add(work)
+    void work.then(
+      () => pending.delete(work),
+      () => pending.delete(work),
+    )
+    return work
+  }
+  const quiet = (remote: Remote) => {
+    const sent = events.filter((event) => event.remote === remote)
+    const published = publications.filter((event) => event.remote === remote)
+    return () => {
+      expect(events.filter((event) => event.remote === remote)).toEqual(sent)
+      expect(publications.filter((event) => event.remote === remote)).toEqual(published)
+    }
+  }
   const enter = (remote: Remote) =>
     host.reconcile(
       {
@@ -337,19 +463,23 @@ async function createScratchFixture() {
   }
   const finish = async (entry: (typeof children)[number]) => {
     entry.child.stdin!.end('finish\n')
-    expect(await entry.closed, entry.errors).toBe(0)
+    expect(await within(entry.closed), entry.errors).toBe(0)
   }
-  const start = async (remote: Remote, kind: 'job' | 'fenced') => {
+  const start = async (
+    remote: Remote,
+    kind: 'job' | 'fenced',
+    scope = { read: ['input.md'], write: [`${kind}.md`] },
+  ) => {
     const result = (await call(remote, kind === 'job' ? 'agent.job' : 'agent.scoped', {
       provider: 'codex',
       name: `${remote}:${kind}`,
       prompt: 'synthetic work',
-      scope: { read: ['input.md'], write: [`${kind}.md`] },
+      scope,
     })) as { ok: boolean; sessionId: string; terminalId?: string }
     expect(result).toMatchObject({ ok: true, sessionId: expect.any(String) })
     const entry = children.at(-1)!
     expect(entry.kind).toBe(kind)
-    await entry.ready
+    await within(entry.ready)
     if (kind === 'job') {
       await vi.waitFor(async () =>
         expect(await readFile(join(dirname(entry.cwd), `${result.sessionId}.pid`), 'utf8')).toBe(
@@ -406,17 +536,32 @@ async function createScratchFixture() {
     await expect(access(dirname(run.entry.home))).rejects.toMatchObject({ code: 'ENOENT' })
   }
 
-  const dispose = async () => {
+  const dispose = async (failedRemote?: Remote) => {
     // Release every gate before stopping, and reap children even if a host
     // reports a teardown failure. Only this ledger's processes/roots are touched.
     for (const release of releases) release()
     native.heldExit = null
     native.heldConfigure = null
+    native.heldRelease = null
+    native.heldFs.length = 0
     const failures: unknown[] = []
+    if (failedRemote !== undefined) {
+      // The expected A failure cannot hide an unrelated B teardown failure.
+      for (const remote of [A, B]) {
+        if (remote === failedRemote) continue
+        try {
+          await host.stop(remote)
+        } catch (err) {
+          failures.push(err)
+        }
+      }
+    }
     try {
       await host.stopAll()
+      if (failedRemote !== undefined) failures.push(new Error('Expected teardown to remain failed'))
     } catch (err) {
-      failures.push(err)
+      if (failedRemote === undefined) failures.push(err)
+      else expect(err).toBeInstanceOf(AggregateError)
     } finally {
       // A failed stop must not let the fixture delete a parent while a
       // dispatched start is still releasing its scratch state.
@@ -426,8 +571,21 @@ async function createScratchFixture() {
           entry.child.kill('SIGKILL')
       }
       await Promise.all(children.map((entry) => entry.closed))
+      while (native.operations.size > 0) await Promise.allSettled([...native.operations])
+      const failedRoots =
+        failedRemote === undefined
+          ? null
+          : await agentScratchRoots(userData, { remote: failedRemote, root: roots[failedRemote] })
       const finalizers = await Promise.allSettled(
-        children.flatMap((entry) => [removed(entry.cwd), removed(dirname(entry.home))]),
+        children
+          .filter(
+            (entry) =>
+              entry.kind !== 'pty' &&
+              (failedRoots === null ||
+                (!entry.cwd.startsWith(failedRoots.jobs) &&
+                  !entry.cwd.startsWith(failedRoots.fenced))),
+          )
+          .flatMap((entry) => [removed(entry.cwd), removed(dirname(entry.home))]),
       )
       for (const result of finalizers)
         if (result.status === 'rejected') failures.push(result.reason)
@@ -470,6 +628,12 @@ async function createScratchFixture() {
         env: { CODEX_HOME: person },
       },
     })
+    await call(A, 'agent.harnessSave', {
+      harness: {
+        ...PRESETS.find((preset) => preset.id === 'pi')!,
+        command: { bin: process.execPath, args: [] },
+      },
+    })
   } catch (err) {
     await dispose()
     throw err
@@ -481,6 +645,8 @@ async function createScratchFixture() {
     B,
     children,
     host,
+    stop,
+    quiet,
     call,
     enter,
     rows,
@@ -490,6 +656,9 @@ async function createScratchFixture() {
     settle,
     holdExit,
     holdConfigure,
+    holdRelease,
+    holdFs,
+    finish,
     events,
     publications,
     person,
@@ -735,3 +904,254 @@ it.each(['success', 'rejection'] as const)(
     }
   },
 )
+
+for (const kind of ['job', 'fenced'] as const) {
+  it.each(['success', 'rejection'] as const)(
+    `drains ${kind} provider release %s before replacing vault a while vault b stays live`,
+    async (outcome) => {
+      const f = await createScratchFixture()
+      let failed = false
+      try {
+        const a = await f.start(f.A, kind)
+        await f.enter(f.B)
+        const bJob = await f.start(f.B, 'job')
+        const bFence = await f.start(f.B, 'fenced')
+        const state = dirname(a.entry.home)
+        const hold = f.holdRelease(state)
+        await f.finish(a.entry)
+        await hold.entered
+        expect(defaultProbePid(a.entry.child.pid!)).toBe('gone')
+        expect(await readFile(join(a.entry.home, 'provider-state'), 'utf8')).toContain(
+          'private state',
+        )
+        let stopped = false
+        const stopping = f.stop(f.A).then(() => {
+          stopped = true
+        })
+        void stopping.catch(() => {})
+        await expect(f.call(f.A, 'agent.sessions')).rejects.toThrow('no such method')
+        const quiet = f.quiet(f.A)
+        await f.intact(f.B, bJob.entry)
+        await f.intact(f.B, bFence.entry)
+        expect(stopped).toBe(false)
+        expect(native.released.filter((entry) => entry.state === state)).toEqual([])
+        // Opening the same remote queues behind teardown, never over its state.
+        const replacement = f.enter(f.A)
+        void replacement.catch(() => {})
+        let replaced = false
+        void replacement.then(
+          () => {
+            replaced = true
+          },
+          () => {},
+        )
+        expect(replaced).toBe(false)
+        if (outcome === 'success') {
+          hold.gate.resolve()
+          await stopping
+          expect(native.released.filter((entry) => entry.state === state)).toEqual([
+            { state, outcome: 'resolved' },
+          ])
+          await f.removed(state)
+          await expect(access(state)).rejects.toMatchObject({ code: 'ENOENT' })
+          await replacement
+          native.heldRelease = null
+          await rm(join(f.roots[f.A], `${kind}.md`), { force: true })
+          const fresh = await f.start(f.A, kind)
+          expect(fresh.sessionId).toBe(a.sessionId)
+          await f.settle(f.A, fresh)
+          await f.stop(f.A)
+        } else {
+          hold.gate.reject(new Error('synthetic release rejected'))
+          await expect(stopping).rejects.toThrow(`plugins in ${f.A} failed to stop`)
+          failed = true
+          quiet()
+          await expect(replacement).rejects.toThrow()
+          await expect(f.stop(f.A)).rejects.toThrow()
+          await expect(f.enter(f.A)).rejects.toThrow()
+          await expect(f.call(f.A, 'agent.sessions')).rejects.toThrow('no such method')
+          // Failed ownership remains captured, not swept or replaced by a retry.
+          expect(await readFile(join(a.entry.home, 'provider-state'), 'utf8')).toContain(
+            'private state',
+          )
+          expect(await readFile(join(a.entry.cwd, 'input.md'), 'utf8')).toBe(f.A)
+          expect(f.children).toHaveLength(3)
+          expect(native.released.filter((entry) => entry.state === state)).toEqual([
+            { state, outcome: 'rejected' },
+          ])
+        }
+        await f.intact(f.B, bJob.entry)
+        await f.intact(f.B, bFence.entry)
+        await f.settle(f.B, bJob)
+        await f.settle(f.B, bFence)
+        if (failed) quiet()
+      } finally {
+        await f.dispose(failed ? f.A : undefined)
+      }
+    },
+  )
+
+  it.each(['link', 'rename'] as const)(
+    `joins admitted ${kind} copy-back %s before vault a stop and cancels future publications`,
+    async (method) => {
+      const f = await createScratchFixture()
+      let failed = false
+      try {
+        const target = join(f.roots[f.A], `${kind}.md`)
+        if (method === 'rename') await writeFile(target, 'original file')
+        const a = await f.start(f.A, kind, {
+          read: ['input.md', ...(method === 'rename' ? [`${kind}.md`] : [])],
+          write: [`${kind}.md`, 'z-cancelled.md'],
+        })
+        await writeFile(join(a.entry.cwd, 'z-cancelled.md'), 'must never publish')
+        await f.enter(f.B)
+        const bJob = await f.start(f.B, 'job')
+        const bFence = await f.start(f.B, 'fenced')
+        const hold = f.holdFs(method, (args) =>
+          method === 'link'
+            ? args[1] === target
+            : args[0] === target && basename(args[1]!) === 'previous',
+        )
+        await f.finish(a.entry)
+        await hold.entered
+        // Simulate a newer sync write after production's last hash check but
+        // before the admitted native rename actually moves the file aside.
+        if (method === 'rename') await writeFile(target, 'newer sync file')
+        let stopped = false
+        const stopping = f.stop(f.A).then(() => {
+          stopped = true
+        })
+        void stopping.catch(() => {})
+        await expect(f.call(f.A, 'agent.sessions')).rejects.toThrow('no such method')
+        const quiet = f.quiet(f.A)
+        await f.intact(f.B, bJob.entry)
+        await f.intact(f.B, bFence.entry)
+        expect(stopped).toBe(false)
+        hold.gate.resolve()
+        if (kind === 'fenced' && method === 'rename') {
+          // A fenced copy error is sticky and must be an explicit drain failure.
+          await expect(stopping).rejects.toThrow(`plugins in ${f.A} failed to stop`)
+          failed = true
+          await expect(f.enter(f.A)).rejects.toThrow()
+        } else await stopping
+        quiet()
+        expect(await readFile(target, 'utf8')).toBe(
+          method === 'rename' ? 'newer sync file' : `${f.A}:${kind}:finished`,
+        )
+        await expect(access(join(f.roots[f.A], 'z-cancelled.md'))).rejects.toMatchObject({
+          code: 'ENOENT',
+        })
+        expect((await readdir(f.roots[f.A])).filter((name) => name.startsWith('.holi-'))).toEqual(
+          [],
+        )
+        await f.removed(a.entry.cwd)
+        await f.removed(dirname(a.entry.home))
+        await f.settle(f.B, bJob)
+        await f.settle(f.B, bFence)
+        quiet()
+        // The held original native operation completed; no old mutation can
+        // arrive in a subsequent generation of the same vault.
+        if (!failed) {
+          await f.enter(f.A)
+          const fresh = await f.start(f.A, 'job', {
+            read: ['input.md', ...(kind === 'job' ? ['job.md'] : [])],
+            write: ['job.md'],
+          })
+          await f.settle(f.A, fresh)
+          await f.stop(f.A)
+        }
+      } finally {
+        await f.dispose(failed ? f.A : undefined)
+      }
+    },
+  )
+}
+
+it('drains retained pty conversation history publication before restarting vault a without losing vault b', async () => {
+  const f = await createScratchFixture()
+  const historyPath = join(f.userData, 'agent-pty-history.json')
+  const history = async () =>
+    JSON.parse(await readFile(historyPath, 'utf8')) as Record<string, SessionSummary[]>
+  const startPi = async (remote: typeof f.A | typeof f.B, name: string) => {
+    const result = (await f.call(remote, 'agent.start', { provider: 'pi', name })) as {
+      ok: boolean
+      sessionId: string
+      terminalId: string
+    }
+    expect(result.ok).toBe(true)
+    const entry = f.children.at(-1)!
+    expect(entry.kind).toBe('pty')
+    await within(entry.ready)
+    return { ...result, entry }
+  }
+  try {
+    await f.enter(f.B)
+    const oldB = await startPi(f.B, 'retained b')
+    await f.finish(oldB.entry)
+    expect(await f.call(f.B, 'agent.stop', { id: oldB.sessionId })).toEqual({ ok: true })
+    const before = await history()
+    expect(before[f.B]).toEqual([
+      expect.objectContaining({ name: 'retained b', conversationId: expect.any(String) }),
+    ])
+    const bJob = await f.start(f.B, 'job')
+    const bFence = await f.start(f.B, 'fenced')
+    const a = await startPi(f.A, 'retained a')
+    await f.finish(a.entry)
+    // Pi's exited terminal/conversation stays retained until deliberate close.
+    expect(await f.call(f.A, 'agent.terminals')).toEqual([
+      expect.objectContaining({ id: a.terminalId }),
+    ])
+    expect(await history()).toEqual(before)
+    const hold = f.holdFs(
+      'writeFile',
+      (args) => args[0] === `${historyPath}.tmp` && args[1]!.includes('retained a'),
+    )
+    let stopped = false
+    const stopping = f.stop(f.A).then(() => {
+      stopped = true
+    })
+    void stopping.catch(() => {})
+    await hold.entered
+    const quiet = f.quiet(f.A)
+    await expect(f.call(f.A, 'agent.sessions')).rejects.toThrow('no such method')
+    expect(await history()).toEqual(before)
+    await f.intact(f.B, bJob.entry)
+    await f.intact(f.B, bFence.entry)
+    expect(stopped).toBe(false)
+    let replaced = false
+    const replacement = f.enter(f.A).then(() => {
+      replaced = true
+    })
+    void replacement.catch(() => {})
+    expect(replaced).toBe(false)
+    hold.gate.resolve()
+    await stopping
+    quiet()
+    const saved = await history()
+    expect(saved[f.B]).toEqual(before[f.B])
+    expect(saved[f.A]).toEqual([
+      expect.objectContaining({
+        id: a.sessionId,
+        name: 'retained a',
+        provider: 'pi',
+        conversationId: expect.any(String),
+      }),
+    ])
+    await replacement
+    const fresh = await startPi(f.A, 'new generation a')
+    expect(fresh.sessionId).toBe(a.sessionId)
+    await f.finish(fresh.entry)
+    await f.stop(f.A)
+    const after = await history()
+    expect(after[f.B]).toEqual(before[f.B])
+    expect(after[f.A]).toEqual([expect.objectContaining({ name: 'new generation a' })])
+    expect(after[f.A]![0]!.conversationId).not.toBe(saved[f.A]![0]!.conversationId)
+    await f.settle(f.B, bJob)
+    await f.settle(f.B, bFence)
+    expect(await history()).toEqual(after)
+    expect(native.operations.size).toBe(0)
+    await expect(access(`${historyPath}.tmp`)).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    await f.dispose()
+  }
+})
