@@ -209,8 +209,8 @@ function MessageBlock({
         <CollapsibleContent>
           <div className="flex flex-col gap-3 md:pl-10.5">
             <MessageAddresses message={message} />
-            <MessageBody message={message} threadUrl={threadUrl} hintOwner={hintOwner} />
             <Attachments attachments={message.attachments} webUrl={threadUrl} visible={visible} />
+            <MessageBody message={message} threadUrl={threadUrl} hintOwner={hintOwner} />
           </div>
         </CollapsibleContent>
       </article>
