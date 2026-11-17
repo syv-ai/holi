@@ -73,6 +73,7 @@ function gmail(
   labels: RawLabel[] = [],
   nextPageToken?: string,
   invites: { id: string }[] = [],
+  messageData: Record<string, unknown> = {},
 ) {
   const seen: string[] = []
   const fetchImpl = vi.fn(async (url: string) => {
@@ -85,7 +86,13 @@ function gmail(
         ? isIcs
           ? { threads: invites }
           : { threads: list, nextPageToken }
-        : (threads[path.split('/').pop()!] ?? {})
+        : path.includes('/messages/')
+          ? (messageData[path.split('/').pop()!] ??
+            Object.values(threads)
+              .flatMap((thread) => (thread as { messages?: unknown[] }).messages ?? [])
+              .find((message) => (message as { id?: string }).id === path.split('/').pop()) ??
+            {})
+          : (threads[path.split('/').pop()!] ?? {})
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   }) as unknown as typeof globalThis.fetch
 
@@ -265,6 +272,68 @@ describe('listThreads', () => {
         expect(result.answered).toBe(secondLabels?.includes('SENT'))
     },
   )
+
+  it('recognizes nested calendar invitations only on the latest incoming message', async () => {
+    const invitation = {
+      id: 'invite-message',
+      internalDate: '1000',
+      labelIds: ['INBOX'],
+      payload: {
+        mimeType: 'multipart/mixed',
+        headers: [header('Content-Type', 'multipart/mixed; boundary="invite"')],
+        parts: [
+          {
+            mimeType: 'multipart/alternative',
+            parts: [
+              { mimeType: 'text/plain', body: { data: b64('Please see invitation') } },
+              {
+                mimeType: 'text/calendar',
+                headers: [header('Content-Type', 'text/calendar; method=REQUEST')],
+                body: { data: b64('BEGIN:VCALENDAR\\nMETHOD:REQUEST') },
+              },
+            ],
+          },
+        ],
+      },
+    }
+    const metadataInvitation = {
+      ...invitation,
+      payload: {
+        mimeType: 'multipart/mixed',
+        headers: [header('Content-Type', 'multipart/mixed; boundary="invite"')],
+      },
+    }
+    const humanFollowup = {
+      id: 'human-followup',
+      internalDate: '2000',
+      labelIds: ['INBOX'],
+      payload: {
+        mimeType: 'text/plain',
+        headers: [header('Content-Type', 'text/plain; charset=UTF-8')],
+        body: { data: b64('Thanks, I will attend.') },
+      },
+    }
+    const { api, seen } = gmail(
+      [{ id: 'invitation' }, { id: 'followup' }],
+      {
+        invitation: { id: 'invitation', messages: [metadataInvitation] },
+        followup: { id: 'followup', messages: [metadataInvitation, humanFollowup] },
+      },
+      [],
+      undefined,
+      [],
+      { 'invite-message': { ...invitation, threadId: 'invitation' } },
+    )
+    const result = await listThreads(api)
+
+    expect(result.threads.map((thread) => thread.automated)).toEqual([true, false])
+    expect(seen.some((url) => new URL(url).pathname.endsWith('/messages/invite-message'))).toBe(
+      true,
+    )
+    expect(seen.some((url) => new URL(url).pathname.endsWith('/messages/human-followup'))).toBe(
+      false,
+    )
+  })
 
   it('keeps recipient identity explicitly unknown when send-as addresses are unavailable', async () => {
     const { api } = gmail([{ id: 't' }], {

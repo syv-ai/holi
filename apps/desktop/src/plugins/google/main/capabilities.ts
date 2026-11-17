@@ -726,9 +726,8 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
     /**
      * A page of threads matching Gmail's own search grammar; no query is the
-     * inbox. Cached and current: a `history.list` delta brings the cached list
-     * up to date. The CLI prints the threads alone; `nextPageToken` is the
-     * list view's "load more".
+     * inbox. Ordinary lists use the cache and history delta. The CLI projects
+     * the page envelope, including its continuation token.
      */
     'google.search': cap({
       doors: ['ui', 'cli', 'app'],
@@ -737,7 +736,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         args: ['query?'],
         flags: ['needs-reply', 'include-cc', 'include-automated'],
         summary:
-          "threads matching Gmail's search grammar (the inbox); --needs-reply lists unanswered incoming threads (factual shortlist, assess each message before deciding whether action is owed); --include-cc and --include-automated opt into Cc-only and positively recognized automation respectively (no automation signal does not prove a human wrote the message). Filters apply to each Gmail page; use nextPageToken to continue. Summaries include replied, lastReplyAt, addressedAs, automated and needsReply facts.",
+          "threads matching Gmail's search grammar (the inbox). --needs-reply is a factual shortlist, not a classification of obligation: it selects incoming mail after the latest sent message, so a new incoming message remains eligible after an older reply; a draft is not a sent reply. The facts replied, lastReplyAt, addressedAs and automated describe Gmail evidence, not semantics: replied means a sent message followed an incoming message, and lastReplyAt is the latest such sent message time. addressedAs is to, cc, neither or unknown; known send-as aliases are matched, unknown recipients remain eligible and are marked unknown. Direct To is the default; --include-cc opts into Cc-only and --include-automated opts into positively recognized automation; absence of automation evidence does not mean a human wrote it. Filters apply to one Gmail page. Continue with --pageToken <token>; an empty filtered page may still have a token and is not exhausted until nextPageToken is null.",
       },
       params: searchParams,
       run: async (ctx, options) => {

@@ -688,8 +688,16 @@ export async function fetchThreadSummaries(
     .map((thread) => summarize(thread, names, knownAddresses))
     .filter((t): t is Omit<MailThreadSummary, 'hasInvite'> => t !== null)
 
+  // Gmail's metadata format omits MIME children. For an otherwise ambiguous,
+  // multipart latest incoming message only, inspect its actual MIME tree; never
+  // infer automation from an older invitation elsewhere in the thread.
+  const invitationIds = await fetchLatestIncomingInvitations(api, threads)
   const invites = await fetchInviteIds(api, summaries)
-  return summaries.map((summary) => ({ ...summary, hasInvite: invites.has(summary.id) }))
+  return summaries.map((summary) => ({
+    ...summary,
+    automated: summary.automated || invitationIds.has(summary.id),
+    hasInvite: invites.has(summary.id),
+  }))
 }
 
 /**
@@ -712,6 +720,65 @@ export async function fetchThreadSummaries(
  * search, and a superset costs nothing when the result is intersected anyway.
  * Gmail excludes spam and trash from an unqualified search on its own.
  */
+async function fetchLatestIncomingInvitations(
+  api: GoogleApi,
+  threads: RawThread[],
+): Promise<Set<string>> {
+  const ids = threads.flatMap((thread) => {
+    if (thread.id === undefined) return []
+    const messages = thread.messages ?? []
+    const latestIncoming = [...messages]
+      .reverse()
+      .find(
+        (message) => !message.labelIds?.includes('SENT') && !message.labelIds?.includes('DRAFT'),
+      )
+    const payload = latestIncoming?.payload
+    if (latestIncoming?.id === undefined || payload === undefined) return []
+
+    const autoSubmitted = headerOf(payload, 'Auto-Submitted')
+    const listId = headerOf(payload, 'List-Id')
+    const unsubscribe = headerOf(payload, 'List-Unsubscribe')
+    const hasOtherEvidence =
+      (autoSubmitted !== null &&
+        ['auto-generated', 'auto-replied'].includes(
+          parseHeaderParameters(autoSubmitted)?.main.toLowerCase() ?? '',
+        )) ||
+      validListId(listId) ||
+      (unsubscribe !== null &&
+        [...unsubscribe.matchAll(/<([^<>]*)>/g)].some(
+          (match) => validUnsubscribeUri(match[1]!) !== null,
+        ))
+    if (hasInvitationMethod(payload)) return []
+    const contentType = headerOf(payload, 'Content-Type')
+    const mainType = parseHeaderParameters(contentType ?? '')?.main.toLowerCase()
+    const multipart =
+      payload.mimeType?.toLowerCase().startsWith('multipart/') === true ||
+      mainType?.startsWith('multipart/') === true
+    return !hasOtherEvidence && multipart
+      ? [{ threadId: thread.id, messageId: latestIncoming.id }]
+      : []
+  })
+
+  const results = await mapPooled(ids, 5, async ({ threadId, messageId }) => {
+    const message = await api.get<RawMessage>(`${BASE}/messages/${messageId}`, { format: 'full' })
+    return message.threadId === threadId && hasInvitationMethod(message.payload) ? threadId : null
+  })
+  return new Set(results.filter((id): id is string => id !== null))
+}
+
+/** Only a valid invitation method on a calendar MIME part is positive evidence. */
+function hasInvitationMethod(part: RawPart | undefined): boolean {
+  if (part === undefined) return false
+  if (part.mimeType?.toLowerCase() === 'text/calendar') {
+    const contentType = headerOf(part, 'Content-Type')
+    const method = parseHeaderParameters(contentType ?? '')?.parameters.get('method')
+    if (method !== undefined && ['request', 'reply', 'cancel'].includes(method.toLowerCase())) {
+      return true
+    }
+  }
+  return (part.parts ?? []).some(hasInvitationMethod)
+}
+
 async function fetchInviteIds(
   api: GoogleApi,
   summaries: Omit<MailThreadSummary, 'hasInvite'>[],
