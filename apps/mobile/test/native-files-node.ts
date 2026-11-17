@@ -304,6 +304,7 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
       if (!Buffer.from(current).equals(Buffer.from(expected)))
         throw new Error('Stale private journal removal')
       await unlink(target)
+      await checkpoint?.('private-remove-sync')
       const dir = await open(dirname(target), 'r')
       try {
         await dir.sync()

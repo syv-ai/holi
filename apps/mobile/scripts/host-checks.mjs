@@ -85,6 +85,8 @@ export function validateReport(report, context) {
     privateB: stagingDirectory(library, rootB),
     bytesA: 'root A saved',
     bytesB: 'root B bytes',
+    malformedReadRejected: true,
+    malformedListRejected: true,
     poisonName: 'move-00000000-0000-4000-8000-000000000589.json',
     poisonBytes: '{malformed B journal',
     poisonRetained: true,
