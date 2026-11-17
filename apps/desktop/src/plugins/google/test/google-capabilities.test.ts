@@ -838,6 +838,7 @@ describe('what other people wrote, at the CLI door', () => {
     lastReplyAt: '2026-10-21T08:00:00Z',
     addressedAs: 'to' as const,
     automated: false,
+    needsReply: true,
   }
   const page = { threads: [INJECTED], nextPageToken: null, syncedAt: '2026-10-21T08:00:00Z' }
 
@@ -859,23 +860,48 @@ describe('what other people wrote, at the CLI door', () => {
       threads: [{ id: INJECTED.id, from: { email: INJECTED.from.email } }],
     })
     expect(projected.threads[0]!.from.name).toMatch(/^<untrusted /)
-    expect(JSON.parse(text)).toEqual(projected.threads)
+    expect(JSON.parse(text)).toEqual(projected)
     const request = resolveArgv(
-      ['google', 'search', 'in:inbox newer_than:7d', '--pageToken', 'next', '--json'],
+      [
+        'google',
+        'search',
+        'in:inbox newer_than:7d',
+        '--pageToken',
+        'next',
+        '--needs-reply',
+        '--include-cc',
+        '--include-automated',
+        '--json',
+      ],
       commands,
       null,
     )
     expect(request).toMatchObject({ kind: 'run', name: 'google.search', json: true })
     if (request.kind !== 'run') throw new Error('the documented search command must run')
     await cli('search', request.params)
-    expect(requested.at(-1)).toMatchObject({ query: 'in:inbox newer_than:7d', pageToken: 'next' })
+    expect(requested.at(-1)).toMatchObject({
+      query: 'in:inbox newer_than:7d',
+      pageToken: 'next',
+      needsReply: true,
+      includeCc: true,
+      includeAutomated: true,
+    })
     const snippet = (value as typeof page).threads[0]!.snippet
     expect(snippet).toMatch(/^<untrusted id="[0-9a-f]+" source="mail" from="mallory@example.com">/)
     expect(closesOnlyAtTheEnd(snippet)).toBe(true)
-    expect(JSON.parse(text)[0].snippet).toBe(snippet)
+    expect(JSON.parse(text).threads[0].snippet).toBe(snippet)
     // The id is what the agent passes back to `read`: never fenced.
     expect((value as typeof page).threads[0]!.id).toBe('t-evil')
     expect(await call('search', { query: 'is:unread' })).toEqual(page)
+    await call('search', { 'include-cc': true })
+    expect(requested.at(-1)).toEqual({ includeCc: true })
+  })
+
+  it('keeps continuation metadata visible for an empty filtered text page', async () => {
+    const pageWithNoMatches = { ...page, threads: [], nextPageToken: 'more' }
+    const { cli } = rig({ data: { threads: async () => pageWithNoMatches } })
+    const result = await cli('search', { 'needs-reply': true })
+    expect(JSON.parse(result.text)).toMatchObject({ threads: [], nextPageToken: 'more' })
   })
 
   it('cleans search snippets only at the CLI door before fencing them', async () => {

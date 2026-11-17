@@ -54,8 +54,8 @@ export interface MailThreadSummary {
   snippet: string
   unread: boolean
   /**
-   * The last message in the thread is one the user sent, so they have replied
-   * and are waiting on the other side.
+   * The last non-draft message in the thread is one the user sent. A trailing
+   * unsent draft does not change who last wrote a real message.
    *
    * Deliberately not "a sent message exists somewhere in this thread": in a long
    * back-and-forth that is true forever, which makes it useless for the question
@@ -97,6 +97,8 @@ export interface MailThreadSummary {
   addressedAs: 'to' | 'cc' | 'neither' | 'unknown' | null
   /** Recognized automation evidence on the latest incoming message only; false means no recognized signal, not that a reply is needed. */
   automated: boolean
+  /** Whether a real incoming message is later than the latest real sent reply. */
+  needsReply: boolean
 }
 
 interface MailAttachment {
@@ -482,6 +484,12 @@ export interface ListThreadsOptions {
    * movement means a thread has left this list.
    */
   mailbox?: MailboxName
+  /** Filter each fetched page to incoming threads without a later real reply. */
+  needsReply?: boolean
+  /** Include messages addressed to the account only through Cc. */
+  includeCc?: boolean
+  /** Include messages with positive automation evidence. */
+  includeAutomated?: boolean
 }
 
 /** The mailboxes the list can be of. Not every Gmail label: only the two that
@@ -948,7 +956,11 @@ function summarize(
     // `SENT` is Gmail's own label for "this account sent this", so it needs no
     // comparison against the connected address, which would be wrong anyway
     // for aliases and send-as addresses.
-    answered: last.labelIds?.includes('SENT') === true,
+    answered:
+      [...messages]
+        .reverse()
+        .find((message) => !message.labelIds?.includes('DRAFT'))
+        ?.labelIds?.includes('SENT') === true,
     messageCount: messages.length,
     webUrl: messageUrl(headerOf(first.payload, 'Message-ID'), thread.id),
     starred: allLabels.includes('STARRED'),
@@ -986,6 +998,14 @@ function summarize(
         )) ||
         listEvidence ||
         invitation),
+    needsReply:
+      latestIncoming !== undefined &&
+      messages.indexOf(latestIncoming) >
+        messages.reduce(
+          (lastSent, message, index) =>
+            message.labelIds?.includes('SENT') === true ? index : lastSent,
+          -1,
+        ),
   }
 }
 

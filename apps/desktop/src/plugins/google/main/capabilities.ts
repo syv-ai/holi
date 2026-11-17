@@ -196,6 +196,9 @@ function searchParams(raw: unknown): {
   category?: MailCategory
   unread?: boolean
   mailbox?: MailboxName
+  needsReply?: boolean
+  includeCc?: boolean
+  includeAutomated?: boolean
 } {
   const p = paramsObject(raw)
   const category = MAIL_CATEGORIES.find((c) => c === optionalStringParam(p, 'category'))
@@ -209,6 +212,9 @@ function searchParams(raw: unknown): {
     ...(category === undefined ? {} : { category }),
     ...(flagParam(p, 'unread') ? { unread: true } : {}),
     ...(mailbox === undefined ? {} : { mailbox }),
+    ...(flagParam(p, 'needs-reply') ? { needsReply: true } : {}),
+    ...(flagParam(p, 'include-cc') ? { includeCc: true } : {}),
+    ...(flagParam(p, 'include-automated') ? { includeAutomated: true } : {}),
   }
 }
 
@@ -729,8 +735,9 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       appGrant: 'mail',
       cli: {
         args: ['query?'],
+        flags: ['needs-reply', 'include-cc', 'include-automated'],
         summary:
-          "threads matching Gmail's search grammar (the inbox); summaries include replied (a SENT message after incoming mail), lastReplyAt (ISO or null), addressedAs (latest incoming To/Cc/neither/unknown; null without incoming), and automated (recognized automation evidence on latest incoming only)",
+          "threads matching Gmail's search grammar (the inbox); --needs-reply lists unanswered incoming threads (factual shortlist, assess each message before deciding whether action is owed); --include-cc and --include-automated opt into Cc-only and positively recognized automation respectively (no automation signal does not prove a human wrote the message). Filters apply to each Gmail page; use nextPageToken to continue. Summaries include replied, lastReplyAt, addressedAs, automated and needsReply facts.",
       },
       params: searchParams,
       run: async (ctx, options) => {
@@ -746,7 +753,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           })),
         ),
       }),
-      text: (page) => json(page.threads),
+      text: (page) => json(page),
     }),
 
     /**
