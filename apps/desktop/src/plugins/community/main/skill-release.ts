@@ -420,16 +420,6 @@ export async function validateSkillSnapshot(
   return authenticated
 }
 
-export async function readPinnedSkillSnapshots(
-  root: string,
-  commit: string,
-  sourcePath: string,
-  skills: readonly string[],
-  signal?: AbortSignal,
-): Promise<SkillSnapshot[]> {
-  return validateSkillSnapshot(root, commit, sourcePath, skills, undefined, signal)
-}
-
 /** Read pins strictly: a malformed or symlink pin cannot hide a competing claim. */
 export async function assertNoCompetingSkillClaims(
   vaultRoot: string,
