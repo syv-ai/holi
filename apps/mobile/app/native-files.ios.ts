@@ -31,13 +31,13 @@ function checkedPath(root: string, relative: string, createParents = false): str
     const names = nativeIO.names(current)
     const collisionKey = (value: string) =>
       String(NSString.stringWithString(value).precomposedStringWithCanonicalMapping).toLowerCase()
+    const next = `${current}/${name}`
+    const kind = nativeIO.kind(next)
     if (
-      createParents &&
+      (createParents || kind === null) &&
       names.some((entry) => entry !== name && collisionKey(entry) === collisionKey(name))
     )
       throw new Error('Filesystem spelling collision')
-    const next = `${current}/${name}`
-    const kind = nativeIO.kind(next)
     if (kind !== null && !names.includes(name))
       throw new Error('Filesystem spelling alias rejected')
     if (kind === 'symlink' || kind === 'other') throw new Error('Unsupported filesystem entry')
