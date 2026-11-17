@@ -1,15 +1,12 @@
 export type Entry = { path: string; kind: 'file' | 'directory' }
 
-/** Native filesystem operations required by the portable vault store. */
-export const storageCheckpoints = [
-  'journal-before',
-  'journal-after',
-  'file-before',
-  'file-after',
-  'cleanup-before',
-  'cleanup-after',
-] as const
-export type StorageCheckpoint = (typeof storageCheckpoints)[number]
+type StorageCheckpoint =
+  | 'journal-before'
+  | 'journal-after'
+  | 'file-before'
+  | 'file-after'
+  | 'cleanup-before'
+  | 'cleanup-after'
 export type StorageCheckpointCallback = (event: {
   phase: StorageCheckpoint
   direction: 'before' | 'after'
@@ -17,6 +14,7 @@ export type StorageCheckpointCallback = (event: {
   path?: string
 }) => Promise<void>
 
+/** Native filesystem operations required by the portable vault store. */
 export interface NativeFiles {
   operationId(): string
   canonicalRoot(root: string): Promise<string>

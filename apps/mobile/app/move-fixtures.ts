@@ -6,5 +6,3 @@ export const moveFixtureBytes = {
   backB: '😀 [[from.md|another label]] and [[from.md]]\n',
   movedB: '😀 [[to.md|another label]] and [[to.md]]\n',
 } as const
-
-export const moveFixturePaths = ['from.md', 'to.md', 'back-a.md', 'back-b.md'] as const

@@ -12,7 +12,7 @@ const encode = (value: string) =>
   )
 const decode = (value: Uint8Array) => decodeURIComponent(escape(String.fromCharCode(...value)))
 
-export const moveCheckpointEvents = [
+const moveCheckpointEvents = [
   { phase: 'journal-before', direction: 'before' },
   { phase: 'journal-after', direction: 'after' },
   ...['from.md', 'to.md', 'back-a.md', 'back-b.md'].flatMap((path) => [
