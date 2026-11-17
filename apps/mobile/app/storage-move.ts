@@ -225,7 +225,7 @@ export async function recoverMoves(
 ): Promise<void> {
   const names = await adapter.privateList(root)
   const pending: { name: string; journal: Journal; raw: Uint8Array }[] = []
-  const paths = new Set<string>()
+  const foldedPaths = new Set<string>()
   for (const name of names.sort()) {
     if (!name.startsWith(prefix) || !name.endsWith(suffix))
       throw new Error('Unknown private vault storage artifact')
@@ -235,10 +235,11 @@ export async function recoverMoves(
     const validatedPaths = new Set<string>()
     for (const change of journal.changes) {
       const validated = validatePath(change.path)
-      if (validated !== change.path || validatedPaths.has(validated) || paths.has(validated))
+      const folded = validated.normalize('NFD').toLowerCase()
+      if (validated !== change.path || validatedPaths.has(validated) || foldedPaths.has(folded))
         throw new Error('Invalid or duplicate move recovery path')
       validatedPaths.add(validated)
-      paths.add(validated)
+      foldedPaths.add(folded)
     }
     // Check move-specific namespace constraints before any pending journal can mutate files.
     for (const change of journal.changes) await adapter.checkMovePath(root, change.path)

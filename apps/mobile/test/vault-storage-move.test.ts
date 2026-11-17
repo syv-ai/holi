@@ -500,6 +500,49 @@ describe('durable note moves', () => {
     expect(await adapter.privateRead(receiving, name)).toEqual(raw)
   })
 
+  it.each([
+    ['New.md', 'new.md'],
+    ['Café.md', 'Cafe\u0301.md'],
+  ])('rejects aliased destinations across pending journals: %s and %s', async (first, second) => {
+    const base = await root()
+    const adapter = createNodeFiles()
+    const storage = createVaultStorage(adapter, { remote: 'holi/pending-aliases', root: base })
+    await storage.create('first.md', text('first bytes'))
+    await storage.create('second.md', text('second bytes'))
+    const canonical = await adapter.canonicalRoot(base)
+    const evidence: { name: string; raw: Uint8Array }[] = []
+    for (const [from, to, content] of [
+      ['first.md', first, 'first bytes'],
+      ['second.md', second, 'second bytes'],
+    ] as const) {
+      const id = randomUUID()
+      const raw = text(
+        JSON.stringify({
+          schema: 2,
+          root: canonical,
+          operationId: id,
+          from,
+          to,
+          changes: [
+            { path: from, before: [...text(content)], after: null },
+            { path: to, before: null, after: [...text(content)] },
+          ],
+        }),
+      )
+      const name = `move-${id}.json`
+      await adapter.privatePublish(canonical, name, raw, null)
+      evidence.push({ name, raw })
+    }
+
+    await expect(storage.list()).rejects.toThrow('Invalid or duplicate move recovery path')
+    expect(await readFile(join(base, 'first.md'), 'utf8')).toBe('first bytes')
+    expect(await readFile(join(base, 'second.md'), 'utf8')).toBe('second bytes')
+    for (const target of [first, second])
+      await expect(readFile(join(base, target))).rejects.toMatchObject({ code: 'ENOENT' })
+    for (const { name, raw } of evidence)
+      expect(await adapter.privateRead(canonical, name)).toEqual(raw)
+  })
+
   it('refuses conflicting preimages and preserves the recovery journal', async () => {
     const base = await root()
     const adapter = createNodeFiles()
