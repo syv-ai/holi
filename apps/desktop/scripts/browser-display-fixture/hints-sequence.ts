@@ -19,6 +19,15 @@
     key: string,
     options: { shift?: boolean; meta?: boolean } = {},
   ) => {
+    const before = await pageEval<number>(`(() => {
+      if (!window.qaHintKeyUps) {
+        window.qaHintKeyUps = 0
+        window.addEventListener('keyup', event => {
+          if (event.isTrusted) window.qaHintKeyUps++
+        }, true)
+      }
+      return window.qaHintKeyUps
+    })()`)
     const keyCode = key.length === 1 ? key.toLowerCase() : key
     const modifiers = [
       ...(options.shift ? ['shift'] : []),
@@ -27,12 +36,16 @@
     page.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
     if (key.length === 1) page.sendInputEvent({ type: 'char', keyCode: key, modifiers })
     page.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
-    await wait(60)
+    await until(
+      async () => (await pageEval<number>('window.qaHintKeyUps')) > before,
+      `trusted hint key ${key}`,
+    )
   }
   const pressLabel = async (label: string) => {
     for (const key of label) await pageNativePress(key)
   }
   const requestPageHints = async () => {
+    await captureFrame(page)
     await pageEval(`document.querySelector('#search').focus()`)
     await pageNativePress('Escape')
     await pageNativePress('f')
