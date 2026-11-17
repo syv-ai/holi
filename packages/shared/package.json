@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./path-safety-node": "./src/path-safety-node.ts",
-    "./vault-format": "./src/vault-format.ts"
+    "./vault-format": "./src/vault-format.ts",
+    "./mobile-path-safety": "./src/mobile-path-safety.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -2,7 +2,12 @@ const { dirname, relative } = require('node:path')
 const { builtinModules } = require('node:module')
 
 // A deliberately closed graph: adding a shared dependency requires reviewing it here.
-const expected = ['path-safety.ts', 'vault-format.ts', 'vault-format.v1.json']
+const expected = [
+  'mobile-path-safety.ts',
+  'path-safety.ts',
+  'vault-format.ts',
+  'vault-format.v1.json',
+]
 const builtins = new Set(builtinModules.map((name) => name.replace(/^node:/, '')))
 
 class SharedGraphPlugin {

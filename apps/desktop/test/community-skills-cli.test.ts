@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { pluginPinPath, type PluginManifest, type PluginPin } from '@holi/shared'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry, type AnyCapability } from '../src/main/capabilities/registry'
@@ -33,14 +33,6 @@ import { createSupervisor } from '../src/plugins/community/main/supervisor'
 
 const execFileAsync = promisify(execFile)
 const roots: string[] = []
-const evidence: Array<Record<string, unknown>> = []
-
-function sanitizeOutput(output: string): string {
-  return output
-    .replace(/Bearer\\s+\\S+/gi, 'Bearer [REDACTED]')
-    .replace(/\\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}\\b/g, '[REDACTED]')
-}
-
 async function run(bin: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
   try {
     const { stdout, stderr } = await execFileAsync(bin, args, { cwd, env })
@@ -76,7 +68,7 @@ async function captureFacts(f: { vaultA: string; vaultB: string; root: string })
   const vault = async (root: string) => ({
     pin: await fingerprint(join(root, '.holi/plugins/demo/manifest.json')),
     settings: await fingerprint(join(root, '.holi/settings/plugins.yaml')),
-    consent: await fingerprint(join(f.root, 'user/plugin-consent.json')),
+    consent: await fingerprint(join(f.root, 'user/consent.json')),
     apps: await fingerprint(join(root, 'demo.app')),
     gitignore: await fingerprint(join(root, '.gitignore')),
     commandLinks: await fingerprint(join(root, '.holi/bin')),
@@ -228,117 +220,91 @@ async function setup() {
   }
 }
 
-afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
-  await writeFile('/tmp/holi-522-cli-evidence.json', `${JSON.stringify(evidence, null, 2)}\n`)
-})
-
 describe('community refresh-skills through the generated CLI and live bridge', () => {
-  it('proves help, copy, no-op, conflict, force, JSON, strict flags and vault targeting', async () => {
-    const f = await setup()
-    const command = async (args: string[], cwd = f.vaultA) => {
-      const result = await run(f.bin, args, cwd, f.env)
-      evidence.push({
-        command: ['holi', ...args],
-        code: result.code,
-        stdout: sanitizeOutput(result.stdout),
-        stderr: sanitizeOutput(result.stderr),
-      })
-      return result
-    }
-    try {
-      const help = await command(['community', 'refresh-skills', '--help'])
-      expect(help.code).toBe(0)
-      expect(help.stdout).toContain(
-        '--force replaces complete skill folders, including local edits',
-      )
+  let f: Awaited<ReturnType<typeof setup>> | undefined
+  let before: Awaited<ReturnType<typeof captureFacts>>
 
-      const before = await captureFacts(f)
-      const aPin = await readFile(join(f.vaultA, '.holi/plugins/demo/manifest.json'), 'utf8')
-      const bPin = await readFile(join(f.vaultB, '.holi/plugins/demo/manifest.json'), 'utf8')
-      const settingsA = await readFile(join(f.vaultA, '.holi/settings/plugins.yaml'), 'utf8')
-      const first = await command(['community', 'refresh-skills', 'demo'])
-      expect(first).toMatchObject({ code: 0, stdout: '.claude/skills/demo\n' })
-      expect(await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
-        'pinned skill\n',
-      )
-      expect(await readFile(join(f.vaultA, '.claude/skills/demo/tool.bin'))).toEqual(
-        Buffer.from([0, 1, 255]),
-      )
-      expect((await command(['community', 'refresh-skills', 'demo'])).code).toBe(0)
-      expect(
-        await writeFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'local edit\n'),
-      ).toBeUndefined()
-      const beforeConflict = await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')
-      expect((await command(['community', 'refresh-skills', 'demo'])).code).not.toBe(0)
-      expect(await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
-        beforeConflict,
-      )
-      expect((await command(['community', 'refresh-skills', 'demo', '--force'])).code).toBe(0)
-      expect(await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
-        'pinned skill\n',
-      )
-      const json = await command(['community', 'refresh-skills', 'demo', '--json'])
-      expect(json.code).toBe(0)
-      expect(JSON.parse(json.stdout)).toEqual([])
-      for (const args of [
-        ['community', 'refresh-skills', 'demo', '--unknown'],
-        ['community', 'refresh-skills', 'demo', '--force', '--force'],
-        ['community', 'refresh-skills', 'demo', '--force=false'],
-      ])
-        expect((await command(args)).code).toBe(2)
-      await mkdir(join(f.vaultB, '.claude/skills/demo'), { recursive: true })
-      await writeFile(join(f.vaultB, '.claude/skills/demo/SKILL.md'), 'vault B local\n')
-      await rm(join(f.vaultA, '.claude/skills/demo'), { recursive: true })
-      const addressedAFromB = await command(
-        ['community', 'refresh-skills', 'demo', '--vault=owner/vault-a'],
-        f.vaultB,
-      )
-      expect(addressedAFromB.code).toBe(0)
-      // Although execution starts from B, the explicit selector changes only A.
-      expect(await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
-        'pinned skill\n',
-      )
-      expect(await readFile(join(f.vaultB, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
-        'vault B local\n',
-      )
-      expect(await readFile(join(f.vaultA, '.holi/plugins/demo/manifest.json'), 'utf8')).toBe(aPin)
-      expect(await readFile(join(f.vaultB, '.holi/plugins/demo/manifest.json'), 'utf8')).toBe(bPin)
-      expect(await readFile(join(f.vaultA, '.holi/settings/plugins.yaml'), 'utf8')).toBe(settingsA)
-      const aSkillBeforeB = await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')
-      const addressedB = await command(
-        ['community', 'refresh-skills', 'demo', '--force', '--vault=owner/vault-b'],
-        f.vaultA,
-      )
-      expect(addressedB.code).toBe(0)
-      expect(await readFile(join(f.vaultB, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
-        'pinned skill\n',
-      )
-      expect(await readFile(join(f.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
-        aSkillBeforeB,
-      )
-      const after = await captureFacts(f)
-      expect(after.vaultA.pin).toBe(before.vaultA.pin)
-      expect(after.vaultA.settings).toBe(before.vaultA.settings)
-      expect(after.vaultA.consent).toBe(before.vaultA.consent)
-      expect(after.vaultA.apps).toBe(before.vaultA.apps)
-      expect(after.vaultA.gitignore).toBe(before.vaultA.gitignore)
-      expect(after.vaultA.commandLinks).toBe(before.vaultA.commandLinks)
-      expect(after.vaultA.otherSkills).toBe(before.vaultA.otherSkills)
-      expect(after.vaultB.pin).toBe(before.vaultB.pin)
-      expect(after.vaultB.settings).toBe(before.vaultB.settings)
-      expect(after.vaultB.consent).toBe(before.vaultB.consent)
-      expect(after.vaultB.apps).toBe(before.vaultB.apps)
-      expect(after.vaultB.gitignore).toBe(before.vaultB.gitignore)
-      expect(after.vaultB.commandLinks).toBe(before.vaultB.commandLinks)
-      expect(after.vaultB.otherSkills).toBe(before.vaultB.otherSkills)
-      evidence.push({
-        fixture:
-          'generated CLI + live bridge + real capability host/registry; synthetic core services',
-        facts: { before, after },
-      })
+  beforeEach(async () => {
+    f = await setup()
+    before = await captureFacts(f)
+  })
+
+  afterEach(async () => {
+    try {
+      // Every scenario must leave unrelated vault and install state untouched.
+      if (f) expect(await captureFacts(f)).toEqual(before)
     } finally {
-      await f.close()
+      try {
+        await f?.close()
+      } finally {
+        f = undefined
+        await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+      }
     }
+  })
+
+  function command(args: string[], cwd = f!.vaultA) {
+    return run(f!.bin, ['community', 'refresh-skills', ...args], cwd, f!.env)
+  }
+
+  it('explains force replacement in help', async () => {
+    const help = await command(['--help'])
+    expect(help.code).toBe(0)
+    expect(help.stdout).toContain('--force replaces complete skill folders, including local edits')
+  })
+
+  it('copies pinned text and binary skills, then reports a JSON no-op', async () => {
+    const first = await command(['demo'])
+    expect(first).toMatchObject({ code: 0, stdout: '.claude/skills/demo\n' })
+    expect(await readFile(join(f!.vaultA, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
+      'pinned skill\n',
+    )
+    expect(await readFile(join(f!.vaultA, '.claude/skills/demo/tool.bin'))).toEqual(
+      Buffer.from([0, 1, 255]),
+    )
+    const copied = await fingerprint(join(f!.vaultA, '.claude/skills/demo'))
+    expect((await command(['demo'])).code).toBe(0)
+    const json = await command(['demo', '--json'])
+    expect(json.code).toBe(0)
+    expect(JSON.parse(json.stdout)).toEqual([])
+    expect(await fingerprint(join(f!.vaultA, '.claude/skills/demo'))).toBe(copied)
+  })
+
+  it('preserves conflicting local edits unless force is explicit', async () => {
+    const skill = join(f!.vaultA, '.claude/skills/demo')
+    await mkdir(skill, { recursive: true })
+    await writeFile(join(skill, 'SKILL.md'), 'local edit\n')
+    await writeFile(join(skill, 'local.txt'), 'local extra\n')
+    const edited = await fingerprint(skill)
+    expect((await command(['demo'])).code).not.toBe(0)
+    expect(await fingerprint(skill)).toBe(edited)
+    expect((await command(['demo', '--force'])).code).toBe(0)
+    expect(await readFile(join(skill, 'SKILL.md'), 'utf8')).toBe('pinned skill\n')
+    expect((await readdir(skill)).sort()).toEqual(['SKILL.md', 'tool.bin'])
+  })
+
+  it.each([['--unknown'], ['--force', '--force'], ['--force=false']])(
+    'rejects strict flag violation %j without copying skills',
+    async (...flags) => {
+      expect((await command(['demo', ...flags])).code).toBe(2)
+      expect(await fingerprint(join(f!.vaultA, '.claude/skills/demo'))).toBe('absent')
+      expect(await fingerprint(join(f!.vaultB, '.claude/skills/demo'))).toBe('absent')
+    },
+  )
+
+  it('targets only the explicit vault, not cwd or the active vault', async () => {
+    const bSkill = join(f!.vaultB, '.claude/skills/demo/SKILL.md')
+    await mkdir(join(f!.vaultB, '.claude/skills/demo'), { recursive: true })
+    await writeFile(bSkill, 'vault B local\n')
+    const addressedAFromB = await command(['demo', '--vault=owner/vault-a'], f!.vaultB)
+    expect(addressedAFromB.code).toBe(0)
+    const aSkill = join(f!.vaultA, '.claude/skills/demo/SKILL.md')
+    expect(await readFile(aSkill, 'utf8')).toBe('pinned skill\n')
+    expect(await readFile(bSkill, 'utf8')).toBe('vault B local\n')
+    const aBeforeB = await fingerprint(join(f!.vaultA, '.claude/skills/demo'))
+    const addressedB = await command(['demo', '--force', '--vault=owner/vault-b'], f!.vaultA)
+    expect(addressedB.code).toBe(0)
+    expect(await readFile(bSkill, 'utf8')).toBe('pinned skill\n')
+    expect(await fingerprint(join(f!.vaultA, '.claude/skills/demo'))).toBe(aBeforeB)
   })
 })

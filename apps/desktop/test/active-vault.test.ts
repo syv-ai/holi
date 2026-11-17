@@ -1273,6 +1273,7 @@ describe('ActiveVault — sync', () => {
     await sleep(QUIESCE)
     const real = openRepo(dir)
     let allowed = false
+    let pushes = 0
     const alerts: string[] = []
     const lines: string[] = []
     const active = await openActiveVault({
@@ -1280,16 +1281,25 @@ describe('ActiveVault — sync', () => {
       remote: 'syv-ai/notes',
       repo: {
         ...real,
-        push: async () =>
-          allowed
+        push: async () => {
+          pushes++
+          return allowed
             ? { kind: 'nothing-to-push' as const }
-            : { kind: 'rejected' as const, reason: 'permission' as const },
+            : { kind: 'rejected' as const, reason: 'permission' as const }
+        },
       },
       onSnapshot: () => {},
       onSyncState: () => {},
       onSyncFailing: (text) => alerts.push(text),
       activity: (entry) => lines.push(entry.message),
-      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+      // Count completed push attempts, not requests declined by an overlapping
+      // startup commit check. The startup timer otherwise fires after 3 seconds.
+      timings: {
+        commitQuietMs: 60_000,
+        pushQuietMs: 60_000,
+        pullIntervalMs: 60_000,
+        healIntervalMs: 60_000,
+      },
     })
     open.push(active)
 
@@ -1306,9 +1316,11 @@ describe('ActiveVault — sync', () => {
     await active.pushNow()
     expect(lines).toContain('Sync is getting through again')
     allowed = false
+    const recoveredPushes = pushes
     for (let i = 1; i < SYNC_ALERT_FAILURES; i++) await active.pushNow()
     expect(alerts).toHaveLength(1)
     await active.pushNow()
+    expect(pushes - recoveredPushes).toBe(SYNC_ALERT_FAILURES)
     expect(alerts).toHaveLength(2)
   })
 
