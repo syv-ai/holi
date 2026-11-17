@@ -341,6 +341,13 @@
       snapshot()
     }
   }
+  const pointerdown = () => {
+    if (!sessionActive) return
+    sessionActive = false
+    cancelAnimationFrame(geometryFrame)
+    geometryFrame = 0
+    send({ type: 'holi-hints:clear', revision })
+  }
   const compositionStart = () => {
     composing = true
     if (enabled) invalidate()
@@ -362,6 +369,7 @@
   const listeners = [
     [window, 'message', message],
     [window, 'keydown', keydown],
+    [window, 'pointerdown', pointerdown, true],
     [window, 'scroll', invalidate, true],
     [window, 'resize', invalidate],
     [document, 'visibilitychange', invalidate],

@@ -291,6 +291,28 @@ describe('community frame hint protocol', () => {
     expect(click).toHaveBeenCalledTimes(2)
   })
 
+  it('cancels on background pointer input without suppressing the click', () => {
+    setup()
+    init()
+    const snapshot = sent('holi-hints:snapshot').at(-1)!
+    host({ type: 'holi-hints:session', nonce, revision: snapshot.revision, active: true })
+    const pointer = new Event('pointerdown', { bubbles: true, cancelable: true })
+    document.body.dispatchEvent(pointer)
+    expect(pointer.defaultPrevented).toBe(false)
+    expect(sent('holi-hints:clear').at(-1)).toMatchObject({ revision: snapshot.revision })
+    const click = vi.fn()
+    document.querySelector('button')!.addEventListener('click', click)
+    host({
+      type: 'holi-hints:activate',
+      nonce,
+      revision: snapshot.revision,
+      id: snapshot.targets[0]!.id,
+    })
+    expect(click).not.toHaveBeenCalled()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', cancelable: true }))
+    expect(sent('holi-hints:start').at(-1)?.revision).toBeGreaterThan(snapshot.revision)
+  })
+
   it('clears on unsupported keys but lets modified shortcuts pass through', () => {
     setup()
     init()
