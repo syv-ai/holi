@@ -1048,7 +1048,9 @@
     if (event.key === 'Escape') {
       // Retire in this key task, before a delayed main activation can obtain a
       // point. Keep the exact queued key so the selected host route also cancels.
+      const capture = hintPendingCapture
       hintPendingCapture = null
+      if (capture !== null) queueHintEvent({ type: 'revoke', capture })
       if (hintOwner) clearHints(hintOwner)
     }
     return true

@@ -34,8 +34,9 @@ export function dispatchBrowserHintEvent(remote: string, value: unknown): void {
     typeof event.attachment !== 'string' ||
     typeof event.origin !== 'string' ||
     !Number.isSafeInteger(event.request) ||
-    !['request', 'key', 'revoke'].includes(event.type) ||
+    !['request', 'cancel', 'key', 'revoke'].includes(event.type) ||
     (event.type !== 'request' &&
+      event.type !== 'cancel' &&
       (!Number.isSafeInteger(event.snapshot) ||
         !Number.isSafeInteger(event.geometry) ||
         event.snapshot < 1 ||
@@ -54,6 +55,7 @@ export function createBrowserHintAdapter(
   const pending = new Map<number, Pending>()
   const controllers = new Map<number, AbortController>()
   const invalidators = new Map<number, () => void>()
+  const invalidatorOrigins = new Map<number, string | null>()
   const retired = new WeakSet<Pending>()
   let generation = 0
   const requestScopeKey = requestKey(context)
@@ -72,11 +74,13 @@ export function createBrowserHintAdapter(
     if (pending.get(request) === item) pending.delete(request)
     if (item.owner !== undefined && snapshot?.owner === item.owner) snapshot = null
     invalidators.delete(request)
+    invalidatorOrigins.delete(request)
     if (clear) clearWire(item.wire)
   }
   const matches = (event: PageHintEvent, item: Pending) => {
     if (event.request !== item.wire.request) return false
-    if (event.type === 'request') return item.requestOrigin === event.origin
+    if (event.type === 'request' || event.type === 'cancel')
+      return item.requestOrigin === event.origin
     const owner = item.owner
     return owner
       ? owner.tab === event.tab &&
@@ -114,10 +118,25 @@ export function createBrowserHintAdapter(
       return
     }
     const match = [...pending.entries()].find(([request, item]) => {
-      return (event.type === 'revoke' || request > 0) && matches(event, item)
+      return (
+        (event.type === 'revoke' || event.type === 'cancel' || request > 0) && matches(event, item)
+      )
     })
     if (!match) return
     const [request, item] = match
+    if (event.type === 'cancel') {
+      if (request > 0) invalidators.get(request)?.()
+      else {
+        for (const [hostRequest, invalidate] of [...invalidators]) {
+          if (invalidatorOrigins.get(hostRequest) !== event.origin) continue
+          invalidate()
+          invalidators.delete(hostRequest)
+          invalidatorOrigins.delete(hostRequest)
+        }
+      }
+      retire(request, item)
+      return
+    }
     if (event.type === 'revoke') {
       // Let the owning coordinator observe this request while its scope is still live.
       if (request > 0) invalidators.get(request)?.()
@@ -131,7 +150,7 @@ export function createBrowserHintAdapter(
 
   const adapter: AsyncHostHintAdapter & { dispose(): void } = {
     async discover(request, signal) {
-      if (!alive()) return null
+      if (!alive() || signal.aborted) return null
       const pagePending = [...pending.entries()].find(([n]) => n < 0)
       const wire = pagePending?.[1].wire ?? {
         tab: context.tab,
@@ -228,7 +247,11 @@ export function createBrowserHintAdapter(
       }
     },
     subscribe(request, invalidate, routeKey) {
+      const pendingPageRequest = [...pending.entries()]
+        .filter(([pendingRequest]) => pendingRequest < 0)
+        .at(-1)?.[1]
       invalidators.set(request, invalidate)
+      invalidatorOrigins.set(request, pendingPageRequest?.requestOrigin ?? null)
       const handler = (event: PageHintEvent) => {
         const item = pending.get(request)
         if (!item || !matches(event, item)) return
@@ -258,7 +281,10 @@ export function createBrowserHintAdapter(
       const off = () => {
         eventSet.delete(handler)
         window.removeEventListener(HOST_HINT_REQUEST, requestHandler)
-        if (invalidators.get(request) === invalidate) invalidators.delete(request)
+        if (invalidators.get(request) === invalidate) {
+          invalidators.delete(request)
+          invalidatorOrigins.delete(request)
+        }
       }
       subscriptions.add(off)
       return () => {
