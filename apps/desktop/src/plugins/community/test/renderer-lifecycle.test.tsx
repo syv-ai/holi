@@ -60,9 +60,19 @@ const releaseResult = {
   port: 4312,
   lease: '123e4567-e89b-12d3-a456-426614174000',
 } as const
+let activeElementDescriptor: PropertyDescriptor | undefined
+let elementFromPointDescriptor: PropertyDescriptor | undefined
 
 afterEach(async () => {
   cleanup()
+  if (activeElementDescriptor)
+    Object.defineProperty(document, 'activeElement', activeElementDescriptor)
+  else Reflect.deleteProperty(document, 'activeElement')
+  if (elementFromPointDescriptor)
+    Object.defineProperty(document, 'elementFromPoint', elementFromPointDescriptor)
+  else Reflect.deleteProperty(document, 'elementFromPoint')
+  activeElementDescriptor = undefined
+  elementFromPointDescriptor = undefined
   // Lease releases run after the resolved acquire, including cleanup's unmounts.
   await Promise.resolve()
   await Promise.resolve()
@@ -204,6 +214,7 @@ test('community guest hints are disabled unless Vim editing and the focused load
       toJSON: () => ({}),
     }),
   })
+  elementFromPointDescriptor = Object.getOwnPropertyDescriptor(document, 'elementFromPoint')
   Object.defineProperty(document, 'elementFromPoint', {
     configurable: true,
     value: () => iframe,
@@ -212,6 +223,7 @@ test('community guest hints are disabled unless Vim editing and the focused load
   iframe.focus()
   // JSDOM does not make an iframe the active element when focused; model the
   // browser state the adapter deliberately requires before enabling guest keys.
+  activeElementDescriptor = Object.getOwnPropertyDescriptor(document, 'activeElement')
   Object.defineProperty(document, 'activeElement', { configurable: true, get: () => iframe })
   fireEvent.load(iframe)
   await act(async () => {

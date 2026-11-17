@@ -4,6 +4,8 @@
     "src",
     "scripts/terminal-hints-native-smoke.tsx",
     "scripts/terminal-hints-native-smoke-main.ts",
+    "scripts/community-hints-native-smoke.tsx",
+    "scripts/community-hints-native-smoke-main.ts",
     "scripts/agent-inbox-542-smoke-main.ts",
     "scripts/agent-inbox-542-smoke-renderer.tsx",
     "scripts/folder-subscriptions-native-smoke.tsx",
