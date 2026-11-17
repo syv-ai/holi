@@ -385,6 +385,7 @@ interface MailListProps {
   onCatchUp: () => void
   catchUpPending: boolean
   catchUpError: string | null
+  catchUpRetryable: boolean
   visible: boolean
 }
 
@@ -399,6 +400,7 @@ export function MailList({
   onCatchUp,
   catchUpPending,
   catchUpError,
+  catchUpRetryable,
   visible,
 }: MailListProps) {
   const [query, setQuery] = useState('')
@@ -594,9 +596,11 @@ export function MailList({
           className="text-destructive flex items-center justify-between gap-2 px-3 py-2 text-sm"
         >
           <span>{catchUpError}</span>
-          <Button variant="outline" size="xs" onClick={onCatchUp}>
-            Retry
-          </Button>
+          {catchUpRetryable && (
+            <Button variant="outline" size="xs" onClick={onCatchUp}>
+              Retry
+            </Button>
+          )}
         </div>
       )}
       {/* ── Header: the mailbox is the title's menu ── */}

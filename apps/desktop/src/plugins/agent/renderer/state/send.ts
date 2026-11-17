@@ -172,7 +172,15 @@ export const startSessionAtom = atom(
       get(activeRemoteAtom) !== remote ||
       get(activeRemoteRevisionValueAtom) !== revision
     ) {
-      await agentCap.stop(remote!, res.sessionId).catch(() => undefined)
+      try {
+        await agentCap.stop(remote!, { id: res.sessionId })
+      } catch (error) {
+        const detail = error instanceof Error ? ` ${error.message}` : ''
+        return {
+          ok: false,
+          message: `Cleanup unconfirmed: the vault changed and session ${res.sessionId} may still be running.${detail}`,
+        }
+      }
       return { ok: false, message: 'The vault changed before the session opened.' }
     }
     landSession(get, set, res.sessionId, res.terminalId)

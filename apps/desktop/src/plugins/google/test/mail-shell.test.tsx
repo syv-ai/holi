@@ -6,8 +6,8 @@
 import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { getDefaultStore } from 'jotai'
-import { activeRemoteAtom, saveBeforeClosing } from '@/plugin-api'
+import { atom, getDefaultStore } from 'jotai'
+import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
 import { ConnectionsSection } from '../renderer/connections-section'
 import { resetMailImagesForTests } from '../renderer/mail-images'
@@ -31,6 +31,20 @@ const setClientMock = vi.fn()
 let accountSub = 'a'
 const toastMock = vi.fn()
 const openExternal = vi.fn()
+const { agentStartMock, agentServiceMock, tasksAvailabilityMock } = vi.hoisted(() => ({
+  agentStartMock: vi.fn(),
+  agentServiceMock: vi.fn(),
+  tasksAvailabilityMock: vi.fn(),
+}))
+
+vi.mock('@/plugin-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/plugin-api')>()
+  return {
+    ...actual,
+    useAgentService: () => agentServiceMock(),
+    useCapabilityAvailability: () => tasksAvailabilityMock(),
+  }
+})
 
 const google: Record<string, (params: unknown) => unknown> = {
   status: () => ({
@@ -187,6 +201,14 @@ beforeEach(() => {
   accountSub = 'a'
   toastMock.mockReset()
   openExternal.mockReset()
+  agentStartMock.mockReset().mockResolvedValue({ ok: true })
+  agentServiceMock.mockReset().mockReturnValue({
+    start: agentStartMock,
+    ask: vi.fn(),
+    targets: atom({ default: 'new' }),
+  })
+  tasksAvailabilityMock.mockReset().mockReturnValue('available')
+  getDefaultStore().set(sessionAtom, { login: 'ada' } as never)
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
   resetMailImagesForTests()
   resetMailFramesForTests()
@@ -831,4 +853,112 @@ test('renders all configured marker symbols in the app-shell list', async () => 
     ids: ['blue', 'red', 'yellow'],
     expectedAccountSub: 'a',
   })
+})
+
+test('catch-up starts a read-only prompt for the signed-in login without opening mail', async () => {
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
+  const [{ name, prompt }] = agentStartMock.mock.calls[0]!
+  expect(name).toBe('Mail catch-up')
+  expect(prompt).toContain('signed-in GitHub login is ada')
+  expect(prompt).toContain("holi google search 'in:inbox is:unread'")
+  expect(prompt).toContain('holi google read <thread-id>')
+  expect(prompt).toContain('holi tasks list --assignee ada --open --json')
+  expect(prompt).toContain('priority and content')
+  expect(prompt).toContain('Do not mark mail read')
+  expect(threadMock).not.toHaveBeenCalled()
+  expect(markReadMock).not.toHaveBeenCalled()
+})
+
+test('catch-up confirms disabled tasks and lets an unresolved lookup degrade honestly', async () => {
+  const user = userEvent.setup()
+  tasksAvailabilityMock.mockReturnValue('unavailable')
+  const { rerender } = render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
+  expect(agentStartMock.mock.calls[0]![0].prompt).toContain(
+    'Tasks are unavailable in this vault. Say so',
+  )
+
+  agentStartMock.mockClear()
+  tasksAvailabilityMock.mockReturnValue('unknown')
+  rerender(<MailShell />)
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
+  expect(agentStartMock.mock.calls[0]![0].prompt).toContain('Try reading tasks with')
+  expect(agentStartMock.mock.calls[0]![0].prompt).not.toContain(
+    'Tasks are unavailable in this vault',
+  )
+})
+
+test('catch-up does not offer retry when stale-session cleanup is unconfirmed', async () => {
+  const user = userEvent.setup()
+  agentStartMock.mockResolvedValueOnce({
+    ok: false,
+    message: 'Cleanup unconfirmed: session may still be running.',
+  })
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Cleanup unconfirmed')
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+})
+
+test('catch-up ignores a stale A-B-A completion', async () => {
+  const user = userEvent.setup()
+  let finish!: (value: { ok: false; message: string }) => void
+  agentStartMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
+
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/other')
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  finish({ ok: false, message: 'stale launch error' })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
+test('catch-up rejects missing login, vault, or agent before starting', async () => {
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+
+  getDefaultStore().set(sessionAtom, null)
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(/sign in to GitHub/i)
+  expect(agentStartMock).not.toHaveBeenCalled()
+
+  getDefaultStore().set(sessionAtom, { login: 'ada' } as never)
+  getDefaultStore().set(activeRemoteAtom, null)
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(/open a vault/i)
+  expect(agentStartMock).not.toHaveBeenCalled()
+
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  agentServiceMock.mockReturnValue(null)
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(/no agent is running/i)
+  expect(agentStartMock).not.toHaveBeenCalled()
+})
+
+test('catch-up ignores duplicate clicks and permits retry after a failed launch', async () => {
+  const user = userEvent.setup()
+  let finish!: (value: { ok: boolean; message?: string }) => void
+  agentStartMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  await user.click(screen.getByRole('button', { name: 'Starting catch-up' }))
+  expect(agentStartMock).toHaveBeenCalledTimes(1)
+  finish({ ok: false, message: 'Temporary launch failure' })
+  expect(await screen.findByRole('alert')).toHaveTextContent('Temporary launch failure')
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(2))
 })

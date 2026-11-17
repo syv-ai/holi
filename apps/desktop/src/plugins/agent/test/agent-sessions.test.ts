@@ -136,6 +136,44 @@ function setup(initial: Row[] = []) {
 }
 
 describe('agent sessions', () => {
+  it('stops a new terminal session when its vault closes during startup', async () => {
+    const t = setup()
+    await t.attach()
+    const started = t.cli.startBg.getMockImplementation()!
+    let release!: () => void
+    t.cli.startBg.mockImplementationOnce(async (target, options) => {
+      await new Promise<void>((resolve) => (release = resolve))
+      return started(target, options)
+    })
+
+    const starting = t.sessions.start({ name: 'Catch-up', prompt: 'read mail' })
+    await vi.waitFor(() => expect(t.cli.startBg).toHaveBeenCalled())
+    await t.sessions.leave()
+    release()
+
+    expect(await starting).toEqual({
+      ok: false,
+      message: 'The vault closed as the session started.',
+    })
+    expect(t.cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
+    expect(t.opened).toEqual([])
+  })
+
+  it('reports unconfirmed cleanup when terminal opening throws and stop fails', async () => {
+    const t = setup()
+    await t.attach()
+    t.terminals.open = () => {
+      throw new Error('PTY unavailable')
+    }
+    t.cli.stop.mockRejectedValueOnce(new Error('stop failed'))
+
+    expect(await t.sessions.start({ prompt: 'Catch me up' })).toEqual({
+      ok: false,
+      message: 'Cleanup unconfirmed: session launch00 may still be running.',
+    })
+    expect(t.cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
+  })
+
   it('stops a background conversation when opening its terminal fails', async () => {
     const t = setup()
     await t.attach()
