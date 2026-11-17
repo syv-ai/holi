@@ -229,7 +229,10 @@ export function PluginsSettings({
                     <span className="text-destructive"> {row.commandsNote}</span>
                   )}
                   {row.syncError !== undefined && (
-                    <span className="text-destructive"> {row.syncError}</span>
+                    <span role="alert" className="text-destructive">
+                      {' '}
+                      {row.syncError}
+                    </span>
                   )}
                   {row.syncBackups?.map((backup) => (
                     <span key={backup} className="text-muted-foreground">
@@ -278,8 +281,7 @@ export function PluginsSettings({
                       disabled={busy}
                       onClick={() =>
                         void act(`${row.id}:adopt-folder`, async () => {
-                          await communityCap.skills(remote, { id: row.id })
-                          await communityCap.unpin(remote, { id: row.id })
+                          await communityCap.adoptFolder(remote, { id: row.id })
                           await setPluginSwitch(remote, row.id, true)
                         })
                       }
