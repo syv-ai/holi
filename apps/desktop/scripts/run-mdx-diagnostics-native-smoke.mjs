@@ -286,20 +286,9 @@ try {
   await waitFor(
     () =>
       evaluate(
-        `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>/^\\d+ MDX diagnostic/.test(el.textContent.trim()) || el.textContent.includes('MDX diagnostics unavailable'))`,
+        `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>el.textContent.includes('syntax is valid')) && document.querySelector('.cm-lintRange-error') === null`,
       ),
-    'hostile MDX compile or lease refresh state',
-  )
-  const needsRetry = await evaluate(
-    `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>el.textContent.includes('MDX diagnostics unavailable'))`,
-  )
-  if (needsRetry) await click('Retry')
-  await waitFor(
-    () =>
-      evaluate(
-        `[...document.querySelectorAll('[aria-live="polite"]')].some((el)=>/^\\d+ MDX diagnostic/.test(el.textContent.trim()))`,
-      ),
-    'fresh lease compiles hostile MDX after source save',
+    'valid hostile MDX compiles cleanly after source save without Retry',
   )
   assert.equal(
     await evaluate(`globalThis.__mdxSmokeExecuted===true`),

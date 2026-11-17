@@ -251,6 +251,11 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   })
   mainWindow = win
   win.once('closed', () => invalidateMdxDiagnostics())
+  win.webContents.on('did-start-navigation', (event) => {
+    if (event.isMainFrame && !event.isSameDocument) invalidateMdxDiagnostics()
+  })
+  win.webContents.on('render-process-gone', () => invalidateMdxDiagnostics())
+  win.webContents.once('destroyed', () => invalidateMdxDiagnostics())
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   // Pin authorization to the intended application document, never to a URL
   // supplied by an IPC sender.
