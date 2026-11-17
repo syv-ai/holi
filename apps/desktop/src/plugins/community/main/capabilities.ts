@@ -83,6 +83,8 @@ type PluginStatus =
   | 'ready'
 
 export interface PluginRow {
+  /** A failed automatic guide/pin update, retained until a later successful refresh. */
+  syncError?: string
   id: string
   name: string
   description: string
@@ -178,10 +180,15 @@ async function statusOf(
 ): Promise<PluginStatus> {
   if (install === null) return 'not-installed'
   const commit = installCommit(install)
-  if (commit !== null) {
-    if (pin !== null && pin.commit !== commit) return 'pin-differs'
-    if (!(await consent.has(install.id, commit))) return 'needs-consent'
-  }
+  if (
+    pin !== null &&
+    (install.source.kind !== 'release' ||
+      pin.commit !== commit ||
+      pin.repo !== install.source.repo ||
+      pin.path !== install.source.path)
+  )
+    return 'pin-differs'
+  if (commit !== null && !(await consent.has(install.id, commit))) return 'needs-consent'
   if (install.manifest.setup !== undefined && install.source.kind === 'release') {
     if (install.setup === 'failed') return 'setup-failed'
     if (install.setup !== 'ok') return 'needs-setup'
@@ -189,7 +196,10 @@ async function statusOf(
   return 'ready'
 }
 
+const syncErrors = new Map<string, string>()
+
 function rowOf(
+  root: string,
   id: string,
   install: Install | null,
   pin: PluginPin | null,
@@ -200,6 +210,9 @@ function rowOf(
 ): PluginRow {
   const manifest: PluginManifest = (install?.manifest ?? pin)!
   return {
+    ...(syncErrors.get(`${root}\0${id}`) === undefined
+      ? {}
+      : { syncError: syncErrors.get(`${root}\0${id}`) }),
     id,
     name: manifest.name,
     description: manifest.description ?? '',
@@ -264,7 +277,7 @@ async function pluginEntries(
       const on = settings.plugins.vault[id] === true
       const check = deps.checks?.get(root, id) ?? null
       return {
-        row: rowOf(id, install, pin, status, on, linkedIn(root), check),
+        row: rowOf(root, id, install, pin, status, on, linkedIn(root), check),
         install,
       }
     }),
@@ -315,6 +328,107 @@ const pluginPathParam = (p: Record<string, unknown>): string => {
 
 /** How long a check for newer releases is trusted before GitHub is asked again. */
 const UPDATE_CHECK_MS = 60 * 60 * 1000
+
+/** Adopt a newer, already-consented same-source install for this vault. Called
+ *  from the attachment's owner-admitted refresh; do not re-enter owner.admit. */
+export async function refreshInstalledPins(
+  root: string,
+  deps: Pick<CommunityDeps, 'store' | 'consent' | 'git' | 'signal'>,
+): Promise<void> {
+  const [pins, installs, settings] = await Promise.all([
+    readPins(root),
+    deps.store.list(),
+    readVaultSettings(root),
+  ])
+  for (const pin of pins.values()) {
+    const install = installs.find((item) => item.id === pin.id)
+    if (
+      !settings.plugins.vault[pin.id] ||
+      install === undefined ||
+      install.source.kind !== 'release' ||
+      install.source.repo !== pin.repo ||
+      install.source.path !== pin.path ||
+      newestFirst(install.manifest.version, pin.version) >= 0 ||
+      install.setup !== 'ok' ||
+      !(await deps.consent.has(install.id, install.source.commit))
+    )
+      continue
+    const source = install.source
+    const key = `${root}\0${pin.id}`
+    try {
+      const next: PluginPin = {
+        ...install.manifest,
+        repo: source.repo,
+        path: source.path,
+        commit: source.commit,
+      }
+      const codeDir = resolve(deps.store.codeDir(install))
+      const expectedRoot = await realpath(
+        resolve(deps.store.releaseDir(install.id, source.commit)),
+      ).catch(() => null)
+      const codeReal = await realpath(codeDir).catch(() => null)
+      if (
+        expectedRoot === null ||
+        codeReal === null ||
+        codeReal !== resolve(expectedRoot, source.path) ||
+        !insidePath(expectedRoot, codeReal)
+      )
+        throw new Error('installed release paths do not match their canonical source')
+      const checkoutManifest = await readManifest(codeDir, source.path)
+      await assertCheckoutIdentity(
+        expectedRoot,
+        source.commit,
+        deps.git.url(source.repo),
+        deps.signal,
+      )
+      await assertManifestPinned(
+        expectedRoot,
+        source.commit,
+        source.path,
+        checkoutManifest,
+        deps.signal,
+      )
+      if (canonicalJson(checkoutManifest) !== canonicalJson(install.manifest))
+        throw new Error('installed release manifest does not match its source')
+      const guard = async () => {
+        const [currentInstall, consented, currentSettings] = await Promise.all([
+          deps.store.get(install.id),
+          deps.consent.has(install.id, source.commit),
+          readVaultSettings(root),
+        ])
+        if (
+          currentInstall === null ||
+          currentInstall.source.kind !== 'release' ||
+          JSON.stringify(currentInstall.source) !== JSON.stringify(source) ||
+          canonicalJson(currentInstall.manifest) !== canonicalJson(install.manifest) ||
+          currentInstall.setup !== 'ok' ||
+          !consented ||
+          currentSettings.plugins.vault[install.id] !== true
+        )
+          throw new Error('automatic community update authorization changed')
+        await assertNoCompetingSkillClaims(root, install.id, install.manifest.skills ?? [])
+      }
+      await guard()
+      await writeSkills(install.manifest, codeDir, root, { guard })
+      await seedApps(install.manifest, codeDir, root)
+      await guard()
+      const lines = install.manifest.ignore ?? []
+      if (lines.length > 0) {
+        const existing = await readFile(join(root, '.gitignore'), 'utf8').catch(() => null)
+        const updated = gitignoreWith(existing, lines)
+        if (updated !== null) await writeAtomic(root, vaultRelPath('.gitignore'), updated)
+      }
+      await writeAtomic(
+        root,
+        vaultRelPath(pluginPinPath(pin.id)),
+        `${JSON.stringify(next, null, 2)}\n`,
+      )
+      syncErrors.delete(key)
+    } catch (error) {
+      syncErrors.set(key, `Could not update guides for ${pin.name}: ${String(error)}`)
+    }
+  }
+}
 
 export function communityCapabilities(deps: CommunityDeps, now = () => Date.now()) {
   /** Each repository's releases, of every plugin in it, as last asked, and
@@ -573,26 +687,75 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
               'BAD_REQUEST',
               `${id} is a folder on this machine; pin a release`,
             )
+          const source = install.source
           const pin: PluginPin = {
             ...install.manifest,
-            repo: install.source.repo,
-            path: install.source.path,
-            commit: install.source.commit,
+            repo: source.repo,
+            path: source.path,
+            commit: source.commit,
           }
-          await writeAtomic(
-            ctx.root,
-            vaultRelPath(pluginPinPath(id)),
-            `${JSON.stringify(pin, null, 2)}\n`,
+          const codeDir = resolve(deps.store.codeDir(install))
+          const expectedRoot = await realpath(
+            resolve(deps.store.releaseDir(id, source.commit)),
+          ).catch(() => null)
+          const codeReal = await realpath(codeDir).catch(() => null)
+          if (
+            expectedRoot === null ||
+            codeReal === null ||
+            codeReal !== resolve(expectedRoot, source.path) ||
+            !insidePath(expectedRoot, codeReal)
           )
-          await writeSkills(install.manifest, deps.store.codeDir(install), ctx.root)
-          await seedApps(install.manifest, deps.store.codeDir(install), ctx.root)
+            throw new CapabilityError('FORBIDDEN', `${id} release paths do not match its source`)
+          const validateSource = async () => {
+            const manifest = await readManifest(codeDir, source.path)
+            await assertCheckoutIdentity(
+              expectedRoot,
+              source.commit,
+              deps.git.url(source.repo),
+              deps.signal,
+            )
+            await assertManifestPinned(
+              expectedRoot,
+              source.commit,
+              source.path,
+              manifest,
+              deps.signal,
+            )
+            if (canonicalJson(manifest) !== canonicalJson(install.manifest))
+              throw new CapabilityError('FORBIDDEN', `${id} manifest does not match its source`)
+          }
+          const guard = async () => {
+            ensureLive()
+            await validateSource()
+            const current = await deps.store.get(id)
+            if (
+              current === null ||
+              current.source.kind !== 'release' ||
+              JSON.stringify(current.source) !== JSON.stringify(source) ||
+              canonicalJson(current.manifest) !== canonicalJson(install.manifest)
+            )
+              throw new CapabilityError('CONFLICT', `${id} changed during pin`)
+            await assertNoCompetingSkillClaims(ctx.root, id, install.manifest.skills ?? [])
+          }
+          await guard()
+          // Publish vault assets first. In particular, a failed guide refresh must
+          // leave the old pin truthful so the operation can be retried.
+          await writeSkills(install.manifest, codeDir, ctx.root, { guard })
+          await seedApps(install.manifest, codeDir, ctx.root)
           await linkRunningCommands(ctx.root, deps)
+          await guard()
           const lines = install.manifest.ignore ?? []
           if (lines.length > 0) {
             const existing = await readFile(join(ctx.root, '.gitignore'), 'utf8').catch(() => null)
             const next = gitignoreWith(existing, lines)
             if (next !== null) await writeAtomic(ctx.root, vaultRelPath('.gitignore'), next)
           }
+          await writeAtomic(
+            ctx.root,
+            vaultRelPath(pluginPinPath(id)),
+            `${JSON.stringify(pin, null, 2)}\n`,
+          )
+          syncErrors.delete(`${ctx.root}\0${id}`)
         }),
     }),
 

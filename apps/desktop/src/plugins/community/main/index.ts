@@ -13,6 +13,7 @@ import {
   communityCapabilities,
   linkRunningCommands,
   listPlugins,
+  refreshInstalledPins,
   runChecks,
   seedRunningApps,
   unlinkWhenOff,
@@ -89,6 +90,13 @@ export const communityMain: MainPlugin = {
     // check of each running plugin not asked yet: every one as the vault
     // opens, and one just turned on.
     const refresh = async (signal: AbortSignal) => {
+      if (signal.aborted) return
+      await refreshInstalledPins(ctx.root, {
+        store,
+        consent,
+        git: { url: remoteUrl, token: ctx.githubToken },
+        signal: attachment.signal,
+      })
       if (signal.aborted) return
       await seedRunningApps(ctx.root, { store, consent })
       if (signal.aborted) return

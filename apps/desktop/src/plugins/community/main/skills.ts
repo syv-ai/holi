@@ -17,14 +17,11 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { cp, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
+import { cp, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import { isAppBundlePath, type PluginManifest } from '@holi/shared'
 import { CapabilityError } from '../../../main/plugin-api'
 import { transactSkillRefresh, type SkillSnapshot } from './skill-transaction'
-
-/** Where a vault keeps Claude Code's skills. */
-const SKILLS_DIR = join('.claude', 'skills')
 
 const inside = (root: string, path: string) => {
   const rel = relative(root, path)
@@ -57,6 +54,7 @@ export async function refreshSkills(
     guard: () => void | Promise<void>
     expectedSnapshots?: readonly SkillSnapshot[]
     validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
+    retainOriginals?: boolean
   },
 ): Promise<string[]> {
   return transactSkillRefresh(
@@ -75,20 +73,16 @@ export async function writeSkills(
   manifest: Pick<PluginManifest, 'skills'>,
   codeDir: string,
   vaultRoot: string,
+  options: { guard?: () => void | Promise<void> } = {},
 ): Promise<string[]> {
-  const root = await realpath(codeDir)
-  const written: string[] = []
-  for (const skill of manifest.skills ?? []) {
-    const from = join(root, skill)
-    const present = await stat(join(from, 'SKILL.md')).catch(() => null)
-    if (present === null) throw new CapabilityError('BAD_REQUEST', `skill ${skill} has no SKILL.md`)
-    const name = basename(skill)
-    const to = join(vaultRoot, SKILLS_DIR, name)
-    await rm(to, { recursive: true, force: true })
-    await copyFromPlugin(root, from, to)
-    written.push(`.claude/skills/${name}`)
-  }
-  return written
+  // Use the same bounded snapshot, canonical-path and rollback safeguards as
+  // the explicit CLI refresh. A pin/update can replace complete folders, but
+  // never by deleting the only copy before the replacement is ready.
+  return refreshSkills(manifest, codeDir, vaultRoot, {
+    force: true,
+    guard: options.guard ?? (() => {}),
+    retainOriginals: true,
+  })
 }
 
 /**

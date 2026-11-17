@@ -426,12 +426,12 @@ export async function assertNoCompetingSkillClaims(
   id: string,
   skills: readonly string[],
 ): Promise<void> {
-  const pinsDir = join(vaultRoot, PLUGIN_PINS_DIR)
+  const root = await realpath(vaultRoot)
+  const pinsDir = join(root, PLUGIN_PINS_DIR)
   const dirInfo = await lstat(pinsDir).catch(() => null)
   if (!dirInfo) return
   if (!dirInfo.isDirectory() || dirInfo.isSymbolicLink())
     throw new Error('unsafe plugin pins directory')
-  const root = await realpath(vaultRoot)
   for (const entry of await readdir(pinsDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.isSymbolicLink())
       throw new Error('malformed plugin pin entry')

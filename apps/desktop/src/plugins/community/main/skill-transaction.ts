@@ -347,6 +347,8 @@ export async function transactSkillRefresh(
     expectedSnapshots?: readonly SkillSnapshot[]
     /** Validates detached copies of the exact bytes and modes that the private snapshot will publish. */
     validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
+    /** Keep rollback originals as machine-local recovery copies after success. */
+    retainOriginals?: boolean
   },
 ): Promise<string[]> {
   const root = await realpath(codeDir)
@@ -669,11 +671,17 @@ export async function transactSkillRefresh(
           `original skill changed during refresh; recovery data preserved at ${relative(vault, record.backup).split(sep).join('/')}`,
         )
     }
-    await rm(stage, { recursive: true, force: true })
+    if (!(options.retainOriginals && records.some((record) => record.backedUp)))
+      await rm(stage, { recursive: true, force: true })
   } catch (error) {
     throw new Error(
       `skill refresh committed but staging cleanup failed; recoverable files may remain at ${relative(vault, stage).split(sep).join('/')}: ${String(error)}`,
     )
   }
-  return changed.map(({ name }) => `${destinationRel}/${name}`)
+  return [
+    ...changed.map(({ name }) => `${destinationRel}/${name}`),
+    ...(options.retainOriginals && records.some((record) => record.backedUp)
+      ? [`.holi/state/${basename(stage)} (guide backups)`]
+      : []),
+  ]
 }
