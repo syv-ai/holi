@@ -768,6 +768,79 @@ it.each(['rollback', 'temporary cleanup'] as const)(
   },
 )
 
+it.each(['safe cancellation', 'rollback', 'temporary cleanup'] as const)(
+  'retains job copy-back ownership after %s without hiding restoration failures',
+  async (kind) => {
+    const t = await rig()
+    const target = join(t.root, 'note.md')
+    await writeFile(target, 'original')
+    t.provider.capabilities.jobs.command = () => ({
+      bin: process.execPath,
+      args: ['-e', `require('node:fs').writeFileSync('note.md', 'agent version');${SCRIPT}`],
+      env: {},
+    })
+    const prep = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
+    const result = await t.jobs.start({
+      provider: t.provider,
+      name: 'fixture',
+      prompt: 'go',
+      scope: { read: ['note.md'], write: ['note.md'] },
+    })
+    if (!result.ok) throw new Error(result.message)
+    await prep.entered
+    const failure =
+      kind === 'rollback'
+        ? hold(
+            'link',
+            (args) =>
+              basename(String(args[0])) === 'previous' && basename(String(args[1])) === 'note.md',
+          )
+        : kind === 'temporary cleanup'
+          ? hold('rm', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
+          : undefined
+    const stop = t.jobs.stop(result.sessionId)
+    const stopped =
+      kind === 'safe cancellation'
+        ? expect(stop).resolves.toEqual({ ok: true })
+        : expect(stop).rejects.toThrow(`${kind} refused`)
+    prep.release()
+    if (failure !== undefined) {
+      await failure.entered
+      failure.fail(new Error(`${kind} refused`))
+    }
+    await stopped
+    if (kind === 'safe cancellation') {
+      expect(await readFile(target, 'utf8')).toBe('original')
+      await t.jobs.leave()
+      expect((await readdir(t.root)).filter((name) => name.startsWith('.holi-'))).toEqual([])
+      await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+      return
+    }
+    expect(t.jobs.sessions()[0]).toMatchObject({
+      state: 'idle',
+      outcome: 'failed',
+      error: expect.stringContaining(`${kind} refused`),
+    })
+    for (let i = 0; i < 2; i++) {
+      await expect(t.jobs.stop(result.sessionId)).rejects.toThrow(`${kind} refused`)
+      await expect(t.jobs.leave()).rejects.toThrow('did not drain')
+      expect(t.jobs.has(result.sessionId)).toBe(true)
+      await expect(
+        access(join(t.scratchRoot, `${result.sessionId}.agent`)),
+      ).resolves.toBeUndefined()
+    }
+    const leftovers = (await readdir(t.root)).filter((name) => name.startsWith('.holi-'))
+    if (kind === 'rollback') {
+      const preserved = leftovers.find((name) => name.startsWith('.holi-copy-'))!
+      expect(await readFile(join(t.root, preserved, 'previous'), 'utf8')).toBe('original')
+      await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    } else {
+      expect(leftovers.some((name) => name.startsWith('.holi-tmp-'))).toBe(true)
+      expect(await readFile(target, 'utf8')).toBe('original')
+    }
+  },
+)
+
 it.each(['pending', 'failed'] as const)(
   "stops a healthy session independently of another fenced session's %s finalization",
   async (kind) => {

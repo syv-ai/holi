@@ -421,6 +421,9 @@ export class CopyBackCancelled extends Error {
   }
 }
 
+/** A copy still owns preserved files or temporary state after failed cleanup. */
+class CopyBackFinalizationError extends Error {}
+
 /**
  * Write `data` at `abs` only if nothing is there: a file beside it, linked
  * into place, which fails when the name is taken (on a case-blind disk too)
@@ -442,7 +445,11 @@ async function createExclusive(
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false
     throw err
   } finally {
-    await rm(tmp, { force: true })
+    try {
+      await rm(tmp, { force: true })
+    } catch (err) {
+      throw new CopyBackFinalizationError(`Could not clean up copy-back: ${String(err)}`)
+    }
   }
 }
 
@@ -674,8 +681,8 @@ export function createJobs(deps: JobsDeps): Jobs {
         } catch (restore) {
           if ((restore as NodeJS.ErrnoException).code !== 'EEXIST') {
             keep = true
-            throw new Error(
-              `${String(err)} The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
+            throw new CopyBackFinalizationError(
+              `${String(err)} Restoration failed: ${String(restore)}. The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
             )
           }
           // Keep a changed version that could belong to the other writer.
@@ -683,13 +690,19 @@ export function createJobs(deps: JobsDeps): Jobs {
         }
       }
       if (keep) {
-        throw new Error(
+        throw new CopyBackFinalizationError(
           `${String(err)} The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
         )
       }
       throw err
     } finally {
-      if (!keep) await rm(hold, { recursive: true, force: true })
+      if (!keep) {
+        try {
+          await rm(hold, { recursive: true, force: true })
+        } catch (err) {
+          throw new CopyBackFinalizationError(`Could not clean up copy-back: ${String(err)}`)
+        }
+      }
     }
   }
 
@@ -1029,9 +1042,15 @@ export function createJobs(deps: JobsDeps): Jobs {
           } catch (err) {
             outcome = 'failed'
             why = (err as Error).message
+            // A rejected publication is settled after successful restoration.
+            // Failed restoration or cleanup still owns preserved state and
+            // must prevent a successful stop or vault drain.
+            if (err instanceof CopyBackFinalizationError) {
+              job.finalizationError = err instanceof Error ? err : new Error(String(err))
+            }
           }
-          // A Stop pressed during the copy wins.
-          if (job.stopped !== undefined) {
+          // Stop wins over safe cancellation, not an unconfirmed restoration.
+          if (job.stopped !== undefined && job.finalizationError === undefined) {
             outcome = 'failed'
             why = job.stopped
           }
@@ -1059,7 +1078,7 @@ export function createJobs(deps: JobsDeps): Jobs {
           job.message = job.finalizationError.message
         }
       }
-      if (job.stopped !== undefined) {
+      if (job.stopped !== undefined && job.finalizationError === undefined) {
         job.outcome = 'failed'
         job.message = job.stopped
       }
