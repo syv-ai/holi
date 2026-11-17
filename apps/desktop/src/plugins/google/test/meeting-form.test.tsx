@@ -240,13 +240,19 @@ it('retains restored event fields after status clears a refusal and the card is 
     )
   }
 
+  const startLabel = new Date('2027-01-12T00:00:00').toLocaleDateString(undefined, {
+    dateStyle: 'medium',
+  })
+  const endLabel = new Date('2027-01-13T00:00:00').toLocaleDateString(undefined, {
+    dateStyle: 'medium',
+  })
   const user = userEvent.setup()
   render(<RetainedDraftHarness />)
   expect(await screen.findByText(/Delivery is uncertain/)).toBeInTheDocument()
   expect(screen.getByLabelText('Title')).toHaveValue('Recovered planning')
   expect(screen.getByLabelText('Location')).toHaveValue('Synthetic room')
-  expect(screen.getByLabelText('Starts')).toHaveValue('2027-01-12')
-  expect(screen.getByLabelText('Ends')).toHaveValue('2027-01-13')
+  expect(screen.getByLabelText('Starts')).toHaveTextContent(startLabel)
+  expect(screen.getByLabelText('Ends')).toHaveTextContent(endLabel)
 
   await user.click(screen.getByRole('button', { name: 'Check status' }))
   await waitFor(() => expect(screen.getByLabelText('Title')).toBeEnabled())
@@ -257,9 +263,12 @@ it('retains restored event fields after status clears a refusal and the card is 
   await ready()
   expect(screen.getByLabelText('Title')).toHaveValue('Recovered planning')
   expect(screen.getByLabelText('Location')).toHaveValue('Synthetic room')
-  expect(screen.getByLabelText('Starts')).toHaveValue('2027-01-12')
-  expect(screen.getByLabelText('Ends')).toHaveValue('2027-01-13')
+  expect(screen.getByLabelText('Starts')).toHaveTextContent(startLabel)
+  expect(screen.getByLabelText('Ends')).toHaveTextContent(endLabel)
+  expect(screen.getByLabelText('Guests')).toHaveValue('guest@example.com')
+  expect(screen.getByRole('switch', { name: 'Add Google Meet' })).toBeChecked()
   expect(screen.getByRole('button', { name: 'Create and send invitations' })).toBeEnabled()
+  expect(cap.createMeeting).not.toHaveBeenCalled()
 })
 
 it('allows corrected submission after a definitive refusal with no unresolved operation', async () => {
