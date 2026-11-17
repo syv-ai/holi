@@ -885,8 +885,7 @@ describe('the calendar view', () => {
     expect(within(card).getByRole('button', { name: 'Saving…' })).toBeDisabled()
     const closeButtons = within(card).getAllByRole('button', { name: 'Close' })
     expect(closeButtons).toHaveLength(2)
-    expect(closeButtons.filter((button) => !(button as HTMLButtonElement).disabled)).toHaveLength(1)
-    expect(closeButtons.filter((button) => (button as HTMLButtonElement).disabled)).toHaveLength(1)
+    for (const button of closeButtons) expect(button).toBeEnabled()
     expect(scheduleMock).toHaveBeenCalledTimes(1)
     const input = scheduleMock.mock.calls[0]![0] as MeetingInput
     resolve({
