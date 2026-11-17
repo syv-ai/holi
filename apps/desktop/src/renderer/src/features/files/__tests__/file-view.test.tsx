@@ -903,6 +903,97 @@ test('trusted MDX diagnostics consume the current source without changing save b
   await waitFor(() => expect(write).toHaveBeenCalled())
 })
 
+test('an atomic MDX autosave renews diagnostics ownership without retrying', async () => {
+  read.mockResolvedValue('# original')
+  historyList.mockResolvedValue([])
+  write.mockResolvedValue(undefined)
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
+  mdxAcquire
+    .mockResolvedValueOnce({ lease: 'lease-before-save' })
+    .mockResolvedValueOnce({ lease: 'lease-after-save' })
+    .mockResolvedValue({ lease: 'lease-after-refresh' })
+  let resolveOldCompile!: (diagnostics: { message: string; line: number; column: number }[]) => void
+  mdxCompile
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOldCompile = resolve
+        }),
+    )
+    .mockRejectedValueOnce(new Error('MDX context changed'))
+    .mockResolvedValue([])
+
+  setup('content/page.mdx')
+  await waitFor(() =>
+    expect(mdxCompile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lease: 'lease-before-save',
+        source: '# original',
+      }),
+    ),
+  )
+  await typeInto('# saved')
+  await typeInto('# interim')
+  await typeInto('# saved')
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith({
+      remote: 'syv-ai/site',
+      path: 'content/page.mdx',
+      text: '# saved',
+    }),
+  )
+  await waitFor(() => expect(mdxAcquire).toHaveBeenCalledTimes(3))
+  await waitFor(() =>
+    expect(mdxCompile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lease: 'lease-after-refresh',
+        source: '# saved',
+      }),
+    ),
+  )
+
+  await act(async () => resolveOldCompile([{ message: 'stale result', line: 1, column: 1 }]))
+  expect(screen.queryByText('1 MDX diagnostic')).not.toBeInTheDocument()
+  expect(await screen.findByText('MDX syntax is valid')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+})
+
+test('an external MDX reload renews ownership even when the source text is unchanged', async () => {
+  read.mockResolvedValue('# unchanged')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
+  mdxAcquire
+    .mockResolvedValueOnce({ lease: 'lease-before-reload' })
+    .mockResolvedValue({ lease: 'lease-after-reload' })
+  mdxCompile.mockResolvedValue([])
+  setup('content/page.mdx')
+  await waitFor(() =>
+    expect(mdxCompile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lease: 'lease-before-reload',
+        source: '# unchanged',
+      }),
+    ),
+  )
+
+  act(() =>
+    lastStore.set(snapshotAtom, {
+      ...emptyVaultSnapshot(),
+      files: [{ path: 'content/page.mdx', updatedAt: '2026-10-24T10:00:00Z' }],
+    }),
+  )
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+  await waitFor(() =>
+    expect(mdxCompile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lease: 'lease-after-reload',
+        source: '# unchanged',
+      }),
+    ),
+  )
+  expect(screen.getByText('MDX syntax is valid')).toBeInTheDocument()
+})
+
 test('MDX trust can be revoked from a source view', async () => {
   read.mockResolvedValue('# source')
   historyList.mockResolvedValue([])

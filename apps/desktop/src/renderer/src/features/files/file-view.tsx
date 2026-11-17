@@ -148,6 +148,7 @@ function TextEditor({
   focused,
   mdxTrustContext,
   mdxTrusted,
+  sourceRevision,
 }: {
   path: string
   text: string
@@ -159,6 +160,7 @@ function TextEditor({
   focused: boolean
   mdxTrustContext: string | null
   mdxTrusted: boolean
+  sourceRevision: number
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -186,6 +188,7 @@ function TextEditor({
     context: mdxTrustContext,
     trusted: mdxTrusted,
     visible,
+    sourceRevision,
   })
   const mdxSourceChanged = mdx.sourceChanged
   const visibility = useRef(visible)
@@ -467,6 +470,7 @@ function TextFileView({
   const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const mtime = useAtomValue(snapshotAtom).files.find((file) => file.path === path)?.updatedAt
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
+  const [sourceRevision, setSourceRevision] = useState(0)
   const [attempt, setAttempt] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [vimMode, setVimMode] = useState('')
@@ -478,6 +482,7 @@ function TextFileView({
     setMdxTrust({ context, trusted })
   }, [])
   const writeGeneration = useRef(0)
+  const observedFile = useRef({ remote, path, mtime })
 
   useEffect(() => {
     if (remote === null) return
@@ -485,7 +490,11 @@ function TextFileView({
     setLoad({ kind: 'loading' })
     trpc.notes.read
       .query({ remote, path })
-      .then((text) => live && setLoad({ kind: 'ready', text }))
+      .then((text) => {
+        if (!live) return
+        setLoad({ kind: 'ready', text })
+        setSourceRevision((revision) => revision + 1)
+      })
       .catch(
         (err: unknown) =>
           live &&
@@ -503,7 +512,15 @@ function TextFileView({
   // whether its pending edits keep it out.
   const ready = load.kind === 'ready'
   useEffect(() => {
-    if (!ready || remote === null || mtime === undefined) return
+    const previous = observedFile.current
+    observedFile.current = { remote, path, mtime }
+    if (
+      !ready ||
+      remote === null ||
+      mtime === undefined ||
+      (previous.remote === remote && previous.path === path && previous.mtime === mtime)
+    )
+      return
     let live = true
     const generation = writeGeneration.current
     trpc.notes.read
@@ -512,9 +529,12 @@ function TextFileView({
         (text) =>
           live &&
           generation === writeGeneration.current &&
-          setLoad((current) =>
-            current.kind === 'ready' && current.text === text ? current : { kind: 'ready', text },
-          ),
+          (() => {
+            setLoad((current) =>
+              current.kind === 'ready' && current.text === text ? current : { kind: 'ready', text },
+            )
+            setSourceRevision((revision) => revision + 1)
+          })(),
       )
       .catch(() => undefined)
     return () => {
@@ -559,6 +579,7 @@ function TextFileView({
             // A read begun before this write cannot replace its durable result.
             writeGeneration.current++
             setLoad({ kind: 'ready', text })
+            setSourceRevision((revision) => revision + 1)
           }}
           onSaveState={setSaveState}
           vimEnabled={vimEnabled}
@@ -567,6 +588,7 @@ function TextFileView({
           focused={focused}
           mdxTrustContext={mdxTrust.context}
           mdxTrusted={mdxTrust.trusted}
+          sourceRevision={sourceRevision}
         />
       )}
     </div>
