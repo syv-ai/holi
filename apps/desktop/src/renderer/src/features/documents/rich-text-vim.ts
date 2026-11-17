@@ -2,7 +2,7 @@ import { Extension } from '@tiptap/react'
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import type { EditorState } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
-import { undo, redo } from '@tiptap/pm/history'
+import { closeHistory, undo, redo } from '@tiptap/pm/history'
 import { requestHostHints } from '@/lib/host-hints'
 import { clearExtraSelections } from './multi-cursor'
 
@@ -26,6 +26,9 @@ type VimState = {
   count: number
   operatorCount: number
   visualAnchor: number | null
+  visualCursor: number | null
+  visualLinewise: boolean
+  operatorAnchor: number | null
   register: { content: import('@tiptap/pm/model').Slice; linewise: boolean } | null
 }
 const KEY = new PluginKey<VimState>('richTextVim')
@@ -37,6 +40,9 @@ const EMPTY: VimState = {
   count: 0,
   operatorCount: 1,
   visualAnchor: null,
+  visualCursor: null,
+  visualLinewise: false,
+  operatorAnchor: null,
   register: null,
 }
 const WORD = /^[\p{L}\p{N}_][\p{L}\p{N}\p{M}_]*$/u
@@ -126,19 +132,68 @@ function containerAt(state: EditorState, pos: number, names: string[]) {
   return null
 }
 
+function structurallyContained(state: EditorState, pos: number) {
+  let contained = false
+  state.doc.descendants((node, start) => {
+    if (
+      ['tableCell', 'tableHeader', 'listItem', 'taskItem'].includes(node.type.name) &&
+      pos >= start &&
+      pos <= start + node.nodeSize
+    )
+      contained = true
+  })
+  return contained
+}
+
 function safeRange(state: EditorState, from: number, to: number) {
   const names = ['tableCell', 'tableHeader', 'listItem', 'taskItem']
-  return names.every((name) => {
-    const left = containerAt(state, from, [name])
-    const right = containerAt(state, to, [name])
-    return left?.pos === right?.pos
+  const touched = blocks(state).filter((block) => block.from <= to && block.to >= from)
+  const origin = containerAt(state, from, names)
+  return touched.every((block) => {
+    const nested = containerAt(state, block.from, names)
+    return origin?.pos === nested?.pos && origin?.type === nested?.type
   })
+}
+
+function visualRange(state: EditorState, anchor: number, head: number, linewise: boolean) {
+  if (!linewise) {
+    const low = Math.min(anchor, head)
+    const high = Math.max(anchor, head)
+    const line = lineAt(state, high)
+    const end = line
+      ? graphemeBoundaries(state, line.from, line.to).find((at) => at > high)
+      : undefined
+    return {
+      anchor: head >= anchor ? anchor : (end ?? high),
+      head: head >= anchor ? (end ?? high) : low,
+      from: low,
+      to: end ?? high,
+    }
+  }
+  const first = lineAt(state, Math.min(anchor, head))
+  const last = lineAt(state, Math.max(anchor, head))
+  if (!first || !last) return null
+  const from = first.block.from
+  const to = last.block.to
+  return { anchor: head >= anchor ? from : to, head: head >= anchor ? to : from, from, to }
+}
+
+function setVisualSelection(view: EditorView, anchor: number, head: number, linewise: boolean) {
+  const range = visualRange(view.state, anchor, head, linewise)
+  if (!range) return false
+  view.dispatch(
+    view.state.tr
+      .setSelection(TextSelection.create(view.state.doc, range.anchor, range.head))
+      .setMeta('vimSelection', true)
+      .setMeta('addToHistory', false),
+  )
+  return true
 }
 
 function select(view: EditorView, pos: number) {
   const safe = Math.max(0, Math.min(pos, view.state.doc.content.size))
   const tr = view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(safe), 1))
-  view.dispatch(tr.setMeta('addToHistory', false).scrollIntoView())
+  view.dispatch(tr.setMeta('vimSelection', true).setMeta('addToHistory', false).scrollIntoView())
 }
 
 function horizontal(view: EditorView, direction: -1 | 1) {
@@ -398,6 +453,9 @@ function handleNormal(
         count: 0,
         operatorCount: 1,
         visualAnchor: null,
+        visualCursor: null,
+        visualLinewise: false,
+        operatorAnchor: null,
       }).setMeta('addToHistory', false)
       view.dispatch(tr)
       event.preventDefault()
@@ -442,21 +500,17 @@ function handleNormal(
       key === '^' ||
       key === '$')
   ) {
+    select(view, current.visualCursor ?? current.visualAnchor)
     if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
     else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
     else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
     else lineMotion(view, key)
-    const anchor = view.state.doc.resolve(
-      Math.min(current.visualAnchor, view.state.doc.content.size),
-    )
+    const anchor = Math.min(current.visualAnchor, view.state.doc.content.size)
     const head = view.state.selection.head
-    const from = Math.min(anchor.pos, head)
-    const to = Math.max(anchor.pos, head)
     view.dispatch(
-      view.state.tr
-        .setSelection(TextSelection.create(view.state.doc, from, to))
-        .setMeta('addToHistory', false),
+      view.state.tr.setMeta(KEY, { ...current, visualCursor: head }).setMeta('addToHistory', false),
     )
+    setVisualSelection(view, anchor, head, current.visualLinewise)
     event.preventDefault()
     return true
   }
@@ -476,20 +530,23 @@ function handleNormal(
   }
   if (key === 'v' || key === 'V') {
     const anchor = view.state.selection.head
-    update({ visualAnchor: anchor, operator: null, count: 0 })
-    if (key === 'V') {
+    let visualHead = anchor
+    if (key === 'V' && current.count > 1) {
+      const all = blocks(view.state)
       const line = lineAt(view.state, anchor)
-      if (line) {
-        const from = line.block.from - 1
-        const to = line.block.to + 1
-        const selection = TextSelection.create(
-          view.state.doc,
-          from,
-          Math.min(to, view.state.doc.content.size),
-        )
-        view.dispatch(view.state.tr.setSelection(selection).setMeta('addToHistory', false))
-      }
+      const index = all.findIndex((block) => block.from === line?.block.from)
+      const target = all[Math.min(all.length - 1, index + current.count - 1)]
+      if (target) visualHead = target.from
     }
+    update({
+      visualAnchor: anchor,
+      visualCursor: visualHead,
+      visualLinewise: key === 'V',
+      operator: null,
+      operatorAnchor: null,
+      count: 0,
+    })
+    setVisualSelection(view, anchor, visualHead, key === 'V')
     event.preventDefault()
     return true
   }
@@ -515,7 +572,7 @@ function handleNormal(
           register: { content, linewise: true },
         })
         if (operator !== 'y' && settings.editable()) {
-          const tr = view.state.tr.delete(from, to)
+          const tr = closeHistory(view.state.tr).delete(from, to)
           view.dispatch(
             tr.setSelection(
               TextSelection.near(tr.doc.resolve(Math.min(from, tr.doc.content.size)), 1),
@@ -539,7 +596,18 @@ function handleNormal(
       key === '^' ||
       key === '$'
     ) {
-      const origin = view.state.selection.head
+      const origin = current.operatorAnchor ?? view.state.selection.head
+      const operatorLine = lineAt(view.state, origin)
+      if (
+        (key === 'j' || key === 'k') &&
+        operatorLine &&
+        structurallyContained(view.state, operatorLine.block.from)
+      ) {
+        update({ operator: null, operatorAnchor: null, count: 0, operatorCount: 1 })
+        settings.onFeedback?.('Vim motion crosses a list or table; no text was changed')
+        event.preventDefault()
+        return true
+      }
       const range = operatorRange(
         view,
         origin,
@@ -549,44 +617,84 @@ function handleNormal(
       const from = range.from
       const to = key === 'e' || key === 'l' || key === '$' ? range.to + 1 : range.to
       const safeTo = Math.min(view.state.doc.content.size, Math.max(from, to))
-      const allowed = safeRange(view.state, from, safeTo)
+      const sourceBlock = lineAt(view.state, origin)?.block
+      const destinationBlock = lineAt(view.state, range.to)?.block
+      const structuralCrossing =
+        (key === 'j' || key === 'k') &&
+        sourceBlock !== undefined &&
+        destinationBlock !== undefined &&
+        containerAt(view.state, sourceBlock.from, [
+          'tableCell',
+          'tableHeader',
+          'listItem',
+          'taskItem',
+        ])?.pos !==
+          containerAt(view.state, destinationBlock.from, [
+            'tableCell',
+            'tableHeader',
+            'listItem',
+            'taskItem',
+          ])?.pos
+      const allowed = !structuralCrossing && safeRange(view.state, from, safeTo)
       if (!allowed) {
-        update({ operator: null, count: 0, operatorCount: 1 })
+        update({ operator: null, operatorAnchor: null, count: 0, operatorCount: 1 })
         settings.onFeedback?.('Vim motion crosses a list or table; no text was changed')
         event.preventDefault()
         return true
       }
       const content = view.state.doc.slice(from, safeTo)
-      update({ operator: null, count: 0, operatorCount: 1, register: { content, linewise: false } })
+      update({
+        operator: null,
+        operatorAnchor: null,
+        count: 0,
+        operatorCount: 1,
+        register: { content, linewise: false },
+      })
       if (operator !== 'y' && settings.editable() && safeTo > from) {
-        const tr = view.state.tr.delete(from, safeTo)
+        const tr = closeHistory(view.state.tr).delete(from, safeTo)
         view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
         if (operator === 'c') setMode(view, 'insert', true)
       }
       event.preventDefault()
       return true
     }
-    update({ operator: null, count: 0 })
+    update({ operator: null, operatorAnchor: null, count: 0 })
   }
   if (current.visualAnchor !== null && (key === 'd' || key === 'c' || key === 'y')) {
-    const { from, to } = view.state.selection
-    const content = view.state.doc.slice(from, to)
-    update({ visualAnchor: null, register: { content, linewise: false } })
-    if (key !== 'y' && settings.editable() && to > from) {
-      if (!safeRange(view.state, from, to)) {
-        settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
-        event.preventDefault()
-        return true
-      }
-      const tr = view.state.tr.delete(from, to)
-      view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
+    const range = visualRange(
+      view.state,
+      current.visualAnchor,
+      view.state.selection.head,
+      current.visualLinewise,
+    )
+    if (!range || (key !== 'y' && !safeRange(view.state, range.from, range.to))) {
+      update({ visualAnchor: null, visualCursor: null, visualLinewise: false, count: 0 })
+      settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
+      event.preventDefault()
+      return true
+    }
+    const content = view.state.doc.slice(range.from, range.to)
+    update({
+      visualAnchor: null,
+      visualCursor: null,
+      visualLinewise: false,
+      register: { content, linewise: current.visualLinewise },
+    })
+    if (key !== 'y' && settings.editable() && range.to > range.from) {
+      const tr = closeHistory(view.state.tr).delete(range.from, range.to)
+      view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(range.from), 1)))
       if (key === 'c') setMode(view, 'insert', true)
     }
     event.preventDefault()
     return true
   }
   if (key === 'd' || key === 'c' || key === 'y') {
-    update({ operator: key, operatorCount: Math.max(1, current.count), count: 0 })
+    update({
+      operator: key,
+      operatorAnchor: view.state.selection.head,
+      operatorCount: Math.max(1, current.count),
+      count: 0,
+    })
     event.preventDefault()
     return true
   }
@@ -725,19 +833,71 @@ export const RichTextVim = Extension.create<VimSettings>({
           apply(transaction, value) {
             const meta = transaction.getMeta(KEY) as VimState | undefined
             if (meta) return meta
-            if (!transaction.docChanged) return value
-            if (value.visualAnchor !== null) {
-              const mapped = transaction.mapping.mapResult(value.visualAnchor, -1)
-              if (mapped.deleted || mapped.pos > transaction.doc.content.size)
-                return { ...value, visualAnchor: null, operator: null, count: 0, operatorCount: 1 }
-              try {
-                transaction.doc.resolve(mapped.pos)
-                return { ...value, visualAnchor: mapped.pos }
-              } catch {
-                return { ...value, visualAnchor: null, operator: null, count: 0, operatorCount: 1 }
+            if (
+              transaction.selectionSet &&
+              !transaction.getMeta('vimSelection') &&
+              (value.visualAnchor !== null || value.operator !== null)
+            ) {
+              return {
+                ...value,
+                visualAnchor: null,
+                visualCursor: null,
+                visualLinewise: false,
+                operator: null,
+                operatorAnchor: null,
+                prefix: false,
+                count: 0,
+                operatorCount: 1,
               }
             }
-            return value
+            if (!transaction.docChanged) return value
+            const mapPosition = (position: number | null) => {
+              if (position === null) return { position: null, invalid: false }
+              const mapped = transaction.mapping.mapResult(position, -1)
+              return {
+                position: mapped.pos,
+                invalid: mapped.deleted || mapped.pos > transaction.doc.content.size,
+              }
+            }
+            const visual = mapPosition(value.visualAnchor)
+            const cursor = mapPosition(value.visualCursor)
+            const operator = mapPosition(value.operatorAnchor)
+            if (visual.invalid || cursor.invalid || operator.invalid) {
+              return {
+                ...value,
+                visualAnchor: null,
+                visualCursor: null,
+                visualLinewise: false,
+                operator: null,
+                operatorAnchor: null,
+                prefix: false,
+                count: 0,
+                operatorCount: 1,
+              }
+            }
+            try {
+              if (visual.position !== null) transaction.doc.resolve(visual.position)
+              if (cursor.position !== null) transaction.doc.resolve(cursor.position)
+              if (operator.position !== null) transaction.doc.resolve(operator.position)
+              return {
+                ...value,
+                visualAnchor: visual.position,
+                visualCursor: cursor.position,
+                operatorAnchor: operator.position,
+              }
+            } catch {
+              return {
+                ...value,
+                visualAnchor: null,
+                visualCursor: null,
+                visualLinewise: false,
+                operator: null,
+                operatorAnchor: null,
+                prefix: false,
+                count: 0,
+                operatorCount: 1,
+              }
+            }
           },
         },
         view(view) {
@@ -838,6 +998,9 @@ export function configureRichTextVim(
         count: 0,
         operatorCount: 1,
         visualAnchor: null,
+        visualCursor: null,
+        visualLinewise: false,
+        operatorAnchor: null,
         register: current.register,
       })
       .setMeta('addToHistory', false),
