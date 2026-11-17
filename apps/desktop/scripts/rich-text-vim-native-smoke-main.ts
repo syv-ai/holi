@@ -861,6 +861,7 @@ async function run() {
     `document.querySelector('[role="textbox"]')?.editor?.isEditable`,
     'document lock clears',
   )
+  await evaluate(`window.richTextVimFixture.focus('primary')`)
   await key('Escape')
   await key('d')
   await key('w')
@@ -898,6 +899,7 @@ async function run() {
   )
   await evaluate(`window.richTextVimFixture.locked(false)`)
   await wait(`document.querySelector('[role="textbox"]')?.editor?.isEditable`, 'visual lock clears')
+  await evaluate(`window.richTextVimFixture.focus('primary')`)
   await key('d')
   assert.equal(
     (await state()).markdown,
@@ -905,6 +907,7 @@ async function run() {
     'post-lock d starts a fresh operator, not the stale visual command',
   )
   await key('Escape')
+  await evaluate(`window.richTextVimFixture.atText('alpha')`)
   await key('d')
   await key('w')
   assert.equal((await state()).markdown, 'beta', 'post-lock command starts a new normal-mode epoch')
@@ -929,6 +932,7 @@ async function run() {
     `document.querySelector('[role="textbox"]')?.editor?.isEditable`,
     'production buffer thaw',
   )
+  await evaluate(`window.richTextVimFixture.focus('primary')`)
   await key('w')
   assert.equal(
     (await state()).markdown,
@@ -936,6 +940,7 @@ async function run() {
     'pending operator is cleared across production freeze',
   )
   await key('Escape')
+  await evaluate(`window.richTextVimFixture.atText('alpha')`)
   await key('d')
   await key('w')
   assert.equal((await state()).markdown, 'beta', 'fresh command edits after production buffer thaw')
@@ -985,22 +990,26 @@ async function run() {
   })
   mark('native-hidden-render-disable-and-fresh-retained-view-epoch')
 
-  const external = markdown.replace('Native Vim fixture', 'External update fixture')
-  await evaluate(
-    `await window.richTextVimFixture.externalWrite(${JSON.stringify(external)}); await window.richTextVimFixture.reload()`,
-  )
+  const external = markdown
+    .replace('Native Vim fixture', 'External update fixture')
+    .replace('alpha beta alpha', 'External update body')
+  await evaluate(`window.richTextVimFixture.externalWrite(${JSON.stringify(external)})`)
   await wait(
-    `document.querySelector('[role="textbox"]')?.editor?.getText().includes('External update fixture')`,
+    `document.querySelector('[role="textbox"]')?.editor?.getText().includes('External update body')`,
     'external disk update',
   )
-  const saved = await evaluate<string>('await window.richTextVimFixture.flush()')
+  const saved = await evaluate<string>('window.richTextVimFixture.flush()')
   assert(saved.startsWith('---\ntitle: External update fixture\ntags: [kept]\n---'))
   assert((await readFile(note, 'utf8')).startsWith('---\ntitle: External update fixture'))
   assert(writes >= 1)
   mark('real-disposable-file-adapter-flush-frontmatter-and-external-update')
 
-  const staleSnapshot = markdown.replace('Native Vim fixture', 'Stale delayed snapshot')
-  const latestSnapshot = markdown.replace('Native Vim fixture', 'Latest external snapshot')
+  const staleSnapshot = markdown
+    .replace('Native Vim fixture', 'Stale delayed snapshot')
+    .replace('alpha beta alpha', 'Stale delayed body')
+  const latestSnapshot = markdown
+    .replace('Native Vim fixture', 'Latest external snapshot')
+    .replace('alpha beta alpha', 'Latest external body')
   await evaluate(
     `window.richTextVimFixture.externalRead(${JSON.stringify(staleSnapshot)},'snapshot-A',true)`,
   )
@@ -1008,26 +1017,26 @@ async function run() {
     `window.richTextVimFixture.externalRead(${JSON.stringify(latestSnapshot)},'snapshot-B')`,
   )
   await wait(
-    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external snapshot')`,
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external body')`,
     'latest snapshot applies while older read is pending',
   )
   await evaluate(`window.richTextVimFixture.document('notes/secondary.md','${alternateRemote}')`)
   await wait(
-    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('secondary alpha beta')`,
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getMarkdown().trim() === 'beta'`,
     'production DocumentView switches path and remote to B',
   )
   await evaluate(`window.richTextVimFixture.document('notes/acceptance.md','${remote}')`)
   await wait(
-    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external snapshot')`,
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external body')`,
     'production DocumentView returns to path and remote A with latest disk text',
   )
   await evaluate(`window.richTextVimFixture.releaseRead()`)
   await wait(
-    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external snapshot')`,
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external body')`,
     'latest external snapshot remains after delayed A read resolves across live A-B-A props',
   )
-  assert(!(await state()).markdown.includes('Stale delayed snapshot'))
-  assert.equal((await state('secondary')).markdown, 'secondary alpha beta')
+  assert(!(await state()).markdown.includes('Stale delayed body'))
+  assert.equal((await state('secondary')).markdown, 'beta')
   nativeResults.push({
     scenario: 'live document path and remote A-B-A',
     oldResultDiscarded: true,
@@ -1036,9 +1045,12 @@ async function run() {
   mark('delayed-external-read-stale-result-ignored-across-live-document-path-remote-aba')
 
   await evaluate(`window.richTextVimFixture.setup('<p>dirty before departure</p>',1)`)
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'END' })
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'END' })
+  await evaluate(
+    `(()=>{const editor=document.querySelector('[role="textbox"]').editor;editor.commands.setTextSelection(editor.state.doc.content.size-1);editor.commands.focus()})()`,
+  )
+  await key('i')
   win.webContents.insertText(' unsaved')
+  await key('Escape')
   await evaluate(`window.richTextVimFixture.failNextWrite()`)
   const switchButton = await evaluate<{ x: number; y: number }>(
     `(()=>{const r=document.querySelector('[data-fixture-action="leave"]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,

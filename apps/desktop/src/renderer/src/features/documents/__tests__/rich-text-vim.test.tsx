@@ -80,6 +80,34 @@ function openTable(onFeedback?: (message: string) => void) {
 }
 
 describe('rich-text Vim extension', () => {
+  it('cancels pending Vim commands before an Escape-owned overlay', () => {
+    const onEscapeOwned = vi.fn()
+    editor = new Editor({
+      extensions: [
+        StarterKit,
+        RichTextVim.configure({
+          enabled: false,
+          editable: () => editor?.isEditable ?? false,
+          escapeOwned: () => true,
+          onEscapeOwned,
+        }),
+      ],
+      content: '<p>alpha beta</p>',
+    })
+    const ed = own(editor)
+    configureRichTextVim(ed.view, true, true, () => ed.isEditable)
+
+    key(ed, 'd')
+    expect(key(ed, 'Escape').defaultPrevented).toBe(true)
+    expect(onEscapeOwned).not.toHaveBeenCalled()
+    key(ed, 'w')
+    expect(text(ed)).toBe('alpha beta')
+
+    expect(key(ed, 'Escape').defaultPrevented).toBe(true)
+    expect(onEscapeOwned).toHaveBeenCalledOnce()
+    expect(text(ed)).toBe('alpha beta')
+  })
+
   it('applies exact operator and logical-line ranges', () => {
     const ed = open('<p>abcd</p>')
     ed.commands.setTextSelection(1)

@@ -314,7 +314,7 @@ function App() {
                     provider: 'claude',
                     sessionId: 'fixture-lock',
                     status: 'working',
-                    seenWorking: true,
+                    seenWorking: false,
                   },
                 }
               : {},
