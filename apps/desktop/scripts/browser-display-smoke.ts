@@ -52,7 +52,11 @@ async function run(): Promise<void> {
       stallRequested()
       return
     }
-    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy':
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'",
+    })
     response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body { color: CanvasText; background: Canvas; font: 16px sans-serif; }</style><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
       <main><h1>Browser page owned by vault ${request.url === '/b' ? 'B' : 'A'}</h1>
       <label>Search <input aria-label="Search" id="search"></label><button id="trusted-button">Submit</button><a id="trusted-link" href="#clicked">Trusted link</a>

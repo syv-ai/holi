@@ -28,6 +28,7 @@
       }
       return window.qaHintKeyUps
     })()`)
+    const routedBefore = sent.length
     const keyCode = key.length === 1 ? key.toLowerCase() : key
     const modifiers = [
       ...(options.shift ? ['shift'] : []),
@@ -36,6 +37,18 @@
     page.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
     if (key.length === 1) page.sendInputEvent({ type: 'char', keyCode: key, modifiers })
     page.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+    if (options.meta) {
+      await until(
+        () =>
+          sent
+            .slice(routedBefore)
+            .some(
+              (event) => event.name === 'key' && (event.payload as { key?: string }).key === key,
+            ),
+        `native shell shortcut ${key}`,
+      )
+      return
+    }
     await until(
       async () => (await pageEval<number>('window.qaHintKeyUps')) > before,
       `trusted hint key ${key}`,
@@ -46,8 +59,8 @@
   }
   const requestPageHints = async () => {
     page.focus()
-    await captureFrame(page)
     await pageEval(`document.querySelector('#search').focus()`)
+    await captureFrame(page)
     await pageNativePress('Escape')
     await pageNativePress('f')
   }
@@ -58,6 +71,8 @@
   let recordingHints = false
   let hintFrame = 0
   let hintRecordingError: unknown
+  let consecutiveCaptureFailures = 0
+  const captureWarnings: string[] = []
   let hintRecorder: Promise<void> | undefined
   const startHintRecording = () => {
     recordingHints = true
@@ -65,17 +80,22 @@
       while (recordingHints && hintFrame < 2400) {
         try {
           const image = await page.capturePage()
+          consecutiveCaptureFailures = 0
           if (!image.isEmpty())
             writeFileSync(
               join(hintFrames, `${String(hintFrame++).padStart(5, '0')}.png`),
               image.toPNG(),
             )
         } catch (error) {
-          const detachedCapture =
+          const missingFrame =
             error instanceof Error &&
-            error.name === 'UnknownVizError' &&
-            (page.isDestroyed() || win.contentView.children.length === 0)
-          if (!detachedCapture) hintRecordingError = error
+            (error.name === 'UnknownVizError' || error.message === 'UnknownVizError')
+          if (missingFrame && !page.isDestroyed() && ++consecutiveCaptureFailures <= 8) {
+            if (captureWarnings.length < 32) captureWarnings.push(error.message)
+            await wait(125)
+            continue
+          }
+          hintRecordingError = error
           break
         }
         await wait(125)
@@ -331,11 +351,20 @@
         hostTargets: hostLabels.map((item: any) => item.label),
         evidence: ['hints-page-light.png', 'hints-page-dark.png', 'hints-shell-light.png'],
         interactionFrames: hintFrame,
+        captureWarnings,
       },
       null,
       2,
     ),
   )
+  // Return the shared fixture to the default toolbar sequence's starting state.
+  await ui(
+    `document.documentElement.dataset.theme='light';document.documentElement.classList.remove('dark')`,
+  )
+  await invoke('A', 'open', { tab: 'same', url: `${url}/a` })
+  await until(() => page.getURL().endsWith('/a'), 'toolbar starting document restored')
+  await captureFrame(page)
+  await badge('insert')
 }
 
 async function pageLabelsFor(target: WebContentsView['webContents']): Promise<any[]> {
