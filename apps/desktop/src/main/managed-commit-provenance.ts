@@ -183,7 +183,7 @@ export function repositoryPublicationSnapshot(root: string): RepositoryPublicati
   }
 }
 
-export async function repositoryIdentity(
+async function repositoryIdentity(
   root: string,
   options: { createLifetime?: boolean } = {},
 ): Promise<

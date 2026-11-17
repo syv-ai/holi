@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import {
   createManagedCommitProvenance,
   ownedCommitOids,
-  repositoryIdentity,
+  repositoryPublicationSnapshot,
 } from '../src/main/managed-commit-provenance'
 import { openRepo } from '../src/main/git'
 import { cleanupFixtures, makeClone, makeRemote, plainGit } from './helpers/git-fixtures'
@@ -69,7 +69,8 @@ describe('managed commit provenance', () => {
         record: (capture, path, sha) => recorder.record(capture, path, sha),
       },
     }).commitAll('managed', ['note.md'])
-    const identity = await repositoryIdentity(root, { createLifetime: false })
+    const identity = repositoryPublicationSnapshot(root)!
+    expect(identity).not.toBeNull()
     expect(
       ownedCommitOids({ file, remote: 'owner/repo', identity, accountId: 31, oids: [oid!] }),
     ).toEqual(new Set([oid]))
@@ -78,7 +79,9 @@ describe('managed commit provenance', () => {
     ).toEqual(new Set())
 
     const fresh = await makeClone(await makeRemote())
-    const absentMarkerIdentity = await repositoryIdentity(fresh, { createLifetime: false })
+    await plainGit(fresh, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])
+    const absentMarkerIdentity = repositoryPublicationSnapshot(fresh)!
+    expect(absentMarkerIdentity).not.toBeNull()
     expect(absentMarkerIdentity.lifetime).toBeNull()
     expect(
       await readFile(join(absentMarkerIdentity.gitDir, 'holi-managed-provenance-id')).catch(
