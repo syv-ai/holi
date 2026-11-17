@@ -123,6 +123,7 @@ interface Tab {
   hintRequestOrigin: string | null
   hintRequestCapture: number | null
   hintCaptureOwner: { capture: number; owner: PageHintOwner } | null
+  hintRetiredCapture: { capture: number; owner: PageHintOwner } | null
   hintPendingKeys: Map<
     number,
     {
@@ -400,6 +401,7 @@ export function createPages(deps: PagesDeps): Pages & {
             tab.hintPendingKeys.clear()
             tab.hintRequestCapture = Number.isSafeInteger(value.capture) ? value.capture! : null
             tab.hintCaptureOwner = null
+            tab.hintRetiredCapture = null
             if (tab.hintRequestCapture !== null) tab.hintPendingKeys.set(tab.hintRequestCapture, [])
             tab.hintOwner = null
             tab.hintClosed = false
@@ -420,6 +422,7 @@ export function createPages(deps: PagesDeps): Pages & {
           ) {
             tab.hintPendingKeys.delete(value.capture)
             tab.hintCaptureOwner = null
+            tab.hintRetiredCapture = null
             const origin = tab.hintRequestOrigin
             if (origin !== null) {
               emitHint(
@@ -443,6 +446,25 @@ export function createPages(deps: PagesDeps): Pages & {
             tab.hintPendingOwner = null
             tab.hintClosed = true
             tab.hintSnapshot++
+          } else if (
+            value.type === 'revoke' &&
+            value.capture !== undefined &&
+            value.capture === tab.hintRetiredCapture?.capture
+          ) {
+            const retired = tab.hintRetiredCapture
+            tab.hintRetiredCapture = null
+            tab.hintCaptureOwner = null
+            const { type: _type, ...retiredOwner } = retired.owner
+            emitHint(
+              { ...retiredOwner, type: 'cancel' },
+              () =>
+                isPresented(tab) &&
+                tab.vimNonce === nonce &&
+                tab.attachmentId === attachment &&
+                tab.vimGeneration === generation &&
+                tab.hintRequest === retired.owner.request &&
+                tab.hintRequestOrigin === retired.owner.origin,
+            )
           } else if (value.type === 'revoke' && value.owner && hintOwns(tab, value.owner)) {
             revokeHints(tab)
           } else if (value.type === 'key' && value.capture !== undefined) {
@@ -476,6 +498,7 @@ export function createPages(deps: PagesDeps): Pages & {
     tab.hintRequestOrigin = null
     tab.hintRequestCapture = null
     tab.hintCaptureOwner = null
+    tab.hintRetiredCapture = null
     tab.hintPendingKeys.clear()
     tab.hintClosed = true
     tab.hintGeometry++
@@ -510,6 +533,7 @@ export function createPages(deps: PagesDeps): Pages & {
       tab.hintRevision = 0
       tab.hintClosed = false
       tab.hintRequestOrigin = null
+      tab.hintRetiredCapture = null
       tab.vimRevision++
       reportVim(tab)
     } catch {
@@ -704,6 +728,16 @@ export function createPages(deps: PagesDeps): Pages & {
     const owner = tab.hintOwner ?? tab.hintPendingOwner
     tab.hintOwner = null
     tab.hintPendingOwner = null
+    if (tab.hintRequestCapture !== null && tab.hintRequestOrigin !== null) {
+      const captureOwner = tab.hintCaptureOwner
+      const retiredOwner = captureOwner?.owner ?? owner
+      if (retiredOwner) {
+        tab.hintRetiredCapture = {
+          capture: tab.hintRequestCapture,
+          owner: retiredOwner,
+        }
+      }
+    }
     tab.hintCaptureOwner = null
     tab.hintRequestCapture = null
     tab.hintPendingKeys.clear()
@@ -1076,6 +1110,7 @@ export function createPages(deps: PagesDeps): Pages & {
       hintRequestOrigin: null,
       hintRequestCapture: null,
       hintCaptureOwner: null,
+      hintRetiredCapture: null,
       hintPendingKeys: new Map(),
       hintRevision: 0,
       hintSnapshot: 0,
@@ -1313,6 +1348,7 @@ export function createPages(deps: PagesDeps): Pages & {
         tab.hintRevision = 0
         tab.hintClosed = false
         tab.hintRequestOrigin = null
+        tab.hintRetiredCapture = null
         tab.hintPendingOwner = null
         tab.vimLastSnapshot = null
         tab.vimPoll = setInterval(() => reportVim(tab), 250)
