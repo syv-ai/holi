@@ -37,9 +37,11 @@ const port = async () => {
   )
   return value
 }
-const debugPort = await port()
-const pluginPort = await port()
+let debugPort
+let pluginPort
 try {
+  debugPort = await port()
+  pluginPort = await port()
   const plugin = join(root, 'plugin')
   await mkdir(plugin)
   await copyFile(
@@ -53,6 +55,11 @@ try {
       name: 'Community hint fixture',
       version: '0.1.0',
       opens: ['slides.md'],
+      setup: [
+        process.execPath,
+        '-e',
+        "require('node:fs').writeFileSync('.hint-smoke-setup', 'setup-complete')",
+      ],
       serve: [process.execPath, 'serve.cjs', '{file}', '--port', '{port}'],
     }),
   )
@@ -128,7 +135,6 @@ try {
     HOME: join(root, 'home'),
     HOLI_510_ROOT: root,
     HOLI_510_SERVER_PORT: String(pluginPort),
-    HOLI_BRIDGE_SCRIPT: join(desktop, 'src/plugins/community/shared/hint-bridge.js'),
   })
   delete env.ELECTRON_RUN_AS_NODE
   child = spawn(electron, [root, `--remote-debugging-port=${debugPort}`], {
@@ -293,9 +299,10 @@ try {
   }
   await start()
   const first = await hints()
-  assert(
+  assert.equal(
     first.some((hint) => hint.target === 'Host action'),
-    'shared host target absent',
+    false,
+    'guest-started labels must exclude host chrome',
   )
   assert(
     first.some((hint) => hint.target === 'Ordinary typing') === false,
@@ -379,7 +386,37 @@ try {
     if (pid > 0) {
       try {
         process.kill(pid, 0)
-        throw new Error(`owned fixture server still alive: ${pid}`)
+        const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+          encoding: 'utf8',
+        }).trim()
+        const cwd = execFileSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {
+          encoding: 'utf8',
+        })
+          .split('\n')
+          .find((line) => line.startsWith('n'))
+          ?.slice(1)
+        const marker = join(root, 'vault/.hint-smoke-pid')
+        const exact =
+          command.includes(join(root, 'plugin/serve.cjs')) &&
+          cwd === join(root, 'plugin') &&
+          (await readFile(marker, 'utf8')) === String(pid)
+        if (!exact) throw new Error(`refusing to signal unverified fixture PID ${pid}`)
+        process.kill(pid, 'SIGTERM')
+        for (let attempt = 0; attempt < 40; attempt++) {
+          try {
+            process.kill(pid, 0)
+          } catch (error) {
+            if (error.code === 'ESRCH') break
+            throw error
+          }
+          await sleep(100)
+        }
+        try {
+          process.kill(pid, 0)
+          process.kill(pid, 'SIGKILL')
+        } catch (error) {
+          if (error.code !== 'ESRCH') throw error
+        }
       } catch (error) {
         if (error.code !== 'ESRCH') throw error
       }

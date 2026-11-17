@@ -1,11 +1,12 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInstallStore } from '../src/plugins/community/main/store'
 import { createConsentStore } from '../src/plugins/community/main/consent'
 import { createSupervisor } from '../src/plugins/community/main/supervisor'
 import { createChecks } from '../src/plugins/community/main/checks'
 import { communityCapabilities } from '../src/plugins/community/main/capabilities'
+import bridgeAsset from '../src/plugins/community/shared/hint-bridge.js?asset'
 import type { CapabilityContext } from '../src/main/capabilities/registry'
 
 const root = process.env.HOLI_510_ROOT!
@@ -60,7 +61,7 @@ async function main() {
     token: () => null,
     firstPartyIds: () => ['agent', 'pdf'],
     emit: () => undefined,
-    bridgeScript: () => process.env.HOLI_BRIDGE_SCRIPT ?? null,
+    bridgeScript: () => process.env.HOLI_BRIDGE_SCRIPT ?? bridgeAsset,
     scratch: join(userData, 'plugins/.staging'),
     checks,
     mutate: async <T>(work: () => Promise<T>) => work(),
@@ -80,6 +81,8 @@ async function main() {
   await call('community.consent', { id: 'smoke-plugin', commit: installed.source.commit })
   if (!(await call('community.setup', { id: 'smoke-plugin' })))
     throw new Error('fixture setup failed')
+  if ((await readFile(join(root, 'plugin/.hint-smoke-setup'), 'utf8')) !== 'setup-complete')
+    throw new Error('fixture setup marker absent')
   await call('community.pin', { id: 'smoke-plugin' })
   row = ((await call('community.list')) as { status: string }[])[0]
   if (row?.status !== 'ready') throw new Error('fixture did not become ready')

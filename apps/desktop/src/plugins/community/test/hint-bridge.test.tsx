@@ -12,6 +12,18 @@ function setup() {
   document.body.innerHTML =
     '<button>Save</button><a href="/next">Next</a><summary>Details</summary>'
   post = vi.spyOn(window, 'postMessage').mockImplementation(() => {})
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    value: vi.fn(
+      (x: number, y: number) =>
+        [...document.querySelectorAll('button,a,summary')].find((element) => {
+          const bounds = element.getBoundingClientRect()
+          return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom
+        }) ?? null,
+    ),
+  })
+  for (const [index, element] of [...document.querySelectorAll('button,a,summary')].entries())
+    rect(element, 10 + index * 80)
   window.eval(script)
 }
 function host(
@@ -98,7 +110,14 @@ describe('community frame hint protocol', () => {
 
   it('pins parent origin and nonce, snapshots supported targets, and ignores forged sessions', () => {
     setup()
+    const foreignFrame = document.createElement('iframe')
+    document.body.append(foreignFrame)
     host({ type: 'holi-hints:init', nonce, enabled: true }, null)
+    host(
+      { type: 'holi-hints:init', nonce, enabled: true },
+      foreignFrame.contentWindow,
+      'https://host.example',
+    )
     host({ type: 'holi-hints:init', nonce, enabled: true }, window, 'https://attacker.example')
     expect(sent('holi-hints:snapshot')).toHaveLength(0)
     init()
