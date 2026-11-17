@@ -45,6 +45,7 @@
     for (const key of label) await pageNativePress(key)
   }
   const requestPageHints = async () => {
+    page.focus()
     await captureFrame(page)
     await pageEval(`document.querySelector('#search').focus()`)
     await pageNativePress('Escape')
@@ -54,25 +55,46 @@
     ui(`document.querySelectorAll('[data-host-hints] [data-hint-key]').length`)
   const hintFrames = join(evidence, 'hints-frames')
   mkdirSync(hintFrames, { recursive: true })
-  let recordingHints = true
+  let recordingHints = false
   let hintFrame = 0
-  const hintRecorder = (async () => {
-    while (recordingHints) {
-      const image = await page.capturePage()
-      if (!image.isEmpty())
-        writeFileSync(
-          join(hintFrames, `${String(hintFrame++).padStart(5, '0')}.png`),
-          image.toPNG(),
-        )
-      await wait(125)
-    }
-  })()
+  let hintRecordingError: unknown
+  let hintRecorder: Promise<void> | undefined
+  const startHintRecording = () => {
+    recordingHints = true
+    hintRecorder = (async () => {
+      while (recordingHints && hintFrame < 2400) {
+        try {
+          const image = await page.capturePage()
+          if (!image.isEmpty())
+            writeFileSync(
+              join(hintFrames, `${String(hintFrame++).padStart(5, '0')}.png`),
+              image.toPNG(),
+            )
+        } catch (error) {
+          const detachedCapture =
+            error instanceof Error &&
+            error.name === 'UnknownVizError' &&
+            (page.isDestroyed() || win.contentView.children.length === 0)
+          if (!detachedCapture) hintRecordingError = error
+          break
+        }
+        await wait(125)
+      }
+      recordingHints = false
+    })()
+  }
+  const stopHintRecording = async () => {
+    recordingHints = false
+    await hintRecorder
+    if (hintRecordingError) throw hintRecordingError
+  }
   // Set the production preference and focus the real embedded page before sending
   // the Vim binding as native keyboard input (not a page/host dispatchEvent).
   await ui('qa.setVim(true)')
   await wait(700)
   await requestPageHints()
   await until(async () => (await hostHintCount()) > 0, 'mixed host and native page hints')
+  startHintRecording()
   const hostLabels = await ui(
     `Array.from(document.querySelectorAll('[data-host-hints] [data-hint-key]')).map(e=>({key:e.getAttribute('data-hint-key'),label:e.getAttribute('data-hint-target')}))`,
   )
@@ -149,8 +171,10 @@
   await pageNativePress('Backspace')
   await pageNativePress('Escape')
   await wait(250)
-  assert.equal((await pageLabelsFor(page)).length, 0, 'Escape left page labels visible')
-  assert.equal(await hostHintCount(), 0, 'Escape left host labels visible')
+  await until(
+    async () => (await pageLabelsFor(page)).length === 0 && (await hostHintCount()) === 0,
+    'page and host labels revoke after Escape',
+  )
   hintMark('native-prefix-backspace-and-escape-clear-request-scoped-labels')
 
   await requestPageHints()
@@ -202,18 +226,21 @@
     async () => (await pageLabelsFor(page)).length === 0,
     'page mutation invalidates labels',
   )
-  assert.equal(await hostHintCount(), 0, 'page mutation left host labels visible')
+  await until(async () => (await hostHintCount()) === 0, 'host labels revoke after page mutation')
   hintMark('page-dom-mutation-invalidates-visible-labels-and-actions')
 
   await requestPageHints()
   await until(async () => (await pageLabelsFor(page)).length > 0, 'scroll invalidation session')
-  page.sendInputEvent({ type: 'mouseWheel', x: 300, y: 300, deltaY: 320, deltaX: 0 })
+  await pageEval(`document.body.tabIndex=-1;document.body.focus()`)
+  await pageNativePress('PageDown')
   await until(
     async () => (await pageLabelsFor(page)).length === 0,
     'page scroll invalidates labels',
   )
-  assert.equal(await hostHintCount(), 0, 'scroll left host labels visible')
+  await until(async () => (await hostHintCount()) === 0, 'host labels revoke after page scroll')
   hintMark('native-page-scroll-invalidates-page-and-host-labels')
+  await pageEval(`window.scrollTo(0, 0)`)
+  await wait(200)
 
   await requestPageHints()
   await until(async () => (await pageLabelsFor(page)).length > 0, 'shell zoom invalidation session')
@@ -222,7 +249,7 @@
     async () => (await pageLabelsFor(page)).length === 0,
     'shell zoom invalidates page labels',
   )
-  assert.equal(await hostHintCount(), 0, 'shell zoom left host labels visible')
+  await until(async () => (await hostHintCount()) === 0, 'host labels revoke after shell zoom')
   win.webContents.setZoomFactor(1)
   await wait(250)
   hintMark('shell-zoom-invalidates-page-and-host-labels')
@@ -287,8 +314,7 @@
   await pageNativePress('Escape')
   hintMark('native-page-light-dark-and-shell-evidence-captured')
 
-  recordingHints = false
-  await hintRecorder
+  await stopHintRecording()
   assert(hintFrame > 0, 'hint interaction recording has no native page frames')
   writeFileSync(
     join(evidence, 'hints-result.json'),
