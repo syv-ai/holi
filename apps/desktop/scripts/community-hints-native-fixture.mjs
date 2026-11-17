@@ -92,6 +92,7 @@ export async function prepareCommunityHintsNativeFixture({ desktop, root, plugin
     join(root, 'preload.cjs'),
     `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('holiSmoke',{call:(name,params)=>ipcRenderer.invoke('community:call',name,params),quit:()=>ipcRenderer.send('smoke:quit')});contextBridge.exposeInMainWorld('holi',{trpc:op=>ipcRenderer.invoke('community:trpc',op),logs:{onEntry:()=>()=>{}}});`,
   )
+  const electron = createRequire(import.meta.url)('electron')
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) => !/TOKEN|SECRET|PASSWORD|API_KEY|AUTH/.test(key) && !key.startsWith('GIT_'),
