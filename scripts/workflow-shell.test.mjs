@@ -8,6 +8,25 @@ const workflow = readFileSync(
   'utf8',
 )
 
+test('reporting reconciles after checker failures when discovery succeeded', () => {
+  assert.match(
+    workflow,
+    /report:\n\s+needs: \[discover, codex-check, claude-check, pi-compatibility\]\n\s+if: always\(\) && needs\.discover\.result == 'success'/,
+  )
+  assert.match(workflow, /Prepare explicit missing-check coverage/)
+  assert.match(workflow, /Checker failed or produced no result; required coverage is unavailable/)
+  for (const name of ['codex-checks', 'claude-checks']) {
+    assert.match(
+      workflow,
+      new RegExp(
+        `- uses: actions/upload-artifact@v4\\n\\s+if: always\\(\\)\\n\\s+with:\\n\\s+name: ${name}`,
+      ),
+    )
+  }
+  assert.match(workflow, /name: pi-probe-results\n\s+path: \$\{\{ runner\.temp \}\/pi-results\//)
+  assert.match(workflow, /Only this reporting job receives the issue-write token/)
+})
+
 test('every workflow run block has valid bash syntax', () => {
   const blocks = [...workflow.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)]
   assert.ok(blocks.length > 0, 'expected multiline run blocks')

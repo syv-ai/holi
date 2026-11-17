@@ -52,6 +52,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - name: Install repository test dependencies
+        id: dependencies
         run: pnpm install --frozen-lockfile
       - name: Install the exact observed Pi package without lifecycle scripts
         env:
@@ -63,28 +64,45 @@ jobs:
           mkdir -p "$RUNNER_TEMP/pi-install"
           npm install --prefix "$RUNNER_TEMP/pi-install" --ignore-scripts --no-audit --no-fund "@earendil-works/pi-coding-agent@$PI_VERSION"
       - name: Check isolated exact-version CLI help and version
+        if: always()
         id: cli
         run: |
-          if node scripts/pi-cli-contract.mjs "$RUNNER_TEMP/pi-install/node_modules/.bin/pi" "$PI_VERSION" > cli-result.json; then
+          if node scripts/pi-cli-contract.mjs "$RUNNER_TEMP/pi-install/node_modules/.bin/pi" "$PI_VERSION" > cli-result.json && [ -s cli-result.json ]; then
+            RESULT="$(cat cli-result.json)"
+          elif [ -s cli-result.json ] && node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' cli-result.json; then
             RESULT="$(cat cli-result.json)"
           else
-            RESULT='{"outcome":"mismatch","detail":"Exact observed Pi CLI compatibility probe failed; see this job output."}'
+            RESULT='{"outcome":"unverified","detail":"Pi install or exact CLI compatibility probe produced no result; see this job output."}'
           fi
+          printf '%s\n' "$RESULT" > cli-result.json
           echo "result=$(printf '%s' "$RESULT" | base64 -w0)" >> "$GITHUB_OUTPUT"
       - name: Replay attributed RPC consumer fixtures through PiRpcRun
+        if: always()
         id: consumer
+        env:
+          DEPENDENCIES_OUTCOME: ${{ steps.dependencies.outcome }}
         run: |
-          if pnpm --filter @holi/desktop exec vitest run src/plugins/agent/test/pi-rpc.test.ts; then
+          if [ "$DEPENDENCIES_OUTCOME" != success ]; then
+            RESULT='{"outcome":"unverified","detail":"Repository test dependencies failed to install; RPC consumer fixtures could not run."}'
+          elif pnpm --filter @holi/desktop exec vitest run src/plugins/agent/test/pi-rpc.test.ts; then
             RESULT="$(node -e 'process.stdout.write(JSON.stringify({outcome:"pass",detail:"Consumer fixture tests passed through PiRpcRun; constructed from upstream RPC documentation/types at b4899f59ef0fba6507c2e619fd804dcde51920ba, not captured from the installed CLI."}))')"
           else
             RESULT="$(node -e 'process.stdout.write(JSON.stringify({outcome:"mismatch",detail:"PiRpcRun consumer fixtures failed; see this compatibility job test output."}))')"
           fi
+          printf '%s\n' "$RESULT" > consumer-result.json
           echo "result=$(printf '%s' "$RESULT" | base64 -w0)" >> "$GITHUB_OUTPUT"
       - name: Probe the native JSONL producer through PiRpcRun
+        if: always()
         id: producer
         run: |
-          node scripts/pi-rpc-producer.mjs "$RUNNER_TEMP/pi-install/node_modules/.bin/pi" "$PI_VERSION" > producer-result.json
-          RESULT="$(cat producer-result.json)"
+          if node scripts/pi-rpc-producer.mjs "$RUNNER_TEMP/pi-install/node_modules/.bin/pi" "${PI_VERSION:-missing}" > producer-result.json && [ -s producer-result.json ]; then
+            RESULT="$(cat producer-result.json)"
+          elif [ -s producer-result.json ] && node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' producer-result.json; then
+            RESULT="$(cat producer-result.json)"
+          else
+            RESULT='{"outcome":"unverified","detail":"Pi install or native producer probe produced no result; see diagnostic artifacts and job output."}'
+            printf '%s\n' "$RESULT" > producer-result.json
+          fi
           echo "result=$(printf '%s' "$RESULT" | base64 -w0)" >> "$GITHUB_OUTPUT"
           node -e 'const r=JSON.parse(require("fs").readFileSync("producer-result.json")); if(r.evidence) require("fs").writeFileSync(process.env.RUNNER_TEMP+"/pi-producer-evidence.json", JSON.stringify(r.evidence,null,2))'
       - uses: actions/upload-artifact@v4
@@ -92,6 +110,19 @@ jobs:
         with:
           name: pi-producer-evidence
           path: ${{ runner.temp }}/pi-producer-evidence.json
+          if-no-files-found: warn
+      - name: Preserve Pi probe results for reporting
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-results"
+          for result in cli-result.json consumer-result.json producer-result.json; do
+            if [ -f "$result" ]; then cp "$result" "$RUNNER_TEMP/pi-results/$result"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pi-probe-results
+          path: ${{ runner.temp }}/pi-results/
           if-no-files-found: warn
       - name: Remove temporary Pi installation
         if: always()
@@ -127,7 +158,15 @@ jobs:
             echo '{"name":"fixture consumers","outcome":"mismatch","detail":"Codex production-consumer fixture tests failed."}' > "$RUNNER_TEMP/codex/fixtures.json"
           fi
           node -e "const fs=require('fs'); const cli=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/codex/cli.json')); const fixture=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/codex/fixtures.json')); fs.writeFileSync(process.env.RUNNER_TEMP+'/codex/checks.json', JSON.stringify([...cli.checks,fixture]))"
+      - name: Ensure Codex diagnostic report exists
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/codex"
+          if [ ! -f "$RUNNER_TEMP/codex/checks.json" ]; then
+            printf '[]\n' > "$RUNNER_TEMP/codex/checks.json"
+          fi
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: codex-checks
           path: ${{ runner.temp }}/codex/checks.json
@@ -163,7 +202,15 @@ jobs:
             echo '{"name":"fixture consumers","outcome":"mismatch","detail":"Claude listing/history/CLI, shipped hook, or statusline production-consumer tests failed."}' > "$RUNNER_TEMP/claude/fixtures.json"
           fi
           node -e "const fs=require('fs'); const cli=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/claude/cli.json')); const fixture=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/claude/fixtures.json')); const checks=cli.checks.filter(check=>check.name!=='fixture consumers'); checks.push(fixture); fs.writeFileSync(process.env.RUNNER_TEMP+'/claude/checks.json', JSON.stringify(checks))"
+      - name: Ensure Claude diagnostic report exists
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/claude"
+          if [ ! -f "$RUNNER_TEMP/claude/checks.json" ]; then
+            printf '[]\n' > "$RUNNER_TEMP/claude/checks.json"
+          fi
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: claude-checks
           path: ${{ runner.temp }}/claude/checks.json
@@ -171,6 +218,7 @@ jobs:
 
   report:
     needs: [discover, codex-check, claude-check, pi-compatibility]
+    if: always() && needs.discover.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -181,26 +229,42 @@ jobs:
         with:
           node-version: 24
       - uses: actions/download-artifact@v4
+        if: always()
+        continue-on-error: true
         with:
           name: codex-checks
           path: codex-checks
       - uses: actions/download-artifact@v4
+        if: always()
+        continue-on-error: true
         with:
           name: claude-checks
           path: claude-checks
+      - name: Prepare explicit missing-check coverage
+        env:
+          PI_CLI_RESULT: ${{ needs.pi-compatibility.outputs.cli }}
+          PI_CONSUMER_RESULT: ${{ needs.pi-compatibility.outputs.consumer }}
+          PI_PRODUCER_RESULT: ${{ needs.pi-compatibility.outputs.producer }}
+        run: |
+          mkdir -p codex-checks claude-checks
+          [ -f codex-checks/checks.json ] || printf '[]\n' > codex-checks/checks.json
+          [ -f claude-checks/checks.json ] || printf '[]\n' > claude-checks/checks.json
+          for item in 'PI_CLI_RESULT pi-cli-result.json' 'PI_CONSUMER_RESULT pi-consumer-result.json' 'PI_PRODUCER_RESULT pi-producer-result.json'; do
+            set -- $item
+            value="${!1}"
+            if [ -n "$value" ]; then
+              printf '%s' "$value" | base64 --decode > "$2"
+            else
+              printf '%s\n' '{"outcome":"unverified","detail":"Checker failed or produced no result; required coverage is unavailable."}' > "$2"
+            fi
+          done
       - name: Reconcile tracking issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           MONITOR_REPORT: ${{ needs.discover.outputs.report }}
-          PI_CLI_RESULT: ${{ needs.pi-compatibility.outputs.cli }}
-          PI_CONSUMER_RESULT: ${{ needs.pi-compatibility.outputs.consumer }}
-          PI_PRODUCER_RESULT: ${{ needs.pi-compatibility.outputs.producer }}
         run: |
           echo "$MONITOR_REPORT" | base64 --decode > report.json
-          echo "$PI_CLI_RESULT" | base64 --decode > pi-cli-result.json
-          echo "$PI_CONSUMER_RESULT" | base64 --decode > pi-consumer-result.json
-          echo "$PI_PRODUCER_RESULT" | base64 --decode > pi-producer-result.json
           # Only this reporting job receives the issue-write token. Provider code
           # is installed and executed in separate, read-only compatibility jobs.
           node scripts/harness-monitor.mjs merge-codex report.json codex-checks/checks.json > codex-report.json

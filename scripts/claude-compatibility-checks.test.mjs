@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { checkProbe, exactVersion, isolatedEnvironment } from './claude-compatibility-checks.mjs'
+import { checkProbe, isolatedEnvironment } from './compatibility-checks.mjs'
+import { exactVersion } from './claude-compatibility-checks.mjs'
 
 test('Claude probe environment is allowlisted and isolated', () => {
-  const env = isolatedEnvironment('/tmp/probe', '/bin')
+  const env = isolatedEnvironment('/tmp/probe', 'CLAUDE_CONFIG_DIR', '/bin')
   assert.deepEqual(Object.keys(env).sort(), [
     'CI',
     'CLAUDE_CONFIG_DIR',
@@ -28,10 +29,17 @@ test('accepts exact Claude Code versions only', () => {
 
 test('names missing commands, options, timeouts and nonzero probes', () => {
   assert.match(
-    checkProbe({ status: 0 }, ['agents', '--all'], 'Usage: claude agents'),
+    checkProbe({ status: 0 }, ['agents', '--all'], 'Usage: claude agents', {
+      label: 'commands/options',
+      separators: ',=',
+    }),
     /missing consumed/,
   )
-  assert.equal(checkProbe({ status: null, error: { code: 'ETIMEDOUT' } }, [], ''), 'timed out')
-  assert.equal(checkProbe({ status: 2 }, [], ''), 'exit 2')
-  assert.equal(checkProbe({ status: 0 }, ['--all'], 'agents --json --all'), null)
+  const options = { label: 'commands/options', separators: ',=' }
+  assert.equal(
+    checkProbe({ status: null, error: { code: 'ETIMEDOUT' } }, [], '', options),
+    'timed out',
+  )
+  assert.equal(checkProbe({ status: 2 }, [], '', options), 'exit 2')
+  assert.equal(checkProbe({ status: 0 }, ['--all'], 'agents --json --all', options), null)
 })
