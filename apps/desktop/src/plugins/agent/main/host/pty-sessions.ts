@@ -101,7 +101,7 @@ export interface PtySessionsDeps {
   providers(): readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'open' | 'close' | 'paste' | 'list'>
   /** The vault's turn bracket: sync pauses and the turn is recorded. */
-  bracket(id: string, edge: 'begin' | 'end' | 'forget'): void
+  bracket(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<unknown>
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
   /** The list changed. */
@@ -268,7 +268,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         pastFailure = err
         log(`closed sessions retry: ${String(err)}`)
       })
-      await retry
+      await bounded(retry, 'PTY history retry')
       failedPast.delete(change)
     }
     if (failedPast.size === 0) pastFailure = undefined
@@ -301,6 +301,17 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     { once: true },
   )
   let lastPushed = ''
+
+  const runBracket = (id: string, edge: 'begin' | 'end' | 'forget'): void => {
+    let work: Promise<unknown>
+    try {
+      work = Promise.resolve(deps.bracket(id, edge))
+    } catch (err) {
+      finalizerFailures.add(err)
+      return
+    }
+    void trackFinalizer(work)
+  }
 
   const stateOf = (s: Session): SessionState =>
     s.copying ? 'working' : s.attention ? 'needs-you' : s.signals.inTurn ? 'working' : 'idle'
@@ -439,12 +450,16 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           session.copy = undefined
           session.copying = false
         }
-        deps.bracket(id, 'begin')
+        runBracket(id, 'begin')
         push()
       },
       onEnd: () => {
         const close = (): void => {
-          deps.bracket(id, 'end')
+          try {
+            runBracket(id, 'end')
+          } catch (err) {
+            finalizerFailures.add(err)
+          }
           push()
         }
         // What a fenced turn wrote is in the vault before its turn closes.
@@ -452,15 +467,27 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         else {
           if (session !== null) session.copying = true
           push()
-          void fence
-            .turnEnded()
-            .then((copy) => {
-              if (session !== null && !session.exiting) session.copy = copy
-            })
+          let copyWork: Promise<FenceCopy>
+          try {
+            copyWork = Promise.resolve(fence.turnEnded())
+          } catch (err) {
+            copyWork = Promise.reject(err)
+          }
+          const completion = copyWork
+            .then(
+              (copy) => {
+                if (session !== null && !session.exiting) session.copy = copy
+              },
+              (err: unknown) => {
+                finalizerFailures.add(err)
+                if (session !== null && !session.exiting) session.copy = { error: String(err) }
+              },
+            )
             .finally(() => {
               if (session !== null && !session.exiting) session.copying = false
               close()
             })
+          void trackFinalizer(completion)
         }
       },
       onAttention: () => {
@@ -521,7 +548,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         const inTurn = s.signals.inTurn
         s.signals.dispose()
         if (s.provider === 'pi' && fence === undefined) {
-          if (inTurn) deps.bracket(id, 'forget')
+          if (inTurn) runBracket(id, 'forget')
           if (s.name === null && lastTitle !== undefined) s.name = nameOf(lastTitle)
           s.attention = false
           push()
@@ -537,7 +564,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
               .catch((err: unknown): FenceCopy => ({ error: String(err) }))
               .then((copy) => {
                 if (sessions.get(id) !== s) return
-                if (inTurn) deps.bracket(id, 'forget')
+                if (inTurn) runBracket(id, 'forget')
                 sessions.delete(id)
                 const row: SessionSummary = {
                   id,
@@ -565,7 +592,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           )
           return
         }
-        if (inTurn) deps.bracket(id, 'forget')
+        if (inTurn) runBracket(id, 'forget')
         sessions.delete(id)
         push()
         if (s.persistConversation && s.conversationId !== undefined) {
@@ -615,9 +642,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const api: PtySessions = {
     sessions: summaries,
     async past() {
-      await pastQueue
+      await bounded(
+        pastQueue.then(() => undefined),
+        'PTY history persistence',
+      )
       const open = new Set(sessions.keys())
-      return (await pastStore.read()).filter((p) => !open.has(p.id))
+      const rows = await bounded(pastStore.read(), 'PTY history read')
+      return rows.filter((p) => !open.has(p.id))
     },
     async hasPast(id) {
       return (await api.past()).some((p) => p.id === id)
@@ -642,7 +673,10 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         // A process can exit before start() returns. Its onExit has already
         // queued the closed row; do not remove that newer history entry.
         if (result.ok && sessions.has(id)) {
-          await changePast((rows) => rows.filter((p) => p.id !== id))
+          await bounded(
+            changePast((rows) => rows.filter((p) => p.id !== id)),
+            'PTY history persistence',
+          )
         }
         return result
       } finally {
@@ -670,7 +704,6 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
 
     start(providerId, args) {
       if (left) return Promise.resolve({ ok: false, message: 'That vault has been left.' })
-      if (left) return Promise.resolve({ ok: false, message: 'That vault has been left.' })
       if (args.login !== true) return track(startNow(providerId, args))
       // One sign-in at a time: a second ask gets the terminal of the first,
       // the one still starting included.
@@ -695,8 +728,11 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     async stop(id) {
       const s = sessions.get(id)
       if (s === undefined) return gone
-      await deps.terminals.close(s.terminalId)
-      while (finalizing.size > 0) await Promise.all([...finalizing])
+      await bounded(
+        Promise.resolve().then(() => deps.terminals.close(s.terminalId)),
+        'PTY close',
+      )
+      while (finalizing.size > 0) await bounded(Promise.all([...finalizing]), 'PTY finalization')
       await bounded(
         pastQueue.then(() => undefined),
         'PTY history persistence',
@@ -704,6 +740,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       await retryPastFailures()
       if (pastFailure !== undefined)
         throw new Error(`Could not save agent session history: ${String(pastFailure)}`)
+      if (finalizerFailures.size > 0)
+        throw new AggregateError([...finalizerFailures], 'PTY session finalization failed.')
       // A fenced terminal's exit handler owns finalization: its session must
       // remain until the asynchronous copy-back has produced the result row.
       if (sessions.get(id) === s && !s.exiting) {
@@ -718,8 +756,11 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
             startedAt: s.startedAt,
             conversationId: s.conversationId,
           }
-          await changePast((rows) =>
-            [closed, ...rows.filter((row) => row.id !== s.id)].slice(0, PAST_MAX),
+          await bounded(
+            changePast((rows) =>
+              [closed, ...rows.filter((row) => row.id !== s.id)].slice(0, PAST_MAX),
+            ),
+            'PTY history persistence',
           )
         }
       }
@@ -762,10 +803,12 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       // A sign-in may still be configuring its CLI or reading its first-spawn
       // notice. Drain it before closing sessions so it cannot open a terminal
       // into the vault after leave has returned.
-      const starts = Promise.allSettled([...starting])
-      const signIns = Promise.allSettled([...signingIn.values()])
-      const closes = Promise.allSettled(
-        [...sessions.values()].map((s) => deps.terminals.close(s.terminalId)),
+      const starts = Promise.all([...starting])
+      const signIns = Promise.all([...signingIn.values()])
+      const closes = Promise.all(
+        [...sessions.values()].map((s) =>
+          Promise.resolve().then(() => deps.terminals.close(s.terminalId)),
+        ),
       )
       const errors: unknown[] = []
       const boundedWork: Array<[Promise<unknown>, string]> = [
@@ -791,6 +834,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       // Pi's PTY is its conversation, so an intentional vault teardown is a
       // close just like Stop. Include sessions whose process exited earlier:
       // their retained terminal and conversation are still open until teardown.
+      const historyUpdates: Promise<void>[] = []
       for (const s of sessions.values()) {
         if (s.persistConversation && s.conversationId !== undefined) {
           const closed: SessionSummary = {
@@ -801,18 +845,37 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
             startedAt: s.startedAt,
             conversationId: s.conversationId,
           }
-          await changePast((rows) =>
-            [closed, ...rows.filter((row) => row.id !== s.id)].slice(0, PAST_MAX),
-          ).catch((err: unknown) => log(`closed sessions: ${String(err)}`))
+          historyUpdates.push(
+            changePast((rows) =>
+              [closed, ...rows.filter((row) => row.id !== s.id)].slice(0, PAST_MAX),
+            ),
+          )
         }
         s.signals.dispose()
+      }
+      try {
+        await bounded(Promise.all(historyUpdates), 'PTY history updates')
+      } catch (err) {
+        errors.push(err)
       }
       try {
         await bounded(
           pastQueue.then(() => undefined),
           'PTY history persistence',
         )
+      } catch (err) {
+        errors.push(err)
+      }
+      try {
         await retryPastFailures()
+      } catch (err) {
+        errors.push(err)
+      }
+      try {
+        await bounded(
+          pastQueue.then(() => undefined),
+          'PTY history persistence',
+        )
       } catch (err) {
         errors.push(err)
       }

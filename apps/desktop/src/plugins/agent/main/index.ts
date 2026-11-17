@@ -91,6 +91,7 @@ export const agentMain: MainPlugin = {
       },
     })
     let started: ReturnType<typeof createAgentSessions> | undefined
+    const activationOwners: Array<() => unknown | Promise<unknown>> = [() => harnesses.dispose()]
     const assertActive = (): void => {
       if (ctx.activationSignal.aborted)
         throw new Error(`agent activation for ${ctx.remote} was cancelled`)
@@ -106,6 +107,7 @@ export const agentMain: MainPlugin = {
       )
       assertActive()
       const terminals = createAgentTerminals({ emit: ctx.emit })
+      activationOwners.push(() => terminals.closeAll())
       const sessionLog = createSessionLog(ctx.log)
       // Capabilities and provider hooks belong to this activation's vault, not
       // whichever vault the renderer currently displays.
@@ -159,6 +161,7 @@ export const agentMain: MainPlugin = {
         snapshot: worktreeEnd,
       })
       started = sessions
+      activationOwners.push(() => sessions.leave({ stopSessions: false }))
       // Fix the session host to this activation's vault before exposing any
       // provider hook routes; early hook reports queue against this owner.
       await sessions.ensure(ctx)
@@ -179,6 +182,7 @@ export const agentMain: MainPlugin = {
         },
       })
       piBackground.setVault(ctx.remote, ctx.root)
+      activationOwners.push(() => piBackground.leave())
       const ptyHistory = jsonFileStore(join(ctx.userData, 'agent-pty-history.json'), parsePastFile)
       const ptySessions = createPtySessions({
         vault: { remote: ctx.remote, root: ctx.root },
@@ -204,13 +208,9 @@ export const agentMain: MainPlugin = {
           void pushHistory()
         },
       })
-      void ptySessions.past().then((list) => {
-        ownPast = list
-        pushHistory()
-      })
-      void ptySessions.past().then((list) => {
-        ownPast = list
-      })
+      activationOwners.push(() => ptySessions.leave())
+      ownPast = await ptySessions.past()
+      pushHistory()
       // Prompts run unwatched by a provider without a supervisor: in a scratch
       // folder of their own, or in the vault, whose turns pause sync and are
       // recorded like a session's. Scratch is private to this canonical vault
@@ -227,6 +227,7 @@ export const agentMain: MainPlugin = {
           pushSessions()
         },
       })
+      activationOwners.push(() => jobs.leave())
       // Sessions Holi runs fenced to a folder of its own, what they wrote
       // copied back as each turn ends.
       const fenced = createFencedSessions({
@@ -236,6 +237,8 @@ export const agentMain: MainPlugin = {
         activationSignal: ctx.activationSignal,
         copyBack: jobs.copyBack,
       })
+      activationOwners.unshift(() => fenced.closing())
+      activationOwners.push(() => fenced.leave())
       // What the agent and Holi want the person to see: an entry in the
       // vault's inbox, and a banner while Holi is out of sight.
       const inbox = createInbox({
@@ -244,6 +247,7 @@ export const agentMain: MainPlugin = {
         changed: (view) => ctx.emit(ctx.remote, 'inbox', view),
       })
       const unproviders = harnesses.subscribe(() => ctx.emit(ctx.remote, 'providers', null))
+      activationOwners.push(() => unproviders())
       ctx.register(AGENT_NAMESPACES, {
         ...agentCapabilities({
           sessions: started,
@@ -273,6 +277,7 @@ export const agentMain: MainPlugin = {
         raise: (notice) => inbox.raise(notice),
         log: (msg) => console.error(`[agent] ${msg}`),
       })
+      activationOwners.push(() => unwatchNeedsYou())
       // A teammate's comment that mentions the person, found after a pull.
       const unmention = ctx.onMention((mention) => {
         if (ctx.activationSignal.aborted) return
@@ -280,6 +285,7 @@ export const agentMain: MainPlugin = {
           .raise(mentionNotice(mention))
           .catch((err: unknown) => console.error('[agent] mention:', err))
       })
+      activationOwners.push(() => unmention())
       // Keystrokes and resizes, in the order they were typed. The host drops
       // any about a vault that is not the open one.
       ctx.on('pty-write', (_remote, payload) => {
@@ -346,6 +352,7 @@ export const agentMain: MainPlugin = {
           ptySessions.noteTurn(id, false)
         },
       })
+      activationOwners.push(() => unsignal())
       // Quitting stops the vault's sessions, so it asks first when one of them
       // is working or waiting on you: that turn is cut short. Idle sessions
       // stop without a question; their conversations stay in the agents list.
@@ -378,6 +385,10 @@ export const agentMain: MainPlugin = {
       sweep()
       const sweepTimer = setInterval(sweep, SWEEP_EVERY_MS)
       sweepTimer.unref?.()
+      activationOwners.push(
+        () => clearInterval(sweepTimer),
+        () => sweeping,
+      )
       // The per-turn hook reads the focused note, and its selected lines, from a
       // file in this clone.
       const unreport = ctx.onReport((report) => {
@@ -388,6 +399,7 @@ export const agentMain: MainPlugin = {
           openPaths: report.openPaths,
         })
       })
+      activationOwners.push(() => unreport())
       // Stopping stops the vault's sessions (the renderer asked first if one
       // was busy). Background ones stay in the agents list and resume when
       // opened; the ones Holi runs end with it.
@@ -427,15 +439,12 @@ export const agentMain: MainPlugin = {
       // activation step fails. Join any pending attach and release it before
       // allowing a retry to create another session host.
       const failures: unknown[] = [err]
-      try {
-        await started?.leave({ stopSessions: false })
-      } catch (cleanupError) {
-        failures.push(cleanupError)
-      }
-      try {
-        await harnesses.dispose()
-      } catch (cleanupError) {
-        failures.push(cleanupError)
+      for (const cleanup of activationOwners) {
+        try {
+          await cleanup()
+        } catch (cleanupError) {
+          failures.push(cleanupError)
+        }
       }
       if (failures.length === 1) throw err
       const failure = new AggregateError(failures, 'agent activation failed')

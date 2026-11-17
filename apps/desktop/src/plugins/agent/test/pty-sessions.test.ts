@@ -23,6 +23,7 @@ function setup(
     write(rows: import('../main/claude/listing').SessionSummary[]): Promise<void>
   },
   capabilities: AgentProvider['capabilities'] = {},
+  closeTerminal?: (id: string, exit: () => void) => Promise<void>,
 ) {
   vi.useFakeTimers()
   const asked: TerminalOpts[] = []
@@ -57,7 +58,9 @@ function setup(
       },
       close: async (id) => {
         closed.push(id)
-        opened[Number(id.slice(5)) - 1]?.onExit?.()
+        const exit = () => opened[Number(id.slice(5)) - 1]?.onExit?.()
+        if (closeTerminal !== undefined) return closeTerminal(id, exit)
+        exit()
       },
       paste: (id, text) => {
         pastes.push([id, text])
@@ -199,6 +202,16 @@ describe('sessions Holi runs', () => {
     })
   })
 
+  it('does not report a successful stop when terminal close rejects', async () => {
+    const t = setup('codex', undefined, {}, async () => {
+      throw new Error('kill failed')
+    })
+    const started = await t.sessions.start('codex', {})
+    if (!started.ok) throw new Error(started.message)
+    await expect(t.sessions.stop(started.sessionId)).rejects.toThrow(/kill failed/)
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+  })
+
   it('pastes an ask unsent, and stops by ending its terminal', async () => {
     const t = setup()
     const res = await t.sessions.start('codex', {})
@@ -283,8 +296,7 @@ describe('sessions Holi runs', () => {
 
     const reopened = setup('pi', store)
     const opening = reopened.sessions.reopen(started.sessionId, {})
-    for (let i = 0; i < 10 && reopened.opened.length === 0; i++) await Promise.resolve()
-    expect(reopened.opened).toHaveLength(1)
+    await vi.waitFor(() => expect(reopened.opened).toHaveLength(1))
     await reopened.sessions.stop(started.sessionId)
     expect(await opening).toMatchObject({ ok: true })
     expect(await reopened.sessions.past()).toEqual([
@@ -522,6 +534,25 @@ describe('sessions Holi runs', () => {
     )
     expect(t.sessions.has(started.sessionId)).toBe(false)
     expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
+  })
+
+  it('keeps a failed history append visible after an unrelated append succeeds', async () => {
+    let writes = 0
+    const store = {
+      read: async () => [] as import('../main/claude/listing').SessionSummary[],
+      write: async () => {
+        writes += 1
+        if (writes === 1 || writes === 3) throw new Error(`write ${writes} failed`)
+      },
+    }
+    const t = setup('pi', store)
+    const first = await t.sessions.start('pi', { prompt: 'First' })
+    const second = await t.sessions.start('pi', { prompt: 'Second' })
+    if (!first.ok || !second.ok) throw new Error('Pi session did not start')
+
+    await expect(t.sessions.leave()).rejects.toThrow(/PTY sessions did not drain/)
+    expect(writes).toBe(3)
+    expect(t.sessions.has(first.sessionId)).toBe(true)
   })
 
   it('persists active and already-exited Pi sessions when leaving the vault', async () => {

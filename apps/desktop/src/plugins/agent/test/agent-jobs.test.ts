@@ -1521,6 +1521,15 @@ describe('a fenced session', () => {
     await vi.waitFor(() => expect(readdir(fence.state)).rejects.toThrow())
   })
 
+  it('fails its drain and retains ownership when provider state release fails', async () => {
+    const release = vi.fn(async () => {
+      throw new Error('provider state is busy')
+    })
+    const { fenced, fence } = await fencedRig(release)
+    await expect(fence.exited()).rejects.toThrow(/Could not release agent state/)
+    await expect(fenced.leave()).rejects.toThrow(/Fenced PTYs did not exit/)
+  })
+
   it('opens no session once the vault is being left', async () => {
     const { fenced, own } = await fencedRig()
     own.start.mockClear()
