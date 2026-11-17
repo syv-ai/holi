@@ -36,7 +36,11 @@ function Fixture() {
   useShortcutDispatcher()
   return (
     <TooltipProvider>
-      <main data-pane="" className="flex h-screen flex-col gap-3 bg-background p-4 text-foreground">
+      <main
+        data-pane=""
+        data-pane-focused="true"
+        className="flex h-screen flex-col gap-3 bg-background p-4 text-foreground"
+      >
         <Button variant="secondary" onClick={() => undefined}>
           Host action
         </Button>
