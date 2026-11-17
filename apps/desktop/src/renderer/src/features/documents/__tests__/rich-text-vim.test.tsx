@@ -1332,6 +1332,145 @@ describe('rich-text Vim extension', () => {
     expect(ed.state.doc.check()).toBeUndefined()
   })
 
+  it('changes only selected logical-line content and groups the change with delayed typing', () => {
+    for (const [html, expected] of [
+      ['<pre><code>first\nmiddle\nlast</code></pre>', 'firstX\nlast'],
+      ['<p>first<br>middle<br>last</p>', 'firstXlast'],
+    ] as const) {
+      const ed = open(html)
+      const initial = ed.state.doc.toJSON()
+      let middle = html.startsWith('<pre>') ? 7 : 0
+      ed.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === 'middle') middle = pos
+      })
+      ed.commands.setTextSelection(middle)
+      key(ed, 'c')
+      key(ed, 'c')
+      expect(ed.view.dom.dataset.vimMode).toBe('insert')
+      ed.view.dispatch(ed.state.tr.insertText('X'))
+      expect(text(ed)).toBe(expected)
+      key(ed, 'Escape')
+      key(ed, 'u')
+      expect(ed.state.doc.toJSON()).toEqual(initial)
+    }
+
+    const ed = open('<p>first</p><p>middle</p><p>last</p>')
+    ed.commands.setTextSelection(8)
+    key(ed, 'c')
+    key(ed, 'c')
+    ed.view.dispatch(ed.state.tr.insertText('X'))
+    expect(ed.getHTML()).toBe('<p>first</p><p>X</p><p>last</p>')
+    key(ed, 'Escape')
+    key(ed, 'u')
+    expect(ed.getHTML()).toBe('<p>first</p><p>middle</p><p>last</p>')
+  })
+
+  it('changes first, middle and last logical lines with counts one and two', () => {
+    const cases = [
+      { index: 0, count: 1, code: 'X\nmiddle\nlast', hardBreak: 'X<br>middle<br>last' },
+      { index: 1, count: 1, code: 'firstX\nlast', hardBreak: 'firstX<br>last' },
+      { index: 2, count: 1, code: 'first\nmiddleX', hardBreak: 'first<br>middleX' },
+      { index: 0, count: 2, code: 'X\nlast', hardBreak: 'X<br>last' },
+      { index: 1, count: 2, code: 'firstX', hardBreak: 'firstX' },
+      { index: 2, count: 2, code: 'first\nmiddleX', hardBreak: 'first<br>middleX' },
+    ] as const
+    for (const { index, count, code, hardBreak } of cases) {
+      for (const schema of ['code', 'hardBreak'] as const) {
+        const html =
+          schema === 'code'
+            ? '<pre><code>first\nmiddle\nlast</code></pre>'
+            : '<p>first<br>middle<br>last</p>'
+        const ed = open(html)
+        ed.commands.setTextSelection([1, 7, 14][index]!)
+        if (count > 1) key(ed, String(count))
+        key(ed, 'c')
+        key(ed, 'c')
+        ed.view.dispatch(ed.state.tr.insertText('X'))
+        expect(
+          schema === 'code' ? ed.state.doc.firstChild?.textContent : ed.getHTML().slice(3, -4),
+        ).toBe(schema === 'code' ? code : hardBreak)
+      }
+    }
+  })
+
+  it('repeats linewise register content with logical separators', () => {
+    for (const count of [2, 3]) {
+      const code = open('<pre><code>first</code></pre>')
+      code.commands.setTextSelection(1)
+      key(code, 'y')
+      key(code, 'y')
+      key(code, String(count))
+      key(code, 'p')
+      expect(code.state.doc.firstChild?.textContent).toBe(
+        Array.from({ length: count + 1 }, () => 'first').join('\n'),
+      )
+      expect(code.state.doc.check()).toBeUndefined()
+
+      const hardBreak = open('<p>first<br>second</p>')
+      hardBreak.commands.setTextSelection(1)
+      key(hardBreak, 'y')
+      key(hardBreak, 'y')
+      key(hardBreak, String(count))
+      key(hardBreak, 'p')
+      expect(hardBreak.getHTML()).toContain(`<p>first${'<br>first'.repeat(count)}<br>second</p>`)
+      expect(hardBreak.state.doc.check()).toBeUndefined()
+    }
+
+    const paragraphs = open('<p>first</p><p>second</p>')
+    paragraphs.commands.setTextSelection(1)
+    key(paragraphs, 'y')
+    key(paragraphs, 'y')
+    key(paragraphs, '2')
+    key(paragraphs, 'p')
+    expect(paragraphs.state.doc.childCount).toBe(4)
+    expect(paragraphs.state.doc.check()).toBeUndefined()
+  })
+
+  it('uses visual numeric prefixes and the destination line for inclusive e', () => {
+    const ed = open('<pre><code>one\ntwo</code></pre>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '2')
+    key(ed, 'e')
+    expect(ed.state.doc.firstChild?.textContent).toBe('')
+
+    ed.commands.setContent('<p>one<br>two</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '2')
+    key(ed, 'e')
+    expect(ed.state.doc.firstChild?.textContent).toBe('')
+
+    ed.commands.setContent('<p>one two three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    key(ed, '1')
+    key(ed, '0')
+    key(ed, 'l')
+    expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe(
+      'one two thr',
+    )
+    key(ed, 'd')
+    expect(text(ed)).toBe('ee')
+
+    ed.commands.setContent('<p>A👩‍💻éB</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '2')
+    key(ed, 'e')
+    expect(text(ed)).toBe('')
+
+    ed.commands.setContent('<p>first</p><p>middle</p><p>last</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'V')
+    key(ed, '1')
+    key(ed, '0')
+    key(ed, 'j')
+    expect(ed.state.selection.empty).toBe(false)
+    key(ed, 'd')
+    expect(ed.getHTML()).toBe('<p></p>')
+  })
+
   it('keeps composition and modified shortcuts out of Vim routing and requests hints for normal f', () => {
     const onHints = vi.fn()
     const ed = new Editor({

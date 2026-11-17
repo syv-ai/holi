@@ -96,6 +96,19 @@ export function logicalLineDeletion(
   }
 }
 
+/** Keep the replacement line on the preceding separator and retain the trailing separator. */
+export function logicalLineChange(
+  lines: ReturnType<typeof logicalLines>,
+  firstIndex: number,
+  lastIndex: number,
+) {
+  const first = lines[firstIndex]
+  const last = lines[lastIndex]
+  if (!first || !last) return null
+  const previous = lines[firstIndex - 1]
+  return { from: previous ? previous.to : first.from, to: last.to }
+}
+
 export function containerAt(state: EditorState, pos: number, names = STRUCTURAL_CONTAINERS) {
   const $pos = state.doc.resolve(Math.max(0, Math.min(pos, state.doc.content.size)))
   for (let depth = $pos.depth; depth > 0; depth--) {
