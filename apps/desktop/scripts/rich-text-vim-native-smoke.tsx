@@ -36,7 +36,11 @@ declare global {
       focus(which?: 'primary' | 'secondary'): void
       mode(enabled: boolean): void
       visibility(value: boolean): void
-      focusOwnership(value: boolean): void
+      leave(): Promise<{ left: boolean; error?: string }>
+      leaveResult(): { left: boolean; error?: string } | null
+      failNextWrite(): Promise<void>
+      externalRead(text: string, updatedAt: string, hold?: boolean): Promise<void>
+      releaseRead(): void
     }
   }
 }
@@ -46,6 +50,7 @@ const path = 'notes/acceptance.md'
 const secondaryPath = 'notes/secondary.md'
 const initial = `---\ntitle: Native Vim fixture\ntags: [kept]\n---\n\n# Heading\n\nalpha beta alpha\n\n**bold mark** and [link](https://example.test) plus [[Wiki note]]\n\n\`\`\`ts\nconst value = 1\n\`\`\`\n\n- parent\n  - child\n- [ ] task\n\n1. ordered item\n\n| left | right |\n| --- | --- |\n| one | two |\n\n~~~mermaid\nA --> B\n~~~\n`
 const store = createStore()
+let lastLeaveResult: { left: boolean; error?: string } | null = null
 store.set(vimCodeEditingAtom, true)
 store.set(activeRemoteAtom, remote)
 store.set(vaultSettingsAtom, {
@@ -74,6 +79,7 @@ function editor(which: 'primary' | 'secondary' = 'primary'): Editor {
 function App() {
   const [visible, setVisible] = useState({ primary: true, secondary: true })
   const [focused, setFocused] = useState<'primary' | 'secondary'>('primary')
+  const [leaveError, setLeaveError] = useState<string | null>(null)
   useEffect(() => {
     Object.assign(window, {
       richTextVimFixture: {
@@ -139,8 +145,39 @@ function App() {
         visibility(value: boolean, which: 'primary' | 'secondary' = 'primary') {
           setVisible((current) => ({ ...current, [which]: value }))
         },
-        focusOwnership(value: boolean, which: 'primary' | 'secondary' = 'primary') {
-          setFocused(value ? which : which === 'primary' ? 'secondary' : 'primary')
+        async leave() {
+          lastLeaveResult = null
+          try {
+            await flushAllBuffers()
+            setVisible((current) => ({ ...current, primary: false }))
+            setFocused('secondary')
+            setLeaveError(null)
+            lastLeaveResult = { left: true }
+            return lastLeaveResult
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            setLeaveError(message)
+            lastLeaveResult = { left: false, error: message }
+            return lastLeaveResult
+          }
+        },
+        leaveResult() {
+          return lastLeaveResult
+        },
+        failNextWrite() {
+          return window.richTextVimIO.call('fixture.failNextWrite', { path }).then(() => undefined)
+        },
+        async externalRead(text: string, updatedAt: string, hold = false) {
+          await window.richTextVimIO.write(path, text)
+          if (hold) await window.richTextVimIO.call('fixture.delayNextRead', { path })
+          store.set(snapshotAtom, (snapshot) => ({
+            ...snapshot,
+            docs: snapshot.docs.map((doc) => (doc.path === path ? { ...doc, updatedAt } : doc)),
+          }))
+          if (hold) await window.richTextVimIO.call('fixture.waitForHeldRead', { path })
+        },
+        releaseRead() {
+          void window.richTextVimIO.call('fixture.releaseRead', { path })
         },
       },
     })
@@ -148,8 +185,37 @@ function App() {
   return (
     <Provider store={store}>
       <TooltipProvider>
-        <main className="flex h-screen flex-col gap-2 bg-background p-4 text-foreground">
+        <main
+          className="flex h-screen flex-col gap-2 bg-background p-4 text-foreground"
+          onFocusCapture={(event) => {
+            const section = (event.target as HTMLElement).closest<HTMLElement>(
+              '[data-fixture-editor]',
+            )
+            if (
+              section?.dataset.fixtureEditor === 'primary' ||
+              section?.dataset.fixtureEditor === 'secondary'
+            )
+              setFocused(section.dataset.fixtureEditor)
+          }}
+        >
           <header className="text-sm">Production DocumentView · disposable fixture</header>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              data-fixture-action="leave"
+              onClick={() => void window.richTextVimFixture.leave()}
+            >
+              Switch away
+            </button>
+            <button
+              type="button"
+              data-fixture-action="retry"
+              onClick={() => void window.richTextVimFixture.leave()}
+            >
+              Retry switch
+            </button>
+            {leaveError ? <span role="alert">{leaveError}</span> : null}
+          </div>
           <section className="grid min-h-0 flex-1 grid-cols-2 gap-2">
             <section data-fixture-editor="primary" hidden={!visible.primary} className="min-h-0">
               <DocumentView

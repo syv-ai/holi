@@ -20,11 +20,16 @@ type NativeState = {
   selectedText: string
   json: { content: NativeNode[] }
   selection: { from: number; to: number }
+  editable: boolean
 }
 const checks: string[] = []
 let windowRef: BrowserWindow | undefined
 let writes = 0
 let frame = 0
+let failWrites = 0
+let heldRead: { resolve: (text: string) => void; text: string } | undefined
+let heldReadWaiters: (() => void)[] = []
+let delayNextRead = false
 app.setName('Holi rich text Vim acceptance 516')
 app.setPath('userData', join(root, 'userData'))
 app.setPath('sessionData', join(root, 'sessionData'))
@@ -62,13 +67,37 @@ async function run() {
     assert.equal(event.senderFrame?.url, `file://${join(root, 'renderer/index.html')}`)
     const file = fixtureFiles.get(requested)
     assert(file, `Unexpected fixture path: ${requested}`)
-    return readFile(file, 'utf8')
+    const text = await readFile(file, 'utf8')
+    if (delayNextRead) {
+      delayNextRead = false
+      return new Promise<string>((resolve) => {
+        heldRead = { resolve, text }
+        for (const ready of heldReadWaiters.splice(0)) ready()
+      })
+    }
+    return text
+  })
+  ipcMain.handle('rich-text-vim:fixture', async (_event, name: string) => {
+    if (name === 'failNextWrite') failWrites++
+    else if (name === 'delayNextRead') delayNextRead = true
+    else if (name === 'waitForHeldRead') {
+      if (heldRead) return
+      await new Promise<void>((resolve) => heldReadWaiters.push(resolve))
+    } else if (name === 'releaseRead' && heldRead) {
+      const held = heldRead
+      heldRead = undefined
+      held.resolve(held.text)
+    } else throw new Error(`Unexpected fixture control: ${name}`)
   })
   ipcMain.handle('rich-text-vim:write', async (event, requested: string, text: string) => {
     assert.equal(event.senderFrame?.url, `file://${join(root, 'renderer/index.html')}`)
     const file = fixtureFiles.get(requested)
     assert(file, `Unexpected fixture path: ${requested}`)
     assert.equal(typeof text, 'string')
+    if (failWrites > 0) {
+      failWrites--
+      throw new Error('fixture disk refusal')
+    }
     await writeFile(file, text)
     writes++
   })
@@ -115,6 +144,21 @@ async function run() {
       join(evidence, 'frames', `frame-${String(frame).padStart(4, '0')}.png`),
       png.toPNG(),
     )
+  }
+  const composition = async (text: string) => {
+    if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3')
+    await win.webContents.debugger.sendCommand('Input.imeSetComposition', {
+      text: 'か',
+      selectionStart: 1,
+      selectionEnd: 1,
+    })
+    await win.webContents.debugger.sendCommand('Input.imeSetComposition', {
+      text,
+      selectionStart: text.length,
+      selectionEnd: text.length,
+    })
+    await win.webContents.debugger.sendCommand('Input.insertText', { text })
+    await new Promise((resolve) => setTimeout(resolve, 80))
   }
   const click = (point: { x: number; y: number }, modifiers: Array<'shift'> = []) => {
     win.webContents.sendInputEvent({ type: 'mouseMove', ...point })
@@ -175,16 +219,14 @@ async function run() {
   mark('production-documentview-mounted-with-rich-markup')
 
   await evaluate(
-    `window.richTextVimFixture.setup('<p>alpha beta</p>',1,'primary');window.richTextVimFixture.setup('<p>alpha beta</p>',1,'secondary');window.richTextVimFixture.focusOwnership(true,'secondary');window.richTextVimFixture.focus('secondary')`,
+    `window.richTextVimFixture.setup('<p>alpha beta</p>',1,'primary');window.richTextVimFixture.setup('<p>alpha beta</p>',1,'secondary')`,
   )
   await key('Escape')
   await key('d')
   await key('w')
   assert.equal((await state('secondary')).markdown, 'beta')
   assert.equal((await state('primary')).markdown, 'alpha beta', 'unfocused split is unchanged')
-  await evaluate(
-    `window.richTextVimFixture.focusOwnership(true,'primary');window.richTextVimFixture.focus('primary')`,
-  )
+  await evaluate(`window.richTextVimFixture.focus('primary')`)
   await key('Escape')
   await key('d')
   await key('w')
@@ -198,6 +240,25 @@ async function run() {
     'retained split view reactivated',
   )
   mark('native-split-document-focus-isolation-and-retained-view')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>base</p>',5)`)
+  await composition('漢')
+  const composed = await state()
+  assert.equal(composed.markdown, 'base漢', 'native IME composition commits the composed text')
+  mark('native-ime-composition-start-update-end-preserves-input')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta alpha</p>',1)`)
+  await key('d', [process.platform === 'darwin' ? 'meta' : 'control'])
+  await key('d', [process.platform === 'darwin' ? 'meta' : 'control'])
+  await key('d')
+  await key('w')
+  await key('i')
+  win.webContents.insertText('X')
+  await key('Escape')
+  const clearedOccurrences = await state()
+  assert.equal(clearedOccurrences.markdown, 'alpha beta X')
+  assert.equal((clearedOccurrences.markdown.match(/X/g) ?? []).length, 1)
+  mark('native-occurrence-shortcut-vim-operator-clears-extra-edits')
 
   // Fixture setup selects known production-schema positions; every Vim action is a trusted native key.
   await evaluate(`window.richTextVimFixture.setup('<p>a👩‍💻bc</p>',1)`)
@@ -399,11 +460,9 @@ async function run() {
   await evaluate(`window.richTextVimFixture.mode(false)`)
   await key('a')
   await evaluate(`window.richTextVimFixture.mode(true)`)
+  await evaluate(`window.richTextVimFixture.visibility(false)`)
   await evaluate(
-    `window.richTextVimFixture.focusOwnership(false); window.richTextVimFixture.visibility(false)`,
-  )
-  await evaluate(
-    `window.richTextVimFixture.visibility(true); window.richTextVimFixture.focusOwnership(true)`,
+    `window.richTextVimFixture.visibility(true); window.richTextVimFixture.focus('primary')`,
   )
   await wait(
     `document.querySelector('[role="textbox"]')?.editor?.isEditable`,
@@ -425,6 +484,62 @@ async function run() {
   assert(writes >= 1)
   mark('real-disposable-file-adapter-flush-frontmatter-and-external-update')
 
+  const staleSnapshot = markdown.replace('Native Vim fixture', 'Stale delayed snapshot')
+  const latestSnapshot = markdown.replace('Native Vim fixture', 'Latest external snapshot')
+  await evaluate(
+    `window.richTextVimFixture.externalRead(${JSON.stringify(staleSnapshot)},'snapshot-A',true)`,
+  )
+  await evaluate(
+    `window.richTextVimFixture.externalRead(${JSON.stringify(latestSnapshot)},'snapshot-B')`,
+  )
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external snapshot')`,
+    'latest snapshot applies while older read is pending',
+  )
+  await evaluate(
+    `window.richTextVimFixture.focus('secondary');window.richTextVimFixture.focus('primary')`,
+  )
+  await evaluate(`window.richTextVimFixture.releaseRead()`)
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external snapshot')`,
+    'latest external snapshot wins after delayed stale read and A-B-A focus transition',
+  )
+  assert(!(await state()).markdown.includes('Stale delayed snapshot'))
+  assert.equal((await state('secondary')).markdown, 'secondary alpha beta')
+  mark('delayed-external-read-stale-result-ignored-across-focus-aba')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>dirty before departure</p>',1)`)
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'END' })
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'END' })
+  win.webContents.insertText(' unsaved')
+  await evaluate(`window.richTextVimFixture.failNextWrite()`)
+  const switchButton = await evaluate<{ x: number; y: number }>(
+    `(()=>{const r=document.querySelector('[data-fixture-action="leave"]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+  )
+  click(switchButton)
+  await wait(`window.richTextVimFixture.leaveResult()!==null`, 'failed switch flush result')
+  const failedLeave = await evaluate<{ left: boolean; error?: string }>(
+    `window.richTextVimFixture.leaveResult()`,
+  )
+  assert.equal(failedLeave.left, false)
+  assert.match(failedLeave.error ?? '', /fixture disk refusal/)
+  assert.equal((await state()).markdown, 'dirty before departure unsaved')
+  assert((await readFile(note, 'utf8')).includes('Latest external snapshot'))
+  assert.equal((await state()).editable, true, 'failed departure retains editable dirty document')
+  const retryButton = await evaluate<{ x: number; y: number }>(
+    `(()=>{const r=document.querySelector('[data-fixture-action="retry"]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+  )
+  click(retryButton)
+  await wait(`window.richTextVimFixture.leaveResult()?.left===true`, 'successful retry switch')
+  const retriedLeave = await evaluate<{ left: boolean }>(`window.richTextVimFixture.leaveResult()`)
+  assert.equal(retriedLeave.left, true)
+  assert((await readFile(note, 'utf8')).includes('dirty before departure unsaved'))
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"]')?.hidden`,
+    'successful retry leaves document',
+  )
+  mark('dirty-departure-refusal-retains-document-and-retry-flushes-before-switch')
+
   await capture('light.png')
   await evaluate(
     `document.documentElement.dataset.theme='dark';document.documentElement.classList.add('dark')`,
@@ -434,6 +549,29 @@ async function run() {
     ok: true,
     issue: 516,
     checks,
+    expectedScenarios: [
+      {
+        name: 'native-ime-composition-start-update-end-preserves-input',
+        input: 'base',
+        output: 'base漢',
+      },
+      {
+        name: 'native-occurrence-shortcut-vim-operator-clears-extra-edits',
+        input: 'alpha beta alpha',
+        output: 'alpha beta X',
+      },
+      {
+        name: 'delayed-external-read-stale-result-ignored-across-focus-aba',
+        staleSnapshot: 'Stale delayed snapshot',
+        expectedVisibleSnapshot: 'Latest external snapshot',
+        focusPathSequence: ['notes/acceptance.md', 'notes/secondary.md', 'notes/acceptance.md'],
+      },
+      {
+        name: 'dirty-departure-refusal-retains-document-and-retry-flushes-before-switch',
+        refusedWrite: 'fixture disk refusal',
+        expectedSavedText: 'dirty before departure unsaved',
+      },
+    ],
     writes,
     evidence: ['light.png', 'dark.png', 'interaction.mp4'],
     interactionFrames: frame,
@@ -447,7 +585,7 @@ async function run() {
     coverageNotes: [
       'Keyboard input is delivered by Electron webContents.sendInputEvent, not synthetic DOM KeyboardEvents.',
       'The fixture uses the production DocumentView and complete document extension schema with a fixed notes.read/notes.write adapter.',
-      'The fixture does not claim app-shell integration: multi-document shell routing, native comment persistence, delayed cross-vault races, and real close-tab UI are not represented.',
+      'The fixture controls a bounded two-document focus/switch surface; it does not represent shell tab routing, native comment persistence, clipboard, Mermaid rendering, or cross-container content transfer.',
     ],
   }
   await writeFile(join(evidence, 'result.json'), JSON.stringify(result, null, 2))
