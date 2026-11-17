@@ -688,7 +688,7 @@ test('a verified community snapshot shares live host labels and activates its ex
 
 test('path A-B-A and same-URL reload retire the previous nonce and its snapshot', async () => {
   capability.acquire.mockResolvedValue(releaseResult)
-  const { store, view, tree } = renderHintLifecycle()
+  const { view, tree } = renderHintLifecycle()
   const first = await loadedGuest()
   guestMessage(first.frame, guestSnapshot(first.nonce))
   guestMessage(first.frame, { type: 'holi-hints:start', nonce: first.nonce, revision: 1 })
