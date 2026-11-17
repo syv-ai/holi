@@ -1,5 +1,5 @@
 import { Extension } from '@tiptap/react'
-import { Fragment } from '@tiptap/pm/model'
+import { Fragment, Slice } from '@tiptap/pm/model'
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
@@ -41,6 +41,7 @@ type VimState = {
   visualCursor: number | null
   visualLinewise: boolean
   operatorAnchor: number | null
+  insertHistoryTime: number | null
   register: {
     content: import('@tiptap/pm/model').Slice
     linewise: boolean
@@ -60,6 +61,7 @@ const EMPTY: VimState = {
   visualCursor: null,
   visualLinewise: false,
   operatorAnchor: null,
+  insertHistoryTime: null,
   register: null,
 }
 const WORD = /^[\p{L}\p{N}_][\p{L}\p{N}\p{M}_]*$/u
@@ -82,7 +84,12 @@ function setMode(view: EditorView, mode: RichTextVimMode, enabled?: boolean) {
   const current = KEY.getState(view.state) ?? EMPTY
   view.dispatch(
     view.state.tr
-      .setMeta(KEY, { ...resetTransient(current), mode, enabled: enabled ?? current.enabled })
+      .setMeta(KEY, {
+        ...resetTransient(current),
+        mode,
+        enabled: enabled ?? current.enabled,
+        insertHistoryTime: mode === 'insert' ? current.insertHistoryTime : null,
+      })
       .setMeta('addToHistory', false),
   )
 }
@@ -677,6 +684,7 @@ function handleNormal(
           })
           if (operator !== 'y' && settings.editable()) {
             const tr = closeHistory(view.state.tr)
+            if (operator === 'c') tr.setMeta('vimChangeInsert', true)
             if (from === block.from && to === block.to) {
               tr.replaceWith(
                 block.from - 1,
@@ -691,12 +699,7 @@ function handleNormal(
           event.preventDefault()
           return true
         }
-        const nested = containerAt(view.state, block.from, [
-          'tableCell',
-          'tableHeader',
-          'listItem',
-          'taskItem',
-        ])
+        const nested = containerAt(view.state, block.from, STRUCTURAL_CONTAINERS)
         const all = blocks(view.state)
         const blockIndex = all.findIndex((candidate) => candidate.from === block.from)
         const lineCount = cappedCount(current.operatorCount * (current.count || 1))
@@ -721,6 +724,7 @@ function handleNormal(
         })
         if (operator !== 'y' && settings.editable()) {
           const tr = closeHistory(view.state.tr)
+          if (operator === 'c') tr.setMeta('vimChangeInsert', true)
           if (operator === 'c' && line.from === block.from && line.to === block.to) {
             const empty = block.node.type.create(block.node.attrs, null, block.node.marks)
             tr.replaceWith(block.from - 1, lastBlock.to + 1, empty)
@@ -819,18 +823,8 @@ function handleNormal(
         (key === 'j' || key === 'k') &&
         sourceBlock !== undefined &&
         destinationBlock !== undefined &&
-        containerAt(view.state, sourceBlock.from, [
-          'tableCell',
-          'tableHeader',
-          'listItem',
-          'taskItem',
-        ])?.pos !==
-          containerAt(view.state, destinationBlock.from, [
-            'tableCell',
-            'tableHeader',
-            'listItem',
-            'taskItem',
-          ])?.pos
+        containerAt(view.state, sourceBlock.from, STRUCTURAL_CONTAINERS)?.pos !==
+          containerAt(view.state, destinationBlock.from, STRUCTURAL_CONTAINERS)?.pos
       const allowed = !structuralCrossing && safeRange(view.state, range.from, range.to)
       if (!allowed) {
         update({ operator: null, operatorAnchor: null, count: 0, operatorCount: 1 })
@@ -875,6 +869,7 @@ function handleNormal(
           const deleteFrom = previousLine && !nextLine ? previousLine.to : inlineFirst.from
           const deleteTo = nextLine ? nextLine.from : inlineLast.to
           const tr = closeHistory(view.state.tr)
+          if (operator === 'c') tr.setMeta('vimChangeInsert', true)
           if (deleteFrom === sourceLine.block.from && deleteTo === sourceLine.block.to) {
             tr.replaceWith(
               sourceLine.block.from - 1,
@@ -889,6 +884,7 @@ function handleNormal(
           view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), 1)))
         } else {
           const tr = closeHistory(view.state.tr).delete(rangeFrom, safeTo)
+          if (operator === 'c') tr.setMeta('vimChangeInsert', true)
           view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(rangeFrom), 1)))
         }
         if (operator === 'c') setMode(view, 'insert', true)
@@ -986,6 +982,7 @@ function handleNormal(
       select(view, Math.min(current.visualAnchor, view.state.doc.content.size))
     } else if (settings.editable() && range.to > range.from) {
       const tr = closeHistory(view.state.tr)
+      if (key === 'c') tr.setMeta('vimChangeInsert', true)
       let deleteFrom = range.from
       if (visualContainer && visualContainerNode) {
         const item = visualContainerNode
@@ -1043,18 +1040,26 @@ function handleNormal(
     return true
   }
   if ((key === 'p' || key === 'P') && current.register) {
+    const repetitions = cappedCount(current.count)
+    const register = current.register
+    const content =
+      repetitions === 1
+        ? register.content
+        : new Slice(
+            Array.from({ length: repetitions }, () => register.content.content).reduce(
+              (combined, fragment) => combined.append(fragment),
+              Fragment.empty,
+            ),
+            register.content.openStart,
+            register.content.openEnd,
+          )
+    const pasteRegister = { ...register, content }
+    if (current.count) update({ count: 0 })
     if (settings.editable()) {
       const line = lineAt(view.state, view.state.selection.head)
-      const nested =
-        line &&
-        containerAt(view.state, line.block.from, [
-          'tableCell',
-          'tableHeader',
-          'listItem',
-          'taskItem',
-        ])
+      const nested = line && containerAt(view.state, line.block.from, STRUCTURAL_CONTAINERS)
       const at =
-        current.register.linewise && line
+        pasteRegister.linewise && line
           ? nested
             ? nested.type === 'tableCell' || nested.type === 'tableHeader'
               ? key === 'p'
@@ -1066,23 +1071,23 @@ function handleNormal(
             : key === 'p'
               ? line.block.to + 1
               : line.block.from - 1
-          : key === 'p' && !current.register.linewise
+          : key === 'p' && !pasteRegister.linewise
             ? (graphemeBoundaries(view.state, line?.from ?? 0, line?.to ?? 0).find(
                 (at) => at > view.state.selection.head,
               ) ?? view.state.selection.head)
             : view.state.selection.head
       const pos = Math.max(0, Math.min(at, view.state.doc.content.size))
-      if (current.register.linewiseContainer) {
+      if (pasteRegister.linewiseContainer) {
         const item = line && containerAt(view.state, line.block.from, ['listItem', 'taskItem'])
         const node = item ? view.state.doc.nodeAt(item.pos) : null
-        if (!item || item.type !== current.register.linewiseContainer || !node) {
+        if (!item || item.type !== pasteRegister.linewiseContainer || !node) {
           settings.onFeedback?.(
             'Vim list register must be pasted into a matching list; no text was changed',
           )
         } else {
           const insertAt = key === 'p' ? item.pos + node.nodeSize : item.pos
           const tr = closeHistory(
-            view.state.tr.replaceRange(insertAt, insertAt, current.register.content),
+            view.state.tr.replaceRange(insertAt, insertAt, pasteRegister.content),
           )
           try {
             tr.doc.check()
@@ -1098,12 +1103,12 @@ function handleNormal(
         }
       } else if (
         line &&
-        current.register.linewiseTextblock === 'codeBlock' &&
+        pasteRegister.linewiseTextblock === 'codeBlock' &&
         line.block.node.type.name === 'codeBlock'
       ) {
-        const value = current.register.content.content.textBetween(
+        const value = pasteRegister.content.content.textBetween(
           0,
-          current.register.content.content.size,
+          pasteRegister.content.content.size,
           '\n',
         )
         const insertion = key === 'p' ? `\n${value}` : `${value}\n`
@@ -1118,11 +1123,11 @@ function handleNormal(
         }
       } else if (
         line &&
-        current.register.linewiseTextblock === 'hardBreak' &&
+        pasteRegister.linewiseTextblock === 'hardBreak' &&
         line.block.node.type.name !== 'codeBlock'
       ) {
         const hardBreak = view.state.schema.nodes.hardBreak
-        const content = current.register.content.content
+        const content = pasteRegister.content.content
         const separator = hardBreak?.create()
         if (separator) {
           const fragment =
@@ -1142,8 +1147,8 @@ function handleNormal(
             settings.onFeedback?.('Vim register does not fit at this position; no text was changed')
           }
         }
-      } else if (line && current.register.linewise && nested) {
-        const tr = closeHistory(view.state.tr.replaceRange(pos, pos, current.register.content))
+      } else if (line && pasteRegister.linewise && nested) {
+        const tr = closeHistory(view.state.tr.replaceRange(pos, pos, pasteRegister.content))
         try {
           tr.doc.check()
           if (!tr.docChanged) throw new Error('empty replacement')
@@ -1161,7 +1166,7 @@ function handleNormal(
         }
       } else {
         closeHistoryBoundary(view)
-        const insertion = view.state.tr.replaceRange(pos, pos, current.register.content)
+        const insertion = view.state.tr.replaceRange(pos, pos, pasteRegister.content)
         const tr = closeHistory(insertion)
         try {
           tr.doc.check()
@@ -1280,6 +1285,17 @@ export const RichTextVim = Extension.create<VimSettings>({
     return [
       new Plugin<VimState>({
         key: KEY,
+        filterTransaction(transaction, state) {
+          const vim = KEY.getState(state)
+          if (
+            vim?.mode === 'insert' &&
+            vim.insertHistoryTime !== null &&
+            transaction.docChanged &&
+            !transaction.getMeta('vimChangeInsert')
+          )
+            transaction.setTime(vim.insertHistoryTime + 1)
+          return true
+        },
         state: {
           init: () => ({
             ...EMPTY,
@@ -1289,6 +1305,8 @@ export const RichTextVim = Extension.create<VimSettings>({
           apply(transaction, value) {
             const meta = transaction.getMeta(KEY) as VimState | undefined
             if (meta) return meta
+            if (transaction.getMeta('vimChangeInsert'))
+              return { ...value, insertHistoryTime: transaction.time }
             if (
               transaction.selectionSet &&
               !transaction.getMeta('vimSelection') &&
@@ -1391,6 +1409,10 @@ export const RichTextVim = Extension.create<VimSettings>({
               clearTransient(view)
               return false
             },
+            compositionend(view) {
+              clearTransient(view)
+              return false
+            },
           },
           handleKeyDown(view, event) {
             const state = KEY.getState(view.state) ?? EMPTY
@@ -1446,6 +1468,8 @@ export function configureRichTextVim(
       ...resetTransient(current),
       enabled: shouldEnable,
       mode: shouldEnable ? (current.enabled ? current.mode : 'normal') : '',
+      insertHistoryTime:
+        shouldEnable && current.mode === 'insert' ? current.insertHistoryTime : null,
       register: current.register,
     })
     .setMeta('addToHistory', false)
