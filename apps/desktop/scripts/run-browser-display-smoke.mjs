@@ -449,9 +449,6 @@ try {
     assert.equal(hints.source, env.HOLI_553_SHA)
     assert.equal(hints.sourceHash, env.HOLI_553_SOURCE_HASH)
     assert.deepEqual(hints.runtimeErrors, [])
-    for (const name of hints.evidence) {
-      assert((await stat(join(evidence, name))).size > 0, `missing hints evidence: ${name}`)
-    }
     const hintVideo = spawnSync(
       'ffmpeg',
       [
@@ -475,7 +472,9 @@ try {
       (await stat(join(evidence, 'hints-interaction.mp4'))).size > 0,
       'missing hint interaction video',
     )
-    assert((await stat(recordingPath)).size > 0, 'missing native interaction video')
+    for (const name of hints.evidence) {
+      assert((await stat(join(evidence, name))).size > 0, `missing hints evidence: ${name}`)
+    }
   }
   if (toolbarAcceptance) {
     for (const name of ['ui-light.png', 'ui-dark.png'])
@@ -507,6 +506,9 @@ try {
     )
     assert.equal(video.status, 0, `video encoding failed: ${video.stderr}`)
     assert((await stat(recordingPath)).size > 0, 'video artifact is empty')
+  }
+  if (hintsAcceptance) {
+    assert((await stat(recordingPath)).size > 0, 'missing native interaction video')
   }
 } finally {
   if (child && child.exitCode === null) {
