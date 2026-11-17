@@ -28,6 +28,7 @@ import { join } from 'node:path'
 import type { AgentProvider, VaultRef } from '../provider'
 import {
   copyIn,
+  CopyBackCancelled,
   leftOutMessage,
   takenDestination,
   takenMessage,
@@ -35,6 +36,7 @@ import {
   type Jobs,
   type Made,
 } from './jobs'
+import { bounded } from './bounded'
 import type { FenceCopy, PtySessions } from './pty-sessions'
 import type { Geometry, StartResult } from './sessions'
 
@@ -76,23 +78,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   const active = new Set<string>()
   const cancellations = new Set<AbortController>()
   const drainErrors = new Set<unknown>()
-  const DRAIN_CAP_MS = 5_000
-  const bounded = async <T>(work: Promise<T>, label: string): Promise<T> => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    try {
-      return await Promise.race([
-        work,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`${label} did not finish before teardown timed out.`)),
-            DRAIN_CAP_MS,
-          )
-        }),
-      ])
-    } finally {
-      if (timer !== undefined) clearTimeout(timer)
-    }
-  }
+  let retirement: Promise<void> | undefined
   // Folders a crash left behind. Their processes died with Holi's PTYs.
   const swept = rm(deps.scratchRoot, { recursive: true, force: true }).catch((err: unknown) => {
     drainErrors.add(err)
@@ -192,6 +178,10 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
           const leftOut = leftOutMessage(skipped)
           return leftOut === undefined ? {} : { leftOut }
         } catch (err) {
+          // This error is raised only after temporary files are removed and
+          // any moved destination is restored. An aborted signal alone says
+          // nothing about whether a real mutation or cleanup failed.
+          if (err instanceof CopyBackCancelled) return {}
           drainErrors.add(err)
           log(`${name}: ${(err as Error).message}`)
           return { error: (err as Error).message }
@@ -295,7 +285,16 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
       if (drainErrors.size > 0)
         throw new AggregateError([...drainErrors], 'Fenced session cleanup did not complete.')
       await bounded(swept, 'Fenced startup sweep')
-      await rm(deps.scratchRoot, { recursive: true, force: true })
+      if (retirement === undefined) {
+        const work = rm(deps.scratchRoot, { recursive: true, force: true })
+        retirement = work
+        // A timeout never releases ownership. Only a settled failure may
+        // retry; a completed retirement must not delete a replacement root.
+        void work.catch(() => {
+          if (retirement === work) retirement = undefined
+        })
+      }
+      await bounded(retirement, 'Fenced scratch cleanup')
     },
   }
 }

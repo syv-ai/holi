@@ -89,6 +89,7 @@ import {
 } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
 import type { JobRun, JobsProvider, VaultRef } from '../provider'
+import { bounded } from './bounded'
 import type { ActionResult } from './sessions'
 
 /**
@@ -413,6 +414,13 @@ export const leftOutMessage = (skipped: readonly string[]): string | undefined =
 const collision = (rel: string): string =>
   `Holi did not copy back ${rel}: something else put it in the vault while the agent worked, and Holi never writes over it.`
 
+/** Expected cancellation, propagated only after publication cleanup/rollback succeeds. */
+export class CopyBackCancelled extends Error {
+  constructor() {
+    super('Copy-back was cancelled.')
+  }
+}
+
 /**
  * Write `data` at `abs` only if nothing is there: a file beside it, linked
  * into place, which fails when the name is taken (on a case-blind disk too)
@@ -427,14 +435,14 @@ async function createExclusive(
   const tmp = join(dirname(abs), `.holi-tmp-${randomBytes(6).toString('hex')}`)
   try {
     await writeFile(tmp, data)
-    if (stopped()) throw new Error('Copy-back was cancelled.')
+    if (stopped()) throw new CopyBackCancelled()
     await link(tmp, abs)
     return true
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false
     throw err
   } finally {
-    await rm(tmp, { force: true }).catch(() => undefined)
+    await rm(tmp, { force: true })
   }
 }
 
@@ -524,23 +532,6 @@ export function createJobs(deps: JobsDeps): Jobs {
   const maxMs = deps.maxMs ?? 30 * 60_000
   const jobs = new Map<string, Job>()
   let lastPushed = ''
-  // A timeout bounds the caller, never the lifetime of the operation it owns.
-  async function bounded<T>(work: Promise<T>, label: string): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    try {
-      return await Promise.race([
-        work,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`${label} did not finish before teardown timed out.`)),
-            5_000,
-          )
-        }),
-      ])
-    } finally {
-      if (timer !== undefined) clearTimeout(timer)
-    }
-  }
 
   const summaries = (): SessionSummary[] =>
     [...jobs.values()].map((j) => ({
@@ -672,7 +663,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       // A write after this check is the residual race the vault accepts.
       const after = await readRegular(previous)
       if (after === null || hashOf(after) !== before) throw new Error(collision(rel))
-      if (stopped()) throw new Error('Copy-back was cancelled.')
+      if (stopped()) throw new CopyBackCancelled()
       if (!(await createExclusive(abs, data, stopped))) throw new Error(collision(rel))
     } catch (err) {
       if (moved) {
