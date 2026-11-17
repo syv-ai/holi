@@ -24,6 +24,7 @@ const native = vi.hoisted(() => ({
     error?: Error
   }>,
   operations: new Set<Promise<unknown>>(),
+  previousFailure: null as { method: 'readFile' | 'close'; error: Error } | null,
 }))
 
 vi.mock('node:fs/promises', async (original) => {
@@ -50,6 +51,25 @@ vi.mock('node:fs/promises', async (original) => {
   return {
     ...fs,
     link: wrap('link'),
+    open: async (...args: Parameters<typeof fs.open>) => {
+      const handle = await fs.open(...args)
+      if (basename(String(args[0])) === 'previous' && native.previousFailure !== null) {
+        const failure = native.previousFailure
+        native.previousFailure = null
+        if (failure.method === 'readFile') {
+          handle.readFile = async () => {
+            throw failure.error
+          }
+        } else {
+          const close = handle.close.bind(handle)
+          handle.close = async () => {
+            await close()
+            throw failure.error
+          }
+        }
+      }
+      return handle
+    },
     mkdir: wrap('mkdir'),
     readdir: wrap('readdir'),
     rm: wrap('rm'),
@@ -98,6 +118,7 @@ const children: Array<{ child: ChildProcess; closed: Promise<void> }> = []
 afterEach(async () => {
   for (const gate of native.gates) gate.release()
   native.gates.length = 0
+  native.previousFailure = null
   vi.useRealTimers()
   for (const { child } of children) {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
@@ -838,6 +859,46 @@ it.each(['safe cancellation', 'rollback', 'temporary cleanup'] as const)(
       expect(leftovers.some((name) => name.startsWith('.holi-tmp-'))).toBe(true)
       expect(await readFile(target, 'utf8')).toBe('original')
     }
+  },
+)
+
+it.each(['readFile', 'close'] as const)(
+  'preserves the original when recovery %s fails beside a competing file',
+  async (method) => {
+    const t = await rig()
+    const target = join(t.root, 'note.md')
+    await writeFile(target, 'original')
+    t.provider.capabilities.jobs.command = () => ({
+      bin: process.execPath,
+      args: ['-e', `require('node:fs').writeFileSync('note.md', 'agent version');${SCRIPT}`],
+      env: {},
+    })
+    const prep = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
+    const run = await t.jobs.start({
+      provider: t.provider,
+      name: 'fixture',
+      prompt: 'go',
+      scope: { read: ['note.md'], write: ['note.md'] },
+    })
+    if (!run.ok) throw new Error(run.message)
+    await prep.entered
+    const restore = hold(
+      'link',
+      (args) => basename(String(args[0])) === 'previous' && basename(String(args[1])) === 'note.md',
+    )
+    const stop = t.jobs.stop(run.sessionId)
+    const failed = expect(stop).rejects.toThrow(`recovery ${method} refused`)
+    prep.release()
+    await restore.entered
+    await writeFile(target, 'competing version')
+    native.previousFailure = { method, error: new Error(`recovery ${method} refused`) }
+    restore.release()
+    await failed
+    const holdDir = (await readdir(t.root)).find((name) => name.startsWith('.holi-copy-'))!
+    expect(await readFile(join(t.root, holdDir, 'previous'), 'utf8')).toBe('original')
+    expect(await readFile(target, 'utf8')).toBe('competing version')
+    await expect(t.jobs.leave()).rejects.toThrow('did not drain')
+    expect(t.jobs.has(run.sessionId)).toBe(true)
   },
 )
 

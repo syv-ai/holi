@@ -674,9 +674,9 @@ export function createJobs(deps: JobsDeps): Jobs {
       if (!(await createExclusive(abs, data, stopped))) throw new Error(collision(rel))
     } catch (err) {
       if (moved) {
-        const old = await readRegular(previous)
         try {
-          // A newly arrived file owns the name; never remove or replace it.
+          // Restore independently of reads: even an unreadable original must
+          // survive. A newly arrived file owns the name and is never replaced.
           await link(previous, abs)
         } catch (restore) {
           if ((restore as NodeJS.ErrnoException).code !== 'EEXIST') {
@@ -685,8 +685,17 @@ export function createJobs(deps: JobsDeps): Jobs {
               `${String(err)} Restoration failed: ${String(restore)}. The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
             )
           }
-          // Keep a changed version that could belong to the other writer.
-          if (old === null || hashOf(old) !== before) keep = true
+          // Until comparison succeeds, both versions remain owned. A read or
+          // close failure must not let finally delete the preserved original.
+          keep = true
+          try {
+            const old = await readRegular(previous)
+            keep = old === null || hashOf(old) !== before
+          } catch (inspect) {
+            throw new CopyBackFinalizationError(
+              `${String(err)} Could not verify restoration: ${String(inspect)}. The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
+            )
+          }
         }
       }
       if (keep) {
