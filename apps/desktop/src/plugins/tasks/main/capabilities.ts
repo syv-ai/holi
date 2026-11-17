@@ -8,7 +8,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
-import { completeTask, isClosedStatus, isOverdue } from '@holi/shared'
+import { completeTask, isClosedStatus, isOverdue, sameLogin } from '@holi/shared'
 import {
   isPrivateTask,
   isTaskFilePath,
@@ -291,17 +291,21 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
       doors: ['app', 'cli'],
       cli: {
         args: [],
-        flags: ['overdue'],
-        summary: 'list tasks; --due today and --overdue filter by due date',
+        flags: ['overdue', 'open'],
+        values: ['assignee'],
+        summary:
+          'list tasks; --due today and --overdue filter by due date; --assignee <login> and --open filter assignments and status',
       },
-      params: (raw): { due?: string; overdue?: boolean } => {
+      params: (raw): { due?: string; overdue?: boolean; assignee?: string; open?: boolean } => {
         const p = paramsObject(raw)
         const due = optionalString(p, 'due')
         if (due !== undefined && due !== 'today') {
           throw new CapabilityError('BAD_REQUEST', 'due must be today')
         }
         const overdue = flagParam(p, 'overdue')
-        return { due, overdue }
+        const assignee = optionalString(p, 'assignee')
+        const open = flagParam(p, 'open')
+        return { due, overdue, assignee, open }
       },
       // An app is told only the tasks it may read, as `docs.list` tells it
       // only the notes: a task's path and title are its content too.
@@ -314,6 +318,12 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
         const now = new Date()
         const localNow = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
         return readable.filter((task) => {
+          if (
+            filters.assignee !== undefined &&
+            !task.assignees.some((login) => sameLogin(login, filters.assignee!))
+          )
+            return false
+          if (filters.open && isClosedStatus(statuses, task.status)) return false
           if (filters.due === 'today' && task.due?.slice(0, 10) !== today) return false
           if (
             filters.overdue &&
