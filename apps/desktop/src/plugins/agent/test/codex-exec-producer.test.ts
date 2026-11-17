@@ -678,13 +678,16 @@ if (bin) {
           if (firstEntryTimeout) clearTimeout(firstEntryTimeout)
         }
         pendingCompletion = ended(f.jobs, result.sessionId, f.brackets, 1)
-        void pendingCompletion.catch(() => {})
+        let firstCompleted = false
+        void pendingCompletion.then(
+          () => (firstCompleted = true),
+          () => {},
+        )
         expect(f.jobs.sessions().find((session) => session.id === result.sessionId)?.outcome).toBe(
           'completed',
         )
-        expect(
-          await Promise.race([pendingCompletion.then(() => 'ended'), Promise.resolve('pending')]),
-        ).toBe('pending')
+        await Promise.resolve()
+        expect(firstCompleted).toBe(false)
         f.releaseBracketEnd(1)
         const first = await pendingCompletion
         expect(first.outcome).toBe('completed')
@@ -708,10 +711,13 @@ if (bin) {
           if (secondEntryTimeout) clearTimeout(secondEntryTimeout)
         }
         pendingCompletion = ended(f.jobs, result.sessionId, f.brackets, 2)
-        void pendingCompletion.catch(() => {})
-        expect(
-          await Promise.race([pendingCompletion.then(() => 'ended'), Promise.resolve('pending')]),
-        ).toBe('pending')
+        let secondCompleted = false
+        void pendingCompletion.then(
+          () => (secondCompleted = true),
+          () => {},
+        )
+        await Promise.resolve()
+        expect(secondCompleted).toBe(false)
         f.releaseBracketEnd(2)
         const row = await pendingCompletion
         expect(row.outcome).toBe('completed')
