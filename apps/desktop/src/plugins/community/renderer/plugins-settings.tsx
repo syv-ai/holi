@@ -274,23 +274,28 @@ export function PluginsSettings({
                       <BusyLabel busy={acting === `${row.id}:check`}>Check again</BusyLabel>
                     </Button>
                   )}
-                  {row.status === 'pin-differs' && row.install?.kind === 'dev' && row.pin && (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() =>
-                        void act(`${row.id}:adopt-folder`, async () => {
-                          await communityCap.adoptFolder(remote, { id: row.id })
-                          await setPluginSwitch(remote, row.id, true)
-                        })
-                      }
-                    >
-                      <BusyLabel busy={acting === `${row.id}:adopt-folder`}>
-                        Use this folder in this vault…
-                      </BusyLabel>
-                    </Button>
-                  )}
+                  {row.status === 'pin-differs' &&
+                    row.install?.kind === 'dev' &&
+                    row.pin &&
+                    row.folderAdoptionToken && (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() =>
+                          void act(`${row.id}:adopt-folder`, async () => {
+                            await communityCap.adoptFolder(remote, {
+                              id: row.id,
+                              token: row.folderAdoptionToken!,
+                            })
+                          })
+                        }
+                      >
+                        <BusyLabel busy={acting === `${row.id}:adopt-folder`}>
+                          Use this folder in this vault…
+                        </BusyLabel>
+                      </Button>
+                    )}
                   {nextStep(row)}
                   <Switch
                     aria-label={`Use ${row.name} in this vault`}
