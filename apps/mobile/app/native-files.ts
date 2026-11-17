@@ -18,6 +18,7 @@ export type StorageCheckpointCallback = (event: {
 }) => Promise<void>
 
 export interface NativeFiles {
+  operationId(): string
   canonicalRoot(root: string): Promise<string>
   list(root: string): Promise<Entry[]>
   read(root: string, relativePath: string): Promise<Uint8Array>

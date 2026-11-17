@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createVaultStorage } from '../app/vault-storage'
@@ -7,11 +7,24 @@ import { createNodeFiles } from './native-files-node'
 
 const roots: string[] = []
 const text = (value: string) => new TextEncoder().encode(value)
-const string = (value: Uint8Array) => new TextDecoder().decode(value)
+const string = (value: Uint8Array) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(value)
 async function root() {
   const path = await mkdtemp(`/tmp/holi-move-${randomUUID()}-`)
   roots.push(path)
   return path
+}
+async function waitForCheckpoint(entered: Promise<void>) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      entered,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Move checkpoint was not reached')), 1_000)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 afterEach(async () =>
   Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true }))),
@@ -55,6 +68,18 @@ describe('durable note moves', () => {
     expect(string((await storage.read('a.md')).bytes)).toBe('a')
   })
 
+  it('rejects local-only move paths before creating recovery evidence', async () => {
+    const base = await root()
+    const adapter = createNodeFiles()
+    const storage = createVaultStorage(adapter, { remote: 'holi/private-move', root: base })
+    const source = await storage.create('public.md', text('keep'))
+    for (const target of ['private.local.md', '.hidden.md', 'node_modules/node.md', '.env']) {
+      await expect(storage.move('public.md', target, source.revision)).rejects.toThrow()
+    }
+    expect(await adapter.privateList(await adapter.canonicalRoot(base))).toEqual([])
+    expect(await readFile(join(base, 'public.md'), 'utf8')).toBe('keep')
+  })
+
   it('does not follow symlinks or accept filesystem spelling aliases', async () => {
     const base = await root()
     const outside = await root()
@@ -77,13 +102,15 @@ describe('durable note moves', () => {
     const from = await setup.create('from.md', text('[[from.md]]'))
     await setup.create('back.md', text('[[from.md]]'))
     const events: { phase: string; direction: string; path?: string }[] = []
-    const observed = createVaultStorage(createNodeFiles(), {
-      remote: 'holi/checkpoint-observe',
-      root: base,
-      checkpoint: async ({ phase, direction, path }) => {
-        events.push({ phase, direction, path })
+    const observed = createVaultStorage(
+      createNodeFiles(),
+      { remote: 'holi/checkpoint-observe', root: base },
+      {
+        checkpoint: async ({ phase, direction, path }) => {
+          events.push({ phase, direction, path })
+        },
       },
-    })
+    )
     await observed.move('from.md', 'to.md', from.revision)
     expect(events).toEqual([
       { phase: 'journal-before', direction: 'before', path: undefined },
@@ -118,13 +145,15 @@ describe('durable note moves', () => {
       const setup = createVaultStorage(createNodeFiles(), { remote: 'holi/setup', root: base })
       const source = await setup.create('from.md', text('source'))
       await setup.create('back.md', text('[[from.md]]'))
-      const interrupted = createVaultStorage(createNodeFiles(), {
-        remote: 'holi/fault',
-        root: base,
-        checkpoint: async (event) => {
-          if (event.phase === phase) throw new Error(`interrupted ${phase}`)
+      const interrupted = createVaultStorage(
+        createNodeFiles(),
+        { remote: 'holi/fault', root: base },
+        {
+          checkpoint: async (event) => {
+            if (event.phase === phase) throw new Error(`interrupted ${phase}`)
+          },
         },
-      })
+      )
       await expect(interrupted.move('from.md', 'to.md', source.revision)).rejects.toThrow()
       const reopened = createVaultStorage(createNodeFiles(), { remote: 'holi/reopen', root: base })
       if (phase === 'journal-before') {
@@ -137,6 +166,17 @@ describe('durable note moves', () => {
         expect(string((await reopened.read('back.md')).bytes)).toBe('[[to.md]]')
       }
     }
+  })
+
+  it('refuses symlinked private artifact directories without writing outside the vault', async () => {
+    const base = await root()
+    const outside = await root()
+    await symlink(outside, join(base, '.holi-storage-private'))
+    const adapter = createNodeFiles()
+    await expect(
+      adapter.privatePublish(base, `move-${randomUUID()}.json`, text('{}'), null),
+    ).rejects.toThrow()
+    expect(await readdir(outside)).toEqual([])
   })
 
   it('refuses malformed recovery evidence without changing vault content', async () => {
@@ -158,6 +198,38 @@ describe('durable note moves', () => {
     )
   })
 
+  it('rejects private paths in schema-2 journals before recovery mutation', async () => {
+    for (const to of ['private.local.md', '.env', 'node_modules/hidden.md']) {
+      const base = await root()
+      const adapter = createNodeFiles()
+      const storage = createVaultStorage(adapter, { remote: 'holi/private-journal', root: base })
+      await storage.create('from.md', text('source'))
+      const canonical = await adapter.canonicalRoot(base)
+      const id = randomUUID()
+      const journal = {
+        schema: 2,
+        root: canonical,
+        operationId: id,
+        from: 'from.md',
+        to,
+        changes: [
+          { path: 'from.md', before: [...text('source')], after: null },
+          { path: to, before: null, after: [...text('source')] },
+        ],
+      }
+      await adapter.privatePublish(
+        canonical,
+        `move-${id}.json`,
+        text(JSON.stringify(journal)),
+        null,
+      )
+      await expect(storage.list()).rejects.toThrow()
+      expect(await readFile(join(base, 'from.md'), 'utf8')).toBe('source')
+      expect(await adapter.privateList(canonical)).toContain(`move-${id}.json`)
+      await expect(readFile(join(base, to))).rejects.toThrow()
+    }
+  })
+
   it('refuses conflicting preimages and preserves the recovery journal', async () => {
     const base = await root()
     const adapter = createNodeFiles()
@@ -165,12 +237,14 @@ describe('durable note moves', () => {
     await storage.create('note.md', text('newer user bytes'))
     const id = randomUUID()
     const journal = {
-      schema: 1,
+      schema: 2,
       root: await adapter.canonicalRoot(base),
       operationId: id,
+      from: 'note.md',
+      to: 'target.md',
       changes: [
-        { path: 'note.md', before: [...text('old bytes')], after: [...text('renamed bytes')] },
-        { path: 'target.md', before: null, after: [...text('newer user bytes')] },
+        { path: 'note.md', before: [...text('old bytes')], after: null },
+        { path: 'target.md', before: null, after: [...text('old bytes')] },
       ],
     }
     await adapter.privatePublish(
@@ -219,23 +293,31 @@ describe('durable note moves', () => {
     })
     const source = await setup.create('from.md', text('source'))
     await setup.create('back.md', text('[[from.md]]'))
-    const interruptedMove = createVaultStorage(createNodeFiles(), {
-      remote: 'holi/recovery-interrupt',
-      root: base,
-      checkpoint: async (event) => {
-        if (event.phase === 'file-after' && event.direction === 'after' && event.path === 'from.md')
-          throw new Error('pause after unlink')
+    const interruptedMove = createVaultStorage(
+      createNodeFiles(),
+      { remote: 'holi/recovery-interrupt', root: base },
+      {
+        checkpoint: async (event) => {
+          if (
+            event.phase === 'file-after' &&
+            event.direction === 'after' &&
+            event.path === 'from.md'
+          )
+            throw new Error('pause after unlink')
+        },
       },
-    })
+    )
     await expect(interruptedMove.move('from.md', 'to.md', source.revision)).rejects.toThrow()
-    const interruptedRecovery = createVaultStorage(createNodeFiles(), {
-      remote: 'holi/recovery-interrupt-again',
-      root: base,
-      checkpoint: async (event) => {
-        if (event.phase === 'file-before' && event.direction === 'before')
-          throw new Error('pause during recovery')
+    const interruptedRecovery = createVaultStorage(
+      createNodeFiles(),
+      { remote: 'holi/recovery-interrupt-again', root: base },
+      {
+        checkpoint: async (event) => {
+          if (event.phase === 'file-before' && event.direction === 'before')
+            throw new Error('pause during recovery')
+        },
       },
-    })
+    )
     await expect(interruptedRecovery.list()).rejects.toThrow()
     const recovered = createVaultStorage(createNodeFiles(), {
       remote: 'holi/recovered',
@@ -264,32 +346,48 @@ describe('durable note moves', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const delayed = createVaultStorage(createNodeFiles(), {
-      remote: 'holi/delayed',
-      root: a,
-      checkpoint: async (event) => {
-        if (
-          event.phase === 'file-before' &&
-          event.direction === 'before' &&
-          event.path === 'same.md'
-        ) {
-          announce()
-          await gate
-        }
+    const delayed = createVaultStorage(
+      createNodeFiles(),
+      { remote: 'holi/delayed', root: a },
+      {
+        checkpoint: async (event) => {
+          if (
+            event.phase === 'file-before' &&
+            event.direction === 'before' &&
+            event.path === 'same.md'
+          ) {
+            announce()
+            await gate
+          }
+        },
       },
-    })
+    )
     const moving = delayed.move('same.md', 'renamed.md', left.revision)
-    await entered
+    await waitForCheckpoint(entered)
     let readFinished = false
     const reading = second.read('same.md').then((value) => {
       readFinished = true
       return value
     })
+    let saveFinished = false
+    const saving = second.save('same.md', text('saved'), left.revision).then(
+      (value) => {
+        saveFinished = true
+        return value
+      },
+      (error: unknown) => {
+        saveFinished = true
+        throw error
+      },
+    )
     await Promise.resolve()
     expect(readFinished).toBe(false)
+    expect(saveFinished).toBe(false)
     release()
     await expect(moving).resolves.toMatchObject({ path: 'renamed.md' })
     await expect(reading).rejects.toThrow()
+    await expect(saving).rejects.toThrow()
+    expect(saveFinished).toBe(true)
     expect(string((await other.read('same.md')).bytes)).toBe('right')
     expect(string((await second.read('renamed.md')).bytes)).toBe('left')
     expect(right.path).toBe('same.md')
