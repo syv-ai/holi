@@ -50,6 +50,8 @@ export function createMdxDiagnostics(options: {
   compile(source: string, signal: AbortSignal): Promise<MdxDiagnostic[]>
 }): MdxDiagnostics {
   const leases = new Map<string, Lease>()
+  let pending = 0
+  let epoch = 0
   let closed = false
   const fail = (message: string): never => {
     throw new Error(message)
@@ -103,87 +105,106 @@ export function createMdxDiagnostics(options: {
   }
   return {
     async acquire(input) {
-      if (closed || leases.size >= MAX_LEASES) fail('MDX diagnostics lease limit reached')
-      const identity = options.context(input.context, input.remote)
-      if (identity === null) throw new Error('MDX context unavailable')
-      if (
-        !options.authorize(identity, input.remote) ||
-        !(await options.trusted(identity)) ||
-        !options.authorize(identity, input.remote)
-      )
-        fail('MDX context unavailable')
-      const path = vaultRelPath(input.path)
-      if (
-        !/\.mdx$/i.test(path) ||
-        isSecretPath(path) ||
-        isLocalOnlyPath(path) ||
-        isAgentSurfacePath(path)
-      )
-        fail('MDX path unavailable')
-      const root = await options.root(identity.remote)
-      if (
-        !options.authorize(identity, input.remote) ||
-        !(await options.trusted(identity)) ||
-        !options.authorize(identity, input.remote)
-      )
-        fail('MDX context changed')
-      const canonicalRoot = await realpath(root)
-      if (
-        !options.authorize(identity, input.remote) ||
-        !(await options.trusted(identity)) ||
-        !options.authorize(identity, input.remote)
-      )
-        fail('MDX context changed')
-      const canonical = await exactPath(canonicalRoot, path)
-      if (
-        !options.authorize(identity, input.remote) ||
-        !(await options.trusted(identity)) ||
-        !options.authorize(identity, input.remote) ||
-        canonical === null ||
-        canonical !== join(canonicalRoot, path)
-      )
-        throw new Error('MDX file unavailable')
-      const info = await stat(canonical).catch(() => null)
-      if (
-        !options.authorize(identity, input.remote) ||
-        !(await options.trusted(identity)) ||
-        !options.authorize(identity, input.remote) ||
-        info === null ||
-        !info.isFile()
-      )
-        throw new Error('MDX file unavailable')
-      const fingerprint = `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
-      const id = randomBytes(32).toString('hex')
-      const lease = {
-        id,
-        identity,
-        root: canonicalRoot,
-        path,
-        fingerprint,
-        watcher: null as unknown as FSWatcher,
-        highGeneration: 0,
-        controller: null,
-        closed: false,
-      }
+      if (closed || leases.size + pending >= MAX_LEASES) fail('MDX diagnostics lease limit reached')
+      pending += 1
+      const acquisitionEpoch = epoch
+      const valid = () => !closed && acquisitionEpoch === epoch
       try {
-        lease.watcher = watch(dirname(canonical), { persistent: false }, (_event, name) => {
-          if (name === null || name.toString() === basename(canonical)) drop(lease)
-        })
-        lease.watcher.on('error', () => drop(lease))
-      } catch {
-        fail('MDX file watcher unavailable')
+        const identity = options.context(input.context, input.remote)
+        if (identity === null) throw new Error('MDX context unavailable')
+        if (
+          !options.authorize(identity, input.remote) ||
+          !(await options.trusted(identity)) ||
+          !options.authorize(identity, input.remote)
+        )
+          fail('MDX context unavailable')
+        const path = vaultRelPath(input.path)
+        if (
+          !/\.mdx$/i.test(path) ||
+          isSecretPath(path) ||
+          isLocalOnlyPath(path) ||
+          isAgentSurfacePath(path)
+        )
+          fail('MDX path unavailable')
+        const root = await options.root(identity.remote)
+        if (!valid()) fail('MDX context changed')
+        if (
+          !options.authorize(identity, input.remote) ||
+          !(await options.trusted(identity)) ||
+          !options.authorize(identity, input.remote)
+        )
+          fail('MDX context changed')
+        const canonicalRoot = await realpath(root)
+        if (!valid()) fail('MDX context changed')
+        if (
+          !options.authorize(identity, input.remote) ||
+          !(await options.trusted(identity)) ||
+          !options.authorize(identity, input.remote)
+        )
+          fail('MDX context changed')
+        const canonical = await exactPath(canonicalRoot, path)
+        if (!valid()) fail('MDX context changed')
+        if (
+          !options.authorize(identity, input.remote) ||
+          !(await options.trusted(identity)) ||
+          !options.authorize(identity, input.remote) ||
+          canonical === null ||
+          canonical !== join(canonicalRoot, path)
+        )
+          throw new Error('MDX file unavailable')
+        const info = await stat(canonical).catch(() => null)
+        if (!valid()) fail('MDX context changed')
+        if (
+          !options.authorize(identity, input.remote) ||
+          !(await options.trusted(identity)) ||
+          !options.authorize(identity, input.remote) ||
+          info === null ||
+          !info.isFile()
+        )
+          throw new Error('MDX file unavailable')
+        const fingerprint = `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
+        const id = randomBytes(32).toString('hex')
+        const lease = {
+          id,
+          identity,
+          root: canonicalRoot,
+          path,
+          fingerprint,
+          watcher: null as unknown as FSWatcher,
+          highGeneration: 0,
+          controller: null,
+          closed: false,
+        }
+        try {
+          lease.watcher = watch(dirname(canonical), { persistent: false }, (_event, name) => {
+            if (name === null || name.toString() === basename(canonical)) drop(lease)
+          })
+          lease.watcher.on('error', () => drop(lease))
+        } catch {
+          lease.watcher?.close()
+          fail('MDX file watcher unavailable')
+        }
+        if (!valid() || lease.closed) {
+          drop(lease)
+          fail('MDX context changed')
+        }
+        const isTrusted = await options.trusted(identity)
+        if (
+          !valid() ||
+          lease.closed ||
+          !options.authorize(identity, input.remote) ||
+          !isTrusted ||
+          !options.authorize(identity, input.remote) ||
+          leases.size >= MAX_LEASES
+        ) {
+          drop(lease)
+          fail('MDX context changed')
+        }
+        leases.set(id, lease)
+        return { lease: id }
+      } finally {
+        pending -= 1
       }
-      if (
-        !options.authorize(identity, input.remote) ||
-        !(await options.trusted(identity)) ||
-        !options.authorize(identity, input.remote) ||
-        leases.size >= MAX_LEASES
-      ) {
-        drop(lease)
-        fail('MDX context changed')
-      }
-      leases.set(id, lease)
-      return { lease: id }
     },
     cancel(input) {
       const lease = leases.get(input.lease)
@@ -247,9 +268,11 @@ export function createMdxDiagnostics(options: {
       return { ok: true }
     },
     invalidate() {
+      epoch += 1
       for (const lease of [...leases.values()]) drop(lease)
     },
     close() {
+      epoch += 1
       closed = true
       for (const lease of [...leases.values()]) drop(lease)
     },
