@@ -535,11 +535,12 @@ export async function prepareAuthenticatedRelease(input: {
     input.manifest,
     input.signal,
   )
-  return readPinnedSkillSnapshots(
+  return validateSkillSnapshot(
     input.root,
     input.commit,
     input.sourcePath,
     input.skills,
+    undefined,
     input.signal,
   )
 }
