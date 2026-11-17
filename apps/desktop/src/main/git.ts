@@ -821,52 +821,79 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     )
       return incomplete('history-unavailable')
     const started = Date.now()
-    const budget = {
-      ...opts,
-      env: { ...opts.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
-      executionBudget: { maxBuffer: 8 * 1024 * 1024, timeout: 5000 },
+    const deadline = started + 5000
+    const outputLimit = 8 * 1024 * 1024
+    let outputBytes = 0
+    const git = async (args: string[], maxOutput = outputLimit): Promise<GitOutcome> => {
+      const timeout = deadline - Date.now()
+      const remainingOutput = outputLimit - outputBytes
+      if (timeout <= 0) throw new GitResourceError('time')
+      if (remainingOutput <= 0) throw new GitResourceError('output')
+      const result = await runGitOnce(
+        root,
+        ['--no-replace-objects', '--literal-pathspecs', ...args],
+        {
+          ...opts,
+          env: {
+            ...opts.env,
+            GIT_NO_REPLACE_OBJECTS: '1',
+            GIT_NO_LAZY_FETCH: '1',
+            GIT_TERMINAL_PROMPT: '0',
+          },
+          executionBudget: {
+            maxBuffer: Math.min(remainingOutput, maxOutput),
+            timeout,
+          },
+        },
+      )
+      outputBytes += Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)
+      return result
     }
-    const git = (args: string[]) =>
-      runGitOnce(root, ['--no-replace-objects', '--literal-pathspecs', ...args], budget)
-    const [base, tip, shallow] = await Promise.all([
-      git(['cat-file', '-e', `${from}^{commit}`]),
-      git(['cat-file', '-e', `${to}^{commit}`]),
-      git(['rev-parse', '--is-shallow-repository']),
-    ])
-    if (!base.ok || !tip.ok || !shallow.ok || shallow.stdout.trim() !== 'false')
-      return incomplete('history-unavailable')
-    const ancestry = await git(['merge-base', '--is-ancestor', from, to])
-    if (!ancestry.ok) return incomplete('history-unavailable')
-    const list = await git(['rev-list', '--topo-order', to, `^${from}`])
-    if (!list.ok) return incomplete('history-unavailable')
-    const commits = list.stdout.trim().split(/\r?\n/).filter(Boolean)
-    if (commits.length > 200) return incomplete('limit')
-    const changes: { sha: string; path: string }[] = []
-    let bytes = 0
-    for (const sha of commits) {
-      if (Date.now() - started >= 5000) return incomplete('limit')
-      const result = await git([
+    try {
+      const base = await git(['cat-file', '-e', `${from}^{commit}`])
+      const tip = await git(['cat-file', '-e', `${to}^{commit}`])
+      const shallow = await git(['rev-parse', '--is-shallow-repository'])
+      if (!base.ok || !tip.ok || !shallow.ok || shallow.stdout.trim() !== 'false')
+        return incomplete('history-unavailable')
+      const ancestry = await git(['merge-base', '--is-ancestor', from, to])
+      if (!ancestry.ok) return incomplete('history-unavailable')
+      // 201 distinguishes exactly-at-limit from over-limit without walking an
+      // unbounded history. The output limit is cumulative across every command.
+      const list = await git(['rev-list', '--topo-order', '--max-count=201', to, `^${from}`])
+      if (!list.ok) return incomplete('history-unavailable')
+      const commits = list.stdout.split(/\r?\n/).filter(Boolean)
+      if (commits.length > 200) return incomplete('limit')
+      const changes: { sha: string; path: string }[] = []
+      const baseArgs = [
         'diff-tree',
         '--no-commit-id',
         '--name-only',
         '-z',
         '--no-renames',
+        '--no-ext-diff',
         '-m',
         '-r',
         '--root',
-        sha,
-        '--',
-        path,
-      ])
-      if (!result.ok) return incomplete('history-unavailable')
-      const commitPaths = new Set(result.stdout.split('\0').filter(Boolean))
-      for (const changed of commitPaths) {
-        changes.push({ sha, path: changed })
-        bytes += Buffer.byteLength(sha) + Buffer.byteLength(changed) + 2
-        if (changes.length > 2000 || bytes > 8 * 1024 * 1024) return incomplete('limit')
+      ]
+      for (const sha of commits) {
+        const args = [...baseArgs, sha]
+        // An empty scope means the entire tree. Do not pass an empty pathspec,
+        // which Git interprets as a literal empty filename.
+        if (path !== '') args.push('--', path)
+        const result = await git(args)
+        if (!result.ok) return incomplete('history-unavailable')
+        for (const changed of new Set(result.stdout.split('\0').filter(Boolean))) {
+          changes.push({ sha, path: changed })
+          if (changes.length > 2000) return incomplete('limit')
+        }
       }
+      return { complete: true, reason: 'ok' as const, changes }
+    } catch (error) {
+      if (error instanceof GitResourceError) return incomplete('limit')
+      // Git may disappear, fail to spawn, or encounter a corrupt/missing object
+      // between validation and traversal. None of these is an empty history.
+      return incomplete('history-unavailable')
     }
-    return { complete: true, reason: 'ok' as const, changes }
   }
 
   /** A file's content at a commit. Unlike `runGit`, this must **not** trim:
