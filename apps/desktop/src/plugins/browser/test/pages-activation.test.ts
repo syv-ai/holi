@@ -43,7 +43,11 @@ vi.mock('electron', () => {
       },
     })
     setBackgroundColor = vi.fn()
-    setBounds = vi.fn()
+    bounds = { x: 0, y: 0, width: 0, height: 0 }
+    setBounds = vi.fn((bounds: typeof this.bounds) => {
+      this.bounds = { ...bounds }
+    })
+    getBounds = vi.fn(() => ({ ...this.bounds }))
     constructor() {
       native.views.push(this)
     }
