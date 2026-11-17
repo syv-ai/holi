@@ -22,6 +22,7 @@ afterAll(async () => {
 async function fixture() {
   const root = await makeClone(await makeRemote())
   roots.push(root)
+  await writeFile(join(root, 'note.md'), 'note\n')
   await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/Owner/Notes.git'])
   const baseline = 'a'.repeat(40)
   const tip = 'b'.repeat(40)
