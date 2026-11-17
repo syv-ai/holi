@@ -24,11 +24,15 @@ function own(ed: Editor) {
   return ed
 }
 
-function open(content: string, editable = true) {
+function open(content: string, editable = true, onFeedback?: (message: string) => void) {
   editor = new Editor({
     extensions: [
       StarterKit,
-      RichTextVim.configure({ enabled: false, editable: () => editor?.isEditable ?? false }),
+      RichTextVim.configure({
+        enabled: false,
+        editable: () => editor?.isEditable ?? false,
+        onFeedback,
+      }),
     ],
     content,
     editable,
@@ -76,6 +80,89 @@ function openTable(onFeedback?: (message: string) => void) {
 }
 
 describe('rich-text Vim extension', () => {
+  it('applies exact operator and logical-line ranges', () => {
+    const ed = open('<p>abcd</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, 'l')
+    expect(text(ed)).toBe('bcd')
+
+    ed.commands.setContent('<p>one two three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    key(ed, 'c')
+    key(ed, 'w')
+    ed.view.dispatch(ed.state.tr.insertText('X'))
+    expect(text(ed)).toBe('X three')
+    key(ed, 'Escape')
+
+    ed.commands.setContent('<p>first<br>second</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'c')
+    key(ed, 'c')
+    ed.view.dispatch(ed.state.tr.insertText('X'))
+    expect(ed.getHTML()).toBe('<p>X<br>second</p>')
+    key(ed, 'Escape')
+
+    ed.commands.setContent('<p>keep<br>delete</p><p>next</p>')
+    const feedback = vi.fn()
+    const unsupported = open('<p>keep<br>delete</p><p>next</p>', true, feedback)
+    unsupported.commands.setTextSelection(6)
+    key(unsupported, '2')
+    key(unsupported, 'V')
+    key(unsupported, 'd')
+    expect(unsupported.getHTML()).toBe('<p>keep<br>delete</p><p>next</p>')
+    expect(feedback).toHaveBeenCalled()
+  })
+  it('completes counted word operators through terminal words and logical line breaks', () => {
+    const ed = open('<p>one two three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    key(ed, 'c')
+    key(ed, 'w')
+    ed.view.dispatch(ed.state.tr.insertText('X'))
+    expect(ed.getHTML()).toBe('<p>X three</p>')
+    key(ed, 'Escape')
+
+    ed.commands.setContent('<p>one two</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '2')
+    key(ed, 'w')
+    expect(ed.getHTML()).toBe('<p></p>')
+
+    ed.commands.setContent('<p>first</p><p>second</p><p>third</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    key(ed, 'c')
+    key(ed, 'c')
+    ed.view.dispatch(ed.state.tr.insertText('X'))
+    expect(ed.getHTML()).toBe('<p>X</p><p>third</p>')
+    key(ed, 'Escape')
+
+    ed.commands.setContent('<p>first<br>second<br>third</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    key(ed, 'c')
+    key(ed, 'c')
+    ed.view.dispatch(ed.state.tr.insertText('X'))
+    expect(ed.getHTML()).toBe('<p>X<br>third</p>')
+    key(ed, 'Escape')
+
+    ed.commands.setContent('<pre><code>one\ntwo</code></pre>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '2')
+    key(ed, 'w')
+    expect(ed.state.doc.firstChild?.textContent).toBe('')
+
+    ed.commands.setContent('<p>A👩‍💻éB</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, 'l')
+    expect(ed.getHTML()).toBe('<p>👩‍💻éB</p>')
+  })
+
   it('routes real ProseMirror motions without document transactions and deletes one grapheme', () => {
     const ed = open('<p>café 👩‍💻</p>')
     ed.commands.setTextSelection(1)
@@ -107,7 +194,24 @@ describe('rich-text Vim extension', () => {
     key(ed, 'y')
     key(ed, 'w')
     key(ed, 'P')
-    expect(ed.getHTML()).toContain('<strong>alpha</strong>')
+    expect(ed.getHTML()).toBe(
+      '<p><strong>alpha</strong> <strong>alpha</strong> beta</p><p>gamma</p>',
+    )
+    expect(ed.state.doc.toJSON()).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', marks: [{ type: 'bold' }], text: 'alpha' },
+            { type: 'text', text: ' ' },
+            { type: 'text', marks: [{ type: 'bold' }], text: 'alpha' },
+            { type: 'text', text: ' beta' },
+          ],
+        },
+        { type: 'paragraph', content: [{ type: 'text', text: 'gamma' }] },
+      ],
+    })
 
     ed.commands.setTextSelection(1)
     key(ed, 'v')
@@ -172,6 +276,26 @@ describe('rich-text Vim extension', () => {
     }
     expect(docChanges).toBe(0)
     expect(ed.state.doc.firstChild?.childCount).toBe(2)
+  })
+
+  it('resolves vertical ranges inside a cell before rejecting cross-cell motion', () => {
+    const ed = openTable()
+    ed.commands.setContent(
+      '<table><tbody><tr><td><p>a<br>b</p></td><td><p>other</p></td></tr></tbody></table>',
+    )
+    let firstText = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'a') firstText = pos
+    })
+    ed.commands.setTextSelection(firstText)
+    key(ed, 'd')
+    key(ed, 'j')
+    const cells: string[] = []
+    ed.state.doc.descendants((node) => {
+      if (node.type.name === 'tableCell') cells.push(node.textContent)
+    })
+    expect(cells).toEqual(['', 'other'])
+    expect(ed.state.doc.check()).toBeUndefined()
   })
 
   it('keeps native table Tab behavior in insert and off modes', () => {
@@ -659,7 +783,7 @@ describe('rich-text Vim extension', () => {
     key(ed, 'd')
     key(ed, 'd')
     expect(ed.state.doc.firstChild?.type.name).toBe('bulletList')
-    expect(ed.state.doc.firstChild?.childCount).toBe(2)
+    expect(ed.state.doc.firstChild?.childCount).toBe(1)
     expect(text(ed)).toBe('second')
 
     const table = openTable()
@@ -1002,6 +1126,65 @@ describe('rich-text Vim extension', () => {
     ).toEqual([true, true, false])
     expect(tasks.state.doc.firstChild?.child(1).textContent).toBe('done')
     expect(tasks.state.doc.check()).toBeUndefined()
+  })
+
+  it('deletes, changes and restores complete checked task items', () => {
+    const ed = new Editor({
+      extensions: [
+        StarterKit,
+        TaskList,
+        RichTextTaskItem.configure({ nested: true }),
+        RichTextVim.configure({ enabled: false, editable: () => true }),
+      ],
+      content:
+        '<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>done</p><ul><li><p>nested</p></li></ul></li><li data-type="taskItem" data-checked="false"><p>next</p></li></ul>',
+    })
+    own(ed)
+    configureRichTextVim(ed.view, true, true, () => true)
+    let done = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'done') done = pos
+    })
+    ed.commands.setTextSelection(done)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(ed.state.doc.firstChild?.childCount).toBe(1)
+    expect(ed.state.doc.firstChild?.child(0).attrs.checked).toBe(false)
+    expect(ed.state.doc.textContent).toBe('next')
+    key(ed, 'P')
+    expect(ed.state.doc.firstChild?.childCount).toBe(2)
+    expect(ed.state.doc.firstChild?.child(0).attrs.checked).toBe(true)
+    expect(ed.state.doc.firstChild?.child(0).textContent).toBe('donenested')
+    let restoredText = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'done') restoredText = pos
+    })
+    ed.commands.setTextSelection(restoredText)
+    key(ed, 'c')
+    key(ed, 'c')
+    expect(ed.state.doc.firstChild?.child(0).attrs.checked).toBe(true)
+    expect(ed.state.doc.firstChild?.child(0).firstChild?.textContent).toBe('')
+    expect(ed.state.doc.firstChild?.child(0).child(1).textContent).toBe('nested')
+    expect(ed.state.doc.check()).toBeUndefined()
+    key(ed, 'Escape')
+
+    ed.commands.setContent(
+      '<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>done</p><ul><li><p>nested</p></li></ul></li><li data-type="taskItem" data-checked="false"><p>next</p></li></ul>',
+    )
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'done') restoredText = pos
+    })
+    ed.commands.setTextSelection(restoredText)
+    key(ed, 'V')
+    key(ed, 'd')
+    expect(ed.state.doc.firstChild?.childCount).toBe(1)
+    expect(ed.state.doc.firstChild?.child(0).textContent).toBe('next')
+    expect(ed.state.doc.check()).toBeUndefined()
+    key(ed, 'P')
+    expect(ed.state.doc.firstChild?.childCount).toBe(2)
+    expect(ed.state.doc.firstChild?.child(0).attrs.checked).toBe(true)
+    expect(ed.state.doc.firstChild?.child(0).textContent).toBe('donenested')
+    expect(ed.state.doc.check()).toBeUndefined()
   })
 
   it('preserves heading schema on cc and linewise intent for vertical operators', () => {

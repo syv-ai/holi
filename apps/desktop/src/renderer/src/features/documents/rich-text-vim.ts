@@ -11,6 +11,7 @@ import {
   graphemeBoundaries,
   graphemeParts as segments,
   logicalLineAt as lineAt,
+  logicalLineDeletion,
   logicalLines,
   safeRange,
   STRUCTURAL_CONTAINERS,
@@ -103,14 +104,14 @@ function cappedCount(count: number) {
 }
 
 function crossesContainerMotion(state: EditorState, origin: number, direction: -1 | 1, count = 1) {
-  const all = blocks(state)
-  const source = lineAt(state, origin)?.block
+  const source = lineAt(state, origin)
   if (!source) return false
-  const sourceIndex = all.findIndex((block) => block.from === source.from)
+  const all = blocks(state).flatMap((block) => logicalLines(block))
+  const sourceIndex = all.findIndex((line) => line.from === source.from)
   const target = all[sourceIndex + direction * count]
   if (!target) return false
-  const startContainer = containerAt(state, source.from, STRUCTURAL_CONTAINERS)
-  const endContainer = containerAt(state, target.from, STRUCTURAL_CONTAINERS)
+  const startContainer = containerAt(state, source.block.from, STRUCTURAL_CONTAINERS)
+  const endContainer = containerAt(state, target.block.from, STRUCTURAL_CONTAINERS)
   return startContainer?.pos !== endContainer?.pos || startContainer?.type !== endContainer?.type
 }
 
@@ -149,6 +150,10 @@ function visualRange(state: EditorState, anchor: number, head: number, linewise:
           : undefined,
     }
   }
+  const partialLogicalEdge =
+    (logicalLines(first.block).length > 1 && first.from !== first.block.from) ||
+    (logicalLines(last.block).length > 1 && last.to !== last.block.to)
+  if (partialLogicalEdge) return null
   const from = first.block.from - 1
   const to = last.block.to + 1
   return {
@@ -589,7 +594,7 @@ function handleNormal(
       if (line) {
         const { block } = line
         const item = containerAt(view.state, block.from, ['listItem', 'taskItem'])
-        if (item && operator === 'y') {
+        if (item) {
           const $item = view.state.doc.resolve(item.pos)
           const index = $item.index()
           const count = cappedCount(current.operatorCount * (current.count || 1))
@@ -613,8 +618,19 @@ function handleNormal(
             if (operator !== 'y' && settings.editable()) {
               const tr = closeHistory(view.state.tr)
               if (operator === 'c') {
-                const empty = block.node.type.create(block.node.attrs, null, block.node.marks)
-                tr.replaceWith(block.from - 1, block.to + 1, empty)
+                const first = items[0]!
+                const children = first.content.content.slice()
+                const firstTextblockIndex = children.findIndex((child) => child.isTextblock)
+                if (firstTextblockIndex >= 0) {
+                  const textblock = children[firstTextblockIndex]!
+                  children[firstTextblockIndex] = textblock.type.create(
+                    textblock.attrs,
+                    null,
+                    textblock.marks,
+                  )
+                }
+                const replacement = first.copy(Fragment.fromArray(children))
+                tr.replaceWith(item.pos, to, replacement)
               } else tr.delete(item.pos, to)
               view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(item.pos), 1)))
               closeHistoryBoundary(view)
@@ -635,13 +651,10 @@ function handleNormal(
             logical.length - 1,
             logicalIndex + cappedCount(current.operatorCount * (current.count || 1)) - 1,
           )
-          const firstLine = logical[logicalIndex]!
-          const lastLine = logical[lastIndex]!
-          const nextLine = logical[lastIndex + 1]
-          const previousLine = logical[logicalIndex - 1]
-          const from = previousLine && !nextLine ? previousLine.to : firstLine.from
-          const to = nextLine ? nextLine.from : lastLine.to
-          const content = view.state.doc.slice(firstLine.from, lastLine.to)
+          const deletion = logicalLineDeletion(logical, logicalIndex, lastIndex)!
+          const from = deletion.from
+          const to = deletion.to
+          const content = view.state.doc.slice(deletion.contentFrom, deletion.contentTo)
           let isHardBreakLine = false
           if (block.node.type.name !== 'codeBlock')
             block.node.descendants((node) => {
@@ -709,9 +722,8 @@ function handleNormal(
         if (operator !== 'y' && settings.editable()) {
           const tr = closeHistory(view.state.tr)
           if (operator === 'c' && line.from === block.from && line.to === block.to) {
-            const nodePos = block.from - 1
             const empty = block.node.type.create(block.node.attrs, null, block.node.marks)
-            tr.replaceWith(nodePos, nodePos + block.node.nodeSize, empty)
+            tr.replaceWith(block.from - 1, lastBlock.to + 1, empty)
           } else tr.delete(from, to)
           view.dispatch(
             tr.setSelection(
@@ -760,19 +772,35 @@ function handleNormal(
       const line = sourceLine
       const boundaries = line ? graphemeBoundaries(view.state, line.from, line.to) : []
       const afterDestination = boundaries.find((at) => at > destination)
-      let to = key === 'e' || key === 'l' || key === '$' ? (afterDestination ?? range.to) : range.to
+      let to = key === 'e' || key === '$' ? (afterDestination ?? range.to) : range.to
       let safeFrom = from
-      if (key === 'w' && destination === origin) {
-        const nextLine = line
-        if (nextLine) to = nextLine.to
+      if (key === 'w' && line) {
+        const chars = wordPositions(view.state)
+        const words: { from: number; to: number }[] = []
+        for (let index = 0; index < chars.length; index++) {
+          if (!WORD.test(chars[index]!.value)) continue
+          if (index === 0 || !WORD.test(chars[index - 1]!.value))
+            words.push({ from: chars[index]!.from, to: chars[index]!.to })
+          else words.at(-1)!.to = chars[index]!.to
+        }
+        const originIndex = words.findIndex((item) => item.from <= origin && origin < item.to)
+        if (originIndex >= 0) {
+          const target = words[originIndex + operatorMotionCount]
+          to = target?.from ?? words.at(-1)?.to ?? line.to
+        } else if (destination === origin) to = line.to
       }
       if (operator === 'c' && key === 'w') {
         const chars = wordPositions(view.state)
         const startIndex = chars.findIndex((item) => item.from <= origin && origin < item.to)
         if (startIndex >= 0 && WORD.test(chars[startIndex]!.value)) {
-          let endIndex = startIndex
-          while (endIndex + 1 < chars.length && WORD.test(chars[endIndex + 1]!.value)) endIndex++
-          to = chars[endIndex]!.to
+          let index = startIndex
+          let words = 1
+          while (index + 1 < chars.length && words < operatorMotionCount) {
+            index++
+            if (WORD.test(chars[index]!.value) && !WORD.test(chars[index - 1]!.value)) words++
+          }
+          while (index + 1 < chars.length && WORD.test(chars[index + 1]!.value)) index++
+          to = chars[index]!.to
         }
       }
       if (key === 'e' && destination === origin && afterDestination !== undefined)
@@ -881,7 +909,25 @@ function handleNormal(
           head: view.state.selection.head,
           linewiseTextblock: undefined,
         }
-    if (!range || !safeRange(view.state, range.from, range.to)) {
+    const visualStart = lineAt(
+      view.state,
+      Math.min(current.visualAnchor, view.state.selection.head),
+    )
+    const visualEnd = lineAt(view.state, Math.max(current.visualAnchor, view.state.selection.head))
+    const visualStartItem =
+      current.visualLinewise && visualStart
+        ? containerAt(view.state, visualStart.block.from, ['listItem', 'taskItem'])
+        : null
+    const visualEndItem =
+      current.visualLinewise && visualEnd
+        ? containerAt(view.state, visualEnd.block.from, ['listItem', 'taskItem'])
+        : null
+    const sameListItem =
+      visualStartItem !== null &&
+      visualEndItem !== null &&
+      visualStartItem.pos === visualEndItem.pos &&
+      visualStartItem.type === visualEndItem.type
+    if (!range || (!sameListItem && !safeRange(view.state, range.from, range.to))) {
       update({ visualAnchor: null, visualCursor: null, visualLinewise: false, count: 0 })
       settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
       event.preventDefault()
@@ -941,7 +987,20 @@ function handleNormal(
     } else if (settings.editable() && range.to > range.from) {
       const tr = closeHistory(view.state.tr)
       let deleteFrom = range.from
-      if (inlineVisual) {
+      if (visualContainer && visualContainerNode) {
+        const item = visualContainerNode
+        const children = item.content.content.slice()
+        const textblockIndex = children.findIndex((child) => child.isTextblock)
+        if (key === 'c' && textblockIndex >= 0) {
+          const textblock = children[textblockIndex]!
+          children[textblockIndex] = textblock.type.create(textblock.attrs, null, textblock.marks)
+          tr.replaceWith(
+            visualContainer.pos,
+            visualContainer.pos + item.nodeSize,
+            item.copy(Fragment.fromArray(children)),
+          )
+        } else tr.delete(visualContainer.pos, visualContainer.pos + item.nodeSize)
+      } else if (inlineVisual) {
         const low = Math.min(
           inlineVisual.lines.findIndex((item) => item.from === inlineVisual.first.from),
           inlineVisual.lines.findIndex((item) => item.from === inlineVisual.last.from),

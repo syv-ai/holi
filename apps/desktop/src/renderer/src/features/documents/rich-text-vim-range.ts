@@ -75,6 +75,26 @@ export function logicalLineAt(state: EditorState, pos: number) {
     : null
 }
 
+export function logicalLineDeletion(
+  lines: ReturnType<typeof logicalLines>,
+  firstIndex: number,
+  lastIndex: number,
+) {
+  const first = lines[firstIndex]
+  const last = lines[lastIndex]
+  if (!first || !last) return null
+  const previous = lines[firstIndex - 1]
+  const next = lines[lastIndex + 1]
+  // Keep the following hard break when deleting from the start; otherwise
+  // consume the preceding separator so the next line joins in its place.
+  return {
+    from: previous ? previous.to : first.from,
+    to: first.block.node.type.name === 'codeBlock' && next && !previous ? next.from : last.to,
+    contentFrom: first.from,
+    contentTo: last.to,
+  }
+}
+
 export function containerAt(state: EditorState, pos: number, names = STRUCTURAL_CONTAINERS) {
   const $pos = state.doc.resolve(Math.max(0, Math.min(pos, state.doc.content.size)))
   for (let depth = $pos.depth; depth > 0; depth--) {
