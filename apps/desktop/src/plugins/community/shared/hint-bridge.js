@@ -124,7 +124,11 @@
       send({ type: 'holi-hints:start', revision })
       return
     }
-    if (event.key !== 'Escape' && event.key !== 'Backspace' && !KEY_ALPHABET.includes(event.key))
+    if (
+      event.key !== 'Escape' &&
+      event.key !== 'Backspace' &&
+      (event.key.length !== 1 || !KEY_ALPHABET.includes(event.key))
+    )
       return
     event.preventDefault()
     send({ type: 'holi-hints:key', key: event.key })
