@@ -200,24 +200,6 @@ async function run() {
     const image = await win.webContents.capturePage()
     await writeFile(join(evidence, name), image.toPNG())
   }
-  const preserveClipboard = async (operation: () => Promise<void>) => {
-    const formats = clipboard.availableFormats()
-    const saved = formats.map((format) => [format, clipboard.readBuffer(format)] as const)
-    assert.equal(saved.length, formats.length, 'capture every advertised clipboard format')
-    try {
-      await operation()
-    } finally {
-      clipboard.clear()
-      for (const [format, bytes] of saved) clipboard.writeBuffer(format, bytes)
-      assert.deepEqual(
-        clipboard.availableFormats().sort(),
-        [...formats].sort(),
-        'restore every original clipboard format',
-      )
-      for (const [format, bytes] of saved)
-        assert.deepEqual(clipboard.readBuffer(format), bytes, `restore clipboard ${format} exactly`)
-    }
-  }
   await wait(`document.querySelector('[role="textbox"]')?.editor`, 'production DocumentView editor')
   await evaluate(`document.querySelector('[role="textbox"]').editor.commands.focus()`)
   win.focus()
@@ -625,22 +607,20 @@ async function run() {
   mark('native-comment-sidecar-anchor-maps-through-delete-and-change')
 
   const shortcut = process.platform === 'darwin' ? 'meta' : 'control'
-  await preserveClipboard(async () => {
-    await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
-    await key('Escape')
-    await key('v')
-    for (let i = 0; i < 5; i++) await key('l')
-    await key('c', [shortcut])
-    assert.equal(clipboard.readText(), 'alpha', 'native copy shortcut writes the selected text')
-    await evaluate(`window.richTextVimFixture.setup('<p>target</p>',7)`)
-    await key('Escape')
-    await key('v', [shortcut])
-    assert.equal(
-      (await state()).markdown,
-      'targetalpha',
-      'native paste shortcut inserts copied text',
-    )
-  })
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  await key('Escape')
+  await key('v')
+  for (let i = 0; i < 5; i++) await key('l')
+  await key('c', [shortcut])
+  assert(clipboard.readText() === 'alpha', 'native copy shortcut writes the synthetic selection')
+  await evaluate(`window.richTextVimFixture.setup('<p>target</p>',7)`)
+  await key('Escape')
+  await key('v', [shortcut])
+  assert.equal(
+    (await state()).markdown,
+    'targetalpha',
+    'native paste shortcut inserts the known synthetic text',
+  )
   mark('native-platform-copy-paste-shortcuts-preserve-existing-clipboard')
 
   // Production schema samples include marks, links, wiki links, code, lists, tables, and Mermaid.
@@ -804,7 +784,7 @@ async function run() {
         copy: 'selected alpha through native platform copy shortcut',
         paste: 'native platform paste inserts alpha after target',
         clipboard:
-          'all advertised formats and bytes restored and verified; clipboard contents omitted',
+          'runner-owned guard restores the complete pasteboard or preserves external changes; no contents recorded',
       },
       {
         name: 'native-mermaid-line-yank-put-delete-undo-preserves-source-and-attrs',
@@ -862,7 +842,7 @@ async function run() {
     coverageNotes: [
       'Keyboard input is delivered by Electron webContents.sendInputEvent, not synthetic DOM KeyboardEvents.',
       'The fixture uses the production DocumentView and complete document extension schema with a fixed notes.read/notes.write adapter.',
-      'Comment anchors use production placeThreads and DocumentComments transaction mapping; native copy/paste preserves and byte-verifies all pre-existing clipboard formats.',
+      'Comment anchors use production placeThreads and DocumentComments transaction mapping; an independent runner guard restores every captured pasteboard item and type or preserves external changes.',
       'Mermaid node content, ordered/task lists, wiki-link atoms, code blocks and table structures are exercised through native Vim keyboard input.',
       'The fixture controls a bounded two-document focus/switch surface; it does not represent shell tab routing.',
     ],
