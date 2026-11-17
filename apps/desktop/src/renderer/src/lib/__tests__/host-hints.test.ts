@@ -52,6 +52,37 @@ it('invalidates an active session when a new owned adapter is registered', () =>
   expect(target.isConnected).toBe(true)
 })
 
+it('keeps newly contributed adapter targets out of an older hint session', () => {
+  button('Host target')
+  const targets = discoverHostHintTargets(root)
+  const owner = document.createElement('iframe')
+  root.append(owner)
+  const link = document.createElement('a')
+  owner.append(link)
+  const adapter = {
+    discover: () => [{ element: link, label: 'Guest target', x: 10, y: 10, token: 'guest' }],
+    unchanged: () => true,
+    activate: () => false,
+  }
+  registerHostHintAdapter(owner, adapter)
+  captureHostHintAdapters(root)
+  expect(hostHintsUnchanged(targets)).toBe(false)
+})
+
+it('does not let an empty adapter invalidate unrelated host-only targets', () => {
+  button('Host target')
+  const adapter = {
+    discover: () => [],
+    unchanged: () => false,
+    activate: () => false,
+  }
+  const owner = document.createElement('iframe')
+  root.append(owner)
+  registerHostHintAdapter(owner, adapter)
+  const targets = discoverHostHintTargets(root)
+  expect(hostHintsUnchanged(targets)).toBe(true)
+})
+
 it('assigns unique prefix-free labels for thousands of targets', () => {
   for (const count of [1, 26, 27, 52, 800, 3000]) {
     const labels = Array.from({ length: count }, (_, index) => hintLabel(index, count))

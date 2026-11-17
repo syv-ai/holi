@@ -1,10 +1,23 @@
 import { resolve } from 'node:path'
+import type { Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
 // `@` is declared in tsconfig.json (`paths`, the source of truth) and repeated in
 // electron.vite.config.ts; the three have to agree.
 const alias = { '@': resolve(__dirname, 'src/renderer/src') }
+
+// In production, Electron Vite turns ?asset imports into unpacked file paths.
+// Node tests need that same contract, not execution of the imported browser script.
+const electronAssetPath: Plugin = {
+  name: 'vitest-electron-asset-path',
+  enforce: 'pre',
+  transform(_code, id) {
+    if (!id.includes('?') || !/[?&]asset(?:&|$)/.test(id.slice(id.indexOf('?')))) return null
+    const filePath = id.slice(0, id.indexOf('?'))
+    return { code: `export default ${JSON.stringify(filePath)}`, map: null }
+  },
+}
 
 export default defineConfig({
   resolve: { alias },
@@ -13,6 +26,7 @@ export default defineConfig({
       {
         // Existing main/state/git suite — node environment, serialised.
         resolve: { alias },
+        plugins: [electronAssetPath],
         test: {
           name: 'node',
           include: ['test/**/*.test.ts', 'src/plugins/*/test/**/*.test.ts'],
