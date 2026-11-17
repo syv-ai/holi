@@ -364,6 +364,161 @@ export interface GitOutcome {
   stderr: string
 }
 
+/** One bounded, replacement-proof Git evidence read. Evidence failures are deliberately distinct from operation failures. */
+async function readGitEvidence(
+  cwd: string,
+  args: string[],
+  opts: RunOpts,
+  deadline: number,
+): Promise<string> {
+  const timeout = deadline - Date.now()
+  if (timeout <= 0) throw new GitResourceError('time')
+  const result = await runGitOnce(cwd, ['--no-replace-objects', ...args], {
+    ...opts,
+    env: { ...opts.env, GIT_NO_REPLACE_OBJECTS: '1' },
+    executionBudget: { maxBuffer: 65536, timeout },
+  })
+  if (!result.ok) throw new Error('Git evidence read failed')
+  return result.stdout.trim()
+}
+
+/** Parse the raw commit headers once for both provenance paths. */
+function rawCommitParents(raw: string): string[] {
+  const separator = raw.indexOf('\n\n')
+  if (separator < 0) throw new Error('Malformed commit object')
+  return raw
+    .slice(0, separator)
+    .split('\n')
+    .filter((line) => line.startsWith('parent '))
+    .map((line) => line.slice('parent '.length))
+}
+
+/**
+ * Trace2 is directed to the command's inherited stderr pipe, not a file a hook
+ * can truncate or rewrite. Ordinary stderr is interleaved, so only JSON event
+ * lines are parsed; any malformed Trace2-shaped line makes the observation
+ * unknown. The output cap is deliberately much smaller than execFile's cap.
+ */
+function traceHasOnlyManagedBuiltins(
+  stderr: string,
+  rootCommand: 'merge' | 'commit',
+  code: number,
+): boolean {
+  const maxBytes = 256 * 1024
+  if (Buffer.byteLength(stderr) > maxBytes || !stderr.endsWith('\n')) return false
+  const events: Record<string, unknown>[] = []
+  for (const line of stderr.split('\n')) {
+    if (line === '') continue
+    if (!line.startsWith('{')) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      return false
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+    const event = parsed as Record<string, unknown>
+    if (typeof event.event !== 'string' || typeof event.sid !== 'string') return false
+    events.push(event)
+    if (events.length > 2048) return false
+  }
+  if (events.length === 0) return false
+
+  const sessions = new Map<string, { started: boolean; command: string | null; exits: number[] }>()
+  const childStarts = new Map<string, { command: string }>()
+  const childExits = new Map<string, number>()
+  let rootSid: string | null = null
+  let rootExit: number | null = null
+  for (const event of events) {
+    const sid = event.sid as string
+    const state = sessions.get(sid) ?? { started: false, command: null, exits: [] }
+    sessions.set(sid, state)
+    switch (event.event) {
+      case 'start':
+        if (state.started) return false
+        state.started = true
+        if (rootSid === null) rootSid = sid
+        break
+      case 'cmd_name':
+        if (typeof event.name !== 'string' || state.command !== null) return false
+        state.command = event.name
+        break
+      case 'child_start': {
+        if (
+          !Number.isInteger(event.child_id) ||
+          event.use_shell !== false ||
+          !Array.isArray(event.argv)
+        )
+          return false
+        const argv = event.argv
+        const command =
+          argv.length === 3 && argv[0] === 'git' && argv[1] === 'stash' && argv[2] === 'create'
+            ? 'stash'
+            : argv.length === 6 &&
+                argv[0] === 'git' &&
+                argv[1] === 'maintenance' &&
+                argv[2] === 'run' &&
+                argv[3] === '--auto' &&
+                argv[4] === '--no-quiet' &&
+                argv[5] === '--detach'
+              ? 'maintenance'
+              : null
+        if (command === null || sid !== rootSid) return false
+        const key = `${sid}:${event.child_id}`
+        if (
+          childStarts.has(key) ||
+          [...childStarts.values()].some((child) => child.command === command)
+        )
+          return false
+        childStarts.set(key, { command })
+        break
+      }
+      case 'child_exit': {
+        if (!Number.isInteger(event.child_id) || !Number.isInteger(event.code)) return false
+        const key = `${sid}:${event.child_id}`
+        if (!childStarts.has(key)) return false
+        // Git versions can report maintenance's completion twice. Identical
+        // repeated parent notifications do not make the child ambiguous.
+        const previous = childExits.get(key)
+        if (previous !== undefined && previous !== event.code) return false
+        childExits.set(key, event.code as number)
+        break
+      }
+      case 'exit':
+        if (!Number.isInteger(event.code)) return false
+        state.exits.push(event.code as number)
+        if (sid === rootSid) rootExit = event.code as number
+        break
+    }
+  }
+  if (rootSid === null || rootExit !== code) return false
+  const root = sessions.get(rootSid)
+  if (!root?.started || root.command !== rootCommand || root.exits.length !== 1) return false
+  if (root.exits[0] !== code || childExits.size !== childStarts.size) return false
+
+  // Child processes must have their own complete Trace2 session, and no nested
+  // child execution is allowed under an otherwise-recognized builtin.
+  for (const child of childStarts.values()) {
+    const candidates = [...sessions.entries()].filter(
+      ([sid, session]) => sid !== rootSid && session.command === child.command,
+    )
+    if (candidates.length !== 1) return false
+    const [sid, session] = candidates[0]!
+    if (!session.started || session.exits.length === 0) return false
+    if (session.exits.some((exitCode) => exitCode !== session.exits[0])) return false
+    const matchingStart = [...childStarts.entries()].find(
+      ([, value]) => value.command === child.command,
+    )
+    if (matchingStart === undefined || childExits.get(matchingStart[0]) !== session.exits[0])
+      return false
+    if (events.some((event) => event.event === 'child_start' && event.sid === sid)) return false
+  }
+  for (const [sid, session] of sessions) {
+    if (sid !== rootSid && (!session.started || session.exits.length === 0)) return false
+  }
+  return true
+}
+
 function isMissingObject(stderr: string): boolean {
   return /could not get object info|not a valid object name|bad object|path .* does not exist in|path .* exists on disk, but not in/i.test(
     stderr,
@@ -578,50 +733,176 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }: {
     abortOnConflict: boolean
   }): Promise<PullResult> {
-    await runGit(root, ['fetch', 'origin'], opts)
-    const target = await remoteTarget()
-    // A branch never pushed has nothing on `origin` to merge yet.
-    if (target === null) return { kind: 'up-to-date' }
-
-    const before = await runGit(root, ['rev-parse', 'HEAD'], opts)
-    const incoming = await runGit(root, ['rev-list', '--count', `HEAD..${target}`], opts)
-    if (incoming === '0') return { kind: 'up-to-date' }
-
-    const merge = await tryGit(root, ['merge', '--no-edit', target], opts)
-    if (!merge.ok) {
-      if (!(await isMerging())) {
-        // Refused before it started: git names no unmerged paths, only the
-        // uncommitted ones in its way, which are the incoming side's changes
-        // that are dirty here.
-        return { kind: 'conflict', paths: [], overwrites: await dirtyIncoming(target) }
+    const recorder = deps.commitProvenance
+    let ticket: unknown = null
+    if (recorder !== undefined) {
+      try {
+        ticket = await recorder.begin(root)
+      } catch (error) {
+        console.error('[git] merge provenance capture failed:', error)
       }
-      // A settlement that throws must not leave markers and MERGE_HEAD behind
-      // for autosave to commit: a pull aborts, as it does on a conflict.
-      const paths = await settleOneAnswerConflicts().catch(async (err: unknown) => {
-        if (abortOnConflict) await abortMerge()
-        throw err
-      })
-      if (paths.length > 0) {
-        if (abortOnConflict) await abortMerge()
-        // Left in the tree for the reconcile otherwise.
-        return { kind: 'conflict', paths }
-      }
-      // Every conflict had one answer and was settled: the merge is whole,
-      // and committed as `git merge` commits one it finishes itself, with no
-      // pre-commit hook. Its changes were committed on both sides already,
-      // and the hook would hold this merge alone to a gate (large files) the
-      // clean ones skip. The transforms would not undo the settlement: relink
-      // deletes no kept file (`followNoteComments`), and memory-index writes
-      // the index this merge just wrote.
-      await runGit(root, [...(await identityArgs()), 'commit', '--no-verify', '--no-edit'], opts)
     }
+    const marker = ticket === null ? null : `holi-managed-merge:${randomUUID()}`
+    let beforeHead: string | null = null
+    let beforeReflog: string | null = null
+    let exactMerge: string | null = null
+    let provenanceFinished = false
+    const finishProvenance = async (oid: string | null) => {
+      if (recorder === undefined || ticket === null || provenanceFinished) return
+      provenanceFinished = true
+      try {
+        await recorder.record(ticket, root, oid)
+      } catch (error) {
+        console.error('[git] merge provenance write failed:', error)
+      }
+    }
+    try {
+      await runGit(root, ['fetch', 'origin'], opts)
+      const target = await remoteTarget()
+      // A branch never pushed has nothing on `origin` to merge yet.
+      if (target === null) return { kind: 'up-to-date' }
 
-    const after = await runGit(root, ['rev-parse', 'HEAD'], opts)
-    return {
-      kind: 'merged',
-      commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
-      from: before,
-      to: after,
+      const before = await runGit(root, ['rev-parse', 'HEAD'], opts)
+      let evidenceDeadline = Date.now() + 1000
+      if (marker !== null) {
+        try {
+          beforeHead = await readGitEvidence(
+            root,
+            ['rev-parse', '--verify', 'HEAD'],
+            opts,
+            evidenceDeadline,
+          )
+        } catch (error) {
+          console.error('[git] merge HEAD evidence unavailable:', error)
+        }
+      }
+      const boundedMergeEvidence = (args: string[]) =>
+        readGitEvidence(root, args, opts, evidenceDeadline)
+      let targetOid: string | null = null
+      if (marker !== null) {
+        try {
+          targetOid = await boundedMergeEvidence(['rev-parse', '--verify', target])
+        } catch (error) {
+          console.error('[git] merge target evidence unavailable:', error)
+        }
+      }
+      if (marker !== null) {
+        try {
+          beforeReflog = await boundedMergeEvidence([
+            'reflog',
+            'show',
+            '-n1',
+            '--format=%H%x00%gs',
+            'HEAD',
+          ])
+        } catch (error) {
+          console.error('[git] merge reflog anchor unavailable:', error)
+        }
+      }
+      const incoming = await runGit(root, ['rev-list', '--count', `HEAD..${target}`], opts)
+      if (incoming === '0') return { kind: 'up-to-date' }
+
+      // Trace2 goes to stderr's inherited pipe. Unlike a trace file, a hook
+      // cannot rewind events Git emitted before launching it.
+      const mergeOpts: RunOpts =
+        marker === null
+          ? opts
+          : {
+              ...opts,
+              env: { ...opts.env, GIT_REFLOG_ACTION: marker, GIT_TRACE2_EVENT: '2' },
+            }
+      const merge = await tryGit(root, ['merge', '--no-edit', target], mergeOpts)
+      const mergeTraceComplete =
+        marker !== null && traceHasOnlyManagedBuiltins(merge.stderr, 'merge', merge.code)
+      let settlementTraceComplete = true
+      if (!merge.ok) {
+        if (!(await isMerging())) {
+          // Refused before it started: git names no unmerged paths, only the
+          // uncommitted ones in its way, which are the incoming side's changes
+          // that are dirty here.
+          return { kind: 'conflict', paths: [], overwrites: await dirtyIncoming(target) }
+        }
+        // A settlement that throws must not leave markers and MERGE_HEAD behind
+        // for autosave to commit: a pull aborts, as it does on a conflict.
+        const paths = await settleOneAnswerConflicts().catch(async (err: unknown) => {
+          if (abortOnConflict) await abortMerge()
+          throw err
+        })
+        if (paths.length > 0) {
+          if (abortOnConflict) await abortMerge()
+          // Left in the tree for the reconcile otherwise.
+          return { kind: 'conflict', paths }
+        }
+        // Every conflict had one answer and was settled: the merge is whole,
+        // and committed as `git merge` commits one it finishes itself, with no
+        // pre-commit hook. Its changes were committed on both sides already,
+        // and the hook would hold this merge alone to a gate (large files) the
+        // clean ones skip. The transforms would not undo the settlement: relink
+        // deletes no kept file (`followNoteComments`), and memory-index writes
+        // the index this merge just wrote.
+        const settleArgs = [...(await identityArgs()), 'commit', '--no-verify', '--no-edit']
+        const settleCommit = await tryGit(root, settleArgs, mergeOpts)
+        settlementTraceComplete =
+          marker !== null &&
+          traceHasOnlyManagedBuiltins(settleCommit.stderr, 'commit', settleCommit.code)
+        if (!settleCommit.ok) {
+          throw new GitError(
+            `git ${settleArgs[0]} failed (${settleCommit.code}): ${settleCommit.stderr.split('\n')[0] ?? ''}`,
+            settleCommit.code,
+            settleCommit.stderr,
+          )
+        }
+        // A successful settlement is attributable only when both Git
+        // invocations independently supplied a complete, bounded observation.
+        if (!mergeTraceComplete || !settlementTraceComplete) {
+          console.error('[git] merge execution observation unavailable')
+        }
+      }
+
+      const after = await runGit(root, ['rev-parse', 'HEAD'], opts)
+      if (
+        marker !== null &&
+        beforeReflog !== null &&
+        mergeTraceComplete &&
+        settlementTraceComplete
+      ) {
+        try {
+          evidenceDeadline = Date.now() + 1000
+          const evidence = boundedMergeEvidence
+          if ((await evidence(['rev-parse', '--verify', 'HEAD'])) !== after)
+            throw new Error('HEAD changed during merge evidence collection')
+          const entries = (await evidence(['reflog', 'show', '-n2', '--format=%H%x00%gs', 'HEAD']))
+            .split('\n')
+            .filter(Boolean)
+          if (entries.length !== 2 || entries[1] !== beforeReflog)
+            throw new Error('Ambiguous merge reflog interval')
+          const [oid, action] = entries[0]!.split('\0')
+          if (oid !== after || !action?.startsWith(`${marker}:`))
+            throw new Error('Missing merge invocation marker')
+          const raw = await evidence(['cat-file', '-p', oid])
+          const parents = rawCommitParents(raw)
+          if (
+            (await evidence(['cat-file', '-t', oid])) !== 'commit' ||
+            parents.length !== 2 ||
+            targetOid === null ||
+            parents[0] !== beforeHead ||
+            parents[1] !== targetOid
+          )
+            throw new Error('Commit is not the exact managed merge')
+          exactMerge = oid
+        } catch (error) {
+          console.error('[git] merge reflog evidence unavailable:', error)
+        }
+      }
+      await finishProvenance(exactMerge)
+      return {
+        kind: 'merged',
+        commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
+        from: before,
+        to: after,
+      }
+    } finally {
+      await finishProvenance(null)
     }
   }
 
@@ -1102,30 +1383,22 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     // Separate budgets either side of the commit: native hooks keep their normal
     // permissions and duration. Only provenance reads get a deadline/output cap.
     let deadline = Date.now() + 1000
-    const evidenceOpts = (): RunOpts => {
-      const timeout = deadline - Date.now()
-      if (timeout <= 0) throw new GitResourceError('time')
-      return {
-        ...opts,
-        env: { ...opts.env, GIT_NO_REPLACE_OBJECTS: '1' },
-        executionBudget: { maxBuffer: 65536, timeout },
-      }
-    }
     // These are reads, not index mutations: never retry an evidence process.
-    const probe = (command: string[]) =>
-      runGitOnce(root, ['--no-replace-objects', ...command], evidenceOpts())
-    const evidence = async (command: string[]) => {
-      const outcome = await probe(command)
-      if (!outcome.ok)
-        throw new GitError('Commit evidence read failed', outcome.code, outcome.stderr)
-      return outcome.stdout.trim()
+    const evidence = (command: string[]) => readGitEvidence(root, command, opts, deadline)
+    const probe = async (command: string[]) => {
+      try {
+        await evidence(command)
+        return { ok: true }
+      } catch {
+        return { ok: false }
+      }
     }
     if (recorder !== undefined && ticket !== null) {
       marker = `holi-managed-commit:${randomUUID()}`
       try {
         if (!(await probe(['rev-parse', '--verify', 'MERGE_HEAD'])).ok) {
           const head = await probe(['rev-parse', '--verify', 'HEAD'])
-          beforeHead = head.ok ? head.stdout.trim() : null
+          beforeHead = head.ok ? await evidence(['rev-parse', '--verify', 'HEAD']) : null
           // One previous entry and its exact parent are enough to anchor a
           // single new entry. Never scan or materialize the historical reflog.
           before =
@@ -1163,13 +1436,13 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
           throw new Error('Missing invocation marker')
         const type = await evidence(['cat-file', '-t', oid])
         const object = await evidence(['cat-file', '-p', oid])
-        const headers = object.split('\n\n', 1)[0]!.split('\n')
-        const parents = headers.filter((line) => line.startsWith('parent '))
+        const headers = object.slice(0, object.indexOf('\n\n')).split('\n')
+        const parents = rawCommitParents(object)
         if (
           type !== 'commit' ||
           !/^tree (?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headers[0]!) ||
           parents.length > 1 ||
-          (parents[0]?.slice('parent '.length) ?? null) !== beforeHead ||
+          (parents[0] ?? null) !== beforeHead ||
           (await probe(['rev-parse', '--verify', 'MERGE_HEAD'])).ok
         )
           throw new Error('Commit object is not the managed non-merge invocation')
