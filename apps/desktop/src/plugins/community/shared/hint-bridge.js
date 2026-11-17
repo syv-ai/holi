@@ -20,9 +20,24 @@
     if (!enabled || !nonce || !hostWindow || disposed) return
     hostWindow.postMessage({ ...message, nonce }, hostOrigin ?? '*')
   }
-  const editable = () => {
-    const node = document.activeElement
-    return !!node && (node.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName))
+  const editable = (event) => {
+    const path = event?.composedPath?.() || []
+    const isEditable = (node) =>
+      node instanceof Element &&
+      (node.isContentEditable ||
+        node.matches('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))
+    if (path.some(isEditable)) return true
+
+    let node = document.activeElement
+    while (node) {
+      if (isEditable(node)) return true
+      // A focused custom-element host may conceal an editor in a closed root.
+      if (node instanceof Element && node.localName.includes('-') && !node.shadowRoot) return true
+      const root = node.shadowRoot
+      if (!root?.activeElement) break
+      node = root.activeElement
+    }
+    return false
   }
   const visiblyActive = (element) => {
     if (!element.isConnected || element.closest('[hidden],[inert],[aria-hidden="true"]'))
@@ -46,7 +61,8 @@
         'dialog[open], [role="menu"], [role="listbox"], [role="alertdialog"], [role="dialog"], [aria-modal="true"], [data-holi-overlay]',
       ),
     ].some(visiblyActive)
-  const eligible = () => enabled && !document.hidden && !editable() && !composing && !overlay()
+  const eligible = (event) =>
+    enabled && !document.hidden && !editable(event) && !composing && !overlay()
   const labelFor = (element) => {
     const labelledBy = element.getAttribute('aria-labelledby')
     const referenced = labelledBy
@@ -145,13 +161,43 @@
     revision += 1
     send({ type: 'holi-hints:snapshot', revision, targets: collect() })
   }
+  let geometryFrame = 0
   const invalidate = () => {
     if (!enabled) return
     revision += 1
     targets.clear()
     sessionActive = false
+    cancelAnimationFrame(geometryFrame)
+    geometryFrame = 0
     send({ type: 'holi-hints:invalidated', revision })
     snapshot()
+  }
+  const monitorGeometry = () => {
+    geometryFrame = 0
+    if (!sessionActive || !enabled) return
+    if (!eligible()) {
+      invalidate()
+      return
+    }
+    for (const item of targets.values()) {
+      const element = item.element
+      if (!visible(element)) {
+        invalidate()
+        return
+      }
+      const rect = element.getBoundingClientRect()
+      const now = [rect.x, rect.y, rect.width, rect.height]
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+      if (
+        now.some((coordinate, index) => coordinate !== item.geometry[index]) ||
+        !hit ||
+        (hit !== element && !element.contains(hit))
+      ) {
+        invalidate()
+        return
+      }
+    }
+    geometryFrame = requestAnimationFrame(monitorGeometry)
   }
   const invalidateDepartingDocument = () => {
     if (!enabled) return
@@ -168,7 +214,7 @@
   }
   const keydown = (event) => {
     if (
-      !eligible() ||
+      !eligible(event) ||
       event.defaultPrevented ||
       event.repeat ||
       event.isComposing ||
@@ -185,6 +231,8 @@
     if (!sessionActive) {
       if (event.key !== 'f') return
       event.preventDefault()
+      revision += 1
+      send({ type: 'holi-hints:snapshot', revision, targets: collect() })
       send({ type: 'holi-hints:start', revision })
       return
     }
@@ -257,6 +305,9 @@
       typeof data.active === 'boolean'
     ) {
       sessionActive = data.active
+      cancelAnimationFrame(geometryFrame)
+      geometryFrame = 0
+      if (sessionActive) geometryFrame = requestAnimationFrame(monitorGeometry)
       return
     }
     if (
@@ -344,6 +395,7 @@
     disposed = true
     observer.disconnect()
     cancelAnimationFrame(navigationFrame)
+    cancelAnimationFrame(geometryFrame)
     for (const { name, original, wrapped } of historyMethods)
       if (history[name] === wrapped) history[name] = original
     for (const [target, type, handler, capture] of listeners)

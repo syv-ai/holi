@@ -65,6 +65,7 @@ afterEach(() => {
     window as Window & { __holiHintBridgeV1__?: { dispose(): void } }
   ).__holiHintBridgeV1__?.dispose()
   post?.mockRestore()
+  vi.unstubAllGlobals()
   document.body.innerHTML = ''
 })
 
@@ -191,6 +192,88 @@ describe('community frame hint protocol', () => {
     activate(latest.revision, latest.targets[0]!.id)
     expect(click).toHaveBeenCalledTimes(1)
     await Promise.resolve()
+  })
+
+  it('refreshes geometry before starting and cancels a moved active target', () => {
+    setup()
+    const button = document.querySelector('button')!
+    const click = vi.fn()
+    button.addEventListener('click', click)
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    init()
+    const stale = sent('holi-hints:snapshot').at(-1)!
+    rect(button, 120)
+    const f = new KeyboardEvent('keydown', { key: 'f', cancelable: true })
+    window.dispatchEvent(f)
+    const fresh = sent('holi-hints:snapshot').at(-1)!
+    const start = sent('holi-hints:start').at(-1)!
+    expect(fresh.revision).toBeGreaterThan(stale.revision)
+    expect(fresh.targets[0]).toMatchObject({ x: 120 })
+    expect(start.revision).toBe(fresh.revision)
+
+    host({ type: 'holi-hints:session', nonce, revision: fresh.revision, active: true })
+    rect(button, 180)
+    frames.shift()?.(0)
+    expect(sent('holi-hints:invalidated').at(-1)?.revision).toBeGreaterThan(fresh.revision)
+    host({
+      type: 'holi-hints:activate',
+      nonce,
+      revision: fresh.revision,
+      id: fresh.targets[0]!.id,
+    })
+    expect(click).not.toHaveBeenCalled()
+  })
+
+  it('does not steal f from shadow-root editors or closed custom hosts', () => {
+    setup()
+    init()
+    const hostElement = document.createElement('x-editor')
+    hostElement.tabIndex = -1
+    document.body.append(hostElement)
+    const root = hostElement.attachShadow({ mode: 'open' })
+    const input = document.createElement('input')
+    root.append(input)
+    input.focus()
+    const inputF = new KeyboardEvent('keydown', {
+      key: 'f',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    })
+    input.dispatchEvent(inputF)
+    expect(inputF.defaultPrevented).toBe(false)
+    expect(sent('holi-hints:start')).toHaveLength(0)
+
+    const editable = document.createElement('div')
+    editable.tabIndex = -1
+    editable.setAttribute('contenteditable', 'true')
+    root.append(editable)
+    editable.focus()
+    const editF = new KeyboardEvent('keydown', {
+      key: 'f',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    })
+    editable.dispatchEvent(editF)
+    expect(editF.defaultPrevented).toBe(false)
+    expect(sent('holi-hints:start')).toHaveLength(0)
+
+    input.blur()
+    editable.blur()
+    const closedHost = document.createElement('x-closed-editor')
+    closedHost.tabIndex = -1
+    document.body.append(closedHost)
+    closedHost.focus()
+    const closedF = new KeyboardEvent('keydown', { key: 'f', cancelable: true })
+    window.dispatchEvent(closedF)
+    expect(closedF.defaultPrevented).toBe(false)
+    expect(sent('holi-hints:start')).toHaveLength(0)
   })
 
   it('rearms a fresh snapshot after each mutation-free activation', () => {
