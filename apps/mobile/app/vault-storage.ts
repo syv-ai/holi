@@ -36,7 +36,6 @@ function validatePath(raw: string): VaultRelPath {
   const path = vaultRelPath(raw)
   if (
     isSecretPath(path) ||
-    isLocalOnlyPath(path) ||
     isInIgnoredDir(path) ||
     path.split('/').some((part) => part.startsWith('.holi-storage-')) ||
     !shownPathOrNull(path)
@@ -112,6 +111,8 @@ export function createVaultStorage(
     ): Promise<StoredDocument> {
       const from = validatePath(rawFrom)
       const to = validatePath(rawTo)
+      if (isLocalOnlyPath(from) || isLocalOnlyPath(to))
+        throw new Error('Move note path is not public')
       return serialize(async (resolved) => {
         const moved = await moveNote(
           adapter,

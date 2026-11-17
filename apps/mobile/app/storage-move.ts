@@ -1,3 +1,4 @@
+import { isLocalOnlyPath, vaultRelPath } from '@holi/shared/mobile-path-safety'
 import { rewriteWikiLinksLosslessly } from '@holi/shared/wiki-links'
 import type { NativeFiles, StorageCheckpointCallback } from './native-files'
 
@@ -14,10 +15,7 @@ function utf8Decode(value: Uint8Array): string {
 }
 
 function createOperationId(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
-    const value = Math.floor(Math.random() * 16)
-    return (char === 'x' ? value : (value & 0x3) | 0x8).toString(16)
-  })
+  return globalThis.crypto.randomUUID()
 }
 
 const prefix = 'move-'
@@ -25,7 +23,14 @@ const suffix = '.json'
 const maxJournalBytes = 16 * 1024 * 1024
 
 type Change = { path: string; before: number[] | null; after: number[] | null }
-type Journal = { schema: 1; root: string; operationId: string; changes: Change[] }
+type Journal = {
+  schema: 2
+  root: string
+  operationId: string
+  from: string
+  to: string
+  changes: Change[]
+}
 
 const bytes = (value: Uint8Array | null) => (value === null ? null : Array.from(value))
 const decode = (value: number[] | null) => (value === null ? null : new Uint8Array(value))
@@ -36,34 +41,68 @@ const equal = (a: Uint8Array | null, b: Uint8Array | null) =>
 const journalName = (id: string) => `${prefix}${id}${suffix}`
 
 function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
-  if (raw.length > maxJournalBytes) throw new Error('Move recovery journal is too large')
+  if (!(raw instanceof Uint8Array) || raw.length > maxJournalBytes)
+    throw new Error('Move recovery journal is too large or invalid')
   let value: unknown
   try {
     value = JSON.parse(utf8Decode(raw))
   } catch {
     throw new Error('Malformed move recovery journal')
   }
-  if (!value || typeof value !== 'object') throw new Error('Malformed move recovery journal')
-  const journal = value as Journal
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Malformed move recovery journal')
+  const candidate = value as Partial<Journal>
   if (
-    journal.schema !== 1 ||
-    journal.root !== root ||
-    typeof journal.operationId !== 'string' ||
+    Object.keys(value).sort().join(',') !== 'changes,from,operationId,root,schema' ||
+    candidate.schema !== 2 ||
+    candidate.root !== root ||
+    typeof candidate.operationId !== 'string' ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      journal.operationId,
+      candidate.operationId,
     ) ||
-    name !== journalName(journal.operationId) ||
-    !Array.isArray(journal.changes) ||
-    journal.changes.length < 2 ||
-    journal.changes.length > 100000
+    name !== journalName(candidate.operationId) ||
+    typeof candidate.from !== 'string' ||
+    typeof candidate.to !== 'string' ||
+    !Array.isArray(candidate.changes) ||
+    candidate.changes.length < 2 ||
+    candidate.changes.length > 100000
   )
     throw new Error('Invalid move recovery journal identity')
+  const from = vaultRelPath(candidate.from)
+  const to = vaultRelPath(candidate.to)
+  if (
+    from !== candidate.from ||
+    to !== candidate.to ||
+    from === to ||
+    from.normalize('NFD').toLowerCase() === to.normalize('NFD').toLowerCase() ||
+    isLocalOnlyPath(from) ||
+    isLocalOnlyPath(to) ||
+    !from.toLowerCase().endsWith('.md') ||
+    !to.toLowerCase().endsWith('.md')
+  )
+    throw new Error('Invalid move recovery identity paths')
+  const changes = candidate.changes as unknown[]
   const seen = new Set<string>()
-  for (const item of journal.changes) {
-    if (!item || typeof item.path !== 'string' || seen.has(item.path))
+  const foldedPaths = new Set<string>()
+  for (const item of changes) {
+    if (!item || typeof item !== 'object' || Array.isArray(item))
+      throw new Error('Invalid move recovery change')
+    const change = item as Partial<Change>
+    if (
+      Object.keys(item).sort().join(',') !== 'after,before,path' ||
+      typeof change.path !== 'string' ||
+      (!Array.isArray(change.before) && change.before !== null) ||
+      (!Array.isArray(change.after) && change.after !== null) ||
+      seen.has(change.path)
+    )
       throw new Error('Invalid move recovery paths')
-    seen.add(item.path)
-    for (const image of [item.before, item.after]) {
+    const canonical = vaultRelPath(change.path)
+    const folded = canonical.normalize('NFD').toLowerCase()
+    if (canonical !== change.path || isLocalOnlyPath(canonical) || foldedPaths.has(folded))
+      throw new Error('Invalid move recovery path spelling')
+    seen.add(change.path)
+    foldedPaths.add(folded)
+    for (const image of [change.before, change.after]) {
       if (
         image !== null &&
         (!Array.isArray(image) ||
@@ -71,10 +110,32 @@ function validateJournal(raw: Uint8Array, root: string, name: string): Journal {
       )
         throw new Error('Invalid move recovery image')
     }
-    if (equal(decode(item.before), decode(item.after)))
+    if (equal(decode(change.before as number[] | null), decode(change.after as number[] | null)))
       throw new Error('No-op move recovery change')
   }
-  return journal
+  if (
+    (changes[0] && (changes[0] as Change).path !== from) ||
+    (changes[0] &&
+      ((changes[0] as Change).before === null || (changes[0] as Change).after !== null)) ||
+    (changes[1] &&
+      ((changes[1] as Change).path !== to ||
+        (changes[1] as Change).before !== null ||
+        (changes[1] as Change).after === null))
+  )
+    throw new Error('Invalid move source/destination plan')
+  const sourceBefore = decode((changes[0] as Change).before!)!
+  const sourceText = utf8Decode(sourceBefore)
+  const moved = rewriteWikiLinksLosslessly(sourceText, from, to)
+  if (!equal(decode((changes[1] as Change).after), utf8Encode(moved.text)))
+    throw new Error('Invalid moved-note postimage')
+  for (const item of changes.slice(2) as Change[]) {
+    if (!item.path.toLowerCase().endsWith('.md') || item.before === null || item.after === null)
+      throw new Error('Invalid backlink plan')
+    const rewritten = rewriteWikiLinksLosslessly(utf8Decode(decode(item.before)!), from, to)
+    if (!rewritten.count || !equal(decode(item.after), utf8Encode(rewritten.text)))
+      throw new Error('Invalid backlink postimage')
+  }
+  return candidate as Journal
 }
 
 async function checkpoint(
@@ -142,6 +203,21 @@ export async function recoverMoves(
       validatedPaths.add(validated)
       paths.add(validated)
     }
+    // Reject journals that omit any currently visible inbound-link file.
+    const changedPaths = new Set(journal.changes.map(({ path }) => path))
+    for (const entry of await adapter.list(root)) {
+      if (
+        entry.kind !== 'file' ||
+        !entry.path.toLowerCase().endsWith('.md') ||
+        entry.path === journal.from ||
+        entry.path === journal.to ||
+        changedPaths.has(entry.path)
+      )
+        continue
+      const current = await adapter.read(root, entry.path)
+      if (rewriteWikiLinksLosslessly(utf8Decode(current), journal.from, journal.to).count)
+        throw new Error(`Move recovery omitted backlink at ${entry.path}`)
+    }
     // Check every operation's precondition before any recovery mutation.
     const states = await Promise.all(
       journal.changes.map((change) => adapter.readOptional(root, change.path)),
@@ -205,15 +281,16 @@ export async function moveNote(
     entries.some((entry) => folded(entry.path) === folded(target))
   )
     throw new Error('Move destination already exists or aliases an existing path')
+  const sourceText = utf8Decode(sourceBytes)
+  const movedSource = rewriteWikiLinksLosslessly(sourceText, source, target)
   const changes: Change[] = [
     { path: source, before: bytes(sourceBytes), after: null },
-    { path: target, before: null, after: bytes(sourceBytes) },
+    { path: target, before: null, after: bytes(utf8Encode(movedSource.text)) },
   ]
   for (const entry of files) {
     if (entry.path === source) continue
     const before = await adapter.read(root, entry.path)
-    const text = utf8Decode(before)
-    const rewritten = rewriteWikiLinksLosslessly(text, source, target)
+    const rewritten = rewriteWikiLinksLosslessly(utf8Decode(before), source, target)
     if (rewritten.count)
       changes.push({
         path: entry.path,
@@ -222,7 +299,7 @@ export async function moveNote(
       })
   }
   const operationId = createOperationId()
-  const journal: Journal = { schema: 1, root, operationId, changes }
+  const journal: Journal = { schema: 2, root, operationId, from: source, to: target, changes }
   const journalBytes = utf8Encode(JSON.stringify(journal))
   if (journalBytes.length > maxJournalBytes) throw new Error('Move recovery journal is too large')
   await checkpoint(callback, 'journal', 'before', operationId)
@@ -235,5 +312,6 @@ export async function moveNote(
       throw new Error(`Move precondition changed at ${change.path}`)
   }
   await recoverMoves(adapter, root, validatePath, callback)
-  return { path: target, bytes: sourceBytes, revision: revision(sourceBytes) }
+  const movedBytes = utf8Encode(movedSource.text)
+  return { path: target, bytes: movedBytes, revision: revision(movedBytes) }
 }
