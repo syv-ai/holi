@@ -13,6 +13,12 @@ interface HoliPage {
   focus(ref: number): boolean
   valueOf(ref: number): string | null
   fill(ref: number, text: string): boolean
+  hints: {
+    discover(request: number): { id: string; label: string; x: number; y: number }[] | null
+    present(request: number, revision: number, labels: { id: string; key: string }[]): boolean
+    clear(request: number): boolean
+    activate(request: number, id: string): { x: number; y: number; field: boolean } | null
+  }
   vim: {
     documentNonce(): string
     rearm(): string
@@ -89,6 +95,31 @@ test('a number finds its control until it leaves the page', () => {
   button.remove()
   expect(holi().click(7)).toBe(false)
   expect(holi().point(7)).toBeNull()
+})
+
+test('visible hint targets are separate from CLI refs and activation rechecks geometry', () => {
+  const button = document.querySelector('button[type=submit]')!
+  button.getBoundingClientRect = () =>
+    ({
+      x: 10,
+      y: 20,
+      width: 40,
+      height: 20,
+      left: 10,
+      top: 20,
+      right: 50,
+      bottom: 40,
+      toJSON: () => ({}),
+    }) as DOMRect
+  document.elementFromPoint = vi.fn(() => button)
+  holi().read(12_000)
+  const targets = holi().hints.discover(1)!
+  expect(targets).toHaveLength(1)
+  expect(targets[0]?.label).toBe('Sign in')
+  expect(holi().hints.present(1, 1, [{ id: targets[0]!.id, key: 'A' }])).toBe(true)
+  expect(holi().hints.activate(1, targets[0]!.id)).toEqual({ x: 30, y: 30, field: false })
+  expect(holi().hints.clear(1)).toBe(true)
+  expect(holi().hints.activate(1, targets[0]!.id)).toBeNull()
 })
 
 test('vim mode uses native selections and blocks unsupported edits synchronously', () => {
