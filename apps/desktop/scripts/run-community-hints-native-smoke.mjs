@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
-import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, copyFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { build } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
-import { build as electronBuild } from 'electron-vite'
+import { fileURLToPath } from 'node:url'
 import { createCdpClient } from './native-smoke-cdp.mjs'
-import { encodeScreencast } from './native-smoke-recording.mjs'
+import { stopOwnedCommunityFixture } from './native-smoke-process.mjs'
+import { prepareCommunityHintsNativeFixture } from './community-hints-native-fixture.mjs'
+import { createNativeProofRecorder, finalizeScreencast } from './native-smoke-recording.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(
@@ -26,7 +23,6 @@ let closed
 let closeResult
 let screencastFrames = []
 let cdpClient
-const mainBuildConfig = join(root, 'community-hints-native-smoke.electron.config.mjs')
 let ws
 let quit
 let log = ''
@@ -48,98 +44,7 @@ let pluginPort
 try {
   debugPort = await port()
   pluginPort = await port()
-  const plugin = join(root, 'plugin')
-  await mkdir(plugin)
-  await copyFile(
-    join(desktop, 'scripts/community-hints-native-smoke-serve.cjs'),
-    join(plugin, 'serve.cjs'),
-  )
-  await writeFile(
-    join(plugin, 'holi-plugin.json'),
-    JSON.stringify({
-      id: 'smoke-plugin',
-      name: 'Community hint fixture',
-      version: '0.1.0',
-      opens: ['slides.md'],
-      setup: [
-        process.execPath,
-        '-e',
-        "require('node:fs').writeFileSync('.hint-smoke-setup', 'setup-complete')",
-      ],
-      serve: [process.execPath, 'serve.cjs', '{file}', '--port', '{port}'],
-    }),
-  )
-  const git = (...args) =>
-    execFileSync('git', args, {
-      cwd: plugin,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
-    })
-  git('init', '-q', '-b', 'main')
-  git('add', '.')
-  git(
-    '-c',
-    'user.name=Fixture',
-    '-c',
-    'user.email=fixture@example.invalid',
-    '-c',
-    'commit.gpgsign=false',
-    'commit',
-    '-qm',
-    'fixture',
-  )
-  git('tag', 'v0.1.0')
-  await build({
-    configFile: false,
-    root: desktop,
-    base: './',
-    resolve: { alias: { '@': join(desktop, 'src/renderer/src') } },
-    plugins: [react(), tailwindcss()],
-    build: {
-      target: 'chrome140',
-      outDir: join(root, 'renderer'),
-      emptyOutDir: true,
-      rollupOptions: { input: join(desktop, 'scripts/community-hints-native-smoke.html') },
-    },
-  })
-  await writeFile(
-    mainBuildConfig,
-    `import { defineConfig, externalizeDepsPlugin } from ${JSON.stringify(pathToFileURL(join(desktop, 'node_modules/electron-vite/dist/index.js')).href)}\nexport default defineConfig({main:{plugins:[externalizeDepsPlugin({exclude:['@holi/shared']})],build:{outDir:${JSON.stringify(root)},emptyOutDir:false,rollupOptions:{input:${JSON.stringify(join(desktop, 'scripts/community-hints-native-smoke-main.ts'))},external:['electron'],output:{format:'cjs',entryFileNames:'main.cjs',banner:${JSON.stringify(`module.paths.unshift(${JSON.stringify(join(desktop, 'node_modules'))});`)}}}}}})\n`,
-  )
-  await electronBuild({ configFile: mainBuildConfig })
-  assert((await readFile(join(root, 'main.cjs'), 'utf8')).includes('app.asar.unpacked'))
-  const emittedBridge = (await readdir(join(root, 'chunks'))).find((name) =>
-    name.startsWith('hint-bridge-'),
-  )
-  assert(emittedBridge, 'electron-vite did not emit the bridge asset')
-  await readFile(join(root, 'chunks', emittedBridge), 'utf8')
-  assert(
-    (await readFile(join(desktop, 'electron-builder.yml'), 'utf8')).includes(
-      "'out/main/chunks/**'",
-    ),
-    'electron-builder does not unpack the emitted bridge asset directory',
-  )
-  await writeFile(
-    join(root, 'package.json'),
-    JSON.stringify({ name: 'holi-community-hints-native-510', main: 'main.cjs' }),
-  )
-  await writeFile(
-    join(root, 'preload.cjs'),
-    `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('holiSmoke',{call:(name,params)=>ipcRenderer.invoke('community:call',name,params),quit:()=>ipcRenderer.send('smoke:quit')});contextBridge.exposeInMainWorld('holi',{trpc:op=>ipcRenderer.invoke('community:trpc',op),logs:{onEntry:()=>()=>{}}});`,
-  )
-  const electron = createRequire(import.meta.url)('electron')
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => !/TOKEN|SECRET|PASSWORD|API_KEY|AUTH/.test(key) && !key.startsWith('GIT_'),
-    ),
-  )
-  Object.assign(env, {
-    HOME: join(root, 'home'),
-    HOLI_510_ROOT: root,
-    HOLI_510_SERVER_PORT: String(pluginPort),
-  })
-  delete env.ELECTRON_RUN_AS_NODE
+  const { electron, env } = await prepareCommunityHintsNativeFixture({ desktop, root, pluginPort })
   child = spawn(electron, [root, `--remote-debugging-port=${debugPort}`], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -334,26 +239,87 @@ try {
   )
   const button = first.find((hint) => hint.target === 'Native button')
   assert(button?.key, `guest native button label absent: ${JSON.stringify(first)}`)
-  const addTarget = first.find((hint) => hint.target === 'Temporary target')
-  assert(addTarget?.key, 'dynamic-target trigger label absent')
-  for (const letter of addTarget.key) await key(letter)
-  await wait('!document.querySelector("[data-host-hints]")', 'target mutation invalidation')
   const replayFromGuest = async (snapshot) =>
     evaluate(`window.parent.postMessage(${JSON.stringify(snapshot)}, "*")`, true)
   const replayBaseline = realSnapshot
   assert(replayBaseline?.nonce && Number.isSafeInteger(replayBaseline.revision))
-  await replayFromGuest({ ...replayBaseline, nonce: replayBaseline.nonce + 'forged' })
-  await replayFromGuest({ ...replayBaseline, revision: replayBaseline.revision + 1 })
-  await replayFromGuest({ ...replayBaseline, revision: Math.max(0, replayBaseline.revision - 1) })
-  await sleep(100)
-  assert.equal(await evaluate('!!document.querySelector("[data-host-hints]")'), false)
-  await start()
-  const validReplaySnapshot = await evaluate(
-    'window.smokeMessages.map(message=>message.data).filter(message=>message?.type==="holi-hints:snapshot").at(-1)',
+  const replayTargets = replayBaseline.targets.map((target) => ({
+    ...target,
+    label: `Replay target: ${target.label}`,
+  }))
+  const remainsCurrent = async (description) => {
+    await sleep(100)
+    const labels = await hints()
+    assert(
+      labels.some((hint) => hint.target === 'Native button'),
+      `${description} replaced live labels`,
+    )
+    assert(
+      labels.every((hint) => !hint.target.startsWith('Replay target:')),
+      `${description} exposed rejected replay labels`,
+    )
+  }
+  // These messages are posted from the actual fixture guest frame, preserving its
+  // origin and WindowProxy source while independently varying protocol credentials.
+  await replayFromGuest({
+    ...replayBaseline,
+    nonce: `${replayBaseline.nonce}forged`,
+    revision: replayBaseline.revision + 1,
+    targets: replayTargets,
+  })
+  await remainsCurrent('old nonce with otherwise valid bounded snapshot')
+  await replayFromGuest({
+    ...replayBaseline,
+    revision: Math.max(0, replayBaseline.revision - 1),
+    targets: replayTargets,
+  })
+  await remainsCurrent('nonmonotonic revision with current nonce')
+  const acceptedReplayRevision = replayBaseline.revision + 1
+  await replayFromGuest({
+    ...replayBaseline,
+    revision: acceptedReplayRevision,
+    targets: replayTargets,
+  })
+  await wait(
+    ' [...document.querySelectorAll("[data-host-hints] [data-hint-target]")].some(e=>e.getAttribute("data-hint-target").startsWith("Replay target:"))',
+    'fresh valid guest replay replaces labels',
   )
-  await replayFromGuest(validReplaySnapshot)
-  await wait('!!document.querySelector("[data-host-hints]")', 'valid guest replay remains accepted')
-  await key('Escape')
+  assert(
+    (await hints()).some((hint) => hint.target === 'Replay target: Native button'),
+    'correct guest source and origin fresh revision was not accepted',
+  )
+  const previousGuestGeneration = await evaluate('window.fixtureGeneration', true)
+  await evaluate('location.reload()', true)
+  await wait('!document.querySelector("[data-host-hints]")', 'negative replay reset')
+  await wait(
+    `window.fixtureGeneration !== ${JSON.stringify(previousGuestGeneration)}`,
+    'new actual guest document after replay',
+    true,
+  )
+  await wait('!!window.__holiHintBridgeV1__', 'fresh actual guest bridge after replay', true)
+  await start()
+  const restoredLabels = await hints()
+  assert(
+    restoredLabels.some((hint) => hint.target === 'Native button') &&
+      restoredLabels.every((hint) => !hint.target.startsWith('Replay target:')),
+    'fresh actual guest snapshot did not replace controlled replay labels',
+  )
+  const setupHint = restoredLabels.find((hint) => hint.target === 'Run fixture setup')
+  assert(setupHint?.key, 'fresh actual snapshot omitted native setup target')
+  for (const letter of setupHint.key) await key(letter)
+  await wait(
+    'document.querySelector("#output").textContent==="Setup complete"',
+    'fresh actual keyboard activation',
+    true,
+  )
+  await start()
+  assertions.push(
+    'old nonce and nonmonotonic revisions with valid fixture targets are rejected; a fresh correct-source/origin revision changes visible labels, then a new actual guest snapshot restores labels and native keyboard activation succeeds',
+  )
+  const addTarget = (await hints()).find((hint) => hint.target === 'Temporary target')
+  assert(addTarget?.key, 'dynamic-target trigger label absent')
+  for (const letter of addTarget.key) await key(letter)
+  await wait('!document.querySelector("[data-host-hints]")', 'target mutation invalidation')
   await start()
   assert(
     (await hints()).some((hint) => hint.target === 'Dynamic target'),
@@ -579,52 +545,21 @@ try {
   )
   await focusGuest()
   const recordingStartedAt = process.hrtime.bigint()
-  const recordFrame = async (stage, expectedTarget) => {
-    const hostState = await evaluate(
-      `(()=>{const overlay=document.querySelector("[data-host-hints]");if(!overlay)return null;const labels=[...overlay.querySelectorAll("[data-hint-key]")].map(e=>({key:e.getAttribute("data-hint-key"),target:e.getAttribute("data-hint-target"),visible:!!(e.getClientRects().length&&getComputedStyle(e).visibility!=="hidden")}));return {visible:!!(overlay.getClientRects().length&&getComputedStyle(overlay).visibility!=="hidden"),labels}})()`,
-    )
-    const guestState = await evaluate(
-      `(()=>{const target=[...document.querySelectorAll("button")].find(e=>e.textContent.trim()===${JSON.stringify(expectedTarget)});return target?{text:target.textContent.trim(),visible:!!(target.getClientRects().length&&getComputedStyle(target).visibility!=="hidden")}:null})()`,
-      true,
-    )
-    assert(hostState?.visible, `${stage}: host hint overlay is not visible`)
-    assert(
-      hostState.labels.some((label) => label.target === expectedTarget && label.visible),
-      `${stage}: host label missing`,
-    )
-    assert(
-      guestState?.visible && guestState.text === expectedTarget,
-      `${stage}: guest target is not visible`,
-    )
-    const frame = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
-    const capturedAt = process.hrtime.bigint()
-    const afterHost = await evaluate('!!document.querySelector("[data-host-hints]")')
-    const afterGuest = await evaluate(
-      `(()=>{const e=[...document.querySelectorAll("button")].find(x=>x.textContent.trim()===${JSON.stringify(expectedTarget)});return !!(e&&e.getClientRects().length&&getComputedStyle(e).visibility!=="hidden")})()`,
-      true,
-    )
-    assert(afterHost && afterGuest, `${stage}: labels invalidated during capture`)
-    const image = Buffer.from(frame.data, 'base64')
-    screencastFrames.push({
-      image,
-      timestamp: Number(capturedAt - recordingStartedAt) / 1e9,
-      stage,
-      labels: hostState.labels,
-      guestTarget: guestState.text,
-    })
-    return image
-  }
-  const initial = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
-  screencastFrames.push({
-    image: Buffer.from(initial.data, 'base64'),
-    timestamp: 0,
-    stage: 'initial',
+  const recorder = createNativeProofRecorder({
+    evaluate,
+    captureScreenshot: () => cdp('Page.captureScreenshot', { format: 'png', fromSurface: true }),
+    frames: screencastFrames,
+    startedAt: recordingStartedAt,
   })
+  await recorder.recordUnassertedFrame('initial')
   await sleep(500)
   await key('f')
   await wait('!!document.querySelector("[data-host-hints]")', 'final light proof session')
   await sleep(500)
-  await writeFile(join(evidence, 'light.png'), await recordFrame('light-hints', 'Native button'))
+  await writeFile(
+    join(evidence, 'light.png'),
+    await recorder.recordFrame('light-hints', 'Native button'),
+  )
   const finalButton = (await hints()).find((hint) => hint.target === 'Native button')
   assert(
     finalButton?.key && finalButton.key.length > 1,
@@ -636,22 +571,20 @@ try {
     'native key prefix remains visibly selected',
   )
   await sleep(500)
-  await recordFrame('key-selection', 'Native button')
+  await recorder.recordFrame('key-selection', 'Native button')
   for (const letter of finalButton.key.slice(1)) await key(letter)
   await wait('window.fixtureClicks===1', 'final native button activation', true)
   await sleep(500)
-  const resultFrame = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
-  screencastFrames.push({
-    image: Buffer.from(resultFrame.data, 'base64'),
-    timestamp: Number(process.hrtime.bigint() - recordingStartedAt) / 1e9,
-    stage: 'activation-result',
-  })
+  await recorder.recordUnassertedFrame('activation-result')
   await evaluate('document.documentElement.dataset.theme="dark"')
   await focusGuest()
   await key('f')
   await wait('!!document.querySelector("[data-host-hints]")', 'dark theme proof session')
   await sleep(500)
-  await writeFile(join(evidence, 'dark.png'), await recordFrame('dark-hints', 'Native button'))
+  await writeFile(
+    join(evidence, 'dark.png'),
+    await recorder.recordFrame('dark-hints', 'Native button'),
+  )
   await sleep(500)
   await key('Escape')
   assert(screencastFrames.length > 0, 'native screenshot recording produced no frames')
@@ -690,8 +623,8 @@ try {
 } catch (error) {
   failure = error
 } finally {
-  try {
-    if (child && child.exitCode === null && child.signalCode === null) {
+  if (child && child.exitCode === null && child.signalCode === null) {
+    try {
       await quit?.().catch(() => undefined)
       await Promise.race([closed, sleep(8000)])
       if (child.exitCode === null && child.signalCode === null) {
@@ -702,104 +635,49 @@ try {
         child.kill('SIGKILL')
         await closed
       }
+    } catch (error) {
+      failure ??= error
     }
-    if (closeResult && (closeResult.code !== 0 || closeResult.signal !== null))
-      failure ??= new Error(`Electron did not exit cleanly: ${JSON.stringify(closeResult)}`)
-    ws?.close()
+  }
+  if (closeResult && (closeResult.code !== 0 || closeResult.signal !== null))
+    failure ??= new Error(`Electron did not exit cleanly: ${JSON.stringify(closeResult)}`)
+
+  ws?.close()
+  let fixturePid = 0
+  let fixtureServerStopped = false
+  try {
     const install = JSON.parse(
       await readFile(join(root, 'profile/plugins/installed.json'), 'utf8').catch(() => '[]'),
     ).find((item) => item.id === 'smoke-plugin')
     const installedCode = install
       ? join(root, 'profile/plugins/smoke-plugin', install.source.commit, install.source.path)
-      : ''
-    const marker = installedCode ? join(installedCode, '.hint-smoke-pid') : ''
-    const pid = marker ? Number(await readFile(marker, 'utf8').catch(() => '0')) : 0
-    let fixturePid = pid
-    if (pid > 0) {
-      try {
-        process.kill(pid, 0)
-        const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
-          encoding: 'utf8',
-        }).trim()
-        const cwd = execFileSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {
-          encoding: 'utf8',
-        })
-          .split('\n')
-          .find((line) => line.startsWith('n'))
-          ?.slice(1)
-        const expectedCommand = `${process.execPath} serve.cjs slides.md --port ${pluginPort}`
-        const exact =
-          command.includes(expectedCommand) &&
-          cwd === installedCode &&
-          (await readFile(marker, 'utf8')) === String(pid)
-        if (!exact) throw new Error(`refusing to signal unverified fixture PID ${pid}`)
-        process.kill(pid, 'SIGTERM')
-        for (let attempt = 0; attempt < 40; attempt++) {
-          try {
-            process.kill(pid, 0)
-          } catch (error) {
-            if (error.code === 'ESRCH') break
-            throw error
-          }
-          await sleep(100)
-        }
-        try {
-          process.kill(pid, 0)
-          process.kill(pid, 'SIGKILL')
-          for (let attempt = 0; attempt < 40; attempt++) {
-            try {
-              process.kill(pid, 0)
-            } catch (error) {
-              if (error.code === 'ESRCH') break
-              throw error
-            }
-            await sleep(100)
-          }
-        } catch (error) {
-          if (error.code !== 'ESRCH') throw error
-        }
-      } catch (error) {
-        if (error.code !== 'ESRCH') throw error
-      }
-    }
-    if (fixturePid > 0) {
-      try {
-        process.kill(fixturePid, 0)
-        throw new Error(`fixture process ${fixturePid} still alive`)
-      } catch (error) {
-        if (error.code !== 'ESRCH') throw error
-      }
-    }
+      : null
+    const stopped = await stopOwnedCommunityFixture({ installedCode, pluginPort, sleep })
+    fixturePid = stopped.pid
+    fixtureServerStopped = stopped.stopped
+    assert(fixtureServerStopped, `fixture process ${fixturePid} still alive`)
+  } catch (error) {
+    failure ??= error
+  }
+
+  cdpClient?.close()
+  let runtimeRemoved = false
+  try {
     await rm(root, { recursive: true, force: true })
-    cdpClient?.close()
+    runtimeRemoved = true
+  } catch (error) {
+    failure ??= error
+  }
+  try {
     await writeFile(join(evidence, 'electron.log'), log)
     const artifactNames = ['dark.png', 'light.png', 'activation.webm']
     try {
-      if (screencastFrames.length) {
-        await encodeScreencast(screencastFrames, {
+      if (screencastFrames.length)
+        await finalizeScreencast(screencastFrames, {
           root: evidence,
           evidence,
           filename: 'activation.webm',
         })
-        const stat = await import('node:fs/promises').then(({ stat }) =>
-          stat(join(evidence, 'activation.webm')),
-        )
-        assert(stat.size > 0, 'activation video is empty')
-        const probe = execFileSync(
-          'ffprobe',
-          [
-            '-v',
-            'error',
-            '-show_entries',
-            'format=duration',
-            '-of',
-            'default=noprint_wrappers=1:nokey=1',
-            join(evidence, 'activation.webm'),
-          ],
-          { encoding: 'utf8' },
-        )
-        assert(Number(probe) >= 2.5, `activation video is too short: ${probe.trim()}s`)
-      }
     } catch (error) {
       failure ??= error
     }
@@ -814,7 +692,7 @@ try {
       join(evidence, 'result.json'),
       JSON.stringify(
         {
-          passed: !failure && exists.length === artifactNames.length,
+          passed: !failure && exists.length === artifactNames.length && runtimeRemoved,
           command: `node apps/desktop/scripts/run-community-hints-native-smoke.mjs ${evidence}`,
           source: {
             commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
@@ -826,21 +704,16 @@ try {
           artifacts: exists,
           failure:
             failure?.stack ??
-            (exists.length !== artifactNames.length ? 'Required artifacts missing' : undefined),
+            (!runtimeRemoved
+              ? 'Disposable runtime directory was not removed'
+              : exists.length !== artifactNames.length
+                ? 'Required artifacts missing'
+                : undefined),
           cleanup: {
-            runtimeRemoved: true,
+            runtimeRemoved,
             electronStopped: !child || child.exitCode !== null || child.signalCode !== null,
             electronClose: closeResult,
-            fixtureServerStopped:
-              fixturePid === 0 ||
-              (() => {
-                try {
-                  process.kill(fixturePid, 0)
-                  return false
-                } catch (error) {
-                  return error.code === 'ESRCH'
-                }
-              })(),
+            fixtureServerStopped,
           },
         },
         null,
