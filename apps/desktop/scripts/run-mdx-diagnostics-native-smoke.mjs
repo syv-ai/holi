@@ -210,6 +210,7 @@ try {
     'renderer exposed privileged globals',
   )
   assert.equal(await evaluate('sessionStorage.length'), 0)
+  await evaluate(`localStorage.setItem('holi-native-default-credential-507', 'synthetic-only')`)
   checks.push('isolated profile and vault', 'production renderer has no privileged globals')
 
   const click = (label) =>
@@ -232,6 +233,26 @@ try {
     'production MDX approval dialog',
   )
   await click('Approve vault')
+  const guest = await waitFor(async () => {
+    const state = await windowStatus(page)
+    return state.guestProbes?.find(
+      (probe) => probe.url === 'https://mdx-compiler.invalid/guest.html',
+    )
+  }, 'actual isolated compiler guest probe')
+  assert.deepEqual(guest.result.globals, {
+    process: 'undefined',
+    require: 'undefined',
+    holi: 'undefined',
+    electron: 'undefined',
+    bridge: 'undefined',
+  })
+  assert.deepEqual(guest.result.storage, { cookies: '', local: 0, session: 0 })
+  assert.equal(
+    guest.result.credentialMarker,
+    null,
+    'default-session fixture credential leaked into compiler guest',
+  )
+  checks.push('actual compiler guest has no privileged globals or session data')
   await waitFor(
     () =>
       evaluate(

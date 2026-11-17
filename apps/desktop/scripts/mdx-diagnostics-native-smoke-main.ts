@@ -27,6 +27,7 @@ let recoveredWindows = 0
 let savedWrites = 0
 let installedSessionPolicy = false
 const blockedRequests: string[] = []
+const guestProbes: Array<{ url: string; result: Record<string, unknown> }> = []
 const compiler = createMdxCompiler(join(app.getAppPath(), 'out/mdx-compiler'))
 const trustStore = createMdxTrustStore(join(profile, 'mdx-trust.json'))
 const owner = () => ({ accountId: identity.accountId, remote })
@@ -52,6 +53,7 @@ invoke('smoke:status', async () => ({
   recoveredWindows,
   savedWrites,
   blockedRequests,
+  guestProbes,
   accountGeneration,
   openRevision,
   compilerAssets: await Promise.all(
@@ -92,6 +94,22 @@ invoke('smoke:trpc', async (request: { path: string; operation: string; input?: 
 })
 
 app.on('web-contents-created', (_event, contents: WebContents) => {
+  if (contents.session !== session.defaultSession) {
+    contents.once('did-finish-load', () => {
+      if (contents.getURL() !== 'https://mdx-compiler.invalid/guest.html') return
+      void contents
+        .executeJavaScript(
+          `(() => ({
+        globals: { process: typeof process, require: typeof require, holi: typeof holi, electron: typeof electron, bridge: typeof holiSmoke },
+        storage: { cookies: document.cookie, local: localStorage.length, session: sessionStorage.length },
+        credentialMarker: localStorage.getItem('holi-native-default-credential-507'),
+      }))()`,
+        )
+        .then((result) => {
+          guestProbes.push({ url: contents.getURL(), result })
+        })
+    })
+  }
   contents.on('render-process-gone', (_event, details) => {
     if (win?.webContents === contents) {
       win = null
