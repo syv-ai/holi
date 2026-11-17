@@ -109,6 +109,7 @@ function App() {
           const current = editor(which)
           return {
             markdown: current.getMarkdown(),
+            textContent: current.state.doc.textContent,
             selectedText: current.state.doc.textBetween(
               current.state.selection.from,
               current.state.selection.to,
@@ -157,7 +158,11 @@ function App() {
           await window.richTextVimIO.write(path, text)
           await window.richTextVimFixture.reload()
         },
-        focus(which: 'primary' | 'secondary' = 'primary') {
+        async focus(which: 'primary' | 'secondary' = 'primary') {
+          setFocused(which)
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          )
           editor(which).commands.focus()
         },
         mode(enabled: boolean) {
@@ -222,7 +227,18 @@ function App() {
           }
           await window.richTextVimIO.call('comments.write', {
             path,
-            text: JSON.stringify({ version: 1, threads: { [id]: thread } }),
+            text: JSON.stringify({
+              version: 1,
+              threads: {
+                [id]: {
+                  anchor: thread.anchor,
+                  comments: Object.fromEntries(
+                    thread.comments.map(({ id: commentId, ...comment }) => [commentId, comment]),
+                  ),
+                  status: thread.status,
+                },
+              },
+            }),
           })
           const loadedThreads = (await window.richTextVimIO.call('comments.list', {
             remote,

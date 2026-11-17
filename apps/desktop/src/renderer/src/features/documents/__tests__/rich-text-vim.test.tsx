@@ -1044,6 +1044,15 @@ describe('rich-text Vim extension', () => {
     })
     expect(ed.state.doc.check()).toBeUndefined()
 
+    ed.commands.setContent('<p>first<br>second</p>')
+    ed.commands.setTextSelection(2)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(ed.state.doc.firstChild?.toJSON()).toEqual({
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'second' }],
+    })
+
     key(ed, 'Escape')
     ed.commands.setContent('<pre><code>first\nmiddle\nlast</code></pre>')
     ed.commands.setTextSelection(2)

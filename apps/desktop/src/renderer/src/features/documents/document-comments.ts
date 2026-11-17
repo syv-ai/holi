@@ -194,10 +194,16 @@ export function placeThreads(
 
 // -------------------------------------------------------------- decorations
 
+interface PendingChangeRange {
+  id: string
+  pos: number
+}
+
 interface CommentsState {
   ranges: readonly PlacedRange[]
   active: string | null
   decorations: DecorationSet
+  pendingChangeRanges: readonly PendingChangeRange[]
 }
 
 type CommentsMeta = { ranges?: readonly PlacedRange[]; active?: string | null }
@@ -263,6 +269,7 @@ export const DocumentComments = Extension.create<{
             ranges: [],
             active: null,
             decorations: DecorationSet.empty,
+            pendingChangeRanges: [],
           }),
           apply(tr, value, _old, state) {
             const meta = tr.getMeta(documentCommentsKey) as CommentsMeta | undefined
@@ -273,18 +280,41 @@ export const DocumentComments = Extension.create<{
                 ranges,
                 active,
                 decorations: decorate(state.doc, ranges, active),
+                pendingChangeRanges: [],
               }
             }
-            if (!tr.docChanged) return value
+            if (!tr.docChanged) {
+              return tr.selectionSet && value.pendingChangeRanges.length > 0
+                ? { ...value, pendingChangeRanges: [] }
+                : value
+            }
+
             const decorations = value.decorations.map(tr.mapping, tr.doc)
+            const ranges = decorations.find().map((d) => ({
+              id: (d.spec as { id: string }).id,
+              from: d.from,
+              to: d.to,
+            }))
+            if (value.pendingChangeRanges.length > 0) {
+              for (const pending of value.pendingChangeRanges) {
+                const from = tr.mapping.map(pending.pos, -1)
+                const to = tr.mapping.map(pending.pos, 1)
+                if (to > from) ranges.push({ id: pending.id, from, to })
+              }
+            }
+            const pendingChangeRanges = tr.getMeta('vimChangeInsert')
+              ? value.ranges
+                  .filter((range) => !ranges.some((mapped) => mapped.id === range.id))
+                  .map((range) => ({
+                    id: range.id,
+                    pos: tr.mapping.map(range.from, -1),
+                  }))
+              : []
             return {
               active: value.active,
-              decorations,
-              ranges: decorations.find().map((d) => ({
-                id: (d.spec as { id: string }).id,
-                from: d.from,
-                to: d.to,
-              })),
+              ranges,
+              decorations: decorate(state.doc, ranges, value.active),
+              pendingChangeRanges,
             }
           },
         },

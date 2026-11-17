@@ -659,7 +659,7 @@ function handleNormal(
             logical.length - 1,
             logicalIndex + cappedCount(current.operatorCount * (current.count || 1)) - 1,
           )
-          const deletion = logicalLineDeletion(logical, logicalIndex, lastIndex)!
+          const deletion = logicalLineDeletion(logical, logicalIndex, lastIndex, operator === 'd')!
           const from = deletion.from
           const to = deletion.to
           const content = view.state.doc.slice(deletion.contentFrom, deletion.contentTo)
