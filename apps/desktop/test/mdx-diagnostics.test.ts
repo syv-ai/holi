@@ -163,6 +163,27 @@ describe('MDX diagnostics lease acquisition', () => {
     diagnostics.close()
   })
 
+  test('a rejected final trust check closes its unpublished watcher and frees capacity', async () => {
+    let trustedCalls = 0
+    const { diagnostics } = await fixture({
+      trusted: async () => {
+        trustedCalls += 1
+        if (trustedCalls === 6) throw new Error('trust store unavailable')
+        return true
+      },
+    })
+    await expect(
+      diagnostics.acquire({ remote: identity.remote, path: 'docs/page.mdx', context: 'token' }),
+    ).rejects.toThrow('trust store unavailable')
+    const leases = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        diagnostics.acquire({ remote: identity.remote, path: 'docs/page.mdx', context: 'token' }),
+      ),
+    )
+    expect(leases).toHaveLength(4)
+    diagnostics.close()
+  })
+
   test('replacement of the leased file fails closed', async () => {
     const { diagnostics, root } = await fixture()
     const lease = await diagnostics.acquire({

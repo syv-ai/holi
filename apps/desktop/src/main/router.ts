@@ -1354,23 +1354,29 @@ export function createRouter(deps: RouterDeps) {
     )
       throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
     const remote = canonicalGitHubRemote(input.remote)
-    const registered = (await deps.registry.list()).some(
-      (vault) => canonicalGitHubRemote(vault.remote) === remote,
-    )
-    if (
-      !registered ||
-      mdxTrustTransition > 0 ||
-      mdxTrustTransitionEpoch !== transitionEpoch ||
-      !trustContextCurrent(context, input.remote)
-    )
-      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
-    const stillOwned = () => trustContextCurrent(context, input.remote)
+    // Retire the context synchronously, before registry or trust-store I/O can
+    // yield to a compile using this token. The captured identity remains the
+    // authority for this in-flight operation; it is not re-read from the
+    // renderer-facing token slot after retirement.
     mdxTrustTransition += 1
     const operationEpoch = ++mdxTrustTransitionEpoch
     trustContext = null
     mdxDiagnostics.invalidate()
     deps.mdxCompiler?.invalidate()
+    const stillOwned = () =>
+      mdxTrustTransitionEpoch === operationEpoch &&
+      deps.session.generation === context.accountGeneration &&
+      String(deps.session.viewer?.accountId) === context.accountId &&
+      context.remote === remote &&
+      deps.host.active() === context.active &&
+      vaultOpenRevision === context.openRevision &&
+      completedVaultOpenRevision === context.openRevision
     try {
+      const registered = (await deps.registry.list()).some(
+        (vault) => canonicalGitHubRemote(vault.remote) === remote,
+      )
+      if (!registered || !stillOwned())
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
       await (approve ? deps.mdxTrust.approve : deps.mdxTrust.revoke)(
         { accountId: context.accountId, remote },
         () =>
@@ -1382,7 +1388,7 @@ export function createRouter(deps: RouterDeps) {
           vaultOpenRevision === context.openRevision &&
           completedVaultOpenRevision === context.openRevision,
       )
-      if (!stillOwned() || mdxTrustTransitionEpoch !== operationEpoch)
+      if (!stillOwned())
         throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
       return { trusted: approve }
     } finally {
@@ -1556,8 +1562,6 @@ export function createRouter(deps: RouterDeps) {
         }
         mdxDiagnostics.invalidatePath(input.remote, from)
         mdxDiagnostics.invalidatePath(input.remote, to)
-        for (const ref of await scanBackrefs(root, from))
-          mdxDiagnostics.invalidatePath(input.remote, safe(ref.path))
         return renameNote(root, from, to, { localLinksOnly: input.localLinksOnly === true })
       }),
 
@@ -1580,12 +1584,14 @@ export function createRouter(deps: RouterDeps) {
             throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${m.to}` })
           }
         }
-        for (const move of input.moves) {
-          const from = safe(move.from)
+        const movedSources = input.moves.map((move) => ({
+          from: safe(move.from),
+          to: safe(move.to),
+        }))
+        // Retire MDX source leases before the move mutates either path.
+        for (const { from, to } of movedSources) {
           mdxDiagnostics.invalidatePath(input.remote, from)
-          mdxDiagnostics.invalidatePath(input.remote, safe(move.to))
-          for (const ref of await scanBackrefs(root, from))
-            mdxDiagnostics.invalidatePath(input.remote, safe(ref.path))
+          mdxDiagnostics.invalidatePath(input.remote, to)
         }
         for (const folder of input.folders) {
           mdxDiagnostics.invalidatePath(input.remote, safe(folder.from))
