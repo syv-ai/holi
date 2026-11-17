@@ -1447,12 +1447,14 @@ describe('rich-text Vim extension', () => {
       const ed = open(html)
       ed.commands.setTextSelection(start)
       for (const value of sequence) key(ed, value)
-      ed.view.dispatch(ed.state.tr.insertText('X'))
+      ed.view.dispatch(ed.state.tr.insertText('X').setTime(Date.now() + 10_000))
       expect(ed.getHTML(), `${html} :: ${sequence.join('')}`).toBe(expected)
       expect(ed.state.doc.check()).toBeUndefined()
       key(ed, 'Escape')
       key(ed, 'u')
-      expect(ed.getHTML()).toBe(html)
+      expect(ed.getHTML(), `${html} :: ${sequence.join('')} undo`).toBe(html)
+      key(ed, 'r', { ctrlKey: true })
+      expect(ed.getHTML(), `${html} :: ${sequence.join('')} redo`).toBe(expected)
     }
   })
 
@@ -1532,6 +1534,178 @@ describe('rich-text Vim extension', () => {
     expect(ed.state.selection.empty).toBe(false)
     key(ed, 'd')
     expect(ed.getHTML()).toBe('<p></p>')
+  })
+
+  it('cancels pending count and prefix after an external selection without changing internal motions', () => {
+    const ed = open('<p>one</p><p>two</p><p>three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    ed.commands.setTextSelection(6)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(ed.getHTML()).toBe('<p>one</p><p>three</p>')
+
+    ed.commands.setContent('<p>one</p><p>two</p><p>three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    key(ed, 'V')
+    ed.commands.setTextSelection(6)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(ed.getHTML()).toBe('<p>one</p><p>three</p>')
+
+    ed.commands.setContent('<p>one</p><p>two</p><p>three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'g')
+    ed.commands.setTextSelection(6)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(ed.getHTML()).toBe('<p>one</p><p>three</p>')
+
+    ed.commands.setContent('<p>one</p><p>two</p><p>three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, 'j')
+    expect(ed.getHTML()).toBe('<p>three</p>')
+  })
+
+  it('extends counted forward-character operators through only available graphemes', () => {
+    for (const count of [1, 2, 3]) {
+      for (const operation of ['d', 'c'] as const) {
+        const ed = open('<p>a👩‍💻éB</p><p>other</p>')
+        ed.commands.setTextSelection(7)
+        key(ed, operation)
+        key(ed, String(count))
+        key(ed, 'l')
+        if (operation === 'c') {
+          ed.view.dispatch(ed.state.tr.insertText('X'))
+          key(ed, 'Escape')
+        }
+        expect(ed.getHTML()).toBe(
+          operation === 'c'
+            ? `<p>a👩‍💻X${count === 1 ? 'B' : ''}</p><p>other</p>`
+            : `<p>a👩‍💻${count === 1 ? 'B' : ''}</p><p>other</p>`,
+        )
+      }
+    }
+    for (const operation of ['d', 'c'] as const) {
+      const final = open('<p>one</p>')
+      final.commands.setTextSelection(3)
+      key(final, operation)
+      key(final, 'l')
+      if (operation === 'c') {
+        expect(final.view.dom.dataset.vimMode).toBe('insert')
+        final.view.dispatch(final.state.tr.insertText('X'))
+        key(final, 'Escape')
+      }
+      expect(final.getHTML()).toBe(operation === 'c' ? '<p>onX</p>' : '<p>on</p>')
+    }
+
+    const empty = open('<p></p><p>next</p>')
+    empty.commands.setTextSelection(1)
+    key(empty, 'd')
+    key(empty, 'l')
+    expect(empty.getHTML()).toBe('<p></p><p>next</p>')
+  })
+
+  it('positions linewise paste on the first inserted logical line', () => {
+    for (const [source, target, selector, expected] of [
+      ['<pre><code>first</code></pre>', '<pre><code>other</code></pre>', 'code', 'other\nirst'],
+      [
+        '<p>first<br>second</p>',
+        '<p>other<br>tail</p>',
+        'hardBreak',
+        '<p>other<br>irst<br>tail</p>',
+      ],
+    ] as const) {
+      const ed = open(source)
+      ed.commands.setTextSelection(1)
+      key(ed, 'y')
+      key(ed, 'y')
+      ed.commands.setContent(target)
+      ed.commands.setTextSelection(1)
+      key(ed, 'p')
+      expect(ed.state.doc.check()).toBeUndefined()
+      key(ed, 'x')
+      expect(selector === 'code' ? ed.state.doc.firstChild?.textContent : ed.getHTML()).toBe(
+        expected,
+      )
+    }
+
+    for (const put of ['p', 'P'] as const) {
+      const ed = open('<pre><code>first</code></pre>')
+      ed.commands.setTextSelection(1)
+      key(ed, 'y')
+      key(ed, 'y')
+      ed.commands.setContent('<pre><code>other</code></pre>')
+      ed.commands.setTextSelection(1)
+      key(ed, '2')
+      key(ed, put)
+      key(ed, 'x')
+      expect(ed.state.doc.firstChild?.textContent).toBe(
+        put === 'p' ? 'other\nirst\nfirst' : 'irst\nfirst\nother',
+      )
+    }
+  })
+
+  it('uses counted logical-line destinations for dollar operators', () => {
+    for (const [markup, expectedFor, textPos] of [
+      [
+        '<pre><code>one\ntwo\nthree</code></pre>',
+        (count: number) => (count === 2 ? 'three' : ''),
+        1,
+      ],
+      [
+        '<p>one<br>two<br>three</p>',
+        (count: number) => (count === 2 ? '<p>three</p>' : '<p></p>'),
+        1,
+      ],
+    ] as const) {
+      for (const count of [2, 3]) {
+        const ed = open(markup)
+        ed.commands.setTextSelection(textPos)
+        key(ed, 'd')
+        key(ed, String(count))
+        key(ed, '$')
+        expect(
+          markup.startsWith('<pre>') ? ed.state.doc.firstChild?.textContent : ed.getHTML(),
+        ).toBe(expectedFor(count))
+      }
+    }
+
+    const code = open('<pre><code>one\n👩‍💻two\nthree</code></pre>')
+    code.commands.setTextSelection(1)
+    key(code, '2')
+    key(code, 'd')
+    key(code, '$')
+    expect(code.state.doc.firstChild?.textContent).toBe('three')
+
+    code.commands.setContent('<pre><code>one\n👩‍💻two\nthree</code></pre>')
+    code.commands.setTextSelection(5)
+    key(code, 'd')
+    key(code, '2')
+    key(code, '$')
+    expect(code.state.doc.firstChild?.textContent).toBe('one\n')
+
+    code.commands.setContent('<pre><code>one\ntwo\nthree</code></pre>')
+    code.commands.setTextSelection(1)
+    key(code, 'y')
+    key(code, '2')
+    key(code, '$')
+    code.commands.setTextSelection(9)
+    key(code, 'P')
+    expect(code.state.doc.firstChild?.textContent).toBe('one\ntwo\none\ntwo\nthree')
+
+    code.commands.setContent('<pre><code>one\ntwo\nthree</code></pre>')
+    code.commands.setTextSelection(1)
+    key(code, 'c')
+    key(code, '2')
+    key(code, '$')
+    code.view.dispatch(code.state.tr.insertText('X'))
+    expect(code.state.doc.firstChild?.textContent).toBe('X\nthree')
+    key(code, 'Escape')
+    key(code, 'u')
+    expect(code.state.doc.firstChild?.textContent).toBe('one\ntwo\nthree')
   })
 
   it('keeps composition and modified shortcuts out of Vim routing and requests hints for normal f', () => {

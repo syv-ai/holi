@@ -99,8 +99,9 @@ export function pasteVimRegister(
       const atLine = key === 'p' ? line.to : line.from
       const tr = closeHistory(view.state.tr.insertText(insertion, atLine))
       if (tr.docChanged) {
+        const caret = atLine + (key === 'p' ? 1 : 0)
         view.dispatch(
-          tr.setSelection(TextSelection.near(tr.doc.resolve(atLine), 1)).scrollIntoView(),
+          tr.setSelection(TextSelection.near(tr.doc.resolve(caret), 1)).scrollIntoView(),
         )
         closeHistoryBoundary()
         updateCount()
@@ -127,7 +128,9 @@ export function pasteVimRegister(
         try {
           tr.doc.check()
           view.dispatch(
-            tr.setSelection(TextSelection.near(tr.doc.resolve(atLine), 1)).scrollIntoView(),
+            tr
+              .setSelection(TextSelection.near(tr.doc.resolve(atLine + (key === 'p' ? 1 : 0)), 1))
+              .scrollIntoView(),
           )
           closeHistoryBoundary()
           updateCount()
