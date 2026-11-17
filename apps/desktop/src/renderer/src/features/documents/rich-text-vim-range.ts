@@ -79,17 +79,18 @@ export function logicalLineDeletion(
   lines: ReturnType<typeof logicalLines>,
   firstIndex: number,
   lastIndex: number,
+  consumeFollowingSeparator = false,
 ) {
   const first = lines[firstIndex]
   const last = lines[lastIndex]
   if (!first || !last) return null
   const previous = lines[firstIndex - 1]
   const next = lines[lastIndex + 1]
-  // Keep the following hard break when deleting from the start; otherwise
-  // consume the preceding separator so the next line joins in its place.
+  // First-line deletion consumes its following separator so the next line
+  // joins in its place; change leaves it to preserve the empty insertion line.
   return {
     from: previous ? previous.to : first.from,
-    to: first.block.node.type.name === 'codeBlock' && next && !previous ? next.from : last.to,
+    to: next && !previous && consumeFollowingSeparator ? next.from : last.to,
     contentFrom: first.from,
     contentTo: last.to,
   }

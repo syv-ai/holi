@@ -51,12 +51,25 @@ let timeoutMs = Number(process.env.HOLI_516_TIMEOUT_MS ?? 240000)
 let timer
 
 function signalOwnedElectron(signal) {
-  if (!child?.pid || childState?.exit) return
+  if (!child?.pid || childState?.exit) return null
   try {
     if (process.platform === 'win32') child.kill(signal)
     else process.kill(-child.pid, signal)
+    return null
   } catch (error) {
-    if (error?.code !== 'ESRCH') throw error
+    if (error?.code === 'ESRCH') return null
+    // EPERM on the process group must not prevent signaling the known child.
+    // Never retry the group signal after the leader has exited: its id may be reused.
+    if (error?.code === 'EPERM' && !childState?.exit) {
+      try {
+        child.kill(signal)
+        return null
+      } catch (fallbackError) {
+        if (fallbackError?.code === 'ESRCH') return null
+        return fallbackError
+      }
+    }
+    return error
   }
 }
 
@@ -68,21 +81,24 @@ process.on('SIGINT', cancel)
 process.on('SIGTERM', cancel)
 
 async function terminateOwnedProcess() {
-  if (!child || !childState || childState.exit) return childState?.exit ?? null
-  signalOwnedElectron('SIGTERM')
+  if (!child || !childState || childState.exit)
+    return { outcome: childState?.exit ?? null, errors: [] }
+  const errors = []
+  const termError = signalOwnedElectron('SIGTERM')
+  if (termError) errors.push(`SIGTERM: ${termError}`)
   let outcome = await Promise.race([
     childState.closed,
     new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
   ])
   if (!outcome) {
-    signalOwnedElectron('SIGKILL')
+    const killError = signalOwnedElectron('SIGKILL')
+    if (killError) errors.push(`SIGKILL: ${killError}`)
     outcome = await Promise.race([
       childState.closed,
       new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
     ])
   }
-  if (!outcome) throw new Error('Owned Electron process did not terminate after SIGKILL')
-  return outcome
+  return { outcome, errors }
 }
 
 async function encodeInteractionVideo() {
@@ -130,7 +146,7 @@ try {
     await mkdir(evidence)
     evidenceOwned = true
   }
-  for (const dir of ['userData', 'sessionData', 'app-data', 'home', 'vault'])
+  for (const dir of ['userData', 'sessionData', 'app-data', 'home', 'tmp', 'vault'])
     await mkdir(join(root, dir), { recursive: true })
 
   await build({
@@ -165,7 +181,7 @@ try {
   await build({
     configFile: false,
     root: desktop,
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['@holi/shared'] })],
     build: {
       ssr: true,
       target: 'node24',
@@ -185,7 +201,7 @@ try {
   if (cancelled) throw new Error('Native fixture cancelled during main build')
   await writeFile(
     join(root, 'preload.cjs'),
-    `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('richTextVimIO',{read:path=>ipcRenderer.invoke('rich-text-vim:read',path),write:(path,text)=>ipcRenderer.invoke('rich-text-vim:write',path,text),call:(name,input)=>{if(name==='notes.read')return ipcRenderer.invoke('rich-text-vim:read',input.path);if(name==='notes.write')return ipcRenderer.invoke('rich-text-vim:write',input.path,input.text);if(name==='comments.read')return ipcRenderer.invoke('rich-text-vim:comments','read');if(name==='comments.list')return ipcRenderer.invoke('rich-text-vim:comments','list',undefined,input.path);if(name==='comments.write')return ipcRenderer.invoke('rich-text-vim:comments','write',input.text);if(name.startsWith('fixture.'))return ipcRenderer.invoke('rich-text-vim:fixture',name.slice(8));throw new Error('Fixture operation denied: '+name)}});`,
+    `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('richTextVimIO',{read:path=>ipcRenderer.invoke('rich-text-vim:read',path),write:(path,text)=>ipcRenderer.invoke('rich-text-vim:write',path,text),call:(name,input)=>{if(name==='notes.read')return ipcRenderer.invoke('rich-text-vim:read',input.path);if(name==='notes.write')return ipcRenderer.invoke('rich-text-vim:write',input.path,input.text);if(name==='comments.read')return ipcRenderer.invoke('rich-text-vim:comments','read');if(name==='comments.list')return ipcRenderer.invoke('rich-text-vim:comments','list',undefined,input.path);if(name==='comments.write')return ipcRenderer.invoke('rich-text-vim:comments','write',input.text);if(name==='github.fileContributors'||name==='history.list')return Promise.resolve([]);if(name.startsWith('fixture.'))return ipcRenderer.invoke('rich-text-vim:fixture',name.slice(8));throw new Error('Fixture operation denied: '+name)}});`,
   )
   await writeFile(
     join(root, 'renderer', 'index.html'),
@@ -242,16 +258,17 @@ try {
 
   const electron = createRequire(import.meta.url)('electron')
   const env = {
-    ...process.env,
+    PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
     HOME: join(root, 'home'),
     USERPROFILE: join(root, 'home'),
+    TMPDIR: join(root, 'tmp'),
+    ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
+    ...(process.env.LC_ALL ? { LC_ALL: process.env.LC_ALL } : {}),
     HOLI_516_ROOT: root,
     HOLI_516_EVIDENCE: evidence,
     HOLI_516_CLIPBOARD_TOKEN: clipboardToken,
     HOLI_VAULT_ROOT: join(root, 'vault'),
-    NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
-      .filter(Boolean)
-      .join(delimiter),
+    NODE_PATH: join(desktop, 'node_modules'),
   }
   delete env.ELECTRON_RUN_AS_NODE
   child = spawn(electron, [root, '--remote-debugging-port=0'], {
@@ -322,7 +339,8 @@ try {
   process.off('SIGINT', cancel)
   process.off('SIGTERM', cancel)
   clearTimeout(timer)
-  const processExit = await terminateOwnedProcess()
+  const processTermination = await terminateOwnedProcess()
+  const processExit = processTermination?.outcome ?? null
   let guardExit = null
   if (guard) {
     try {
@@ -380,18 +398,26 @@ try {
   }
   if (evidenceOwned)
     await writeFile(join(evidence, 'electron-smoke.log'), log).catch(() => undefined)
-  await rm(root, { recursive: true, force: true })
+  const electronTerminated = !child || processExit !== null
+  const guardTerminated = !guardCleanup.started || guardCleanup.exited
   let rootRemoved = false
-  try {
-    await access(root)
-  } catch (error) {
-    rootRemoved = error.code === 'ENOENT'
+  if (electronTerminated && guardTerminated) {
+    await rm(root, { recursive: true, force: true }).catch((error) => {
+      guardCleanup.rootRemovalError = String(error)
+    })
+    try {
+      await access(root)
+    } catch (error) {
+      rootRemoved = error.code === 'ENOENT'
+    }
   }
   guardLines?.close()
   if (evidenceOwned) {
     const cleanup = {
       isolatedRootRemoved: rootRemoved,
-      electronTerminated: !child || processExit !== null,
+      electronTerminated,
+      electronExit: processExit,
+      electronTerminationErrors: processTermination?.errors ?? [],
       clipboardGuard: guardCleanup,
     }
     for (const name of ['result.json', 'failure.json']) {
@@ -411,5 +437,13 @@ try {
     )
   if (!guardCleanup.exited && guardCleanup.started)
     throw new Error(`Clipboard guard did not exit cleanly: ${JSON.stringify(guardCleanup)}`)
+  if (!electronTerminated)
+    throw new Error(
+      `Owned Electron process did not terminate; retaining isolated root: ${JSON.stringify({ root, errors: processTermination?.errors })}`,
+    )
+  if (processTermination?.errors?.length)
+    throw new Error(
+      `Electron termination reported errors: ${JSON.stringify(processTermination.errors)}`,
+    )
   if (!rootRemoved) throw new Error(`Isolated native-smoke root remains after cleanup: ${root}`)
 }

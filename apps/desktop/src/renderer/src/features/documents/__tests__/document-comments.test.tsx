@@ -19,6 +19,7 @@ import {
   threadsAt,
 } from '../document-comments'
 import { createDocumentExtensions } from '../document-extensions'
+import { configureRichTextVim, RichTextVim } from '../rich-text-vim'
 
 let editor: Editor | null = null
 afterEach(() => editor?.destroy())
@@ -32,6 +33,7 @@ function open(body: string): Editor {
         onOpenLink: () => undefined,
       }),
       RichTextTable,
+      RichTextVim.configure({ enabled: false, editable: () => editor?.isEditable ?? false }),
       DocumentComments,
     ],
     content: body,
@@ -175,6 +177,26 @@ describe('placeThreads', () => {
     // An edit before the passage moves the tint with it.
     ed.commands.insertContentAt(1, 'zero ')
     expect(threadsAt(ed.state, from + 5)).toEqual(['a'])
+  })
+
+  it('moves a comment range onto text inserted by a Vim change operator', () => {
+    const ed = open('alpha beta\n')
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('w')
+    ed.view.dispatch(ed.state.tr.insertText('omega'))
+
+    const { from } = rangeOf(ed, 'omega')
+    expect(threadsAt(ed.state, from), ed.view.dom.innerHTML).toEqual(['a'])
   })
 })
 
