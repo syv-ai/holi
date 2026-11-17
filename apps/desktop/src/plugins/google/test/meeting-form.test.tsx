@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
-import { StrictMode } from 'react'
+import { StrictMode, useCallback, useState } from 'react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import {
   EventCard,
@@ -129,6 +129,8 @@ it('opening, typing and guest Enter never send; the explicit invitation button s
   )
   await user.dblClick(screen.getByRole('button', { name: 'Create and send invitations' }))
   expect(cap.createMeeting).toHaveBeenCalledTimes(1)
+  expect(screen.getByText('Close', { selector: 'button' })).toBeInTheDocument()
+  expect(screen.queryByText('Cancel', { selector: 'button' })).not.toBeInTheDocument()
   const sent = cap.createMeeting.mock.calls[0]![1] as MeetingInput
   expect(sent).toMatchObject({
     guests: ['guest@example.com'],
@@ -165,9 +167,14 @@ it('restores unresolved intent on reopen, checks read-only, and explicitly retri
   expect(await screen.findByText(/Delivery is uncertain/)).toBeInTheDocument()
   expect(screen.getByLabelText('Guests')).toHaveValue('guest@example.com')
   expect(screen.getByLabelText('Title')).toBeDisabled()
+  expect(screen.getByText('Close', { selector: 'button' })).toBeInTheDocument()
+  expect(screen.queryByText('Cancel', { selector: 'button' })).not.toBeInTheDocument()
   expect(cap.createMeeting).not.toHaveBeenCalled()
+  cap.checkMeeting.mockRejectedValueOnce(new Error('Status is still unavailable.'))
   await user.click(screen.getByRole('button', { name: 'Check status' }))
   expect(cap.checkMeeting).toHaveBeenCalledWith(identity.remote, { sub: identity.sub })
+  expect(await screen.findByRole('alert')).toHaveTextContent('Status is still unavailable.')
+  expect(screen.getByLabelText('Title')).toBeDisabled()
   expect(cap.createMeeting).not.toHaveBeenCalled()
   first.unmount()
   card({ initial: { ...draft, title: 'A different form' } })
@@ -177,35 +184,119 @@ it('restores unresolved intent on reopen, checks read-only, and explicitly retri
   await waitFor(() => expect(cap.createMeeting).toHaveBeenCalledWith(identity.remote, op.input))
 })
 
-it('unlocks a refused meeting after status confirms no operation, preserving fields for correction', async () => {
+it('retains restored event fields after status clears a refusal and the card is parked', async () => {
+  const restoredOperation: MeetingOperation = {
+    ...op,
+    input: {
+      ...op.input,
+      title: 'Recovered planning',
+      location: 'Synthetic room',
+      allDay: true,
+      start: '2027-01-12',
+      end: '2027-01-14',
+      guests: ['guest@example.com'],
+      meet: true,
+    },
+  }
+  cap.meetingState.mockResolvedValueOnce({ meetSupported: true, operation: restoredOperation })
+  cap.checkMeeting.mockResolvedValueOnce(null)
+
+  function RetainedDraftHarness() {
+    const [retainedDraft, setRetainedDraft] = useState(draft)
+    const [retainedMeetingDraft, setRetainedMeetingDraft] = useState({ guests: '', meet: false })
+    const [parked, setParked] = useState(false)
+    const retainDraft = useCallback((next: EventDraft) => setRetainedDraft(next), [])
+    const retainMeetingDraft = useCallback((next: { guests: string; meet: boolean }) => {
+      setRetainedMeetingDraft(next)
+    }, [])
+    const state: EventCardState = { mode: 'create', draft: retainedDraft, identity: 1 }
+    const anchor: EventCardAnchor = { rect: new DOMRect(40, 40, 1, 1), element: null }
+    return (
+      <>
+        <button type="button" onClick={() => setParked((value) => !value)}>
+          {parked ? 'Return to Calendar' : 'Park Calendar'}
+        </button>
+        {!parked && (
+          <EventCard
+            meetingIdentity={identity}
+            meetingDraft={retainedMeetingDraft}
+            onMeetingDraftChange={retainMeetingDraft}
+            onCreated={vi.fn()}
+            state={state}
+            anchor={anchor}
+            error={null}
+            saving={false}
+            canCreateTask={false}
+            onOpenChange={vi.fn()}
+            onEdit={vi.fn()}
+            onDraftChange={retainDraft}
+            onSave={vi.fn().mockResolvedValue(true)}
+            onDelete={vi.fn()}
+            onCreateTask={vi.fn()}
+            onOpenExternal={vi.fn()}
+          />
+        )}
+      </>
+    )
+  }
+
+  const startLabel = new Date('2027-01-12T00:00:00').toLocaleDateString(undefined, {
+    dateStyle: 'medium',
+  })
+  const endLabel = new Date('2027-01-13T00:00:00').toLocaleDateString(undefined, {
+    dateStyle: 'medium',
+  })
+  const user = userEvent.setup()
+  render(<RetainedDraftHarness />)
+  expect(await screen.findByText(/Delivery is uncertain/)).toBeInTheDocument()
+  expect(screen.getByLabelText('Title')).toHaveValue('Recovered planning')
+  expect(screen.getByLabelText('Location')).toHaveValue('Synthetic room')
+  expect(screen.getByLabelText('Starts')).toHaveTextContent(startLabel)
+  expect(screen.getByLabelText('Ends')).toHaveTextContent(endLabel)
+
+  await user.click(screen.getByRole('button', { name: 'Check status' }))
+  await waitFor(() => expect(screen.getByLabelText('Title')).toBeEnabled())
+  expect(screen.getByRole('button', { name: 'Create and send invitations' })).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: 'Park Calendar' }))
+  await user.click(screen.getByRole('button', { name: 'Return to Calendar' }))
+
+  await ready()
+  expect(screen.getByLabelText('Title')).toHaveValue('Recovered planning')
+  expect(screen.getByLabelText('Location')).toHaveValue('Synthetic room')
+  expect(screen.getByLabelText('Starts')).toHaveTextContent(startLabel)
+  expect(screen.getByLabelText('Ends')).toHaveTextContent(endLabel)
+  expect(screen.getByLabelText('Guests')).toHaveValue('guest@example.com')
+  expect(screen.getByRole('switch', { name: 'Add Google Meet' })).toBeChecked()
+  expect(screen.getByRole('button', { name: 'Create and send invitations' })).toBeEnabled()
+  expect(cap.createMeeting).not.toHaveBeenCalled()
+})
+
+it('allows corrected submission after a definitive refusal with no unresolved operation', async () => {
   const user = userEvent.setup()
   cap.meetingState
     .mockResolvedValueOnce({ meetSupported: true, operation: null })
-    .mockResolvedValueOnce({ meetSupported: true, operation: op })
-    .mockResolvedValueOnce({ meetSupported: true, operation: op })
-  const first = card()
+    .mockResolvedValueOnce({ meetSupported: true, operation: null })
+  card()
   await ready()
   cap.createMeeting.mockRejectedValueOnce(new Error('Google refused the event.'))
   await user.type(screen.getByLabelText('Guests'), 'guest@example.com')
   await user.click(screen.getByRole('button', { name: 'Create and send invitations' }))
   expect(await screen.findByText(/Google refused the event/)).toBeInTheDocument()
-  expect(cap.meetingState).toHaveBeenCalled()
-  expect(screen.getByLabelText('Title')).toBeDisabled()
-
-  first.unmount()
-  card()
-  expect(await screen.findByText(/Delivery is uncertain/)).toBeInTheDocument()
-  expect(screen.getByLabelText('Title')).toBeDisabled()
-  cap.checkMeeting.mockResolvedValueOnce(null)
-  await user.click(screen.getByRole('button', { name: 'Check status' }))
-  expect(await screen.findByLabelText('Title')).toBeEnabled()
+  expect(cap.meetingState).toHaveBeenCalledTimes(2)
+  expect(screen.getByLabelText('Title')).toBeEnabled()
   expect(screen.getByLabelText('Title')).toHaveValue(draft.title)
   expect(screen.getByRole('button', { name: 'Create and send invitations' })).toBeEnabled()
   await user.clear(screen.getByLabelText('Title'))
   await user.type(screen.getByLabelText('Title'), 'Corrected event')
   await user.click(screen.getByRole('button', { name: 'Create and send invitations' }))
   await waitFor(() => expect(cap.createMeeting).toHaveBeenCalledTimes(2))
-  expect(cap.createMeeting.mock.calls[1]![1]).toMatchObject({ title: 'Corrected event' })
+  expect(cap.createMeeting.mock.calls[1]![1]).toMatchObject({
+    title: 'Corrected event',
+    guests: ['guest@example.com'],
+  })
+  expect(cap.createMeeting.mock.calls[1]![1].operation).toBe(
+    cap.createMeeting.mock.calls[0]![1].operation,
+  )
 })
 
 it('accepted Meet failure has status recovery and an external action, never a create retry', async () => {
