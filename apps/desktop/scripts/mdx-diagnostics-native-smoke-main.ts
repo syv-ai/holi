@@ -1,4 +1,6 @@
+import assert from 'node:assert/strict'
 import { app, BrowserWindow, ipcMain, session, type WebContents } from 'electron'
+import { createGuestProbes } from './mdx-compiler-guest-probes'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createMdxCompiler } from '../src/main/mdx-compiler'
@@ -28,6 +30,7 @@ let savedWrites = 0
 let installedSessionPolicy = false
 const blockedRequests: string[] = []
 const guestProbes: Array<{ url: string; result: Record<string, unknown> }> = []
+let adversaries: Awaited<ReturnType<typeof createGuestProbes>> | null = null
 const compiler = createMdxCompiler(join(app.getAppPath(), 'out/mdx-compiler'))
 const trustStore = createMdxTrustStore(join(profile, 'mdx-trust.json'))
 const owner = () => ({ accountId: identity.accountId, remote })
@@ -43,9 +46,14 @@ const diagnostics = createMdxDiagnostics({
 })
 
 const invoke = (channel: string, handler: (...args: any[]) => any) =>
-  ipcMain.handle(channel, (_event, ...args) => handler(...args))
+  ipcMain.handle(channel, (event, ...args) => {
+    if (event.sender !== win?.webContents || event.senderFrame !== event.sender.mainFrame)
+      throw new Error('Fixture caller is not the current application document')
+    return handler(...args)
+  })
 
 invoke('smoke:status', async () => ({
+  runtime: process.versions,
   userData: app.getPath('userData'),
   sessionData: app.getPath('sessionData'),
   appPath: app.getAppPath(),
@@ -93,6 +101,93 @@ invoke('smoke:trpc', async (request: { path: string; operation: string; input?: 
   throw new Error(`Unsupported fixture tRPC operation: ${request.path}`)
 })
 
+invoke('smoke:scenarios', async () => {
+  assert(adversaries)
+  const probes = adversaries
+  diagnostics.invalidate()
+  const policy = await probes.policy(compiler)
+  const recovery = await probes.crashAndHang(compiler)
+  const stale: Array<{ name: string; rejected: string }> = []
+  const heldChange = async (
+    name: string,
+    change: (lease: string) => void | Promise<void>,
+    reuse = false,
+  ) => {
+    const { lease } = await diagnostics.acquire({ remote, path: 'notes/fixture.mdx', context })
+    const ready = probes.hold()
+    const result = diagnostics
+      .compile({ lease, generation: 1, source: '# held native request\n' })
+      .then(
+        () => ({ ok: true, message: '' }),
+        (error: Error) => ({ ok: false, message: error.message }),
+      )
+    await ready
+    await change(lease)
+    const outcome = await result
+    assert.equal(outcome.ok, false, `${name} returned stale diagnostics`)
+    stale.push({ name, rejected: outcome.message })
+    if (reuse) {
+      assert.deepEqual(
+        await diagnostics.compile({ lease, generation: 2, source: '# current source\n' }),
+        [],
+      )
+      diagnostics.release({ lease })
+    } else {
+      diagnostics.release({ lease })
+      const fresh = await diagnostics.acquire({ remote, path: 'notes/fixture.mdx', context })
+      assert.deepEqual(
+        await diagnostics.compile({
+          lease: fresh.lease,
+          generation: 1,
+          source: '# current owner\n',
+        }),
+        [],
+      )
+      diagnostics.release(fresh)
+    }
+  }
+  await heldChange(
+    'source generation cancellation',
+    (lease) => {
+      diagnostics.cancel({ lease, generation: 2 })
+    },
+    true,
+  )
+  await heldChange('view release', (lease) => {
+    diagnostics.release({ lease })
+  })
+  await heldChange('trust revoke and reapproval', async () => {
+    diagnostics.invalidate()
+    await trustStore.revoke(owner())
+    await trustStore.approve(owner())
+  })
+  await heldChange('account A–B–A', () => {
+    diagnostics.invalidate()
+    identity = {
+      ...identity,
+      accountId: 'other',
+      accountGeneration: ++accountGeneration,
+      active: {},
+    }
+    diagnostics.invalidate()
+    identity = { ...identity, accountId: '507', accountGeneration: ++accountGeneration, active: {} }
+  })
+  await heldChange('vault A–B–A', () => {
+    diagnostics.invalidate()
+    identity = { ...identity, remote: 'fixture/other', openRevision: ++openRevision, active: {} }
+    diagnostics.invalidate()
+    identity = { ...identity, remote, openRevision: ++openRevision, active: {} }
+  })
+  await heldChange('native filesystem replacement watcher', async () => {
+    await writeFile(`${file}.replacement`, '# atomically replaced source\n')
+    await rename(`${file}.replacement`, file)
+  })
+  probes.assertHealthy()
+  await probes.close()
+  adversaries = null
+  return { policy, recovery, stale }
+})
+
 app.on('web-contents-created', (_event, contents: WebContents) => {
   if (contents.session !== session.defaultSession) {
     contents.once('did-finish-load', () => {
@@ -106,9 +201,14 @@ app.on('web-contents-created', (_event, contents: WebContents) => {
       }))()`,
         )
         .then((result) => {
-          guestProbes.push({ url: contents.getURL(), result })
+          guestProbes.push({
+            url: contents.isDestroyed() ? 'destroyed' : contents.getURL(),
+            result,
+          })
         })
+        .catch(() => undefined)
     })
+    return
   }
   contents.on('render-process-gone', (_event, details) => {
     if (win?.webContents === contents) {
@@ -174,12 +274,14 @@ async function createEditorWindow() {
 }
 
 app.whenReady().then(async () => {
+  adversaries = await createGuestProbes()
   await mkdir(join(profile, 'sessionData'), { recursive: true })
   await mkdir(join(vault, 'notes'), { recursive: true })
-  await writeFile(file, '# Café 🪿\n\n<Widget>\n')
+  await writeFile(file, '# Café 🪿\n\nCafé 🪿 {1 + }\n')
   await createEditorWindow()
 })
 app.on('before-quit', () => {
   diagnostics.close()
   compiler.close()
+  void adversaries?.close()
 })

@@ -23,6 +23,9 @@ let socket
 let cdp
 let logs = ''
 let outcome = 'failed'
+let nativeScenarios = null
+let runtime = null
+let positionedDiagnostics = null
 const checks = []
 const portServer = createServer()
 let childClosed = Promise.resolve(null)
@@ -123,7 +126,7 @@ try {
   })
   await writeFile(
     join(appDir, 'preload.cjs'),
-    `const { contextBridge, ipcRenderer } = require('electron'); contextBridge.exposeInMainWorld('holiSmoke', { call: (channel, input) => { if (!['smoke:status','smoke:trpc'].includes(channel)) return Promise.reject(Error('Denied fixture operation')); return ipcRenderer.invoke(channel, input) } });`,
+    `const { contextBridge, ipcRenderer } = require('electron'); contextBridge.exposeInMainWorld('holiSmoke', { call: (channel, input) => { if (!['smoke:status','smoke:trpc','smoke:scenarios'].includes(channel)) return Promise.reject(Error('Denied fixture operation')); return ipcRenderer.invoke(channel, input) } });`,
   )
   await build({
     configFile: join(desktop, 'vite.mdx-compiler.config.ts'),
@@ -182,7 +185,7 @@ try {
     socket.addEventListener('open', resolve, { once: true })
     socket.addEventListener('error', reject, { once: true })
   })
-  cdp = createCdpClient(socket, { timeoutMs: 5000 })
+  cdp = createCdpClient(socket, { timeoutMs: 30000 })
   const targets = await waitFor(
     async () =>
       (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(
@@ -198,6 +201,7 @@ try {
     'production CodeMirror editor',
   )
   const isolation = await windowStatus(page)
+  runtime = isolation.runtime
   assert.equal(isolation.userData, join(profile, 'userData'))
   assert.equal(isolation.sessionData, join(profile, 'sessionData'))
   assert.equal(isolation.vault, vault)
@@ -268,8 +272,19 @@ try {
   const diagnostic = await evaluate(
     `JSON.stringify({source:window.__mdxSmoke.source(),message:[...document.querySelectorAll('[aria-live="polite"]')].map((el)=>el.textContent).find((text)=>/^\\d+ MDX diagnostic/.test(text.trim())),underlines:document.querySelectorAll('.cm-lintRange-error').length,classes:[...document.querySelectorAll('.cm-editor *')].map((node)=>node.className?.baseVal??node.className).filter((name)=>String(name).includes('lint')||String(name).includes('diagnostic'))})`,
   ).then(JSON.parse)
+  positionedDiagnostics = await evaluate('window.__mdxSmoke.diagnostics()')
+  assert.equal(positionedDiagnostics.length, 1)
+  assert.equal(positionedDiagnostics[0].line, 3)
+  assert.equal(positionedDiagnostics[0].column, 14)
+  assert.match(positionedDiagnostics[0].message, /expression|acorn/i)
   await screenshot(page, join(evidence, 'diagnostics-light.png'))
   await evaluate(`window.__mdxSmoke.theme('dark')`)
+  await evaluate(
+    `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`,
+  )
+  await evaluate(
+    `Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})))`,
+  )
   await screenshot(page, join(evidence, 'diagnostics-dark.png'))
   assert(diagnostic.source.includes('Café 🪿'), 'Unicode source was changed')
   assert(
@@ -320,6 +335,19 @@ try {
   const runtimeErrors = await evaluate(`JSON.stringify(window.__mdxSmoke.errors)`)
   assert.deepEqual(JSON.parse(runtimeErrors), [], 'fixture renderer reported runtime errors')
 
+  nativeScenarios = await evaluate(`window.holiSmoke.call('smoke:scenarios')`)
+  assert(nativeScenarios.policy.executionChecks > 0)
+  assert.equal(nativeScenarios.policy.outboundRequests, 0)
+  assert.equal(nativeScenarios.recovery.crashRejected, true)
+  assert.equal(nativeScenarios.recovery.timeoutRejected, true)
+  assert.equal(nativeScenarios.recovery.recovered, true)
+  assert.equal(nativeScenarios.stale.length, 6)
+  checks.push(
+    'real guest policy denies network, files, app URLs, popup, permission, media, navigation and download traffic',
+    'real guest compiled output was not evaluated and storage was cleared',
+    'real guest crash and deadline recover with fresh successful compilations',
+    ...nativeScenarios.stale.map((item) => `native held compile rejects stale ${item.name}`),
+  )
   outcome = 'passed'
 } catch (error) {
   logs += `\nSMOKE ERROR: ${error?.stack ?? error}\n`
@@ -343,6 +371,9 @@ try {
         issue: 507,
         outcome,
         checks: { passed: checks.length, names: checks },
+        nativeScenarios,
+        runtime,
+        positionedDiagnostics,
         artifact: 'unsigned Electron app.asar',
         resources: {
           temporaryRoot: root,

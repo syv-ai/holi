@@ -2,6 +2,7 @@ import { Provider, createStore } from 'jotai'
 import { useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { EditorView } from '@codemirror/view'
+import { forEachDiagnostic } from '@codemirror/lint'
 import { emptyVaultSnapshot } from '@holi/shared'
 import { FileView } from '@/features/files/file-view'
 import { activeRemoteAtom, openedRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -41,6 +42,19 @@ function Fixture() {
         source() {
           return this.editor().state.doc.toString()
         },
+        diagnostics() {
+          const view = this.editor()
+          const result: Array<{ line: number; column: number; message: string }> = []
+          forEachDiagnostic(view.state, (diagnostic, from) => {
+            const line = view.state.doc.lineAt(from)
+            result.push({
+              line: line.number,
+              column: from - line.from + 1,
+              message: diagnostic.message,
+            })
+          })
+          return result
+        },
         setSource(text: string) {
           const view = this.editor()
           view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
@@ -69,6 +83,7 @@ declare global {
       editor(): EditorView
       state(): string | null
       source(): string
+      diagnostics(): Array<{ line: number; column: number; message: string }>
       setSource(text: string): void
       theme(mode: 'light' | 'dark'): void
     }
