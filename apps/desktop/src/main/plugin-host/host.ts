@@ -191,6 +191,7 @@ interface Started {
     pluginId: string
     phase: 'active' | 'draining' | 'closed'
     established: boolean
+    superseded: boolean
     events: ReturnType<typeof pluginEvents>
     cancel: () => void
   }
@@ -488,6 +489,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       pluginId: id,
       phase: 'active',
       established: false,
+      superseded: false,
       events: events(id, remote, root, () => lease.phase !== 'closed'),
       cancel: () => {
         // Cancellation revokes ordinary work once. A later stop must not
@@ -870,7 +872,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         cancel: lease.cancel,
       }
     } catch (err) {
-      const cancelled = controller.signal.aborted
+      const cancelled = lease.superseded || state.closed || state.generation !== activation
       lease.cancel()
       lease.phase = 'closed'
       state.leases.delete(lease)
@@ -1144,7 +1146,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       // A superseded read must not overwrite dispatch's current enablement.
       forget(vault.remote)
       for (const lease of state.leases) {
-        if (!lease.established) lease.cancel()
+        if (!lease.established) {
+          lease.superseded = true
+          lease.cancel()
+        }
       }
       if (why === 'settings' || why === 'snapshot') {
         const configured = (await read(vault.root)).running
@@ -1162,7 +1167,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         )
         if (unavailable.size > 0) state.parked = true
         for (const lease of state.leases) {
-          if (unavailable.has(lease.pluginId)) lease.cancel()
+          if (unavailable.has(lease.pluginId)) {
+            lease.superseded = true
+            lease.cancel()
+          }
         }
       }
       return queued(state, () => reconcileNow(vault, why, scheduledGeneration, configuration))

@@ -210,6 +210,26 @@ const turn = (root: string, on: boolean) =>
   writeVaultSettings(root, { committed: { plugins: { fake: on } } })
 
 describe('app frame activation leases', () => {
+  it('reports startup failure after a plugin invalidates its own activation', async () => {
+    const root = await tempDir()
+    let attempts = 0
+    const plugin: MainPlugin = {
+      info: { id: 'self-invalidating', label: 'Self invalidating', default: true },
+      activate(ctx) {
+        attempts++
+        ctx.invalidateActivation()
+        throw new Error('native activation failed')
+      },
+    }
+    const h = rig({ plugins: [plugin] })
+    await h.enter(openVault('o/r', root))
+    expect(h.host.failures('o/r')).toEqual({ 'self-invalidating': 'native activation failed' })
+    await h.reconcile('snapshot')
+    expect(attempts).toBe(1)
+    expect(h.host.failures('o/r')).toEqual({ 'self-invalidating': 'native activation failed' })
+    await h.host.stop('o/r')
+  })
+
   it('keeps wanted startup alive across unchanged snapshots while it awaits external work', async () => {
     const root = await tempDir()
     let release: () => void = () => {}
