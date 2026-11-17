@@ -240,6 +240,8 @@ export async function recoverMoves(
       validatedPaths.add(validated)
       paths.add(validated)
     }
+    // Check move-specific namespace constraints before any pending journal can mutate files.
+    for (const change of journal.changes) await adapter.checkMovePath(root, change.path)
     // Reject journals that omit any currently visible inbound-link file.
     const changedPaths = new Set(journal.changes.map(({ path }) => path))
     for (const entry of await adapter.list(root)) {
@@ -349,6 +351,7 @@ export async function moveNote(
   validateJournal(journalBytes, root, name)
   const checkPreconditions = async () => {
     for (const change of changes) {
+      await adapter.checkMovePath(root, change.path)
       const current = await adapter.readOptional(root, change.path)
       if (!equal(current, decode(change.before)))
         throw new Error(`Move precondition changed at ${change.path}`)
