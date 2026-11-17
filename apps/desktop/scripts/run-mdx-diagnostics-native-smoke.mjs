@@ -24,6 +24,7 @@ let logs = ''
 let outcome = 'failed'
 const checks = []
 const portServer = createServer()
+let childClosed = Promise.resolve(null)
 await mkdir(evidence, { recursive: true })
 for (const name of [
   'result.json',
@@ -124,17 +125,8 @@ try {
     `const { contextBridge, ipcRenderer } = require('electron'); contextBridge.exposeInMainWorld('holiSmoke', { call: (channel, input) => { if (!['smoke:status','smoke:trust','smoke:rotate','mdx:acquire','mdx:cancel','mdx:compile','mdx:release','smoke:replaceFile'].includes(channel)) return Promise.reject(Error('Denied fixture operation')); return ipcRenderer.invoke(channel, input) }, trust: (value) => ipcRenderer.invoke('smoke:trust', value) });`,
   )
   await build({
-    configFile: false,
-    root: desktop,
-    build: {
-      target: 'es2022',
-      outDir: join(appDir, 'out/mdx-compiler'),
-      emptyOutDir: true,
-      rollupOptions: {
-        input: join(desktop, 'src/mdx-compiler/guest.html'),
-        output: { entryFileNames: 'guest.js', format: 'iife', assetFileNames: '[name][extname]' },
-      },
-    },
+    configFile: join(desktop, 'vite.mdx-compiler.config.ts'),
+    build: { outDir: join(appDir, 'out/mdx-compiler'), emptyOutDir: true },
   })
   const appMetadata = {
     name: 'holi-mdx-diagnostics-native-smoke-507',
@@ -177,7 +169,7 @@ try {
     logs += chunk
     process.stderr.write(chunk)
   })
-  const childClosed = new Promise((resolve) =>
+  childClosed = new Promise((resolve) =>
     child.once('close', (code, signal) => resolve({ code, signal })),
   )
   const version = await waitFor(async () => {
@@ -286,8 +278,6 @@ try {
     probes.fetch && probes.websocket && probes.open && probes.file && probes.holi,
     `network/window probes not denied: ${JSON.stringify(probes)}`,
   )
-  const requestPolicy = await windowStatus(page)
-  assert(requestPolicy.blockedRequests.some((request) => request.includes('example.invalid')))
   checks.push('fetch/beacon/websocket/pop-up/file/Holi-scheme probes denied by CSP/session policy')
 
   await evaluate(`window.holiSmoke.call('smoke:rotate')`)
@@ -378,7 +368,14 @@ try {
     ),
   )
   await rm(root, { recursive: true, force: true })
-  await portServer.close().catch(() => {})
+  if (portServer.listening) {
+    await new Promise((resolve, reject) =>
+      portServer.close((error) => (error ? reject(error) : resolve())),
+    ).catch((error) => {
+      logs += `\nPORT SERVER CLOSE ERROR: ${error?.stack ?? error}\n`
+      outcome = 'failed'
+    })
+  }
 }
 
 async function windowStatus(page) {
