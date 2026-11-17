@@ -2,11 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  FRAME_HINT_LIMITS,
-  isFrameHintsMessage,
-  type FrameHintsMessage,
-} from '../shared/frame-hints'
+import { isFrameHintsMessage, type FrameHintsMessage } from '../shared/frame-hints'
 
 const script = readFileSync(resolve(__dirname, '../shared/hint-bridge.js'), 'utf8')
 const nonce = 'host-random-nonce'
@@ -87,7 +83,7 @@ describe('community frame hint protocol', () => {
         type: 'holi-hints:snapshot',
         nonce,
         revision: 1,
-        targets: Array(FRAME_HINT_LIMITS.targets + 1).fill(target),
+        targets: Array(101).fill(target),
       }),
     ).toBe(false)
     expect(isFrameHintsMessage({ type: 'holi-hints:key', nonce, key: 'x' })).toBe(true)

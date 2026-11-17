@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import {
+  registerHostHintAdapter,
+  type HostHintAdapter,
   activateHostHint,
   discoverHostHintTargets,
   hostHintsUnchanged,
-  registerHostHintAdapter,
-  type HostHintAdapter,
 } from '@/plugin-api'
 import { createCommunityHintAdapter } from '../renderer/community-hints'
 import { isFrameHintsMessage, type FrameHintsMessage } from '../shared/frame-hints'

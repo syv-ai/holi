@@ -141,10 +141,10 @@ export { useVimField } from '@/hooks/use-vim-field'
 export { VimFieldMode } from '@/composites/vim-field-mode'
 export { matchHotkey } from '@/lib/hotkey'
 export {
-  activateHostHint,
-  discoverHostHintTargets,
+  /** @public Hint-adapter integration tests exercise the shared coordinator. */ activateHostHint,
+  /** @public Hint-adapter integration tests exercise the shared coordinator. */ discoverHostHintTargets,
+  /** @public Hint-adapter integration tests exercise the shared coordinator. */ hostHintsUnchanged,
   hostHintElementEligible,
-  hostHintsUnchanged,
   registerHostHintAdapter,
   requestAdaptedHostHints,
   type HostHintAdapter,

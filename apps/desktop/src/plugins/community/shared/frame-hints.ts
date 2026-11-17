@@ -8,14 +8,14 @@
  * labels and key interpretation stay with the guest DOM and host coordinator;
  * no plugin URL, code, capability, or arbitrary key crosses this protocol.
  */
-export const FRAME_HINT_LIMITS = {
+const FRAME_HINT_LIMITS = {
   targets: 100,
   label: 160,
   id: 80,
   nonce: 128,
 } as const
 
-export const FRAME_HINT_KEYS = 'asdfghjklqwertyuiopzxcvbnm'
+const FRAME_HINT_KEYS = 'asdfghjklqwertyuiopzxcvbnm'
 
 export type FrameHintTarget = {
   id: string
@@ -46,7 +46,7 @@ const revision = (value: unknown) => Number.isSafeInteger(value) && (value as nu
 const exact = (value: Record<string, unknown>, keys: string[]) =>
   Object.keys(value).length === keys.length && keys.every((key) => key in value)
 
-export function isFrameHintTarget(value: unknown): value is FrameHintTarget {
+function isFrameHintTarget(value: unknown): value is FrameHintTarget {
   if (!record(value) || !exact(value, ['id', 'kind', 'label', 'x', 'y', 'width', 'height']))
     return false
   return (
