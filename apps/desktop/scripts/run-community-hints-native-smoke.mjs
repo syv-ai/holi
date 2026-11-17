@@ -667,7 +667,7 @@ try {
     'native activation succeeds and actual native frames preserve the visible hint session',
   )
   await evaluate('document.documentElement.dataset.theme="dark"')
-  await shot('dark.png')
+  await shot('dark-activated.png')
   await evaluate(
     'window.holiSmoke.call("community.remove",{id:"smoke-plugin"}).then(()=>window.communitySmoke.refresh())',
   )
