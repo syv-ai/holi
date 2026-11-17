@@ -305,7 +305,18 @@ export function createGoogleData({
       }
       const result = await syncThreads(api(), cache, options, knownAddresses)
       assertActive()
-      return result
+      if (options.needsReply !== true) return result
+      return {
+        ...result,
+        threads: result.threads.filter(
+          (thread) =>
+            thread.needsReply &&
+            (thread.addressedAs === 'to' ||
+              thread.addressedAs === 'unknown' ||
+              (options.includeCc === true && thread.addressedAs === 'cc')) &&
+            (options.includeAutomated === true || !thread.automated),
+        ),
+      }
     },
 
     async contacts() {

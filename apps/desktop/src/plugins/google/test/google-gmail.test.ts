@@ -238,6 +238,54 @@ describe('htmlToText', () => {
 })
 
 describe('listThreads', () => {
+  it.each([
+    ['new incoming after a reply', ['INBOX'], ['SENT'], ['INBOX'], true],
+    ['draft after incoming', ['INBOX'], ['DRAFT'], undefined, true],
+    ['draft after sent reply', ['INBOX'], ['SENT'], ['DRAFT'], false],
+    ['sent-only', ['SENT'], undefined, ['DRAFT'], false],
+  ])(
+    'classifies %s from real message order',
+    async (_name, firstLabels, secondLabels, thirdLabels, expected) => {
+      const messages = [firstLabels, secondLabels, thirdLabels].flatMap((labels, index) =>
+        labels === undefined
+          ? []
+          : [
+              {
+                id: `m${index}`,
+                internalDate: String(index + 1),
+                labelIds: labels,
+                payload: { headers: [header('To', 'me@example.com')] },
+              },
+            ],
+      )
+      const { api } = gmail([{ id: 't' }], { t: { id: 't', messages } })
+      const result = (await listThreads(api, {}, ['me@example.com'])).threads[0]!
+      expect(result.needsReply).toBe(expected)
+      if (thirdLabels?.includes('DRAFT'))
+        expect(result.answered).toBe(secondLabels?.includes('SENT'))
+    },
+  )
+
+  it('keeps recipient identity explicitly unknown when send-as addresses are unavailable', async () => {
+    const { api } = gmail([{ id: 't' }], {
+      t: {
+        id: 't',
+        messages: [
+          {
+            id: 'in',
+            internalDate: '1',
+            labelIds: ['INBOX'],
+            payload: { headers: [header('To', 'me@example.com')] },
+          },
+        ],
+      },
+    })
+    expect((await listThreads(api)).threads[0]).toMatchObject({
+      addressedAs: 'unknown',
+      needsReply: true,
+    })
+  })
+
   it('summarizes replies and latest incoming recipient and automation facts', async () => {
     const messages = [
       {
@@ -269,6 +317,7 @@ describe('listThreads', () => {
       addressedAs: 'cc',
       automated: true,
       answered: false,
+      needsReply: true,
     })
   })
 
@@ -307,11 +356,12 @@ describe('listThreads', () => {
     const { api } = gmail([{ id: 't1' }], { t1: { id: 't1', messages: [sentOnly, ownDraft] } })
     const summary = (await listThreads(api, {}, ['me@example.com'])).threads[0]!
     expect(summary).toMatchObject({
-      answered: false,
+      answered: true,
       replied: false,
       lastReplyAt: null,
       addressedAs: null,
       automated: false,
+      needsReply: false,
     })
   })
 
