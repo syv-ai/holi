@@ -17,7 +17,8 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { cp, mkdir, readdir, realpath, stat } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { cp, lstat, mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import { isAppBundlePath, type PluginManifest } from '@holi/shared'
 import { CapabilityError } from '../../../main/plugin-api'
@@ -73,8 +74,14 @@ export async function writeSkills(
   manifest: Pick<PluginManifest, 'skills'>,
   codeDir: string,
   vaultRoot: string,
-  options: { guard?: () => void | Promise<void> } = {},
+  options: {
+    guard?: () => void | Promise<void>
+    expectedSnapshots?: readonly SkillSnapshot[]
+    validateSnapshot?: (snapshots: readonly SkillSnapshot[]) => Promise<void> | void
+  } = {},
 ): Promise<string[]> {
+  // Plugins without skills must not create skill transaction state.
+  if ((manifest.skills ?? []).length === 0) return []
   // Use the same bounded snapshot, canonical-path and rollback safeguards as
   // the explicit CLI refresh. A pin/update can replace complete folders, but
   // never by deleting the only copy before the replacement is ready.
@@ -82,6 +89,12 @@ export async function writeSkills(
     force: true,
     guard: options.guard ?? (() => {}),
     retainOriginals: true,
+    ...(options.expectedSnapshots === undefined
+      ? {}
+      : { expectedSnapshots: options.expectedSnapshots }),
+    ...(options.validateSnapshot === undefined
+      ? {}
+      : { validateSnapshot: options.validateSnapshot }),
   })
 }
 
@@ -93,20 +106,53 @@ export async function seedApps(
   manifest: Pick<PluginManifest, 'apps'>,
   codeDir: string,
   vaultRoot: string,
+  options: { guard?: () => void | Promise<void> } = {},
 ): Promise<string[]> {
+  if ((manifest.apps ?? []).length === 0) return []
   const root = await realpath(codeDir)
-  const written: string[] = []
-  for (const app of manifest.apps ?? []) {
-    const name = basename(app)
-    if (!isAppBundlePath(name))
-      throw new CapabilityError('BAD_REQUEST', `${app} is not a vault app's folder`)
-    const from = join(root, app)
-    if ((await stat(join(from, 'index.html')).catch(() => null)) === null)
-      throw new CapabilityError('BAD_REQUEST', `app ${app} has no index.html`)
-    const to = join(vaultRoot, name)
-    if ((await stat(to).catch(() => null)) !== null) continue
-    await copyFromPlugin(root, from, to)
-    written.push(name)
+  const staged: { name: string; stage: string; target: string }[] = []
+  const published: string[] = []
+  const vault = await realpath(vaultRoot)
+  const stateParent = join(vault, '.holi/state')
+  for (const rel of ['.holi', '.holi/state']) {
+    const path = join(vault, rel)
+    let info = await lstat(path).catch(() => null)
+    if (!info) {
+      await mkdir(path)
+      info = await lstat(path)
+    }
+    if (!info.isDirectory() || info.isSymbolicLink())
+      throw new CapabilityError('BAD_REQUEST', 'unsafe app staging path')
   }
-  return written
+  const stageRoot = join(stateParent, `community-apps.local.${randomUUID()}`)
+  await mkdir(stageRoot, { mode: 0o700 })
+  try {
+    for (const app of manifest.apps ?? []) {
+      const name = basename(app)
+      if (!isAppBundlePath(name))
+        throw new CapabilityError('BAD_REQUEST', `${app} is not a vault app's folder`)
+      const from = join(root, app)
+      if ((await stat(join(from, 'index.html')).catch(() => null)) === null)
+        throw new CapabilityError('BAD_REQUEST', `app ${app} has no index.html`)
+      const target = join(vaultRoot, name)
+      if ((await lstat(target).catch(() => null)) !== null) continue
+      const stage = join(stageRoot, name)
+      await copyFromPlugin(root, from, stage)
+      staged.push({ name, stage, target })
+    }
+    for (const item of staged) {
+      await options.guard?.()
+      if ((await lstat(item.target).catch(() => null)) !== null) continue
+      await rename(item.stage, item.target)
+      published.push(item.name)
+    }
+    return published
+  } catch (error) {
+    // Remove only this operation's staged material. Published folders are valid
+    // complete copies and are deliberately left intact for a safe retry.
+    await rm(stageRoot, { recursive: true, force: true }).catch(() => {})
+    throw error
+  } finally {
+    await rm(stageRoot, { recursive: true, force: true }).catch(() => {})
+  }
 }

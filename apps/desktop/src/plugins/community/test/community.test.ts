@@ -45,6 +45,7 @@ import { runCheck } from '../main/setup'
 import { describeRepo } from '../main/search'
 import { createInstallStore } from '../main/store'
 import { createSupervisor, type ServerState } from '../main/supervisor'
+import { seedApps } from '../main/skills'
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -316,6 +317,53 @@ describe('installing', () => {
 })
 
 describe('skills', () => {
+  test('pinning rejects guide bytes changed after the release was fetched', async () => {
+    await makeRepo()
+    await mkdir(join(repoDir, 'skills/prezzi'), { recursive: true })
+    await writeFile(join(repoDir, 'skills/prezzi/SKILL.md'), 'authenticated guide\n')
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, skills: ['skills/prezzi'] }),
+    )
+    commitAll('guide')
+    git(repoDir, 'tag', '-f', 'v0.1.0')
+    const { call, deps } = setup()
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    const install = (await deps.store.get('prezzi'))!
+    await writeFile(
+      join(deps.store.codeDir(install), 'skills/prezzi/SKILL.md'),
+      'modified checkout\n',
+    )
+    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
+      /pinned|snapshot|source|authenticated/i,
+    )
+    await expect(readFile(join(vault, '.claude/skills/prezzi/SKILL.md'), 'utf8')).rejects.toThrow()
+  })
+
+  test('pinning never follows a vault .gitignore symlink', async () => {
+    await makeRepo()
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, ignore: ['private-output'] }),
+    )
+    commitAll('ignore')
+    git(repoDir, 'tag', '-f', 'v0.1.0')
+    const external = join(dir, 'external-ignore')
+    await writeFile(external, 'external data\n')
+    await symlink(external, join(vault, '.gitignore'))
+    const { call } = setup()
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
+      /regular file|ELOOP|symbolic/i,
+    )
+    expect(await readFile(external, 'utf8')).toBe('external data\n')
+    await expect(
+      readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8'),
+    ).rejects.toThrow()
+  })
+
   test('pinning writes the plugin’s skills, following links inside it, refusing links out', async () => {
     const commit = await makeRepo()
     await mkdir(join(repoDir, 'docs/blocks'), { recursive: true })
@@ -358,7 +406,9 @@ describe('skills', () => {
     git(repoDir, '-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', 'commit', '-qm', 'out')
     git(repoDir, 'tag', 'v0.3.0')
     await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.3.0' })
-    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(/outside the plugin/)
+    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
+      /(unsafe skill symlink|outside the plugin|escapes plugin)/,
+    )
   })
 })
 
@@ -453,7 +503,9 @@ describe('several plugins in one repository', () => {
     git(repoDir, 'tag', 'notes-v0.3.0')
     const { call } = setup()
     await call('community.install', { repo, path: 'notes', version: '0.3.0' })
-    await expect(call('community.pin', { id: 'notes' })).rejects.toThrow(/outside the plugin/)
+    await expect(call('community.pin', { id: 'notes' })).rejects.toThrow(
+      /(outside the plugin|escapes plugin)/,
+    )
   })
 
   test('a folder whose manifest names another plugin is refused', async () => {
@@ -509,6 +561,20 @@ describe('several plugins in one repository', () => {
 })
 
 describe('apps', () => {
+  test('stages every new app before publishing any, so failed copy retries cleanly', async () => {
+    const appRoot = join(dir, 'app-plugin')
+    await mkdir(join(appRoot, 'apps/First.app'), { recursive: true })
+    await writeFile(join(appRoot, 'apps/First.app/index.html'), '<p>first</p>')
+    await mkdir(join(appRoot, 'apps/Second.app'), { recursive: true })
+    await expect(
+      seedApps({ apps: ['apps/First.app', 'apps/Second.app'] }, appRoot, vault),
+    ).rejects.toThrow(/no index.html/)
+    expect(existsSync(join(vault, 'First.app'))).toBe(false)
+    await writeFile(join(appRoot, 'apps/Second.app/index.html'), '<p>second</p>')
+    await expect(
+      seedApps({ apps: ['apps/First.app', 'apps/Second.app'] }, appRoot, vault),
+    ).resolves.toEqual(['First.app', 'Second.app'])
+  })
   test('a plugin that only ships an app needs no server, and its app is copied in once', async () => {
     await makeRepo()
     await mkdir(join(repoDir, 'apps/Notes.app'), { recursive: true })

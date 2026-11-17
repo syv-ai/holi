@@ -57,7 +57,7 @@ import {
   assertManifestPinned,
   assertNoCompetingSkillClaims,
   canonicalJson,
-  readPinnedSkillSnapshots,
+  prepareAuthenticatedRelease,
   validateSkillSnapshot,
 } from './skill-release'
 import { COMMUNITY_INFO } from '../info'
@@ -85,6 +85,7 @@ type PluginStatus =
 export interface PluginRow {
   /** A failed automatic guide/pin update, retained until a later successful refresh. */
   syncError?: string
+  syncBackups?: string[]
   id: string
   name: string
   description: string
@@ -197,6 +198,7 @@ async function statusOf(
 }
 
 const syncErrors = new Map<string, string>()
+const syncBackups = new Map<string, string[]>()
 
 function rowOf(
   root: string,
@@ -213,6 +215,9 @@ function rowOf(
     ...(syncErrors.get(`${root}\0${id}`) === undefined
       ? {}
       : { syncError: syncErrors.get(`${root}\0${id}`) }),
+    ...(syncBackups.get(`${root}\0${id}`) === undefined
+      ? {}
+      : { syncBackups: syncBackups.get(`${root}\0${id}`) }),
     id,
     name: manifest.name,
     description: manifest.description ?? '',
@@ -305,11 +310,6 @@ function insidePath(root: string, path: string): boolean {
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
 }
 
-function manifestFromPin(pin: PluginPin): PluginManifest {
-  const { repo: _repo, path: _path, commit: _commit, ...manifest } = pin
-  return manifest
-}
-
 const serverKey = (root: string, id: string, path: string) => `${root}\0${id}\0${path}`
 
 const repoParam = (p: Record<string, unknown>): string => {
@@ -333,7 +333,7 @@ const UPDATE_CHECK_MS = 60 * 60 * 1000
  *  from the attachment's owner-admitted refresh; do not re-enter owner.admit. */
 export async function refreshInstalledPins(
   root: string,
-  deps: Pick<CommunityDeps, 'store' | 'consent' | 'git' | 'signal'>,
+  deps: Pick<CommunityDeps, 'store' | 'consent' | 'git' | 'signal' | 'live'>,
 ): Promise<void> {
   const [pins, installs, settings] = await Promise.all([
     readPins(root),
@@ -390,11 +390,26 @@ export async function refreshInstalledPins(
       )
       if (canonicalJson(checkoutManifest) !== canonicalJson(install.manifest))
         throw new Error('installed release manifest does not match its source')
+      const pinPath = join(root, pluginPinPath(pin.id))
+      const originalPinText = await readBoundedRegularText(pinPath, 'plugin pin').catch(() => null)
+      if (originalPinText === null) throw new Error('automatic community update pin changed')
+      const expectedSnapshots = await prepareAuthenticatedRelease({
+        root: expectedRoot,
+        commit: source.commit,
+        sourcePath: source.path,
+        originUrl: deps.git.url(source.repo),
+        manifest: install.manifest,
+        skills: install.manifest.skills ?? [],
+        signal: deps.signal,
+      })
       const guard = async () => {
-        const [currentInstall, consented, currentSettings] = await Promise.all([
+        if (deps.live?.() === false || deps.signal?.aborted)
+          throw new Error('community attachment is closed')
+        const [currentInstall, consented, currentSettings, currentPinText] = await Promise.all([
           deps.store.get(install.id),
           deps.consent.has(install.id, source.commit),
           readVaultSettings(root),
+          readBoundedRegularText(pinPath, 'plugin pin').catch(() => null),
         ])
         if (
           currentInstall === null ||
@@ -403,25 +418,52 @@ export async function refreshInstalledPins(
           canonicalJson(currentInstall.manifest) !== canonicalJson(install.manifest) ||
           currentInstall.setup !== 'ok' ||
           !consented ||
-          currentSettings.plugins.vault[install.id] !== true
+          currentSettings.plugins.vault[install.id] !== true ||
+          currentPinText !== originalPinText
         )
           throw new Error('automatic community update authorization changed')
         await assertNoCompetingSkillClaims(root, install.id, install.manifest.skills ?? [])
       }
+      const validateSnapshot = async (snapshots: Parameters<typeof validateSkillSnapshot>[4]) => {
+        await guard()
+        await validateSkillSnapshot(
+          expectedRoot,
+          source.commit,
+          source.path,
+          install.manifest.skills ?? [],
+          snapshots,
+          deps.signal,
+        )
+        await guard()
+      }
       await guard()
-      await writeSkills(install.manifest, codeDir, root, { guard })
+      const writtenGuides = await writeSkills(install.manifest, codeDir, root, {
+        guard,
+        expectedSnapshots,
+        validateSnapshot,
+      })
+      const retainedBackups = writtenGuides.filter((path) => path.endsWith('(guide backups)'))
+      if (retainedBackups.length) syncBackups.set(key, retainedBackups)
+      else syncBackups.delete(key)
       await seedApps(install.manifest, codeDir, root)
       await guard()
       const lines = install.manifest.ignore ?? []
       if (lines.length > 0) {
-        const existing = await readFile(join(root, '.gitignore'), 'utf8').catch(() => null)
+        let existing: string | null
+        try {
+          existing = await readBoundedRegularText(join(root, '.gitignore'), 'vault .gitignore')
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') existing = null
+          else throw error
+        }
         const updated = gitignoreWith(existing, lines)
-        if (updated !== null) await writeAtomic(root, vaultRelPath('.gitignore'), updated)
+        if (updated !== null) await writeAtomic(root, vaultRelPath('.gitignore'), updated, guard)
       }
       await writeAtomic(
         root,
         vaultRelPath(pluginPinPath(pin.id)),
         `${JSON.stringify(next, null, 2)}\n`,
+        guard,
       )
       syncErrors.delete(key)
     } catch (error) {
@@ -724,9 +766,34 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             if (canonicalJson(manifest) !== canonicalJson(install.manifest))
               throw new CapabilityError('FORBIDDEN', `${id} manifest does not match its source`)
           }
+          const pinPath = join(ctx.root, pluginPinPath(id))
+          const originalPinText = await readBoundedRegularText(pinPath, 'plugin pin').catch(
+            (error) => {
+              if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+              throw error
+            },
+          )
+          const expectedSnapshots = await prepareAuthenticatedRelease({
+            root: expectedRoot,
+            commit: source.commit,
+            sourcePath: source.path,
+            originUrl: deps.git.url(source.repo),
+            manifest: install.manifest,
+            skills: install.manifest.skills ?? [],
+            signal: deps.signal,
+          })
+          let publishingOwnPinDirectory = false
           const guard = async () => {
             ensureLive()
             await validateSource()
+            const currentPinText = await readBoundedRegularText(pinPath, 'plugin pin').catch(
+              (error) => {
+                if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+                throw error
+              },
+            )
+            if (currentPinText !== originalPinText)
+              throw new CapabilityError('CONFLICT', `${id} vault pin changed during pin`)
             const current = await deps.store.get(id)
             if (
               current === null ||
@@ -735,26 +802,73 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
               canonicalJson(current.manifest) !== canonicalJson(install.manifest)
             )
               throw new CapabilityError('CONFLICT', `${id} changed during pin`)
-            await assertNoCompetingSkillClaims(ctx.root, id, install.manifest.skills ?? [])
+            await assertNoCompetingSkillClaims(ctx.root, id, install.manifest.skills ?? [], {
+              allowIncompleteOwnPin: publishingOwnPinDirectory,
+            })
           }
           await guard()
           // Publish vault assets first. In particular, a failed guide refresh must
           // leave the old pin truthful so the operation can be retried.
-          await writeSkills(install.manifest, codeDir, ctx.root, { guard })
-          await seedApps(install.manifest, codeDir, ctx.root)
+          const validateSnapshot = async (
+            snapshots: Parameters<typeof validateSkillSnapshot>[4],
+          ) => {
+            await guard()
+            await validateSkillSnapshot(
+              expectedRoot,
+              source.commit,
+              source.path,
+              install.manifest.skills ?? [],
+              snapshots,
+              deps.signal,
+            )
+            await guard()
+          }
+          const writtenGuides = await writeSkills(install.manifest, codeDir, ctx.root, {
+            guard,
+            expectedSnapshots,
+            validateSnapshot,
+          })
+          const retainedBackups = writtenGuides.filter((path) => path.endsWith('(guide backups)'))
+          if (retainedBackups.length) syncBackups.set(`${ctx.root}\0${id}`, retainedBackups)
+          else syncBackups.delete(`${ctx.root}\0${id}`)
+          await seedApps(install.manifest, codeDir, ctx.root, { guard })
           await linkRunningCommands(ctx.root, deps)
           await guard()
           const lines = install.manifest.ignore ?? []
           if (lines.length > 0) {
-            const existing = await readFile(join(ctx.root, '.gitignore'), 'utf8').catch(() => null)
+            let existing: string | null
+            try {
+              existing = await readBoundedRegularText(
+                join(ctx.root, '.gitignore'),
+                'vault .gitignore',
+              )
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === 'ENOENT') existing = null
+              else throw error
+            }
             const next = gitignoreWith(existing, lines)
-            if (next !== null) await writeAtomic(ctx.root, vaultRelPath('.gitignore'), next)
+            if (next !== null) await writeAtomic(ctx.root, vaultRelPath('.gitignore'), next, guard)
           }
-          await writeAtomic(
-            ctx.root,
-            vaultRelPath(pluginPinPath(id)),
-            `${JSON.stringify(pin, null, 2)}\n`,
-          )
+          const pinDir = join(ctx.root, PLUGIN_PINS_DIR, id)
+          const pinDirWasAbsent = (await lstat(pinDir).catch(() => null)) === null
+          publishingOwnPinDirectory = pinDirWasAbsent
+          try {
+            await writeAtomic(
+              ctx.root,
+              vaultRelPath(pluginPinPath(id)),
+              `${JSON.stringify(pin, null, 2)}\n`,
+              guard,
+            )
+          } catch (error) {
+            publishingOwnPinDirectory = false
+            if (pinDirWasAbsent) {
+              const contents = await readdir(pinDir).catch(() => null)
+              if (contents?.length === 0)
+                await rm(pinDir, { recursive: false, force: true }).catch(() => {})
+            }
+            throw error
+          }
+          publishingOwnPinDirectory = false
           syncErrors.delete(`${ctx.root}\0${id}`)
         }),
     }),
@@ -867,44 +981,19 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           if (rootReal !== expectedRoot || codeReal !== codeDir)
             deny(`${id} release paths are not canonical`)
           const manifest = await readManifest(codeDir, source.path).catch(() => null)
-          try {
-            await assertCheckoutIdentity(
-              expectedRoot,
-              source.commit,
-              deps.git.url(source.repo),
-              deps.signal,
-            )
-          } catch {
-            deny(`${id} release checkout does not match its pin`)
-          }
-          if (
-            manifest === null ||
-            canonicalJson(manifest) !== canonicalJson(install.manifest) ||
-            canonicalJson(manifest) !== canonicalJson(manifestFromPin(pin))
-          )
-            deny(`${id} release checkout does not match its pin`)
-          try {
-            await assertManifestPinned(
-              expectedRoot,
-              source.commit,
-              source.path,
-              manifest,
-              deps.signal,
-            )
-          } catch (error) {
-            deny(`${id} manifest does not match pinned Git object: ${String(error)}`)
-          }
           let expectedSnapshots
           try {
-            expectedSnapshots = await readPinnedSkillSnapshots(
-              expectedRoot,
-              source.commit,
-              source.path,
+            expectedSnapshots = await prepareAuthenticatedRelease({
+              root: expectedRoot,
+              commit: source.commit,
+              sourcePath: source.path,
+              originUrl: deps.git.url(source.repo),
+              manifest,
               skills,
-              deps.signal,
-            )
+              signal: deps.signal,
+            })
           } catch (error) {
-            deny(`${id} skills do not match pinned Git objects: ${String(error)}`)
+            deny(`${id} release does not match its pinned Git objects: ${String(error)}`)
           }
           const guard = async () => {
             ensureLive()

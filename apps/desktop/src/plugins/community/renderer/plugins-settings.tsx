@@ -231,6 +231,12 @@ export function PluginsSettings({
                   {row.syncError !== undefined && (
                     <span className="text-destructive"> {row.syncError}</span>
                   )}
+                  {row.syncBackups?.map((backup) => (
+                    <span key={backup} className="text-muted-foreground">
+                      {' '}
+                      Prior guides kept at {backup}.
+                    </span>
+                  ))}
                 </>
               }
               control={
@@ -263,6 +269,24 @@ export function PluginsSettings({
                       }
                     >
                       <BusyLabel busy={acting === `${row.id}:check`}>Check again</BusyLabel>
+                    </Button>
+                  )}
+                  {row.status === 'pin-differs' && row.install?.kind === 'dev' && row.pin && (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() =>
+                        void act(`${row.id}:adopt-folder`, async () => {
+                          await communityCap.skills(remote, { id: row.id })
+                          await communityCap.unpin(remote, { id: row.id })
+                          await setPluginSwitch(remote, row.id, true)
+                        })
+                      }
+                    >
+                      <BusyLabel busy={acting === `${row.id}:adopt-folder`}>
+                        Use this folder in this vault…
+                      </BusyLabel>
                     </Button>
                   )}
                   {nextStep(row)}

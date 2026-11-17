@@ -425,6 +425,7 @@ export async function assertNoCompetingSkillClaims(
   vaultRoot: string,
   id: string,
   skills: readonly string[],
+  options: { allowIncompleteOwnPin?: boolean } = {},
 ): Promise<void> {
   const root = await realpath(vaultRoot)
   const pinsDir = join(root, PLUGIN_PINS_DIR)
@@ -437,6 +438,7 @@ export async function assertNoCompetingSkillClaims(
       throw new Error('malformed plugin pin entry')
     const file = join(pinsDir, entry.name, 'manifest.json')
     const info = await lstat(file).catch(() => null)
+    if (!info && entry.name === id && options.allowIncompleteOwnPin) continue
     if (
       !info?.isFile() ||
       info.isSymbolicLink() ||
@@ -513,4 +515,31 @@ export async function assertManifestPinned(
   const supplied = parsePluginManifest(manifest, sourcePath)
   if (!pinned.ok || !supplied.ok || canonicalJson(pinned.value) !== canonicalJson(supplied.value))
     throw new Error('manifest differs from pinned Git object')
+}
+
+/** Authenticate the release checkout and return exact Git-backed guide snapshots. */
+export async function prepareAuthenticatedRelease(input: {
+  root: string
+  commit: string
+  sourcePath: string
+  originUrl: string
+  manifest: unknown
+  skills: readonly string[]
+  signal?: AbortSignal
+}): Promise<SkillSnapshot[]> {
+  await assertCheckoutIdentity(input.root, input.commit, input.originUrl, input.signal)
+  await assertManifestPinned(
+    input.root,
+    input.commit,
+    input.sourcePath,
+    input.manifest,
+    input.signal,
+  )
+  return readPinnedSkillSnapshots(
+    input.root,
+    input.commit,
+    input.sourcePath,
+    input.skills,
+    input.signal,
+  )
 }
