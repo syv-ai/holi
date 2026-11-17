@@ -550,6 +550,8 @@ try {
     '(()=>{const activate=document.querySelector("#activate");const prefixes=document.createElement("div");prefixes.className="key-padding";prefixes.setAttribute("aria-label","Native hint prefix fixtures");prefixes.style.cssText="display:flex;flex-wrap:wrap;gap:1px;margin:4px 0";for(let index=1;index<=40;index++){const button=document.createElement("button");button.type="button";button.textContent="Prefix fixture "+String(index).padStart(2,"0");button.style.cssText="font-size:10px;margin:1px;padding:2px";prefixes.append(button)}activate.before(prefixes)})()',
     true,
   )
+  await evaluate('document.documentElement.dataset.theme="light"')
+  assert.equal(await evaluate('document.documentElement.dataset.theme'), 'light')
   await focusGuest()
   const recordingStartedAt = process.hrtime.bigint()
   const recorder = createNativeProofRecorder({
