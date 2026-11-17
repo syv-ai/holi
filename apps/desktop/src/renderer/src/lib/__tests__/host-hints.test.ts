@@ -5,6 +5,8 @@ import {
   activateHostHint,
   hostHintsUnchanged,
   registerHostHintAdapter,
+  registerAsyncHostHintAdapter,
+  captureAsyncHostHintAdapters,
   captureHostHintAdapters,
   registerHostHintSurface,
 } from '../host-hints'
@@ -50,6 +52,24 @@ it('invalidates an active session when a new owned adapter is registered', () =>
   expect(hostHintsUnchanged(targets)).toBe(true)
   unregister()
   expect(target.isConnected).toBe(true)
+})
+
+it('captures only visible async adapters owned by the pane', () => {
+  const adapter = {
+    discover: vi.fn(),
+    present: vi.fn(),
+    clear: vi.fn(),
+    activate: vi.fn(),
+    subscribe: vi.fn(),
+  }
+  const owner = document.createElement('iframe')
+  root.append(owner)
+  const unregister = registerAsyncHostHintAdapter(owner, adapter)
+  expect(captureAsyncHostHintAdapters(root)).toEqual([adapter])
+  owner.hidden = true
+  expect(captureAsyncHostHintAdapters(root)).toEqual([])
+  unregister()
+  expect(captureAsyncHostHintAdapters(root)).toEqual([])
 })
 
 it('assigns unique prefix-free labels for thousands of targets', () => {
