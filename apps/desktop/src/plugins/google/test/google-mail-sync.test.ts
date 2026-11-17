@@ -133,6 +133,47 @@ describe('syncThreads', () => {
     expect(threadGets(seen)).toHaveLength(2)
   })
 
+  it('fetches each needs-reply page fresh without sharing the ordinary list cache', async () => {
+    const cold = gmail({ listPages: { '': { threads: [], nextPageToken: 'cold-next' } } })
+    expect(await syncThreads(cold.api, cache, { needsReply: true })).toMatchObject({
+      threads: [],
+      nextPageToken: 'cold-next',
+    })
+
+    const ordinary = gmail({
+      list: [{ id: 'ordinary' }],
+      threads: { ordinary: rawThread('ordinary', 'Ordinary') },
+    })
+    await syncThreads(ordinary.api, cache, {})
+
+    const firstPage = gmail({
+      listPages: { '': { threads: [{ id: 'filtered-out' }], nextPageToken: 'page-2' } },
+      threads: { 'filtered-out': rawThread('filtered-out', 'Filtered out') },
+    })
+    const first = await syncThreads(firstPage.api, cache, { needsReply: true })
+    expect(first).toMatchObject({ threads: [{ id: 'filtered-out' }], nextPageToken: 'page-2' })
+
+    const emptyPage = gmail({ listPages: { '': { threads: [], nextPageToken: 'page-3' } } })
+    expect(await syncThreads(emptyPage.api, cache, { needsReply: true })).toMatchObject({
+      threads: [],
+      nextPageToken: 'page-3',
+    })
+
+    const continued = gmail({ listPages: { 'page-2': { threads: [], nextPageToken: 'page-3' } } })
+    expect(
+      await syncThreads(continued.api, cache, { needsReply: true, pageToken: 'page-2' }),
+    ).toMatchObject({ threads: [], nextPageToken: 'page-3' })
+    expect(
+      new URL(continued.seen.find((url) => url.includes('/threads?'))!).searchParams.get(
+        'pageToken',
+      ),
+    ).toBe('page-2')
+
+    // Neither the needs-reply fetch nor its filtered empty page overwrote the
+    // independently maintained ordinary inbox cache.
+    expect(cache.readThreads(cacheKey({}))?.map((thread) => thread.id)).toEqual(['ordinary'])
+  })
+
   it('refreshes explicit searches so repeated results retain current pagination', async () => {
     const firstIds = Array.from({ length: 25 }, (_, i) => `t${i + 1}`)
     const threads = Object.fromEntries([...firstIds, 't26'].map((id) => [id, rawThread(id, id)]))

@@ -68,6 +68,7 @@ import {
   textOnly,
   type MailboxName,
   type MailCategory,
+  type MailPage,
 } from './gmail'
 import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
@@ -180,6 +181,9 @@ const agendaWindow = ({ from, to }: { from: string; to: string }): AgendaWindow 
   timeMax: to,
 })
 
+const NEEDS_REPLY_CLI_TEXT: unique symbol = Symbol('needs-reply CLI text envelope')
+type CliMailPage = MailPage & { [NEEDS_REPLY_CLI_TEXT]?: true }
+
 const MAIL_CATEGORIES: readonly MailCategory[] = [
   'primary',
   'social',
@@ -196,6 +200,9 @@ function searchParams(raw: unknown): {
   category?: MailCategory
   unread?: boolean
   mailbox?: MailboxName
+  needsReply?: boolean
+  includeCc?: boolean
+  includeAutomated?: boolean
 } {
   const p = paramsObject(raw)
   const category = MAIL_CATEGORIES.find((c) => c === optionalStringParam(p, 'category'))
@@ -209,6 +216,9 @@ function searchParams(raw: unknown): {
     ...(category === undefined ? {} : { category }),
     ...(flagParam(p, 'unread') ? { unread: true } : {}),
     ...(mailbox === undefined ? {} : { mailbox }),
+    ...(flagParam(p, 'needs-reply') ? { needsReply: true } : {}),
+    ...(flagParam(p, 'include-cc') ? { includeCc: true } : {}),
+    ...(flagParam(p, 'include-automated') ? { includeAutomated: true } : {}),
   }
 }
 
@@ -417,7 +427,6 @@ function inviteAnswer(p: Record<string, unknown>): InviteAnswer {
 }
 
 const ok = { ok: true as const }
-const json = (value: unknown): string => JSON.stringify(value, null, 2)
 
 /** `holi google accounts`, as the agent reads it. */
 function accountsText(value: GoogleAccountsOverview): string {
@@ -720,33 +729,48 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
     /**
      * A page of threads matching Gmail's own search grammar; no query is the
-     * inbox. Cached and current: a `history.list` delta brings the cached list
-     * up to date. The CLI prints the threads alone; `nextPageToken` is the
-     * list view's "load more".
+     * inbox. Ordinary UI lists use the cache and history delta. CLI reads use
+     * a fresh page; --json exposes its continuation token. Ordinary CLI text
+     * remains a thread array; --needs-reply text includes the page envelope.
      */
     'google.search': cap({
       doors: ['ui', 'cli', 'app'],
       appGrant: 'mail',
       cli: {
         args: ['query?'],
+        flags: ['needs-reply', 'include-cc', 'include-automated', 'unread'],
+        values: ['pageToken', 'category', 'mailbox'],
         summary:
-          "threads matching Gmail's search grammar (the inbox); summaries include replied (a SENT message after incoming mail), lastReplyAt (ISO or null), addressedAs (latest incoming To/Cc/neither/unknown; null without incoming), and automated (recognized automation evidence on latest incoming only)",
+          "threads matching Gmail's search grammar (the inbox). --needs-reply is a factual shortlist, not a classification of obligation: it selects incoming mail after the latest sent message, so a new incoming message remains eligible after an older reply; a draft is not a sent reply. The facts replied, lastReplyAt, addressedAs and automated describe Gmail evidence, not semantics: replied means a sent message followed an incoming message, and lastReplyAt is the latest such sent message time. addressedAs is the latest incoming message's recipient classification (to, cc, neither or unknown), or null when there is no incoming message; known send-as aliases are matched and unknown recipients remain eligible. Direct To is the default only with --needs-reply; --include-cc opts into Cc-only and --include-automated opts into positively recognized automation only in that mode, and neither flag otherwise filters results. No recognized automation evidence is not proof a human wrote it; automationUnknown marks MIME evidence that was unavailable or truncated and remains eligible. Filters apply to one Gmail page. Use --json to receive nextPageToken and continue with --pageToken <token>; an empty filtered page may still have a token and is not exhausted until nextPageToken is null.",
       },
       params: searchParams,
       run: async (ctx, options) => {
         const data = await dataOf(ctx.remote)
-        return google(() => data.threads(options))
+        const page = (await google(() =>
+          data.threads(options, { freshPage: ctx.door === 'cli' }),
+        )) as CliMailPage
+        if (ctx.door === 'cli' && options.needsReply === true) {
+          Object.defineProperty(page, NEEDS_REPLY_CLI_TEXT, { value: true })
+        }
+        return page
       },
-      cliValue: (page) => ({
-        ...page,
-        threads: fenceThreads(
-          page.threads.map((thread) => ({
-            ...thread,
-            snippet: cleanSearchSnippet(thread.snippet),
-          })),
-        ),
-      }),
-      text: (page) => json(page.threads),
+      cliValue: (page: CliMailPage) => {
+        const value = {
+          ...page,
+          threads: fenceThreads(
+            page.threads.map((thread) => ({
+              ...thread,
+              snippet: cleanSearchSnippet(thread.snippet),
+            })),
+          ),
+        }
+        if (page[NEEDS_REPLY_CLI_TEXT]) {
+          Object.defineProperty(value, NEEDS_REPLY_CLI_TEXT, { value: true })
+        }
+        return value as CliMailPage
+      },
+      text: (page: CliMailPage) =>
+        JSON.stringify(page[NEEDS_REPLY_CLI_TEXT] ? page : page.threads, null, 2),
     }),
 
     /**
