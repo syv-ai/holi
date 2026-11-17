@@ -345,29 +345,39 @@ it('keeps live job and fenced data planes independent through another vault star
     expect(bFence.entry.home).toBe(join(`${bFence.entry.cwd}.agent`, 'codex-home'))
     expect(aJob.entry.home).not.toBe(bJob.entry.home)
     expect(aFence.entry.home).not.toBe(bFence.entry.home)
-    // A's copied inputs still work after B started. Join its job finalizer
-    // before stopping A; leave itself closes the still-live fenced terminal.
-    await settle(A, aJob)
+    // Stop A with both finalizers still owning live work. Its admission closes
+    // immediately, while teardown must reap the children and remove only A's
+    // scratch; B's same-id owners remain operational.
     await host.stop(A)
-    await aFence.entry.closed
+    await Promise.all([aJob.entry.closed, aFence.entry.closed])
+    await removed(aJob.entry.cwd)
+    await removed(dirname(aJob.entry.home))
     await removed(aFence.entry.cwd)
     await removed(dirname(aFence.entry.home))
+    await expect(access(aJob.entry.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(aFence.entry.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
     await intact(B, bJob.entry)
     await intact(B, bFence.entry)
+
+    // A's restart must admit and finish fresh work, not merely recreate a
+    // capability surface. The fresh IDs deliberately collide with B's IDs.
     await enter(A)
+    const restartedJob = await start(A, 'job')
+    expect(restartedJob.sessionId).toBe(bJob.sessionId)
     await intact(B, bJob.entry)
     await intact(B, bFence.entry)
+    await settle(A, restartedJob)
     await host.stop(A)
     await intact(B, bJob.entry)
     await intact(B, bFence.entry)
-    // No sentinel-only acceptance: B's original processes read their original
-    // input/state again, emit output, and the real hosts copy into B only.
+    // B's original sessions finish after both A activations have stopped, and
+    // the real providers copy their output into B only.
     await settle(B, bJob)
     await settle(B, bFence)
     expect(await readFile(join(roots[A], 'job.md'), 'utf8')).toBe(`${A}:job:finished`)
     await expect(access(join(roots[A], 'fenced.md'))).rejects.toMatchObject({ code: 'ENOENT' })
     await removed(join(b.jobs, `${bJob.sessionId}.pid`))
-    expect(children).toHaveLength(4)
+    expect(children).toHaveLength(5)
   } finally {
     // Explicit ownership ledger: close activations, reap every synthetic child,
     // join provider/host finalizer deletions, then (and only then) remove roots.
