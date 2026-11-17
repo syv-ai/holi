@@ -862,6 +862,11 @@ describe('rich-text Vim extension', () => {
     expect(text(ed)).toBe('one two three')
 
     key(ed, 'd')
+    ed.view.dom.dispatchEvent(new Event('compositionend'))
+    key(ed, 'w')
+    expect(text(ed)).toBe('one two three')
+
+    key(ed, 'd')
     configureRichTextVim(ed.view, true, true, () => ed.isEditable)
     key(ed, 'w')
     expect(text(ed)).toBe('one two three')
@@ -882,6 +887,79 @@ describe('rich-text Vim extension', () => {
     expect(text(history)).toBe('two three')
     key(history, 'u')
     expect(text(history)).toBe('one two three')
+  })
+
+  it('repeats counted structured puts and keeps a change insert session in native history', () => {
+    const ed = open('<p><strong>alpha</strong> beta</p><p>tail</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'y')
+    key(ed, 'w')
+    ed.commands.setTextSelection(7)
+    key(ed, '2')
+    key(ed, 'P')
+    expect(ed.state.doc.toJSON()).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', marks: [{ type: 'bold' }], text: 'alpha' },
+            { type: 'text', text: ' ' },
+            { type: 'text', marks: [{ type: 'bold' }], text: 'alpha' },
+            { type: 'text', text: ' ' },
+            { type: 'text', marks: [{ type: 'bold' }], text: 'alpha' },
+            { type: 'text', text: ' beta' },
+          ],
+        },
+        { type: 'paragraph', content: [{ type: 'text', text: 'tail' }] },
+      ],
+    })
+    key(ed, 'u')
+    expect(ed.state.doc.toJSON()).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', marks: [{ type: 'bold' }], text: 'alpha' },
+            { type: 'text', text: ' beta' },
+          ],
+        },
+        { type: 'paragraph', content: [{ type: 'text', text: 'tail' }] },
+      ],
+    })
+
+    ed.commands.setContent('<p>one two</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'c')
+    key(ed, 'w')
+    ed.view.dispatch(ed.state.tr.insertText('A').setTime(Date.now() + 10_000))
+    ed.view.dispatch(ed.state.tr.insertText('B').setTime(Date.now() + 20_000))
+    key(ed, 'Escape')
+    expect(ed.state.doc.toJSON()).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'AB two' }],
+        },
+      ],
+    })
+    key(ed, 'u')
+    expect(ed.state.doc.toJSON()).toEqual({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'one two' }] }],
+    })
+    key(ed, 'r', { ctrlKey: true })
+    expect(ed.state.doc.textContent).toBe('AB two')
+
+    key(ed, 'i')
+    ed.view.dispatch(ed.state.tr.insertText('C'))
+    key(ed, 'Escape')
+    key(ed, 'u')
+    expect(ed.state.doc.textContent).toBe('AB two')
+    key(ed, 'u')
+    expect(ed.state.doc.textContent).toBe('one two')
   })
 
   it('preserves grapheme boundaries and operator-specific final-word ranges', () => {
