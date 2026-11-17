@@ -142,6 +142,12 @@ function setup(firstPort = 3940) {
   return { call, deps, events, states, origins, supervisor }
 }
 
+async function pinReady(call: any, commit: string, id = 'prezzi') {
+  await turnOn()
+  await call('community.consent', { id, commit })
+  await call('community.setup', { id })
+}
+
 async function turnOn() {
   await mkdir(join(vault, '.holi/settings'), { recursive: true })
   await writeFile(
@@ -306,7 +312,12 @@ describe('installing', () => {
     const external = join(dir, 'external-holi')
     await mkdir(external)
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
     await rm(join(vault, '.holi'), { recursive: true, force: true })
     await symlink(external, join(vault, '.holi'))
     await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
@@ -318,7 +329,12 @@ describe('installing', () => {
   test('a pin offers the same commit to a machine without it', async () => {
     const commit = await makeRepo()
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
     await call('community.pin', { id: 'prezzi' })
     const pin = JSON.parse(
       await readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8'),
@@ -345,7 +361,12 @@ describe('skills', () => {
     commitAll('guide')
     git(repoDir, 'tag', '-f', 'v0.1.0')
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
     await call('community.pin', { id: 'prezzi' })
     const pinPath = join(vault, '.holi/plugins/prezzi/manifest.json')
     await writeFile(join(vault, '.claude/skills/prezzi/SKILL.md'), 'local edit\\n')
@@ -384,6 +405,7 @@ describe('skills', () => {
     const { call, deps } = setup()
     await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
     const install = (await deps.store.get('prezzi'))!
+    await pinReady(call, (install.source as { commit: string }).commit)
     await writeFile(
       join(deps.store.codeDir(install), 'skills/prezzi/SKILL.md'),
       'modified checkout\n',
@@ -407,7 +429,12 @@ describe('skills', () => {
     await writeFile(external, 'external data\n')
     await symlink(external, join(vault, '.gitignore'))
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
     await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
       /regular file|ELOOP|symbolic/i,
     )
@@ -443,7 +470,12 @@ describe('skills', () => {
     git(repoDir, 'tag', 'v0.2.0')
     void commit
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.2.0' })
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.2.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
     await call('community.pin', { id: 'prezzi' })
     expect(await readFile(join(vault, '.claude/skills/prezzi/references/cover.md'), 'utf8')).toBe(
       '# cover\n',
@@ -458,7 +490,12 @@ describe('skills', () => {
     git(repoDir, 'add', '-A')
     git(repoDir, '-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', 'commit', '-qm', 'out')
     git(repoDir, 'tag', 'v0.3.0')
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.3.0' })
+    const escapedInstall = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.3.0',
+    })
+    await pinReady(call, (escapedInstall.install as { commit: string }).commit)
     await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
       /(unsafe skill symlink|outside the plugin|escapes plugin)/,
     )
@@ -555,7 +592,8 @@ describe('several plugins in one repository', () => {
     commitAll('notes skill')
     git(repoDir, 'tag', 'notes-v0.3.0')
     const { call } = setup()
-    await call('community.install', { repo, path: 'notes', version: '0.3.0' })
+    const installed = await call('community.install', { repo, path: 'notes', version: '0.3.0' })
+    await pinReady(call, (installed.install as { commit: string }).commit, 'notes')
     await expect(call('community.pin', { id: 'notes' })).rejects.toThrow(
       /(outside the plugin|escapes plugin)/,
     )
@@ -617,11 +655,11 @@ describe('apps', () => {
   test('rejects case-folded destination collisions before publishing either app', async () => {
     const appRoot = join(dir, 'app-collision')
     await mkdir(join(appRoot, 'apps/Notes.app'), { recursive: true })
-    await mkdir(join(appRoot, 'other/notes.APP'), { recursive: true })
+    await mkdir(join(appRoot, 'other/notes.app'), { recursive: true })
     await writeFile(join(appRoot, 'apps/Notes.app/index.html'), '<p>one</p>')
-    await writeFile(join(appRoot, 'other/notes.APP/index.html'), '<p>two</p>')
+    await writeFile(join(appRoot, 'other/notes.app/index.html'), '<p>two</p>')
     await expect(
-      seedApps({ apps: ['apps/Notes.app', 'other/notes.APP'] }, appRoot, vault),
+      seedApps({ apps: ['apps/Notes.app', 'other/notes.app'] }, appRoot, vault),
     ).rejects.toThrow(/colliding destination names/)
     expect(existsSync(join(vault, 'Notes.app'))).toBe(false)
   })

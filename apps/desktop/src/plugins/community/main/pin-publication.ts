@@ -61,7 +61,6 @@ export async function publishPin(input: PinPublication): Promise<void> {
   const guard = async () => {
     ensureLive()
     await assertSafePublicationPath(root, pinPath)
-    await validateSource()
     const current = await store.get(id)
     if (
       !current ||
@@ -77,7 +76,8 @@ export async function publishPin(input: PinPublication): Promise<void> {
       throw new CapabilityError('CONFLICT', `${id} vault pin changed during publication`)
   }
   await assertSafePublicationPath(root, pinPath)
-  await assertSafePublicationPath(root, join(root, '.holi', 'state', 'marker'))
+  if ((install.manifest.skills ?? []).length > 0 || (install.manifest.apps ?? []).length > 0)
+    await assertSafePublicationPath(root, join(root, '.holi', 'state', 'marker'))
   await validateSource()
   const expectedSnapshots = await prepareAuthenticatedRelease({
     root: expectedRoot,

@@ -7,7 +7,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { lstat, realpath, readdir, readFile, rm, rmdir } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
@@ -32,6 +32,7 @@ import {
   paramsObject,
   flagParam,
   readVaultSettings,
+  writeVaultSettings,
   withFileLock,
   stringParam,
   toolPath,
@@ -52,7 +53,7 @@ import {
 import { searchPlugins } from './search'
 import { refreshSkills, seedApps, writeSkills } from './skills'
 import { publishPin } from './pin-publication'
-import { readOptionalPublicationText } from './publication-files'
+import { assertSafePublicationPath, readOptionalPublicationText } from './publication-files'
 import {
   assertCheckoutIdentity,
   assertManifestPinned,
@@ -104,6 +105,8 @@ export interface PluginRow {
     | { kind: 'release'; repo: string; path: string; version: string; commit: string }
     | { kind: 'dev'; folder: string; version: string }
     | null
+  /** Opaque displayed-snapshot identity required to adopt a folder over a pin. */
+  folderAdoptionToken?: string
   /** What it will run, for the consent dialog. */
   setup: string[] | null
   /** Null for a plugin that only ships apps and skills. */
@@ -175,12 +178,6 @@ async function readPinRecords(
   return pins
 }
 
-async function readPins(root: string): Promise<Map<string, PluginPin>> {
-  return new Map(
-    [...(await readPinRecords(root)).entries()].map(([id, record]) => [id, record.pin]),
-  )
-}
-
 const installCommit = (i: Install) => (i.source.kind === 'release' ? i.source.commit : null)
 
 async function statusOf(
@@ -218,6 +215,7 @@ function rowOf(
   on: boolean,
   linked: LinkedCommands | null,
   check: CheckResult | null,
+  folderAdoptionToken?: string,
 ): PluginRow {
   const manifest: PluginManifest = (install?.manifest ?? pin)!
   return {
@@ -227,6 +225,7 @@ function rowOf(
     ...(syncBackups.get(`${root}\0${id}`) === undefined
       ? {}
       : { syncBackups: syncBackups.get(`${root}\0${id}`) }),
+    ...(folderAdoptionToken === undefined ? {} : { folderAdoptionToken }),
     id,
     name: manifest.name,
     description: manifest.description ?? '',
@@ -277,11 +276,12 @@ async function pluginEntries(
   root: string,
   deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },
 ) {
-  const [pins, installs, settings] = await Promise.all([
-    readPins(root),
+  const [pinRecords, installs, settings] = await Promise.all([
+    readPinRecords(root),
     deps.store.list(),
     readVaultSettings(root),
   ])
+  const pins = new Map([...pinRecords].map(([id, record]) => [id, record.pin]))
   const ids = [...new Set([...pins.keys(), ...installs.map((i) => i.id)])].sort()
   return Promise.all(
     ids.map(async (id) => {
@@ -290,8 +290,16 @@ async function pluginEntries(
       const status = await statusOf(install, pin, deps.consent)
       const on = settings.plugins.vault[id] === true
       const check = deps.checks?.get(root, id) ?? null
+      const folderAdoptionToken =
+        install?.source.kind === 'dev' && pin !== null
+          ? createHash('sha256')
+              .update(canonicalJson(install))
+              .update('\0')
+              .update(pinRecords.get(id)!.text)
+              .digest('hex')
+          : undefined
       return {
-        row: rowOf(root, id, install, pin, status, on, linkedIn(root), check),
+        row: rowOf(root, id, install, pin, status, on, linkedIn(root), check, folderAdoptionToken),
         install,
       }
     }),
@@ -314,22 +322,7 @@ const pathParam = (raw: unknown): { path: string } => ({
 })
 
 /** The server key: one per vault, plugin and file. */
-async function assertSafeVaultPath(root: string, path: string): Promise<void> {
-  const canonicalRoot = await realpath(root)
-  if (canonicalRoot !== resolve(root)) throw new Error('vault root is not canonical')
-  const rel = relative(canonicalRoot, resolve(path))
-  if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('publication path escapes the vault')
-  let current = canonicalRoot
-  for (const part of rel.split(sep).slice(0, -1)) {
-    current = join(current, part)
-    const info = await lstat(current).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null
-      throw error
-    })
-    if (info?.isSymbolicLink() || (info !== null && !info.isDirectory()))
-      throw new Error(`unsafe vault path ancestor: ${current}`)
-  }
-}
+const assertSafeVaultPath = assertSafePublicationPath
 
 function insidePath(root: string, path: string): boolean {
   const rel = relative(root, path)
@@ -765,8 +758,11 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     // The exact install and pin snapshots bind this multi-file operation.
     'community.adoptFolder': cap({
       doors: ['ui'],
-      params: idParams,
-      run: async (ctx, { id }) =>
+      params: (raw: unknown) => {
+        const p = paramsObject(raw)
+        return { id: stringParam(p, 'id'), token: stringParam(p, 'token') }
+      },
+      run: async (ctx, { id, token }) =>
         admit(async () => {
           ensureLive()
           const install = await installOf(id)
@@ -777,6 +773,16 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           const originalPin = await readOptionalPublicationText(pinPath, 'plugin pin')
           if (originalPin === null)
             throw new CapabilityError('CONFLICT', `${id} has no release pin`)
+          const displayedToken = createHash('sha256')
+            .update(canonicalJson(install))
+            .update('\0')
+            .update(originalPin)
+            .digest('hex')
+          if (token !== displayedToken)
+            throw new CapabilityError(
+              'CONFLICT',
+              `${id} folder installation or pin changed; look again`,
+            )
           const guard = async () => {
             ensureLive()
             const [current, currentPin] = await Promise.all([
@@ -796,13 +802,18 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           }
           await guard()
           const codeDir = deps.store.codeDir(install)
+          const key = `${ctx.root}\0${id}`
           const skills = await writeSkills(install.manifest, codeDir, ctx.root, { guard })
+          const backups = skills.filter((path) => path.endsWith('(guide backups)'))
+          if (backups.length)
+            syncBackups.set(key, [...new Set([...(syncBackups.get(key) ?? []), ...backups])])
           const apps = await seedApps(install.manifest, codeDir, ctx.root, {
             guard,
             signal: deps.signal,
           })
           await guard()
           await withFileLock(resolve(pinPath), async () => {
+            await guard()
             const finalPin = await readOptionalPublicationText(pinPath, 'plugin pin')
             ensureLive()
             if (finalPin !== originalPin)
@@ -810,10 +821,26 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             await rm(pinPath, { force: true })
             await rmdir(dirname(pinPath)).catch(() => {})
           })
-          const key = `${ctx.root}\0${id}`
-          const backups = skills.filter((path) => path.endsWith('(guide backups)'))
-          if (backups.length)
-            syncBackups.set(key, [...new Set([...(syncBackups.get(key) ?? []), ...backups])])
+          const guardAfterUnpin = async () => {
+            ensureLive()
+            const current = await deps.store.get(id)
+            const currentPin = await readOptionalPublicationText(pinPath, 'plugin pin')
+            if (
+              !current ||
+              current.source.kind !== 'dev' ||
+              JSON.stringify(current.source) !== JSON.stringify(install.source) ||
+              canonicalJson(current.manifest) !== canonicalJson(install.manifest) ||
+              currentPin !== null
+            )
+              throw new CapabilityError(
+                'CONFLICT',
+                `${id} folder installation changed during adoption`,
+              )
+            ensureLive()
+          }
+          await guardAfterUnpin()
+          await writeVaultSettings(ctx.root, { committed: { plugins: { [id]: true } } })
+          await guardAfterUnpin()
           await linkRunningCommands(ctx.root, deps)
           return [...skills, ...apps]
         }),
@@ -845,15 +872,17 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             ensureLive()
           }
           await guard()
-          const result = [
-            ...(await writeSkills(install.manifest, codeDir, ctx.root, { guard })),
-            ...(await seedApps(install.manifest, codeDir, ctx.root, {
-              guard,
-              signal: deps.signal,
-            })),
-          ]
+          const key = `${ctx.root}\0${id}`
+          const skills = await writeSkills(install.manifest, codeDir, ctx.root, { guard })
+          const backups = skills.filter((path) => path.endsWith('(guide backups)'))
+          if (backups.length)
+            syncBackups.set(key, [...new Set([...(syncBackups.get(key) ?? []), ...backups])])
+          const apps = await seedApps(install.manifest, codeDir, ctx.root, {
+            guard,
+            signal: deps.signal,
+          })
           await guard()
-          return result
+          return [...skills, ...apps]
         }),
     }),
 
@@ -954,7 +983,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
             canonicalJson(manifest) !== canonicalJson(install.manifest) ||
             canonicalJson(manifest) !== canonicalJson(manifestFromPin(pin))
           )
-            deny(`${id} release checkout does not match its complete pin`)
+            deny(`${id} release checkout does not match its pin (complete pin metadata differs)`)
           let expectedSnapshots
           try {
             expectedSnapshots = await prepareAuthenticatedRelease({
