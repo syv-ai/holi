@@ -344,7 +344,7 @@ describe('managed merge evidence', () => {
     await plainGit(teammate, ['push', 'origin', 'HEAD:main'])
     await writeFile(
       join(local, '.git/hooks/prepare-commit-msg'),
-      '#!/bin/sh\nprintf "settlement refused by hook\\n" >&2\nexit 1\n',
+      '#!/bin/sh\n(exec 3>&-; sleep 0.1; printf "settlement refused by hook\\n" >&2) &\nexit 1\n',
       { mode: 0o755 },
     )
     const records: Array<string | null> = []

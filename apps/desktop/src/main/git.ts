@@ -425,6 +425,41 @@ async function tryGitObservedOnce(
       if (size + chunk.length <= limit) target.push(chunk)
       return size + chunk.length
     }
+    let stdoutEnded = false
+    let stderrEnded = false
+    let exited = false
+    let finished = false
+    let streamsFailed = false
+    let outcomeCode = 1
+    let drainTimer: NodeJS.Timeout | undefined
+    const closeStreams = () => {
+      child.stdin!.destroy()
+      child.stdout!.destroy()
+      child.stderr!.destroy()
+      child.stdio[3]!.destroy()
+    }
+    const finish = (expired = false) => {
+      if (finished || !exited) return
+      if (!expired && !(stdoutEnded && stderrEnded && traceEnded)) return
+      finished = true
+      if (drainTimer !== undefined) clearTimeout(drainTimer)
+      closeStreams()
+      resolve({
+        outcome: {
+          ok: outcomeCode === 0,
+          code: outcomeCode,
+          stdout: Buffer.concat(output).toString(),
+          stderr: Buffer.concat(errors).toString(),
+        },
+        trace: Buffer.concat(traces).toString(),
+        complete:
+          !expired &&
+          !streamsFailed &&
+          !traceOverflow &&
+          outputSize <= MAX_BUFFER &&
+          errorSize <= MAX_BUFFER,
+      })
+    }
     child.stdout!.on('data', (chunk: Buffer) => {
       outputSize = append(output, chunk, outputSize, MAX_BUFFER)
     })
@@ -436,39 +471,37 @@ async function tryGitObservedOnce(
       if (traceSize > 256 * 1024) traceOverflow = true
       else traces.push(Buffer.from(chunk))
     })
+    child.stdout!.on('end', () => {
+      stdoutEnded = true
+      finish()
+    })
+    child.stderr!.on('end', () => {
+      stderrEnded = true
+      finish()
+    })
     child.stdio[3]!.on('end', () => {
       traceEnded = true
+      finish()
     })
+    for (const stream of [child.stdout!, child.stderr!, child.stdio[3]!]) {
+      stream.on('error', () => {
+        streamsFailed = true
+      })
+    }
+    child.stdin!.on('error', () => {})
     child.on('error', (error: NodeJS.ErrnoException) => {
+      if (finished) return
+      finished = true
+      if (drainTimer !== undefined) clearTimeout(drainTimer)
+      closeStreams()
       reject(error.code === 'ENOENT' ? new GitMissingError(gitPath) : error)
     })
     child.on('exit', (code, signal) => {
-      const waitForTrace = new Promise<void>((done) => {
-        if (traceEnded) return done()
-        const timer = setTimeout(() => {
-          child.stdio[3]!.destroy()
-          done()
-        }, 1000)
-        child.stdio[3]!.once('end', () => {
-          clearTimeout(timer)
-          done()
-        })
-      })
-      void waitForTrace.then(() => {
-        const stderr = Buffer.concat(errors).toString()
-        const outcomeCode = code ?? (signal ? 1 : 0)
-        resolve({
-          outcome: {
-            ok: outcomeCode === 0,
-            code: outcomeCode,
-            stdout: Buffer.concat(output).toString(),
-            stderr,
-          },
-          trace: Buffer.concat(traces).toString(),
-          complete:
-            traceEnded && !traceOverflow && outputSize <= MAX_BUFFER && errorSize <= MAX_BUFFER,
-        })
-      })
+      if (finished) return
+      exited = true
+      outcomeCode = code ?? (signal ? 1 : 0)
+      drainTimer = setTimeout(() => finish(true), 1000)
+      finish()
     })
     child.stdin!.end()
   })

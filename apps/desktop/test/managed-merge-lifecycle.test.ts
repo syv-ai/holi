@@ -169,24 +169,31 @@ describe('managed merge provenance lifecycle', () => {
         subscribedNow: () => subscribed,
       })
       const marker = join(local, '.git/holi-managed-provenance-id')
+      const observed: Array<{ ticket: unknown; oid: string | null }> = []
+      let completed = false
+      const callbackErrors: unknown[] = []
       const wrapped = {
         begin: (root: string) => recorder.begin(root),
         record: async (ticket: unknown, root: string, oid: string | null): Promise<void> => {
-          expect(ticket).not.toBeNull()
-          expect(oid).toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
-          if (change === 'logout') identity = null
-          if (change === 'adoption') identity = { accountId: 2, generation: 2 }
-          if (change === 'relogin') identity = { accountId: 1, generation: 2 }
-          if (change === 'subscription') subscribed = false
-          if (change === 'lifetime') await writeFile(marker, `${randomUUID()}\n`)
-          if (change === 'origin')
-            await plainGit(root, [
-              'remote',
-              'set-url',
-              'origin',
-              'https://github.com/other/repo.git',
-            ])
-          await recorder.record(ticket, root, oid)
+          observed.push({ ticket, oid })
+          try {
+            if (change === 'logout') identity = null
+            if (change === 'adoption') identity = { accountId: 2, generation: 2 }
+            if (change === 'relogin') identity = { accountId: 1, generation: 2 }
+            if (change === 'subscription') subscribed = false
+            if (change === 'lifetime') await writeFile(marker, `${randomUUID()}\n`)
+            if (change === 'origin')
+              await plainGit(root, [
+                'remote',
+                'set-url',
+                'origin',
+                'https://github.com/other/repo.git',
+              ])
+            await recorder.record(ticket, root, oid)
+            completed = true
+          } catch (error) {
+            callbackErrors.push(error)
+          }
         },
       }
       const fetcher = join(await tmp('holi-merge-fetch-'), 'git')
@@ -204,6 +211,11 @@ describe('managed merge provenance lifecycle', () => {
           }).pull()
         ).kind,
       ).toBe('merged')
+      expect(observed).toHaveLength(1)
+      expect(observed[0]!.ticket).not.toBeNull()
+      expect(observed[0]!.oid).toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
+      expect(completed).toBe(true)
+      expect(callbackErrors).toEqual([])
       await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' })
     },
   )
