@@ -29,6 +29,7 @@ type VimSettings = {
   onHints?: (view: EditorView) => void
   onFeedback?: (message: string) => void
   escapeOwned?: () => boolean
+  onEscapeOwned?: () => void
 }
 
 type VimState = {
@@ -456,6 +457,11 @@ function handleNormal(
         tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
       tr.setMeta(KEY, resetTransient(current)).setMeta('addToHistory', false)
       view.dispatch(tr)
+      event.preventDefault()
+      return true
+    }
+    if (settings.escapeOwned?.()) {
+      settings.onEscapeOwned?.()
       event.preventDefault()
       return true
     }
@@ -1308,8 +1314,12 @@ export const RichTextVim = Extension.create<VimSettings>({
                 event.shiftKey
               )
                 return false
-              if (options.escapeOwned?.() || view.dom.getAttribute('aria-haspopup') === 'listbox')
-                return false
+              if (options.escapeOwned?.()) {
+                options.onEscapeOwned?.()
+                event.preventDefault()
+                return true
+              }
+              if (view.dom.getAttribute('aria-haspopup') === 'listbox') return false
               leaveInsert(view)
               event.preventDefault()
               return true

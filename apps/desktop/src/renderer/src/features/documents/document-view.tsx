@@ -316,6 +316,7 @@ function DocumentEditor({
   const vimModeCallback = useRef<(mode: RichTextVimMode) => void>(() => {})
   vimModeCallback.current = (mode) => setVimMode(mode)
   const findOpenRef = useRef(false)
+  const closeFindRef = useRef<() => void>(() => {})
   const tableStyle = useAppSetting('tableStyle')
   const propertiesLayout = useAppSetting('propertiesLayout')
   const hasProperties = useHasTaskProperties(path)
@@ -401,6 +402,7 @@ function DocumentEditor({
         editable: () => editorRef.current?.isEditable ?? false,
         onModeChange: (mode) => queueMicrotask(() => vimModeCallback.current(mode)),
         escapeOwned: () => findOpenRef.current,
+        onEscapeOwned: () => closeFindRef.current(),
         onFeedback: (message) => toast.error(message),
       }),
       Extension.create({
@@ -819,6 +821,7 @@ function DocumentEditor({
 
   const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef, focused)
   findOpenRef.current = find !== null
+  closeFindRef.current = () => setFind(null)
 
   async function finishTask() {
     if (doneInFlight.current || lockedRef.current || frozen.current || !editor?.isEditable) return
