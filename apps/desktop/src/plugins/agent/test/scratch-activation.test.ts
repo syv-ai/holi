@@ -1,5 +1,14 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -7,6 +16,7 @@ import { expect, it, vi } from 'vitest'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
+import type { PluginEvent } from '../../../main/plugin-host/events'
 import { createPluginHost } from '../../../main/plugin-host/host'
 import { defaultProbePid } from '../../../main/process-group'
 import type { SpawnPty } from '../main/host/pty'
@@ -27,6 +37,8 @@ const native = vi.hoisted(() => ({
       ) => ChildProcess),
   removals: [] as { path: string; done: Promise<void> }[],
   heldExit: null as null | { cwd: string; entered: () => void; wait: Promise<void> },
+  heldConfigure: null as null | { root: string; entered: () => void; wait: Promise<void> },
+  configured: [] as { root: string; outcome: 'resolved' | 'rejected'; dir?: string }[],
 }))
 
 vi.mock('electron', () => ({
@@ -40,6 +52,40 @@ vi.mock('../main/claude/cli', async (original) => {
     resolveClaudeBin: () => '/synthetic/claude',
     createClaudeCli: (deps: Parameters<typeof cli.createClaudeCli>[0]) =>
       cli.createClaudeCli({ ...deps, run: async () => '[]' }),
+  }
+})
+// Delay only the provider adapter's configure seam, not the host or its
+// cancellation checks. Successful releases still invoke Codex's real configure.
+vi.mock('../main/codex', async (original) => {
+  const codex = await original<typeof import('../main/codex')>()
+  return {
+    ...codex,
+    codexProvider: (deps: Parameters<typeof codex.codexProvider>[0]) => {
+      const provider = codex.codexProvider(deps)
+      const configure = provider.configure
+      return {
+        ...provider,
+        configure: async (vault: Parameters<typeof configure>[0]) => {
+          try {
+            const hold = native.heldConfigure
+            if (hold !== null && hold.root === vault.root) {
+              hold.entered()
+              await hold.wait
+            }
+            const result = await configure(vault)
+            native.configured.push({
+              root: vault.root,
+              outcome: 'resolved',
+              ...(result === null ? {} : { dir: result.dir }),
+            })
+            return result
+          } catch (err) {
+            native.configured.push({ root: vault.root, outcome: 'rejected' })
+            throw err
+          }
+        },
+      }
+    },
   }
 })
 // Deliberately collide job, fence and PTY session ids across activations.
@@ -64,7 +110,7 @@ vi.mock('node:fs/promises', async (original) => {
     },
   }
 })
-// Only the two native launch adapters vary. AgentRuntime, all four hosts,
+// Only native launch and the configure delay adapters vary. AgentRuntime, all four hosts,
 // providers (including command construction/home preparation), dispatcher and
 // plugin activation/teardown are production implementations.
 vi.mock('../../../main/plugin-api', async (original) => {
@@ -117,7 +163,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-it('keeps live job and fenced data planes independent through another vault startup and restart', async () => {
+async function createScratchFixture() {
   const userData = await realpath(await mkdtemp(join(tmpdir(), 'holi-scratch-activation-')))
   const roots = { 'fixture/a': join(userData, 'vault-a'), 'fixture/b': join(userData, 'vault-b') }
   type Remote = keyof typeof roots
@@ -138,7 +184,23 @@ it('keeps live job and fenced data planes independent through another vault star
   const fixture = fileURLToPath(new URL('./fixtures/scratch-provider.mjs', import.meta.url))
   native.removals.length = 0
   native.heldExit = null
-  let releaseHeldExit: (() => void) | null = null
+  native.heldConfigure = null
+  native.configured.length = 0
+  const releases: (() => void)[] = []
+  const holdExit = (cwd: string) => {
+    const heldExit = deferred<void>()
+    const exitEntered = deferred<void>()
+    releases.push(heldExit.resolve)
+    native.heldExit = { cwd, entered: exitEntered.resolve, wait: heldExit.promise }
+    return { heldExit, exitEntered }
+  }
+  const holdConfigure = (remote: Remote) => {
+    const gate = deferred<void>()
+    const entered = deferred<void>()
+    releases.push(gate.resolve)
+    native.heldConfigure = { root: roots[remote], entered: entered.resolve, wait: gate.promise }
+    return { gate, entered: entered.promise }
+  }
   native.start = (kind, bin, args, cwd, env) => {
     // Never execute a real provider or inherit keys/config from this machine.
     expect(bin).toBe(process.execPath)
@@ -182,15 +244,41 @@ it('keeps live job and fenced data planes independent through another vault star
     return child
   }
 
+  const events: PluginEvent[] = []
+  const publications: PluginEvent[] = []
+  const pending = new Set<Promise<unknown>>()
   const registry = createCapabilityRegistry()
   const host = createPluginHost({
-    plugins: [agentMain],
+    plugins: [
+      agentMain,
+      {
+        info: {
+          id: 'fixture-observer',
+          label: 'Fixture observer',
+          description: 'Records agent publication',
+          default: true,
+          builtIn: true,
+          requires: ['agent'],
+        },
+        activate(ctx) {
+          for (const name of ['sessions', 'turn-end'])
+            ctx.hear('agent', name, (payload) =>
+              publications.push({ remote: ctx.remote, name, payload }),
+            )
+          return () => {}
+        },
+      },
+    ],
     registry,
     userData,
     coreSeeds: [],
     active: () => null,
     rootFor: async (remote) => roots[remote as Remote] ?? null,
-    events: { send: () => {}, listen: () => () => {}, liveRemote: () => host.displayed() },
+    events: {
+      send: (_channel, event) => events.push(event),
+      listen: () => () => {},
+      liveRemote: () => host.displayed(),
+    },
     openAppDoor: () => {
       throw new Error('unused')
     },
@@ -211,8 +299,15 @@ it('keeps live job and fenced data planes independent through another vault star
     pluginEnabled: async (plugin, root) => (await host.serving(root)).has(plugin),
     claims: (root) => host.scanClaimsFor(root),
   })
-  const call = async (remote: Remote, name: string, params: unknown = {}) =>
-    (await capabilities.dispatch({ door: 'ui', remote, name, params })).value
+  const call = async (remote: Remote, name: string, params: unknown = {}) => {
+    const work = capabilities.dispatch({ door: 'ui', remote, name, params })
+    pending.add(work)
+    try {
+      return (await work).value
+    } finally {
+      pending.delete(work)
+    }
+  }
   const enter = (remote: Remote) =>
     host.reconcile(
       {
@@ -311,6 +406,50 @@ it('keeps live job and fenced data planes independent through another vault star
     await expect(access(dirname(run.entry.home))).rejects.toMatchObject({ code: 'ENOENT' })
   }
 
+  const dispose = async () => {
+    // Release every gate before stopping, and reap children even if a host
+    // reports a teardown failure. Only this ledger's processes/roots are touched.
+    for (const release of releases) release()
+    native.heldExit = null
+    native.heldConfigure = null
+    const failures: unknown[] = []
+    try {
+      await host.stopAll()
+    } catch (err) {
+      failures.push(err)
+    } finally {
+      // A failed stop must not let the fixture delete a parent while a
+      // dispatched start is still releasing its scratch state.
+      await Promise.allSettled([...pending])
+      for (const entry of children) {
+        if (entry.child.exitCode === null && entry.child.signalCode === null)
+          entry.child.kill('SIGKILL')
+      }
+      await Promise.all(children.map((entry) => entry.closed))
+      const finalizers = await Promise.allSettled(
+        children.flatMap((entry) => [removed(entry.cwd), removed(dirname(entry.home))]),
+      )
+      for (const result of finalizers)
+        if (result.status === 'rejected') failures.push(result.reason)
+      const deletions = await Promise.allSettled(native.removals.map((entry) => entry.done))
+      for (const result of deletions) if (result.status === 'rejected') failures.push(result.reason)
+      try {
+        expect(
+          children.every(
+            (entry) => entry.child.exitCode !== null || entry.child.signalCode !== null,
+          ),
+        ).toBe(true)
+        for (const entry of children) expect(defaultProbePid(entry.child.pid!)).toBe('gone')
+      } finally {
+        await rm(userData, { recursive: true, force: true })
+        native.start = null
+      }
+      await expect(access(userData)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'scratch fixture cleanup failed')
+  }
+
+  const person = join(userData, 'synthetic-codex-home')
   try {
     for (const [remote, root] of Object.entries(roots)) {
       await mkdir(root, { recursive: true })
@@ -321,7 +460,6 @@ it('keeps live job and fenced data planes independent through another vault star
       execFileSync('git', ['-C', root, 'add', '.'])
       execFileSync('git', ['-C', root, 'commit', '-qm', 'fixture'])
     }
-    const person = join(userData, 'synthetic-codex-home')
     await mkdir(person)
     await writeFile(join(person, 'auth.json'), '{"fixture":"not a credential"}')
     await enter(A)
@@ -332,6 +470,52 @@ it('keeps live job and fenced data planes independent through another vault star
         env: { CODEX_HOME: person },
       },
     })
+  } catch (err) {
+    await dispose()
+    throw err
+  }
+  return {
+    userData,
+    roots,
+    A,
+    B,
+    children,
+    host,
+    call,
+    enter,
+    rows,
+    removed,
+    start,
+    intact,
+    settle,
+    holdExit,
+    holdConfigure,
+    events,
+    publications,
+    person,
+    dispose,
+  }
+}
+
+it('keeps live job and fenced data planes independent through another vault startup and restart', async () => {
+  const fixture = await createScratchFixture()
+  const {
+    userData,
+    roots,
+    A,
+    B,
+    children,
+    host,
+    call,
+    enter,
+    rows,
+    removed,
+    start,
+    intact,
+    settle,
+    holdExit,
+  } = fixture
+  try {
     // Both A processes are doing real scratch work BEFORE B's startup sweep.
     const aJob = await start(A, 'job')
     const aFence = await start(A, 'fenced')
@@ -359,14 +543,7 @@ it('keeps live job and fenced data planes independent through another vault star
     // Hold A's real PTY exit callback after the operating-system child closes.
     // Teardown must keep waiting for the production finalizer, while B's same-id
     // job and fenced session remain operational.
-    const heldExit = deferred<void>()
-    releaseHeldExit = heldExit.resolve
-    const exitEntered = deferred<void>()
-    native.heldExit = {
-      cwd: aFence.entry.cwd,
-      entered: exitEntered.resolve,
-      wait: heldExit.promise,
-    }
+    const { heldExit, exitEntered } = holdExit(aFence.entry.cwd)
     let stoppedA = false
     const stoppingA = host.stop(A).then(() => {
       stoppedA = true
@@ -411,25 +588,150 @@ it('keeps live job and fenced data planes independent through another vault star
     await removed(join(b.jobs, `${bJob.sessionId}.pid`))
     expect(children).toHaveLength(5)
   } finally {
-    releaseHeldExit?.()
-    native.heldExit = null
-    // Explicit ownership ledger: close activations, reap every synthetic child,
-    // join provider/host finalizer deletions, then (and only then) remove roots.
-    await host.stopAll()
-    for (const entry of children) {
-      if (entry.child.exitCode === null && entry.child.signalCode === null)
-        entry.child.kill('SIGKILL')
-      await entry.closed
-      await removed(entry.cwd)
-      await removed(dirname(entry.home))
-    }
-    await Promise.all(native.removals.map((entry) => entry.done))
-    expect(
-      children.every((entry) => entry.child.exitCode !== null || entry.child.signalCode !== null),
-    ).toBe(true)
-    for (const entry of children) expect(defaultProbePid(entry.child.pid!)).toBe('gone')
-    await rm(userData, { recursive: true, force: true })
-    await expect(access(userData)).rejects.toMatchObject({ code: 'ENOENT' })
-    native.start = null
+    await fixture.dispose()
   }
 })
+
+it.each(['success', 'rejection'] as const)(
+  'keeps vault b live when provider configure %s arrives after vault a invalidation',
+  async (outcome) => {
+    const fixture = await createScratchFixture()
+    const {
+      userData,
+      roots,
+      A,
+      B,
+      children,
+      host,
+      call,
+      enter,
+      rows,
+      start,
+      intact,
+      settle,
+      holdConfigure,
+      events,
+      publications,
+      person,
+    } = fixture
+    let starting: Promise<unknown> | undefined
+    let stopping: Promise<void> | undefined
+    try {
+      await enter(B)
+      const bJob = await start(B, 'job')
+      const bFence = await start(B, 'fenced')
+      await enter(A)
+      const a = await agentScratchRoots(userData, { remote: A, root: roots[A] })
+      const b = await agentScratchRoots(userData, { remote: B, root: roots[B] })
+      const { gate, entered } = holdConfigure(A)
+      let startSettled = false
+      starting = call(A, 'agent.scoped', {
+        provider: 'codex',
+        name: 'delayed configure',
+        prompt: 'synthetic work',
+        scope: { read: ['input.md'], write: ['fenced.md'] },
+      }).finally(() => {
+        startSettled = true
+      })
+      // Observe any failure immediately, while retaining the original promise
+      // for assertions and the finally drain.
+      void starting.catch(() => {})
+      await entered
+      expect(startSettled).toBe(false)
+      const scratch = await readdir(a.fenced)
+      expect(scratch).toEqual(expect.arrayContaining(['575757575757', '575757575757.agent']))
+      expect(await readFile(join(a.fenced, '575757575757', 'input.md'), 'utf8')).toBe(A)
+      expect(native.configured.filter((entry) => entry.root === roots[A])).toEqual([])
+      expect(children).toHaveLength(2)
+
+      // stop revokes A synchronously, before waiting for configure. Its real
+      // capability dispatch refuses new work while B keeps both data planes.
+      let stopSettled = false
+      stopping = host.stop(A).then(() => {
+        stopSettled = true
+      })
+      void stopping.catch(() => {})
+      await expect(call(A, 'agent.sessions')).rejects.toThrow('no such method')
+      const aEvents = events.filter((event) => event.remote === A)
+      const aPublications = publications.filter((event) => event.remote === A)
+      expect(await call(B, 'agent.terminals')).toEqual([
+        expect.objectContaining({ id: bFence.terminalId, launchedFor: bFence.sessionId }),
+      ])
+      await intact(B, bJob.entry)
+      await intact(B, bFence.entry)
+      expect(startSettled).toBe(false)
+      expect(stopSettled).toBe(false)
+
+      if (outcome === 'success') gate.resolve()
+      else gate.reject(new Error('delayed synthetic configure rejection'))
+      await expect(starting).resolves.toEqual({ ok: false, message: 'That vault has been left.' })
+      await stopping
+      expect(native.configured.filter((entry) => entry.root === roots[A])).toEqual([
+        outcome === 'success'
+          ? { root: roots[A], outcome: 'resolved', dir: person }
+          : { root: roots[A], outcome: 'rejected' },
+      ])
+      // No late PTY/process, session/terminal publication, history or vault
+      // output can be produced by the now-resolved/rejected A start.
+      expect(children).toHaveLength(2)
+      expect(
+        children.every((entry) => entry.cwd.startsWith(b.jobs) || entry.cwd.startsWith(b.fenced)),
+      ).toBe(true)
+      expect(events.filter((event) => event.remote === A)).toEqual(aEvents)
+      expect(publications.filter((event) => event.remote === A)).toEqual(aPublications)
+      await expect(call(A, 'agent.sessions')).rejects.toThrow('no such method')
+      await expect(call(A, 'agent.terminals')).rejects.toThrow('no such method')
+      for (const path of [a.jobs, a.fenced, join(roots[A], 'job.md'), join(roots[A], 'fenced.md')])
+        await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
+      await intact(B, bJob.entry)
+      await intact(B, bFence.entry)
+      expect(await rows(B)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: bJob.sessionId, state: 'working' }),
+          expect.objectContaining({ id: bFence.sessionId, state: 'working' }),
+        ]),
+      )
+      // Real provider completion/copy-back after A's stop proves B was not
+      // merely left with a published capability surface or a stale row.
+      await settle(B, bJob)
+      await settle(B, bFence)
+      expect(publications).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            remote: B,
+            name: 'sessions',
+            payload: expect.arrayContaining([
+              expect.objectContaining({ id: bJob.sessionId, outcome: 'completed' }),
+              expect.objectContaining({ id: bFence.sessionId, outcome: 'completed', closed: true }),
+            ]),
+          }),
+        ]),
+      )
+      for (const path of [join(roots[A], 'job.md'), join(roots[A], 'fenced.md')])
+        await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
+      const history = JSON.parse(
+        await readFile(join(userData, 'agent-pty-history.json'), 'utf8').catch(
+          (err: NodeJS.ErrnoException) => {
+            if (err.code === 'ENOENT') return '{}'
+            throw err
+          },
+        ),
+      ) as Record<string, unknown[]>
+      expect(history[A] ?? []).toEqual([])
+      expect(events.filter((event) => event.remote === A)).toEqual(aEvents)
+      expect(publications.filter((event) => event.remote === A)).toEqual(aPublications)
+      expect(children).toHaveLength(2)
+      await host.stop(B)
+      for (const path of [a.jobs, a.fenced, b.jobs, b.fenced])
+        await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      // dispose releases configuration/exit gates and reaps owned children even
+      // when stop fails; always also join the dispatched start and stop.
+      try {
+        await fixture.dispose()
+      } finally {
+        await Promise.allSettled([starting, stopping])
+      }
+    }
+  },
+)
