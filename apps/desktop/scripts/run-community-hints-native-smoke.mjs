@@ -289,12 +289,18 @@ try {
     'real release install requires consent; setup marker is verified in installed release checkout; pin/acquire start supervised server and emitted production bridge asset is readable',
   )
   const focusGuest = async () => {
+    await cdp('Page.bringToFront')
     const rect = await evaluate(
       '(()=>{const r=document.querySelector("iframe").getBoundingClientRect();return {x:r.x+10,y:r.y+10}})()',
     )
     await click(rect.x, rect.y)
     await wait('document.activeElement===document.querySelector("iframe")', 'guest frame focus')
     await wait('document.hasFocus()', 'native guest keyboard focus', true)
+    // Flush layout/focus work from the preceding presentation change before input.
+    const rendered =
+      'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))'
+    await evaluate(rendered)
+    await evaluate(rendered, true)
   }
   const hints = () =>
     evaluate(
@@ -391,12 +397,19 @@ try {
   await wait('!document.querySelector("[data-host-hints]")', 'dark screenshot hint cancellation')
   await evaluate('document.documentElement.dataset.theme="light"')
   await cdp('Page.startScreencast', { format: 'png', everyNthFrame: 1 })
+  await sleep(1500)
   await start()
   await shot('light.png')
-  await sleep(3200)
   const current = (await hints()).find((hint) => hint.target === 'Native button')
+  assert(current?.key, 'native button hint disappeared before selection')
   for (const letter of current.key) await key(letter)
   await wait('window.fixtureClicks===1', 'guest default button activation', true)
+  await sleep(2000)
+  const finalFrame = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
+  screencastFrames.push({
+    image: Buffer.from(finalFrame.data, 'base64'),
+    timestamp: Date.now() / 1000,
+  })
   await cdp('Page.stopScreencast')
   assert(screencastFrames.length > 0, 'CDP screencast produced no activation video frames')
   assertions.push('actual native keyboard prefix activates guest button through shared coordinator')
