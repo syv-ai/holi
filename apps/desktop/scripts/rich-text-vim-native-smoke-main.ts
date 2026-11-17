@@ -821,7 +821,15 @@ async function run() {
   await evaluate(`window.richTextVimFixture.focus('primary')`)
   await key('f', [process.platform === 'darwin' ? 'meta' : 'control'])
   await wait(`document.querySelector('input[aria-label="Find"]')`, 'native platform find shortcut')
-  await evaluate(`document.querySelector('[role="textbox"]').editor.commands.focus()`)
+  const editorPoint = await evaluate<{ x: number; y: number }>(`(() => {
+    const rect = document.querySelector('[data-fixture-editor="primary"] [role="textbox"]').getBoundingClientRect()
+    return { x: rect.left + 20, y: rect.top + 10 }
+  })()`)
+  click(editorPoint)
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]').editor.view.hasFocus()`,
+    'native click returns focus from find to the editor',
+  )
   await key('Escape')
   await wait(
     `!document.querySelector('input[aria-label="Find"]')`,
