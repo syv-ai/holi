@@ -417,6 +417,24 @@ export function createPages(deps: PagesDeps): Pages & {
             value.capture === tab.hintRequestCapture
           ) {
             tab.hintPendingKeys.delete(value.capture)
+            const origin = tab.hintRequestOrigin
+            if (origin !== null) {
+              emitHint(
+                {
+                  tab: tab.id,
+                  nonce,
+                  attachment,
+                  request: tab.hintRequest,
+                  origin,
+                  type: 'cancel',
+                },
+                () =>
+                  isPresented(tab) &&
+                  tab.vimNonce === nonce &&
+                  tab.attachmentId === attachment &&
+                  tab.vimGeneration === generation,
+              )
+            }
             tab.hintRequestCapture = null
             tab.hintRequestOrigin = null
             tab.hintPendingOwner = null

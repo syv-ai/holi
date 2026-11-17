@@ -815,7 +815,6 @@ test.each(['blur', 'pointer', 'request', 'preference', 'escape', 'surface'] as c
     let remoteKey = ''
     let subscriptions = 0
     let unsubscriptions = 0
-    let routeSelectedKey: ((event: KeyboardEvent) => boolean) | undefined
     const adapter: AsyncHostHintAdapter = {
       discover: async () =>
         Array.from({ length: 30 }, (_, index) => ({
@@ -837,16 +836,10 @@ test.each(['blur', 'pointer', 'request', 'preference', 'escape', 'surface'] as c
             finish = resolve
           }),
       ),
-      subscribe: (_request, invalidate, routeKey) => {
+      subscribe: () => {
         subscriptions++
-        routeSelectedKey = (event) => {
-          const routed = routeKey(event)
-          if (routed) invalidate()
-          return routed
-        }
         return () => {
           unsubscriptions++
-          routeSelectedKey = undefined
         }
       },
     }
@@ -880,7 +873,7 @@ test.each(['blur', 'pointer', 'request', 'preference', 'escape', 'surface'] as c
         bubbles: true,
         cancelable: true,
       })
-      expect(routeSelectedKey?.(ownerEscape)).toBe(true)
+      act(() => window.dispatchEvent(ownerEscape))
       expect(ownerEscape.defaultPrevented).toBe(true)
     }
     if (reason === 'surface') {

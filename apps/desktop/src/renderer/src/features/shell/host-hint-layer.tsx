@@ -369,6 +369,10 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       start(detail?.source ?? null, detail?.adapter, detail?.scoped)
     }
     const onKey = (event: KeyboardEvent): boolean => {
+      if (event.key === 'Escape' && activations.current.size > 0) {
+        cancel()
+        return true
+      }
       const active = current.current
       if (!active) return false
       if (!hostHintsUnchanged(active.discoveryTargets, active.adapter, active.root)) {

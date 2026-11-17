@@ -237,6 +237,67 @@
     'cancelled delayed activation clicked',
   )
 
+  // Once the selected async target retires the visible session, Escape in the
+  // real host window must still cancel its owned pending activation.
+  await requestPageHints()
+  await until(async () => (await pageLabelsFor(page)).length > 0, 'host Escape activation hints')
+  const hostEscapeTarget = (await pageLabelsFor(page)).find((item: any) =>
+    /Submit/.test(item.label),
+  )
+  assert(hostEscapeTarget)
+  const clicksBeforeHostEscape = (await pageEval<any[]>('window.qaHintEvents')).length
+  let releaseHostEscape!: () => void
+  let hostEscapeActivationEntered!: () => void
+  const hostEscapeEntered = new Promise<void>((resolve) => {
+    hostEscapeActivationEntered = resolve
+  })
+  hintActivationGate = {
+    wait: new Promise<void>((resolve) => {
+      releaseHostEscape = resolve
+    }),
+    entered: hostEscapeActivationEntered,
+  }
+  try {
+    await pressLabel(hostEscapeTarget.key)
+    await hostEscapeEntered
+    const queued = hintUiCalls.filter((call) => call.name === 'browser.hints-activate').at(-1)!
+      .params.owner
+    const hostEscapePrevented = await ui(`(() => {
+      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    })()`)
+    assert.equal(
+      hostEscapePrevented,
+      true,
+      'owned host Escape was not consumed by the shell dispatcher',
+    )
+    await until(
+      () =>
+        hintUiCalls.some(
+          (call) =>
+            call.name === 'browser.hints-clear' &&
+            call.params.request === queued.request &&
+            call.params.nonce === queued.nonce &&
+            call.params.attachment === queued.attachment,
+        ),
+      'host-window Escape clears exact delayed activation',
+    )
+    await wait(350)
+    assert.equal(await pageOverlayCount(), 0, 'host Escape left page labels')
+    assert.equal(await hostHintCount(), 0, 'host Escape left host labels')
+    hintMark('native-host-escape-cancels-selected-delayed-browser-action')
+  } finally {
+    hintActivationGate = undefined
+    releaseHostEscape()
+  }
+  await wait(300)
+  assert.equal(
+    (await pageEval<any[]>('window.qaHintEvents')).length,
+    clicksBeforeHostEscape,
+    'host Escape allowed delayed activation to click',
+  )
+
   await requestPageHints()
   await until(async () => (await pageLabelsFor(page)).length > 0, 'opacity invalidation hints')
   await pageEval(`document.querySelector('#trusted-button').style.opacity='0'`)
@@ -253,6 +314,44 @@
   await pageNativePress('Escape')
   await pageEval(`document.querySelector('#trusted-button').style.opacity=''`)
   hintMark('transparent-targets-and-ancestors-excluded-and-opacity-mutation-revokes')
+
+  // Hold only this fixture's isolated-world poll while f and Escape are queued
+  // in the same native turn. The exact cancellation must reach the host even
+  // though discovery never starts; it must not produce toolbar fallback labels.
+  await pageEval(`document.body.tabIndex=-1;document.body.focus()`)
+  const clearsBeforePrediscoveryCancel = hintUiCalls.filter(
+    (call) => call.name === 'browser.hints-clear',
+  ).length
+  await captureFrame(page)
+  await page.executeJavaScriptInIsolatedWorld(1017, [
+    { code: `globalThis.qaSavedHintPoll=__holiPage.hints.poll;__holiPage.hints.poll=()=>[];true` },
+  ])
+  try {
+    await pageNativePress('f')
+    await pageNativePress('Escape')
+    const pendingEvents = await page.executeJavaScriptInIsolatedWorld(1017, [
+      { code: `qaSavedHintPoll()` },
+    ])
+    assert.deepEqual(
+      pendingEvents.map((event: any) => event.type),
+      ['request', 'key', 'revoke'],
+    )
+    assert(Number.isSafeInteger(pendingEvents[0].capture))
+  } finally {
+    await page.executeJavaScriptInIsolatedWorld(1017, [
+      { code: `__holiPage.hints.poll=qaSavedHintPoll;delete globalThis.qaSavedHintPoll` },
+    ])
+  }
+  await until(
+    () =>
+      hintUiCalls.filter((call) => call.name === 'browser.hints-clear').length >
+      clearsBeforePrediscoveryCancel,
+    'cancelled pre-discovery request reaches host adapter',
+  )
+  await wait(350)
+  assert.equal(await pageOverlayCount(), 0, 'pre-discovery Escape left page labels')
+  assert.equal(await hostHintCount(), 0, 'cancelled discovery fell back to host toolbar labels')
+  hintMark('native-prediscovery-escape-cancels-request-without-host-fallback')
 
   // Hold only this fixture's isolated-world poll while genuine native keys fill
   // the pre-discovery queue. No synthetic/trust override or production test door.

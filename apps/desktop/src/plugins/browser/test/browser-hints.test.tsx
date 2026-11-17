@@ -48,7 +48,12 @@ function setup(current = () => true) {
     ...context,
     ownerOrigin: `opaque-owner-${id}`,
     adapter: createBrowserHintAdapter(context),
-    event: (request: number, origin: string, type: 'request' | 'key' | 'revoke', extra = {}) =>
+    event: (
+      request: number,
+      origin: string,
+      type: 'request' | 'cancel' | 'key' | 'revoke',
+      extra = {},
+    ) =>
       dispatchBrowserHintEvent(context.remote, {
         tab: context.tab,
         nonce: context.nonce,
@@ -56,7 +61,7 @@ function setup(current = () => true) {
         request,
         origin,
         type,
-        ...(type === 'request' ? {} : { snapshot: 2, geometry: 3 }),
+        ...(type === 'request' || type === 'cancel' ? {} : { snapshot: 2, geometry: 3 }),
         ...extra,
       }),
   }
@@ -141,6 +146,35 @@ test('a revoke before discovery retires only its exact page-origin request', () 
   fixture.event(7, 'request-token', 'revoke')
   expect(input('browser.hints-clear')).toEqual([
     { tab: fixture.tab, nonce: fixture.nonce, attachment: fixture.attachment, request: 7 },
+  ])
+  fixture.adapter.dispose()
+})
+
+test('cancels a request before first discovery without crossing into the next request', async () => {
+  const fixture = setup()
+  const oldController = new AbortController()
+  let unsubscribeOld = () => {}
+  const oldInvalidated = vi.fn(() => {
+    oldController.abort()
+    unsubscribeOld()
+  })
+  fixture.event(7, 'old-origin', 'request')
+  unsubscribeOld = fixture.adapter.subscribe(1, oldInvalidated, () => false)
+  fixture.event(7, 'old-origin', 'cancel')
+  expect(oldInvalidated).toHaveBeenCalledOnce()
+  expect(await fixture.adapter.discover(1, oldController.signal)).toBeNull()
+  expect(input('browser.hints-discover')).toHaveLength(0)
+
+  fixture.event(8, 'new-origin', 'request')
+  const newInvalidated = vi.fn()
+  fixture.adapter.subscribe(2, newInvalidated, () => false)
+  expect(await fixture.adapter.discover(2, new AbortController().signal)).toEqual([
+    { id: 'target-1', label: 'Continue', x: 20, y: 30 },
+  ])
+  expect(oldInvalidated).toHaveBeenCalledOnce()
+  expect(newInvalidated).not.toHaveBeenCalled()
+  expect(input('browser.hints-discover')).toEqual([
+    { tab: fixture.tab, nonce: fixture.nonce, attachment: fixture.attachment, request: 8 },
   ])
   fixture.adapter.dispose()
 })
