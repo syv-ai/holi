@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { fakeClaudeCommand } from './fake-claude-command'
 import type { ClaudeCli } from '../main/claude/cli'
 import { SIGN_IN_NOTICE } from '../main/claude/config-dir'
 import {
@@ -28,7 +29,7 @@ const row = (id: string, over: Row = {}): Row => ({
   ...over,
 })
 
-function setup(initial: Row[] = []) {
+function setup(initial: Row[] = [], nativeCli?: ClaudeCli, root = ROOT) {
   let listing: Row[] = initial
   const cli = {
     list: vi.fn(async () => JSON.stringify(listing)),
@@ -88,7 +89,7 @@ function setup(initial: Row[] = []) {
   const running = new Set<number>()
   const vault: AgentVault = {
     remote: REMOTE,
-    root: ROOT,
+    root,
     head: () => Promise.resolve('base-sha'),
     commitNow: () => Promise.resolve(null),
     pauseSync: (reason: string) => {
@@ -105,7 +106,14 @@ function setup(initial: Row[] = []) {
       terminal: () => ({ bin: '/usr/local/bin/claude', args: [], env: {} }),
       firstSpawn: { take: async () => true, notice: SIGN_IN_NOTICE },
       capabilities: {
-        background: { cli, parseListing, isLive, summarise, watch: () => () => {}, message },
+        background: {
+          cli: nativeCli ?? cli,
+          parseListing,
+          isLive,
+          summarise,
+          watch: () => () => {},
+          message,
+        },
         status: { contextPercent: readContextPercent, model: readModelName },
       },
     },
@@ -136,6 +144,26 @@ function setup(initial: Row[] = []) {
 }
 
 describe('agent sessions', () => {
+  it('propagates a malformed native launch receipt without speculative stop or terminal attach', async () => {
+    const command = await fakeClaudeCommand('unexpected launch receipt\n')
+    const t = setup([], command.cli, command.target.root)
+    try {
+      await t.attach()
+      const result = await t.sessions.start({ name: 'Mail catch-up', prompt: 'Read only' })
+      expect(result).toMatchObject({ ok: false, cleanupUnconfirmed: true })
+      expect(result).not.toHaveProperty('sessionId')
+      expect(t.opened).toEqual([])
+      expect((await command.calls()).filter((args) => args[0] === 'stop')).toEqual([])
+      const pid = await command.childPid()
+      expect(() => process.kill(pid, 0)).not.toThrow()
+      const beat = await command.heartbeat()
+      await vi.waitFor(async () => expect(await command.heartbeat()).toBeGreaterThan(beat))
+    } finally {
+      await t.sessions.leave()
+      await command.close()
+    }
+  })
+
   it('stops a new terminal session when its vault closes during startup', async () => {
     const t = setup()
     await t.attach()

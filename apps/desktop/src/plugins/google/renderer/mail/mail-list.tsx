@@ -387,6 +387,9 @@ interface MailListProps {
   catchUpError: string | null
   catchUpRetryable: boolean
   catchUpRecovery: boolean
+  catchUpCleanupPending: boolean
+  catchUpCleanupFailed: boolean
+  onCatchUpCleanup: () => void
   onCatchUpRecovery: () => void
   visible: boolean
 }
@@ -404,6 +407,9 @@ export function MailList({
   catchUpError,
   catchUpRetryable,
   catchUpRecovery,
+  catchUpCleanupPending,
+  catchUpCleanupFailed,
+  onCatchUpCleanup,
   onCatchUpRecovery,
   visible,
 }: MailListProps) {
@@ -594,6 +600,11 @@ export function MailList({
           Starting catch-up conversation…
         </div>
       )}
+      {catchUpCleanupPending && (
+        <div role="status" className="text-muted-foreground px-3 py-2 text-sm">
+          Confirming that the surviving session has stopped…
+        </div>
+      )}
       {catchUpError !== null && (
         <div
           role="alert"
@@ -601,9 +612,30 @@ export function MailList({
         >
           <span>{catchUpError}</span>
           {catchUpRecovery ? (
-            <Button variant="outline" size="xs" onClick={onCatchUpRecovery}>
-              Open surviving session
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={onCatchUpRecovery}
+                disabled={catchUpCleanupPending}
+              >
+                Open surviving session
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={onCatchUpCleanup}
+                disabled={catchUpCleanupPending}
+              >
+                {catchUpCleanupPending
+                  ? 'Confirming stop…'
+                  : catchUpCleanupFailed
+                    ? 'Retry cleanup'
+                    : 'Stop surviving session'}
+              </Button>
+            </div>
           ) : (
             catchUpRetryable && (
               <Button variant="outline" size="xs" onClick={onCatchUp}>
@@ -657,7 +689,7 @@ export function MailList({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={catchUpPending ? 'Starting catch-up' : 'Catch me up'}
-                  disabled={catchUpPending || catchUpRecovery}
+                  disabled={catchUpPending || !catchUpRetryable}
                   onClick={onCatchUp}
                 >
                   <SparklesIcon aria-hidden="true" />

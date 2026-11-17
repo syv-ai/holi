@@ -32,11 +32,14 @@ const setClientMock = vi.fn()
 let accountSub = 'a'
 const toastMock = vi.fn()
 const openExternal = vi.fn()
-const { agentStartMock, agentServiceMock, tasksAvailabilityMock } = vi.hoisted(() => ({
-  agentStartMock: vi.fn(),
-  agentServiceMock: vi.fn(),
-  tasksAvailabilityMock: vi.fn(),
-}))
+const { agentStartMock, agentStopMock, agentServiceMock, tasksAvailabilityMock } = vi.hoisted(
+  () => ({
+    agentStartMock: vi.fn(),
+    agentStopMock: vi.fn(),
+    agentServiceMock: vi.fn(),
+    tasksAvailabilityMock: vi.fn(),
+  }),
+)
 
 vi.mock('@/plugin-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/plugin-api')>()
@@ -101,8 +104,17 @@ vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: {
       run: {
-        mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
+        mutate: async ({
+          remote,
+          name,
+          paramsJson,
+        }: {
+          remote: string
+          name: string
+          paramsJson?: string
+        }) => {
           const params = paramsJson === undefined ? undefined : JSON.parse(paramsJson)
+          if (name === 'agent.stop') return agentStopMock(remote, params)
           const verb = google[name.replace(/^google\./, '')]
           if (verb === undefined) throw new Error(`unexpected ${name}`)
           return verb(params)
@@ -202,6 +214,7 @@ beforeEach(() => {
   accountSub = 'a'
   toastMock.mockReset()
   openExternal.mockReset()
+  agentStopMock.mockReset().mockResolvedValue({ ok: true })
   agentStartMock.mockReset().mockResolvedValue({ ok: true })
   agentServiceMock.mockReset().mockReturnValue({
     start: agentStartMock,
@@ -1084,4 +1097,152 @@ test('catch-up ignores duplicate clicks and permits retry after a failed launch'
   expect(await screen.findByRole('alert')).toHaveTextContent('Temporary launch failure')
   await user.click(screen.getByRole('button', { name: 'Retry' }))
   await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(2))
+})
+
+test.each(['returned', 'thrown'] as const)(
+  'a %s clean catch-up failure is shared with Mail remounted before settlement',
+  async (failure) => {
+    const user = userEvent.setup()
+    let settle!: () => void
+    agentStartMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          settle = () =>
+            failure === 'returned'
+              ? resolve({ ok: false, message: 'Temporary startup failure' })
+              : reject(new Error('Temporary startup failure'))
+        }),
+    )
+    const first = render(<MailShell />)
+    await screen.findByRole('list', { name: 'Inbox' })
+    await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+    first.unmount()
+    render(<MailShell />)
+    expect(await screen.findByRole('button', { name: 'Starting catch-up' })).toBeDisabled()
+    settle()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Temporary startup failure')
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  },
+)
+
+test('confirmed stop of the known survivor unlocks catch-up, but opening it does not', async () => {
+  const user = userEvent.setup()
+  agentStartMock.mockResolvedValueOnce({
+    ok: false,
+    cleanupUnconfirmed: true,
+    sessionId: 'owned-survivor',
+    message: 'Cleanup unconfirmed',
+  })
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  await user.click(await screen.findByRole('button', { name: 'Open surviving session' }))
+  expect(screen.getByRole('button', { name: 'Catch me up' })).toBeDisabled()
+  expect(agentStopMock).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Stop surviving session' }))
+  await waitFor(() =>
+    expect(agentStopMock).toHaveBeenCalledWith('syv-ai/vault', { id: 'owned-survivor' }),
+  )
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Catch me up' })).toBeEnabled())
+  expect(screen.queryByRole('alert')).toBeNull()
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(2))
+})
+
+test.each(['returned', 'thrown'] as const)(
+  'a %s cleanup failure keeps catch-up locked with an explicit cleanup retry',
+  async (failure) => {
+    const user = userEvent.setup()
+    agentStartMock.mockResolvedValueOnce({
+      ok: false,
+      cleanupUnconfirmed: true,
+      sessionId: 'owned-survivor',
+      message: 'Cleanup unconfirmed',
+    })
+    if (failure === 'returned')
+      agentStopMock.mockResolvedValueOnce({ ok: false, message: 'Stop refused' })
+    else agentStopMock.mockRejectedValueOnce(new Error('Stop refused'))
+    render(<MailShell />)
+    await screen.findByRole('list', { name: 'Inbox' })
+    await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+    await user.click(await screen.findByRole('button', { name: 'Stop surviving session' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Stop refused')
+    expect(screen.getByRole('button', { name: 'Catch me up' })).toBeDisabled()
+    expect(agentStartMock).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Retry cleanup' }))
+    await waitFor(() => expect(agentStopMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Catch me up' })).toBeEnabled())
+  },
+)
+
+test.each(['vault', 'account'] as const)(
+  'switching %s during cleanup cannot consume the confirmation',
+  async (scope) => {
+    const user = userEvent.setup()
+    let finish!: (result: { ok: true }) => void
+    agentStopMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    agentStartMock.mockResolvedValue({
+      ok: false,
+      cleanupUnconfirmed: true,
+      sessionId: 'owned-survivor',
+      message: 'Cleanup unconfirmed',
+    })
+    render(<MailShell />)
+    await screen.findByRole('list', { name: 'Inbox' })
+    await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+    await user.click(await screen.findByRole('button', { name: 'Stop surviving session' }))
+    expect(await screen.findByRole('button', { name: 'Confirming stop…' })).toBeDisabled()
+    if (scope === 'vault') {
+      getDefaultStore().set(activeRemoteAtom, 'syv-ai/other')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Catch me up' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+      await screen.findByRole('button', { name: 'Stop surviving session' })
+      getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+      await screen.findByRole('button', { name: 'Confirming stop…' })
+    } else {
+      for (const email of ['ada@home.test', 'ada@syv.ai']) {
+        await user.click(screen.getByRole('button', { name: /Google account/ }))
+        await user.click(await screen.findByRole('menuitem', { name: email }))
+        await screen.findByRole('button', { name: `Google account ${email}` })
+      }
+    }
+    finish({ ok: true })
+    await screen.findByRole('button', { name: 'Stop surviving session' })
+    expect(screen.getByRole('button', { name: 'Catch me up' })).toBeDisabled()
+    expect(getDefaultStore().get(mailCatchUpByVaultAtom).get('syv-ai/vault')?.kind).toBe(
+      'uncertain',
+    )
+    if (scope === 'vault')
+      expect(getDefaultStore().get(mailCatchUpByVaultAtom).get('syv-ai/other')?.kind).toBe(
+        'uncertain',
+      )
+  },
+)
+
+test('an unknown native session id remains blocked without speculative stop or launch retry', async () => {
+  const user = userEvent.setup()
+  agentStartMock.mockResolvedValueOnce({
+    ok: false,
+    cleanupUnconfirmed: true,
+    message: 'Native ownership unknown; identify the run in Claude Code before stopping it.',
+  })
+  const first = render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('identify the run in Claude Code')
+  first.unmount()
+  render(<MailShell />)
+  expect(await screen.findByRole('button', { name: 'Catch me up' })).toBeDisabled()
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Stop surviving session' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Open surviving session' })).toBeNull()
+  expect(agentStopMock).not.toHaveBeenCalled()
+  expect(agentStartMock).toHaveBeenCalledTimes(1)
 })

@@ -23,14 +23,20 @@ import {
   useHasCapability,
   sessionAtom,
 } from '@/plugin-api'
-import { beginMailCatchUp, finishMailCatchUp, mailCatchUpByVaultAtom } from './mail-catch-up'
+import {
+  beginMailCatchUp,
+  confirmMailCatchUpCleanup,
+  finishMailCatchUp,
+  mailCatchUpByVaultAtom,
+  reportMailCatchUpRecoveryError,
+} from './mail-catch-up'
 import type { ComposeIntent } from '../compose-intent'
 import { MailComposer, type MailComposerHandle } from '../mail-composer'
 import { ComposeSessionGate } from '../compose-session'
 import { buildSummarizePrompt } from '../summarize-prompt'
 import { TASKS_CREATE, tasksCreateCap } from '../tasks-cap'
 import { googleCap } from '../google-cap'
-import { useGoogleAccount } from '../account'
+import { googleAccountRevisionAtom, useGoogleAccount } from '../account'
 import { AppHeader, type ThreadCommands } from './mail-header'
 import { AppSidebar } from './mail-sidebar'
 import { MailList } from './mail-list'
@@ -60,21 +66,27 @@ export function MailShell({
   const catchUpStates = useAtomValue(mailCatchUpByVaultAtom)
   const catchUpState = remote === null ? undefined : catchUpStates.get(remote)
   const [catchUpError, setCatchUpError] = useState<string | null>(null)
-  const [catchUpRetryable, setCatchUpRetryable] = useState(true)
-  const catchUpContext = useRef({ remote, revision: remoteRevision })
+  const catchUpContext = useRef({ remote, revision: remoteRevision, account: currentSub })
+  const recoveryContext = useRef<object | null>(null)
+  useEffect(() => {
+    recoveryContext.current = {}
+    return () => {
+      recoveryContext.current = null
+    }
+  }, [remote, remoteRevision, currentSub])
   useEffect(() => {
     if (
       catchUpContext.current.remote === remote &&
-      catchUpContext.current.revision === remoteRevision
+      catchUpContext.current.revision === remoteRevision &&
+      catchUpContext.current.account === currentSub
     )
       return
-    catchUpContext.current = { remote, revision: remoteRevision }
+    catchUpContext.current = { remote, revision: remoteRevision, account: currentSub }
     setCatchUpError(null)
-    setCatchUpRetryable(true)
-  }, [remote, remoteRevision])
+  }, [remote, remoteRevision, currentSub])
 
   const catchUp = () => {
-    if (catchUpState !== undefined) return
+    if (catchUpState !== undefined && catchUpState.kind !== 'failed') return
     if (login === null) {
       setCatchUpError('Sign in to GitHub to catch up on tasks assigned to you.')
       return
@@ -89,10 +101,9 @@ export function MailShell({
     }
     const origin = remote
     const originRevision = store.get(activeRemoteRevisionValueAtom)
-    const admissionId = beginMailCatchUp(store, origin, originRevision)
+    const admissionId = beginMailCatchUp(store, origin)
     if (admissionId === null) return
     setCatchUpError(null)
-    setCatchUpRetryable(true)
     const prompt = [
       `Catch me up in vault ${origin}. The signed-in GitHub login is ${login}.`,
       '',
@@ -119,30 +130,63 @@ export function MailShell({
             sessionId: result.sessionId ?? null,
           })
         } else {
-          finishMailCatchUp(store, origin, admissionId, { kind: 'failed' })
-          if (
-            store.get(activeRemoteAtom) === origin &&
-            store.get(activeRemoteRevisionValueAtom) === originRevision
-          )
-            setCatchUpError(result.message)
+          finishMailCatchUp(store, origin, admissionId, {
+            kind: 'failed',
+            revision: originRevision,
+            error: result.message,
+          })
         }
       })
       .catch((error: unknown) => {
-        finishMailCatchUp(store, origin, admissionId, { kind: 'failed' })
-        if (
-          store.get(activeRemoteAtom) === origin &&
-          store.get(activeRemoteRevisionValueAtom) === originRevision
-        )
-          setCatchUpError(error instanceof Error ? error.message : 'Could not start catch-up.')
+        finishMailCatchUp(store, origin, admissionId, {
+          kind: 'failed',
+          revision: originRevision,
+          error: error instanceof Error ? error.message : 'Could not start catch-up.',
+        })
       })
   }
-  const recoverCatchUp = () => {
-    if (agent === null || catchUpState?.kind !== 'uncertain' || catchUpState.sessionId === null)
-      return
-    void agent.show({ session: catchUpState.sessionId, live: true }).then((result) => {
-      if (!result.ok) setCatchUpError(result.message)
-    })
+  const recoveryIsCurrent = () => {
+    const context = recoveryContext.current
+    const revision = store.get(activeRemoteRevisionValueAtom)
+    const accountRevision = store.get(googleAccountRevisionAtom)
+    return () =>
+      context !== null &&
+      recoveryContext.current === context &&
+      store.get(activeRemoteAtom) === remote &&
+      store.get(activeRemoteRevisionValueAtom) === revision &&
+      store.get(googleAccountRevisionAtom) === accountRevision
   }
+  const recoverCatchUp = () => {
+    if (
+      agent === null ||
+      remote === null ||
+      catchUpState?.kind !== 'uncertain' ||
+      catchUpState.sessionId === null
+    )
+      return
+    const isCurrent = recoveryIsCurrent()
+    const report = (message: string) => {
+      if (isCurrent()) reportMailCatchUpRecoveryError(store, remote, catchUpState.id, message)
+    }
+    void agent
+      .show({ session: catchUpState.sessionId, live: true })
+      .then((result) => {
+        if (!result.ok) report(result.message)
+      })
+      .catch((error: unknown) => {
+        report(error instanceof Error ? error.message : 'Could not open surviving session.')
+      })
+  }
+  const confirmCleanup = () => {
+    if (remote === null || catchUpState?.kind !== 'uncertain') return
+    void confirmMailCatchUpCleanup(store, remote, catchUpState.id, recoveryIsCurrent())
+  }
+  const sharedError =
+    catchUpState?.kind === 'uncertain'
+      ? [catchUpState.error, catchUpState.recoveryError].filter(Boolean).join(' ')
+      : catchUpState?.kind === 'failed' && catchUpState.revision === remoteRevision
+        ? catchUpState.error
+        : null
 
   return (
     <MailAccountShell
@@ -151,11 +195,20 @@ export function MailShell({
       className={className}
       visible={visible}
       catchUpPending={catchUpState?.kind === 'pending'}
-      catchUpError={catchUpState?.kind === 'uncertain' ? catchUpState.error : catchUpError}
-      catchUpRetryable={catchUpState?.kind === 'uncertain' ? false : catchUpRetryable}
+      catchUpError={
+        catchUpState?.kind === 'uncertain' ? sharedError : (catchUpError ?? sharedError)
+      }
+      catchUpRetryable={catchUpState?.kind !== 'uncertain'}
       catchUpRecovery={catchUpState?.kind === 'uncertain' && catchUpState.sessionId !== null}
       onCatchUp={catchUp}
       onCatchUpRecovery={recoverCatchUp}
+      catchUpCleanupPending={
+        catchUpState?.kind === 'uncertain' && catchUpState.confirmation !== undefined
+      }
+      catchUpCleanupFailed={
+        catchUpState?.kind === 'uncertain' && catchUpState.recoveryError !== undefined
+      }
+      onCatchUpCleanup={confirmCleanup}
     />
   )
 }
@@ -170,6 +223,9 @@ function MailAccountShell({
   catchUpRecovery,
   onCatchUp,
   onCatchUpRecovery,
+  catchUpCleanupPending,
+  catchUpCleanupFailed,
+  onCatchUpCleanup,
 }: {
   account: string | null
   className?: string
@@ -180,6 +236,9 @@ function MailAccountShell({
   catchUpRecovery: boolean
   onCatchUp: () => void
   onCatchUpRecovery: () => void
+  catchUpCleanupPending: boolean
+  catchUpCleanupFailed: boolean
+  onCatchUpCleanup: () => void
 }) {
   const { currentSub } = useGoogleAccount()
   const mail = useMail(account)
@@ -478,6 +537,9 @@ function MailAccountShell({
             catchUpRetryable={catchUpRetryable}
             catchUpRecovery={catchUpRecovery}
             onCatchUpRecovery={onCatchUpRecovery}
+            catchUpCleanupPending={catchUpCleanupPending}
+            catchUpCleanupFailed={catchUpCleanupFailed}
+            onCatchUpCleanup={onCatchUpCleanup}
             visible={visible}
           />
         </AppSidebar>
