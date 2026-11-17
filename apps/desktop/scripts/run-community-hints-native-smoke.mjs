@@ -176,15 +176,6 @@ try {
   const contexts = new Map()
   cdpClient = createCdpClient(ws, {
     onEvent(message) {
-      if (message.method === 'Page.screencastFrame') {
-        screencastFrames.push({
-          image: Buffer.from(message.params.data, 'base64'),
-          timestamp: message.params.metadata.timestamp,
-        })
-        void cdpClient.call('Page.screencastFrameAck', {
-          sessionId: message.params.sessionId,
-        })
-      }
       if (message.method === 'Runtime.executionContextCreated' && !message.sessionId)
         contexts.set(message.params.context.id, message.params.context)
       if (message.method === 'Runtime.executionContextDestroyed')
@@ -237,17 +228,19 @@ try {
       `timeout: ${description}; host=${await evaluate('document.body.innerText')}; hostMessages=${JSON.stringify(await evaluate('window.smokeMessages'))}; guestMessages=${JSON.stringify(await evaluate('window.smokeMessages', true))}`,
     )
   }
-  const key = async (value) => {
+  const key = async (value, modifiers = 0) => {
     await cdp('Input.dispatchKeyEvent', {
       type: 'keyDown',
       key: value,
       code: value.length === 1 ? `Key${value.toUpperCase()}` : value,
       text: value.length === 1 ? value : undefined,
+      modifiers,
     })
     await cdp('Input.dispatchKeyEvent', {
       type: 'keyUp',
       key: value,
       code: value.length === 1 ? `Key${value.toUpperCase()}` : value,
+      modifiers,
     })
   }
   const click = async (x, y) => {
@@ -326,6 +319,10 @@ try {
   }
   await start()
   const first = await hints()
+  const realSnapshot = await evaluate(
+    'window.smokeMessages.map(message=>message.data).filter(message=>message?.type==="holi-hints:snapshot").at(-1)',
+  )
+  assert(realSnapshot?.nonce && Number.isSafeInteger(realSnapshot.revision))
   assert.equal(
     first.some((hint) => hint.target === 'Host action'),
     false,
@@ -336,11 +333,17 @@ try {
     'offscreen target exposed',
   )
   const button = first.find((hint) => hint.target === 'Native button')
-  assert(button?.key, 'guest native button label absent')
+  assert(button?.key, `guest native button label absent: ${JSON.stringify(first)}`)
   const addTarget = first.find((hint) => hint.target === 'Temporary target')
   assert(addTarget?.key, 'dynamic-target trigger label absent')
   for (const letter of addTarget.key) await key(letter)
   await wait('!document.querySelector("[data-host-hints]")', 'target mutation invalidation')
+  await evaluate(`window.frames[0].postMessage(${JSON.stringify(realSnapshot)}, "*")`)
+  await evaluate(
+    `(()=>{const frame=document.querySelector("iframe");const snapshot=${JSON.stringify(realSnapshot)};for(const [source,origin,data] of [[window,location.origin,snapshot],[frame.contentWindow,"https://wrong-origin.invalid",snapshot],[frame.contentWindow,location.origin,{...snapshot,nonce:snapshot.nonce+"stale"}],[frame.contentWindow,location.origin,{...snapshot,revision:Math.max(0,snapshot.revision-1)}]])window.dispatchEvent(new MessageEvent("message",{source,origin,data}))})()`,
+  )
+  await sleep(100)
+  assert.equal(await evaluate('!!document.querySelector("[data-host-hints]")'), false)
   await start()
   assert(
     (await hints()).some((hint) => hint.target === 'Dynamic target'),
@@ -348,7 +351,7 @@ try {
   )
   await key('Escape')
   assertions.push(
-    'native activation adds a live target; DOM mutation invalidates old labels and the next snapshot includes the new target',
+    'native activation adds a live target; mutation invalidates labels, real stale snapshots and source/origin/nonce/revision replays are rejected, and fresh labels include the new target',
   )
   const shot = async (name) => {
     await sleep(100)
@@ -387,37 +390,60 @@ try {
   await cdp('Emulation.clearDeviceMetricsOverride')
   await key('Escape')
   assertions.push(
-    'repeated Escape recovers; ordinary single-pane host starts host-only; native viewport resize invalidates labels',
+    'repeated Escape recovers; ordinary pane ignores a retained hidden pane and starts host-only; native viewport resize invalidates labels',
+  )
+  await start()
+  const beforeFrameResize = await hints()
+  const nativeLabelBeforeResize = beforeFrameResize.find((hint) => hint.target === 'Native button')
+  assert(nativeLabelBeforeResize?.key)
+  await evaluate('document.querySelector("iframe").style.width="90%"')
+  await wait('!document.querySelector("[data-host-hints]")', 'frame layout change invalidation')
+  await evaluate('document.querySelector("iframe").style.width="100%"')
+  await focusGuest()
+  await key('f')
+  await wait('!!document.querySelector("[data-host-hints]")', 'frame resize fresh labels')
+  const remappedStableButton = (await hints()).find((hint) => hint.target === 'Stable button')
+  assert(remappedStableButton?.key, 'freshly mapped stable button missing after frame resize')
+  for (const letter of remappedStableButton.key) await key(letter)
+  await wait('window.fixtureStableClicks===1', 'freshly mapped label activation', true)
+  await start()
+  const consecutiveStableButton = (await hints()).find((hint) => hint.target === 'Stable button')
+  assert(consecutiveStableButton?.key, 'stable target absent from immediate fresh session')
+  for (const letter of consecutiveStableButton.key) await key(letter)
+  await wait('window.fixtureStableClicks===2', 'consecutive mutation-free activation', true)
+  await start()
+  await key('Escape')
+  assertions.push(
+    'iframe viewport geometry invalidates and remaps targets; a fresh mapped target activates, then remains activatable in a consecutive mutation-free session',
   )
   assertions.push('actual cross-origin f produces shared host/guest labels; Escape cancels')
-  await evaluate('document.documentElement.dataset.theme="dark"')
   await start()
-  await shot('dark.png')
-  await key('Escape')
-  await wait('!document.querySelector("[data-host-hints]")', 'dark screenshot hint cancellation')
-  await evaluate('document.documentElement.dataset.theme="light"')
-  await cdp('Page.startScreencast', { format: 'png', everyNthFrame: 1 })
-  await sleep(1500)
+  await key('ArrowDown')
+  await wait('!document.querySelector("[data-host-hints]")', 'unsupported key cancellation')
+  assert.equal(await evaluate('window.fixtureClicks', true), 0)
   await start()
-  await shot('light.png')
-  const current = (await hints()).find((hint) => hint.target === 'Native button')
-  assert(current?.key, 'native button hint disappeared before selection')
-  for (const letter of current.key) await key(letter)
-  await wait('window.fixtureClicks===1', 'guest default button activation', true)
-  await sleep(2000)
-  const finalFrame = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
-  screencastFrames.push({
-    image: Buffer.from(finalFrame.data, 'base64'),
-    timestamp: Date.now() / 1000,
-  })
-  await cdp('Page.stopScreencast')
-  assert(screencastFrames.length > 0, 'CDP screencast produced no activation video frames')
-  assertions.push('actual native keyboard prefix activates guest button through shared coordinator')
+  await key('x', 2)
+  await wait('!document.querySelector("[data-host-hints]")', 'modified key cancellation')
+  await clickGuestSelector('input[aria-label="Editable fixture"]')
+  await key('x')
+  assert.equal(
+    await evaluate(
+      'document.querySelector("input[aria-label=\\"Editable fixture\\"]").value',
+      true,
+    ),
+    'x',
+    'unsupported and modified hint keys must leave subsequent native editable input intact',
+  )
+  assertions.push(
+    'unsupported and modified native keys clear active labels without activating a target; ordinary editable input remains intact',
+  )
   await start()
+  const staleButton = (await hints()).find((hint) => hint.target === 'Native button')
+  assert(staleButton?.key)
   await evaluate('document.querySelector("#activate").remove()', true)
   await wait('!document.querySelector("[data-host-hints]")', 'guest mutation cancellation')
-  for (const letter of current.key) await key(letter)
-  assert.equal(await evaluate('window.fixtureClicks', true), 1)
+  for (const letter of staleButton.key) await key(letter)
+  assert.equal(await evaluate('window.fixtureClicks', true), 0)
   assertions.push('removed target cancels labels and cannot receive stale activation')
   await evaluate('window.communitySmoke.vim(false)')
   await focusGuest()
@@ -502,6 +528,77 @@ try {
   assertions.push(
     'active editable typing is unchanged; overlay and composing input suppress hint activation',
   )
+  await evaluate(
+    '(()=>{const pane=document.createElement("section");pane.dataset.pane="";pane.dataset.paneFocused="true";pane.hidden=true;pane.style.cssText="position:fixed;right:16px;top:16px";pane.textContent="Other pane";document.body.append(pane)})()',
+  )
+  await start()
+  await key('Escape')
+  await wait('!document.querySelector("[data-host-hints]")', 'retained hidden pane cancellation')
+  await evaluate(
+    '(()=>{const panes=document.querySelectorAll("[data-pane]");panes[1].hidden=false;panes[0].setAttribute("data-pane-focused","false");panes[1].setAttribute("data-pane-focused","true")})()',
+  )
+  await focusGuest()
+  await key('f')
+  await sleep(200)
+  assert.equal(await evaluate('!!document.querySelector("[data-host-hints]")'), false)
+  await evaluate(
+    '(()=>{const panes=document.querySelectorAll("[data-pane]");panes[0].setAttribute("data-pane-focused","true");panes[1].setAttribute("data-pane-focused","false")})()',
+  )
+  await focusGuest()
+  await key('f')
+  await wait('!!document.querySelector("[data-host-hints]")', 'focused split pane recovery')
+  await evaluate(
+    '(()=>{const panes=document.querySelectorAll("[data-pane]");panes[0].setAttribute("data-pane-focused","false");panes[1].setAttribute("data-pane-focused","true")})()',
+  )
+  await wait('!document.querySelector("[data-host-hints]")', 'split focus transition cancellation')
+  await evaluate(
+    '(()=>{const panes=document.querySelectorAll("[data-pane]");panes[1].remove();panes[0].setAttribute("data-pane-focused","true")})()',
+  )
+  assertions.push(
+    'split panes restrict guest hints to the exact focused pane; focus changes cancel and a hidden pane does not interfere with the primary pane',
+  )
+  await focusGuest()
+  const recordingStartedAt = process.hrtime.bigint()
+  const recordFrame = async () => {
+    const frame = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
+    screencastFrames.push({
+      image: Buffer.from(frame.data, 'base64'),
+      timestamp: Number(process.hrtime.bigint() - recordingStartedAt) / 1e9,
+    })
+  }
+  for (let index = 0; index < 4; index++) {
+    await recordFrame()
+    if (index < 3) await sleep(500)
+  }
+  await key('f')
+  await wait('!!document.querySelector("[data-host-hints]")', 'final light proof session')
+  await shot('light.png')
+  const finalButton = (await hints()).find((hint) => hint.target === 'Native button')
+  assert(finalButton?.key, 'native final activation label absent')
+  for (const letter of finalButton.key) await key(letter)
+  await wait('window.fixtureClicks===1', 'final native button activation', true)
+  await evaluate('document.documentElement.dataset.theme="dark"')
+  await shot('dark.png')
+  // Keep recording actual frames for two seconds after native activation; the last
+  // captured screenshot is the video's final frame in the same monotonic domain.
+  for (let index = 0; index < 5; index++) {
+    await recordFrame()
+    if (index < 4) await sleep(500)
+  }
+  assert(screencastFrames.length > 0, 'native screenshot recording produced no frames')
+  assert(
+    screencastFrames.every(
+      (frame, index) =>
+        Number.isFinite(frame.timestamp) &&
+        (index === 0 || frame.timestamp > screencastFrames[index - 1].timestamp),
+    ),
+    'native frame timestamps must be finite and strictly increasing in one monotonic domain',
+  )
+  assertions.push(
+    'native activation succeeds and actual native frames preserve the visible hint session',
+  )
+  await evaluate('document.documentElement.dataset.theme="dark"')
+  await shot('dark.png')
   await evaluate(
     'window.holiSmoke.call("community.remove",{id:"smoke-plugin"}).then(()=>window.communitySmoke.refresh())',
   )
