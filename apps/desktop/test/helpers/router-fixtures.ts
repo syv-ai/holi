@@ -107,6 +107,8 @@ export async function rig(
   // behaviour is tested in active-vault.test.ts.
   const host = createVaultHost({
     registry,
+    // Status observations must not contend with the fixture's explicit writes.
+    gitDeps: { env: { GIT_OPTIONAL_LOCKS: '0' } },
     claims: TASKS,
     onSnapshot: () => {},
     onSyncState: () => {},
