@@ -1,5 +1,5 @@
 import { isLocalOnlyPath, isSecretPath, vaultRelPath } from '@holi/shared'
-import { exactPath } from '@holi/shared/path-safety-node'
+import { exactPath, exactPathSync } from '@holi/shared/path-safety-node'
 import { isNonContentPath } from './vault-files'
 import { ownedCommitOids, repositoryPublicationSnapshot } from '../managed-commit-provenance'
 import { canonicalGitHubRemote } from '../mdx-trust'
@@ -44,6 +44,10 @@ export async function subscriptionChanges(args: {
   if (!args.current() || !scopeMatches(currentScope))
     return { ...pending, history: 'unavailable' as const }
 
+  const initial = repositoryPublicationSnapshot(args.root)
+  if (initial === null || initial.remote !== remote)
+    return { ...pending, history: 'unavailable' as const }
+
   let tip: string | null = null
   try {
     const captured = await args.repo.historicalHead()
@@ -53,10 +57,6 @@ export async function subscriptionChanges(args: {
   } catch {
     return { ...pending, history: 'unavailable' as const }
   }
-  const initial = repositoryPublicationSnapshot(args.root)
-  if (initial === null || initial.remote !== remote)
-    return { ...pending, tip, history: 'unavailable' as const }
-
   let history: Awaited<ReturnType<GitRepo['revisionChanges']>>
   try {
     history = await args.repo.revisionChanges(args.baseline, tip, args.path)
@@ -85,6 +85,11 @@ export async function subscriptionChanges(args: {
   // The last async observation is the saved scope. Everything after it is
   // synchronous, including provenance reads and the repository publication guard.
   const finalScope = await args.currentScope().catch(() => null)
+  // Revalidate exact paths after the final await; this synchronous publication
+  // segment has no opportunity for a symlink/case alias swap between check and return.
+  const publishableChanges = safeChanges.filter(
+    ({ path }) => exactPathSync(args.root, path) !== null,
+  )
   const final = repositoryPublicationSnapshot(args.root)
   const ownership =
     args.accountId === null || final?.lifetime === null || final === null
@@ -94,7 +99,7 @@ export async function subscriptionChanges(args: {
           remote,
           identity: final,
           accountId: args.accountId,
-          oids: safeChanges.map(({ sha }) => sha),
+          oids: publishableChanges.map(({ sha }) => sha),
         })
   if (
     !args.current() ||
@@ -109,7 +114,7 @@ export async function subscriptionChanges(args: {
   )
     return { ...pending, tip, history: 'unavailable' as const }
 
-  const changes = safeChanges
+  const changes = publishableChanges
     .filter((change) => !ownership.has(change.sha))
     .map((change) => ({ ...change, ownership: 'unknown' as const, reviewed: false as const }))
   return {

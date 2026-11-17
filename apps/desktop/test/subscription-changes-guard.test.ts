@@ -1,4 +1,4 @@
-import { rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -71,7 +71,11 @@ describe('subscription change publication guard', () => {
 
     const missing = await makeClone(await makeRemote())
     roots.push(missing)
-    await plainGit(missing, ['update-ref', 'refs/heads/main', 'f'.repeat(40)])
+    const branch = (await plainGit(missing, ['symbolic-ref', '--quiet', 'HEAD'])).trim()
+    const gitDir = (await plainGit(missing, ['rev-parse', '--absolute-git-dir'])).trim()
+    const looseRef = join(gitDir, branch)
+    await mkdir(join(looseRef, '..'), { recursive: true })
+    await writeFile(looseRef, `${'f'.repeat(40)}\\n`)
     expect(await openRepo(missing).historicalHead()).toEqual({ kind: 'unavailable' })
   })
 
@@ -96,6 +100,54 @@ describe('subscription change publication guard', () => {
     )
     const result = await f.run()
     expect(result.changes.map(({ path }) => path)).toEqual(['note.md'])
+  })
+
+  it('rejects a repository replacement while historical HEAD is pending', async () => {
+    const f = await fixture()
+    const replacement = await makeClone(await makeRemote())
+    roots.push(replacement)
+    await plainGit(replacement, [
+      'remote',
+      'set-url',
+      'origin',
+      'https://github.com/Owner/Notes.git',
+    ])
+    const repo = {
+      historicalHead: async () => {
+        const moved = `${f.root}.old`
+        roots.push(moved)
+        await rename(f.root, moved)
+        await rename(replacement, f.root)
+        return { kind: 'commit' as const, sha: 'b'.repeat(40) }
+      },
+      revisionChanges: async () => ({ complete: true, reason: 'ok' as const, changes: f.changes }),
+    }
+    const result = await subscriptionChanges({
+      repo: repo as never,
+      root: f.root,
+      remote: 'Owner/Notes',
+      baseline: f.scope.baseline,
+      path: '',
+      provenanceFile: join(f.root, 'missing-provenance.json'),
+      accountId: 9,
+      current: () => true,
+      currentScope: async () => f.scope,
+    })
+    expect(result.history).toBe('unavailable')
+    expect(result.changes).toEqual([])
+  })
+
+  it('rejects a path ancestor swapped during the final awaited scope read', async () => {
+    const f = await fixture()
+    const outside = `${f.root}.outside`
+    roots.push(outside)
+    await writeFile(outside, 'outside')
+    const result = await f.run(async (root) => {
+      await rename(join(root, 'note.md'), join(root, 'note-old.md'))
+      await symlink(outside, join(root, 'note.md'))
+    })
+    expect(result.history).toBe('ok')
+    expect(result.changes).toEqual([])
   })
 
   it('rejects an origin changed during the final awaited scope read', async () => {
