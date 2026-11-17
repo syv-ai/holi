@@ -8,7 +8,12 @@
  */
 import type { MainPlugin } from '../../../main/plugin-api'
 import { BROWSER_INFO } from '../info'
-import { browserCapabilities, BROWSER_NAMESPACES, type Rect } from './capabilities'
+import {
+  browserCapabilities,
+  browserHintCapabilities,
+  BROWSER_NAMESPACES,
+  type Rect,
+} from './capabilities'
 import { browserSeed } from './seed'
 
 const combineLeases =
@@ -50,8 +55,13 @@ export const browserMain: MainPlugin = {
           { id, ...snapshot },
           combineLeases(ctx.presentationLease(), attachment),
         ),
+      hints: (event, attachment) =>
+        ctx.emit(ctx.remote, 'hints', event, combineLeases(ctx.presentationLease(), attachment)),
     })
-    const undo = ctx.register(BROWSER_NAMESPACES, browserCapabilities(pages))
+    const undo = ctx.register(BROWSER_NAMESPACES, {
+      ...browserCapabilities(pages),
+      ...browserHintCapabilities(pages),
+    })
     // Where each tab is drawn, as the renderer lays it out: every frame it
     // moves, so a message rather than a capability call.
     const offPlace = ctx.on(

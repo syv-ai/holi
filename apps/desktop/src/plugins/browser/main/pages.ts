@@ -34,7 +34,17 @@ import {
   type WebContents,
 } from 'electron'
 import { CapabilityError } from '../../../main/plugin-api'
-import { isPageUrl, type PageError, type PageInfo } from '../shared/page'
+import {
+  isPageUrl,
+  type PageError,
+  type PageHintEvent,
+  type PageHintLabel,
+  type PageHintOwner,
+  type PageHintScope,
+  type PageHintSnapshot,
+  type PageHintTarget,
+  type PageInfo,
+} from '../shared/page'
 import type { Pages, Rect } from './capabilities'
 import PAGE_SCRIPT from './page-script.js?raw'
 
@@ -80,6 +90,7 @@ export interface PagesDeps {
     snapshot: { nonce: string; attachment: string; revision: number; mode: 'insert' | 'normal' },
     attachment?: () => boolean,
   ): void
+  hints?(event: PageHintEvent, attachment?: () => boolean): void
 }
 
 /** A `mailto:` or `tel:` link, to the system. */
@@ -105,6 +116,14 @@ interface Tab {
   vimPoll: ReturnType<typeof setInterval> | null
   vimLastSnapshot: string | null
   vimNavigationPending: boolean
+  hintRequest: number
+  hintOwner: PageHintOwner | null
+  hintRequestOrigin: string | null
+  hintRevision: number
+  hintSnapshot: number
+  hintGeometry: number
+  hintQueue: PageHintEvent[]
+  hintDraining: boolean
 }
 
 let shared: Session | null = null
@@ -213,6 +232,15 @@ export function createPages(deps: PagesDeps): Pages & {
     nonce: string,
     attachment: string,
   ): Promise<void>
+  discoverHints(scope: PageHintScope): Promise<PageHintSnapshot | null>
+  presentHints(
+    owner: PageHintOwner,
+    revision: number,
+    labels: PageHintLabel[],
+    theme: 'light' | 'dark',
+  ): Promise<boolean>
+  clearHints(scope: PageHintScope): Promise<void>
+  activateHint(owner: PageHintOwner, id: string): Promise<boolean>
 } {
   const tabs = new Map<string, Tab>()
   let current: string | null = null
@@ -287,6 +315,7 @@ export function createPages(deps: PagesDeps): Pages & {
 
   function reportVim(tab: Tab): void {
     if (tab.vimNonce === null || !isPresented(tab)) return
+    drainHintEvents(tab)
     const nonce = tab.vimNonce
     const attachment = tab.attachmentId
     if (attachment === null) return
@@ -313,8 +342,79 @@ export function createPages(deps: PagesDeps): Pages & {
       .catch(() => {})
   }
 
+  function drainHintEvents(tab: Tab): void {
+    const emitHint = deps.hints
+    if (!emitHint || tab.hintDraining || tab.vimNonce === null || tab.attachmentId === null) return
+    tab.hintDraining = true
+    const nonce = tab.vimNonce
+    const attachment = tab.attachmentId
+    const generation = tab.vimGeneration
+    void inPage<
+      {
+        type: 'request' | 'key'
+        key?: string
+        code?: string
+        repeat?: boolean
+        isComposing?: boolean
+        metaKey?: boolean
+        ctrlKey?: boolean
+        altKey?: boolean
+        shiftKey?: boolean
+      }[]
+    >(tab, '__holiPage.hints.poll()')
+      .then((events) => {
+        if (
+          !Array.isArray(events) ||
+          !isPresented(tab) ||
+          tab.vimNonce !== nonce ||
+          tab.attachmentId !== attachment ||
+          tab.vimGeneration !== generation
+        )
+          return
+        for (const value of events.slice(0, 16)) {
+          if (value.type === 'request') {
+            const request = ++tab.hintRequest
+            const origin = randomUUID()
+            tab.hintRequestOrigin = origin
+            tab.hintOwner = null
+            emitHint(
+              { tab: tab.id, nonce, attachment, request, origin, type: 'request' },
+              () =>
+                isPresented(tab) &&
+                tab.vimNonce === nonce &&
+                tab.attachmentId === attachment &&
+                tab.vimGeneration === generation,
+            )
+          } else if (value.type === 'key' && tab.hintOwner) {
+            const owner = tab.hintOwner
+            const { type: _type, ...key } = value
+            emitHint({ ...owner, type: 'key', ...key }, () => hintOwns(tab, owner))
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        tab.hintDraining = false
+      })
+  }
+
+  function revokeHints(tab: Tab): void {
+    const owner = tab.hintOwner
+    tab.hintOwner = null
+    tab.hintRequestOrigin = null
+    tab.hintGeometry++
+    if (owner)
+      deps.hints?.(
+        { ...owner, type: 'revoke' },
+        () => isPresented(tab) && tab.attachmentId === owner.attachment,
+      )
+    if (tab.vimNonce && !tab.view.webContents.isDestroyed())
+      void inPage(tab, `__holiPage.hints.clear(${tab.hintRequest})`).catch(() => {})
+  }
+
   function resetVimOwnership(tab: Tab): void {
     tab.vimGeneration++
+    revokeHints(tab)
     tab.vimNonce = null
     tab.vimModeSequence++
     tab.vimLastSnapshot = null
@@ -383,6 +483,149 @@ export function createPages(deps: PagesDeps): Pages & {
     }
   }
 
+  const hintOwns = (tab: Tab, owner: PageHintOwner): boolean => {
+    const current = tab.hintOwner
+    return (
+      isPresented(tab) &&
+      tab.vimNonce === owner.nonce &&
+      tab.attachmentId === owner.attachment &&
+      current !== null &&
+      current.origin === owner.origin &&
+      current.request === owner.request &&
+      current.snapshot === owner.snapshot &&
+      current.geometry === owner.geometry
+    )
+  }
+
+  async function discoverHints(scope: PageHintScope): Promise<PageHintSnapshot | null> {
+    const tab = tabs.get(scope.tab)
+    if (!tab || !isPresented(tab) || !scopeMatches(tab, scope) || scope.request < tab.hintRequest)
+      return null
+    tab.hintRequest = Math.max(tab.hintRequest, scope.request)
+    tab.hintOwner = null
+    const snapshot = ++tab.hintSnapshot
+    const generation = tab.vimGeneration
+    const attachment = tab.attachmentId!
+    const origin = tab.hintRequestOrigin ?? randomUUID()
+    const ownerBase = { ...scope, origin }
+    const targets = await inPage<PageHintTarget[] | null>(
+      tab,
+      `__holiPage.hints.discover(${scope.request})`,
+    ).catch(() => null)
+    if (
+      !targets ||
+      !isPresented(tab) ||
+      generation !== tab.vimGeneration ||
+      tab.attachmentId !== attachment ||
+      tab.vimNonce !== scope.nonce ||
+      tab.hintRequest !== scope.request ||
+      tab.hintSnapshot !== snapshot ||
+      !scopeMatches(tab, scope)
+    )
+      return null
+    const owner: PageHintOwner = {
+      ...ownerBase,
+      snapshot,
+      geometry: tab.hintGeometry,
+    }
+    tab.hintOwner = owner
+    const bounds = tab.view.getBounds()
+    const zoom = deps.window()?.webContents.getZoomFactor() ?? 1
+    return {
+      owner,
+      targets: targets.map((target) => ({
+        ...target,
+        x: bounds.x / zoom + target.x,
+        y: bounds.y / zoom + target.y,
+      })),
+    }
+  }
+
+  function scopeMatches(tab: Tab, scope: PageHintScope): boolean {
+    return (
+      scope.tab === tab.id &&
+      scope.nonce === tab.vimNonce &&
+      scope.attachment === tab.attachmentId &&
+      Number.isSafeInteger(scope.request) &&
+      scope.request > 0
+    )
+  }
+
+  async function presentHints(
+    owner: PageHintOwner,
+    revision: number,
+    labels: PageHintLabel[],
+    theme: 'light' | 'dark',
+  ): Promise<boolean> {
+    const tab = tabs.get(owner.tab)
+    if (
+      !tab ||
+      !hintOwns(tab, owner) ||
+      !Number.isSafeInteger(revision) ||
+      revision <= tab.hintRevision
+    )
+      return false
+    tab.hintRevision = revision
+    const generation = tab.vimGeneration
+    const lease = tab.shownLease
+    const result = await inPage<boolean>(
+      tab,
+      `__holiPage.hints.present(${owner.request}, ${revision}, ${JSON.stringify(labels)}, ${JSON.stringify(theme)})`,
+    ).catch(() => false)
+    return (
+      result &&
+      tabs.get(tab.id) === tab &&
+      hintOwns(tab, owner) &&
+      generation === tab.vimGeneration &&
+      lease === tab.shownLease
+    )
+  }
+
+  async function clearHints(scope: PageHintScope): Promise<void> {
+    const tab = tabs.get(scope.tab)
+    if (!tab || !scopeMatches(tab, scope) || scope.request < tab.hintRequest) return
+    tab.hintRequest = Math.max(tab.hintRequest, scope.request)
+    tab.hintOwner = null
+    tab.hintSnapshot++
+    tab.hintRevision++
+    await inPage<boolean>(tab, `__holiPage.hints.clear(${scope.request})`).catch(() => false)
+  }
+
+  async function activateHint(owner: PageHintOwner, id: string): Promise<boolean> {
+    const tab = tabs.get(owner.tab)
+    if (!tab || !hintOwns(tab, owner) || !isPresented(tab)) return false
+    const generation = tab.vimGeneration
+    const attachment = tab.attachmentId
+    const point = await inPage<{ x: number; y: number; field: boolean } | null>(
+      tab,
+      `__holiPage.hints.activate(${owner.request}, ${JSON.stringify(id)})`,
+    ).catch(() => null)
+    if (
+      !point ||
+      !hintOwns(tab, owner) ||
+      generation !== tab.vimGeneration ||
+      attachment !== tab.attachmentId
+    )
+      return false
+    const win = tab.shownIn
+    if (!win || !isPresented(tab)) return false
+    const at = { x: Math.round(point.x), y: Math.round(point.y) }
+    if (!hintOwns(tab, owner)) return false
+    const wc = tab.view.webContents
+    wc.sendInputEvent({ type: 'mouseMove', ...at })
+    wc.sendInputEvent({ type: 'mouseDown', ...at, button: 'left', clickCount: 1 })
+    wc.sendInputEvent({ type: 'mouseUp', ...at, button: 'left', clickCount: 1 })
+    if (point.field) {
+      tab.vimRevision++
+      void inPage(
+        tab,
+        `__holiPage.vim.configure(true, ${tab.vimRevision}, ${JSON.stringify(owner.nonce)})`,
+      )
+    }
+    await clearHints(owner)
+    return true
+  }
+
   /** Wait for what an action set off: a load, then the page's own drawing. */
   async function settle(tab: Tab): Promise<void> {
     await delay(150)
@@ -399,6 +642,7 @@ export function createPages(deps: PagesDeps): Pages & {
   }
 
   function contextMenu(tab: Tab, params: Electron.ContextMenuParams): void {
+    revokeHints(tab)
     const win = deps.window()
     if (!isPresented(tab) || win === null || tab.shownIn !== win) return
     const lease = tab.shownLease
@@ -663,6 +907,14 @@ export function createPages(deps: PagesDeps): Pages & {
       vimPoll: null,
       vimLastSnapshot: null,
       vimNavigationPending: false,
+      hintRequest: 0,
+      hintOwner: null,
+      hintRequestOrigin: null,
+      hintRevision: 0,
+      hintSnapshot: 0,
+      hintGeometry: 0,
+      hintQueue: [],
+      hintDraining: false,
     }
     tabs.set(tab.id, tab)
     current = tab.id
@@ -675,6 +927,7 @@ export function createPages(deps: PagesDeps): Pages & {
 
   function hide(tab: Tab): void {
     const win = tab.shownIn
+    revokeHints(tab)
     tab.shownIn = null
     tab.shownLease = null
     tab.attachment = null
@@ -867,6 +1120,10 @@ export function createPages(deps: PagesDeps): Pages & {
     placementGuard,
 
     configureVim,
+    discoverHints,
+    presentHints,
+    clearHints,
+    activateHint,
 
     place(id, rect) {
       const tab = tabs.get(id)
@@ -889,6 +1146,20 @@ export function createPages(deps: PagesDeps): Pages & {
         current = id
       }
       const zoom = win.webContents.getZoomFactor()
+      const nextBounds = {
+        x: Math.round(rect.x * zoom),
+        y: Math.round(rect.y * zoom),
+        width: Math.round(rect.width * zoom),
+        height: Math.round(rect.height * zoom),
+      }
+      const previousBounds = tab.view.getBounds()
+      if (
+        previousBounds.x !== nextBounds.x ||
+        previousBounds.y !== nextBounds.y ||
+        previousBounds.width !== nextBounds.width ||
+        previousBounds.height !== nextBounds.height
+      )
+        revokeHints(tab)
       tab.view.setBounds({
         x: Math.round(rect.x * zoom),
         y: Math.round(rect.y * zoom),
