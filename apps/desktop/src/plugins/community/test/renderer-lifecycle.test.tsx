@@ -5,6 +5,13 @@ import { Provider, createStore } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, vimCodeEditingAtom } from '@/plugin-api'
 import { fireEvent } from '@testing-library/react'
+// This renderer integration test intentionally composes the real core coordinator.
+// eslint-disable-next-line no-restricted-imports
+import { HostHintLayer } from '@/features/shell/host-hint-layer'
+// eslint-disable-next-line no-restricted-imports
+import { hostHintKeyAtom } from '@/state/shortcuts'
+import { installHintLayout } from '@/test/host-hint-layout'
+import type { FrameHintsMessage } from '../shared/frame-hints'
 import { communityCap } from '../renderer/community-cap'
 import { PluginFrame } from '../renderer/plugin-frame'
 import {
@@ -62,6 +69,75 @@ const releaseResult = {
 } as const
 let activeElementDescriptor: PropertyDescriptor | undefined
 let elementFromPointDescriptor: PropertyDescriptor | undefined
+let visualViewportDescriptor: PropertyDescriptor | undefined
+
+function renderHintLifecycle(path = 'index.dash.md') {
+  const layout = installHintLayout()
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  store.set(rowsAtom, { remote: 'ada/notes', rows: [row] })
+  store.set(vimCodeEditingAtom, true)
+  const tree = (currentPath: string) => (
+    <Provider store={store}>
+      <main data-pane data-pane-focused>
+        <PluginFrame path={currentPath} />
+      </main>
+      <HostHintLayer scopeKey="vault:tab:community" />
+    </Provider>
+  )
+  const view = render(tree(path))
+  return { layout, store, view, tree }
+}
+
+async function loadedGuest() {
+  const frame = (await screen.findByLabelText('Dash: index.dash.md')) as HTMLIFrameElement
+  layoutFrame(frame)
+  frame.focus()
+  activeElementDescriptor = Object.getOwnPropertyDescriptor(document, 'activeElement')
+  Object.defineProperty(document, 'activeElement', { configurable: true, get: () => frame })
+  elementFromPointDescriptor = Object.getOwnPropertyDescriptor(document, 'elementFromPoint')
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    value: () => frame,
+  })
+  const messages: FrameHintsMessage[] = []
+  vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation((message) => {
+    messages.push(message as FrameHintsMessage)
+  })
+  fireEvent.load(frame)
+  await waitFor(() =>
+    expect(messages.some((message) => message.type === 'holi-hints:init')).toBe(true),
+  )
+  const init = messages.find((message) => message.type === 'holi-hints:init')!
+  return { frame, messages, nonce: init.nonce }
+}
+
+function layoutFrame(frame: HTMLIFrameElement) {
+  Object.defineProperty(frame, 'clientWidth', { configurable: true, value: 400 })
+  Object.defineProperty(frame, 'clientHeight', { configurable: true, value: 300 })
+  // The shared layout stub supplies the iframe rectangle and native hit test.
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    value: () => frame,
+  })
+}
+
+function guestMessage(frame: HTMLIFrameElement, data: unknown, origin = new URL(frame.src).origin) {
+  act(() =>
+    window.dispatchEvent(
+      new MessageEvent('message', { data, source: frame.contentWindow, origin }),
+    ),
+  )
+}
+
+function guestSnapshot(nonce: string, revision = 1, label = 'Save') {
+  return {
+    type: 'holi-hints:snapshot',
+    nonce,
+    revision,
+    targets: [{ id: 'save', kind: 'button', label, x: 20, y: 10, width: 40, height: 20 }],
+  }
+}
 
 afterEach(async () => {
   cleanup()
@@ -71,8 +147,13 @@ afterEach(async () => {
   if (elementFromPointDescriptor)
     Object.defineProperty(document, 'elementFromPoint', elementFromPointDescriptor)
   else Reflect.deleteProperty(document, 'elementFromPoint')
+  if (visualViewportDescriptor)
+    Object.defineProperty(window, 'visualViewport', visualViewportDescriptor)
+  else Reflect.deleteProperty(window, 'visualViewport')
   activeElementDescriptor = undefined
   elementFromPointDescriptor = undefined
+  visualViewportDescriptor = undefined
+  vi.restoreAllMocks()
   // Lease releases run after the resolved acquire, including cleanup's unmounts.
   await Promise.resolve()
   await Promise.resolve()
@@ -585,4 +666,150 @@ test('a superseded success cannot clear the latest refresh failure, and vault te
     errorLog.mockRestore()
   }
   expect(store.get(rowsErrorAtom)).toBeNull()
+})
+
+test('a verified community snapshot shares live host labels and activates its exact guest target', async () => {
+  capability.acquire.mockResolvedValue(releaseResult)
+  const { store, view } = renderHintLifecycle()
+  const { frame, messages, nonce } = await loadedGuest()
+  guestMessage(frame, guestSnapshot(nonce))
+  guestMessage(frame, { type: 'holi-hints:start', nonce, revision: 1 })
+
+  expect(await screen.findByLabelText('Vim host hints')).toBeInTheDocument()
+  expect(document.querySelector('[data-hint-target="Save"]')).toBeInTheDocument()
+  const route = store.get(hostHintKeyAtom)
+  expect(route).not.toBeNull()
+  guestMessage(frame, { type: 'holi-hints:key', nonce, key: 'a' })
+  expect(document.querySelector('[data-host-hints]')).toBeNull()
+  expect(messages.at(-1)).toMatchObject({
+    type: 'holi-hints:activate',
+    nonce,
+    revision: 1,
+    id: 'save',
+  })
+  view.unmount()
+})
+
+test('path A-B-A and same-URL reload retire the previous nonce and its snapshot', async () => {
+  capability.acquire.mockResolvedValue(releaseResult)
+  const { store, view, tree } = renderHintLifecycle()
+  const first = await loadedGuest()
+  guestMessage(first.frame, guestSnapshot(first.nonce))
+  guestMessage(first.frame, { type: 'holi-hints:start', nonce: first.nonce, revision: 1 })
+  expect(await screen.findByLabelText('Vim host hints')).toBeInTheDocument()
+
+  view.rerender(tree('second.dash.md'))
+  await waitFor(() => expect(view.container.querySelector('iframe')).toBeNull())
+  view.rerender(tree('index.dash.md'))
+  await waitFor(() => expect(capability.acquire).toHaveBeenCalledTimes(3))
+  const returned = await loadedGuest()
+  expect(returned.nonce).not.toBe(first.nonce)
+  guestMessage(first.frame, guestSnapshot(first.nonce, 100, 'Stale path target'))
+  guestMessage(first.frame, { type: 'holi-hints:start', nonce: first.nonce, revision: 100 })
+  expect(document.querySelector('[data-hint-target="Stale path target"]')).toBeNull()
+  expect(first.messages.some((message) => message.type === 'holi-hints:activate')).toBe(false)
+
+  guestMessage(returned.frame, guestSnapshot(returned.nonce))
+  guestMessage(returned.frame, {
+    type: 'holi-hints:start',
+    nonce: returned.nonce,
+    revision: 1,
+  })
+  expect(await screen.findByLabelText('Vim host hints')).toBeInTheDocument()
+  const beforeReload = returned.messages.filter(
+    (message) => message.type === 'holi-hints:init',
+  ).length
+  fireEvent.load(returned.frame)
+  await waitFor(() =>
+    expect(
+      returned.messages.filter((message) => message.type === 'holi-hints:init').length,
+    ).toBeGreaterThan(beforeReload),
+  )
+  const reloadNonce = returned.messages
+    .filter((message) => message.type === 'holi-hints:init')
+    .at(-1)!.nonce
+  expect(reloadNonce).not.toBe(returned.nonce)
+  guestMessage(returned.frame, guestSnapshot(returned.nonce, 101, 'Stale reload target'))
+  guestMessage(returned.frame, {
+    type: 'holi-hints:start',
+    nonce: returned.nonce,
+    revision: 101,
+  })
+  expect(document.querySelector('[data-hint-target="Stale reload target"]')).toBeNull()
+  expect(returned.messages.some((message) => message.type === 'holi-hints:activate')).toBe(false)
+  view.unmount()
+})
+
+test('vault departure and return disposes the old guest before restoring a fresh context', async () => {
+  capability.acquire.mockResolvedValue(releaseResult)
+  const { store, view } = renderHintLifecycle()
+  const oldGuest = await loadedGuest()
+  guestMessage(oldGuest.frame, guestSnapshot(oldGuest.nonce))
+  guestMessage(oldGuest.frame, { type: 'holi-hints:start', nonce: oldGuest.nonce, revision: 1 })
+  expect(await screen.findByLabelText('Vim host hints')).toBeInTheDocument()
+
+  await act(async () => store.set(activeRemoteAtom, 'ada/other'))
+  expect(oldGuest.frame.isConnected).toBe(false)
+  await act(async () => store.set(activeRemoteAtom, 'ada/notes'))
+  const newGuest = await loadedGuest()
+  expect(newGuest.frame).not.toBe(oldGuest.frame)
+  guestMessage(oldGuest.frame, guestSnapshot(oldGuest.nonce, 90, 'Departed vault target'))
+  guestMessage(oldGuest.frame, { type: 'holi-hints:start', nonce: oldGuest.nonce, revision: 90 })
+  expect(document.querySelector('[data-hint-target="Departed vault target"]')).toBeNull()
+  guestMessage(newGuest.frame, guestSnapshot(newGuest.nonce, 1, 'Returned vault target'))
+  guestMessage(newGuest.frame, {
+    type: 'holi-hints:start',
+    nonce: newGuest.nonce,
+    revision: 1,
+  })
+  expect(await screen.findByLabelText('Vim host hints')).toBeInTheDocument()
+  expect(document.querySelector('[data-hint-target="Returned vault target"]')).toBeInTheDocument()
+  view.unmount()
+})
+
+test('zoom, visual viewport resize, and scroll cancel live labels and rearm against new geometry', async () => {
+  class ViewportEvents extends EventTarget {
+    offsetLeft = 0
+    offsetTop = 0
+    width = 1200
+    height = 900
+    scale = 1
+    pageLeft = 0
+    pageTop = 0
+  }
+  visualViewportDescriptor = Object.getOwnPropertyDescriptor(window, 'visualViewport')
+  const viewport = new ViewportEvents() as VisualViewport
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
+  capability.acquire.mockResolvedValue(releaseResult)
+  const { layout, view } = renderHintLifecycle()
+  const guest = await loadedGuest()
+  guestMessage(guest.frame, guestSnapshot(guest.nonce))
+  guestMessage(guest.frame, { type: 'holi-hints:start', nonce: guest.nonce, revision: 1 })
+  expect(await screen.findByLabelText('Vim host hints')).toBeInTheDocument()
+  expect(document.querySelector('[data-hint-target="Save"]')).toBeInTheDocument()
+
+  fireEvent.resize(window)
+  expect(document.querySelector('[data-host-hints]')).toBeNull()
+
+  layout.place(guest.frame, 160, 120, 400, 300)
+  guestMessage(guest.frame, guestSnapshot(guest.nonce, 2, 'Moved Save'))
+  guestMessage(guest.frame, { type: 'holi-hints:start', nonce: guest.nonce, revision: 2 })
+  expect(await screen.findByText('a')).toBeInTheDocument()
+  expect(document.querySelector('[data-hint-target="Moved Save"]')).toHaveStyle({
+    '--hint-x': '200px',
+    '--hint-y': '140px',
+  })
+
+  await act(async () => viewport.dispatchEvent(new Event('resize')))
+  expect(document.querySelector('[data-host-hints]')).toBeNull()
+  guestMessage(guest.frame, guestSnapshot(guest.nonce, 3, 'Zoomed Save'))
+  guestMessage(guest.frame, { type: 'holi-hints:start', nonce: guest.nonce, revision: 3 })
+  expect(await screen.findByText('a')).toBeInTheDocument()
+  expect(document.querySelector('[data-hint-target="Zoomed Save"]')).toBeInTheDocument()
+
+  await act(async () => viewport.dispatchEvent(new Event('scroll')))
+  expect(document.querySelector('[data-host-hints]')).toBeNull()
+  fireEvent.scroll(window)
+  expect(document.querySelector('[data-host-hints]')).toBeNull()
+  view.unmount()
 })
