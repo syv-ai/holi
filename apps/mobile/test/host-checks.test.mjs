@@ -12,6 +12,7 @@ import {
 } from '../scripts/host-checks.mjs'
 
 import { storageFaultPhases, storageFixturePaths } from '../app/vault-storage-check'
+import { moveFixtureBytes as images } from '../app/move-fixtures'
 
 const runId = '11111111-1111-1111-1111-111111111111'
 const corpus = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
@@ -343,14 +344,6 @@ test('host command failures and timeouts cannot pass', async () => {
 })
 
 test('native move checkpoint states reject interchangeable pre/post evidence', () => {
-  const images = {
-    source: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[from.md| self ]]\r\n',
-    moved: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[to.md| self ]]\r\n',
-    backA: 'first [[from.md| label ]] then [[from.md#Heading]]\r\n',
-    movedA: 'first [[to.md| label ]] then [[from.md#Heading]]\r\n',
-    backB: '😀 [[from.md|another label]] and [[from.md]]\n',
-    movedB: '😀 [[to.md|another label]] and [[to.md]]\n',
-  }
   const operationId = '22222222-2222-4222-8222-222222222222'
   const root = '/sandbox/Documents/holi-move-run'
   const values = (expected) =>

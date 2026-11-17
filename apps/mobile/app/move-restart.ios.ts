@@ -2,6 +2,7 @@ import { knownFolders } from '@nativescript/core'
 import { createNativeFiles, nativeFiles } from './native-files.ios'
 import { nativeIO } from './native-posix.ios'
 import { createVaultStorage } from './vault-storage'
+import { moveFixtureBytes as images } from './move-fixtures'
 import type { StorageCheckpointCallback } from './native-files'
 import { stagingDirectory } from './storage-staging'
 
@@ -23,13 +24,14 @@ export const moveCheckpointEvents = [
   { phase: 'recovery-file-before', direction: 'before', path: 'to.md' },
 ] as const
 
-const sourceBytes = '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[from.md| self ]]\r\n'
-const backABytes = 'first [[from.md|  label ]] then [[from.md#Heading]]\r\n'
-const backBBytes = '😀 [[from.md|another label]] and [[from.md]]\n'
-const movedBytes = '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[to.md| self ]]\r\n'
-const movedABytes = 'first [[to.md|  label ]] then [[from.md#Heading]]\r\n'
-const movedBBytes = '😀 [[to.md|another label]] and [[to.md]]\n'
-
+const {
+  source: sourceBytes,
+  backA: backABytes,
+  backB: backBBytes,
+  moved: movedBytes,
+  movedA: movedABytes,
+  movedB: movedBBytes,
+} = images
 /** Fixed native crash fixtures; launch values select only a compiled case ordinal. */
 export async function runMoveRestart(
   action: 'stage' | 'recovery',
@@ -262,10 +264,71 @@ export async function runMoveRestart(
     !(await nativeFiles.privateList(conflictRoot)).includes(conflictName)
   )
     throw new Error('Conflicting journal changed newer bytes or lost its evidence')
+  const wrongRoot = `${documents}/holi-move-wrong-root-${runId}-${ordinal}`
+  const namedRoot = `${documents}/holi-move-named-root-${runId}-${ordinal}`
+  nativeIO.mkdir(wrongRoot)
+  nativeIO.mkdir(namedRoot)
+  const wrongRootStore = createVaultStorage(nativeFiles, {
+    remote: 'holi/wrong-root',
+    root: wrongRoot,
+  })
+  const wrongRootSource = encode('[[from.md]]')
+  const wrongRootMoved = encode('[[to.md]]')
+  await wrongRootStore.create('from.md', wrongRootSource)
+  await createVaultStorage(nativeFiles, { remote: 'holi/named-root', root: namedRoot }).create(
+    'keep.md',
+    encode('named root preserved'),
+  )
+  const canonicalWrongRoot = nativeIO.canonical(wrongRoot)
+  const canonicalNamedRoot = nativeIO.canonical(namedRoot)
+  const wrongRootId = `20000000-0000-4000-8000-${String(ordinal).padStart(12, '0')}`
+  const wrongRootName = `move-${wrongRootId}.json`
+  const wrongRootJournal = encode(
+    JSON.stringify({
+      schema: 2,
+      root: canonicalNamedRoot,
+      operationId: wrongRootId,
+      from: 'from.md',
+      to: 'to.md',
+      changes: [
+        { path: 'from.md', before: [...wrongRootSource], after: null },
+        { path: 'to.md', before: null, after: [...wrongRootMoved] },
+      ],
+    }),
+  )
+  await nativeFiles.privatePublish(canonicalWrongRoot, wrongRootName, wrongRootJournal, null)
+  let wrongRootError = ''
+  try {
+    await wrongRootStore.list()
+  } catch (error) {
+    wrongRootError = String(error)
+  }
+  if (!wrongRootError.includes('Invalid move recovery journal identity'))
+    throw new Error('Wrong-root journal was not refused for its root identity')
+  if (
+    decode(await nativeFiles.read(canonicalWrongRoot, 'from.md')) !== '[[from.md]]' ||
+    (await nativeFiles.readOptional(canonicalWrongRoot, 'to.md')) !== null ||
+    decode(await nativeFiles.read(canonicalNamedRoot, 'keep.md')) !== 'named root preserved' ||
+    !(await nativeFiles.privateList(canonicalWrongRoot)).includes(wrongRootName) ||
+    (await nativeFiles.privateRead(canonicalWrongRoot, wrongRootName)).join(',') !==
+      wrongRootJournal.join(',')
+  )
+    throw new Error('Wrong-root refusal changed fixture bytes or lost exact journal evidence')
+  const wrongRootRefusal = {
+    receivingRoot: canonicalWrongRoot,
+    namedRoot: canonicalNamedRoot,
+    journalName: wrongRootName,
+    error: wrongRootError,
+    sourceUnchanged: true,
+    destinationAbsent: true,
+    namedRootUnchanged: true,
+    journalBytesPreserved: true,
+  }
   return {
     root,
     listed,
     recovered: expected.phase !== 'journal-before',
+    wrongRootRefusal,
     malformedJournalRefused: true,
     conflictJournalRefused: true,
   }

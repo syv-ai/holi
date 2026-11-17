@@ -80,6 +80,21 @@ describe('durable note moves', () => {
     expect(await readFile(join(base, 'public.md'), 'utf8')).toBe('keep')
   })
 
+  it('rejects an unroundtrippable backlink before publishing recovery evidence', async () => {
+    const base = await root()
+    const adapter = createNodeFiles()
+    const storage = createVaultStorage(adapter, { remote: 'holi/invalid-backlink', root: base })
+    const source = await storage.create('source.md', text('source'))
+    await storage.create('pipe|label.md', text('[[source.md]]'))
+    const canonical = await adapter.canonicalRoot(base)
+    await expect(storage.move('source.md', 'target.md', source.revision)).rejects.toThrow()
+    expect(await storage.list()).toContain('source.md')
+    expect(await storage.read('source.md')).toMatchObject({ bytes: text('source') })
+    expect(await readFile(join(base, 'pipe|label.md'), 'utf8')).toBe('[[source.md]]')
+    expect(await adapter.privateList(canonical)).toEqual([])
+    await expect(storage.read('target.md')).rejects.toThrow()
+  })
+
   it('rejects wiki targets that cannot round-trip without publishing a journal', async () => {
     const base = await root()
     const adapter = createNodeFiles()
@@ -262,8 +277,15 @@ describe('durable note moves', () => {
     const from = await setup.create('from.md', text('[[from.md]]'))
     await setup.create('back.md', text('[[from.md]]'))
     const events: { phase: string; direction: string; path?: string }[] = []
+    const unordered = createNodeFiles()
+    const reversed = {
+      ...unordered,
+      async list(root: string) {
+        return (await unordered.list(root)).reverse()
+      },
+    }
     const observed = createVaultStorage(
-      createNodeFiles(),
+      reversed,
       { remote: 'holi/checkpoint-observe', root: base },
       {
         checkpoint: async ({ phase, direction, path }) => {
@@ -290,6 +312,13 @@ describe('durable note moves', () => {
         path: expect.stringMatching(/^move-.*\.json$/),
       },
     ])
+    const recovered = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/checkpoint-recover',
+      root: base,
+    })
+    expect(string((await recovered.read('to.md')).bytes)).toBe('[[to.md]]')
+    expect(string((await recovered.read('back.md')).bytes)).toBe('[[to.md]]')
+    expect(await recovered.list()).not.toContain('from.md')
   })
 
   it('recovers exactly once before exposing a vault after each operation checkpoint', async () => {
@@ -388,6 +417,38 @@ describe('durable note moves', () => {
       expect(await adapter.privateList(canonical)).toContain(`move-${id}.json`)
       await expect(readFile(join(base, to))).rejects.toThrow()
     }
+  })
+
+  it('refuses an otherwise-valid journal naming another root before mutation', async () => {
+    const base = await root()
+    const namedRoot = await root()
+    const adapter = createNodeFiles()
+    const storage = createVaultStorage(adapter, { remote: 'holi/wrong-root', root: base })
+    const source = text('[[from.md]]')
+    const moved = text('[[to.md]]')
+    await storage.create('from.md', source)
+    await writeFile(join(namedRoot, 'keep.md'), 'named root preserved')
+    const id = randomUUID()
+    const journal = {
+      schema: 2,
+      root: await adapter.canonicalRoot(namedRoot),
+      operationId: id,
+      from: 'from.md',
+      to: 'to.md',
+      changes: [
+        { path: 'from.md', before: [...source], after: null },
+        { path: 'to.md', before: null, after: [...moved] },
+      ],
+    }
+    const raw = text(JSON.stringify(journal))
+    const receiving = await adapter.canonicalRoot(base)
+    const name = `move-${id}.json`
+    await adapter.privatePublish(receiving, name, raw, null)
+    await expect(storage.list()).rejects.toThrow('Invalid move recovery journal identity')
+    expect(await readFile(join(base, 'from.md'))).toEqual(Buffer.from(source))
+    await expect(readFile(join(base, 'to.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(namedRoot, 'keep.md'), 'utf8')).toBe('named root preserved')
+    expect(await adapter.privateRead(receiving, name)).toEqual(raw)
   })
 
   it('refuses conflicting preimages and preserves the recovery journal', async () => {
