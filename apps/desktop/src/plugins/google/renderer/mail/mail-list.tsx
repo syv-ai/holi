@@ -11,6 +11,7 @@ import {
   SearchIcon,
   SquarePenIcon,
   SquarePlusIcon,
+  SparklesIcon,
   StarIcon,
   XIcon,
 } from 'lucide-react'
@@ -381,6 +382,9 @@ interface MailListProps {
   onCompose: () => void
   onOpenDraft: (draft: DraftSummary) => void
   onOpenConnections: () => void
+  onCatchUp: () => void
+  catchUpPending: boolean
+  catchUpError: string | null
   visible: boolean
 }
 
@@ -392,6 +396,9 @@ export function MailList({
   onCompose,
   onOpenDraft,
   onOpenConnections,
+  onCatchUp,
+  catchUpPending,
+  catchUpError,
   visible,
 }: MailListProps) {
   const [query, setQuery] = useState('')
@@ -576,6 +583,22 @@ export function MailList({
       {/* ── Account ── */}
       <div className="border-border shrink-0 border-b p-2">{account}</div>
 
+      {catchUpPending && (
+        <div role="status" className="text-muted-foreground px-3 py-2 text-sm">
+          Starting catch-up conversation…
+        </div>
+      )}
+      {catchUpError !== null && (
+        <div
+          role="alert"
+          className="text-destructive flex items-center justify-between gap-2 px-3 py-2 text-sm"
+        >
+          <span>{catchUpError}</span>
+          <Button variant="outline" size="xs" onClick={onCatchUp}>
+            Retry
+          </Button>
+        </div>
+      )}
       {/* ── Header: the mailbox is the title's menu ── */}
       <div className="border-border flex h-(--header-height) shrink-0 items-center justify-between border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -613,6 +636,22 @@ export function MailList({
 
         {/* Header tools */}
         <div className="flex items-center gap-0.5">
+          {inbox && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={catchUpPending ? 'Starting catch-up' : 'Catch me up'}
+                  disabled={catchUpPending}
+                  onClick={onCatchUp}
+                >
+                  <SparklesIcon aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              {visible && <TooltipContent>Catch me up</TooltipContent>}
+            </Tooltip>
+          )}
           {/* Refresh */}
           <Tooltip>
             <TooltipTrigger asChild>
