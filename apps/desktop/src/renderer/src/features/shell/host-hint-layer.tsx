@@ -142,6 +142,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       adapter?: HostHintAdapter,
       scoped = false,
     ) => {
+      if (activations.current.size > 0) return
       const root =
         (scoped ? source?.closest<HTMLElement>('[data-panel-terminal]') : null) ??
         source?.closest<HTMLElement>('[data-pane]') ??
@@ -347,11 +348,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
     }
     const onKey = (event: KeyboardEvent): boolean => {
       const active = current.current
-      if (!active) {
-        if (event.key !== 'Escape') return false
-        cancel()
-        return true
-      }
+      if (!active) return false
       if (!hostHintsUnchanged(active.discoveryTargets, active.adapter, active.root)) {
         cancel()
         return (
@@ -438,9 +435,23 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
           if (cleared) return
           cleared = true
           activations.current.delete(clearSelected)
+          unsubscribe.current?.()
+          unsubscribe.current = null
           selected.clear(active.request)
         }
         activations.current.add(clearSelected)
+        unsubscribe.current =
+          selected.subscribe?.(
+            active.request,
+            () => cancel(),
+            (event) => {
+              if (event.key !== 'Escape' || activations.current.size === 0) return false
+              event.preventDefault()
+              event.stopImmediatePropagation()
+              cancel()
+              return true
+            },
+          ) ?? null
         void selected
           .activate(active.request, asyncFound.target.id)
           .catch(() => undefined)
