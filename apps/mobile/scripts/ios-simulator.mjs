@@ -11,6 +11,7 @@ import {
   validateCheckpoint,
 } from './host-checks.mjs'
 import { captureStorageEvidence, readBoundedJson } from './storage-evidence.mjs'
+import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
 import {
   interruptionBefore,
   interruptionPending,
@@ -107,8 +108,14 @@ try {
   simulator = await simctl('create', `holi-265-${runId}`, deviceType, runtime.identifier)
   assert.match(simulator, /^[A-F0-9-]{36}$/)
   await writeFile(join(artifacts, 'simulator-id.txt'), simulator)
-  await simctl('boot', simulator)
-  await simctl('bootstatus', simulator, '-b')
+  await bootSimulator({
+    simulator,
+    artifacts,
+    runId,
+    command,
+    signal: controller.signal,
+    metadata: { xcode, runtime: runtime.identifier, deviceType },
+  })
   await simctl('status_bar', simulator, 'override', '--time', '9:41')
   await simctl('install', simulator, app)
   const container = await simctl('get_app_container', simulator, bundleId, 'data')
@@ -259,7 +266,7 @@ try {
     join(artifacts, 'failure.json'),
     JSON.stringify({ error: String(error), appPids }, null, 2),
   )
-  if (simulator) {
+  if (simulator && canonicalContainer) {
     try {
       await runCommand('xcrun', ['simctl', 'terminate', simulator, bundleId], { timeout: 10_000 })
     } catch {
@@ -304,21 +311,7 @@ try {
 } finally {
   // Never enumerate/delete other devices. Even an interrupted run cleans its own device.
   if (simulator) {
-    const cleanup = async (...args) => runCommand('xcrun', ['simctl', ...args], { timeout: 60_000 })
-    for (const args of [
-      ['shutdown', simulator],
-      ['delete', simulator],
-    ]) {
-      try {
-        await cleanup(...args)
-      } catch (error) {
-        cleanupFailures.push(String(error))
-      }
-    }
-    await writeFile(
-      join(artifacts, 'cleanup.json'),
-      JSON.stringify({ simulator, failures: cleanupFailures }, null, 2),
-    )
+    cleanupFailures.push(...(await cleanupSimulator({ simulator, artifacts })))
     if (cleanupFailures.length)
       console.error(`Simulator cleanup failed: ${cleanupFailures.join('\n')}`)
   }
