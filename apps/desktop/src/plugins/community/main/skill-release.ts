@@ -17,13 +17,13 @@ const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024
 const MAX_PATH_DEPTH = 32
 const MAX_GIT_OUTPUT_BYTES = 32 * 1024 * 1024
 
-type GitReader = {
+export type GitReader = {
   read(args: string[], maxBuffer?: number): Promise<Buffer>
 }
 
 const GIT_TIMEOUT_MS = 5_000
 
-function createGitReader(root: string, signal?: AbortSignal): GitReader {
+export function createGitReader(root: string, signal?: AbortSignal): GitReader {
   return {
     read(args, maxBuffer = MAX_GIT_OUTPUT_BYTES) {
       return new Promise<Buffer>((resolveOutput, reject) => {

@@ -1,12 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { execFile as execFileCallback } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
-import { promisify } from 'node:util'
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import { CapabilityError } from '../../../main/plugin-api'
-
-const execFile = promisify(execFileCallback)
+import { createGitReader, gitModeMatches } from './skill-release'
 const MAX_ENTRIES = 2048
 const MAX_DEPTH = 32
 const MAX_BYTES = 32 * 1024 * 1024
@@ -17,9 +14,13 @@ const inside = (root: string, path: string) => {
   const rel = relative(root, path)
   return rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep) && rel !== path)
 }
-const check = async (options: AppPublicationOptions) => {
+const check = (options: AppPublicationOptions) => {
   if (options.signal?.aborted) throw new CapabilityError('FORBIDDEN', 'publication cancelled')
+}
+const authorize = async (options: AppPublicationOptions) => {
+  check(options)
   await options.guard?.()
+  check(options)
 }
 const inode = (info: Awaited<ReturnType<typeof lstat>>) =>
   `${info.dev}:${info.ino}:${Number(info.mode) & 0o170000}`
@@ -30,32 +31,54 @@ type AppPublicationOptions = {
 }
 type Item = { path: string; bytes: Buffer; mode: number }
 
+async function validateStage(stage: string, items: readonly Item[]) {
+  const expected = new Map(items.map((item) => [item.path, item]))
+  const seen = new Set<string>()
+  const walk = async (dir: string, prefix: string) => {
+    const info = await lstat(dir)
+    if (!info.isDirectory() || info.isSymbolicLink()) fail('unsafe staged app directory')
+    for (const entry of await readdir(dir)) {
+      const path = prefix ? `${prefix}/${entry}` : entry
+      const absolute = join(dir, entry)
+      const child = await lstat(absolute)
+      if (child.isDirectory() && !child.isSymbolicLink()) await walk(absolute, path)
+      else {
+        const item = expected.get(path)
+        if (!item || !child.isFile() || child.isSymbolicLink())
+          fail('staged app changed before publication')
+        const bytes = await readFile(absolute)
+        if (!bytes.equals(item!.bytes) || (child.mode & 0o777) !== (item!.mode & 0o777))
+          fail('staged app changed before publication')
+        seen.add(path)
+      }
+    }
+  }
+  await walk(stage, '')
+  if (seen.size !== expected.size) fail('staged app changed before publication')
+}
+
 async function authenticatedFiles(
   release: NonNullable<AppPublicationOptions['release']>,
   app: string,
+  signal?: AbortSignal,
 ) {
   const source = release.sourcePath.replace(/\\/g, '/')
   const treePath = source ? `${source}/${app}` : app
-  const { stdout } = await execFile('git', [
-    '-C',
-    release.root,
-    'ls-tree',
-    '-rz',
-    '--full-tree',
-    release.commit,
-    '--',
-    treePath,
-  ])
-  const records = stdout.split('\0').filter(Boolean)
-  const expected = new Map<string, { mode: number; oid: string }>()
-  for (const record of records) {
+  const git = createGitReader(release.root, signal)
+  const output = await git.read(['ls-tree', '-rz', '--full-tree', release.commit, '--', treePath])
+  const expected = new Map<string, { mode: string; oid: string; bytes: Buffer }>()
+  for (const record of output.toString('utf8').split('\0').filter(Boolean)) {
     const tab = record.indexOf('\t')
-    const [mode, type, oid] = record.slice(0, tab).split(' ')
+    const [rawMode, rawType, rawOid] = record.slice(0, tab).split(' ')
     const path = record.slice(tab + 1)
-    if (!mode || !type || !oid) fail(`invalid authenticated app tree: ${app}`)
+    if (!rawMode || !rawType || !rawOid) fail(`invalid authenticated app tree: ${app}`)
+    const mode = rawMode!
+    const type = rawType!
+    const oid = rawOid!
     const prefix = `${treePath}/`
     if (type !== 'blob' || !path.startsWith(prefix)) fail(`invalid authenticated app tree: ${app}`)
-    expected.set(path.slice(prefix.length), { mode: Number.parseInt(mode!, 8), oid: oid! })
+    const bytes = await git.read(['cat-file', 'blob', oid], MAX_BYTES)
+    expected.set(path.slice(prefix.length), { mode, oid, bytes })
   }
   if (!expected.size) fail(`missing authenticated app tree: ${app}`)
   return expected
@@ -90,8 +113,10 @@ export async function publishApps(
   await mkdir(stageRoot, { mode: 0o700 })
   const stageIdentity = inode(await lstat(stageRoot))
   const published: string[] = []
-  const ensureAnchors = async () => {
-    await check(options)
+  const snapshots = new Map<string, Item[]>()
+  const ensureAnchors = async (fullGuard = false) => {
+    check(options)
+    if (fullGuard) await authorize(options)
     if (
       inode(await lstat(holi)) !== holiId ||
       inode(await lstat(state)) !== stateId ||
@@ -114,7 +139,7 @@ export async function publishApps(
   }
   try {
     for (let index = 0; index < apps.length; index++) {
-      await ensureAnchors()
+      await ensureAnchors(true)
       const app = apps[index]!
       const name = names[index]!
       if (!name.endsWith('.app')) fail(`invalid app folder: ${app}`)
@@ -127,7 +152,9 @@ export async function publishApps(
         )
       )
         continue
-      const expected = options.release ? await authenticatedFiles(options.release, app) : undefined
+      const expected = options.release
+        ? await authenticatedFiles(options.release, app, options.signal)
+        : undefined
       const items: Item[] = []
       const dirs: string[] = []
       const ancestors = new Set<string>()
@@ -141,8 +168,8 @@ export async function publishApps(
       ): Promise<void> => {
         await ensureAnchors()
         if (++entries > MAX_ENTRIES || depth > MAX_DEPTH) fail('app exceeds filesystem limits')
-        const info = await lstat(path)
-        const actual = info.isSymbolicLink() ? await realpath(path) : path
+        await lstat(path)
+        const actual = await realpath(path)
         if (!inside(root, actual)) fail(`app source escapes checkout: ${app}/${rel}`)
         const actualStat = await stat(actual)
         if (actualStat.isDirectory()) {
@@ -189,18 +216,21 @@ export async function publishApps(
           fail(`app tree differs from authenticated release: ${app}`)
         for (const item of items) {
           const file = expected.get(item.path)
-          const mode = item.mode & 0o111 ? 0o100755 : 0o100644
+          const checkoutBytes = item.bytes
+          const crlfBytes = Buffer.from(checkoutBytes.toString('utf8').replace(/\r\n/g, '\n'))
           if (
             !file ||
-            file.mode !== mode ||
-            createHash('sha1')
-              .update(`blob ${item.bytes.length}\0`)
-              .update(item.bytes)
-              .digest('hex') !== file.oid
+            !gitModeMatches(file!.mode, item.mode) ||
+            (!checkoutBytes.equals(file!.bytes) && !crlfBytes.equals(file!.bytes))
           )
             fail(`app file differs from authenticated release: ${app}/${item.path}`)
+          item.bytes = file!.bytes
         }
       }
+      snapshots.set(
+        name,
+        items.map((item) => ({ ...item, bytes: Buffer.from(item.bytes) })),
+      )
       const stage = join(stageRoot, name)
       for (const dir of dirs) await mkdir(join(stage, dir), { recursive: true })
       for (const item of items) {
@@ -236,9 +266,20 @@ export async function publishApps(
         )
       )
         continue
+      await ensureAnchors(true)
+      await validateStage(join(stageRoot, name), snapshots.get(name) ?? [])
       await ensureAnchors()
+      check(options)
+      const stagedPath = join(stageRoot, name)
+      const stagedIdentity = inode(await lstat(stagedPath))
       try {
-        await rename(join(stageRoot, name), target)
+        await rename(stagedPath, target)
+        if (options.signal?.aborted) {
+          const identity = await lstat(target).catch(() => undefined)
+          if (identity && inode(identity) === stagedIdentity)
+            await rm(target, { recursive: true, force: true })
+          throw new CapabilityError('FORBIDDEN', 'publication cancelled')
+        }
         published.push(name)
       } catch (error) {
         if (
