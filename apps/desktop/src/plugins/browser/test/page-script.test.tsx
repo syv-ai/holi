@@ -15,7 +15,12 @@ interface HoliPage {
   fill(ref: number, text: string): boolean
   hints: {
     discover(request: number): { id: string; label: string; x: number; y: number }[] | null
-    present(request: number, revision: number, labels: { id: string; key: string }[]): boolean
+    present(
+      request: number,
+      revision: number,
+      labels: { id: string; key: string }[],
+      theme?: 'light' | 'dark',
+    ): boolean
     clear(request: number): boolean
     activate(request: number, id: string): { x: number; y: number; field: boolean } | null
   }
@@ -97,6 +102,13 @@ test('a number finds its control until it leaves the page', () => {
   expect(holi().point(7)).toBeNull()
 })
 
+test('hint requests reject stale operations and themes are bounded', () => {
+  expect(holi().hints.discover(3)).not.toBeNull()
+  expect(holi().hints.discover(2)).toBeNull()
+  expect(holi().hints.present(3, 1, [], 'system' as 'light')).toBe(false)
+  expect(holi().hints.clear(2)).toBe(false)
+})
+
 test('visible hint targets are separate from CLI refs and activation rechecks geometry', () => {
   const button = document.querySelector('button[type=submit]')!
   button.getBoundingClientRect = () =>
@@ -113,13 +125,13 @@ test('visible hint targets are separate from CLI refs and activation rechecks ge
     }) as DOMRect
   document.elementFromPoint = vi.fn(() => button)
   holi().read(12_000)
-  const targets = holi().hints.discover(1)!
+  const targets = holi().hints.discover(4)!
   expect(targets).toHaveLength(1)
   expect(targets[0]?.label).toBe('Sign in')
-  expect(holi().hints.present(1, 1, [{ id: targets[0]!.id, key: 'A' }])).toBe(true)
-  expect(holi().hints.activate(1, targets[0]!.id)).toEqual({ x: 30, y: 30, field: false })
-  expect(holi().hints.clear(1)).toBe(true)
-  expect(holi().hints.activate(1, targets[0]!.id)).toBeNull()
+  expect(holi().hints.present(4, 1, [{ id: targets[0]!.id, key: 'A' }])).toBe(true)
+  expect(holi().hints.activate(4, targets[0]!.id)).toEqual({ x: 30, y: 30, field: false })
+  expect(holi().hints.clear(4)).toBe(true)
+  expect(holi().hints.activate(4, targets[0]!.id)).toBeNull()
 })
 
 test('vim mode uses native selections and blocks unsupported edits synchronously', () => {

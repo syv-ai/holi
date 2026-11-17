@@ -841,6 +841,8 @@
   let hintRevision = 0
   let hintSnapshot = new Map()
   let hintRoot = null
+  const hintEvents = []
+  let hintGeometry = 0
   const hintSelector =
     'a[href],button,input[type="button"],input[type="submit"],input[type="reset"],[role="button"],[role="link"],[role="tab"],[role="menuitem"],summary'
   function hintTargets() {
@@ -902,9 +904,78 @@
     hintRoot = null
     return true
   }
+  const invalidateHints = () => {
+    hintGeometry++
+    if (hintRoot) {
+      hintRoot.remove()
+      hintRoot = null
+    }
+    hintSnapshot.clear()
+  }
+  for (const eventName of [
+    'scroll',
+    'resize',
+    'focusin',
+    'pointerdown',
+    'compositionstart',
+    'compositionend',
+  ])
+    addEventListener(eventName, invalidateHints, true)
+  new MutationObserver((records) => {
+    if (
+      records.every(
+        (record) =>
+          hintRoot &&
+          (record.target === hintRoot ||
+            hintRoot.contains(record.target) ||
+            [...record.addedNodes].includes(hintRoot)),
+      )
+    )
+      return
+    invalidateHints()
+  }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true })
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (
+        !vimEnabled ||
+        !eligibleNow() ||
+        vimMode !== 'normal' ||
+        event.isComposing ||
+        event.repeat ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      )
+        return
+      if (event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        hintEvents.push({ type: 'request' })
+      } else if (hintSnapshot.size && event.key.length === 1 && /^[a-zA-Z]$/.test(event.key)) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        hintEvents.push({
+          type: 'key',
+          key: event.key,
+          code: event.code,
+          repeat: event.repeat,
+          isComposing: event.isComposing,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          altKey: event.altKey,
+          shiftKey: event.shiftKey,
+        })
+      }
+    },
+    true,
+  )
   const hints = {
+    poll() {
+      return hintEvents.splice(0)
+    },
     discover(request) {
-      if (!Number.isSafeInteger(request) || request < 1) return null
+      if (!Number.isSafeInteger(request) || request < 1 || request < hintRequest) return null
       clearHints(hintRequest)
       hintRequest = request
       hintRevision = 0
@@ -913,7 +984,7 @@
         return { id, label, x, y }
       })
     },
-    present(request, revision, labels) {
+    present(request, revision, labels, theme = 'light') {
       if (
         request !== hintRequest ||
         !Number.isSafeInteger(revision) ||
@@ -922,6 +993,7 @@
         labels.length > 200
       )
         return false
+      if (theme !== 'light' && theme !== 'dark') return false
       hintRevision = revision
       hintRoot?.remove()
       const root = document.createElement('div')
@@ -940,14 +1012,18 @@
           return false
         const badge = document.createElement('span')
         badge.textContent = item.key
-        badge.style.cssText = `all:initial;position:fixed;left:${Math.round(target.x)}px;top:${Math.round(target.y)}px;transform:translate(-50%,-50%);padding:2px 5px;background:#facc15;color:#111;font:600 12px monospace;border-radius:3px;box-shadow:0 1px 4px #0008;`
+        badge.style.cssText = `all:initial;position:fixed;left:${Math.round(target.x)}px;top:${Math.round(target.y)}px;transform:translate(-50%,-50%);padding:2px 5px;background:${theme === 'dark' ? '#facc15' : '#1d4ed8'};color:${theme === 'dark' ? '#111827' : '#ffffff'};font:600 12px monospace;border-radius:3px;box-shadow:0 1px 4px #0008;`
         shadow.append(badge)
       }
       document.documentElement.append(root)
       hintRoot = root
       return true
     },
-    clear: clearHints,
+    clear(request) {
+      if (!Number.isSafeInteger(request) || request < hintRequest) return false
+      hintRequest = request
+      return clearHints(request)
+    },
     activate(request, id) {
       if (request !== hintRequest) return null
       const target = hintSnapshot.get(id)
