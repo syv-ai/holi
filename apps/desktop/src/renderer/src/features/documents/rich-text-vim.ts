@@ -14,6 +14,7 @@ type VimSettings = {
   editable: () => boolean
   onModeChange?: (mode: RichTextVimMode) => void
   onHints?: (view: EditorView) => void
+  onFeedback?: (message: string) => void
   escapeOwned?: () => boolean
 }
 
@@ -23,6 +24,7 @@ type VimState = {
   prefix: boolean
   operator: 'd' | 'c' | 'y' | null
   count: number
+  operatorCount: number
   visualAnchor: number | null
   register: { content: import('@tiptap/pm/model').Slice; linewise: boolean } | null
 }
@@ -33,6 +35,7 @@ const EMPTY: VimState = {
   prefix: false,
   operator: null,
   count: 0,
+  operatorCount: 1,
   visualAnchor: null,
   register: null,
 }
@@ -112,6 +115,24 @@ function graphemeBoundaries(state: EditorState, from: number, to: number) {
   })
   flushText()
   return [...positions].filter((pos) => pos >= from && pos <= to).sort((a, b) => a - b)
+}
+
+function containerAt(state: EditorState, pos: number, names: string[]) {
+  const $pos = state.doc.resolve(Math.max(0, Math.min(pos, state.doc.content.size)))
+  for (let depth = $pos.depth; depth > 0; depth--) {
+    const node = $pos.node(depth)
+    if (names.includes(node.type.name)) return { type: node.type.name, pos: $pos.before(depth) }
+  }
+  return null
+}
+
+function safeRange(state: EditorState, from: number, to: number) {
+  const names = ['tableCell', 'tableHeader', 'listItem', 'taskItem']
+  return names.every((name) => {
+    const left = containerAt(state, from, [name])
+    const right = containerAt(state, to, [name])
+    return left?.pos === right?.pos
+  })
 }
 
 function select(view: EditorView, pos: number) {
@@ -365,9 +386,20 @@ function handleNormal(
 ) {
   const key = event.key
   const plain = !event.metaKey && !event.ctrlKey && !event.altKey
-  if (key === 'Escape') {
-    if (current.prefix) {
-      setMode(view, 'normal')
+  if (key === 'Escape' && plain) {
+    if (current.prefix || current.operator || current.count || current.visualAnchor !== null) {
+      const tr = view.state.tr
+      if (current.visualAnchor !== null)
+        tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
+      tr.setMeta(KEY, {
+        ...current,
+        prefix: false,
+        operator: null,
+        count: 0,
+        operatorCount: 1,
+        visualAnchor: null,
+      }).setMeta('addToHistory', false)
+      view.dispatch(tr)
       event.preventDefault()
       return true
     }
@@ -392,28 +424,39 @@ function handleNormal(
   )
     return false
   if (!plain) return false
+  clearExtraSelections(view)
   const update = (patch: Partial<VimState>) =>
     view.dispatch(
-      view.state.tr
-        .setMeta(KEY, { ...current, ...patch })
-        .setMeta('addToHistory', false),
+      view.state.tr.setMeta(KEY, { ...current, ...patch }).setMeta('addToHistory', false),
     )
-  if (key === 'Escape' && current.visualAnchor !== null) {
-    update({ visualAnchor: null, operator: null, count: 0 })
-    select(view, view.state.selection.head)
-    event.preventDefault()
-    return true
-  }
-  if (current.visualAnchor !== null && (key === 'h' || key === 'j' || key === 'k' || key === 'l' || key === 'w' || key === 'b' || key === 'e' || key === '0' || key === '^' || key === '$')) {
+  if (
+    current.visualAnchor !== null &&
+    (key === 'h' ||
+      key === 'j' ||
+      key === 'k' ||
+      key === 'l' ||
+      key === 'w' ||
+      key === 'b' ||
+      key === 'e' ||
+      key === '0' ||
+      key === '^' ||
+      key === '$')
+  ) {
     if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
     else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
     else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
     else lineMotion(view, key)
-    const anchor = view.state.doc.resolve(Math.min(current.visualAnchor, view.state.doc.content.size))
+    const anchor = view.state.doc.resolve(
+      Math.min(current.visualAnchor, view.state.doc.content.size),
+    )
     const head = view.state.selection.head
     const from = Math.min(anchor.pos, head)
     const to = Math.max(anchor.pos, head)
-    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)).setMeta('addToHistory', false))
+    view.dispatch(
+      view.state.tr
+        .setSelection(TextSelection.create(view.state.doc, from, to))
+        .setMeta('addToHistory', false),
+    )
     event.preventDefault()
     return true
   }
@@ -431,8 +474,22 @@ function handleNormal(
     event.preventDefault()
     return true
   }
-  if (key === 'v') {
-    update({ visualAnchor: view.state.selection.head, operator: null, count: 0 })
+  if (key === 'v' || key === 'V') {
+    const anchor = view.state.selection.head
+    update({ visualAnchor: anchor, operator: null, count: 0 })
+    if (key === 'V') {
+      const line = lineAt(view.state, anchor)
+      if (line) {
+        const from = line.block.from - 1
+        const to = line.block.to + 1
+        const selection = TextSelection.create(
+          view.state.doc,
+          from,
+          Math.min(to, view.state.doc.content.size),
+        )
+        view.dispatch(view.state.tr.setSelection(selection).setMeta('addToHistory', false))
+      }
+    }
     event.preventDefault()
     return true
   }
@@ -442,27 +499,65 @@ function handleNormal(
       const line = lineAt(view.state, view.state.selection.head)
       if (line) {
         const { block } = line
-        const from = block.from - 1
-        const to = block.to + 1
+        const nested = containerAt(view.state, block.from, [
+          'tableCell',
+          'tableHeader',
+          'listItem',
+          'taskItem',
+        ])
+        const from = nested ? block.from : block.from - 1
+        const to = nested ? block.to : block.to + 1
         const content = view.state.doc.slice(from, to)
-        update({ operator: null, count: 0, register: { content, linewise: true } })
+        update({
+          operator: null,
+          count: 0,
+          operatorCount: 1,
+          register: { content, linewise: true },
+        })
         if (operator !== 'y' && settings.editable()) {
           const tr = view.state.tr.delete(from, to)
-          view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(from, tr.doc.content.size)), 1)))
+          view.dispatch(
+            tr.setSelection(
+              TextSelection.near(tr.doc.resolve(Math.min(from, tr.doc.content.size)), 1),
+            ),
+          )
           if (operator === 'c') setMode(view, 'insert', true)
         }
       }
       event.preventDefault()
       return true
     }
-    if (key === 'w' || key === 'b' || key === 'e' || key === 'h' || key === 'l' || key === 'j' || key === 'k' || key === '0' || key === '^' || key === '$') {
+    if (
+      key === 'w' ||
+      key === 'b' ||
+      key === 'e' ||
+      key === 'h' ||
+      key === 'l' ||
+      key === 'j' ||
+      key === 'k' ||
+      key === '0' ||
+      key === '^' ||
+      key === '$'
+    ) {
       const origin = view.state.selection.head
-      const range = operatorRange(view, origin, key, Math.max(1, current.count || 1))
+      const range = operatorRange(
+        view,
+        origin,
+        key,
+        Math.max(1, current.operatorCount * (current.count || 1)),
+      )
       const from = range.from
-      const to = key === 'w' || key === 'e' || key === 'l' || key === '$' ? range.to + 1 : range.to
+      const to = key === 'e' || key === 'l' || key === '$' ? range.to + 1 : range.to
       const safeTo = Math.min(view.state.doc.content.size, Math.max(from, to))
+      const allowed = safeRange(view.state, from, safeTo)
+      if (!allowed) {
+        update({ operator: null, count: 0, operatorCount: 1 })
+        settings.onFeedback?.('Vim motion crosses a list or table; no text was changed')
+        event.preventDefault()
+        return true
+      }
       const content = view.state.doc.slice(from, safeTo)
-      update({ operator: null, count: 0, register: { content, linewise: false } })
+      update({ operator: null, count: 0, operatorCount: 1, register: { content, linewise: false } })
       if (operator !== 'y' && settings.editable() && safeTo > from) {
         const tr = view.state.tr.delete(from, safeTo)
         view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
@@ -478,6 +573,11 @@ function handleNormal(
     const content = view.state.doc.slice(from, to)
     update({ visualAnchor: null, register: { content, linewise: false } })
     if (key !== 'y' && settings.editable() && to > from) {
+      if (!safeRange(view.state, from, to)) {
+        settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
+        event.preventDefault()
+        return true
+      }
       const tr = view.state.tr.delete(from, to)
       view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
       if (key === 'c') setMode(view, 'insert', true)
@@ -486,19 +586,43 @@ function handleNormal(
     return true
   }
   if (key === 'd' || key === 'c' || key === 'y') {
-    update({ operator: key })
+    update({ operator: key, operatorCount: Math.max(1, current.count), count: 0 })
     event.preventDefault()
     return true
   }
-  if ((key === 'p' || key === 'P') && current.register && settings.editable()) {
-    const at = view.state.selection.head + (key === 'p' && !current.register.linewise ? 1 : 0)
-    const pos = Math.max(0, Math.min(at, view.state.doc.content.size))
-    const tr = view.state.tr.replace(pos, pos, current.register.content)
-    view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(pos), 1)).scrollIntoView())
+  if ((key === 'p' || key === 'P') && current.register) {
+    if (settings.editable()) {
+      const line = lineAt(view.state, view.state.selection.head)
+      const nested =
+        line &&
+        containerAt(view.state, line.block.from, [
+          'tableCell',
+          'tableHeader',
+          'listItem',
+          'taskItem',
+        ])
+      const at =
+        current.register.linewise && line
+          ? nested
+            ? key === 'p'
+              ? line.block.to
+              : line.block.from
+            : key === 'p'
+              ? line.block.to + 1
+              : line.block.from - 1
+          : view.state.selection.head + (key === 'p' && !current.register.linewise ? 1 : 0)
+      const pos = Math.max(0, Math.min(at, view.state.doc.content.size))
+      const $pos = view.state.doc.resolve(pos)
+      if ($pos.parent.canReplace($pos.index(), $pos.index(), current.register.content.content)) {
+        const tr = view.state.tr.replace(pos, pos, current.register.content)
+        view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(pos), 1)).scrollIntoView())
+      } else
+        settings.onFeedback?.('Vim register does not fit at this position; no text was changed')
+    }
     event.preventDefault()
     return true
   }
-  if (/^[1-9]$/.test(key)) {
+  if (/^[0-9]$/.test(key) && (current.count > 0 || key !== '0')) {
     update({ count: Math.min(999, current.count * 10 + Number(key)) })
     event.preventDefault()
     return true
@@ -526,7 +650,17 @@ function handleNormal(
     event.preventDefault()
     return true
   }
-  if (key === 'h' || key === 'l' || key === 'j' || key === 'k' || key === 'w' || key === 'b' || key === 'e' || key === '^' || key === '$') {
+  if (
+    key === 'h' ||
+    key === 'l' ||
+    key === 'j' ||
+    key === 'k' ||
+    key === 'w' ||
+    key === 'b' ||
+    key === 'e' ||
+    key === '^' ||
+    key === '$'
+  ) {
     for (let index = 0; index < Math.max(1, current.count); index++) {
       if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
       else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
@@ -591,8 +725,18 @@ export const RichTextVim = Extension.create<VimSettings>({
           apply(transaction, value) {
             const meta = transaction.getMeta(KEY) as VimState | undefined
             if (meta) return meta
-            if (value.visualAnchor !== null && transaction.docChanged)
-              return { ...value, visualAnchor: transaction.mapping.map(value.visualAnchor, -1) }
+            if (!transaction.docChanged) return value
+            if (value.visualAnchor !== null) {
+              const mapped = transaction.mapping.mapResult(value.visualAnchor, -1)
+              if (mapped.deleted || mapped.pos > transaction.doc.content.size)
+                return { ...value, visualAnchor: null, operator: null, count: 0, operatorCount: 1 }
+              try {
+                transaction.doc.resolve(mapped.pos)
+                return { ...value, visualAnchor: mapped.pos }
+              } catch {
+                return { ...value, visualAnchor: null, operator: null, count: 0, operatorCount: 1 }
+              }
+            }
             return value
           },
         },
@@ -692,6 +836,7 @@ export function configureRichTextVim(
         prefix: false,
         operator: null,
         count: 0,
+        operatorCount: 1,
         visualAnchor: null,
         register: current.register,
       })

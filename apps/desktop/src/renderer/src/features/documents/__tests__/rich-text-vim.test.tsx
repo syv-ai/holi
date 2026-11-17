@@ -81,7 +81,7 @@ describe('rich-text Vim extension', () => {
     key(ed, 'w')
     expect(text(ed)).toBe('gamma')
     key(ed, 'u')
-    expect(text(ed)).toBe('alphabeta gamma')
+    expect(text(ed)).toBe('alpha betagamma')
 
     ed.commands.setTextSelection(1)
     key(ed, 'y')
@@ -395,6 +395,61 @@ describe('rich-text Vim extension', () => {
     expect(ed.state.doc.firstChild?.childCount).toBe(4)
     expect(ed.state.selection.$from.parent.type.name).toBe('paragraph')
     expect(ed.view.dom.dataset.vimMode).toBe('insert')
+  })
+
+  it('uses operator-prefix counts as products and keeps pending counts independent', () => {
+    const ed = open('<p>one two three four five six seven eight</p>')
+    ed.commands.setTextSelection(1)
+    for (const keyName of ['2', 'd', '3', 'w']) key(ed, keyName)
+    expect(text(ed)).toBe('seven eight')
+
+    ed.commands.setContent('<p>alpha beta gamma</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, 'w')
+    expect(text(ed)).toBe('beta gamma')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, 'e')
+    expect(text(ed)).toBe(' gamma')
+  })
+
+  it('makes visual mode a real inclusive grapheme selection and cancels it on Escape', () => {
+    const ed = open('<p>a👩‍💻bc</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    key(ed, 'l')
+    expect(ed.state.selection.empty).toBe(false)
+    key(ed, 'Escape')
+    expect(ed.state.selection.empty).toBe(true)
+    expect(ed.view.dom.dataset.vimMode).toBe('normal')
+    expect(text(ed)).toBe('a👩‍💻bc')
+  })
+
+  it('preserves list and table containers for doubled line deletion', () => {
+    const ed = open('<ul><li><p>first</p></li><li><p>second</p></li></ul>')
+    ed.commands.setTextSelection(3)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(ed.state.doc.firstChild?.type.name).toBe('bulletList')
+    expect(ed.state.doc.firstChild?.childCount).toBe(2)
+    expect(text(ed)).toBe('second')
+
+    const table = openTable()
+    key(table, 'd')
+    key(table, 'd')
+    expect(table.state.doc.firstChild?.type.name).toBe('table')
+    expect(table.state.doc.firstChild?.childCount).toBe(2)
+  })
+
+  it('keeps an existing rich Slice register intact across a yank and paste', () => {
+    const ed = open('<p><strong>alpha</strong> [[target]]</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'y')
+    key(ed, 'w')
+    ed.commands.setTextSelection(ed.state.doc.content.size - 1)
+    key(ed, 'p')
+    expect(ed.getHTML()).toContain('<strong>alpha</strong>')
   })
 
   it('keeps composition and modified shortcuts out of Vim routing and requests hints for normal f', () => {
