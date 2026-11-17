@@ -107,7 +107,7 @@ const proof = {
   scenarios: [] as ScenarioEvidence[],
   cleanup: { nativeGroupsDrained: false, rootsRemoved: false },
 }
-async function fixture(mode: 'success' | 'failure' | 'stall' = 'success') {
+async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayBracketEnd = false) {
   if (!bin) throw new Error('HOLI_CODEX_BIN is required for native producer verification')
   const root = await mkdtemp(join(tmpdir(), 'holi-native-codex-'))
   roots.push(root)
@@ -135,6 +135,10 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success') {
     tokens?: number
   }> = []
   const brackets: Array<{ id: string; edge: string }> = []
+  let bracketEndStarted: (() => void) | undefined
+  const bracketEndEntered = new Promise<void>((resolve) => (bracketEndStarted = resolve))
+  let releaseBracketEnd: (() => void) | undefined
+  const bracketEndGate = new Promise<void>((resolve) => (releaseBracketEnd = resolve))
   let requestSeen: (() => void) | undefined
   const requestReceived = new Promise<void>((resolve) => {
     requestSeen = resolve
@@ -284,7 +288,13 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success') {
           tokens: row.usage?.total,
         })
     },
-    bracket: (id, edge) => brackets.push({ id, edge }),
+    bracket: async (id, edge) => {
+      if (delayBracketEnd && edge === 'end') {
+        bracketEndStarted?.()
+        await bracketEndGate
+      }
+      brackets.push({ id, edge })
+    },
     spawn: (command, args, opts) => {
       const child = spawnOwnedProgram(command, args, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] })
       if (child.pid) {
@@ -374,6 +384,8 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success') {
     host,
     brackets,
     requestReceived,
+    bracketEndEntered,
+    releaseBracketEnd: () => releaseBracketEnd?.(),
     stopServer: () => releaseStall?.(),
   }
 }
@@ -483,11 +495,16 @@ async function nativeVersion(
   return { code, stdout, timedOut, limited, groupDrained }
 }
 
-async function ended(jobs: ReturnType<typeof createJobs>, id: string) {
+async function ended(
+  jobs: ReturnType<typeof createJobs>,
+  id: string,
+  brackets: Array<{ id: string; edge: string }>,
+) {
   const deadline = Date.now() + 25_000
   while (Date.now() < deadline) {
     const row = jobs.sessions().find((session) => session.id === id)
-    if (row?.outcome) return row
+    if (row?.outcome && brackets.some((bracket) => bracket.id === id && bracket.edge === 'end'))
+      return row
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
   throw new Error('native job did not settle')
@@ -558,7 +575,7 @@ if (bin) {
       })
       expect(result.ok).toBe(true)
       if (!result.ok) return
-      const row = await ended(f.jobs, result.sessionId)
+      const row = await ended(f.jobs, result.sessionId, f.brackets)
       expect(row.outcome).toBe('completed')
       expect(row.usage?.total).toBe(13)
       expect(f.requests).toHaveLength(1)
@@ -601,7 +618,7 @@ if (bin) {
     it('resumes the native thread and reports the cumulative usage total', async () => {
       const scenario = beginScenario('follow-up')
       onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
-      const f = await fixture()
+      const f = await fixture('success', true)
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
       scenario.jsonl = f.jsonl
@@ -619,14 +636,25 @@ if (bin) {
       expect(result.ok).toBe(true)
       if (!result.ok) return
       progress(scenario, 'host-lifecycle')
-      const first = await ended(f.jobs, result.sessionId)
+      await f.bracketEndEntered
+      const firstCompletion = ended(f.jobs, result.sessionId, f.brackets)
+      let firstCompleted = false
+      void firstCompletion.then(() => (firstCompleted = true))
+      expect(f.jobs.sessions().find((session) => session.id === result.sessionId)?.outcome).toBe(
+        'completed',
+      )
+      await Promise.resolve()
+      expect(firstCompleted).toBe(false)
+      f.releaseBracketEnd()
+      const first = await firstCompletion
       expect(first.outcome).toBe('completed')
       const firstThread = f.jsonl
         .map(({ event }) => event as { kind?: string; id?: string })
         .find((event) => event.kind === 'thread')?.id
       expect(firstThread).toBeTruthy()
       f.jobs.message(result.sessionId, 'Follow up')
-      const row = await ended(f.jobs, result.sessionId)
+      f.releaseBracketEnd()
+      const row = await ended(f.jobs, result.sessionId, f.brackets)
       expect(row.outcome).toBe('completed')
       expect(row.usage?.total).toBe(26)
       expect(f.requests).toHaveLength(2)
@@ -683,7 +711,7 @@ if (bin) {
       expect(result.ok).toBe(true)
       if (!result.ok) return
       progress(scenario, 'host-lifecycle')
-      const row = await ended(f.jobs, result.sessionId)
+      const row = await ended(f.jobs, result.sessionId, f.brackets)
       expect(row.outcome).toBe('failed')
       expect(row.outcome).not.toBe('completed')
       expect(row.error).toContain('fixture rejected request')
@@ -732,7 +760,7 @@ if (bin) {
         ),
       ])
       expect(await f.jobs.stop(result.sessionId)).toEqual({ ok: true })
-      const stopped = await ended(f.jobs, result.sessionId)
+      const stopped = await ended(f.jobs, result.sessionId, f.brackets)
       expect(stopped.outcome).toBe('failed')
       expect(stopped.error).toContain('Stopped')
       expect(
