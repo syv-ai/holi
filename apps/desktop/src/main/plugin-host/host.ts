@@ -53,7 +53,7 @@ import type { ActivityWrite } from '../activity/log'
  * @public exported for its test
  */
 export type OpenVault = LiveVault &
-  Pick<ActiveVault, 'pause' | 'resume' | 'commitNow'> & {
+  Pick<ActiveVault, 'pause' | 'resume' | 'commitNow' | 'drainSync'> & {
     repo: Pick<ActiveVault['repo'], 'head'>
   }
 
@@ -628,6 +628,18 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       pauseSync: (reason) => {
         if (!valid()) throw new Error(`${remote} plugin context is no longer active`)
         return keep(pauseSync(vault, state, reason))
+      },
+      pauseSyncAndDrain: async (reason) => {
+        if (!valid()) throw new Error(`${remote} plugin context is no longer active`)
+        const release = keep(pauseSync(vault, state, reason))
+        try {
+          await vault.drainSync()
+          if (!valid()) throw new Error(`${remote} plugin activation was cancelled`)
+          return release
+        } catch (error) {
+          release()
+          throw error
+        }
       },
       commitNow: async () => {
         if (!valid() && !draining() && !finalizing())

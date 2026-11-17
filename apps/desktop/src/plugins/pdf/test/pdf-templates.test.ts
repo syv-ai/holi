@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -177,17 +177,110 @@ describe('migrateTemplates', () => {
     expect(await readFile(join(old, 'template.typ'))).toEqual(reportBytes)
   })
 
+  it('removes obsolete templates at any slug, but preserves unmatched foundation', async () => {
+    const root = await vault()
+    const legacy = join(root, '.holi/document-templates/_legacy')
+    await mkdir(join(legacy, 'nested'), { recursive: true })
+    await writeFile(join(legacy, 'template.json'), JSON.stringify({ name: 'Syv.ai report' }))
+    await writeFile(join(legacy, 'nested', 'asset.bin'), Buffer.from([0, 255, 12]))
+    const foundation = join(root, '.holi/document-templates/_brand')
+    await mkdir(foundation, { recursive: true })
+    await writeFile(join(foundation, 'brand.typ'), 'foundation')
+    await migrateTemplates(root, {})
+    expect(await readFile(join(legacy, 'template.json')).catch(() => null)).toBeNull()
+    await expect(stat(legacy)).rejects.toThrow()
+    expect(await readFile(join(foundation, 'brand.typ'), 'utf8')).toBe('foundation')
+  })
+
   it('removes an obsolete arbitrary slug without changing supported templates', async () => {
     const root = await vault()
     await seed(root, 'legacy', { name: 'Syv.ai report' })
     await writeFile(join(root, '.holi/document-templates/legacy/template.typ'), 'edited')
     await seed(root, 'report', { name: 'Report' })
+    await seed(root, 'brand-special', { name: 'Syv.ai proposal' })
+    await writeFile(
+      join(root, '.holi/document-templates/brand-special/template.typ'),
+      Buffer.from([0, 255, 2]),
+    )
     const before = await readFile(join(root, '.holi/document-templates/report/template.typ'))
+    const branded = await readFile(
+      join(root, '.holi/document-templates/brand-special/template.typ'),
+    )
     await migrateTemplates(root, {})
     expect(await readFile(join(root, '.holi/document-templates/report/template.typ'))).toEqual(
       before,
     )
+    expect(
+      await readFile(join(root, '.holi/document-templates/brand-special/template.typ')),
+    ).toEqual(branded)
     expect(await listTemplates(root)).toHaveLength(1)
     await migrateTemplates(root, {})
+  })
+
+  it('reopens canonical Report restoration from durable state after the obsolete manifest is gone', async () => {
+    const root = await vault()
+    const base = join(root, '.holi/document-templates/report')
+    await mkdir(base, { recursive: true })
+    await writeFile(join(base, 'template.json'), JSON.stringify({ name: 'Syv.ai report' }))
+    const seed = {
+      '.holi/document-templates/report/template.json': '{"name":"Report"}',
+      '.holi/document-templates/report/template.typ': 'report',
+    }
+    await migrateTemplates(root, seed)
+    const first = await readFile(join(base, 'template.typ'))
+    const before = await stat(join(base, 'template.typ'))
+    await migrateTemplates(root, seed)
+    expect(await readFile(join(base, 'template.typ'))).toEqual(first)
+    expect((await stat(join(base, 'template.typ'))).mtimeMs).toBe(before.mtimeMs)
+  })
+
+  it('refuses an unrelated occupant during restoration without overwriting it', async () => {
+    const root = await vault()
+    const report = join(root, '.holi/document-templates/report')
+    await mkdir(report, { recursive: true })
+    await writeFile(join(report, 'template.json'), JSON.stringify({ name: 'Syv.ai report' }))
+    const seed = {
+      '.holi/document-templates/report/template.json': '{"name":"Report"}',
+      '.holi/document-templates/report/template.typ': 'seed',
+    }
+    await migrateTemplates(root, seed)
+    await writeFile(join(report, 'template.typ'), 'unrelated')
+    await expect(migrateTemplates(root, seed)).rejects.toThrow(/unexpected occupant/)
+    expect(await readFile(join(report, 'template.typ'), 'utf8')).toBe('unrelated')
+  })
+
+  it('refuses a linked manifest', async () => {
+    const root = await vault()
+    const outside = join(await vault(), 'manifest.json')
+    await writeFile(outside, JSON.stringify({ name: 'Syv.ai report' }))
+    const dir = join(root, '.holi/document-templates/report')
+    await mkdir(dir, { recursive: true })
+    await symlink(outside, join(dir, 'template.json'))
+    await expect(migrateTemplates(root, {})).rejects.toThrow(/unsafe template migration path/)
+    expect(await readFile(outside, 'utf8')).toContain('Syv.ai report')
+  })
+
+  it('refuses a linked child without touching its external target', async () => {
+    const root = await vault()
+    const outside = join(await vault(), 'sentinel')
+    await writeFile(outside, 'safe')
+    const dir = join(root, '.holi/document-templates/legacy')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'template.json'), JSON.stringify({ name: 'Syv.ai report' }))
+    await symlink(outside, join(dir, 'linked'))
+    await migrateTemplates(root, {})
+    expect(await readFile(outside, 'utf8')).toBe('safe')
+    await expect(stat(join(dir, 'linked'))).rejects.toThrow()
+  })
+
+  it('cancellation leaves the obsolete manifest as a retryable identity', async () => {
+    const root = await vault()
+    const dir = join(root, '.holi/document-templates/report')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'template.json'), JSON.stringify({ name: 'Syv.ai report' }))
+    const controller = new AbortController()
+    controller.abort()
+    await expect(migrateTemplates(root, {}, controller.signal)).rejects.toThrow(/cancelled/)
+    expect(await readFile(join(dir, 'template.json'), 'utf8')).toContain('Syv.ai report')
   })
 })

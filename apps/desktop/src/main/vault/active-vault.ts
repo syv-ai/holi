@@ -144,6 +144,8 @@ export interface ActiveVault {
   caughtUp(): Promise<boolean>
   /** Stops both loops while an agent turn holds the vault. */
   pause(reason: string): void
+  /** Resolve once already-admitted Git mutations drain. Call after pausing admission. */
+  drainSync(): Promise<void>
   /** Lift the pause, then `retry`. */
   resume(): void
   /**
@@ -915,8 +917,11 @@ export async function openActiveVault(args: {
       return null
     } finally {
       syncing = null
-      pullInFlight = false
-      await refreshState()
+      try {
+        await refreshState()
+      } finally {
+        pullInFlight = false
+      }
     }
   }
 
@@ -1054,8 +1059,11 @@ export async function openActiveVault(args: {
       }
       return false
     } finally {
-      pushInFlight = false
-      await refreshState()
+      try {
+        await refreshState()
+      } finally {
+        pushInFlight = false
+      }
     }
   }
 
@@ -1223,6 +1231,9 @@ export async function openActiveVault(args: {
           throw new BranchRefusedError(`Sync is paused (${manualPause}). Switch when it resumes.`)
         }
         const before = await args.repo.status()
+        if (manualPause !== null) {
+          throw new BranchRefusedError(`Sync is paused (${manualPause}). Switch when it resumes.`)
+        }
         const blocked = blockedReason(before)
         if (blocked !== null) {
           throw new BranchRefusedError(
@@ -1239,6 +1250,9 @@ export async function openActiveVault(args: {
             throw new BranchRefusedError('Sync is busy. Try again in a moment.')
           }
           await new Promise((r) => setTimeout(r, 50))
+        }
+        if (manualPause !== null) {
+          throw new BranchRefusedError(`Sync is paused (${manualPause}). Switch when it resumes.`)
         }
         // The switch holds the loop exactly as a pull does: the commit below
         // runs inside the hold (`duringPull`), and every other commit, pull,
@@ -1419,6 +1433,12 @@ export async function openActiveVault(args: {
       pause(reason) {
         manualPause = reason
         setState({ kind: 'paused', reason, manual: true })
+      },
+      async drainSync() {
+        while (!closed && (committing || pullInFlight || pushInFlight || deliveryVerifying)) {
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+        if (closed) throw new Error('vault closed while waiting for sync to drain')
       },
       resume() {
         manualPause = null

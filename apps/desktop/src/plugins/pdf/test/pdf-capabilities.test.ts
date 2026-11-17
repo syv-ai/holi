@@ -99,6 +99,33 @@ describe('pdf capabilities', () => {
     ])
   })
 
+  it('filters reintroduced obsolete templates from UI and CLI and refuses rendering them', async () => {
+    const files = {
+      ...TEMPLATE_FILES,
+      '.holi/document-templates/legacy/template.json': JSON.stringify({
+        name: 'Syv.ai report',
+        fields: [],
+      }),
+      '.holi/document-templates/case/template.json': JSON.stringify({
+        name: 'syv.ai report',
+        fields: [],
+      }),
+      'note.md': '# Note',
+    }
+    const { run } = await rig(files, true)
+    for (const door of ['ui', 'cli'] as const) {
+      const listed = (await run('pdf.templates', undefined, door)) as { name: string }[]
+      expect(listed.map(({ name }) => name)).toContain('syv.ai report')
+      expect(listed.map(({ name }) => name)).not.toContain('Syv.ai report')
+      await expect(
+        run('pdf.render', { path: 'note.md', template: 'legacy' }, door),
+      ).rejects.toThrow(/template legacy/)
+      const output = join(base, `${door}.pdf`)
+      await run('pdf.render', { path: 'note.md', template: 'plain', out: output }, door)
+      expect((await readFile(output)).toString()).toContain('%PDF-1.7')
+    }
+  })
+
   it('keeps the signatures made in the viewer, outside the vault', async () => {
     const { root, run } = await rig()
     expect(await run('pdf.signatures')).toBe('[]')
