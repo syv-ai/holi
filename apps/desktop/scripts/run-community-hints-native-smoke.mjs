@@ -280,6 +280,13 @@ try {
     revision: acceptedReplayRevision,
     targets: replayTargets,
   })
+  // The protocol snapshot is cached by the adapter; a matching start asks the
+  // real host discovery path to render that controlled revision for inspection.
+  await replayFromGuest({
+    type: 'holi-hints:start',
+    nonce: replayBaseline.nonce,
+    revision: acceptedReplayRevision,
+  })
   await wait(
     ' [...document.querySelectorAll("[data-host-hints] [data-hint-target]")].some(e=>e.getAttribute("data-hint-target").startsWith("Replay target:"))',
     'fresh valid guest replay replaces labels',
