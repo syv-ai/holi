@@ -26,7 +26,8 @@ function killElectronTree(child, signal = 'SIGTERM') {
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(
-  process.argv[2] ?? join(tmpdir(), `holi-553-evidence-${Date.now()}-${process.pid}`),
+  process.argv.slice(2).find((argument) => argument !== '--') ??
+    join(tmpdir(), `holi-553-evidence-${Date.now()}-${process.pid}`),
 )
 const fixture = join(desktop, 'scripts/browser-display-fixture')
 const hintsAcceptance = process.env.HOLI_524_HINTS === '1'
