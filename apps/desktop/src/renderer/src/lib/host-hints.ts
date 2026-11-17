@@ -67,13 +67,32 @@ export interface HostHintAdapterTarget {
 }
 
 const registeredAdapters = new Map<HTMLElement, HostHintAdapter>()
+const adapterGenerations = new WeakMap<HTMLElement, { current: number; captured: number }>()
+
+function adapterGeneration(root: HTMLElement) {
+  let generation = adapterGenerations.get(root)
+  if (!generation) {
+    generation = { current: 0, captured: 0 }
+    adapterGenerations.set(root, generation)
+  }
+  return generation
+}
+
+function changeAdapterGeneration(owner: HTMLElement) {
+  const root = owner.closest<HTMLElement>('[data-pane]')
+  if (root) adapterGeneration(root).current += 1
+}
 
 /** Register an explicitly owned target source for the pane containing `owner`. */
 export function registerHostHintAdapter(owner: HTMLElement, adapter: HostHintAdapter): () => void {
   registeredAdapters.set(owner, adapter)
+  changeAdapterGeneration(owner)
   return () => {
     adapter.invalidate?.()
-    if (registeredAdapters.get(owner) === adapter) registeredAdapters.delete(owner)
+    if (registeredAdapters.get(owner) === adapter) {
+      registeredAdapters.delete(owner)
+      changeAdapterGeneration(owner)
+    }
   }
 }
 
@@ -101,7 +120,9 @@ function adaptersFor(root: HTMLElement): HostHintAdapter[] {
 
 export function captureHostHintAdapters(root: HTMLElement): HostHintAdapter[] {
   const adapters = adaptersFor(root)
+  const capturedGeneration = adapterGeneration(root).current
   for (const adapter of adapters) adapter.capture?.()
+  adapterGeneration(root).captured = capturedGeneration
   return adapters
 }
 
@@ -138,6 +159,8 @@ export interface HostHintTarget {
   scopeAdapter?: HostHintAdapter
   token?: unknown
   surface: ShadowRoot | null
+  /** Registry version seen by discovery, used to invalidate a newly-owned source. */
+  adapterGeneration?: number
 }
 
 /** Shell chrome and the focused pane, or only the foremost interactive overlay. */
@@ -171,6 +194,7 @@ export function discoverHostHintTargets(
         overlay,
         surface,
         scopeAdapter: adapter,
+        adapterGeneration: adapterGeneration(root).current,
       })
     }
   }
@@ -201,6 +225,7 @@ export function discoverHostHintTargets(
           token: target.token,
           key: '',
           surface: null,
+          adapterGeneration: adapterGeneration(root).current,
         })
       }
     }
@@ -228,6 +253,12 @@ export function hostHintsUnchanged(
   root = targets[0]?.root,
 ): boolean {
   if (!root?.isConnected) return false
+  const generation = adapterGeneration(root)
+  if (
+    generation.current > generation.captured &&
+    targets.some((target) => (target.adapterGeneration ?? 0) < generation.current)
+  )
+    return false
   const adapters = new Set(targets.flatMap((target) => (target.adapter ? [target.adapter] : [])))
   for (const source of adapters) {
     const adapted = targets.filter((target) => target.adapter === source)
@@ -237,6 +268,7 @@ export function hostHintsUnchanged(
   const next = discoverHostHintTargets(root, requestAdapter, requestAdapter?.guestOnly === true)
   const ordinaryNext = next.filter((target) => !target.adapter)
   if (
+    next.length !== targets.length ||
     ordinaryNext.length !== ordinary.length ||
     !ordinaryNext.every((target, i) => sameTarget(target, ordinary[i]!))
   )
