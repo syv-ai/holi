@@ -8,6 +8,7 @@
   const KEY_ALPHABET = 'asdfghjklqwertyuiopzxcvbnm'
   let nonce = null
   let hostOrigin = null
+  let hostWindow = null
   let enabled = false
   let sessionActive = false
   let revision = 0
@@ -16,17 +17,35 @@
   let disposed = false
 
   const send = (message) => {
-    if (!enabled || !nonce || !hostOrigin || disposed) return
-    window.parent.postMessage({ ...message, nonce }, hostOrigin)
+    if (!enabled || !nonce || !hostWindow || disposed) return
+    hostWindow.postMessage({ ...message, nonce }, hostOrigin ?? '*')
   }
   const editable = () => {
     const node = document.activeElement
     return !!node && (node.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName))
   }
+  const visiblyActive = (element) => {
+    if (!element.isConnected || element.closest('[hidden],[inert],[aria-hidden="true"]'))
+      return false
+    for (let node = element; node instanceof Element; node = node.parentElement) {
+      const style = getComputedStyle(node)
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.visibility === 'collapse' ||
+        Number(style.opacity) === 0
+      )
+        return false
+    }
+    const rect = element.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+  }
   const overlay = () =>
-    !!document.querySelector(
-      'dialog[open], [aria-modal="true"], [role="dialog"], [data-holi-overlay]',
-    )
+    [
+      ...document.querySelectorAll(
+        'dialog[open], [role="menu"], [role="listbox"], [role="alertdialog"], [role="dialog"], [aria-modal="true"], [data-holi-overlay]',
+      ),
+    ].some(visiblyActive)
   const eligible = () => enabled && !document.hidden && !editable() && !composing && !overlay()
   const labelFor = (element) => {
     const labelledBy = element.getAttribute('aria-labelledby')
@@ -50,26 +69,43 @@
   const visible = (element) => {
     if (
       !element.isConnected ||
-      element.matches(':disabled') ||
-      element.closest('[hidden], [inert]')
-    )
-      return false
-    const style = getComputedStyle(element)
-    if (
-      style.display === 'none' ||
-      style.visibility === 'hidden' ||
-      style.visibility === 'collapse' ||
-      style.pointerEvents === 'none'
+      element.matches(':disabled,[aria-disabled="true"]') ||
+      element.closest('[hidden], [inert], [aria-disabled="true"]')
     )
       return false
     const rect = element.getBoundingClientRect()
+    let left = 0
+    let top = 0
+    let right = innerWidth
+    let bottom = innerHeight
+    for (let node = element; node instanceof Element; node = node.parentElement) {
+      const style = getComputedStyle(node)
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.visibility === 'collapse' ||
+        Number(style.opacity) === 0 ||
+        (node === element && style.pointerEvents === 'none')
+      )
+        return false
+      if (
+        node !== element &&
+        /(hidden|clip|scroll|auto)/.test(`${style.overflow}${style.overflowX}${style.overflowY}`)
+      ) {
+        const clip = node.getBoundingClientRect()
+        left = Math.max(left, clip.left)
+        top = Math.max(top, clip.top)
+        right = Math.min(right, clip.right)
+        bottom = Math.min(bottom, clip.bottom)
+      }
+    }
     return (
       rect.width > 0 &&
       rect.height > 0 &&
-      rect.bottom > 0 &&
-      rect.right > 0 &&
-      rect.top < innerHeight &&
-      rect.left < innerWidth
+      rect.right > left &&
+      rect.left < right &&
+      rect.bottom > top &&
+      rect.top < bottom
     )
   }
   const collect = () => {
@@ -81,6 +117,8 @@
       const label = labelFor(element)
       if (!label) continue
       const rect = element.getBoundingClientRect()
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+      if (!hit || (hit !== element && !element.contains(hit))) continue
       const id = `target-${++next}`
       const target = {
         element,
@@ -115,9 +153,36 @@
     send({ type: 'holi-hints:invalidated', revision })
     snapshot()
   }
+  const invalidateDepartingDocument = () => {
+    if (!enabled) return
+    revision += 1
+    targets.clear()
+    sessionActive = false
+    send({ type: 'holi-hints:invalidated', revision })
+  }
+  let navigationFrame = 0
+  const invalidateNavigation = () => {
+    invalidateDepartingDocument()
+    cancelAnimationFrame(navigationFrame)
+    navigationFrame = requestAnimationFrame(snapshot)
+  }
   const keydown = (event) => {
-    if (!eligible() || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey)
+    if (
+      !eligible() ||
+      event.defaultPrevented ||
+      event.repeat ||
+      event.isComposing ||
+      event.key === 'Process'
+    )
       return
+    if (event.altKey || event.ctrlKey || event.metaKey) {
+      if (sessionActive) {
+        event.preventDefault()
+        sessionActive = false
+        send({ type: 'holi-hints:clear' })
+      }
+      return
+    }
     if (!sessionActive) {
       if (event.key !== 'f') return
       event.preventDefault()
@@ -128,8 +193,12 @@
       event.key !== 'Escape' &&
       event.key !== 'Backspace' &&
       (event.key.length !== 1 || !KEY_ALPHABET.includes(event.key))
-    )
+    ) {
+      event.preventDefault()
+      sessionActive = false
+      send({ type: 'holi-hints:clear' })
       return
+    }
     event.preventDefault()
     send({ type: 'holi-hints:key', key: event.key })
   }
@@ -146,23 +215,31 @@
       typeof data.nonce === 'string' &&
       data.nonce.length > 0 &&
       data.nonce.length <= 128 &&
-      event.origin !== 'null'
+      event.source === window.parent
     ) {
       nonce = data.nonce
-      hostOrigin = event.origin
+      hostWindow = window.parent
+      hostOrigin = event.origin === 'null' ? null : event.origin
       enabled = true
       sessionActive = false
       targets.clear()
       snapshot()
       return
     }
-    if (!enabled || event.origin !== hostOrigin || data.nonce !== nonce) return
+    if (
+      !enabled ||
+      event.source !== hostWindow ||
+      (hostOrigin !== null && event.origin !== hostOrigin) ||
+      data.nonce !== nonce
+    )
+      return
     if (data.type === 'holi-hints:disable' && exact(data, ['type', 'nonce'])) {
       enabled = false
       sessionActive = false
       targets.clear()
       nonce = null
       hostOrigin = null
+      hostWindow = null
       return
     }
     if (data.type === 'holi-hints:clear' && exact(data, ['type', 'nonce'])) {
@@ -194,6 +271,11 @@
         return
       }
       const rect = item.element.getBoundingClientRect()
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+      if (!hit || (hit !== item.element && !item.element.contains(hit))) {
+        invalidate()
+        return
+      }
       const now = [rect.x, rect.y, rect.width, rect.height]
       if (now.some((coordinate, index) => coordinate !== item.geometry[index])) {
         invalidate()
@@ -212,6 +294,16 @@
     composing = false
     if (enabled) invalidate()
   }
+  const historyMethods = ['pushState', 'replaceState'].map((name) => {
+    const original = history[name]
+    const wrapped = function (...args) {
+      const result = original.apply(this, args)
+      invalidateNavigation()
+      return result
+    }
+    history[name] = wrapped
+    return { name, original, wrapped }
+  })
   const listeners = [
     [window, 'message', message],
     [window, 'keydown', keydown],
@@ -222,10 +314,10 @@
     [document, 'compositionend', compositionEnd, true],
     [document, 'focusin', invalidate, true],
     [document, 'focusout', invalidate, true],
-    [window, 'pagehide', invalidate],
-    [window, 'popstate', invalidate],
-    [window, 'hashchange', invalidate],
-    [window, 'beforeunload', invalidate],
+    [window, 'pagehide', invalidateDepartingDocument],
+    [window, 'popstate', invalidateNavigation],
+    [window, 'hashchange', invalidateNavigation],
+    [window, 'beforeunload', invalidateDepartingDocument],
     ...(window.visualViewport
       ? [
           [window.visualViewport, 'resize', invalidate],
@@ -247,6 +339,9 @@
     if (disposed) return
     disposed = true
     observer.disconnect()
+    cancelAnimationFrame(navigationFrame)
+    for (const { name, original, wrapped } of historyMethods)
+      if (history[name] === wrapped) history[name] = original
     for (const [target, type, handler, capture] of listeners)
       target.removeEventListener(type, handler, capture)
     targets.clear()

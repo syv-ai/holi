@@ -16,7 +16,9 @@ export function createCommunityHintAdapter(
   request: typeof requestAdaptedHostHints = requestAdaptedHostHints,
 ): HostHintAdapter {
   const origin = new URL(frame.src, window.location.href).origin
+  const targetOrigin = origin === 'null' ? '*' : origin
   const nonce = crypto.randomUUID()
+  const parentWindow = frame.contentWindow
   let revision = -1
   let snapshot: FrameHintTarget[] | null = null
   let tokens = new Map<string, { id: string; revision: number }>()
@@ -38,19 +40,29 @@ export function createCommunityHintAdapter(
     }
   }
   const post = (message: FrameHintsMessage) => {
-    if (live) frame.contentWindow?.postMessage(message, origin)
+    if (live && frame.contentWindow === parentWindow)
+      parentWindow?.postMessage(message, targetOrigin)
   }
   const frameVisible = () => {
     if (!live || !frame.isConnected || frame.inert || frame.closest('[hidden],[inert]'))
       return false
+    for (let node: HTMLElement | null = frame; node; node = node.parentElement) {
+      const style = getComputedStyle(node)
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)
+        return false
+    }
     const rect = frame.getBoundingClientRect()
     const viewport = window.visualViewport
     const left = viewport?.offsetLeft ?? 0
     const top = viewport?.offsetTop ?? 0
     const right = left + (viewport?.width ?? window.innerWidth)
     const bottom = top + (viewport?.height ?? window.innerHeight)
+    const pane = frame.closest<HTMLElement>('[data-pane]')
+    const panes = document.querySelectorAll('[data-pane]')
+    const focused =
+      pane !== null && (panes.length <= 1 || pane.getAttribute('data-pane-focused') === 'true')
     return (
-      frame.closest('[data-pane-focused]') !== null &&
+      focused &&
       rect.width > 0 &&
       rect.height > 0 &&
       rect.right > left &&
@@ -62,7 +74,7 @@ export function createCommunityHintAdapter(
   const frameFocused = () => frameVisible() && document.activeElement === frame
   const onFrameLoad = () => thisAdapter.invalidate?.()
   const receive = (event: MessageEvent<unknown>) => {
-    if (!live || event.source !== frame.contentWindow || event.origin !== origin) return
+    if (!live || event.source !== parentWindow || event.origin !== origin) return
     if (!isFrameHintsMessage(event.data) || event.data.nonce !== nonce) return
     const data = event.data
     if (data.type === 'holi-hints:snapshot') {
@@ -81,7 +93,7 @@ export function createCommunityHintAdapter(
     if (data.type === 'holi-hints:start') {
       if (snapshot === null || data.revision !== revision || !frameFocused()) return
       session = true
-      request(frame, thisAdapter)
+      request(frame, thisAdapter, { guestOnly: true })
       if (
         !live ||
         snapshot === null ||
@@ -96,8 +108,12 @@ export function createCommunityHintAdapter(
       return
     }
     if (data.type === 'holi-hints:key') {
-      if (!session || (data.key.length !== 1 && data.key !== 'Escape' && data.key !== 'Backspace'))
+      if (!session) return
+      if (data.key.length !== 1 && data.key !== 'Escape' && data.key !== 'Backspace') {
+        session = false
+        post({ type: 'holi-hints:clear', nonce })
         return
+      }
       const event = new KeyboardEvent('keydown', { key: data.key, bubbles: true, cancelable: true })
       if (latestKeyRoute?.(event)) {
         if (data.key === 'Escape') {
@@ -111,6 +127,7 @@ export function createCommunityHintAdapter(
     }
   }
   const thisAdapter: HostHintAdapter = {
+    guestOnly: true,
     discover(): readonly HostHintAdapterTarget[] {
       if (!frameFocused() || snapshot === null) return []
       const rect = frame.getBoundingClientRect()
@@ -211,17 +228,22 @@ export function createCommunityHintAdapter(
         window.removeEventListener('blur', cancelForChange)
         window.visualViewport?.removeEventListener('scroll', cancelForChange)
         window.visualViewport?.removeEventListener('resize', cancelForChange)
-        // The shell unsubscribes immediately before calling activate(). Let that
-        // synchronous activation post first; ordinary cancellation still clears.
+        // Unsubscribing ends the current session but preserves this document's
+        // snapshot so Escape can be followed by a fresh guest request.
         queueMicrotask(() => {
           if (subscriptionGeneration !== subscription) return
           if (session) post({ type: 'holi-hints:clear', nonce })
-          invalidate()
+          session = false
         })
       }
     },
     invalidate() {
       if (!live) return
+      if (invalidateSession) {
+        const cancel = invalidateSession
+        invalidateSession = null
+        cancel()
+      }
       post({ type: 'holi-hints:disable', nonce })
       snapshot = null
       tokens.clear()
