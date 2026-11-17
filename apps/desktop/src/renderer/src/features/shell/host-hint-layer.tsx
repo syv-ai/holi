@@ -43,6 +43,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
   const current = useRef<HintSession | null>(null)
   const unsubscribe = useRef<(() => void) | null>(null)
   const asyncLifetime = useRef<{ request: number; controller: AbortController } | null>(null)
+  const activations = useRef(new Set<() => void>())
   const requestNumber = useRef(0)
   const revisionNumber = useRef(0)
   const change = useCallback(
@@ -121,9 +122,8 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         return
       }
       const controller = new AbortController()
-      asyncLifetime.current = { request, controller }
       const next: HintSession = {
-        targets,
+        targets: asyncAdapters.length ? [] : targets,
         prefix: '',
         adapter,
         root,
@@ -136,6 +136,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         asyncLabels: new Map(),
       }
       change(next)
+      asyncLifetime.current = { request, controller }
       if (asyncAdapters.length) {
         const discoveries = Promise.all(
           asyncAdapters.map(async (source) => {
@@ -151,7 +152,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
           new Promise<NonNullable<Awaited<typeof discoveries>>>((resolve) =>
             window.setTimeout(() => resolve([]), 120),
           ),
-        ]).then((results) => {
+        ]).then(async (results) => {
           if (controller.signal.aborted || current.current?.request !== request) return
           const asyncTargets = new Map(
             results.filter(
@@ -159,7 +160,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
                 Boolean(entry[1]),
             ),
           )
-          const native = current.current.targets
+          const native = targets
           const entries = [
             ...native.map((target) => ({ x: target.x, y: target.y, target })),
             ...[...asyncTargets].flatMap(([source, items]) =>
@@ -181,29 +182,45 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
               if (index >= 0) revisedTargets[index] = { ...target, key }
             }
           }
-          const populated = {
-            ...current.current,
-            targets: revisedTargets,
-            asyncTargets,
-            asyncLabels: labelsBySource,
-            pending: false,
-          }
-          change(populated)
-          void Promise.all(
+          const presented = await Promise.all(
             asyncAdapters.map(async (source) => {
-              const labels = labelsBySource.get(source) ?? []
               try {
-                await source.present(request, ++revisionNumber.current, labels)
+                return [
+                  source,
+                  await source.present(
+                    request,
+                    ++revisionNumber.current,
+                    labelsBySource.get(source) ?? [],
+                  ),
+                ] as const
               } catch {
-                // An unavailable source should not take away hints from other sources.
+                return [source, false] as const
               }
             }),
           )
-          const lifetimePrefix = populated.buffered
-          if (lifetimePrefix) {
-            const latest = current.current
-            if (latest?.request === request)
-              change({ ...latest, prefix: lifetimePrefix, buffered: '' })
+          if (controller.signal.aborted || current.current?.request !== request) return
+          const available = new Set(presented.filter(([, ok]) => ok).map(([source]) => source))
+          const usableTargets = new Map(
+            [...asyncTargets].filter(([source]) => available.has(source)),
+          )
+          for (const [source] of presented) {
+            if (!available.has(source)) {
+              source.clear(request)
+              labelsBySource.delete(source)
+            }
+          }
+          const buffered = current.current.buffered
+          const populated: HintSession = {
+            ...current.current,
+            targets: revisedTargets,
+            asyncTargets: usableTargets,
+            asyncLabels: labelsBySource,
+            pending: false,
+            buffered: '',
+          }
+          change(populated)
+          for (const key of buffered) {
+            window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
           }
         })
       }
@@ -270,6 +287,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
   }, [change])
 
   useLayoutEffect(() => {
+    const activationSet = activations.current
     change(null)
     if (!enabled) return
     const cancel = () => change(null)
@@ -313,6 +331,10 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       }
       if (event.repeat) return true
       if (active.pending) {
+        if (event.key === 'Escape') {
+          cancel()
+          return true
+        }
         if (event.key === 'Backspace') {
           change({ ...active, buffered: active.buffered.slice(0, -1) })
           return true
@@ -367,10 +389,18 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         }
         current.current = null
         setSession(null)
+        let cleared = false
+        const clearSelected = () => {
+          if (cleared) return
+          cleared = true
+          activations.current.delete(clearSelected)
+          selected.clear(active.request)
+        }
+        activations.current.add(clearSelected)
         void selected
           .activate(active.request, asyncFound.target.id)
           .catch(() => undefined)
-          .finally(() => selected.clear(active.request))
+          .finally(clearSelected)
       } else if (matches.length || asyncMatches.length) change({ ...active, prefix })
       else cancel()
       return true
@@ -409,9 +439,8 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       characterData: true,
     })
     return () => {
-      unsubscribe.current?.()
-      unsubscribe.current = null
-      current.current = null
+      change(null)
+      for (const clear of activationSet) clear()
       store.set(hostHintKeyAtom, null)
       observer.disconnect()
       window.removeEventListener(HOST_HINT_REQUEST, onRequest)

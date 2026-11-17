@@ -634,6 +634,30 @@ test('pending async discovery buffers typeahead and Escape makes its result iner
   expect(adapter.activate).not.toHaveBeenCalled()
 })
 
+test('failed async presentation never exposes or activates its target', async () => {
+  const adapter: AsyncHostHintAdapter = {
+    discover: async () => [{ id: 'remote', label: 'Remote', x: 200, y: 100 }],
+    present: vi.fn(async () => false),
+    clear: vi.fn(),
+    activate: vi.fn(async () => true),
+    subscribe: () => vi.fn(),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <Button>Local</Button>
+      <div data-testid="owner" />
+    </section>,
+  )
+  registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+  screen.getByRole('button', { name: 'Local' }).focus()
+  await userEvent.keyboard('f')
+  await act(async () => await Promise.resolve())
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['Local'])
+  await userEvent.keyboard('a')
+  expect(adapter.activate).not.toHaveBeenCalled()
+  expect(adapter.clear).toHaveBeenCalledOnce()
+})
+
 test('async discovery errors leave native host hints usable and clear once on cancellation', async () => {
   const adapter: AsyncHostHintAdapter = {
     discover: async () => {
