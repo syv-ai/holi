@@ -103,7 +103,9 @@ export function isFrameHintsMessage(value: unknown): value is FrameHintsMessage 
       return (
         exact(value, ['type', 'nonce', 'key']) &&
         typeof value.key === 'string' &&
-        (value.key === 'Escape' || value.key === 'Backspace' || FRAME_HINT_KEYS.includes(value.key))
+        (value.key === 'Escape' ||
+          value.key === 'Backspace' ||
+          (value.key.length === 1 && FRAME_HINT_KEYS.includes(value.key)))
       )
     case 'holi-hints:activate':
       return (

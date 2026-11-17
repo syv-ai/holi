@@ -3,7 +3,8 @@ import { act, cleanup, render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, vimCodeEditingAtom } from '@/plugin-api'
+import { fireEvent } from '@testing-library/react'
 import { communityCap } from '../renderer/community-cap'
 import { PluginFrame } from '../renderer/plugin-frame'
 import {
@@ -170,6 +171,42 @@ test('a frame acquires only for its current remote and serving row', async () =>
     store.set(rowsAtom, { remote: 'ada/notes', rows: [row] })
   })
   await waitFor(() => expect(capability.acquire).toHaveBeenCalledTimes(1))
+  view.unmount()
+})
+
+test('community guest hints are disabled unless Vim editing and the focused loaded pane are live', async () => {
+  capability.acquire.mockResolvedValue(releaseResult)
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  store.set(rowsAtom, { remote: 'ada/notes', rows: [row] })
+  const view = render(
+    <Provider store={store}>
+      <div data-pane data-pane-focused>
+        <PluginFrame path="index.dash.md" />
+      </div>
+    </Provider>,
+  )
+  await waitFor(() => expect(view.container.querySelector('iframe')).not.toBeNull())
+  const iframe = view.container.querySelector('iframe')!
+  const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => {})
+  iframe.focus()
+  fireEvent.load(iframe)
+  await act(async () => {
+    store.set(vimCodeEditingAtom, true)
+  })
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'holi-hints:init', enabled: true }),
+      expect.any(String),
+    ),
+  )
+  await act(async () => {
+    store.set(vimCodeEditingAtom, false)
+  })
+  expect(post).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'holi-hints:disable' }),
+    expect.any(String),
+  )
   view.unmount()
 })
 
