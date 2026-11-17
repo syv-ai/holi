@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MultiCursor, extraSelections } from '../multi-cursor'
 
 import { configureRichTextVim, RichTextVim } from '../rich-text-vim'
+import { WikiLink } from '../wiki-link'
+import { TaskList } from '@tiptap/extension-list'
+import { RichTextTaskItem } from '../rich-text/rich-text-task-item'
 
 let editor: Editor | null = null
 const editors = new Set<Editor>()
@@ -604,9 +607,29 @@ describe('rich-text Vim extension', () => {
   it('allows same-cell block edits and preserves an empty cell paragraph', () => {
     const table = openTable()
     table.commands.setContent(
-      '<table><tbody><tr><td><p>first</p><p>second</p></td></tr><tr><td><p>other</p></td></tr></tbody></table>',
+      '<table><tbody><tr><td><p>first</p><p>second</p></td></tr></tbody></table>',
     )
     let firstCellPos = 0
+    table.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'tableCell' && !firstCellPos) firstCellPos = pos
+    })
+    table.commands.setTextSelection(firstCellPos + 2)
+    key(table, 'y')
+    key(table, 'y')
+    key(table, 'p')
+    const pastedCell = table.state.doc.firstChild?.firstChild?.firstChild
+    expect(pastedCell?.childCount).toBe(3)
+    expect(pastedCell?.content.toJSON()).toEqual([
+      { type: 'paragraph', content: [{ type: 'text', text: 'first' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'first' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'second' }] },
+    ])
+    expect(table.state.doc.check()).toBeUndefined()
+
+    table.commands.setContent(
+      '<table><tbody><tr><td><p>first</p><p>second</p></td></tr><tr><td><p>other</p></td></tr></tbody></table>',
+    )
+    firstCellPos = 0
     table.state.doc.descendants((node, pos) => {
       if (node.type.name === 'tableCell' && !firstCellPos) firstCellPos = pos
     })
@@ -759,6 +782,228 @@ describe('rich-text Vim extension', () => {
     expect(ed.view.dom.dataset.vimMode).toBe('insert')
   })
 
+  it('yanks, changes and deletes logical lines inside code blocks without flattening the block', () => {
+    const ed = open('<pre><code>first\nmiddle\nlast</code></pre>')
+    ed.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'codeBlock',
+          attrs: { language: 'typescript' },
+          content: [{ type: 'text', text: 'first\nmiddle\nlast' }],
+        },
+      ],
+    })
+    ed.commands.setTextSelection(8)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(ed.state.doc.toJSON()).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'codeBlock',
+          attrs: { language: 'typescript' },
+          content: [{ type: 'text', text: 'first\nlast' }],
+        },
+        { type: 'paragraph' },
+      ],
+    })
+    expect(ed.state.doc.check()).toBeUndefined()
+
+    ed.commands.setContent('<pre><code>first\nmiddle\nlast</code></pre>')
+    ed.commands.setTextSelection(8)
+    key(ed, 'y')
+    key(ed, 'y')
+    ed.commands.setTextSelection(2)
+    key(ed, 'p')
+    expect(ed.state.doc.firstChild?.type.name).toBe('codeBlock')
+    expect(ed.state.doc.firstChild?.textContent).toBe('first\nmiddle\nmiddle\nlast')
+    expect(ed.state.doc.check()).toBeUndefined()
+
+    ed.commands.setTextSelection(8)
+    key(ed, 'c')
+    key(ed, 'c')
+    expect(ed.state.doc.firstChild?.type.name).toBe('codeBlock')
+    expect(ed.state.doc.firstChild?.textContent).toBe('first\nmiddle\nlast')
+    expect(ed.view.dom.dataset.vimMode).toBe('insert')
+    key(ed, 'Escape')
+
+    ed.commands.setContent('<p>first<br>middle<br>last</p>')
+    ed.commands.setTextSelection(8)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(ed.state.doc.firstChild?.toJSON()).toEqual({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: 'first' },
+        { type: 'hardBreak' },
+        { type: 'text', text: 'last' },
+      ],
+    })
+    expect(ed.state.doc.check()).toBeUndefined()
+
+    key(ed, 'Escape')
+    ed.commands.setContent('<pre><code>first\nmiddle\nlast</code></pre>')
+    ed.commands.setTextSelection(2)
+    key(ed, '2')
+    key(ed, 'V')
+    key(ed, 'y')
+    ed.commands.setTextSelection(ed.state.doc.firstChild!.nodeSize - 2)
+    key(ed, 'p')
+    expect(ed.state.doc.firstChild?.textContent).toBe('first\nmiddle\nlast\nfirst\nmiddle')
+    expect(ed.state.doc.firstChild?.type.name).toBe('codeBlock')
+    expect(ed.state.doc.check()).toBeUndefined()
+
+    ed.commands.setContent('<pre><code>first\nmiddle\nlast</code></pre>')
+    ed.commands.setTextSelection(2)
+    key(ed, 'd')
+    key(ed, 'j')
+    expect(ed.state.doc.firstChild?.textContent).toBe('last')
+    expect(ed.state.doc.firstChild?.type.name).toBe('codeBlock')
+    expect(ed.state.doc.check()).toBeUndefined()
+
+    ed.commands.setContent('<p>first<br>middle<br>last</p>')
+    ed.commands.setTextSelection(8)
+    key(ed, 'y')
+    key(ed, 'y')
+    ed.commands.setTextSelection(2)
+    key(ed, 'p')
+    expect(ed.state.doc.firstChild?.toJSON()).toEqual({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: 'first' },
+        { type: 'hardBreak' },
+        { type: 'text', text: 'middle' },
+        { type: 'hardBreak' },
+        { type: 'text', text: 'middle' },
+        { type: 'hardBreak' },
+        { type: 'text', text: 'last' },
+      ],
+    })
+
+    ed.commands.setContent('<p>first<br>middle<br>last</p>')
+    ed.commands.setTextSelection(2)
+    key(ed, 'd')
+    key(ed, 'j')
+    expect(ed.state.doc.firstChild?.toJSON()).toEqual({
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'last' }],
+    })
+    expect(ed.state.doc.check()).toBeUndefined()
+  })
+
+  it('pastes listwise registers as sibling list items', () => {
+    const ed = open('<ul><li><p>first</p></li><li><p>second</p></li></ul>')
+    let firstText = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'first') firstText = pos
+    })
+    ed.commands.setTextSelection(firstText)
+    key(ed, 'y')
+    key(ed, 'y')
+    key(ed, 'p')
+    expect(ed.state.doc.firstChild?.type.name).toBe('bulletList')
+    expect(ed.state.doc.firstChild?.childCount).toBe(3)
+    expect(ed.state.doc.firstChild?.content.toJSON()).toEqual([
+      {
+        type: 'listItem',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'first' }] }],
+      },
+      {
+        type: 'listItem',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'first' }] }],
+      },
+      {
+        type: 'listItem',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'second' }] }],
+      },
+    ])
+    expect(ed.state.doc.check()).toBeUndefined()
+
+    ed.commands.setContent('<p>first</p><p>second</p><p>third</p>')
+    ed.commands.setTextSelection(9)
+    key(ed, 'y')
+    key(ed, 'y')
+    key(ed, 'P')
+    expect(ed.state.doc.toJSON()).toEqual({
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'first' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'second' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'second' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'third' }] },
+      ],
+    })
+  })
+
+  it('copies real wiki-link atoms and task-item attributes through linewise registers', () => {
+    const wiki = new Editor({
+      extensions: [
+        StarterKit,
+        WikiLink.configure({ onOpen: () => undefined }),
+        RichTextVim.configure({ enabled: false, editable: () => true }),
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'first ' },
+              { type: 'wikiLink', attrs: { target: 'folder/note', label: 'Note' } },
+            ],
+          },
+        ],
+      },
+    })
+    own(wiki)
+    configureRichTextVim(wiki.view, true, true, () => true)
+    wiki.commands.setTextSelection(2)
+    key(wiki, 'y')
+    key(wiki, 'y')
+    wiki.commands.setTextSelection(wiki.state.doc.content.size - 1)
+    key(wiki, 'p')
+    const links: { name: string; attrs: Record<string, unknown> }[] = []
+    wiki.state.doc.descendants((node) => {
+      if (node.type.name === 'wikiLink') links.push({ name: node.type.name, attrs: node.attrs })
+    })
+    expect(links).toEqual([
+      { name: 'wikiLink', attrs: { target: 'folder/note', label: 'Note' } },
+      { name: 'wikiLink', attrs: { target: 'folder/note', label: 'Note' } },
+    ])
+    expect(wiki.state.doc.check()).toBeUndefined()
+
+    const tasks = new Editor({
+      extensions: [
+        StarterKit,
+        TaskList,
+        RichTextTaskItem.configure({ nested: true }),
+        RichTextVim.configure({ enabled: false, editable: () => true }),
+      ],
+      content:
+        '<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>done</p></li><li data-type="taskItem" data-checked="false"><p>todo</p></li></ul>',
+    })
+    own(tasks)
+    configureRichTextVim(tasks.view, true, true, () => true)
+    let doneText = 0
+    tasks.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'done') doneText = pos
+    })
+    tasks.commands.setTextSelection(doneText)
+    key(tasks, 'y')
+    key(tasks, 'y')
+    key(tasks, 'p')
+    expect(tasks.state.doc.firstChild?.childCount).toBe(3)
+    expect(
+      Array.from(
+        { length: 3 },
+        (_, index) => tasks.state.doc.firstChild?.child(index).attrs.checked,
+      ),
+    ).toEqual([true, true, false])
+    expect(tasks.state.doc.firstChild?.child(1).textContent).toBe('done')
+    expect(tasks.state.doc.check()).toBeUndefined()
+  })
+
   it('preserves heading schema on cc and linewise intent for vertical operators', () => {
     const ed = open('<h2>Heading</h2><p>next</p>')
     ed.commands.setTextSelection(2)
@@ -767,6 +1012,7 @@ describe('rich-text Vim extension', () => {
     expect(ed.state.doc.firstChild?.type.name).toBe('heading')
     expect(ed.state.doc.firstChild?.attrs.level).toBe(2)
     expect(ed.state.doc.childCount).toBe(2)
+    key(ed, 'Escape')
 
     ed.commands.setContent('<p>first</p><p>second</p><p>third</p>')
     ed.commands.setTextSelection(2)
@@ -774,7 +1020,17 @@ describe('rich-text Vim extension', () => {
     key(ed, 'j')
     ed.commands.setTextSelection(ed.state.doc.content.size - 1)
     key(ed, 'p')
-    expect(ed.state.doc.childCount).toBe(4)
+    expect(ed.state.doc.childCount).toBe(5)
+    expect(ed.state.doc.toJSON()).toEqual({
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'first' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'second' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'third' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'first' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'second' }] },
+      ],
+    })
     expect(ed.state.doc.check()).toBeUndefined()
   })
 
