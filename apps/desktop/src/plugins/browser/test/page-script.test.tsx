@@ -999,7 +999,7 @@ test('active hint capture precedes field Vim handling and queues raw control key
     holi()
       .hints.poll()
       .map(({ type }) => type),
-  ).toEqual(['key', 'key', 'key'])
+  ).toEqual(['key', 'key', 'key', 'revoke'])
   expect(f.preventDefault).toHaveBeenCalled()
   expect(holi().vim.mode().mode).toBe('insert')
 })
@@ -1194,5 +1194,8 @@ test('Escape retires the page snapshot synchronously while preserving its exact 
   expect(nativeKey('Escape').defaultPrevented).toBe(true)
   expect(holi().hints.activate(owner, target.id)).toBeNull()
   expect(holi().hints.inspect()).toEqual([])
-  expect(holi().hints.poll()).toMatchObject([{ type: 'key', key: 'Escape', owner }])
+  expect(holi().hints.poll()).toMatchObject([
+    { type: 'key', key: 'Escape', owner },
+    { type: 'revoke', owner },
+  ])
 })

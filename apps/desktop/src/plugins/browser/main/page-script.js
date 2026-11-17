@@ -1051,7 +1051,11 @@
       const capture = hintPendingCapture
       hintPendingCapture = null
       if (capture !== null) queueHintEvent({ type: 'revoke', capture })
-      if (hintOwner) clearHints(hintOwner)
+      if (hintOwner) {
+        const owner = { ...hintOwner }
+        clearHints(owner)
+        queueHintEvent({ type: 'revoke', owner })
+      }
     }
     return true
   }
