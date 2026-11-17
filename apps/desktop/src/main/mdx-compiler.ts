@@ -46,10 +46,13 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
       throw new Error('MDX source exceeds 256 KiB')
     if (signal?.aborted) throw new Error('MDX compilation cancelled')
 
+    const requestedEpoch = epoch
     const id = randomUUID()
     const html = join(assetDirectory, 'guest.html')
     const script = join(assetDirectory, 'guest.js')
     await Promise.all([readFile(html), readFile(script)])
+    if (closed || signal?.aborted || requestedEpoch !== epoch)
+      throw new Error(signal?.aborted ? 'MDX compilation cancelled' : 'MDX compilation invalidated')
 
     const partition = `mdx-compiler-${randomUUID()}`
     const guestSession = electronSession.fromPartition(partition, { cache: false })
@@ -125,7 +128,7 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
             const encoded = Buffer.from(JSON.stringify({ id, source }), 'utf8').toString('base64')
             // Fixed invocation; source crosses only as base64-encoded JSON data.
             await guest.webContents.executeJavaScript(
-              `window.postMessage(JSON.parse(atob('${encoded}')), '*')`,
+              `window.postMessage(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('${encoded}'), (c) => c.charCodeAt(0)))), '*')`,
             )
             while (!settled) {
               if (signal?.aborted) return finish(new Error('MDX compilation cancelled'))
@@ -143,8 +146,10 @@ export function createMdxCompiler(assetDirectory: string): MdxCompiler {
                       item !== null &&
                       typeof item === 'object' &&
                       typeof (item as MdxDiagnostic).message === 'string' &&
-                      typeof (item as MdxDiagnostic).line === 'number' &&
-                      typeof (item as MdxDiagnostic).column === 'number',
+                      Number.isFinite((item as MdxDiagnostic).line) &&
+                      Number.isFinite((item as MdxDiagnostic).column) &&
+                      Math.abs((item as MdxDiagnostic).line) <= 1_000_000 &&
+                      Math.abs((item as MdxDiagnostic).column) <= 1_000_000,
                   )
                   .map((item) => ({
                     message: item.message.slice(0, MAX_MESSAGE),

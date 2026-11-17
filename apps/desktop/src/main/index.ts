@@ -346,7 +346,7 @@ async function main(): Promise<void> {
   const mdxTrust = createMdxTrustStore(join(app.getPath('userData'), 'mdx-trust.json'))
   const mdxCompiler = createMdxCompiler(join(app.getAppPath(), 'out/mdx-compiler'))
   session.onGenerationChange(() => mdxCompiler.invalidate())
-  app.on('before-quit', () => mdxCompiler.invalidate())
+  app.on('before-quit', () => mdxCompiler.close())
   const userDataDir = app.getPath('userData')
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
