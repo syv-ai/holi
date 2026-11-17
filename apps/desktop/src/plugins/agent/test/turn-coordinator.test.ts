@@ -53,6 +53,7 @@ function rig(
     snapshot?: () => Promise<string | null>
     turnSafetyMs?: number
     idleConfirmMs?: number
+    drainCapMs?: number
     withLog?: boolean
   } = {},
 ) {
@@ -85,6 +86,7 @@ function rig(
     log: () => {},
     now: () => clock,
     settleRetryMs: 0,
+    ...(opts.drainCapMs === undefined ? {} : { drainCapMs: opts.drainCapMs }),
     ...(opts.snapshot === undefined ? {} : { snapshot: opts.snapshot }),
     ...(opts.turnSafetyMs === undefined ? {} : { turnSafetyMs: opts.turnSafetyMs }),
     ...(opts.idleConfirmMs === undefined ? {} : { idleConfirmMs: opts.idleConfirmMs }),
@@ -112,6 +114,12 @@ function rig(
 }
 
 describe('the working set', () => {
+  it('reports a bounded failure when admitted turn persistence stalls', async () => {
+    const r = rig({ commitNow: () => new Promise(() => {}), drainCapMs: 10 })
+    r.coordinator.begin('a')
+    void r.coordinator.end('a')
+    await expect(r.coordinator.drain()).rejects.toThrow('did not drain before teardown timed out')
+  })
   it('drains turn records before teardown reports success', async () => {
     let finish!: (sha: string) => void
     const r = rig({ commitNow: () => new Promise<string>((resolve) => (finish = resolve)) })

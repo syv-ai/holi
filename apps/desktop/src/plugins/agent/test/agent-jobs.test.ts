@@ -149,6 +149,8 @@ async function rig(
     keepMs?: number
     afterWrite?: (rel: string) => Promise<void> | void
     activationSignal?: AbortSignal
+    bracket?: (id: string, edge: 'begin' | 'end' | 'forget') => unknown | Promise<unknown>
+    scratchRoot?: string
   } = {},
 ) {
   const root = await temp('holi-job-vault-')
@@ -160,10 +162,11 @@ async function rig(
   const lists: SessionSummary[][] = []
   const jobs = createJobs({
     vault: { remote: 'syv/vault', root },
-    scratchRoot: join(userData, 'agent-jobs'),
+    scratchRoot: opts.scratchRoot ?? join(userData, 'agent-jobs'),
     onChange: (list) => lists.push(list),
     killGraceMs: 200,
     log: () => {},
+    ...(opts.bracket === undefined ? {} : { bracket: opts.bracket }),
     ...opts,
   })
   const ended = (id: string) =>
@@ -179,6 +182,16 @@ async function rig(
 }
 
 describe('a job', () => {
+  it('reports an initial sweep failure without an unowned rejection', async () => {
+    const userData = await temp('holi-job-data-')
+    const blocker = join(userData, 'not-a-directory')
+    await writeFile(blocker, 'file')
+    const { jobs, provider } = await rig(SUCCESS, { scratchRoot: join(blocker, 'jobs') })
+    await expect(
+      jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE }),
+    ).resolves.toMatchObject({ ok: false, message: expect.stringContaining('sweep') })
+  })
+
   it('runs in a scratch folder and copies back only what it wrote in scope', async () => {
     const { root, userData, jobs, provider, ended } = await rig(SUCCESS)
     const started = await jobs.start({
@@ -742,7 +755,10 @@ describe('a job in the vault', () => {
     event({ type: 'turn.completed', usage: { input_tokens: 1600, output_tokens: 400 } }),
   ].join('\n')
 
-  async function vaultRig(followUp = FOLLOW) {
+  async function vaultRig(
+    followUp = FOLLOW,
+    bracket?: (id: string, edge: 'begin' | 'end' | 'forget') => unknown | Promise<unknown>,
+  ) {
     const root = await temp('holi-job-vault-')
     const userData = await temp('holi-job-data-')
     const first = join(userData, 'first.js')
@@ -754,12 +770,88 @@ describe('a job in the vault', () => {
       vault: { remote: 'syv/vault', root },
       scratchRoot: join(userData, 'agent-jobs'),
       onChange: () => {},
-      bracket: (id, edge) => edges.push(`${edge}:${id}`),
+      bracket: bracket ?? ((id, edge) => edges.push(`${edge}:${id}`)),
       killGraceMs: 200,
       log: () => {},
     })
     return { root, jobs, edges, ...turns(first, next) }
   }
+
+  it('keeps stop draining through bracket persistence after process close', async () => {
+    let reachEnd!: () => void
+    let finishEnd!: () => void
+    const reachedEnd = new Promise<void>((resolve) => (reachEnd = resolve))
+    const endGate = new Promise<void>((resolve) => (finishEnd = resolve))
+    const { jobs, provider } = await vaultRig(FOLLOW, async (_id, edge) => {
+      if (edge === 'end') {
+        reachEnd()
+        await endGate
+      }
+    })
+    const started = await jobs.start({
+      provider,
+      name: 'x',
+      prompt: 'go',
+      allow: ['Write(tilbud/**)'],
+    })
+    if (!started.ok) throw new Error(started.message)
+    const id = started.sessionId
+    await reachedEnd
+    let stopped = false
+    const stopping = jobs.stop(id).then(() => (stopped = true))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(stopped).toBe(false)
+    expect(jobs.sessions().find((row) => row.id === id)).toMatchObject({ state: 'idle' })
+    finishEnd()
+    await stopping
+    await jobs.leave()
+  })
+
+  it('revokes message admission synchronously when retirement starts', async () => {
+    const { jobs, provider } = await vaultRig()
+    const started = await jobs.start({
+      provider,
+      name: 'x',
+      prompt: 'go',
+      allow: ['Write(tilbud/**)'],
+    })
+    if (!started.ok) throw new Error(started.message)
+    await vi.waitFor(() => {
+      const row = jobs.sessions().find((session) => session.id === started.sessionId)
+      if (row?.outcome === undefined) throw new Error('still running')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await jobs.stop(started.sessionId)
+    expect(() => jobs.message(started.sessionId, 'too late')).toThrow('That job has ended.')
+    await jobs.leave()
+  })
+
+  it('preserves failed leave ownership and retries after a late bracket close', async () => {
+    let reachEnd!: () => void
+    let finishEnd!: () => void
+    const reachedEnd = new Promise<void>((resolve) => (reachEnd = resolve))
+    const endGate = new Promise<void>((resolve) => (finishEnd = resolve))
+    const { jobs, provider } = await vaultRig(FOLLOW, async (_id, edge) => {
+      if (edge === 'end') {
+        reachEnd()
+        await endGate
+      }
+    })
+    const started = await jobs.start({
+      provider,
+      name: 'x',
+      prompt: 'go',
+      allow: ['Write(tilbud/**)'],
+    })
+    if (!started.ok) throw new Error(started.message)
+    await reachedEnd
+    await expect(jobs.leave()).rejects.toThrow('did not drain')
+    expect(jobs.has(started.sessionId)).toBe(true)
+    finishEnd()
+    await vi.waitFor(() => expect(jobs.sessions()[0]?.state).toBe('idle'))
+    await jobs.leave()
+    expect(jobs.has(started.sessionId)).toBe(false)
+  })
 
   it('writes only named folders and reports the latest cumulative usage total', async () => {
     const { root, jobs, edges, provider, runs } = await vaultRig()

@@ -45,6 +45,8 @@ export interface TurnCoordinatorDeps {
   /** How long to wait before asking again for a settle commit that answered
    *  null. Default 1000. */
   settleRetryMs?: number
+  /** Maximum time a drain waits for admitted turn persistence. */
+  drainCapMs?: number
   /** Where a turn that ends while another session's is still running ended: a
    *  sha `git diff` can take, or null when git fails. Absent, such a turn waits
    *  for the settle commit like the rest. */
@@ -113,6 +115,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
   const log = deps.log ?? ((msg: string) => console.log(`[turn] ${msg}`))
   const turnSafetyMs = deps.turnSafetyMs ?? 600_000
   const idleConfirmMs = deps.idleConfirmMs ?? 1_000
+  const drainCapMs = deps.drainCapMs ?? 5_000
   const now = deps.now ?? (() => Date.now())
 
   /** Sessions mid-turn. Empty means the vault is free to sync. */
@@ -261,6 +264,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       // throws rather than landing in the next one.
       if (batch.length > 0 && vault !== null) {
         settled = track(settleBatch(vault, batch)).catch((err: unknown) => {
+          finalizationFailures.add(err)
           log(`turn record failed: ${String(err)}`)
           return null
         })
@@ -295,12 +299,16 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       // Captured BEFORE the pause: the base is the tree the turn started
       // against. Skipped with no log to record into.
       if (vault !== null && deps.turnLogFor !== undefined) {
-        turn.basePending = vault
-          .head()
-          .then((sha) => {
-            turn.base = sha
-          })
-          .catch(() => {})
+        turn.basePending = track(
+          vault
+            .head()
+            .then((sha) => {
+              turn.base = sha
+            })
+            .catch((err: unknown) => {
+              finalizationFailures.add(err)
+            }),
+        )
       }
       turns.set(sessionId, turn)
       // The pause belongs to the vault, so only the first session in takes it.
@@ -339,8 +347,24 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     },
 
     async drain() {
-      while (pending.size > 0) await Promise.allSettled([...pending])
-      await writing
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const bounded = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Agent turn history did not drain before teardown timed out.')),
+          drainCapMs,
+        )
+      })
+      try {
+        await Promise.race([
+          (async () => {
+            while (pending.size > 0) await Promise.allSettled([...pending])
+            await writing
+          })(),
+          bounded,
+        ])
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
       if (writeFailure !== undefined || finalizationFailures.size > 0)
         throw new AggregateError(
           [...(writeFailure === undefined ? [] : [writeFailure]), ...finalizationFailures],

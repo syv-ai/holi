@@ -766,10 +766,18 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           if (stopped.ok && unprompted.has(row.id)) await bg.cli.rm(targetOf(c), row.id)
         }),
       )
-      await Promise.race([
-        stops,
-        new Promise((r) => setTimeout(r, deps.leaveCapMs ?? LEAVE_CAP_MS)),
-      ])
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Agent sessions did not stop before vault teardown timed out.')),
+          deps.leaveCapMs ?? LEAVE_CAP_MS,
+        )
+      })
+      try {
+        await Promise.race([stops, timedOut])
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
     }
     await deps.terminals.closeAll()
     for (const id of [...coordinator.working]) coordinator.forget(id)
