@@ -143,12 +143,6 @@ export function captureHostHintAdapters(root: HTMLElement): HostHintAdapter[] {
   return adapters
 }
 
-export function captureAsyncHostHintAdapters(root: HTMLElement): AsyncHostHintAdapter[] {
-  return [...registeredAsyncAdapters]
-    .filter(([owner]) => adapterParticipates(owner, root))
-    .map(([, adapter]) => adapter)
-}
-
 /** The editor requests hints without depending on the shell that presents them. */
 export function requestHostHints(source: HTMLElement): void {
   window.dispatchEvent(new CustomEvent(HOST_HINT_REQUEST, { detail: { source } }))
