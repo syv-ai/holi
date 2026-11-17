@@ -69,11 +69,19 @@ function privateStages(root: string): string {
   let stageRoot = `${library}/HoliVaultStorage`
   if (stageRoot === root || stageRoot.startsWith(`${root}/`) || root.startsWith(`${stageRoot}/`))
     throw new Error('Vault overlaps private storage')
+  const rootParent = stageRoot.slice(0, stageRoot.lastIndexOf('/'))
   directory(stageRoot)
+  nativeIO.syncDirectory(rootParent)
+  nativeIO.syncDirectory(stageRoot)
   const target = stagingDirectory(library, root)
   for (const segment of target.slice(stageRoot.length + 1).split('/')) {
+    const parent = stageRoot
     stageRoot += `/${segment}`
     directory(stageRoot)
+    // Confirm even pre-existing directories: a prior mkdir may have outlived a
+    // failed parent fsync, so existence alone is not a durability guarantee.
+    nativeIO.syncDirectory(parent)
+    nativeIO.syncDirectory(stageRoot)
   }
   return stageRoot
 }
@@ -147,6 +155,19 @@ export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
       const path = checkedPath(root, relative)
       return nativeIO.kind(path) === null ? null : nativeIO.read(path)
     },
+    async confirm(root, relative, expected) {
+      stages(root)
+      const path = checkedPath(root, relative)
+      const kind = nativeIO.kind(path)
+      if (expected === null) {
+        if (kind !== null) throw new Error('Unexpected move postimage')
+      } else {
+        if (kind !== 'regular' || !equal(nativeIO.read(path), expected))
+          throw new Error('Unexpected move postimage')
+        nativeIO.syncFile(path)
+      }
+      nativeIO.syncDirectory(path.slice(0, path.lastIndexOf('/')))
+    },
     async create(root, relative, bytes) {
       await publish(root, relative, bytes, null)
     },
@@ -182,6 +203,13 @@ export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
         if (nativeIO.kind(stage) === 'regular') nativeIO.removeFile(stage)
         throw error
       }
+    },
+    async privateConfirm(root, name, expected) {
+      const target = `${stages(root)}/${name}`
+      if (nativeIO.kind(target) !== 'regular' || !equal(nativeIO.read(target), expected))
+        throw new Error('Stale private journal confirmation')
+      nativeIO.syncFile(target)
+      nativeIO.syncDirectory(target.slice(0, target.lastIndexOf('/')))
     },
     async privateRemove(root, name, expected) {
       const target = `${stages(root)}/${name}`

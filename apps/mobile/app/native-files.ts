@@ -23,6 +23,8 @@ export interface NativeFiles {
   list(root: string): Promise<Entry[]>
   read(root: string, relativePath: string): Promise<Uint8Array>
   readOptional(root: string, relativePath: string): Promise<Uint8Array | null>
+  /** Verify the visible image and make its file/directory entry durable. */
+  confirm(root: string, relativePath: string, expected: Uint8Array | null): Promise<void>
   publish(
     root: string,
     relativePath: string,
@@ -39,5 +41,7 @@ export interface NativeFiles {
     expected: Uint8Array | null,
   ): Promise<void>
   privateRemove(root: string, name: string, expected: Uint8Array): Promise<void>
+  /** Verify a surviving journal and make its bytes and namespace durable. */
+  privateConfirm(root: string, name: string, expected: Uint8Array): Promise<void>
   remove(root: string, relativePath: string, expected: Uint8Array): Promise<void>
 }

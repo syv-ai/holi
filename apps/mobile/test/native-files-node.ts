@@ -28,7 +28,12 @@ export type NodeFilesCheckpoint = (
     | 'file-before'
     | 'file-after'
     | 'cleanup-before'
-    | 'cleanup-after',
+    | 'cleanup-after'
+    | 'confirm-file'
+    | 'confirm-journal'
+    | 'public-sync'
+    | 'private-sync'
+    | 'private-directory-sync',
 ) => Promise<void>
 
 async function safe(root: string, relativePath: string, allowMissingLeaf = false): Promise<string> {
@@ -94,6 +99,19 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
     const info = await lstat(path)
     if (!info.isDirectory() || info.isSymbolicLink())
       throw new Error('Private storage is not a directory')
+    await checkpoint?.('private-directory-sync')
+    const parent = await open(canonical, 'r')
+    try {
+      await parent.sync()
+    } finally {
+      await parent.close()
+    }
+    const directory = await open(path, 'r')
+    try {
+      await directory.sync()
+    } finally {
+      await directory.close()
+    }
     return path
   }
   const durableWrite = async (path: string, content: Uint8Array) => {
@@ -142,6 +160,38 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
         throw error
+      }
+    },
+    async confirm(root, path, expected) {
+      await checkpoint?.('confirm-file')
+      const target = await safe(root, path, true)
+      const parentPath = dirname(target)
+      let current: Uint8Array | null = null
+      try {
+        const info = await lstat(target)
+        if (!info.isFile() || info.isSymbolicLink()) throw new Error('Invalid move postimage')
+        current = new Uint8Array(await readFile(target))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      if (
+        !Buffer.from(current ?? []).equals(Buffer.from(expected ?? [])) ||
+        (current === null) !== (expected === null)
+      )
+        throw new Error('Unexpected move postimage')
+      if (current !== null) {
+        const file = await open(target, 'r')
+        try {
+          await file.sync()
+        } finally {
+          await file.close()
+        }
+      }
+      const parent = await open(parentPath, 'r')
+      try {
+        await parent.sync()
+      } finally {
+        await parent.close()
       }
     },
     async create(root, path, bytes) {
@@ -216,6 +266,7 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
       await checkpoint?.('journal-before')
       await link(temporary, target)
       await unlink(temporary)
+      await checkpoint?.('private-sync')
       const dir = await open(directory, 'r')
       try {
         await dir.sync()
@@ -223,6 +274,27 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
         await dir.close()
       }
       await checkpoint?.('journal-after')
+    },
+    async privateConfirm(root, name, expected) {
+      await checkpoint?.('confirm-journal')
+      const target = join(await privateRoot(root), name)
+      const info = await lstat(target)
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error('Invalid private journal file')
+      const current = await readFile(target)
+      if (!Buffer.from(current).equals(Buffer.from(expected)))
+        throw new Error('Stale private journal confirmation')
+      const file = await open(target, 'r')
+      try {
+        await file.sync()
+      } finally {
+        await file.close()
+      }
+      const dir = await open(dirname(target), 'r')
+      try {
+        await dir.sync()
+      } finally {
+        await dir.close()
+      }
     },
     async privateRemove(root, name, expected) {
       const target = join(await privateRoot(root), name)
@@ -244,6 +316,7 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
       const current = await readFile(target)
       if (!Buffer.from(current).equals(Buffer.from(expected))) throw new Error('Stale bytes')
       await unlink(target)
+      await checkpoint?.('public-sync')
       const dir = await open(dirname(target), 'r')
       try {
         await dir.sync()
@@ -265,6 +338,7 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
           throw new Error('Changed during save')
         await checkpoint?.('publish')
         await rename(stage, target)
+        await checkpoint?.('public-sync')
         const parent = await open(dirname(target), 'r')
         try {
           await parent.sync()

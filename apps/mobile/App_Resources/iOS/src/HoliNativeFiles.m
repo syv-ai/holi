@@ -343,6 +343,34 @@ static BOOL HNFIsFault(NSString *fault, NSString *stage) {
   return YES;
 }
 
+- (BOOL)syncFile:(NSData *)pathBytes error:(NSError **)error {
+  char *path = HNFPath(pathBytes, error);
+  if (!path)
+    return NO;
+  int fd = open(path, O_RDONLY | O_NOFOLLOW);
+  int saved = errno;
+  free(path);
+  if (fd < 0) {
+    HNFSetError(error, @"open-file", saved);
+    return NO;
+  }
+  struct stat st;
+  int result = fstat(fd, &st);
+  if (result == 0 && !S_ISREG(st.st_mode)) {
+    result = -1;
+    errno = EINVAL;
+  }
+  if (result == 0)
+    result = fsync(fd);
+  saved = errno;
+  close(fd);
+  if (result != 0) {
+    HNFSetError(error, @"fsync-file", saved);
+    return NO;
+  }
+  return YES;
+}
+
 - (BOOL)syncDirectory:(NSData *)pathBytes error:(NSError **)error {
   char *path = HNFPath(pathBytes, error);
   if (!path)

@@ -80,6 +80,166 @@ describe('durable note moves', () => {
     expect(await readFile(join(base, 'public.md'), 'utf8')).toBe('keep')
   })
 
+  it('rejects wiki targets that cannot round-trip without publishing a journal', async () => {
+    const base = await root()
+    const adapter = createNodeFiles()
+    const storage = createVaultStorage(adapter, { remote: 'holi/round-trip', root: base })
+    const source = await storage.create('source.md', text('source'))
+    for (const target of ['pipe|label.md', 'close].md', ' leading.md', 'trailing.md ']) {
+      await expect(storage.move('source.md', target, source.revision)).rejects.toThrow()
+    }
+    expect(await adapter.privateList(await adapter.canonicalRoot(base))).toEqual([])
+    expect(await readFile(join(base, 'source.md'), 'utf8')).toBe('source')
+  })
+
+  it('ignores hidden state files as backlinks and rejects hidden journal identities', async () => {
+    const base = await root()
+    const adapter = createNodeFiles()
+    const storage = createVaultStorage(adapter, { remote: 'holi/hidden-backlink', root: base })
+    const source = await storage.create('source.md', text('source'))
+    await mkdir(join(base, '.holi', 'state'), { recursive: true })
+    await writeFile(join(base, '.holi', 'state', 'index.md'), '[[source.md]]')
+    await expect(storage.move('source.md', 'target.md', source.revision)).resolves.toMatchObject({
+      path: 'target.md',
+    })
+
+    const id = randomUUID()
+    const canonical = await adapter.canonicalRoot(base)
+    const journal = {
+      schema: 2,
+      root: canonical,
+      operationId: id,
+      from: 'target.md',
+      to: '.holi/state/forged.md',
+      changes: [
+        { path: 'target.md', before: [...text('source')], after: null },
+        { path: '.holi/state/forged.md', before: null, after: [...text('source')] },
+      ],
+    }
+    await adapter.privatePublish(canonical, `move-${id}.json`, text(JSON.stringify(journal)), null)
+    await expect(storage.list()).rejects.toThrow()
+    expect(await readFile(join(base, 'target.md'), 'utf8')).toBe('source')
+    await expect(readFile(join(base, '.holi', 'state', 'forged.md'))).rejects.toThrow()
+  })
+
+  it('preserves tampered journal evidence instead of deleting new bytes', async () => {
+    const base = await root()
+    const setup = createVaultStorage(createNodeFiles(), { remote: 'holi/tamper-setup', root: base })
+    const source = await setup.create('source.md', text('source'))
+    const tampered = text('tampered journal')
+    const storage = createVaultStorage(
+      createNodeFiles(),
+      { remote: 'holi/tamper', root: base },
+      {
+        checkpoint: async ({ phase, path }) => {
+          if (phase === 'cleanup-before' && path)
+            await writeFile(join(base, '.holi-storage-private', path), tampered)
+        },
+      },
+    )
+    await expect(storage.move('source.md', 'target.md', source.revision)).rejects.toThrow()
+    expect(await readdir(join(base, '.holi-storage-private'))).not.toHaveLength(0)
+    expect(
+      await readFile(
+        join(
+          base,
+          '.holi-storage-private',
+          (await readdir(join(base, '.holi-storage-private'))).find((name) =>
+            name.endsWith('.json'),
+          )!,
+        ),
+        'utf8',
+      ),
+    ).toBe('tampered journal')
+  })
+
+  it('keeps its journal when source, destination or backlink postimages change', async () => {
+    for (const changedPath of ['source.md', 'target.md', 'back.md']) {
+      const base = await root()
+      const setup = createVaultStorage(createNodeFiles(), {
+        remote: 'holi/postimage-setup',
+        root: base,
+      })
+      const source = await setup.create('source.md', text('source'))
+      await setup.create('back.md', text('[[source.md]]'))
+      const newer = `newer ${changedPath}`
+      const storage = createVaultStorage(
+        createNodeFiles(),
+        { remote: 'holi/postimage', root: base },
+        {
+          checkpoint: async ({ phase, path }) => {
+            if (
+              (phase === 'file-before' && path === 'back.md' && changedPath !== 'back.md') ||
+              (phase === 'cleanup-before' && changedPath === 'back.md')
+            )
+              await writeFile(join(base, changedPath), newer)
+          },
+        },
+      )
+      await expect(storage.move('source.md', 'target.md', source.revision)).rejects.toThrow()
+      expect(await readFile(join(base, changedPath), 'utf8')).toBe(newer)
+      expect(
+        (await readdir(join(base, '.holi-storage-private'))).some((name) => name.endsWith('.json')),
+      ).toBe(true)
+    }
+  })
+
+  it('reconfirms durability after a visible unlink outlives a failed directory sync', async () => {
+    const base = await root()
+    const setup = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/durability-setup',
+      root: base,
+    })
+    const source = await setup.create('source.md', text('source'))
+    let failed = false
+    const interrupted = createVaultStorage(
+      createNodeFiles(async (phase) => {
+        if (phase === 'public-sync' && !failed) {
+          failed = true
+          throw new Error('injected parent fsync failure')
+        }
+      }),
+      { remote: 'holi/durability', root: base },
+    )
+    await expect(interrupted.move('source.md', 'target.md', source.revision)).rejects.toThrow()
+    await expect(readFile(join(base, 'source.md'))).rejects.toThrow()
+    expect(
+      (await readdir(join(base, '.holi-storage-private'))).some((name) => name.endsWith('.json')),
+    ).toBe(true)
+    const reopened = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/durability-reopen',
+      root: base,
+    })
+    expect(await reopened.list()).toContain('target.md')
+    expect(await reopened.list()).not.toContain('source.md')
+    expect(
+      (await readdir(join(base, '.holi-storage-private'))).some((name) => name.endsWith('.json')),
+    ).toBe(false)
+  })
+
+  it('retries durability confirmation for an existing private namespace', async () => {
+    const base = await root()
+    const setup = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/namespace-setup',
+      root: base,
+    })
+    const source = await setup.create('source.md', text('source'))
+    let failed = false
+    const adapter = createNodeFiles(async (phase) => {
+      if (phase === 'private-directory-sync' && !failed) {
+        failed = true
+        throw new Error('injected namespace parent fsync failure')
+      }
+    })
+    const storage = createVaultStorage(adapter, { remote: 'holi/namespace', root: base })
+    await expect(storage.move('source.md', 'target.md', source.revision)).rejects.toThrow()
+    expect(await readFile(join(base, 'source.md'), 'utf8')).toBe('source')
+    await expect(adapter.privateList(await adapter.canonicalRoot(base))).resolves.toEqual([])
+    await expect(storage.move('source.md', 'target.md', source.revision)).resolves.toMatchObject({
+      path: 'target.md',
+    })
+  })
+
   it('does not follow symlinks or accept filesystem spelling aliases', async () => {
     const base = await root()
     const outside = await root()
