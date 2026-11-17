@@ -16,7 +16,6 @@ import {
 } from '@holi/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
-import type { SettingsFragment } from '../src/main/vault/seed/types'
 import {
   claudeSeed,
   agentSettings,
@@ -1531,6 +1530,9 @@ describe('updateShipped: what `holi skills update` does', () => {
           cwd: root,
         })
       await git('init', '-q')
+      // Fixture commits must join their maintenance before teardown removes .git.
+      await git('config', 'maintenance.autoDetach', 'false')
+      await git('config', 'gc.autoDetach', 'false')
       await ensureSeeded(root)
       await rm(join(root, SEED_STATE_FILE))
       for (const text of [OLDER_SHIPPED.text, ...commits]) {

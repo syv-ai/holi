@@ -129,7 +129,19 @@ export function validateSharedGraph(graph) {
 }
 
 /** Kill the complete CLI/build process group on timeout or cancellation. */
-export function runCommand(command, args, { timeout = 120_000, log, signal, ...options } = {}) {
+export function runCommand(
+  command,
+  args,
+  {
+    timeout = 120_000,
+    log,
+    signal,
+    onOutput,
+    outputLimit = Infinity,
+    killGrace = 2_000,
+    ...options
+  } = {},
+) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       ...options,
@@ -140,20 +152,44 @@ export function runCommand(command, args, { timeout = 120_000, log, signal, ...o
     let stdout = ''
     let failure
     let killTimer
+    let settled = false
+    const finish = (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      clearTimeout(killTimer)
+      if (failure) kill('SIGKILL')
+      signal?.removeEventListener('abort', abort)
+      if (failure || code !== 0) {
+        reject(
+          Object.assign(new Error(`${failure?.message ?? `Exit ${code}: ${command}`}\n${output}`), {
+            exitCode: code,
+            timedOut: failure?.message.startsWith('Timed out:') ?? false,
+          }),
+        )
+      } else resolve(stdout.trim())
+    }
     const kill = (sig) => {
       if (!child.pid) return
       try {
         if (process.platform === 'win32') child.kill(sig)
         else process.kill(-child.pid, sig)
       } catch (error) {
-        if (error.code !== 'ESRCH') failure = error
+        if (error.code !== 'ESRCH' && !failure) failure = error
       }
     }
     const stop = (reason) => {
       if (failure) return
       failure = reason
       kill('SIGTERM')
-      killTimer = setTimeout(() => kill('SIGKILL'), 2_000)
+      killTimer = setTimeout(() => {
+        kill('SIGKILL')
+        // Do not wait forever for inherited pipes held by an escaped descendant.
+        child.stdout.destroy()
+        child.stderr.destroy()
+        child.unref()
+        finish(null)
+      }, killGrace)
     }
     const timer = setTimeout(
       () => stop(new Error(`Timed out: ${command} ${args.join(' ')}`)),
@@ -162,27 +198,24 @@ export function runCommand(command, args, { timeout = 120_000, log, signal, ...o
     const abort = () => stop(new Error('Simulator check interrupted'))
     signal?.addEventListener('abort', abort, { once: true })
     if (signal?.aborted) abort()
-    const receive = (data) => {
+    const receive = (data, stream) => {
       if (log) appendFileSync(log, data)
-      output = (output + data.toString()).slice(-100_000)
+      output = (output + data.toString()).slice(-Math.min(100_000, outputLimit))
+      try {
+        onOutput?.(data, stream)
+      } catch (error) {
+        stop(error)
+      }
     }
     child.stdout.on('data', (data) => {
-      stdout += data.toString()
-      receive(data)
+      stdout = (stdout + data.toString()).slice(-outputLimit)
+      receive(data, 'stdout')
     })
-    child.stderr.on('data', receive)
+    child.stderr.on('data', (data) => receive(data, 'stderr'))
     child.on('error', (error) => {
-      failure = error
+      failure ??= error
     })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      clearTimeout(killTimer)
-      // The leader can exit before a descendant which ignored SIGTERM.
-      if (failure) kill('SIGKILL')
-      signal?.removeEventListener('abort', abort)
-      if (failure || code !== 0) {
-        reject(new Error(`${failure?.message ?? `Exit ${code}: ${command}`}\n${output}`))
-      } else resolve(stdout.trim())
-    })
+    // The leader can exit before a descendant which ignored SIGTERM.
+    child.on('close', finish)
   })
 }
