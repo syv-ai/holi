@@ -241,6 +241,10 @@ export interface GitRepo {
   /** The current commit, or **null** on an unborn branch (no commits yet): a
    *  real state of a real vault, not an error. */
   head(): Promise<string | null>
+  /** Local-only, bounded HEAD capture for historical queries. Unborn is distinct from unavailable. */
+  historicalHead(): Promise<
+    { kind: 'commit'; sha: string } | { kind: 'unborn' } | { kind: 'unavailable' }
+  >
   /** The paths changed across `from..to`, with line counts. Missing or invalid
    *  history is empty; an exhausted execution budget throws GitResourceError. */
   rangeFiles(
@@ -1031,6 +1035,39 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       })
   }
 
+  async function historicalHead(): Promise<
+    { kind: 'commit'; sha: string } | { kind: 'unborn' } | { kind: 'unavailable' }
+  > {
+    const localOpts: RunOpts = {
+      ...opts,
+      env: {
+        ...opts.env,
+        GIT_NO_REPLACE_OBJECTS: '1',
+        GIT_NO_LAZY_FETCH: '1',
+        GIT_TERMINAL_PROMPT: '0',
+      },
+      executionBudget: { maxBuffer: 65536, timeout: 250 },
+    }
+    const ref = await tryGit(root, ['rev-parse', '--verify', 'HEAD'], localOpts)
+    if (ref.ok) {
+      const sha = ref.stdout.trim()
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) return { kind: 'unavailable' }
+      const object = await tryGit(root, ['cat-file', '-e', `${sha}^{commit}`], localOpts)
+      return object.ok ? { kind: 'commit', sha } : { kind: 'unavailable' }
+    }
+    const symbolic = await tryGit(root, ['symbolic-ref', '--quiet', 'HEAD'], localOpts)
+    const workTree = await tryGit(root, ['rev-parse', '--is-inside-work-tree'], localOpts)
+    if (!symbolic.ok || !workTree.ok || workTree.stdout.trim() !== 'true')
+      return { kind: 'unavailable' }
+    const branch = symbolic.stdout.trim()
+    if (!/^refs\/heads\/[^\s]+$/.test(branch)) return { kind: 'unavailable' }
+    const valid = await tryGit(root, ['check-ref-format', branch], localOpts)
+    const refExists = await tryGit(root, ['show-ref', '--verify', '--quiet', branch], localOpts)
+    return valid.ok && !refExists.ok && refExists.code === 1
+      ? { kind: 'unborn' }
+      : { kind: 'unavailable' }
+  }
+
   async function head(): Promise<string | null> {
     const res = await tryGit(root, ['rev-parse', '--verify', 'HEAD'], opts)
     if (res.ok) {
@@ -1614,6 +1651,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     commit,
     commitFiles,
     head,
+    historicalHead,
     rangeFiles,
     revisionChanges,
     commitAll,

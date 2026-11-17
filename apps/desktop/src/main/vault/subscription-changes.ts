@@ -1,12 +1,12 @@
-import { isInIgnoredDir, isLocalOnlyPath, isSecretPath, vaultRelPath } from '@holi/shared'
-import { lstat } from 'node:fs/promises'
-import { resolve } from 'node:path'
-import { runGit, type GitRepo } from '../git'
-import { ownedCommitOids, repositoryIdentity } from '../managed-commit-provenance'
+import { isLocalOnlyPath, isSecretPath, vaultRelPath } from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
+import { isNonContentPath } from './vault-files'
+import { ownedCommitOids, repositoryPublicationSnapshot } from '../managed-commit-provenance'
 import { canonicalGitHubRemote } from '../mdx-trust'
+import type { GitRepo } from '../git'
 import type { SubscriptionScope } from './subscriptions'
 
-export type SubscriptionChange = {
+interface SubscriptionChange {
   sha: string
   path: string
   ownership: 'unknown'
@@ -31,39 +31,38 @@ export async function subscriptionChanges(args: {
     history: 'pending-baseline' as const,
     changes: [] as SubscriptionChange[],
   }
-  const stillCurrent = async () => {
-    if (!args.current()) return false
-    const scope = await args.currentScope().catch(() => null)
-    return (
-      scope !== null &&
-      scope.path === args.path &&
-      scope.baseline === args.baseline &&
-      args.current()
-    )
-  }
   if (args.baseline === null) return pending
-  if (!(await stillCurrent())) return { ...pending, history: 'unavailable' as const }
-  let tip: string | null
+  let remote: string
   try {
-    tip = await args.repo.head()
+    remote = canonicalGitHubRemote(args.remote)
   } catch {
     return { ...pending, history: 'unavailable' as const }
   }
-  if (tip === null) return { ...pending, history: 'pending-baseline' as const }
-  const identity = await repositoryIdentity(args.root, { createLifetime: false }).catch(() => null)
-  let origin = ''
+  const scopeMatches = (scope: SubscriptionScope | null) =>
+    scope !== null && scope.path === args.path && scope.baseline === args.baseline
+  const currentScope = await args.currentScope().catch(() => null)
+  if (!args.current() || !scopeMatches(currentScope))
+    return { ...pending, history: 'unavailable' as const }
+
+  let tip: string | null = null
   try {
-    origin = canonicalGitHubRemote(
-      await runGit(args.root, ['--no-replace-objects', 'remote', 'get-url', 'origin'], {
-        executionBudget: { maxBuffer: 65536, timeout: 1000 },
-      }),
-    )
+    const captured = await args.repo.historicalHead()
+    if (captured.kind === 'unborn') return pending
+    if (captured.kind !== 'commit') return { ...pending, history: 'unavailable' as const }
+    tip = captured.sha
+  } catch {
+    return { ...pending, history: 'unavailable' as const }
+  }
+  const initial = repositoryPublicationSnapshot(args.root)
+  if (initial === null || initial.remote !== remote)
+    return { ...pending, tip, history: 'unavailable' as const }
+
+  let history: Awaited<ReturnType<GitRepo['revisionChanges']>>
+  try {
+    history = await args.repo.revisionChanges(args.baseline, tip, args.path)
   } catch {
     return { ...pending, tip, history: 'unavailable' as const }
   }
-  if (!identity || origin !== args.remote)
-    return { ...pending, tip, history: 'unavailable' as const }
-  const history = await args.repo.revisionChanges(args.baseline, tip, args.path)
   const safeChanges: typeof history.changes = []
   for (const change of history.changes) {
     const { path } = change
@@ -72,65 +71,44 @@ export async function subscriptionChanges(args: {
         vaultRelPath(path) !== path ||
         isLocalOnlyPath(path) ||
         isSecretPath(path) ||
-        isInIgnoredDir(path)
+        isNonContentPath(path)
       )
         continue
-      // Current symlinks can expose an outside target even though history
-      // returns only the link's name. Walk each existing component without
-      // following links; deleted paths remain eligible for historical review.
-      const parts = path.split('/')
-      let cursor = args.root
-      let unsafe = false
-      for (const part of parts) {
-        cursor = resolve(cursor, part)
-        try {
-          if ((await lstat(cursor)).isSymbolicLink()) {
-            unsafe = true
-            break
-          }
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') break
-          unsafe = true
-          break
-        }
-      }
-      if (!unsafe) safeChanges.push(change)
+      // exactPath rejects an existing symlink/case alias, while still allowing
+      // deleted historical paths through the closest existing ancestor.
+      if ((await exactPath(args.root, path)) !== null) safeChanges.push(change)
     } catch {
       // Invalid historical names are not emitted.
     }
   }
+
+  // The last async observation is the saved scope. Everything after it is
+  // synchronous, including provenance reads and the repository publication guard.
+  const finalScope = await args.currentScope().catch(() => null)
+  const final = repositoryPublicationSnapshot(args.root)
   const ownership =
-    args.accountId === null || identity.lifetime === null
+    args.accountId === null || final?.lifetime === null || final === null
       ? new Set<string>()
       : ownedCommitOids({
           file: args.provenanceFile,
-          remote: args.remote,
-          identity,
+          remote,
+          identity: final,
           accountId: args.accountId,
           oids: safeChanges.map(({ sha }) => sha),
         })
-  // Revalidate the exact repository and origin after every traversal await,
-  // including path lstat checks, before any suppression can be returned.
-  const afterIdentity = await repositoryIdentity(args.root, { createLifetime: false }).catch(
-    () => null,
-  )
-  let afterOrigin = ''
-  try {
-    afterOrigin = canonicalGitHubRemote(
-      await runGit(args.root, ['--no-replace-objects', 'remote', 'get-url', 'origin'], {
-        executionBudget: { maxBuffer: 65536, timeout: 1000 },
-      }),
-    )
-  } catch {
-    return { ...pending, tip, history: 'unavailable' as const }
-  }
   if (
-    afterOrigin !== origin ||
-    JSON.stringify(afterIdentity) !== JSON.stringify(identity) ||
-    !(await stillCurrent()) ||
-    !args.current()
+    !args.current() ||
+    !scopeMatches(finalScope) ||
+    final === null ||
+    final.remote !== remote ||
+    final.root !== initial.root ||
+    final.gitDir !== initial.gitDir ||
+    final.device !== initial.device ||
+    final.inode !== initial.inode ||
+    final.marker !== initial.marker
   )
     return { ...pending, tip, history: 'unavailable' as const }
+
   const changes = safeChanges
     .filter((change) => !ownership.has(change.sha))
     .map((change) => ({ ...change, ownership: 'unknown' as const, reviewed: false as const }))
