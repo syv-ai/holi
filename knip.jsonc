@@ -54,6 +54,10 @@
         // Native Electron smoke: the TS entry and isolated renderer are built by its MJS runner.
         "scripts/terminal-hints-native-smoke-main.ts",
         "scripts/terminal-hints-native-smoke.tsx",
+        // Isolated #510 community iframe smoke entries are selected by its runner.
+        "scripts/community-hints-native-smoke-main.ts",
+        "scripts/community-hints-native-smoke.tsx",
+        "scripts/community-hints-native-smoke-serve.cjs",
         "scripts/pdf-vim-native-smoke-main.ts",
         "scripts/pdf-vim-native-smoke.tsx",
         "scripts/mail-vim-native-smoke-main.ts",
