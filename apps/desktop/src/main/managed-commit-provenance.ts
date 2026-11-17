@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, realpathSync, statSync } from 'node:fs'
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  realpathSync,
+  readSync,
+  statSync,
+} from 'node:fs'
 import { open, readFile, realpath, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
@@ -33,6 +42,25 @@ export interface CommitIdentity {
 }
 
 const empty = (): ProvenanceFile => ({ version: 1, records: [] })
+const MAX_PROVENANCE_BYTES = 8 * 1024 * 1024
+const MAX_MARKER_BYTES = 256
+
+function readBoundedRegularFile(file: string, maxBytes: number): string {
+  const before = lstatSync(file)
+  if (!before.isFile() || before.isSymbolicLink() || before.size > maxBytes)
+    throw new Error('Unsafe or oversized file')
+  const fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+  try {
+    const info = fstatSync(fd)
+    if (!info.isFile() || info.size > maxBytes) throw new Error('Unsafe or oversized file')
+    const buffer = Buffer.alloc(maxBytes + 1)
+    const length = readSync(fd, buffer, 0, maxBytes + 1, 0)
+    if (length > maxBytes) throw new Error('Oversized file')
+    return buffer.subarray(0, length).toString('utf8')
+  } finally {
+    closeSync(fd)
+  }
+}
 
 function provenanceKey(key: ProvenanceKey): string {
   return JSON.stringify([
@@ -76,7 +104,7 @@ export function ownedCommitOids(args: {
 }): ReadonlySet<string> {
   if (args.identity.lifetime === null) return new Set()
   try {
-    const text = readFileSync(args.file, 'utf8')
+    const text = readBoundedRegularFile(args.file, MAX_PROVENANCE_BYTES)
     const state = parse(JSON.parse(text), text)
     const wanted = new Set(args.oids)
     return new Set(
@@ -160,7 +188,7 @@ export function repositoryPublicationSnapshot(root: string): RepositoryPublicati
     const markerFile = `${gitDir}/holi-managed-provenance-id`
     let marker: string
     try {
-      marker = `present:${readFileSync(markerFile, 'utf8')}`
+      marker = `present:${readBoundedRegularFile(markerFile, MAX_MARKER_BYTES)}`
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       marker = 'absent'
@@ -185,7 +213,6 @@ export function repositoryPublicationSnapshot(root: string): RepositoryPublicati
 
 async function repositoryIdentity(
   root: string,
-  options: { createLifetime?: boolean } = {},
 ): Promise<
   Pick<ProvenanceRecord, 'root' | 'gitDir' | 'device' | 'inode'> & { lifetime: string | null }
 > {
@@ -203,8 +230,7 @@ async function repositoryIdentity(
     lifetime = (await readFile(lifetimeFile, 'utf8')).trim()
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    if (options.createLifetime === false) lifetime = ''
-    else {
+    {
       const candidate = randomUUID()
       try {
         const handle = await open(lifetimeFile, 'wx', 0o600)
@@ -230,14 +256,6 @@ async function repositoryIdentity(
       lifetime: null,
     }
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(lifetime)) {
-    if (options.createLifetime === false)
-      return {
-        root: canonicalRoot,
-        gitDir,
-        device: Number(gitStat.dev),
-        inode: Number(gitStat.ino),
-        lifetime: null,
-      }
     throw new Error('Invalid repository lifetime marker')
   }
   return {
@@ -433,8 +451,10 @@ export function createManagedCommitProvenance(args: {
               gitDir === started.gitDir &&
               Number(info.dev) === started.device &&
               Number(info.ino) === started.inode &&
-              readFileSync(`${gitDir}/holi-managed-provenance-id`, 'utf8').trim() ===
-                started.lifetime &&
+              readBoundedRegularFile(
+                `${gitDir}/holi-managed-provenance-id`,
+                MAX_MARKER_BYTES,
+              ).trim() === started.lifetime &&
               args.subscribedNow()
             )
           } catch {
