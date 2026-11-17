@@ -685,7 +685,7 @@ async function run() {
   await key('Escape')
   await key('c')
   await key('w')
-  win.webContents.insertText('omega')
+  for (const character of 'omega') await win.webContents.insertText(character)
   await key('Escape')
   const commentAfterChange = await evaluate<{
     id: string
@@ -695,7 +695,7 @@ async function run() {
   } | null>(`window.richTextVimFixture.commentRange('thread-change')`)
   assert(commentAfterChange, 'production decoration maps through the live change transaction')
   assert.equal((await state()).markdown, 'omega beta')
-  assert.equal(commentAfterChange.text, 'omega')
+  assert.equal(commentAfterChange.text, 'omega', 'comment follows each native typing transaction')
   assert.equal(
     await evaluate<string>(`window.richTextVimFixture.commentText('thread-change')`),
     'Review this passage',
