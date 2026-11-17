@@ -3,16 +3,55 @@ import { test } from 'vitest'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
 import { runCommand, validateReport, validateSharedGraph } from '../scripts/host-checks.mjs'
 
+import { storageFaultPhases, storageFixturePaths } from '../app/vault-storage-check'
+
+const runId = '11111111-1111-1111-1111-111111111111'
 const corpus = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
-const context = { runId: 'fresh', launchedAt: 100, now: 200, osVersion: '26.2' }
+const context = {
+  runId,
+  launchedAt: 100,
+  now: 200,
+  osVersion: '26.2',
+  storageRoot: '/sandbox/Documents',
+}
+const rawNames = ['Café.md', 'Cafe\u0301.md'].map((name, index) => ({
+  root: `/sandbox/Documents/holi-raw-${runId}-${index}`,
+  name,
+  names: [name],
+  aliasRejected: true,
+  originalText: 'raw native fixture',
+  saved: 'updated raw native fixture',
+}))
 const report = {
-  schemaVersion: 1,
-  runId: 'fresh',
+  schemaVersion: 2,
+  phase: 'normal',
+  rawNames,
+  nativeFilenameRoots: rawNames,
+  nativeFilenameSpellings: true,
+  runId,
   platform: 'ios',
   osVersion: '26.2',
   startedAt: 110,
   finishedAt: 120,
   corpus,
+  storage: {
+    schemaVersion: 3,
+    faultPhases: [...storageFaultPhases],
+    faultOperations: 10,
+    fixturesPreserved: [...storageFixturePaths],
+    passed: 1,
+    total: 1,
+    failed: 0,
+    concurrentFulfilled: 1,
+    staleRejected: true,
+    isolatedRoots: true,
+    exactBytes: true,
+    listingFiltered: true,
+    caseAliasRejected: true,
+    symlinkRejected: true,
+    finalBytes: 'winner A',
+  },
+  storageRoot: `/sandbox/Documents/holi-storage-check-${runId}`,
 }
 
 test('host accepts only fresh complete native evidence for every bundled case', () => {
@@ -22,6 +61,60 @@ test('host accepts only fresh complete native evidence for every bundled case', 
 })
 
 for (const [name, mutate] of [
+  [
+    'wrong phase',
+    (value) => {
+      value.phase = 'recovery'
+    },
+  ],
+  [
+    'missing fault cases',
+    (value) => {
+      value.storage.faultOperations = 0
+    },
+  ],
+  [
+    'missing planted fixtures',
+    (value) => {
+      value.storage.fixturesPreserved.pop()
+    },
+  ],
+  [
+    'missing native Unicode proof',
+    (value) => {
+      delete value.rawNames
+    },
+  ],
+  [
+    'wrong raw root',
+    (value) => {
+      value.rawNames[0].root = '/outside'
+    },
+  ],
+  [
+    'Unicode spelling mismatch',
+    (value) => {
+      value.rawNames[0].names = ['Cafe\u0301.md']
+    },
+  ],
+  [
+    'traversal storage root',
+    (value) => {
+      value.storageRoot = '/sandbox/Documents/../Library/private'
+    },
+  ],
+  [
+    'symlink-like namespace root',
+    (value) => {
+      value.storageRoot = '/sandbox/Documents/holi-storage-check-fresh-110/../outside'
+    },
+  ],
+  [
+    'outside container storage root',
+    (value) => {
+      value.storageRoot = '/sandbox-other/Documents/holi-storage-check-fresh-110'
+    },
+  ],
   [
     'stale run',
     (value) => {
@@ -55,7 +148,7 @@ for (const [name, mutate] of [
   [
     'unsupported schema',
     (value) => {
-      value.schemaVersion = 2
+      value.schemaVersion = 3
     },
   ],
   [
@@ -68,6 +161,18 @@ for (const [name, mutate] of [
     'missing report',
     (value) => {
       delete value.corpus
+    },
+  ],
+  [
+    'missing storage evidence',
+    (value) => {
+      delete value.storage
+    },
+  ],
+  [
+    'failed storage evidence',
+    (value) => {
+      value.storage.failed = 1
     },
   ],
   [
@@ -117,8 +222,14 @@ for (const [name, mutate] of [
 test('host rejects absent, incomplete or nonportable shared graph evidence', () => {
   const graph = {
     schemaVersion: 1,
-    resources: ['path-safety.ts', 'vault-format.ts', 'vault-format.v1.json'],
+    resources: [
+      'mobile-path-safety.ts',
+      'path-safety.ts',
+      'vault-format.ts',
+      'vault-format.v1.json',
+    ],
     edges: [
+      { from: 'mobile-path-safety.ts', request: './path-safety', to: 'path-safety.ts' },
       { from: 'vault-format.ts', request: './path-safety', to: 'path-safety.ts' },
       { from: 'vault-format.ts', request: './vault-format.v1.json', to: 'vault-format.v1.json' },
     ],
