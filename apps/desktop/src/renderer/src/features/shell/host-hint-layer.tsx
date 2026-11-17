@@ -21,8 +21,40 @@ import { vimCodeEditingAtom } from '@/state/preferences'
 import { hostHintKeyAtom } from '@/state/shortcuts'
 import { useShortcutHandlers } from '@/hooks/use-shortcuts'
 
+const ASYNC_HINT_DEADLINE_MS = 120
+const MAX_PENDING_HINT_KEYS = 8
+
+function withinDeadline<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => resolve(fallback), ASYNC_HINT_DEADLINE_MS)
+    void promise.then(
+      (value) => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        window.clearTimeout(timer)
+        resolve(fallback)
+      },
+    )
+  })
+}
+
+function presentWithinDeadline(
+  source: AsyncHostHintAdapter,
+  request: number,
+  revision: number,
+  labels: readonly { id: string; key: string }[],
+): Promise<boolean> {
+  return withinDeadline(
+    Promise.resolve().then(() => source.present(request, revision, labels)),
+    false,
+  )
+}
+
 interface HintSession {
   targets: HostHintTarget[]
+  discoveryTargets: HostHintTarget[]
   prefix: string
   adapter?: HostHintAdapter
   root: HTMLElement
@@ -49,6 +81,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
   const change = useCallback(
     (next: HintSession | null) => {
       const previous = current.current
+      if (!next) for (const retire of [...activations.current]) retire()
       if (next?.request !== previous?.request) {
         unsubscribe.current?.()
         unsubscribe.current = null
@@ -58,18 +91,22 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
           for (const source of previous?.asyncAdapters ?? []) source.clear(lifetime.request)
           asyncLifetime.current = null
         }
+        for (const retire of [...activations.current]) retire()
       }
       current.current = next
       if (next && previous?.request === next.request && previous.prefix !== next.prefix) {
         const revision = ++revisionNumber.current
+        const request = next.request
         for (const [source, labels] of next.asyncLabels) {
-          void source
-            .present(
-              next.request,
-              revision,
-              labels.filter((label) => label.key.startsWith(next.prefix)),
-            )
-            .catch(() => undefined)
+          void presentWithinDeadline(
+            source,
+            request,
+            revision,
+            labels.filter((label) => label.key.startsWith(next.prefix)),
+          ).then((ok) => {
+            if (!ok && current.current?.request === request && revisionNumber.current === revision)
+              change(null)
+          })
         }
       }
       const sources = new Set([
@@ -124,6 +161,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       const controller = new AbortController()
       const next: HintSession = {
         targets: asyncAdapters.length ? [] : targets,
+        discoveryTargets: targets,
         prefix: '',
         adapter,
         root,
@@ -139,20 +177,18 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       asyncLifetime.current = { request, controller }
       if (asyncAdapters.length) {
         const discoveries = Promise.all(
-          asyncAdapters.map(async (source) => {
-            try {
-              return [source, await source.discover(request, controller.signal)] as const
-            } catch {
-              return [source, null] as const
-            }
-          }),
-        )
-        void Promise.race([
-          discoveries,
-          new Promise<NonNullable<Awaited<typeof discoveries>>>((resolve) =>
-            window.setTimeout(() => resolve([]), 120),
+          asyncAdapters.map(
+            async (source) =>
+              [
+                source,
+                await withinDeadline(
+                  Promise.resolve().then(() => source.discover(request, controller.signal)),
+                  null,
+                ),
+              ] as const,
           ),
-        ]).then(async (results) => {
+        )
+        void discoveries.then(async (results) => {
           if (controller.signal.aborted || current.current?.request !== request) return
           const asyncTargets = new Map(
             results.filter(
@@ -182,28 +218,27 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
               if (index >= 0) revisedTargets[index] = { ...target, key }
             }
           }
+          const initialRevision = ++revisionNumber.current
           const presented = await Promise.all(
-            asyncAdapters.map(async (source) => {
-              try {
-                return [
+            [...asyncTargets.keys()].map(
+              async (source) =>
+                [
                   source,
-                  await source.present(
+                  await presentWithinDeadline(
+                    source,
                     request,
-                    ++revisionNumber.current,
+                    initialRevision,
                     labelsBySource.get(source) ?? [],
                   ),
-                ] as const
-              } catch {
-                return [source, false] as const
-              }
-            }),
+                ] as const,
+            ),
           )
           if (controller.signal.aborted || current.current?.request !== request) return
           const available = new Set(presented.filter(([, ok]) => ok).map(([source]) => source))
           const usableTargets = new Map(
             [...asyncTargets].filter(([source]) => available.has(source)),
           )
-          for (const [source] of presented) {
+          for (const source of asyncAdapters) {
             if (!available.has(source)) {
               source.clear(request)
               labelsBySource.delete(source)
@@ -213,6 +248,8 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
           const populated: HintSession = {
             ...current.current,
             targets: revisedTargets,
+            discoveryTargets: native,
+            asyncAdapters: asyncAdapters.filter((source) => available.has(source)),
             asyncTargets: usableTargets,
             asyncLabels: labelsBySource,
             pending: false,
@@ -242,7 +279,9 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
     >()
     const invalidate = () => {
       const active = current.current
-      if (active && !hostHintsUnchanged(active.targets, active.adapter, active.root)) change(null)
+      if (active && !hostHintsUnchanged(active.discoveryTargets, active.adapter, active.root))
+        change(null)
+      if (!active) for (const retire of [...activations.current]) retire()
     }
     const onSurface = (event: Event) => {
       const detail = (
@@ -256,6 +295,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       if (detail.registered) {
         const observer = new MutationObserver(() => {
           if (current.current) change(null)
+          else for (const retire of [...activations.current]) retire()
         })
         observer.observe(detail.root, {
           childList: true,
@@ -290,7 +330,10 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
     const activationSet = activations.current
     change(null)
     if (!enabled) return
-    const cancel = () => change(null)
+    const cancel = () => {
+      change(null)
+      for (const retire of [...activationSet]) retire()
+    }
     const onRequest = (event: Event) => {
       const detail = (
         event as CustomEvent<{
@@ -299,12 +342,17 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
           scoped?: boolean
         }>
       ).detail
+      cancel()
       start(detail?.source ?? null, detail?.adapter, detail?.scoped)
     }
     const onKey = (event: KeyboardEvent): boolean => {
       const active = current.current
-      if (!active) return false
-      if (!hostHintsUnchanged(active.targets, active.adapter, active.root)) {
+      if (!active) {
+        if (event.key !== 'Escape') return false
+        cancel()
+        return true
+      }
+      if (!hostHintsUnchanged(active.discoveryTargets, active.adapter, active.root)) {
         cancel()
         return (
           !event.isComposing &&
@@ -340,6 +388,10 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
           return true
         }
         if (event.key.length === 1 && !event.shiftKey) {
+          if (active.buffered.length >= MAX_PENDING_HINT_KEYS) {
+            cancel()
+            return true
+          }
           change({ ...active, buffered: active.buffered + event.key })
           return true
         }
@@ -355,21 +407,13 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         return false
       }
       const prefix = active.prefix + event.key
-      const asyncMatches = [...active.asyncTargets]
-        .flatMap(([source, targets]) =>
-          targets.map((target) => ({
-            source,
-            target,
-            key: hintLabel(
-              [...active.targets, ...[...active.asyncTargets.values()].flat()]
-                .sort((a, b) => a.y - b.y || a.x - b.x)
-                .findIndex((item) => item === target),
-              active.targets.length +
-                [...active.asyncTargets.values()].reduce((n, items) => n + items.length, 0),
-            ),
-          })),
-        )
-        .filter((entry) => entry.key.startsWith(prefix))
+      const asyncMatches = [...active.asyncTargets].flatMap(([source, targets]) => {
+        const labels = active.asyncLabels.get(source) ?? []
+        return targets.flatMap((target) => {
+          const label = labels.find((entry) => entry.id === target.id)
+          return label?.key.startsWith(prefix) ? [{ source, target, key: label.key }] : []
+        })
+      })
       const matches = active.targets.filter((target) => target.key.startsWith(prefix))
       const found = matches.find((target) => target.key === prefix)
       const asyncFound = asyncMatches.find((entry) => entry.key === prefix)
@@ -412,11 +456,12 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
     window.addEventListener('focusin', cancel, true)
     window.addEventListener('compositionstart', cancel, true)
     window.addEventListener('blur', cancel)
+    document.addEventListener('visibilitychange', cancel)
     window.addEventListener('resize', cancel)
     window.addEventListener('scroll', cancel, true)
     const observer = new MutationObserver((records) => {
       if (
-        !current.current ||
+        (!current.current && !activationSet.size) ||
         records.every((record) => {
           const element =
             record.target instanceof Element ? record.target : record.target.parentElement
@@ -430,7 +475,8 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         })
       )
         return
-      if (!hostHintsUnchanged(current.current.targets)) cancel()
+      if (current.current && !hostHintsUnchanged(current.current.discoveryTargets)) cancel()
+      else if (!current.current) cancel()
     })
     observer.observe(document.body, {
       childList: true,
@@ -448,6 +494,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       window.removeEventListener('focusin', cancel, true)
       window.removeEventListener('compositionstart', cancel, true)
       window.removeEventListener('blur', cancel)
+      document.removeEventListener('visibilitychange', cancel)
       window.removeEventListener('resize', cancel)
       window.removeEventListener('scroll', cancel, true)
     }
