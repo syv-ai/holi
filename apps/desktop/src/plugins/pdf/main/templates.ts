@@ -88,8 +88,9 @@ export async function migrateTemplates(
   const publish = async (rel: string, bytes: Buffer): Promise<void> => {
     const tempRel = `${rel}.${randomUUID()}.tmp`
     try {
+      const tempPath = await safe(tempRel)
       check()
-      await writeFile(await safe(tempRel), bytes, { flag: 'wx' })
+      await writeFile(tempPath, bytes, { flag: 'wx' })
       const temp = await safe(tempRel)
       const destination = await safe(rel)
       check()
@@ -128,15 +129,25 @@ export async function migrateTemplates(
 
   const removeTree = async (rel: string): Promise<void> => {
     check()
-    const abs = await safe(rel)
+    const valid = vaultRelPath(rel)
+    if (!valid) throw new Error(`unsafe template migration path: ${rel}`)
+    const parentRel = rel.slice(0, rel.lastIndexOf('/'))
+    const leaf = rel.slice(rel.lastIndexOf('/') + 1)
+    const parent = await safe(parentRel)
+    const abs = join(parent, leaf)
     const st = await lstat(abs)
     if (st.isDirectory() && !st.isSymbolicLink()) {
       for (const child of await readdir(abs)) await removeTree(`${rel}/${child}`)
       check()
-      await rmdir(await safe(rel))
-    } else {
+      // Re-check the parent immediately before the destructive operation.
+      const currentParent = await safe(parentRel)
       check()
-      await unlink(abs)
+      await rmdir(join(currentParent, leaf))
+    } else {
+      // lstat does not follow a leaf symlink; unlink removes only the link.
+      const currentParent = await safe(parentRel)
+      check()
+      await unlink(join(currentParent, leaf))
     }
   }
   for (const entry of entries) {
@@ -164,8 +175,14 @@ export async function migrateTemplates(
     }
     // Retired templates are intentionally removed as a whole, but only after
     // their identifying manifest has been validated above.
-    for (const child of await readdir(await safe(dir))) await removeTree(`${dir}/${child}`)
-    await rmdir(await safe(dir))
+    const children = await readdir(await safe(dir))
+    // Keep the identifying manifest until every other child has been removed. If
+    // a deletion is interrupted, a retry can still prove this is the retired item.
+    children.sort((a, b) => Number(a === 'template.json') - Number(b === 'template.json'))
+    for (const child of children) await removeTree(`${dir}/${child}`)
+    const retiredPath = await safe(dir)
+    check()
+    await rmdir(retiredPath)
   }
 
   if (!restoring || seededFiles.length === 0) return
@@ -190,8 +207,9 @@ export async function migrateTemplates(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+  const reportPath = await safe(reportDir)
   check()
-  await mkdir(await safe(reportDir), { recursive: true })
+  await mkdir(reportPath, { recursive: true })
   for (const [rel, bytes] of seededFiles.filter(([path]) => path !== reportManifest)) {
     check()
     try {
