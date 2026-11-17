@@ -1,6 +1,5 @@
-import { chmod } from 'node:fs/promises'
+import { chmod, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { writeFile } from 'node:fs/promises'
 import { afterAll, describe, expect, it } from 'vitest'
 import { openRepo } from '../src/main/git'
 import {
@@ -139,7 +138,7 @@ describe('managed merge provenance', () => {
     expect(records).toEqual([oid])
   })
 
-  it('rejects replacement objects that disguise the raw merge parents', async () => {
+  it('reads raw parents despite an outside-trace replacement disguise', async () => {
     const remote = await makeRemote()
     const local = await makeClone(remote, 'local')
     const teammate = await makeClone(remote, 'teammate')
@@ -148,31 +147,52 @@ describe('managed merge provenance', () => {
     await commitFile(teammate, 'theirs.md', 'theirs\n')
     const incoming = await plainGit(teammate, ['rev-parse', 'HEAD'])
     await plainGit(teammate, ['push', 'origin', 'HEAD:main'])
+    const wrapper = join(await tmp('holi-replace-object-'), 'git')
+    const proof = join(await tmp('holi-replace-object-proof-'), 'raw-parent-read')
     await writeFile(
-      join(local, '.git/hooks/post-merge'),
-      `#!/bin/sh\nset -eu\nmerge=$(git rev-parse HEAD)\none=$(git rev-parse HEAD^)\ntree=$(git rev-parse 'HEAD^{tree}')\nother=$(printf other | git commit-tree "$tree" -p "$one")\ngit replace "$merge" "$one"\ngit update-ref -m 'merge: disguised' HEAD "$merge"\n`,
+      wrapper,
+      `#!/bin/sh
+git "$@"
+status=$?
+if [ "$1" = merge ] && [ $status -eq 0 ]; then
+  merge=$(env -u GIT_TRACE2_EVENT git rev-parse HEAD)
+  tree=$(env -u GIT_TRACE2_EVENT git rev-parse 'HEAD^{tree}')
+  wrong=$(printf wrong | env -u GIT_TRACE2_EVENT git commit-tree "$tree" -p "$ours")
+  env -u GIT_TRACE2_EVENT git replace "$wrong" "$merge"
+  env -u GIT_TRACE2_EVENT git update-ref -m "$GIT_REFLOG_ACTION: disguised" HEAD "$wrong"
+  touch "$EVIDENCE_PROOF"
+fi
+exit $status
+`,
     )
-    await chmod(join(local, '.git/hooks/post-merge'), 0o755)
+    await chmod(wrapper, 0o755)
     const records: Array<string | null> = []
     expect(
       (
         await openRepo(local, {
+          gitPath: wrapper,
+          env: { EVIDENCE_PROOF: proof, ours },
           commitProvenance: {
             begin: () => ({}),
-            record: async (_ticket, _root, oid) => {
-              records.push(oid)
-            },
+            record: async (_ticket, _root, oid) => records.push(oid),
           },
         }).pull()
       ).kind,
     ).toBe('merged')
+    await access(proof)
     const head = await plainGit(local, ['rev-parse', 'HEAD'])
+    expect(head).not.toBe(incoming)
+    const disguised = (await plainGit(local, ['cat-file', '-p', head]))
+      .split('\n\n')[0]!
+      .split('\n')
+      .filter((line) => line.startsWith('parent '))
+    expect(disguised).toHaveLength(2)
     const parents = (await plainGit(local, ['--no-replace-objects', 'cat-file', '-p', head]))
       .split('\n\n')[0]!
       .split('\n')
       .filter((line) => line.startsWith('parent '))
       .map((line) => line.slice('parent '.length))
-    expect(parents).toEqual([ours, incoming])
+    expect(parents).toEqual([ours])
     expect(records).toEqual([null])
   })
 
@@ -213,7 +233,7 @@ describe('managed merge provenance', () => {
     expect(records).toEqual([own])
   })
 
-  it('does not claim a concurrent native commit after the real merge', async () => {
+  it('rejects unsolicited native amend sessions after the real merge', async () => {
     const remote = await makeRemote()
     const local = await makeClone(remote, 'local')
     const teammate = await makeClone(remote, 'teammate')
@@ -223,7 +243,7 @@ describe('managed merge provenance', () => {
     const wrapper = join(await tmp('holi-race-'), 'git')
     await writeFile(
       wrapper,
-      `#!/bin/sh\ngit "$@"\nstatus=$?\nif [ "$1" = merge ] && [ $status -eq 0 ]; then git commit --allow-empty -m concurrent-native >/dev/null; fi\nexit $status\n`,
+      `#!/bin/sh\ngit "$@"\nstatus=$?\nif [ "$1" = merge ] && [ $status -eq 0 ]; then\n  git -c maintenance.auto=false commit --amend --no-edit >/dev/null\n  git reflog delete 'HEAD@{1}'\nfi\nexit $status\n`,
     )
     await chmod(wrapper, 0o755)
     const records: Array<string | null> = []

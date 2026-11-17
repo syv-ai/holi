@@ -1,5 +1,6 @@
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { openRepo } from '../src/main/git'
@@ -168,15 +169,16 @@ describe('managed merge provenance lifecycle', () => {
         subscribedNow: () => subscribed,
       })
       const marker = join(local, '.git/holi-managed-provenance-id')
-      const before = await readFile(marker, 'utf8').catch(() => null)
       const wrapped = {
         begin: (root: string) => recorder.begin(root),
         record: async (ticket: unknown, root: string, oid: string | null): Promise<void> => {
+          expect(ticket).not.toBeNull()
+          expect(oid).toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
           if (change === 'logout') identity = null
           if (change === 'adoption') identity = { accountId: 2, generation: 2 }
           if (change === 'relogin') identity = { accountId: 1, generation: 2 }
           if (change === 'subscription') subscribed = false
-          if (change === 'lifetime') await writeFile(marker, `${before ?? 'old'}\nreplacement\n`)
+          if (change === 'lifetime') await writeFile(marker, `${randomUUID()}\n`)
           if (change === 'origin')
             await plainGit(root, [
               'remote',
