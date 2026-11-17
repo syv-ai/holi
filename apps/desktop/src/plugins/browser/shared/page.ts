@@ -58,7 +58,9 @@ export interface PageHintSnapshot {
   targets: PageHintTarget[]
 }
 
-/** Main-owned identity for one hint snapshot and its lifetime. */
+/** Main-owned identity for one hint snapshot and its lifetime. `origin` is an opaque
+ * request token, never the page URL/origin; `snapshot` and `geometry` bind all
+ * page-side effects to the exact discovery and layout that produced them. */
 export interface PageHintOwner extends PageHintScope {
   origin: string
   snapshot: number

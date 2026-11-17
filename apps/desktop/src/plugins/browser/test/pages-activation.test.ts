@@ -94,6 +94,46 @@ describe('browser page activation', () => {
     native.menus.length = 0
   })
 
+  it('does not resurrect a discovery after its native request was cleared', async () => {
+    const { createPages } = await import('../main/pages')
+    const window = win()
+    const modes: { nonce: string; attachment: string }[] = []
+    const pages = createPages({
+      window: () => window,
+      presentationLease: () => () => true,
+      changed: () => {},
+      address: () => {},
+      key: () => {},
+      reveal: () => {},
+      vimMode: (_id, snapshot) => modes.push(snapshot),
+    })
+    await pages.open({ id: 'hints', reveal: false })
+    const view = native.views[0]
+    view.webContents.emit('did-finish-load')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    pages.place('hints', { x: 0, y: 0, width: 100, height: 100 })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const mode = modes.at(-1)!
+    let resolveDiscovery!: (value: { id: string; label: string; x: number; y: number }[]) => void
+    view.webContents.executeJavaScriptInIsolatedWorld.mockImplementation(
+      async (_world: number, scripts: { code: string }[]) => {
+        const code = scripts.at(-1)?.code ?? ''
+        if (code.includes('__holiPage.hints.discover('))
+          return await new Promise((resolve) => {
+            resolveDiscovery = resolve
+          })
+        return undefined
+      },
+    )
+    const scope = { tab: 'hints', nonce: mode.nonce, attachment: mode.attachment, request: 1 }
+    const pending = pages.discoverHints(scope)
+    await pages.clearHints(scope)
+    resolveDiscovery([{ id: '0', label: 'Continue', x: 5, y: 6 }])
+    expect(await pending).toBeNull()
+    expect(await pages.discoverHints(scope)).toBeNull()
+    pages.dispose()
+  })
+
   it('fences browser Vim configuration across A-B-A attachment changes', async () => {
     const { createPages } = await import('../main/pages')
     const window = win()
