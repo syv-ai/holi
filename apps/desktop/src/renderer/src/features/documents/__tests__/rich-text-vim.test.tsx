@@ -73,6 +73,40 @@ describe('rich-text Vim extension', () => {
     expect(text(ed)).toBe('afé ')
   })
 
+  it('runs counted operators, visual selections, and structured yank/paste on ProseMirror', () => {
+    const ed = open('<p><strong>alpha</strong> beta</p><p>gamma</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    key(ed, 'd')
+    key(ed, 'w')
+    expect(text(ed)).toBe('gamma')
+    key(ed, 'u')
+    expect(text(ed)).toBe('alphabeta gamma')
+
+    ed.commands.setTextSelection(1)
+    key(ed, 'y')
+    key(ed, 'w')
+    key(ed, 'P')
+    expect(ed.getHTML()).toContain('<strong>alpha</strong>')
+
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    key(ed, 'l')
+    expect(ed.state.selection.empty).toBe(false)
+    key(ed, 'd')
+    expect(ed.state.selection.empty).toBe(true)
+  })
+
+  it('yanks and deletes a whole logical line with doubled operators', () => {
+    const ed = open('<p>first</p><p>second</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, 'd')
+    expect(text(ed)).toBe('second')
+    key(ed, 'P')
+    expect(text(ed)).toBe('firstsecond')
+  })
+
   it('consumes unsupported normal-mode editing keys without document transactions', () => {
     const ed = open('<p>word</p>')
     const before = ed.state.doc
