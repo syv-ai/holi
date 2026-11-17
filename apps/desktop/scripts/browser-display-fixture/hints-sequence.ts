@@ -39,6 +39,21 @@
   }
   const hostHintCount = () =>
     ui(`document.querySelectorAll('[data-host-hints] [data-hint-key]').length`)
+  const hintFrames = join(evidence, 'hints-frames')
+  mkdirSync(hintFrames, { recursive: true })
+  let recordingHints = true
+  let hintFrame = 0
+  const hintRecorder = (async () => {
+    while (recordingHints) {
+      const image = await page.capturePage()
+      if (!image.isEmpty())
+        writeFileSync(
+          join(hintFrames, `${String(hintFrame++).padStart(5, '0')}.png`),
+          image.toPNG(),
+        )
+      await wait(125)
+    }
+  })()
   // Set the production preference and focus the real embedded page before sending
   // the Vim binding as native keyboard input (not a page/host dispatchEvent).
   await ui('qa.setVim(true)')
@@ -153,6 +168,18 @@
   await pageEval(`document.body.tabIndex=-1;document.body.focus()`)
   hintMark('hide-return-invalidates-old-page-and-host-labels')
 
+  await invoke('A', 'open', { tab: 'same', url: `${url}/a?hint-replacement` })
+  await until(
+    () => page.getURL().endsWith('/a?hint-replacement'),
+    'hint-owned navigation replacement',
+  )
+  await wait(350)
+  await requestPageHints()
+  await until(async () => (await pageLabelsFor(page)).length > 0, 'replacement document hints')
+  await pageNativePress('Escape')
+  await until(async () => (await pageLabelsFor(page)).length === 0, 'replacement hint cancellation')
+  hintMark('hint-owned-navigation-replacement-rearms-current-document')
+
   await requestPageHints()
   await until(async () => (await pageLabelsFor(page)).length > 0, 'mutation invalidation session')
   await pageEval(
@@ -247,6 +274,9 @@
   await pageNativePress('Escape')
   hintMark('native-page-light-dark-and-shell-evidence-captured')
 
+  recordingHints = false
+  await hintRecorder
+  assert(hintFrame > 0, 'hint interaction recording has no native page frames')
   writeFileSync(
     join(evidence, 'hints-result.json'),
     JSON.stringify(
@@ -261,6 +291,7 @@
         pageTargets: pageLabels.map((item: any) => item.label),
         hostTargets: hostLabels.map((item: any) => item.label),
         evidence: ['hints-page-light.png', 'hints-page-dark.png', 'hints-shell-light.png'],
+        interactionFrames: hintFrame,
       },
       null,
       2,

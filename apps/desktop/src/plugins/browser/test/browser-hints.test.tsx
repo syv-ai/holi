@@ -1,0 +1,231 @@
+import { beforeEach, expect, test, vi } from 'vitest'
+
+const run = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/trpc', () => ({
+  trpc: { cap: { run: { mutate: (input: unknown) => run(input) } } },
+}))
+
+import { createBrowserHintAdapter, dispatchBrowserHintEvent } from '../renderer/browser-hints'
+
+let serial = 0
+const input = (name: string) =>
+  run.mock.calls
+    .map(([call]) => call as { name: string; paramsJson?: string })
+    .filter((call) => call.name === name)
+    .map((call) => (call.paramsJson ? JSON.parse(call.paramsJson) : undefined))
+
+beforeEach(() => {
+  run.mockReset()
+  run.mockImplementation(({ name, paramsJson }: { name: string; paramsJson?: string }) => {
+    const params = paramsJson ? JSON.parse(paramsJson) : undefined
+    return Promise.resolve(
+      name === 'browser.hints-discover'
+        ? {
+            owner: { ...params, origin: `opaque-owner-${serial}`, snapshot: 2, geometry: 3 },
+            targets: [{ id: 'target-1', label: 'Continue', x: 20, y: 30 }],
+          }
+        : name === 'browser.hints-activate'
+          ? true
+          : name === 'browser.hints-present'
+            ? true
+            : { cleared: true },
+    )
+  })
+})
+
+function setup(current = () => true) {
+  const id = ++serial
+  const context = {
+    remote: `owner/vault-${id}`,
+    tab: `tab-${id}`,
+    nonce: `doc-${id}`,
+    attachment: `attach-${id}`,
+    ownerElement: document.createElement('div'),
+    current,
+  }
+  return {
+    ...context,
+    ownerOrigin: `opaque-owner-${id}`,
+    adapter: createBrowserHintAdapter(context),
+    event: (request: number, origin: string, type: 'request' | 'key' | 'revoke', extra = {}) =>
+      dispatchBrowserHintEvent(context.remote, {
+        tab: context.tab,
+        nonce: context.nonce,
+        attachment: context.attachment,
+        request,
+        origin,
+        type,
+        ...(type === 'request' ? {} : { snapshot: 2, geometry: 3 }),
+        ...extra,
+      }),
+  }
+}
+
+test('discovers with a page request token and presents/activates the exact opaque owner', async () => {
+  const fixture = setup()
+  fixture.event(7, 'opaque-request-origin', 'request')
+  expect(input('browser.hints-discover')).toHaveLength(0)
+  const targets = await fixture.adapter.discover(1, new AbortController().signal)
+  expect(targets).toEqual([{ id: 'target-1', label: 'Continue', x: 20, y: 30 }])
+  expect(input('browser.hints-discover')).toEqual([
+    { tab: fixture.tab, nonce: fixture.nonce, attachment: fixture.attachment, request: 7 },
+  ])
+  const owner = {
+    tab: fixture.tab,
+    nonce: fixture.nonce,
+    attachment: fixture.attachment,
+    request: 7,
+    origin: fixture.ownerOrigin,
+    snapshot: 2,
+    geometry: 3,
+  }
+  expect(await fixture.adapter.present(1, 1, [{ id: 'target-1', key: 'A' }])).toBe(true)
+  expect(input('browser.hints-present')).toEqual([
+    { owner, p: { revision: 1, labels: [{ id: 'target-1', key: 'A' }], theme: 'light' } },
+  ])
+  expect(await fixture.adapter.activate(1, 'target-1')).toBe(true)
+  expect(input('browser.hints-activate')).toEqual([{ owner, p: { id: 'target-1' } }])
+  expect(input('browser.hints-clear')).toEqual([
+    { tab: fixture.tab, nonce: fixture.nonce, attachment: fixture.attachment, request: 7 },
+  ])
+  fixture.adapter.dispose()
+})
+
+test('rejects sibling document and attachment events without assuming origin is a URL', async () => {
+  const fixture = setup()
+  const requestOrigin = 'opaque-request-origin'
+  fixture.event(7, requestOrigin, 'request')
+  await fixture.adapter.discover(1, new AbortController().signal)
+  let invalidated = 0
+  fixture.adapter.subscribe(
+    1,
+    () => invalidated++,
+    () => false,
+  )
+  dispatchBrowserHintEvent(fixture.remote, {
+    tab: 'sibling',
+    nonce: fixture.nonce,
+    attachment: fixture.attachment,
+    request: 7,
+    origin: requestOrigin,
+    type: 'revoke',
+  })
+  dispatchBrowserHintEvent(fixture.remote, {
+    tab: fixture.tab,
+    nonce: 'old',
+    attachment: fixture.attachment,
+    request: 7,
+    origin: requestOrigin,
+    type: 'revoke',
+  })
+  dispatchBrowserHintEvent(fixture.remote, {
+    tab: fixture.tab,
+    nonce: fixture.nonce,
+    attachment: 'old',
+    request: 7,
+    origin: requestOrigin,
+    type: 'revoke',
+  })
+  fixture.event(8, requestOrigin, 'revoke')
+  expect(invalidated).toBe(0)
+  expect(input('browser.hints-clear')).toHaveLength(0)
+  fixture.adapter.dispose()
+})
+
+test('a revoke before discovery retires only its exact page-origin request', () => {
+  const fixture = setup()
+  fixture.event(7, 'request-token', 'request')
+  fixture.event(7, 'other-token', 'revoke')
+  expect(input('browser.hints-clear')).toHaveLength(0)
+  fixture.event(7, 'request-token', 'revoke')
+  expect(input('browser.hints-clear')).toEqual([
+    { tab: fixture.tab, nonce: fixture.nonce, attachment: fixture.attachment, request: 7 },
+  ])
+  fixture.adapter.dispose()
+})
+
+test('notifies the owning coordinator before retiring only the revoked request', async () => {
+  const fixture = setup()
+  fixture.event(7, 'request-token', 'request')
+  await fixture.adapter.discover(1, new AbortController().signal)
+  const invalidate = vi.fn(() => fixture.adapter.clear(1))
+  fixture.adapter.subscribe(1, invalidate, () => false)
+  fixture.event(8, 'different-token', 'request')
+  await fixture.adapter.discover(2, new AbortController().signal)
+  fixture.event(7, fixture.ownerOrigin, 'revoke')
+  expect(invalidate).toHaveBeenCalledOnce()
+  expect(input('browser.hints-clear')).toEqual([
+    { tab: fixture.tab, nonce: fixture.nonce, attachment: fixture.attachment, request: 7 },
+  ])
+  expect(await fixture.adapter.present(2, 1, [{ id: 'target-1', key: 'B' }])).toBe(true)
+  fixture.adapter.dispose()
+})
+
+test('aborts delayed discovery and refuses publication after ownership changes', async () => {
+  const fixture = setup()
+  let resolve!: (value: unknown) => void
+  run.mockImplementationOnce(() => new Promise((done) => (resolve = done)))
+  const controller = new AbortController()
+  const discovery = fixture.adapter.discover(9, controller.signal)
+  controller.abort()
+  resolve({ owner: { request: 7, origin: 'opaque', snapshot: 1, geometry: 0 }, targets: [] })
+  expect(await discovery).toBeNull()
+  expect(await fixture.adapter.present(9, 2, [])).toBe(false)
+  fixture.adapter.dispose()
+})
+
+test('host requests retain their high-water request number across adapter remounts', async () => {
+  const fixture = setup()
+  await fixture.adapter.discover(1, new AbortController().signal)
+  fixture.adapter.dispose()
+  const next = createBrowserHintAdapter({
+    remote: fixture.remote,
+    tab: fixture.tab,
+    nonce: fixture.nonce,
+    attachment: fixture.attachment,
+    ownerElement: fixture.ownerElement,
+    current: () => true,
+  })
+  await next.discover(2, new AbortController().signal)
+  expect(input('browser.hints-discover').map(({ request }) => request)).toEqual([1, 2])
+  next.dispose()
+})
+
+test('a rejected activation clears its captured request even after a new request is discovered', async () => {
+  const fixture = setup()
+  await fixture.adapter.discover(1, new AbortController().signal)
+  let rejectActivation!: (reason?: unknown) => void
+  run.mockImplementationOnce(() => new Promise((_resolve, reject) => (rejectActivation = reject)))
+  const activation = fixture.adapter.activate(1, 'target-1')
+  await Promise.resolve()
+  await fixture.adapter.discover(2, new AbortController().signal)
+  rejectActivation(new Error('native action cancelled'))
+  expect(await activation).toBe(false)
+  expect(input('browser.hints-clear')).toEqual([
+    { tab: fixture.tab, nonce: fixture.nonce, attachment: fixture.attachment, request: 1 },
+  ])
+  expect(await fixture.adapter.present(2, 1, [{ id: 'target-1', key: 'C' }])).toBe(true)
+  fixture.adapter.dispose()
+})
+
+test('routes only keys owned by the matching request and opaque origin', async () => {
+  const fixture = setup()
+  await fixture.adapter.discover(4, new AbortController().signal)
+  const routed: KeyboardEvent[] = []
+  fixture.adapter.subscribe(
+    4,
+    () => undefined,
+    (event) => (routed.push(event), true),
+  )
+  fixture.event(8, fixture.ownerOrigin, 'key', { key: 'a', code: 'KeyA' })
+  fixture.event(4, fixture.ownerOrigin, 'key', {
+    key: 'stale',
+    code: 'KeyS',
+    snapshot: 1,
+  })
+  fixture.event(4, 'wrong-owner', 'key', { key: 'b', code: 'KeyB' })
+  fixture.event(4, fixture.ownerOrigin, 'key', { key: 'x', code: 'KeyX', ctrlKey: true })
+  expect(routed).toHaveLength(1)
+  expect(routed[0]).toMatchObject({ key: 'x', code: 'KeyX', ctrlKey: true })
+  fixture.adapter.dispose()
+})

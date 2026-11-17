@@ -72,18 +72,19 @@ export interface PageHintLabel {
   key: string
 }
 
-export type PageHintEvent = PageHintScope & {
-  origin: string
-  type: 'request' | 'key' | 'revoke'
-  key?: string
-  code?: string
-  repeat?: boolean
-  isComposing?: boolean
-  metaKey?: boolean
-  ctrlKey?: boolean
-  altKey?: boolean
-  shiftKey?: boolean
-}
+export type PageHintEvent =
+  | (PageHintScope & { origin: string; type: 'request' })
+  | (PageHintOwner & {
+      type: 'key' | 'revoke'
+      key?: string
+      code?: string
+      repeat?: boolean
+      isComposing?: boolean
+      metaKey?: boolean
+      ctrlKey?: boolean
+      altKey?: boolean
+      shiftKey?: boolean
+    })
 
 /** Where to scroll (`holi browser scroll`). */
 export type ScrollTo = 'down' | 'up' | 'top' | 'bottom'
