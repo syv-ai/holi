@@ -8,6 +8,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { readJobEvent } from '../main/codex'
 import { createJobs, type Jobs, type JobsDeps } from '../main/host/jobs'
 import { createPtySessions } from '../main/host/pty-sessions'
+import { createFencedSessions } from '../main/host/fenced'
+import { bounded } from '../main/host/bounded'
 import type { OpenArgs } from '../main/host/terminals'
 import type { SessionSummary } from '../main/claude/listing'
 import type { AgentProvider, JobsProvider } from '../main/provider'
@@ -19,6 +21,7 @@ const native = vi.hoisted(() => ({
     entered(): void
     wait: Promise<void>
     release(): void
+    error?: Error
   }>,
   operations: new Set<Promise<unknown>>(),
 }))
@@ -26,13 +29,14 @@ const native = vi.hoisted(() => ({
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
   const wrap =
-    (method: 'mkdir' | 'readdir' | 'rm' | 'writeFile') =>
+    (method: 'mkdir' | 'readdir' | 'rm' | 'writeFile' | 'link') =>
     (...args: unknown[]) => {
       const work = (async () => {
         const gate = native.gates.find((g) => g.method === method && g.matches(args))
         if (gate) {
           gate.entered()
           await gate.wait
+          if (gate.error) throw gate.error
         }
         return (fs[method] as (...args: unknown[]) => Promise<unknown>)(...args)
       })()
@@ -45,6 +49,7 @@ vi.mock('node:fs/promises', async (original) => {
     }
   return {
     ...fs,
+    link: wrap('link'),
     mkdir: wrap('mkdir'),
     readdir: wrap('readdir'),
     rm: wrap('rm'),
@@ -64,7 +69,7 @@ function hold(method: string, matches: (args: unknown[]) => boolean) {
   const entered = deferred()
   const gate = deferred()
   let calls = 0
-  native.gates.push({
+  const entry: (typeof native.gates)[number] = {
     method,
     matches,
     entered: () => {
@@ -73,11 +78,21 @@ function hold(method: string, matches: (args: unknown[]) => boolean) {
     },
     wait: gate.promise,
     release: gate.resolve,
-  })
-  return { entered: entered.promise, release: gate.resolve, calls: () => calls }
+  }
+  native.gates.push(entry)
+  return {
+    entered: entered.promise,
+    release: gate.resolve,
+    calls: () => calls,
+    fail: (error: Error) => {
+      entry.error = error
+      gate.resolve()
+    },
+  }
 }
 
 const roots: string[] = []
+const drains: Array<() => Promise<void>> = []
 const owners: Jobs[] = []
 const children: Array<{ child: ChildProcess; closed: Promise<void> }> = []
 afterEach(async () => {
@@ -88,6 +103,7 @@ afterEach(async () => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
   }
   await Promise.all(children.splice(0).map(({ closed }) => closed))
+  for (const drain of drains.splice(0)) await drain().catch(() => {})
   await Promise.allSettled(owners.splice(0).map((jobs) => jobs.leave()))
   while (native.operations.size > 0) await Promise.allSettled([...native.operations])
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
@@ -574,3 +590,260 @@ it('retains the close owner when its exit callback precedes a close rejection', 
   await t.sessions.leave()
   expect(t.closeCalls()).toBe(2)
 })
+
+async function fencedRig() {
+  const t = await rig()
+  // Use the real copy-back rules, without leaving a job process alive.
+  await t.jobs.leave()
+  const scratchRoot = join(t.dir, 'fenced')
+  const provider: AgentProvider = {
+    ...t.provider,
+    terminal: () => ({ bin: 'fixture', args: [], env: {} }),
+    capabilities: { fenced: 'sandbox' },
+  }
+  const opened: OpenArgs[] = []
+  const activation = new AbortController()
+  const sessions = createPtySessions({
+    vault: { root: t.root, remote: 'fixture/vault' },
+    providers: () => [provider],
+    binDir: () => null,
+    bracket: () => {},
+    onChange: () => {},
+    log: () => {},
+    terminals: {
+      open: (args) => {
+        opened.push(args)
+        return { ok: true, id: `terminal-${opened.length}` }
+      },
+      close: async (id) => {
+        opened[Number(id.split('-')[1]) - 1]?.onExit?.()
+      },
+      paste: () => true,
+      list: () => [],
+    },
+  })
+  const fenced = createFencedSessions({
+    vault: { root: t.root, remote: 'fixture/vault' },
+    scratchRoot,
+    own: sessions,
+    copyBack: t.jobs.copyBack,
+    activationSignal: activation.signal,
+    log: () => {},
+  })
+  drains.push(
+    () => sessions.leave(),
+    () => fenced.leave(),
+  )
+  const start = async (read: string[] = [], write: string[] = []) => {
+    const result = await fenced.start({
+      provider,
+      name: 'fenced',
+      prompt: 'go',
+      scope: { read, write },
+    })
+    if (!result.ok) throw new Error(result.message)
+    const entry = opened.at(-1)!
+    return { ...result, entry, state: `${entry.cwd}.agent` }
+  }
+  return { ...t, scratchRoot, provider, sessions, fenced, activation, start }
+}
+
+it('bounds fenced root removal, joins retries and never removes a replacement namespace', async () => {
+  const t = await fencedRig()
+  const run = await t.start()
+  await t.sessions.stop(run.sessionId)
+  const gate = hold('rm', (args) => args[0] === t.scratchRoot)
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const first = t.fenced.leave()
+  const failed = expect(first).rejects.toThrow('timed out')
+  await gate.entered
+  await vi.advanceTimersByTimeAsync(5_001)
+  await failed
+  const second = t.fenced.leave()
+  const failedAgain = expect(second).rejects.toThrow('timed out')
+  await vi.advanceTimersByTimeAsync(5_001)
+  await failedAgain
+  expect(gate.calls()).toBe(1)
+  let retired = false
+  const retry = t.fenced.leave().then(() => {
+    retired = true
+  })
+  await tick()
+  expect(retired).toBe(false)
+  gate.release()
+  await retry
+  expect(gate.calls()).toBe(1)
+  await mkdir(t.scratchRoot)
+  await writeFile(join(t.scratchRoot, 'replacement'), 'new activation')
+  await t.fenced.leave()
+  expect(await readFile(join(t.scratchRoot, 'replacement'), 'utf8')).toBe('new activation')
+  expect(gate.calls()).toBe(1)
+})
+
+it('rejects stop and leave on fenced provider release failure without losing its state owner', async () => {
+  const t = await fencedRig()
+  const release = vi.fn(async () => {
+    throw new Error('release refused')
+  })
+  t.provider.release = release
+  const run = await t.start()
+  await writeFile(join(run.state, 'owned'), 'provider resource')
+  await expect(t.sessions.stop(run.sessionId)).rejects.toThrow('finalization failed')
+  expect(t.sessions.sessions()).toEqual([
+    expect.objectContaining({
+      id: run.sessionId,
+      closed: true,
+      outcome: 'failed',
+      error: expect.stringContaining('release refused'),
+    }),
+  ])
+  for (let i = 0; i < 2; i++) {
+    await expect(t.sessions.leave()).rejects.toThrow('did not drain')
+    await expect(t.fenced.leave()).rejects.toThrow()
+    expect(await readFile(join(run.state, 'owned'), 'utf8')).toBe('provider resource')
+  }
+  expect(release).toHaveBeenCalledTimes(1)
+})
+
+it.each(['new', 'known'] as const)(
+  'drains safe fenced %s publication cancellation after confirmed cleanup',
+  async (kind) => {
+    const t = await fencedRig()
+    const target = join(t.root, 'note.md')
+    if (kind === 'known') await writeFile(target, 'original')
+    const run = await t.start(kind === 'known' ? ['note.md'] : [], ['note.md'])
+    await writeFile(join(run.entry.cwd, 'note.md'), 'agent version')
+    const gate = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
+    t.sessions.noteTurn(run.sessionId, false)
+    await gate.entered
+    t.activation.abort()
+    await t.fenced.closing()
+    gate.release()
+    await t.sessions.stop(run.sessionId)
+    await t.sessions.leave()
+    await t.fenced.leave()
+    if (kind === 'known') expect(await readFile(target, 'utf8')).toBe('original')
+    else await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await readdir(t.root)).filter((name) => name.startsWith('.holi-'))).toEqual([])
+    await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  },
+)
+
+it.each(['rollback', 'temporary cleanup'] as const)(
+  'retains real fenced %s failure even when cancellation was requested',
+  async (kind) => {
+    const t = await fencedRig()
+    const target = join(t.root, 'note.md')
+    await writeFile(target, 'original')
+    const run = await t.start(['note.md'], ['note.md'])
+    await writeFile(join(run.entry.cwd, 'note.md'), 'agent version')
+    const prep = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
+    const failure =
+      kind === 'rollback'
+        ? hold(
+            'link',
+            (args) =>
+              basename(String(args[0])) === 'previous' && basename(String(args[1])) === 'note.md',
+          )
+        : hold('rm', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
+    t.sessions.noteTurn(run.sessionId, false)
+    await prep.entered
+    t.activation.abort()
+    prep.release()
+    await failure.entered
+    failure.fail(new Error(`${kind} refused`))
+    await t.sessions.stop(run.sessionId)
+    await t.sessions.leave()
+    for (let i = 0; i < 2; i++)
+      await expect(t.fenced.leave()).rejects.toThrow('cleanup did not complete')
+    const leftovers = (await readdir(t.root)).filter((name) => name.startsWith('.holi-'))
+    if (kind === 'rollback') {
+      const preserved = leftovers.find((name) => name.startsWith('.holi-copy-'))!
+      expect(await readFile(join(t.root, preserved, 'previous'), 'utf8')).toBe('original')
+      await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    } else {
+      expect(leftovers.some((name) => name.startsWith('.holi-tmp-'))).toBe(true)
+      expect(await readFile(target, 'utf8')).toBe('original')
+    }
+  },
+)
+
+it.each(['pending', 'failed'] as const)(
+  "stops a healthy session independently of another fenced session's %s finalization",
+  async (kind) => {
+    const t = await fencedRig()
+    const entered = deferred()
+    const gate = deferred()
+    drains.unshift(async () => {
+      gate.resolve()
+    })
+    t.provider.release = async () => {
+      entered.resolve()
+      await gate.promise
+      if (kind === 'failed') throw new Error('unrelated release refused')
+    }
+    const a = await t.start()
+    const b = await t.sessions.start('codex', {})
+    if (!b.ok) throw new Error(b.message)
+    a.entry.onExit?.()
+    await entered.promise
+    if (kind === 'failed') {
+      gate.resolve()
+      await vi.waitFor(() =>
+        expect(t.sessions.sessions()).toContainEqual(
+          expect.objectContaining({ id: a.sessionId, closed: true, outcome: 'failed' }),
+        ),
+      )
+    }
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let stopped = false
+    const stopB = t.sessions.stop(b.sessionId).then((result) => {
+      stopped = true
+      return result
+    })
+    await tick()
+    await tick()
+    // Settle normal promise work without advancing any teardown deadline.
+    expect(stopped).toBe(true)
+    expect(await stopB).toEqual({ ok: true })
+    expect(t.sessions.has(b.sessionId)).toBe(false)
+    const leaving = t.sessions.leave()
+    if (kind === 'pending') {
+      const failed = expect(leaving).rejects.toThrow('did not drain')
+      await vi.advanceTimersByTimeAsync(5_001)
+      await failed
+      gate.resolve()
+      await t.sessions.leave()
+      await t.fenced.leave()
+    } else {
+      await expect(leaving).rejects.toThrow('did not drain')
+      await expect(t.fenced.leave()).rejects.toThrow()
+    }
+  },
+)
+
+it('bounds only the wait and rejoins the same operation after a custom deadline', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const gate = deferred()
+  const wait = bounded(gate.promise, 'fixture', 17)
+  const failed = expect(wait).rejects.toThrow('fixture did not finish before teardown timed out.')
+  await vi.advanceTimersByTimeAsync(17)
+  await failed
+  expect(vi.getTimerCount()).toBe(0)
+  const retry = bounded(gate.promise, 'fixture', 17)
+  gate.resolve()
+  await retry
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+it.each(['fulfilled', 'rejected'] as const)(
+  'clears the bounded deadline when work is %s',
+  async (kind) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const error = new Error('native operation failed')
+    const work = kind === 'fulfilled' ? Promise.resolve(42) : Promise.reject(error)
+    if (kind === 'fulfilled') await expect(bounded(work, 'fixture')).resolves.toBe(42)
+    else await expect(bounded(work, 'fixture')).rejects.toBe(error)
+    expect(vi.getTimerCount()).toBe(0)
+  },
+)
