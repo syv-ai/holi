@@ -50,63 +50,32 @@ export function MailShell({
   visible?: boolean
 }) {
   const { currentSub } = useGoogleAccount()
-  return (
-    <MailAccountShell
-      key={currentSub ?? 'disconnected'}
-      account={currentSub}
-      className={className}
-      visible={visible}
-    />
-  )
-}
-
-function MailAccountShell({
-  account,
-  className,
-  visible,
-}: {
-  account: string | null
-  className?: string
-  visible: boolean
-}) {
-  const { currentSub } = useGoogleAccount()
-  const mail = useMail(account)
   const remote = useAtomValue(activeRemoteAtom)
-  const openSettingsSection = useSetAtom(openSettingsSectionAtom)
-  const openNote = useSetAtom(openDocumentAtom)
-  const agent = useAgentService()
+  const remoteRevision = useAtomValue(activeRemoteRevisionValueAtom)
   const store = useStore()
-  const canLinkToTask = useHasCapability(TASKS_CREATE) && remote !== null
-  // tasks.list is intentionally CLI/app-only; tasks.create is the existing UI
-  // capability door that tells us whether the tasks plugin runs in this vault.
+  const agent = useAgentService()
   const tasksAvailability = useCapabilityAvailability(TASKS_CREATE)
   const login = useAtomValue(sessionAtom)?.login ?? null
   const catchUpPendingRef = useRef(false)
   const [catchUpPending, setCatchUpPending] = useState(false)
   const [catchUpError, setCatchUpError] = useState<string | null>(null)
   const [catchUpRetryable, setCatchUpRetryable] = useState(true)
+  const [recoverySessionId, setRecoverySessionId] = useState<string | null>(null)
+  const catchUpContext = useRef({ remote, revision: remoteRevision })
+  useEffect(() => {
+    if (
+      catchUpContext.current.remote === remote &&
+      catchUpContext.current.revision === remoteRevision
+    )
+      return
+    catchUpContext.current = { remote, revision: remoteRevision }
+    setCatchUpError(null)
+    setCatchUpRetryable(true)
+    setRecoverySessionId(null)
+  }, [remote, remoteRevision])
 
-  const composerRef = useRef<MailComposerHandle | null>(null)
-  const composeGate = useRef(new ComposeSessionGate()).current
-  const transitionRef = useRef(0)
-  const continueRef = useRef(0)
-  const sequenceRef = useRef(0)
-  const liveContext = useRef({ remote, account: currentSub, selectedThread: mail.openId })
-  liveContext.current = { remote, account: currentSub, selectedThread: mail.openId }
-  const [expanded, setExpanded] = useState(true)
-  /** Exactly one active composition, whether standalone or attached to a thread. */
-  const [composition, setComposition] = useState<{
-    intent: ComposeIntent
-    draftId?: string
-    identity: object
-    key: number
-  } | null>(null)
-  const compositionOwner = useRef<object | null>(null)
-  compositionOwner.current = composition?.identity ?? null
-
-  const openConnections = () => openSettingsSection('connections')
   const catchUp = () => {
-    if (catchUpPendingRef.current) return
+    if (catchUpPendingRef.current || recoverySessionId !== null) return
     if (login === null) {
       setCatchUpError('Sign in to GitHub to catch up on tasks assigned to you.')
       return
@@ -123,6 +92,7 @@ function MailAccountShell({
     setCatchUpPending(true)
     setCatchUpError(null)
     setCatchUpRetryable(true)
+    setRecoverySessionId(null)
     const origin = remote
     const originRevision = store.get(activeRemoteRevisionValueAtom)
     const prompt = [
@@ -147,7 +117,8 @@ function MailAccountShell({
           return
         if (!result.ok) {
           setCatchUpError(result.message)
-          setCatchUpRetryable(!result.message.startsWith('Cleanup unconfirmed:'))
+          setCatchUpRetryable(!result.cleanupUnconfirmed)
+          setRecoverySessionId(result.cleanupUnconfirmed ? (result.sessionId ?? null) : null)
         }
       })
       .catch((error: unknown) => {
@@ -162,6 +133,80 @@ function MailAccountShell({
         setCatchUpPending(false)
       })
   }
+  const recoverCatchUp = () => {
+    if (agent === null || recoverySessionId === null) return
+    void agent.show({ session: recoverySessionId, live: true }).then((result) => {
+      if (!result.ok) setCatchUpError(result.message)
+    })
+  }
+
+  return (
+    <MailAccountShell
+      key={currentSub ?? 'disconnected'}
+      account={currentSub}
+      className={className}
+      visible={visible}
+      catchUpPending={catchUpPending}
+      catchUpError={catchUpError}
+      catchUpRetryable={catchUpRetryable}
+      catchUpRecovery={recoverySessionId !== null}
+      onCatchUp={catchUp}
+      onCatchUpRecovery={recoverCatchUp}
+    />
+  )
+}
+
+function MailAccountShell({
+  account,
+  className,
+  visible,
+  catchUpPending,
+  catchUpError,
+  catchUpRetryable,
+  catchUpRecovery,
+  onCatchUp,
+  onCatchUpRecovery,
+}: {
+  account: string | null
+  className?: string
+  visible: boolean
+  catchUpPending: boolean
+  catchUpError: string | null
+  catchUpRetryable: boolean
+  catchUpRecovery: boolean
+  onCatchUp: () => void
+  onCatchUpRecovery: () => void
+}) {
+  const { currentSub } = useGoogleAccount()
+  const mail = useMail(account)
+  const remote = useAtomValue(activeRemoteAtom)
+  const openSettingsSection = useSetAtom(openSettingsSectionAtom)
+  const openNote = useSetAtom(openDocumentAtom)
+  const agent = useAgentService()
+  const store = useStore()
+  const canLinkToTask = useHasCapability(TASKS_CREATE) && remote !== null
+  // tasks.list is intentionally CLI/app-only; tasks.create is the existing UI
+  // capability door that tells us whether the tasks plugin runs in this vault.
+
+  const composerRef = useRef<MailComposerHandle | null>(null)
+  const composeGate = useRef(new ComposeSessionGate()).current
+  const transitionRef = useRef(0)
+  const continueRef = useRef(0)
+  const sequenceRef = useRef(0)
+  const liveContext = useRef({ remote, account: currentSub, selectedThread: mail.openId })
+  liveContext.current = { remote, account: currentSub, selectedThread: mail.openId }
+  const [expanded, setExpanded] = useState(true)
+  /** Exactly one active composition, whether standalone or attached to a thread. */
+  const [composition, setComposition] = useState<{
+    intent: ComposeIntent
+    draftId?: string
+    identity: object
+    key: number
+  } | null>(null)
+  const compositionOwner = useRef<object | null>(null)
+  compositionOwner.current = composition?.identity ?? null
+
+  const openConnections = () => openSettingsSection('connections')
   const thread = mail.reader.kind === 'ready' ? mail.reader.thread : null
   const contextIsCurrent = (expectedRemote: string | null, expectedAccount: string | null) =>
     store.get(activeRemoteAtom) === expectedRemote &&
@@ -423,10 +468,12 @@ function MailAccountShell({
             onCompose={() => startCompose()}
             onOpenDraft={openDraft}
             onOpenConnections={openConnections}
-            onCatchUp={catchUp}
+            onCatchUp={onCatchUp}
             catchUpPending={catchUpPending}
             catchUpError={catchUpError}
             catchUpRetryable={catchUpRetryable}
+            catchUpRecovery={catchUpRecovery}
+            onCatchUpRecovery={onCatchUpRecovery}
             visible={visible}
           />
         </AppSidebar>

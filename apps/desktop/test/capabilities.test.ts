@@ -1086,6 +1086,14 @@ describe('tasks.list', () => {
     expect(defaults.value as { path: string }[]).toHaveLength(items.length)
   })
 
+  it('parses CLI task-list flags into boolean capability parameters', () => {
+    const parsed = taskCapabilities({ today: () => '2026-09-30' })['tasks.list'].params({
+      assignee: 'Ada',
+      open: 'true',
+    })
+    expect(parsed).toEqual({ due: undefined, overdue: false, assignee: 'Ada', open: true })
+  })
+
   it('tells an app only the tasks it may read, and the agent every one', async () => {
     const task = (path: string) => ({ path, title: path, status: 'todo', tags: [], assignees: [] })
     const items = ['ops/task.a.md', '.holi/memory/task.b.md', 'Budget.app/data/task.c.md'].map(task)

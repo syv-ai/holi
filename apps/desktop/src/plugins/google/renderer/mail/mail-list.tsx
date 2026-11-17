@@ -386,6 +386,8 @@ interface MailListProps {
   catchUpPending: boolean
   catchUpError: string | null
   catchUpRetryable: boolean
+  catchUpRecovery: boolean
+  onCatchUpRecovery: () => void
   visible: boolean
 }
 
@@ -401,6 +403,8 @@ export function MailList({
   catchUpPending,
   catchUpError,
   catchUpRetryable,
+  catchUpRecovery,
+  onCatchUpRecovery,
   visible,
 }: MailListProps) {
   const [query, setQuery] = useState('')
@@ -596,10 +600,16 @@ export function MailList({
           className="text-destructive flex items-center justify-between gap-2 px-3 py-2 text-sm"
         >
           <span>{catchUpError}</span>
-          {catchUpRetryable && (
-            <Button variant="outline" size="xs" onClick={onCatchUp}>
-              Retry
+          {catchUpRecovery ? (
+            <Button variant="outline" size="xs" onClick={onCatchUpRecovery}>
+              Open surviving session
             </Button>
+          ) : (
+            catchUpRetryable && (
+              <Button variant="outline" size="xs" onClick={onCatchUp}>
+                Retry
+              </Button>
+            )
           )}
         </div>
       )}
@@ -647,7 +657,7 @@ export function MailList({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={catchUpPending ? 'Starting catch-up' : 'Catch me up'}
-                  disabled={catchUpPending}
+                  disabled={catchUpPending || catchUpRecovery}
                   onClick={onCatchUp}
                 >
                   <SparklesIcon aria-hidden="true" />

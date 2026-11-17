@@ -42,8 +42,11 @@ const LEAVE_CAP_MS = 5_000
 export type ActionResult = { ok: true } | { ok: false; message: string }
 export type OpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
 export type StartResult =
-  { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
-type LaunchResult = { ok: true; sessionId: string } | { ok: false; message: string }
+  | { ok: true; sessionId: string; terminalId: string }
+  | { ok: false; message: string; cleanupUnconfirmed?: true; sessionId?: string }
+type LaunchResult =
+  | { ok: true; sessionId: string }
+  | { ok: false; message: string; cleanupUnconfirmed?: true; sessionId?: string }
 
 export interface Geometry {
   cols?: number
@@ -553,8 +556,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       if (!res.ok) return res
       const cleanup = async () => {
         try {
-          await bg.cli.stop(targetOf(c), res.id)
-          return true
+          const stopped = await bg.cli.stop(targetOf(c), res.id)
+          return stopped.ok
         } catch {
           return false
         }
@@ -562,6 +565,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       const cleanupFailure = () => ({
         ok: false as const,
         message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+        cleanupUnconfirmed: true,
+        sessionId: res.id,
       })
       if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
         return (await cleanup())

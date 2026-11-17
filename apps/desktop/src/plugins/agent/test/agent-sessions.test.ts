@@ -32,9 +32,9 @@ function setup(initial: Row[] = []) {
   let listing: Row[] = initial
   const cli = {
     list: vi.fn(async () => JSON.stringify(listing)),
-    stop: vi.fn(async (_t, id: string) => {
+    stop: vi.fn<ClaudeCli['stop']>(async (_t, id) => {
       listing = listing.map((r) => (r.id === id ? { ...r, pid: undefined, state: 'stopped' } : r))
-      return { ok: true as const }
+      return { ok: true }
     }),
     respawn: vi.fn(async () => ({ ok: true as const })),
     rm: vi.fn(async (_t, id: string) => {
@@ -170,6 +170,25 @@ describe('agent sessions', () => {
     expect(await t.sessions.start({ prompt: 'Catch me up' })).toEqual({
       ok: false,
       message: 'Cleanup unconfirmed: session launch00 may still be running.',
+      cleanupUnconfirmed: true,
+      sessionId: 'launch00',
+    })
+    expect(t.cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
+  })
+
+  it('reports unconfirmed cleanup when stop resolves with a refusal', async () => {
+    const t = setup()
+    await t.attach()
+    t.terminals.open = () => {
+      throw new Error('PTY unavailable')
+    }
+    t.cli.stop.mockResolvedValueOnce({ ok: false, message: 'stop refused' })
+
+    expect(await t.sessions.start({ prompt: 'Catch me up' })).toEqual({
+      ok: false,
+      message: 'Cleanup unconfirmed: session launch00 may still be running.',
+      cleanupUnconfirmed: true,
+      sessionId: 'launch00',
     })
     expect(t.cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
   })
