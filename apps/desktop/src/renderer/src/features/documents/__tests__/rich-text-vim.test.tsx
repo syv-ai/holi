@@ -1,7 +1,7 @@
 import { Editor, Node } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { TableKit } from '@tiptap/extension-table'
-import { NodeSelection } from '@tiptap/pm/state'
+import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MultiCursor, extraSelections } from '../multi-cursor'
 
@@ -424,6 +424,96 @@ describe('rich-text Vim extension', () => {
     expect(ed.state.selection.empty).toBe(true)
     expect(ed.view.dom.dataset.vimMode).toBe('normal')
     expect(text(ed)).toBe('a👩‍💻bc')
+  })
+
+  it('selects visual graphemes inclusively in both directions and handles counted V', () => {
+    const ed = open('<p>a👩‍💻bc</p><p>second</p><p>third</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    key(ed, 'l')
+    expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe('a👩‍💻')
+    key(ed, 'l')
+    expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe('a👩‍💻b')
+    key(ed, 'Escape')
+    ed.commands.setTextSelection(7)
+    key(ed, 'v')
+    key(ed, 'h')
+    expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe('👩‍💻b')
+    key(ed, 'Escape')
+
+    ed.commands.setTextSelection(1)
+    key(ed, '2')
+    key(ed, 'V')
+    key(ed, 'd')
+    expect(text(ed)).toBe('third')
+  })
+
+  it('maps pending operators through inserts, cancels invalidated or externally moved selections', () => {
+    const ed = open('<p>alpha beta</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    ed.view.dispatch(ed.state.tr.insertText('X', 1))
+    key(ed, 'w')
+    expect(text(ed)).toBe('Xbeta')
+
+    ed.commands.setContent('<p>alpha beta</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    ed.view.dispatch(ed.state.tr.setSelection(TextSelection.near(ed.state.doc.resolve(3))))
+    const before = text(ed)
+    key(ed, 'w')
+    expect(text(ed)).toBe(before)
+  })
+
+  it('keeps d, de, db and zero motions grapheme-safe and guards cross-cell edits', () => {
+    const ed = open('<p>one two three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, 'w')
+    expect(text(ed)).toBe('two three')
+    ed.commands.setContent('<p>one two three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, 'e')
+    expect(text(ed)).toBe(' two three')
+    ed.commands.setContent('<p>one two three</p>')
+    ed.commands.setTextSelection(5)
+    key(ed, 'd')
+    key(ed, 'b')
+    expect(text(ed)).toBe('two three')
+    ed.commands.setContent('<p>one two three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '$')
+    expect(text(ed)).toBe('')
+  })
+
+  it('groups change and inserted text into one undo and clears occurrence selections before Vim edits', () => {
+    const ed = open('<p>word word</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'c')
+    key(ed, 'w')
+    ed.view.dispatch(ed.state.tr.insertText('X'))
+    key(ed, 'Escape')
+    key(ed, 'u')
+    expect(text(ed)).toBe('word word')
+
+    const multi = new Editor({
+      extensions: [
+        StarterKit,
+        MultiCursor,
+        RichTextVim.configure({ enabled: false, editable: () => true }),
+      ],
+      content: '<p>word word</p>',
+    })
+    editor = multi
+    configureRichTextVim(multi.view, true, true, () => true)
+    multi.commands.setTextSelection(1)
+    key(multi, 'd', { ctrlKey: true })
+    key(multi, 'd', { ctrlKey: true })
+    expect(extraSelections(multi.state)).toHaveLength(1)
+    key(multi, 'x')
+    expect(extraSelections(multi.state)).toHaveLength(0)
   })
 
   it('preserves list and table containers for doubled line deletion', () => {
