@@ -202,6 +202,9 @@ export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
     },
     async privateList(root) {
       const path = stages(root)
+      // Reconfirm deletion durability even when this adapter already cached the namespace.
+      // A prior unlink may have succeeded while this sync failed; absence is not yet durable.
+      nativeIO.syncDirectory(path)
       return nativeIO.names(path).filter((name) => !stageNamePattern.test(name))
     },
     async privateRead(root, name) {

@@ -56,6 +56,35 @@ describe('durable note moves', () => {
     await expect(storage.read('old/é.md')).rejects.toThrow()
   })
 
+  it('reconfirms private directory durability after removal sync fails', async () => {
+    const base = await root()
+    let failRemovalSync = true
+    let failNextGateSync = true
+    const adapter = createNodeFiles(async (phase) => {
+      if (phase === 'private-remove-sync' && failRemovalSync) {
+        failRemovalSync = false
+        throw new Error('injected removal directory sync failure')
+      }
+      if (phase === 'private-directory-sync' && !failRemovalSync && failNextGateSync) {
+        failNextGateSync = false
+        throw new Error('injected recovery gate sync failure')
+      }
+    })
+    const storage = createVaultStorage(adapter, { remote: 'holi/private-durability', root: base })
+    const canonical = await adapter.canonicalRoot(base)
+    const journal = 'move-00000000-0000-4000-8000-000000000001.json'
+    await adapter.privatePublish(canonical, journal, text('journal'), null)
+    await expect(adapter.privateRemove(canonical, journal, text('journal'))).rejects.toThrow(
+      'injected removal directory sync failure',
+    )
+    await expect(storage.create('blocked.md', text('blocked'))).rejects.toThrow(
+      'injected recovery gate sync failure',
+    )
+    expect(await readdir(base)).not.toContain('blocked.md')
+    await storage.create('durable.md', text('durable'))
+    expect(await readFile(join(base, 'durable.md'), 'utf8')).toBe('durable')
+  })
+
   it('rejects stale source revisions, collisions and privacy changes', async () => {
     const base = await root()
     const storage = createVaultStorage(createNodeFiles(), { remote: 'holi/move', root: base })

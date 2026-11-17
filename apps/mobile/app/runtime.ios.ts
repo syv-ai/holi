@@ -198,9 +198,23 @@ export async function checkCompatibility(): Promise<string> {
       prefixRead.revision,
     )
     const prefixList = await prefixStore.list()
+    const rawNestedBytes = await nativeFiles.read(nestedRoot, 'same/note.md')
+    const malformedRejected = async (operation: () => Promise<unknown>) => {
+      try {
+        await operation()
+      } catch (error) {
+        if (String(error).includes('Malformed move recovery journal')) return true
+        throw error
+      }
+      return false
+    }
+    const nestedReadRejected = await malformedRejected(() => nestedStore.read('same/note.md'))
+    const nestedListRejected = await malformedRejected(() => nestedStore.list())
     if (
       String.fromCharCode(...prefixSaved.bytes) !== 'root A saved' ||
-      String.fromCharCode(...(await nestedStore.read('same/note.md')).bytes) !== 'root B bytes' ||
+      String.fromCharCode(...rawNestedBytes) !== 'root B bytes' ||
+      !nestedReadRejected ||
+      !nestedListRejected ||
       prefixList.length !== 1 ||
       prefixList[0] !== 'same/note.md' ||
       nestedPrivate.startsWith(`${prefixPrivate}/`) ||
@@ -214,6 +228,8 @@ export async function checkCompatibility(): Promise<string> {
       privateB: nestedPrivate,
       bytesA: 'root A saved',
       bytesB: 'root B bytes',
+      malformedReadRejected: nestedReadRejected,
+      malformedListRejected: nestedListRejected,
       poisonName,
       poisonBytes: '{malformed B journal',
       poisonRetained:
