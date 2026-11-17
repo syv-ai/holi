@@ -18,14 +18,13 @@ export const pdfMain: MainPlugin = {
   info: PDF_INFO,
   seed: pdfSeed,
   async activate(ctx) {
-    const releaseSync = ctx.pauseSync('retiring obsolete PDF template')
+    const releaseSync = await ctx.pauseSyncAndDrain('retiring obsolete PDF template')
     try {
+      if (ctx.activationSignal.aborted) throw new Error('PDF activation cancelled')
       await migrateTemplates(ctx.root, pdfSeed.once, ctx.activationSignal)
-    } catch (error) {
+    } finally {
       releaseSync()
-      throw error
     }
-    releaseSync()
     if (ctx.activationSignal.aborted) throw new Error('PDF activation cancelled')
     const typst = sharedTypst(join(ctx.userData, 'typst'))
     // The hidden window mermaid draws in, made by the first note with a
@@ -39,7 +38,6 @@ export const pdfMain: MainPlugin = {
       mermaid ??= import('./mermaid-window').then((m) => m.createMermaidWindow())
       return (await mermaid).draw(sources)
     }
-    if (ctx.activationSignal.aborted) throw new Error('PDF activation cancelled')
     const undo = ctx.register(
       PDF_NAMESPACES,
       pdfCapabilities({

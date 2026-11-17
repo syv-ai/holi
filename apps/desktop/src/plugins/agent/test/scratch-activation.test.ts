@@ -441,6 +441,7 @@ async function createScratchFixture() {
         root: roots[remote],
         pause: () => {},
         resume: () => {},
+        drainSync: async () => {},
         commitNow: async () =>
           execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
             encoding: 'utf8',

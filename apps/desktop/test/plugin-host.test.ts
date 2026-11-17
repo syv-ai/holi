@@ -37,12 +37,18 @@ async function tempDir(prefix = 'holi-plugin-host-'): Promise<string> {
 }
 
 /** An open vault the test drives: what `host.open` would have made active. */
-function openVault(remote: string, root: string, log: string[] = []): OpenVault {
+function openVault(
+  remote: string,
+  root: string,
+  log: string[] = [],
+  drainSync: () => Promise<void> = async () => {},
+): OpenVault {
   return {
     remote,
     root,
     pause: (reason) => void log.push(`pause ${reason}`),
     resume: () => void log.push('resume'),
+    drainSync,
     commitNow: async () => null,
     repo: { head: async () => 'sha' },
   }
@@ -1544,6 +1550,68 @@ describe('the lifecycle', () => {
     ctx!.pauseSync('held')
     await host.stop('o/r')
     expect(log.slice(-3)).toEqual(['pause held', 'stop base', 'resume'])
+  })
+
+  it('drains running Git work before returning a sync hold, and releases on drain failure', async () => {
+    const root = await tempDir()
+    const log: string[] = []
+    let ctx: PluginCtx | null = null
+    const plugins = [logged(log, 'base', {}, (c) => ((ctx = c), () => {}))]
+    let finish!: () => void
+    const draining = new Promise<void>((resolve) => (finish = resolve))
+    const { host, enter } = rig({ plugins })
+    await enter(openVault('o/r', root, log, () => draining))
+
+    let settled = false
+    const holding = ctx!.pauseSyncAndDrain('PDF migration').then((release) => {
+      settled = true
+      return release
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(log).toContain('pause PDF migration')
+    finish()
+    const release = await holding
+    release()
+    expect(log.slice(-2)).toEqual(['pause PDF migration', 'resume'])
+
+    await host.stop('o/r')
+  })
+
+  it('releases a pending drain when the plugin stops', async () => {
+    const root = await tempDir()
+    const log: string[] = []
+    let ctx: PluginCtx | null = null
+    const plugins = [logged(log, 'base', {}, (c) => ((ctx = c), () => {}))]
+    let finish!: () => void
+    const draining = new Promise<void>((resolve) => (finish = resolve))
+    const { host, enter } = rig({ plugins })
+    await enter(openVault('o/r', root, log, () => draining))
+    const holding = ctx!.pauseSyncAndDrain('pending')
+    await Promise.resolve()
+    await host.stop('o/r')
+    finish()
+    await expect(holding).rejects.toThrow(/cancelled/)
+    expect(log.slice(-2)).toEqual(['stop base', 'resume'])
+  })
+
+  it('releases a failed drain and does not hold another vault', async () => {
+    const roots = { 'o/a': await tempDir(), 'o/b': await tempDir() }
+    const log: string[] = []
+    const contexts = new Map<string, PluginCtx>()
+    const plugins = [logged(log, 'base', {}, (ctx) => (contexts.set(ctx.remote, ctx), () => {}))]
+    const { host, enter } = rig({ plugins })
+    await enter(
+      openVault('o/a', roots['o/a']!, log, async () => {
+        throw new Error('drain failed')
+      }),
+    )
+    await enter(openVault('o/b', roots['o/b']!, log))
+    await expect(contexts.get('o/a')!.pauseSyncAndDrain('failed')).rejects.toThrow('drain failed')
+    expect(log).toContain('pause failed')
+    expect(log.slice(-1)).toEqual(['resume'])
+    await host.stop('o/a')
+    await host.stop('o/b')
   })
 
   it("tells a started plugin of its vault's snapshots, until it stops", async () => {
