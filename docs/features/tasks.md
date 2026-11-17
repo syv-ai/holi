@@ -126,20 +126,23 @@ the [planning](planning.md) view shows every task in the vault by them.
   leaves Holi in the tray, and Settings > Updates > Open at login starts it at login. Every 60s,
   and once at launch as catch-up, main sweeps every registered vault that runs tasks, open or not.
   An explicit `reminder` fires when due and newer than its per-path watermark; a timeless reminder
-  fires at 09:00. Separately, a task with no explicit reminder gets one overdue notification when
-  its valid due occurrence becomes overdue, provided the vault's statuses were read and its status
+  fires at 09:00. Separately, a task with no explicit reminder gets one overdue notification attempt
+  when its valid due occurrence becomes overdue, provided the vault's statuses were read and its status
   is not in the vault-defined `completed` category. The fallback is not an additional fire for a
   task with an explicit reminder. Both paths apply the assignee rule below: assigned tasks notify
   only when this machine's signed-in login is among the assignees, and are not marked delivered
   otherwise; unassigned tasks can notify every member running Holi. Each notification names the
   vault its task is in. More than 3 fires in one sweep become a summary per vault, never one across
   vaults; up to 3 titles are named, and a vault with a single fire keeps its own notification.
-  Clicking a notification opens the task through the same arrival as a Holi link, switching vault
-  if needed; that is the only way the sweep reaches the open window. Each vault's tasks are read
+  Clicking an individual task notification opens that task through the same arrival as a Holi
+  link, switching vault if needed; that is the only way the sweep reaches the open window. Summary
+  notifications have no task target or click action. Each vault's tasks are read
   from its own clone at every sweep and kept nowhere. Explicit reminder watermarks are per task
   path under `reminders`; overdue fallback receipts are keyed by vault, task path and due
-  occurrence, so a changed due occurrence can notify again. Both are stored in that vault's
-  machine-local `.holi/settings/app.local.yaml`.
+  occurrence, so a changed due occurrence can notify again. These record attempts, not confirmed
+  OS delivery: an attempt suppressed by notification preferences or denied by the OS still counts,
+  so enabling notifications does not replay that overdue occurrence. Both are stored in that
+  vault's machine-local `.holi/settings/app.local.yaml`.
 - **Assignees** are GitHub logins (`assignees: [ada]`), the identity a vault already has:
   its members are its repo's collaborators. Like `tags`, a task's assignees are always a list,
   empty when the task is no one's, and an empty list is no key at all. A hand-written `@login` or
