@@ -607,6 +607,46 @@ test('async targets share allocated labels with native controls and activate thr
   expect(calls.indexOf('activate')).toBeLessThan(calls.indexOf('clear'))
 })
 
+test('disposing an async source clears only its active host-hint session', async () => {
+  let retireActive: (() => void) | undefined
+  let retireOther: (() => void) | undefined
+  const source = (label: string, retain: (retire: () => void) => void): AsyncHostHintAdapter => ({
+    discover: async () => [{ id: label, label, x: 200, y: 100 }],
+    present: vi.fn(async () => true),
+    clear: vi.fn(),
+    activate: vi.fn(async () => true),
+    subscribe: (_request, invalidate) => {
+      retain(invalidate)
+      return vi.fn()
+    },
+  })
+  setup(
+    <>
+      <section data-pane="one" data-pane-focused>
+        <Button>Local</Button>
+        <div data-testid="active-owner" />
+      </section>
+      <section data-pane="two">
+        <div data-testid="other-owner" />
+      </section>
+    </>,
+  )
+  const active = source('Active remote', (retire) => (retireActive = retire))
+  const other = source('Other remote', (retire) => (retireOther = retire))
+  registerAsyncHostHintAdapter(screen.getByTestId('active-owner'), active)
+  registerAsyncHostHintAdapter(screen.getByTestId('other-owner'), other)
+  screen.getByRole('button', { name: 'Local' }).focus()
+  await userEvent.keyboard('f')
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toContain('Local')
+
+  act(() => retireOther?.())
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['Local'])
+
+  act(() => retireActive?.())
+  expect(hints()).toHaveLength(0)
+})
+
 test('pending async discovery buffers typeahead and Escape makes its result inert', async () => {
   let resolve!: (targets: readonly { id: string; label: string; x: number; y: number }[]) => void
   const adapter: AsyncHostHintAdapter = {

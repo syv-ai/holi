@@ -287,18 +287,7 @@ async function run(): Promise<void> {
           view,
           `document.activeElement?.matches('#text, #graphemes') ? document.activeElement.id : null`,
         )
-        if (target) {
-          const diagnostic = await inPage<unknown>(
-            view,
-            `(() => { const element=document.activeElement; return {key:${pageKey},target:element.id,value:element.value,codepoints:[...element.value].map(char=>char.codePointAt(0).toString(16)),selection:[element.selectionStart,element.selectionEnd],events:window.__holiSmokeNativeEvents.slice(${eventStart})} })()`,
-          )
-          const state = await view.webContents.executeJavaScriptInIsolatedWorld(1017, [
-            { code: `({ nonce: __holiPage.vim.documentNonce(), ...__holiPage.vim.mode() })` },
-          ])
-          console.log(
-            `[DEBUG-524-caret] ${JSON.stringify({ ...(diagnostic as object), nativeInput, state })}`,
-          )
-        }
+        if (target) return
         return
       }
       await new Promise((resolve) => setTimeout(resolve, 5))
@@ -307,9 +296,7 @@ async function run(): Promise<void> {
       view,
       `({key:${pageKey},active:document.activeElement?.id,events:window.__holiSmokeNativeEvents?.slice(${eventStart}) ?? []})`,
     )
-    throw new Error(
-      `[DEBUG-524-caret] native keyup was not observed: ${JSON.stringify(diagnostic)}`,
-    )
+    throw new Error(`native keyup was not observed: ${JSON.stringify(diagnostic)}`)
   }
   const inPage = <T>(view: WebContentsView, expression: string) =>
     view.webContents.executeJavaScript(expression) as Promise<T>

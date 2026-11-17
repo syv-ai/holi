@@ -271,13 +271,20 @@ export function createBrowserHintAdapter(
       generation++
       for (const controller of controllers.values()) controller.abort()
       controllers.clear()
+      // Unmounting this source can remove the page before its revoke event reaches us.
+      // Retire the latest subscribed request while its coordinator callback is still
+      // registered; unrelated host sessions have no callback here.
+      const activeRequest = [...invalidators.keys()]
+        .filter((request) => request > 0 && pending.has(request))
+        .sort((a, b) => b - a)[0]
+      if (activeRequest !== undefined) invalidators.get(activeRequest)?.()
+      for (const [request, item] of [...pending]) {
+        if (request > 0) retire(request, item)
+      }
       for (const off of subscriptions) off()
       subscriptions.clear()
       set.delete(onPageEvent)
       if (set.size === 0) listeners.delete(key)
-      for (const [request, item] of pending) {
-        if (request > 0) retire(request, item)
-      }
       pending.clear()
       snapshot = null
     },
