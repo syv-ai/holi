@@ -10,7 +10,8 @@
 import { useAtomValue, useStore } from 'jotai'
 import { useEffect, useState } from 'react'
 import { pluginServerOrigin, servedFile } from '@holi/shared'
-import { activeRemoteAtom, cn } from '@/plugin-api'
+import { activeRemoteAtom, cn, registerHostHintAdapter, requestAdaptedHostHints } from '@/plugin-api'
+import { createCommunityHintAdapter } from './community-hints'
 import { Button } from '@/components/ui/button'
 import { communityCap } from './community-cap'
 import {
@@ -51,6 +52,20 @@ export function PluginFrame({
   /** Bumped by Restart: a fresh acquire, and a fresh document. */
   const [attempt, setAttempt] = useState(0)
   const [loaded, setLoaded] = useState(false)
+  const [frame, setFrame] = useState<HTMLIFrameElement | null>(null)
+
+  useEffect(() => {
+    if (!frame || !visible || !loaded) return
+    const adapter = createCommunityHintAdapter(frame)
+    const unregister = registerHostHintAdapter(frame, adapter)
+    // The shell remains the sole owner of hint labels and activation keys.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || (event.target instanceof HTMLElement && event.target.isContentEditable)) return
+      if (event.key === 'f' && !event.metaKey && !event.ctrlKey && !event.altKey) requestAdaptedHostHints(frame, adapter)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => { window.removeEventListener('keydown', onKeyDown, true); unregister(); adapter.invalidate?.() }
+  }, [frame, visible, loaded])
 
   useEffect(() => {
     if (remote === null || !eligible) {
@@ -86,6 +101,7 @@ export function PluginFrame({
   if (eligible && phase.kind === 'running' && exited === null) {
     return (
       <iframe
+        ref={setFrame}
         key={`${phase.port}:${attempt}`}
         src={`${pluginServerOrigin(phase.port)}/`}
         aria-label={`${name}: ${path}`}
