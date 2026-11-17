@@ -76,7 +76,8 @@ describe('subscription change publication guard', () => {
     const gitDir = (await plainGit(missing, ['rev-parse', '--absolute-git-dir'])).trim()
     const looseRef = join(gitDir, branch)
     await mkdir(join(looseRef, '..'), { recursive: true })
-    await writeFile(looseRef, `${'f'.repeat(40)}\\n`)
+    await writeFile(looseRef, `${'f'.repeat(40)}\n`)
+    expect(await plainGit(missing, ['rev-parse', '--verify', 'HEAD'])).toBe('f'.repeat(40))
     expect(await openRepo(missing).historicalHead()).toEqual({ kind: 'unavailable' })
   })
 

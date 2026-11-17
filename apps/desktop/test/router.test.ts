@@ -5,32 +5,21 @@ import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'n
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { promisify } from 'node:util'
-import {
-  parseTaskFile,
-  privateTaskPath,
-  sharedTaskPath,
-  taskClaim,
-  SCRATCHPAD_PATH,
-} from '@holi/shared'
+import { parseTaskFile, privateTaskPath, sharedTaskPath, SCRATCHPAD_PATH } from '@holi/shared'
 import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { describe, expect, it, vi } from 'vitest'
-import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
+import { createVaultHost } from '../src/main/vault/active-vault'
 import { seedVault } from './helpers/seed'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
-import { createCapabilityHost } from '../src/main/capabilities/dispatch'
-import { cap, createCapabilityRegistry } from '../src/main/capabilities/registry'
-import { noCoreServices } from '../src/main/capabilities/services'
-import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
-import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
-import { createRouter, type RouterDeps } from '../src/main/router'
+import { cap } from '../src/main/capabilities/registry'
+import { createRouter } from '../src/main/router'
 import { withFileLock } from '../src/main/vault/vault-files'
 import { exactPath } from '@holi/shared/path-safety-node'
 
 const exec = promisify(execFile)
 import { GitHubSession } from '../src/main/github/session'
-import { TokenStore, type SafeStorageLike, type StoredAuth } from '../src/main/github/token-store'
+import { TokenStore, type StoredAuth } from '../src/main/github/token-store'
 import { VaultRegistry } from '../src/main/vault/registry'
-import { createManagedCommitProvenance } from '../src/main/managed-commit-provenance'
 
 import { dirs, hosts, REMOTE, storage, TASKS, TODAY, rig } from './helpers/router-fixtures'
 

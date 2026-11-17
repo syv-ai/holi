@@ -15,6 +15,8 @@ describe('subscriptions IPC', () => {
     const { root, caller, host, userData, session } = fixture
     if (path !== '') await mkdir(join(root, path), { recursive: true })
     await exec('git', ['init', '-b', 'main', root])
+    await exec('git', ['-C', root, 'config', '--local', 'commit.gpgsign', 'false'])
+    await exec('git', ['-C', root, 'config', '--local', 'tag.gpgsign', 'false'])
     await exec('git', ['-C', root, 'config', 'user.name', 'Test'])
     await exec('git', ['-C', root, 'config', 'user.email', 'test@example.invalid'])
     await exec('git', [
@@ -226,9 +228,6 @@ describe('subscriptions IPC', () => {
       expect.arrayContaining([mainCommit, branch]),
     )
     expect(result.changes.map(({ sha }) => sha)).not.toContain(merge)
-    expect(result.changes.map(({ sha }) => sha)).toEqual(
-      expect.arrayContaining([mainCommit, branch]),
-    )
   })
 
   it('reports null and missing baselines as explicitly incomplete', async () => {
