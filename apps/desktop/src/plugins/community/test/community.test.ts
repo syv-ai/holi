@@ -7,6 +7,7 @@ import { execFile, execFileSync, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -46,6 +47,7 @@ import { describeRepo } from '../main/search'
 import { createInstallStore } from '../main/store'
 import { createSupervisor, type ServerState } from '../main/supervisor'
 import { seedApps } from '../main/skills'
+import { skillTransactionFs } from '../main/skill-transaction'
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -149,7 +151,7 @@ async function turnOn() {
 }
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'holi-community-'))
+  dir = await realpath(await mkdtemp(join(tmpdir(), 'holi-community-')))
   vault = join(dir, 'vault')
   userData = join(dir, 'userData')
   await mkdir(join(vault, 'decks/q4'), { recursive: true })
@@ -299,6 +301,20 @@ describe('installing', () => {
     ).rejects.toThrow(/built into Holi/)
   })
 
+  test('pin refuses symlinked .holi ancestry even without skills or apps', async () => {
+    await makeRepo()
+    const external = join(dir, 'external-holi')
+    await mkdir(external)
+    const { call } = setup()
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    await rm(join(vault, '.holi'), { recursive: true, force: true })
+    await symlink(external, join(vault, '.holi'))
+    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
+      /unsafe vault path ancestor/,
+    )
+    await expect(lstat(join(external, 'plugins'))).rejects.toThrow()
+  })
+
   test('a pin offers the same commit to a machine without it', async () => {
     const commit = await makeRepo()
     const { call } = setup()
@@ -317,6 +333,43 @@ describe('installing', () => {
 })
 
 describe('skills', () => {
+  test('pinning rejects exact pin bytes changed during guide publication', async () => {
+    await makeRepo()
+    await mkdir(join(repoDir, 'skills/prezzi'), { recursive: true })
+    await writeFile(join(repoDir, 'skills/prezzi/SKILL.md'), 'authenticated guide\\n')
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, skills: ['skills/prezzi'] }),
+    )
+    commitAll('guide')
+    git(repoDir, 'tag', '-f', 'v0.1.0')
+    const { call } = setup()
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    await call('community.pin', { id: 'prezzi' })
+    const pinPath = join(vault, '.holi/plugins/prezzi/manifest.json')
+    await writeFile(join(vault, '.claude/skills/prezzi/SKILL.md'), 'local edit\\n')
+    const originalRename = skillTransactionFs.rename
+    let raced = false
+    skillTransactionFs.rename = async (from, to) => {
+      if (!raced && String(to).endsWith('.original')) {
+        raced = true
+        await writeFile(pinPath, `${await readFile(pinPath, 'utf8')} `)
+      }
+      return originalRename(from, to)
+    }
+    try {
+      await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(/pin changed/)
+    } finally {
+      skillTransactionFs.rename = originalRename
+    }
+    expect(raced).toBe(true)
+    expect(await readFile(join(vault, '.claude/skills/prezzi/SKILL.md'), 'utf8')).toBe(
+      'local edit\\n',
+    )
+    expect((await readFile(pinPath, 'utf8')).endsWith(' ')).toBe(true)
+  })
+
   test('pinning rejects guide bytes changed after the release was fetched', async () => {
     await makeRepo()
     await mkdir(join(repoDir, 'skills/prezzi'), { recursive: true })
