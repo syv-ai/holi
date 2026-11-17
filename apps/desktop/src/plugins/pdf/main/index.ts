@@ -12,11 +12,21 @@ import type { MermaidWindow } from './mermaid-window'
 import { pdfSeed } from './seed'
 import { createSignatureStore } from './signatures'
 import { sharedTypst } from './typst-bin'
+import { migrateTemplates } from './templates'
 
 export const pdfMain: MainPlugin = {
   info: PDF_INFO,
   seed: pdfSeed,
-  activate(ctx) {
+  async activate(ctx) {
+    const releaseSync = ctx.pauseSync('retiring obsolete PDF template')
+    try {
+      await migrateTemplates(ctx.root, pdfSeed.once, ctx.activationSignal)
+    } catch (error) {
+      releaseSync()
+      throw error
+    }
+    releaseSync()
+    if (ctx.activationSignal.aborted) throw new Error('PDF activation cancelled')
     const typst = sharedTypst(join(ctx.userData, 'typst'))
     // The hidden window mermaid draws in, made by the first note with a
     // diagram. A dynamic import keeps Electron out of what the tests load.
@@ -29,6 +39,7 @@ export const pdfMain: MainPlugin = {
       mermaid ??= import('./mermaid-window').then((m) => m.createMermaidWindow())
       return (await mermaid).draw(sources)
     }
+    if (ctx.activationSignal.aborted) throw new Error('PDF activation cancelled')
     const undo = ctx.register(
       PDF_NAMESPACES,
       pdfCapabilities({
