@@ -45,6 +45,7 @@ export function traceHasOnlyManagedBuiltins(
     { command: string; sid: string; childId: number; index: number }
   >()
   const childExits = new Map<string, number>()
+  const childPids = new Map<string, number>()
   let rootSid: string | null = null
   let rootExit: number | null = null
   for (const event of events) {
@@ -97,7 +98,13 @@ export function traceHasOnlyManagedBuiltins(
         break
       }
       case 'child_exit': {
-        if (!Number.isInteger(event.child_id) || !Number.isInteger(event.code)) return false
+        if (
+          !Number.isInteger(event.child_id) ||
+          !Number.isInteger(event.code) ||
+          !Number.isSafeInteger(event.pid) ||
+          (event.pid as number) <= 0
+        )
+          return false
         const key = `${sid}:${event.child_id}`
         if (!childStarts.has(key)) return false
         // Git versions can report maintenance's completion twice. Identical
@@ -105,6 +112,9 @@ export function traceHasOnlyManagedBuiltins(
         const previous = childExits.get(key)
         if (previous !== undefined && previous !== event.code) return false
         childExits.set(key, event.code as number)
+        const previousPid = childPids.get(key)
+        if (previousPid !== undefined && previousPid !== event.pid) return false
+        childPids.set(key, event.pid as number)
         break
       }
       case 'exit':
@@ -134,14 +144,22 @@ export function traceHasOnlyManagedBuiltins(
 
   // Child processes must have their own complete Trace2 session, and no nested
   // child execution is allowed under an otherwise-recognized builtin.
-  for (const child of childStarts.values()) {
+  const expectedSids = new Set([rootSid])
+  for (const [key, child] of childStarts) {
+    const pid = childPids.get(key)
+    if (pid === undefined) return false
+    const suffix = `-P${pid.toString(16).padStart(8, '0')}`
     const candidates = [...sessions.entries()].filter(
-      ([sid, session]) => sid !== rootSid && session.command === child.command,
+      ([sid, session]) =>
+        sid.startsWith(`${rootSid}/`) &&
+        sid.slice(rootSid.length + 1).indexOf('/') === -1 &&
+        sid.toLowerCase().endsWith(suffix.toLowerCase()) &&
+        session.command === child.command,
     )
     if (candidates.length !== 1) return false
     const [sid, session] = candidates[0]!
-    if (sid !== `${rootSid}/${child.childId}` || !session.started || session.exits.length === 0)
-      return false
+    expectedSids.add(sid)
+    if (!session.started || session.exits.length === 0) return false
     if (session.exits.some((exitCode) => exitCode !== session.exits[0])) return false
     const matchingStart = [...childStarts.entries()].find(
       ([, value]) => value.command === child.command,
@@ -158,14 +176,10 @@ export function traceHasOnlyManagedBuiltins(
       return false
     if (events.some((event) => event.event === 'child_start' && event.sid === sid)) return false
   }
-  const expectedSids = new Set([
-    rootSid,
-    ...[...childStarts.values()].map((child) => `${rootSid}/${child.childId}`),
-  ])
   if (sessions.size !== expectedSids.size) return false
   for (const [sid, session] of sessions) {
     if (!expectedSids.has(sid)) return false
-    if (sid !== rootSid && (!session.started || session.exits.length !== 1)) return false
+    if (sid !== rootSid && (!session.started || session.exits.length === 0)) return false
   }
   return true
 }

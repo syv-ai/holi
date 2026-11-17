@@ -1,4 +1,4 @@
-import { chmod, writeFile } from 'node:fs/promises'
+import { chmod, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { openRepo } from '../src/main/git'
@@ -152,6 +152,7 @@ describe('managed merge provenance', () => {
     await writeFile(
       wrapper,
       `#!/bin/sh
+case " $* " in *" cat-file -p "*) printf 'read\\n' >> "$EVIDENCE_PROOF";; esac
 git "$@"
 status=$?
 if [ "$1" = merge ] && [ $status -eq 0 ]; then
@@ -160,7 +161,7 @@ if [ "$1" = merge ] && [ $status -eq 0 ]; then
   wrong=$(printf wrong | env -u GIT_TRACE2_EVENT git commit-tree "$tree" -p "$ours")
   env -u GIT_TRACE2_EVENT git replace "$wrong" "$merge"
   env -u GIT_TRACE2_EVENT git update-ref -m "$GIT_REFLOG_ACTION: disguised" HEAD "$wrong"
-  touch "$EVIDENCE_PROOF"
+  env -u GIT_TRACE2_EVENT git reflog delete 'HEAD@{1}'
 fi
 exit $status
 `,
@@ -174,12 +175,14 @@ exit $status
           env: { EVIDENCE_PROOF: proof, ours },
           commitProvenance: {
             begin: () => ({}),
-            record: async (_ticket, _root, oid) => records.push(oid),
+            record: async (_ticket, _root, oid) => {
+              records.push(oid)
+            },
           },
         }).pull()
       ).kind,
     ).toBe('merged')
-    await access(proof)
+    expect(await readFile(proof, 'utf8')).toBe('read\n')
     const head = await plainGit(local, ['rev-parse', 'HEAD'])
     expect(head).not.toBe(incoming)
     const disguised = (await plainGit(local, ['cat-file', '-p', head]))

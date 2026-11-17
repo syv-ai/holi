@@ -445,7 +445,10 @@ async function tryGitObservedOnce(
     child.on('exit', (code, signal) => {
       const waitForTrace = new Promise<void>((done) => {
         if (traceEnded) return done()
-        const timer = setTimeout(done, 1000)
+        const timer = setTimeout(() => {
+          child.stdio[3]!.destroy()
+          done()
+        }, 1000)
         child.stdio[3]!.once('end', () => {
           clearTimeout(timer)
           done()

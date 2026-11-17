@@ -21,10 +21,10 @@ function maintenanceTrace(option: string | null): string {
       { event: 'start', sid: 'root' },
       { event: 'cmd_name', sid: 'root', name: 'merge' },
       { event: 'child_start', sid: 'root', child_id: 1, use_shell: false, argv },
-      { event: 'start', sid: 'root/1' },
-      { event: 'cmd_name', sid: 'root/1', name: 'maintenance' },
-      { event: 'exit', sid: 'root/1', code: 0 },
-      { event: 'child_exit', sid: 'root', child_id: 1, code: 0 },
+      { event: 'start', sid: 'root/stamp-P0000007b' },
+      { event: 'cmd_name', sid: 'root/stamp-P0000007b', name: 'maintenance' },
+      { event: 'exit', sid: 'root/stamp-P0000007b', code: 0 },
+      { event: 'child_exit', sid: 'root', child_id: 1, pid: 123, code: 0 },
       { event: 'exit', sid: 'root', code: 0 },
     ]
       .map((event) => JSON.stringify(event))
@@ -331,6 +331,42 @@ describe('managed merge evidence', () => {
         }).pull()
       ).kind,
     ).toBe('merged')
+    expect(records).toEqual([null])
+  })
+
+  it('keeps settlement errors separate from sensitive Trace2 parameters', async () => {
+    const remote = await makeRemote()
+    const local = await makeClone(remote, 'local')
+    const teammate = await makeClone(remote, 'teammate')
+    await commitFile(local, 'README.md', 'local edit\n')
+    await plainGit(teammate, ['rm', 'README.md'])
+    await plainGit(teammate, ['commit', '-m', 'delete note'])
+    await plainGit(teammate, ['push', 'origin', 'HEAD:main'])
+    await writeFile(
+      join(local, '.git/hooks/prepare-commit-msg'),
+      '#!/bin/sh\nprintf "settlement refused by hook\\n" >&2\nexit 1\n',
+      { mode: 0o755 },
+    )
+    const records: Array<string | null> = []
+    const error = await openRepo(local, {
+      env: {
+        GIT_TRACE2_ENV_VARS: 'HOLI_TEST_TRACE_VALUE',
+        HOLI_TEST_TRACE_VALUE: 'synthetic-private-trace-value',
+      },
+      commitProvenance: {
+        begin: () => ({}),
+        record: async (_ticket, _root, oid) => {
+          records.push(oid)
+        },
+      },
+    })
+      .pull()
+      .catch((failure: unknown) => failure)
+    expect(error).toBeInstanceOf(Error)
+    expect(error).toMatchObject({ stderr: expect.stringContaining('settlement refused by hook') })
+    const diagnostic = String((error as Error).message) + (error as { stderr: string }).stderr
+    expect(diagnostic).not.toContain('synthetic-private-trace-value')
+    expect(diagnostic).not.toContain('"event":')
     expect(records).toEqual([null])
   })
 
