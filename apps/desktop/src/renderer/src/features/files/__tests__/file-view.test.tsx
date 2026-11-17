@@ -34,6 +34,9 @@ const mdxStatus = vi.fn()
 const mdxApprove = vi.fn()
 const mdxRevoke = vi.fn()
 const mdxCompile = vi.fn()
+const mdxAcquire = vi.fn()
+const mdxCancel = vi.fn()
+const mdxRelease = vi.fn()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -53,6 +56,9 @@ vi.mock('@/lib/trpc', () => ({
       approve: { mutate: (input: unknown) => mdxApprove(input) },
       revoke: { mutate: (input: unknown) => mdxRevoke(input) },
       compile: { mutate: (input: unknown) => mdxCompile(input) },
+      acquireDiagnosticsLease: { mutate: (input: unknown) => mdxAcquire(input) },
+      cancelCompile: { mutate: (input: unknown) => mdxCancel(input) },
+      releaseDiagnosticsLease: { mutate: (input: unknown) => mdxRelease(input) },
     },
   },
 }))
@@ -66,6 +72,9 @@ afterEach(() => {
   mdxApprove.mockReset()
   mdxRevoke.mockReset()
   mdxCompile.mockReset()
+  mdxAcquire.mockReset().mockResolvedValue({ lease: 'test-lease' })
+  mdxCancel.mockReset().mockResolvedValue({ ok: true })
+  mdxRelease.mockReset().mockResolvedValue({ ok: true })
 })
 
 function HintKeys() {
@@ -876,12 +885,17 @@ test('trusted MDX diagnostics consume the current source without changing save b
   mdxCompile.mockResolvedValue([{ message: 'unexpected token', line: 2, column: 1 }])
   setup('content/page.mdx')
   await waitFor(() => expect(mdxCompile).toHaveBeenCalled())
-  expect(mdxCompile).toHaveBeenCalledWith({
+  expect(mdxAcquire).toHaveBeenCalledWith({
     remote: 'syv-ai/site',
     path: 'content/page.mdx',
     context: 'consent-1',
+  })
+  expect(mdxCompile).toHaveBeenCalledWith({
+    lease: 'test-lease',
+    generation: expect.any(Number),
     source: hostile,
   })
+  expect(mdxCancel).toHaveBeenCalledWith({ lease: 'test-lease', generation: expect.any(Number) })
   expect(await screen.findByText('1 MDX diagnostic')).toBeInTheDocument()
   expect((globalThis as Record<string, unknown>).__mdxShouldNotRun).toBeUndefined()
 

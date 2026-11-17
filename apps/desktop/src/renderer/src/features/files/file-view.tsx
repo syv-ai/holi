@@ -14,11 +14,10 @@
  * latest commit and History, the same as a document's (`FileHistoryButton`).
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { fileKind, type MdxCompileState } from '@holi/shared'
+import { fileKind } from '@holi/shared'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
 import { findNext, findPrevious } from '@codemirror/search'
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view'
-import { setDiagnostics } from '@codemirror/lint'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { FileTextIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -46,6 +45,7 @@ import { codeFind, codeFindCount } from './code-find'
 import { CodeFindBar } from './code-find-bar'
 import { codeLook } from './code-look'
 import { MdxTrustControl } from './mdx-trust-control'
+import { useMdxDiagnostics } from './use-mdx-diagnostics'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
 import { basename } from '@/lib/tree-paths'
 
@@ -171,9 +171,6 @@ function TextEditor({
   const callbacks = useRef({ onSaved, onSaveState })
   callbacks.current = { onSaved, onSaveState }
   const [view, setView] = useState<EditorView | null>(null)
-  const [mdxState, setMdxState] = useState<MdxCompileState>({ kind: 'checking' })
-  const mdxGeneration = useRef(0)
-  const mdxTimer = useRef<number | undefined>(undefined)
   /** The find bar, open while set; a new request refocuses it. */
   const [find, setFind] = useState<FindRequest | null>(null)
   const [count, setCount] = useState<FindCount>({ total: 0, current: null })
@@ -182,67 +179,18 @@ function TextEditor({
   reportSelection.current = setEditorSelection
   const memory = useViewMemory()
   const vim = useVimEditor(view, vimEnabled, visible && focused, onVimModeChange, handleFindKeyDown)
+  const mdx = useMdxDiagnostics({
+    view,
+    remote,
+    path,
+    context: mdxTrustContext,
+    trusted: mdxTrusted,
+    visible,
+  })
+  const mdxSourceChanged = mdx.sourceChanged
   const visibility = useRef(visible)
   const focusState = useRef(focused)
   focusState.current = focused
-
-  const scheduleMdxCompile = useCallback(
-    (current: EditorView, source: string, immediate = false) => {
-      const generation = ++mdxGeneration.current
-      window.clearTimeout(mdxTimer.current)
-      current.dispatch(setDiagnostics(current.state, []))
-      if (!/\.mdx$/i.test(path)) return
-      if (!visible) {
-        setMdxState({
-          kind: 'unavailable',
-          message: 'MDX diagnostics pause while this view is hidden.',
-        })
-        return
-      }
-      if (!mdxTrusted || mdxTrustContext === null) {
-        setMdxState({ kind: 'unavailable', message: 'Approve this vault to check MDX syntax.' })
-        return
-      }
-      setMdxState({ kind: 'checking' })
-      mdxTimer.current = window.setTimeout(
-        () => {
-          void trpc.mdxTrust.compile
-            .mutate({ remote: remote!, path, context: mdxTrustContext, source })
-            .then((diagnostics) => {
-              if (generation !== mdxGeneration.current || viewRef.current !== current) return
-              const mapped = diagnostics.map((diagnostic) => {
-                const line = current.state.doc.line(
-                  Math.min(diagnostic.line, current.state.doc.lines),
-                )
-                const from = Math.min(line.from + Math.max(0, diagnostic.column - 1), line.to)
-                return {
-                  from,
-                  to: Math.min(from + 1, line.to),
-                  severity: 'error' as const,
-                  message: diagnostic.message,
-                }
-              })
-              current.dispatch(setDiagnostics(current.state, mapped))
-              setMdxState(
-                mapped.length === 0 ? { kind: 'clean' } : { kind: 'syntax-error', diagnostics },
-              )
-            })
-            .catch((error: unknown) => {
-              if (generation !== mdxGeneration.current || viewRef.current !== current) return
-              setMdxState({
-                kind: 'unavailable',
-                message: error instanceof Error ? error.message : String(error),
-              })
-            })
-        },
-        immediate ? 0 : 300,
-      )
-    },
-    [mdxTrusted, mdxTrustContext, path, remote, visible],
-  )
-
-  const scheduleMdxRef = useRef(scheduleMdxCompile)
-  scheduleMdxRef.current = scheduleMdxCompile
 
   const publishCurrentSelection = useCallback(
     (current: EditorView) => {
@@ -266,7 +214,6 @@ function TextEditor({
   )
 
   useEffect(() => {
-    const mdxGenerationRef = mdxGeneration
     const host = hostRef.current
     if (host === null || remote === null) return
     // Where this file was left, when it was open before: the caret clamped
@@ -356,7 +303,7 @@ function TextEditor({
               }
             }
             if (!update.docChanged) return
-            scheduleMdxRef.current(update.view, update.state.doc.toString())
+            mdxSourceChanged(update.view, update.state.doc.toString())
             if (update.transactions.some((tr) => tr.annotation(externalReload))) return
             dirty.current = true
             window.clearTimeout(saveTimer.current)
@@ -396,8 +343,6 @@ function TextEditor({
       },
     )
     return () => {
-      mdxGenerationRef.current++
-      window.clearTimeout(mdxTimer.current)
       unregister()
       leaveWriter.current = null
       scroller.removeEventListener('scroll', noteScroll)
@@ -409,23 +354,7 @@ function TextEditor({
       setView(null)
       setFind(null)
     }
-  }, [remote, path, memory, vim.extension])
-
-  useEffect(() => {
-    const current = viewRef.current
-    if (current === null || !/\.mdx$/i.test(path)) return
-    if (!visible) {
-      mdxGeneration.current++
-      window.clearTimeout(mdxTimer.current)
-      current.dispatch(setDiagnostics(current.state, []))
-      setMdxState({
-        kind: 'unavailable',
-        message: 'MDX diagnostics pause while this view is hidden.',
-      })
-      return
-    }
-    scheduleMdxRef.current(current, current.state.doc.toString())
-  }, [visible, path, mdxTrustContext, mdxTrusted, view])
+  }, [remote, path, memory, vim.extension, mdxSourceChanged])
 
   useEffect(() => {
     const wasVisible = visibility.current
@@ -496,24 +425,16 @@ function TextEditor({
           aria-live="polite"
         >
           <span>
-            {mdxState.kind === 'checking'
+            {mdx.state.kind === 'checking'
               ? 'Checking MDX…'
-              : mdxState.kind === 'clean'
+              : mdx.state.kind === 'clean'
                 ? 'MDX syntax is valid'
-                : mdxState.kind === 'syntax-error'
-                  ? `${mdxState.diagnostics.length} MDX diagnostic${mdxState.diagnostics.length === 1 ? '' : 's'}`
-                  : `MDX diagnostics unavailable: ${mdxState.message}`}
+                : mdx.state.kind === 'syntax-error'
+                  ? `${mdx.state.diagnostics.length} MDX diagnostic${mdx.state.diagnostics.length === 1 ? '' : 's'}`
+                  : `MDX diagnostics unavailable: ${mdx.state.kind === 'unavailable' ? mdx.state.message : ''}`}
           </span>
-          {mdxState.kind === 'unavailable' && mdxTrusted && visible ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                const current = viewRef.current
-                if (current) scheduleMdxRef.current(current, current.state.doc.toString(), true)
-              }}
-            >
+          {mdx.state.kind === 'unavailable' && mdxTrusted && visible ? (
+            <Button type="button" size="sm" variant="outline" onClick={mdx.retry}>
               Retry
             </Button>
           ) : null}
