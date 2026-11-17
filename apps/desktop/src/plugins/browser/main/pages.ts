@@ -122,6 +122,7 @@ interface Tab {
   hintPendingOwner: PageHintOwner | null
   hintRequestOrigin: string | null
   hintRequestCapture: number | null
+  hintCaptureOwner: { capture: number; owner: PageHintOwner } | null
   hintPendingKeys: Map<
     number,
     {
@@ -398,6 +399,7 @@ export function createPages(deps: PagesDeps): Pages & {
             tab.hintRequestOrigin = origin
             tab.hintPendingKeys.clear()
             tab.hintRequestCapture = Number.isSafeInteger(value.capture) ? value.capture! : null
+            tab.hintCaptureOwner = null
             if (tab.hintRequestCapture !== null) tab.hintPendingKeys.set(tab.hintRequestCapture, [])
             tab.hintOwner = null
             tab.hintClosed = false
@@ -417,6 +419,7 @@ export function createPages(deps: PagesDeps): Pages & {
             value.capture === tab.hintRequestCapture
           ) {
             tab.hintPendingKeys.delete(value.capture)
+            tab.hintCaptureOwner = null
             const origin = tab.hintRequestOrigin
             if (origin !== null) {
               emitHint(
@@ -442,9 +445,17 @@ export function createPages(deps: PagesDeps): Pages & {
             tab.hintSnapshot++
           } else if (value.type === 'revoke' && value.owner && hintOwns(tab, value.owner)) {
             revokeHints(tab)
-          } else if (value.type === 'key' && value.capture !== undefined && !value.owner) {
-            const pending = tab.hintPendingKeys.get(value.capture)
-            if (pending) pending.push(value)
+          } else if (value.type === 'key' && value.capture !== undefined) {
+            const captureOwner = tab.hintCaptureOwner
+            if (captureOwner?.capture === value.capture && hintOwns(tab, captureOwner.owner)) {
+              const { capture: _capture, ...rawKey } = value
+              emitHint({ ...captureOwner.owner, type: 'key', ...rawKey }, () =>
+                hintOwns(tab, captureOwner.owner),
+              )
+            } else if (!value.owner && value.capture === tab.hintRequestCapture) {
+              const pending = tab.hintPendingKeys.get(value.capture)
+              if (pending && pending.length < 32) pending.push(value)
+            }
           } else if (value.type === 'key' && value.owner && hintOwns(tab, value.owner)) {
             const owner = value.owner
             const { type: _type, owner: _eventOwner, ...key } = value
@@ -464,6 +475,7 @@ export function createPages(deps: PagesDeps): Pages & {
     tab.hintPendingOwner = null
     tab.hintRequestOrigin = null
     tab.hintRequestCapture = null
+    tab.hintCaptureOwner = null
     tab.hintPendingKeys.clear()
     tab.hintClosed = true
     tab.hintGeometry++
@@ -627,11 +639,11 @@ export function createPages(deps: PagesDeps): Pages & {
     const capture = tab.hintRequestCapture
     const pendingKeys = capture === null ? [] : (tab.hintPendingKeys.get(capture) ?? [])
     if (capture !== null) tab.hintPendingKeys.delete(capture)
+    if (capture !== null) tab.hintCaptureOwner = { capture, owner }
     for (const key of pendingKeys) {
       const { capture: _capture, ...rawKey } = key as typeof key & { capture?: number }
       deps.hints?.({ ...owner, type: 'key', ...rawKey }, () => hintOwns(tab, owner))
     }
-    tab.hintRequestCapture = null
     return {
       owner,
       targets: targets.map((target) => ({
@@ -692,6 +704,9 @@ export function createPages(deps: PagesDeps): Pages & {
     const owner = tab.hintOwner ?? tab.hintPendingOwner
     tab.hintOwner = null
     tab.hintPendingOwner = null
+    tab.hintCaptureOwner = null
+    tab.hintRequestCapture = null
+    tab.hintPendingKeys.clear()
     tab.hintSnapshot++
     tab.hintRevision++
     if (owner)
@@ -1060,6 +1075,7 @@ export function createPages(deps: PagesDeps): Pages & {
       hintPendingOwner: null,
       hintRequestOrigin: null,
       hintRequestCapture: null,
+      hintCaptureOwner: null,
       hintPendingKeys: new Map(),
       hintRevision: 0,
       hintSnapshot: 0,

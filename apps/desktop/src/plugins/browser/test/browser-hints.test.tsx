@@ -211,6 +211,26 @@ test('adapter disposal invalidates the owning active request before retiring it'
   expect(await fixture.adapter.present(1, 2, [])).toBe(false)
 })
 
+test('late cancellation survives failed discovery and snapshot clear until unsubscribe', async () => {
+  const fixture = setup()
+  let reject!: (reason?: unknown) => void
+  run.mockImplementationOnce(() => new Promise((_resolve, fail) => (reject = fail)))
+  fixture.event(7, 'failed-origin', 'request')
+  const invalidated = vi.fn()
+  const unsubscribe = fixture.adapter.subscribe(1, invalidated, () => false)
+  const discovery = fixture.adapter.discover(1, new AbortController().signal)
+  await Promise.resolve()
+  reject(new Error('discovery failed'))
+  expect(await discovery).toBeNull()
+  fixture.adapter.clear(1)
+  fixture.event(7, 'failed-origin', 'cancel')
+  expect(invalidated).toHaveBeenCalledOnce()
+  fixture.event(7, 'failed-origin', 'cancel')
+  expect(invalidated).toHaveBeenCalledOnce()
+  unsubscribe()
+  fixture.adapter.dispose()
+})
+
 test('adapter disposal invalidates a pending discovery without publishing its late result', async () => {
   const fixture = setup()
   let resolve!: (value: unknown) => void

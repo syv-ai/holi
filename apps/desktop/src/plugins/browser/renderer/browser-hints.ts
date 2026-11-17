@@ -55,7 +55,10 @@ export function createBrowserHintAdapter(
   const pending = new Map<number, Pending>()
   const controllers = new Map<number, AbortController>()
   const invalidators = new Map<number, () => void>()
-  const invalidatorOrigins = new Map<number, string | null>()
+  const subscriptionsByRequest = new Map<
+    number,
+    { wire: PageHintScope | null; origin: string | null; cancelled: boolean }
+  >()
   const retired = new WeakSet<Pending>()
   let generation = 0
   const requestScopeKey = requestKey(context)
@@ -73,8 +76,6 @@ export function createBrowserHintAdapter(
     retired.add(item)
     if (pending.get(request) === item) pending.delete(request)
     if (item.owner !== undefined && snapshot?.owner === item.owner) snapshot = null
-    invalidators.delete(request)
-    invalidatorOrigins.delete(request)
     if (clear) clearWire(item.wire)
   }
   const matches = (event: PageHintEvent, item: Pending) => {
@@ -114,33 +115,45 @@ export function createBrowserHintAdapter(
         requestOrigin: event.origin,
       }
       pending.set(-event.request, item)
+      const waiting = [...subscriptionsByRequest.values()].filter((record) => record.wire === null)
+      const subscription = waiting.at(-1)
+      if (subscription) {
+        subscription.wire = item.wire
+        subscription.origin = event.origin
+      }
       requestHostHints(context.ownerElement)
       return
     }
-    const match = [...pending.entries()].find(([request, item]) => {
-      return (
-        (event.type === 'revoke' || event.type === 'cancel' || request > 0) && matches(event, item)
-      )
-    })
-    if (!match) return
-    const [request, item] = match
+    const match = [...pending.entries()].find(
+      ([request, item]) =>
+        (event.type === 'revoke' || event.type === 'cancel' || request > 0) && matches(event, item),
+    )
+    const subscribed = [...subscriptionsByRequest.entries()].find(
+      ([, record]) =>
+        record.wire !== null &&
+        record.wire.request === event.request &&
+        record.wire.tab === event.tab &&
+        record.wire.nonce === event.nonce &&
+        record.wire.attachment === event.attachment &&
+        record.origin === event.origin,
+    )
+    if (!match && !subscribed) return
+    const [request, item] = match ?? [0, undefined]
     if (event.type === 'cancel') {
-      if (request > 0) invalidators.get(request)?.()
-      else {
-        for (const [hostRequest, invalidate] of [...invalidators]) {
-          if (invalidatorOrigins.get(hostRequest) !== event.origin) continue
-          invalidate()
-          invalidators.delete(hostRequest)
-          invalidatorOrigins.delete(hostRequest)
-        }
+      if (subscribed && !subscribed[1].cancelled) {
+        subscribed[1].cancelled = true
+        invalidators.get(subscribed[0])?.()
       }
-      retire(request, item)
+      if (match) retire(request, item!)
       return
     }
     if (event.type === 'revoke') {
       // Let the owning coordinator observe this request while its scope is still live.
-      if (request > 0) invalidators.get(request)?.()
-      retire(request, item)
+      if (subscribed && !subscribed[1].cancelled) {
+        subscribed[1].cancelled = true
+        invalidators.get(subscribed[0])?.()
+      }
+      if (match) retire(request, item!)
       return
     }
   }
@@ -168,6 +181,11 @@ export function createBrowserHintAdapter(
       signal.addEventListener('abort', () => controller.abort(), { once: true })
       const item: Pending = { wire, generation: gen, requestOrigin }
       pending.set(request, item)
+      const subscription = subscriptionsByRequest.get(request)
+      if (subscription) {
+        subscription.wire = wire
+        subscription.origin = requestOrigin ?? null
+      }
       try {
         const found = await browserHintCap['hints-discover'](context.remote, wire)
         if (
@@ -251,10 +269,22 @@ export function createBrowserHintAdapter(
         .filter(([pendingRequest]) => pendingRequest < 0)
         .at(-1)?.[1]
       invalidators.set(request, invalidate)
-      invalidatorOrigins.set(request, pendingPageRequest?.requestOrigin ?? null)
+      const record = {
+        wire: pendingPageRequest?.wire ?? null,
+        origin: pendingPageRequest?.requestOrigin ?? null,
+        cancelled: false,
+      }
+      subscriptionsByRequest.set(request, record)
       const handler = (event: PageHintEvent) => {
         const item = pending.get(request)
-        if (!item || !matches(event, item)) return
+        const exact =
+          record.wire !== null &&
+          record.wire.request === event.request &&
+          record.wire.tab === event.tab &&
+          record.wire.nonce === event.nonce &&
+          record.wire.attachment === event.attachment &&
+          record.origin === event.origin
+        if (!exact || (item && !matches(event, item))) return
         if (event.type !== 'key' || !event.key) return
         const keyEvent = new KeyboardEvent('keydown', {
           key: event.key,
@@ -281,10 +311,8 @@ export function createBrowserHintAdapter(
       const off = () => {
         eventSet.delete(handler)
         window.removeEventListener(HOST_HINT_REQUEST, requestHandler)
-        if (invalidators.get(request) === invalidate) {
-          invalidators.delete(request)
-          invalidatorOrigins.delete(request)
-        }
+        if (invalidators.get(request) === invalidate) invalidators.delete(request)
+        if (subscriptionsByRequest.get(request) === record) subscriptionsByRequest.delete(request)
       }
       subscriptions.add(off)
       return () => {
@@ -302,7 +330,7 @@ export function createBrowserHintAdapter(
       // Retire the latest subscribed request while its coordinator callback is still
       // registered; unrelated host sessions have no callback here.
       const activeRequest = [...invalidators.keys()]
-        .filter((request) => request > 0 && pending.has(request))
+        .filter((request) => request > 0)
         .sort((a, b) => b - a)[0]
       if (activeRequest !== undefined) invalidators.get(activeRequest)?.()
       for (const [request, item] of [...pending]) {

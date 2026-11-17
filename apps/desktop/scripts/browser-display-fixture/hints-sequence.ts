@@ -57,6 +57,30 @@
   const pressLabel = async (label: string) => {
     for (const key of label) await pageNativePress(key)
   }
+  const hostNativePress = async (key: string) => {
+    const before = await ui(`(() => {
+      if (!window.qaHostKeyUps) {
+        window.qaHostKeyUps = []
+        window.addEventListener('keyup', event => {
+          if (event.isTrusted)
+            window.qaHostKeyUps.push({
+              key: event.key,
+              trusted: event.isTrusted,
+              source: 'WebContents.sendInputEvent',
+            })
+        }, true)
+      }
+      return window.qaHostKeyUps.length
+    })()`)
+    const keyCode = key.length === 1 ? key.toLowerCase() : key
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode })
+    if (key.length === 1) win.webContents.sendInputEvent({ type: 'char', keyCode: key })
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode })
+    await until(
+      async () => (await ui('window.qaHostKeyUps.length')) > before,
+      `trusted host key ${key}`,
+    )
+  }
   const requestPageHints = async (selector = 'body') => {
     page.focus()
     await pageEval(
@@ -239,8 +263,12 @@
 
   // Once the selected async target retires the visible session, Escape in the
   // real host window must still cancel its owned pending activation.
-  await requestPageHints()
-  await until(async () => (await pageLabelsFor(page)).length > 0, 'host Escape activation hints')
+  await ui('document.body.tabIndex=-1;document.body.focus()')
+  await hostNativePress('f')
+  await until(
+    async () => (await pageLabelsFor(page)).length > 0,
+    'host-origin Escape activation hints',
+  )
   const hostEscapeTarget = (await pageLabelsFor(page)).find((item: any) =>
     /Submit/.test(item.label),
   )
@@ -258,20 +286,19 @@
     entered: hostEscapeActivationEntered,
   }
   try {
-    await pressLabel(hostEscapeTarget.key)
+    for (const key of hostEscapeTarget.key) await hostNativePress(key)
     await hostEscapeEntered
     const queued = hintUiCalls.filter((call) => call.name === 'browser.hints-activate').at(-1)!
       .params.owner
-    const hostEscapePrevented = await ui(`(() => {
-      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-      window.dispatchEvent(event)
-      return event.defaultPrevented
-    })()`)
-    assert.equal(
-      hostEscapePrevented,
-      true,
-      'owned host Escape was not consumed by the shell dispatcher',
-    )
+    const hostFocusBefore = await ui('document.activeElement?.tagName')
+    await hostNativePress('Escape')
+    const hostKeyEvidence = await ui('window.qaHostKeyUps.at(-1)')
+    assert.deepEqual(hostKeyEvidence, {
+      key: 'Escape',
+      trusted: true,
+      source: 'WebContents.sendInputEvent',
+    })
+    assert.equal(await ui('document.activeElement?.tagName'), hostFocusBefore)
     await until(
       () =>
         hintUiCalls.some(
@@ -281,7 +308,7 @@
             call.params.nonce === queued.nonce &&
             call.params.attachment === queued.attachment,
         ),
-      'host-window Escape clears exact delayed activation',
+      'native host Escape clears exact delayed activation',
     )
     await wait(350)
     assert.equal(await pageOverlayCount(), 0, 'host Escape left page labels')
@@ -323,20 +350,29 @@
     (call) => call.name === 'browser.hints-clear',
   ).length
   await captureFrame(page)
+  await pageEval(`(() => {
+    window.qaCancelKeyUps=[]
+    const listener=event=>{if(event.isTrusted)window.qaCancelKeyUps.push(event.key)}
+    window.addEventListener('keyup',listener,true)
+  })()`)
+  const hintsEventsBefore = sent.filter(
+    (event) => event.remote === 'A' && event.name === 'hints',
+  ).length
   await page.executeJavaScriptInIsolatedWorld(1017, [
     { code: `globalThis.qaSavedHintPoll=__holiPage.hints.poll;__holiPage.hints.poll=()=>[];true` },
   ])
   try {
-    await pageNativePress('f')
-    await pageNativePress('Escape')
-    const pendingEvents = await page.executeJavaScriptInIsolatedWorld(1017, [
-      { code: `qaSavedHintPoll()` },
-    ])
-    assert.deepEqual(
-      pendingEvents.map((event: any) => event.type),
-      ['request', 'key', 'revoke'],
+    const before = await pageEval<number>('window.qaCancelKeyUps.length')
+    for (const key of ['f', 'Escape']) {
+      const keyCode = key.length === 1 ? key.toLowerCase() : key
+      page.sendInputEvent({ type: 'keyDown', keyCode })
+      if (key.length === 1) page.sendInputEvent({ type: 'char', keyCode: key })
+      page.sendInputEvent({ type: 'keyUp', keyCode })
+    }
+    await until(
+      async () => (await pageEval<number>('window.qaCancelKeyUps.length')) >= before + 2,
+      'trusted native f and Escape',
     )
-    assert(Number.isSafeInteger(pendingEvents[0].capture))
   } finally {
     await page.executeJavaScriptInIsolatedWorld(1017, [
       { code: `__holiPage.hints.poll=qaSavedHintPoll;delete globalThis.qaSavedHintPoll` },
@@ -347,6 +383,36 @@
       hintUiCalls.filter((call) => call.name === 'browser.hints-clear').length >
       clearsBeforePrediscoveryCancel,
     'cancelled pre-discovery request reaches host adapter',
+  )
+  const requestEvent = sent
+    .slice()
+    .filter((event) => event.remote === 'A' && event.name === 'hints')
+    .slice(hintsEventsBefore)
+    .find((event) => (event.payload as any).type === 'request')
+  const cancelEvent = sent
+    .slice()
+    .filter((event) => event.remote === 'A' && event.name === 'hints')
+    .slice(hintsEventsBefore)
+    .find((event) => (event.payload as any).type === 'cancel')
+  assert(requestEvent && cancelEvent, 'native request and cancel were not emitted by production')
+  assert.deepEqual(cancelEvent.payload, { ...requestEvent.payload, type: 'cancel' })
+  const cancelledWire = hintUiCalls
+    .filter((call) => call.name === 'browser.hints-clear')
+    .at(-1)!.params
+  assert.deepEqual(
+    {
+      tab: cancelledWire.tab,
+      nonce: cancelledWire.nonce,
+      attachment: cancelledWire.attachment,
+      request: cancelledWire.request,
+    },
+    {
+      tab: (cancelEvent.payload as any).tab,
+      nonce: (cancelEvent.payload as any).nonce,
+      attachment: (cancelEvent.payload as any).attachment,
+      request: (cancelEvent.payload as any).request,
+    },
+    'native cancellation clear must match its exact emitted request scope',
   )
   await wait(350)
   assert.equal(await pageOverlayCount(), 0, 'pre-discovery Escape left page labels')
@@ -391,6 +457,71 @@
   await until(async () => (await pageLabelsFor(page)).length > 0, 'fresh capture after overflow')
   await pageNativePress('Escape')
   hintMark('native-prediscovery-overflow-releases-escape-input-and-fresh-capture')
+
+  await requestPageHints()
+  await until(
+    async () => (await pageLabelsFor(page)).length > 0,
+    'settled capture before delayed poll',
+  )
+  const delayedPollStart = sent.filter(
+    (event) => event.remote === 'A' && event.name === 'hints',
+  ).length
+  await pageEval(`(() => {
+    window.qaDelayedKeyUps=[]
+    window.addEventListener('keyup',event=>{if(event.isTrusted)window.qaDelayedKeyUps.push(event.key)},true)
+  })()`)
+  await page.executeJavaScriptInIsolatedWorld(1017, [
+    { code: `globalThis.qaSavedHintPoll=__holiPage.hints.poll;__holiPage.hints.poll=()=>[];true` },
+  ])
+  try {
+    for (const key of ['a', 'Escape']) {
+      const keyCode = key.length === 1 ? key.toLowerCase() : key
+      page.sendInputEvent({ type: 'keyDown', keyCode })
+      if (key.length === 1) page.sendInputEvent({ type: 'char', keyCode: key })
+      page.sendInputEvent({ type: 'keyUp', keyCode })
+    }
+    await until(
+      async () => (await pageEval<string[]>('window.qaDelayedKeyUps')).length >= 2,
+      'trusted delayed-poll key acknowledgements',
+    )
+    await wait(350)
+    assert((await pageOverlayCount()) > 0, 'fixture did not hold more than two production polls')
+  } finally {
+    await page.executeJavaScriptInIsolatedWorld(1017, [
+      { code: `__holiPage.hints.poll=qaSavedHintPoll;delete globalThis.qaSavedHintPoll` },
+    ])
+  }
+  await until(
+    () =>
+      sent.filter((event) => event.remote === 'A' && event.name === 'hints').length >=
+      delayedPollStart + 2,
+    'production emits buffered prefix key and Escape cancellation',
+  )
+  const delayedEvents = sent
+    .filter((event) => event.remote === 'A' && event.name === 'hints')
+    .slice(delayedPollStart)
+    .map((event) => event.payload as any)
+  const latePrefix = delayedEvents.find((event) => event.type === 'key' && event.key === 'a')
+  const lateCancel = delayedEvents.find((event) => event.type === 'cancel')
+  assert(latePrefix && lateCancel, 'late capture key or Escape cancellation was lost')
+  assert.deepEqual(
+    {
+      tab: latePrefix.tab,
+      nonce: latePrefix.nonce,
+      attachment: latePrefix.attachment,
+      request: latePrefix.request,
+      origin: latePrefix.origin,
+    },
+    {
+      tab: lateCancel.tab,
+      nonce: lateCancel.nonce,
+      attachment: lateCancel.attachment,
+      request: lateCancel.request,
+      origin: lateCancel.origin,
+    },
+    'late captured keys and cancellation must retain exact owner identity',
+  )
+  hintMark('native-delayed-poll-forwards-prefix-and-escape-through-settled-owner')
 
   await pageEval(`document.querySelector('#search').focus()`)
   await requestPageHints('#search')
