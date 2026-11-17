@@ -30,19 +30,35 @@ const inside = (root: string, path: string) => {
 }
 
 /** Every path under `dir`, resolved, must stay inside `root`. */
-async function assertContained(root: string, dir: string): Promise<void> {
+async function assertContained(
+  root: string,
+  dir: string,
+  state: { visited: Set<string>; entries: number; signal?: AbortSignal },
+): Promise<void> {
+  if (state.signal?.aborted) throw new CapabilityError('FORBIDDEN', 'publication cancelled')
+  if (++state.entries > 10_000) throw new CapabilityError('BAD_REQUEST', 'plugin tree is too large')
   const real = await realpath(dir)
   if (!inside(root, real))
     throw new CapabilityError('BAD_REQUEST', `${dir} points outside the plugin`)
+  if (state.visited.has(real)) return
+  state.visited.add(real)
   if (!(await stat(real)).isDirectory()) return
-  for (const entry of await readdir(real)) await assertContained(root, join(real, entry))
+  for (const entry of await readdir(real))
+    await assertContained(root, join(real, entry), state)
 }
 
 /** Copy `from`, a folder inside the plugin at `root`, to `to`. */
-async function copyFromPlugin(root: string, from: string, to: string): Promise<void> {
-  await assertContained(root, from)
+async function copyFromPlugin(
+  root: string,
+  from: string,
+  to: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await assertContained(root, from, { visited: new Set(), entries: 0, signal })
+  if (signal?.aborted) throw new CapabilityError('FORBIDDEN', 'publication cancelled')
   await mkdir(dirname(to), { recursive: true })
   await cp(from, to, { recursive: true, dereference: true })
+  if (signal?.aborted) throw new CapabilityError('FORBIDDEN', 'publication cancelled')
 }
 
 /** Refresh only declared skill folders after preflighting every source and destination. */
@@ -58,6 +74,9 @@ export async function refreshSkills(
     retainOriginals?: boolean
   },
 ): Promise<string[]> {
+  const names = (manifest.skills ?? []).map((path) => basename(path))
+  if (new Set(names.map((name) => name.toLocaleLowerCase('en-US'))).size !== names.length)
+    throw new CapabilityError('BAD_REQUEST', 'skill paths have colliding destination names')
   return transactSkillRefresh(
     (manifest.skills ?? []).map((path) => ({ path, name: basename(path) })),
     codeDir,
@@ -106,10 +125,15 @@ export async function seedApps(
   manifest: Pick<PluginManifest, 'apps'>,
   codeDir: string,
   vaultRoot: string,
-  options: { guard?: () => void | Promise<void> } = {},
+  options: { guard?: () => void | Promise<void>; signal?: AbortSignal } = {},
 ): Promise<string[]> {
   if ((manifest.apps ?? []).length === 0) return []
   const root = await realpath(codeDir)
+  const apps = manifest.apps ?? []
+  const names = apps.map((app) => basename(app))
+  const aliases = names.map((name) => name.toLocaleLowerCase('en-US'))
+  if (new Set(aliases).size !== aliases.length)
+    throw new CapabilityError('BAD_REQUEST', 'app paths have colliding destination names')
   const staged: { name: string; stage: string; target: string }[] = []
   const published: string[] = []
   const vault = await realpath(vaultRoot)
@@ -127,7 +151,7 @@ export async function seedApps(
   const stageRoot = join(stateParent, `community-apps.local.${randomUUID()}`)
   await mkdir(stageRoot, { mode: 0o700 })
   try {
-    for (const app of manifest.apps ?? []) {
+    for (const app of apps) {
       const name = basename(app)
       if (!isAppBundlePath(name))
         throw new CapabilityError('BAD_REQUEST', `${app} is not a vault app's folder`)
@@ -137,7 +161,7 @@ export async function seedApps(
       const target = join(vaultRoot, name)
       if ((await lstat(target).catch(() => null)) !== null) continue
       const stage = join(stageRoot, name)
-      await copyFromPlugin(root, from, stage)
+      await copyFromPlugin(root, from, stage, options.signal)
       staged.push({ name, stage, target })
     }
     for (const item of staged) {
