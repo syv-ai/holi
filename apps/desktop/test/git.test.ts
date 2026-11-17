@@ -13,7 +13,7 @@
  */
 import { execFile } from 'node:child_process'
 import { commitChanges } from './commit-changes'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -1180,6 +1180,47 @@ describe('changedFiles', () => {
     })
     expect(await repo.revisionChanges(baseline!, tip!, 'scope/a.md')).toMatchObject({
       complete: true,
+    })
+  })
+
+  it('omits symlinks from history after they are deleted', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await mkdir(join(dir, 'scope'), { recursive: true })
+    await symlink('../outside.md', join(dir, 'scope', 'unsafe.md'))
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'add symlink'])
+    await rm(join(dir, 'scope', 'unsafe.md'))
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'delete symlink'])
+    const deleted = await repo.head()
+
+    expect(await repo.revisionChanges(baseline!, deleted!, 'scope')).toEqual({
+      complete: true,
+      reason: 'ok',
+      changes: [],
+    })
+  })
+
+  it('omits a symlink-to-file replacement record from history', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await mkdir(join(dir, 'scope'), { recursive: true })
+    await symlink('../outside.md', join(dir, 'scope', 'unsafe.md'))
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'add symlink'])
+    await rm(join(dir, 'scope', 'unsafe.md'))
+    await writeFile(join(dir, 'scope', 'unsafe.md'), 'regular file\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'replace symlink'])
+    const replaced = await repo.head()
+
+    expect(await repo.revisionChanges(baseline!, replaced!, 'scope')).toEqual({
+      complete: true,
+      reason: 'ok',
+      changes: [],
     })
   })
 

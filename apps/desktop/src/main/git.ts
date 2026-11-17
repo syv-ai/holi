@@ -867,7 +867,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       const baseArgs = [
         'diff-tree',
         '--no-commit-id',
-        '--name-only',
+        '--raw',
         '-z',
         '--no-renames',
         '--no-ext-diff',
@@ -882,7 +882,28 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
         if (path !== '') args.push('--', path)
         const result = await git(args)
         if (!result.ok) return incomplete('history-unavailable')
-        for (const changed of new Set(result.stdout.split('\0').filter(Boolean))) {
+        // Raw records retain both modes without reading blobs. Exclude a path if
+        // either historical side is a symlink or gitlink, even when absent now.
+        const records = result.stdout.split('\0')
+        const changedPaths = new Set<string>()
+        for (let i = 0; i < records.length;) {
+          const header = records[i++]
+          if (!header) continue
+          const fields = header.trimStart().split(/\s+/)
+          const oldMode = fields[0]?.slice(1)
+          const newMode = fields[1]
+          const changed = records[i++]
+          if (!changed) break
+          if (
+            oldMode === '120000' ||
+            newMode === '120000' ||
+            oldMode === '160000' ||
+            newMode === '160000'
+          )
+            continue
+          changedPaths.add(changed)
+        }
+        for (const changed of changedPaths) {
           changes.push({ sha, path: changed })
           if (changes.length > 2000) return incomplete('limit')
         }
