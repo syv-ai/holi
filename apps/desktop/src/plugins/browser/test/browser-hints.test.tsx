@@ -161,6 +161,49 @@ test('notifies the owning coordinator before retiring only the revoked request',
   fixture.adapter.dispose()
 })
 
+test('adapter disposal invalidates the owning active request before retiring it', async () => {
+  const fixture = setup()
+  await fixture.adapter.discover(1, new AbortController().signal)
+  const invalidate = vi.fn()
+  fixture.adapter.subscribe(1, invalidate, () => false)
+
+  fixture.adapter.dispose()
+
+  expect(invalidate).toHaveBeenCalledOnce()
+  expect(input('browser.hints-clear')).toEqual([
+    { tab: fixture.tab, nonce: fixture.nonce, attachment: fixture.attachment, request: 1 },
+  ])
+  expect(await fixture.adapter.present(1, 2, [])).toBe(false)
+})
+
+test('adapter disposal invalidates a pending discovery without publishing its late result', async () => {
+  const fixture = setup()
+  let resolve!: (value: unknown) => void
+  run.mockImplementationOnce(() => new Promise((done) => (resolve = done)))
+  const discovery = fixture.adapter.discover(4, new AbortController().signal)
+  const invalidate = vi.fn()
+  fixture.adapter.subscribe(4, invalidate, () => false)
+
+  fixture.adapter.dispose()
+  resolve({ owner: { request: 7, origin: 'opaque', snapshot: 1, geometry: 0 }, targets: [] })
+
+  expect(invalidate).toHaveBeenCalledOnce()
+  expect(await discovery).toBeNull()
+  expect(input('browser.hints-clear')).toHaveLength(1)
+})
+
+test('disposing an adapter after its request subscription ended cannot invalidate it', async () => {
+  const fixture = setup()
+  await fixture.adapter.discover(1, new AbortController().signal)
+  const invalidate = vi.fn()
+  const unsubscribe = fixture.adapter.subscribe(1, invalidate, () => false)
+  unsubscribe()
+
+  fixture.adapter.dispose()
+
+  expect(invalidate).not.toHaveBeenCalled()
+})
+
 test('aborts delayed discovery and refuses publication after ownership changes', async () => {
   const fixture = setup()
   let resolve!: (value: unknown) => void
