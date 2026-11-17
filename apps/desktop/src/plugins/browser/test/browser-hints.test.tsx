@@ -211,20 +211,25 @@ test('a rejected activation clears its captured request even after a new request
 test('routes only keys owned by the matching request and opaque origin', async () => {
   const fixture = setup()
   await fixture.adapter.discover(4, new AbortController().signal)
+  const wireRequest = input('browser.hints-discover')[0].request as number
   const routed: KeyboardEvent[] = []
   fixture.adapter.subscribe(
     4,
     () => undefined,
     (event) => (routed.push(event), true),
   )
-  fixture.event(8, fixture.ownerOrigin, 'key', { key: 'a', code: 'KeyA' })
-  fixture.event(4, fixture.ownerOrigin, 'key', {
+  fixture.event(wireRequest + 1, fixture.ownerOrigin, 'key', { key: 'a', code: 'KeyA' })
+  fixture.event(wireRequest, fixture.ownerOrigin, 'key', {
     key: 'stale',
     code: 'KeyS',
     snapshot: 1,
   })
-  fixture.event(4, 'wrong-owner', 'key', { key: 'b', code: 'KeyB' })
-  fixture.event(4, fixture.ownerOrigin, 'key', { key: 'x', code: 'KeyX', ctrlKey: true })
+  fixture.event(wireRequest, 'wrong-owner', 'key', { key: 'b', code: 'KeyB' })
+  fixture.event(wireRequest, fixture.ownerOrigin, 'key', {
+    key: 'x',
+    code: 'KeyX',
+    ctrlKey: true,
+  })
   expect(routed).toHaveLength(1)
   expect(routed[0]).toMatchObject({ key: 'x', code: 'KeyX', ctrlKey: true })
   fixture.adapter.dispose()

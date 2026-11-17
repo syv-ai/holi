@@ -652,25 +652,46 @@
   }
   const onVimKey = (event) => {
     if (!event.isTrusted) return
-    if (hintOwner && !hintClosed && eligibleNow()) {
-      if (event.isComposing || event.repeat || event.metaKey || event.ctrlKey || event.altKey)
+    if (hintPendingCapture !== null && eligibleNow()) {
+      if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey) {
+        invalidateHints()
         return
-      if (event.key === 'Escape' || event.key === 'Backspace' || /^[a-zA-Z]$/.test(event.key)) {
-        event.preventDefault()
-        event.stopImmediatePropagation()
-        queueHintEvent({
-          type: 'key',
-          key: event.key,
-          code: event.code,
-          repeat: event.repeat,
-          isComposing: event.isComposing,
-          metaKey: event.metaKey,
-          ctrlKey: event.ctrlKey,
-          altKey: event.altKey,
-          shiftKey: event.shiftKey,
-          owner: { ...hintOwner },
-        })
       }
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      queueHintEvent({
+        type: 'key',
+        capture: hintPendingCapture,
+        key: event.key,
+        code: event.code,
+        repeat: event.repeat,
+        isComposing: event.isComposing,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+      })
+      return
+    }
+    if (hintOwner && !hintClosed && eligibleNow()) {
+      if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey) {
+        invalidateHints()
+        return
+      }
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      queueHintEvent({
+        type: 'key',
+        key: event.key,
+        code: event.code,
+        repeat: event.repeat,
+        isComposing: event.isComposing,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        owner: { ...hintOwner },
+      })
       return
     }
     const target = event.target
@@ -838,6 +859,12 @@
       hintSnapshot.clear()
       hintRoot?.remove()
       hintRoot = null
+      hintShadow = null
+      visibleHintLabels = []
+      hintGeometry = 0
+      hintSnapshotGeometry = -1
+      hintCaptureSequence = 0
+      hintPendingCapture = null
       hintEvents.length = 0
       return vimNonce
     },
@@ -875,6 +902,9 @@
   let visibleHintLabels = []
   const hintEvents = []
   let hintGeometry = 0
+  let hintSnapshotGeometry = -1
+  let hintCaptureSequence = 0
+  let hintPendingCapture = null
   const queueHintEvent = (event) => {
     if (hintEvents.length >= 32) {
       const owner = hintOwner && { ...hintOwner }
@@ -954,6 +984,11 @@
   }
   const invalidateHints = () => {
     hintGeometry++
+    hintSnapshotGeometry = -1
+    if (hintPendingCapture !== null) {
+      queueHintEvent({ type: 'revoke', capture: hintPendingCapture })
+      hintPendingCapture = null
+    }
     if (hintOwner && !hintClosed) queueHintEvent({ type: 'revoke', owner: { ...hintOwner } })
     if (hintRoot) {
       hintRoot.remove()
@@ -971,38 +1006,58 @@
   ])
     addEventListener(eventName, invalidateHints, true)
   new MutationObserver((records) => {
-    if (
-      records.every((record) =>
-        [...record.addedNodes, ...record.removedNodes].some((node) => hintOwnedRoots.has(node)),
-      )
+    const ownOnly = records.every((record) =>
+      [...record.addedNodes, ...record.removedNodes].some((node) => hintOwnedRoots.has(node)),
     )
+    // Ignore our append and an explicit clear, but not a page removing the
+    // overlay root: the closed shadow tree cannot protect a detached overlay.
+    if (ownOnly && (!hintRoot || hintRoot.isConnected || hintClosed)) return
+    if (hintRoot && !hintRoot.isConnected && hintOwner && !hintClosed) {
+      hintClosed = true
+      hintSnapshot.clear()
+      hintRoot = null
+      hintShadow = null
+      queueHintEvent({ type: 'revoke', owner: { ...hintOwner } })
       return
+    }
     invalidateHints()
   }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true })
   document.addEventListener(
     'keydown',
     (event) => {
-      if (!event.isTrusted || (hintOwner && !hintClosed)) return
       if (
-        !vimEnabled ||
-        !eligibleNow() ||
-        vimMode !== 'normal' ||
-        event.isComposing ||
-        event.repeat ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey
+        !event.isTrusted ||
+        (hintOwner && !hintClosed && !hintSnapshot.size && hintPendingCapture === null)
       )
         return
-      if (event.key.toLowerCase() === 'f') {
+      if (!vimEnabled || !eligibleNow() || vimMode !== 'normal' || event.repeat) return
+      const captureActive = hintSnapshot.size > 0 || hintPendingCapture !== null
+      if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey) {
+        if (captureActive) invalidateHints()
+        return
+      }
+      if (event.key.toLowerCase() === 'f' && !captureActive) {
         event.preventDefault()
         event.stopImmediatePropagation()
-        queueHintEvent({ type: 'request' })
-      } else if (hintSnapshot.size && event.key.length === 1 && /^[a-zA-Z]$/.test(event.key)) {
+        hintPendingCapture = ++hintCaptureSequence
+        queueHintEvent({ type: 'request', capture: hintPendingCapture })
+      } else if (hintSnapshot.size || hintPendingCapture !== null) {
+        // While labels are active, all unmodified keys belong to the host's
+        // label parser (including Escape, Backspace, digits and punctuation).
+        // Modified/composition keys retain native page behavior after revoke.
+        if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) {
+          invalidateHints()
+          return
+        }
         event.preventDefault()
         event.stopImmediatePropagation()
         queueHintEvent({
           type: 'key',
+          ...(hintPendingCapture === null
+            ? hintOwner
+              ? { owner: { ...hintOwner } }
+              : {}
+            : { capture: hintPendingCapture }),
           key: event.key,
           code: event.code,
           repeat: event.repeat,
@@ -1031,6 +1086,21 @@
     a.snapshot === b.snapshot &&
     a.geometry === b.geometry
   const hints = {
+    reset() {
+      hintOwner = null
+      hintClosed = true
+      hintRevision = 0
+      hintSnapshot.clear()
+      hintRoot?.remove()
+      hintRoot = null
+      hintShadow = null
+      visibleHintLabels = []
+      hintGeometry = 0
+      hintSnapshotGeometry = -1
+      hintCaptureSequence = 0
+      hintPendingCapture = null
+      hintEvents.length = 0
+    },
     poll() {
       return hintEvents.splice(0)
     },
@@ -1062,26 +1132,32 @@
         (hintClosed || owner.snapshot <= hintOwner.snapshot)
       )
         return null
-      if (owner.geometry < hintGeometry) return null
+      // `owner.geometry` belongs to main-process placement. Page geometry is a
+      // separate local revision: its event count cannot be compared with main's.
       hintSnapshot.clear()
       hintRoot?.remove()
       hintRoot = null
       hintOwner = { ...owner }
       hintClosed = false
       hintRevision = 0
-      hintGeometry = owner.geometry
-      return hintTargets()
-        .slice(0, 200)
-        .map(({ id, label, x, y, element, rect }) => {
-          hintSnapshot.set(id, { element, rect, x, y, owner: { ...owner } })
-          return { id, label, x, y }
-        })
+      if (owner.capture === hintPendingCapture) hintPendingCapture = null
+      const geometry = hintGeometry
+      hintSnapshotGeometry = geometry
+      const targets = hintTargets()
+      // A synchronous focus/scroll change while collecting targets invalidates
+      // the snapshot before it can become actionable.
+      if (geometry !== hintGeometry) return null
+      return targets.slice(0, 200).map(({ id, label, x, y, element, rect }) => {
+        hintSnapshot.set(id, { element, rect, x, y, owner: { ...owner } })
+        return { id, label, x, y }
+      })
     },
     present(owner, revision, labels, theme = 'light') {
       if (
         !sameHintOwner(owner, hintOwner) ||
         hintClosed ||
-        hintGeometry !== owner.geometry ||
+        hintSnapshotGeometry !== hintGeometry ||
+        (hintRoot !== null && !hintRoot.isConnected) ||
         !Number.isSafeInteger(revision) ||
         revision <= hintRevision ||
         !Array.isArray(labels) ||
@@ -1152,17 +1228,27 @@
       return visibleHintLabels.map((item) => ({ ...item }))
     },
     enterInsert(owner, id) {
-      if (!sameHintOwner(owner, hintOwner) || hintClosed || hintGeometry !== owner.geometry)
+      if (
+        !sameHintOwner(owner, hintOwner) ||
+        hintClosed ||
+        hintSnapshotGeometry !== hintGeometry ||
+        !hintRoot?.isConnected
+      )
         return false
       const target = hintSnapshot.get(id)
-      if (!target || !hintField(target.element)) return false
+      if (!target || !target.element.isConnected || !hintField(target.element)) return false
       vimField = target.element
       vimMode = 'insert'
       verticalColumn = null
       return true
     },
     activate(owner, id) {
-      if (!sameHintOwner(owner, hintOwner) || hintClosed || hintGeometry !== owner.geometry)
+      if (
+        !sameHintOwner(owner, hintOwner) ||
+        hintClosed ||
+        hintSnapshotGeometry !== hintGeometry ||
+        !hintRoot?.isConnected
+      )
         return null
       const target = hintSnapshot.get(id)
       if (!target || !sameHintOwner(target.owner, owner) || !target.element.isConnected) return null

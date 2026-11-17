@@ -1,4 +1,4 @@
-import { expect, test, vi } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { browserHintCapabilities, type BrowserHintPages } from '../main/capabilities'
 
 const owner = {
@@ -21,6 +21,12 @@ const pages = {
   activateHint: vi.fn(async () => true),
 } as unknown as BrowserHintPages
 const capabilities = browserHintCapabilities(pages)
+beforeEach(() => {
+  vi.mocked(pages.discoverHints).mockClear()
+  vi.mocked(pages.presentHints).mockClear()
+  vi.mocked(pages.clearHints).mockClear()
+  vi.mocked(pages.activateHint).mockClear()
+})
 const call = async (name: keyof typeof capabilities, wire: unknown) => {
   const capability = capabilities[name]
   const params = capability.params(wire)
