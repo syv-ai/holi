@@ -48,7 +48,11 @@ export function createCommunityHintAdapter(
       return false
     for (let node: HTMLElement | null = frame; node; node = node.parentElement) {
       const style = getComputedStyle(node)
-      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        (style.opacity !== '' && Number(style.opacity) === 0)
+      )
         return false
     }
     const rect = frame.getBoundingClientRect()

@@ -118,10 +118,13 @@ describe('community frame hint protocol', () => {
       foreignFrame.contentWindow,
       'https://host.example',
     )
-    host({ type: 'holi-hints:init', nonce, enabled: true }, window, 'https://attacker.example')
     expect(sent('holi-hints:snapshot')).toHaveLength(0)
+    // The first legitimate parent init establishes the origin; only subsequent
+    // messages can be checked against that pinned origin.
     init()
     const snapshot = sent('holi-hints:snapshot').at(-1)!
+    host({ type: 'holi-hints:init', nonce, enabled: true }, window, 'https://attacker.example')
+    expect(sent('holi-hints:snapshot')).toHaveLength(1)
     expect(snapshot.targets.map(({ kind, label }) => [kind, label])).toEqual([
       ['button', 'Save'],
       ['link', 'Next'],
@@ -239,19 +242,16 @@ describe('community frame hint protocol', () => {
   it('preserves link default action through click and loading twice leaves one listener', () => {
     setup()
     const link = document.querySelector('a')!
-    rect(link)
+    // The link is behind the button in this deterministic hit-test fixture;
+    // give it its own non-overlapping rectangle so it is genuinely targetable.
+    rect(link, 90)
     const click = vi.fn()
     link.addEventListener('click', click)
     init()
     const target = sent('holi-hints:snapshot')
       .at(-1)!
       .targets.find((item) => item.kind === 'link')!
-    host({
-      type: 'holi-hints:activate',
-      nonce,
-      revision: sent('holi-hints:snapshot').at(-1)!.revision,
-      id: target.id,
-    })
+    activate(sent('holi-hints:snapshot').at(-1)!.revision, target.id)
     expect(click).toHaveBeenCalledTimes(1)
     expect(click.mock.instances).toHaveLength(1)
 

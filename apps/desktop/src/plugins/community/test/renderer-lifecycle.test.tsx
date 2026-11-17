@@ -188,8 +188,31 @@ test('community guest hints are disabled unless Vim editing and the focused load
   )
   await waitFor(() => expect(view.container.querySelector('iframe')).not.toBeNull())
   const iframe = view.container.querySelector('iframe')!
+  Object.defineProperty(iframe, 'clientWidth', { configurable: true, value: 400 })
+  Object.defineProperty(iframe, 'clientHeight', { configurable: true, value: 300 })
+  Object.defineProperty(iframe, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 400,
+      bottom: 300,
+      width: 400,
+      height: 300,
+      toJSON: () => ({}),
+    }),
+  })
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    value: () => iframe,
+  })
   const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => {})
   iframe.focus()
+  // JSDOM does not make an iframe the active element when focused; model the
+  // browser state the adapter deliberately requires before enabling guest keys.
+  Object.defineProperty(document, 'activeElement', { configurable: true, get: () => iframe })
   fireEvent.load(iframe)
   await act(async () => {
     store.set(vimCodeEditingAtom, true)
