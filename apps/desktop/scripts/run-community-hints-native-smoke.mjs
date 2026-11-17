@@ -558,19 +558,32 @@ try {
     'split panes restrict guest hints to the exact focused pane; focus changes cancel and a hidden pane does not interfere with the primary pane',
   )
   await focusGuest()
-  await key('f')
-  await wait('!!document.querySelector("[data-host-hints]")', 'final light proof session')
-  await shot('light.png')
-  assert((await hints()).some((hint) => hint.target === 'Stable button'))
-  // Capture actual native window frames over one measured monotonic interval.
   const recordingStartedAt = process.hrtime.bigint()
-  for (let index = 0; index < 8; index++) {
+  const recordFrame = async () => {
     const frame = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
     screencastFrames.push({
       image: Buffer.from(frame.data, 'base64'),
       timestamp: Number(process.hrtime.bigint() - recordingStartedAt) / 1e9,
     })
-    if (index < 7) await sleep(450)
+  }
+  for (let index = 0; index < 4; index++) {
+    await recordFrame()
+    if (index < 3) await sleep(500)
+  }
+  await key('f')
+  await wait('!!document.querySelector("[data-host-hints]")', 'final light proof session')
+  await shot('light.png')
+  const finalButton = (await hints()).find((hint) => hint.target === 'Native button')
+  assert(finalButton?.key, 'native final activation label absent')
+  for (const letter of finalButton.key) await key(letter)
+  await wait('window.fixtureClicks===1', 'final native button activation', true)
+  await evaluate('document.documentElement.dataset.theme="dark"')
+  await shot('dark.png')
+  // Keep recording actual frames for two seconds after native activation; the last
+  // captured screenshot is the video's final frame in the same monotonic domain.
+  for (let index = 0; index < 5; index++) {
+    await recordFrame()
+    if (index < 4) await sleep(500)
   }
   assert(screencastFrames.length > 0, 'native screenshot recording produced no frames')
   assert(
