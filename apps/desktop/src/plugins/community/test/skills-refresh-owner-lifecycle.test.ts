@@ -294,6 +294,79 @@ describe('community refresh through real owner attachments', () => {
     }
   })
 
+  it('activation adopts only a newer, consented release from the pinned source', async () => {
+    const f = await fixture()
+    await waitFor(() => f.commandEvents() >= 2, 'both initial owner refreshes did not finish')
+    const install = (await f.owner.store.get('demo'))!
+    if (install.source.kind !== 'release') throw new Error('fixture must be a release')
+    const oldDir = f.owner.store.releaseDir('demo', install.source.commit)
+    const codeDir = f.owner.store.codeDir(install)
+    await writeFile(
+      join(codeDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, version: '1.1.0' }),
+    )
+    const { execFileSync } = await import('node:child_process')
+    execFileSync(
+      'git',
+      ['-c', 'user.name=Ada', '-c', 'user.email=ada@example.test', 'commit', '-am', 'release 1.1'],
+      { cwd: codeDir, stdio: 'ignore' },
+    )
+    const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: codeDir,
+      encoding: 'utf8',
+    }).trim()
+    const newDir = f.owner.store.releaseDir('demo', commit)
+    await mkdir(join(newDir, '..'), { recursive: true })
+    await rename(oldDir, newDir)
+    const newer: Install = {
+      id: 'demo',
+      source: { ...install.source, tag: 'v1.1.0', commit },
+      manifest: { ...manifest, version: '1.1.0' },
+      setup: 'ok',
+    }
+    await f.owner.store.put(newer)
+    await f.owner.consent.grant('demo', commit)
+    await f.owner.mutate(async () => undefined)
+    for (const vault of f.vaults) {
+      const pin = JSON.parse(await readFile(join(vault.root, pluginPinPath('demo')), 'utf8'))
+      expect(pin).toMatchObject({ version: '1.1.0', commit })
+      expect(await readFile(join(vault.root, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
+        'pinned skill\n',
+      )
+    }
+    await f.owner.store.put({ ...newer, manifest: { ...manifest, version: '0.9.0' } })
+    await f.owner.mutate(async () => undefined)
+    const [first] = f.vaults
+    const afterOlderInstall = JSON.parse(
+      await readFile(join(first!.root, pluginPinPath('demo')), 'utf8'),
+    )
+    expect(afterOlderInstall).toMatchObject({ version: '1.1.0', commit })
+
+    await f.owner.store.put({
+      ...newer,
+      source: {
+        kind: 'release',
+        repo: 'other/demo',
+        path: '',
+        tag: 'v9.0.0',
+        commit,
+      },
+      manifest: { ...manifest, version: '9.0.0' },
+    })
+    await f.owner.mutate(async () => undefined)
+    const afterSourceSwitch = JSON.parse(
+      await readFile(join(first!.root, pluginPinPath('demo')), 'utf8'),
+    )
+    expect(afterSourceSwitch).toMatchObject({ repo: 'owner/demo', version: '1.1.0', commit })
+    const row = (
+      (await f.activations[0]!.table['community.list']!.run(
+        { root: first!.root, remote: first!.remote } as CapabilityContext,
+        {},
+      )) as { id: string; status: string }[]
+    ).find((item) => item.id === 'demo')
+    expect(row?.status).toBe('pin-differs')
+  })
+
   it('uses owner admission without triggering mutation observers', async () => {
     const f = await fixture()
     const [a] = f.activations

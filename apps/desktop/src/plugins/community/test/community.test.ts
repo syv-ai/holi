@@ -215,7 +215,16 @@ describe('installing', () => {
     commitAll('initial guide')
     git(repoDir, 'tag', '-f', 'v0.1.0')
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    const initialInstall = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await call('community.consent', {
+      id: 'prezzi',
+      commit: (initialInstall.install as { commit: string }).commit,
+    })
+    await call('community.setup', { id: 'prezzi' })
     await call('community.pin', { id: 'prezzi' })
     const oldPin = JSON.parse(
       await readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8'),
@@ -229,7 +238,17 @@ describe('installing', () => {
     )
     commitAll('updated guide')
     git(repoDir, 'tag', 'v0.2.0')
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.2.0' })
+    const updatedInstall = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.2.0',
+    })
+    await call('community.consent', {
+      id: 'prezzi',
+      commit: (updatedInstall.install as { commit: string }).commit,
+    })
+    await call('community.setup', { id: 'prezzi' })
+    await call('community.pin', { id: 'prezzi' })
 
     expect(
       JSON.parse(await readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8')).commit,

@@ -220,13 +220,16 @@ export function PluginsSettings({
                 <>
                   {row.description !== '' && <>{row.description} </>}
                   {row.check?.ok === false ? (
-                    <span className="text-amber-400">{row.check.hint}</span>
+                    <span className="text-destructive">{row.check.hint}</span>
                   ) : (
                     STATUS[row.status]
                   )}
                   {row.install?.kind === 'dev' && <> · from {row.install.folder}</>}
                   {row.commandsNote !== null && (
-                    <span className="text-amber-400"> {row.commandsNote}</span>
+                    <span className="text-destructive"> {row.commandsNote}</span>
+                  )}
+                  {row.syncError !== undefined && (
+                    <span className="text-destructive"> {row.syncError}</span>
                   )}
                 </>
               }
