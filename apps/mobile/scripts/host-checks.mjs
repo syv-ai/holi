@@ -99,12 +99,52 @@ export function validateCheckpoint(marker, { runId, pid, launchedAt, now, docume
   assert.match(basename(marker.stage), stageNamePattern)
 }
 
+export function moveCrashCases() {
+  return [
+    { ordinal: 0, phase: 'journal-before', direction: 'before', path: null },
+    { ordinal: 1, phase: 'journal-after', direction: 'after', path: null },
+    ...['from.md', 'to.md', 'back-a.md', 'back-b.md'].flatMap((path, index) => [
+      { ordinal: 2 + index * 2, phase: 'file-before', direction: 'before', path },
+      { ordinal: 3 + index * 2, phase: 'file-after', direction: 'after', path },
+    ]),
+    { ordinal: 10, phase: 'cleanup-before', direction: 'before', path: 'journal' },
+    { ordinal: 11, phase: 'cleanup-after', direction: 'after', path: 'journal' },
+    { ordinal: 12, phase: 'recovery-file-before', direction: 'before', path: 'to.md' },
+  ]
+}
+
+export function validateMoveCheckpoint(marker, context) {
+  const { runId, caseInfo, pid, launchedAt, now, root, privatePath } = context
+  assert.equal(marker.schemaVersion, 1)
+  assert.equal(marker.runId, runId)
+  assert.equal(marker.ordinal, caseInfo.ordinal)
+  assert.equal(marker.phase, caseInfo.phase)
+  assert.equal(marker.direction, caseInfo.direction)
+  assert.equal(marker.path, caseInfo.path === 'journal' ? marker.path : caseInfo.path)
+  assert.equal(marker.root, root)
+  assert.equal(marker.privatePath, privatePath)
+  assert.equal(marker.pid, pid)
+  assert.ok(Number.isSafeInteger(pid) && pid > 0)
+  assert.ok(Number.isSafeInteger(marker.startedAt) && marker.startedAt >= launchedAt)
+  assert.ok(Number.isSafeInteger(marker.readyAt) && marker.readyAt >= marker.startedAt)
+  assert.ok(marker.readyAt <= now && now - marker.readyAt < 60_000)
+  assert.match(
+    marker.operationId,
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i,
+  )
+  if (caseInfo.path === null) assert.equal(marker.path, null)
+  else if (caseInfo.path === 'journal') assert.equal(marker.path, `move-${marker.operationId}.json`)
+  else assert.equal(marker.path, caseInfo.path)
+  return marker
+}
+
 export function validateSharedGraph(graph) {
   const resources = [
     'mobile-path-safety.ts',
     'path-safety.ts',
     'vault-format.ts',
     'vault-format.v1.json',
+    'wiki-links.ts',
   ]
   assert.equal(graph.schemaVersion, 1)
   assert.deepEqual(graph.resources, resources)
