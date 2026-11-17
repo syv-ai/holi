@@ -319,7 +319,7 @@ export const DocumentComments = Extension.create<{
             if (tr.getMeta('vimChangeInsert')) {
               for (const range of value.ranges) {
                 if (ranges.some((mapped) => mapped.id === range.id)) continue
-                const pos = tr.mapping.map(range.from, -1)
+                const pos = tr.selection.head
                 pendingChangeRanges.push({ id: range.id, from: pos, to: pos })
               }
             }
@@ -334,6 +334,12 @@ export const DocumentComments = Extension.create<{
         props: {
           decorations(state) {
             return documentCommentsKey.getState(state)?.decorations
+          },
+          handleDOMEvents: {
+            blur(view) {
+              view.dispatch(view.state.tr.setMeta(documentCommentsKey, {}))
+              return false
+            },
           },
           handleClick(view, pos) {
             const ids = threadsAt(view.state, pos)
