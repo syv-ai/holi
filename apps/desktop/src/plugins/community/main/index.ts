@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { communityPluginsSignature } from '@holi/shared'
 import { installedInfos, remoteUrl, type MainPlugin } from '../../../main/plugin-api'
 import { COMMUNITY_INFO } from '../info'
-import hintBridge from '../shared/hint-bridge.js?asset'
+import hintBridge from '../shared/hint-bridge.js?asset&asarUnpack'
 import {
   COMMUNITY_NAMESPACES,
   communityCapabilities,
