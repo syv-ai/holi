@@ -94,7 +94,11 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     }
   }
   // Folders a crash left behind. Their processes died with Holi's PTYs.
-  const swept = rm(deps.scratchRoot, { recursive: true, force: true })
+  const swept = rm(deps.scratchRoot, { recursive: true, force: true }).catch((err: unknown) => {
+    drainErrors.add(err)
+    throw err
+  })
+  void swept.catch(() => {})
 
   /** Bumped as the vault is left: a start that began before sees it. */
   let generation = 0
@@ -134,18 +138,39 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     cancellations.add(controller)
     let sessionId: string | null = null
     const drop = async (): Promise<void> => {
-      cancellations.delete(controller)
-      if (sessionId !== null) active.delete(sessionId)
-      await rm(dir, { recursive: true, force: true })
-      await rm(state, { recursive: true, force: true })
+      try {
+        await rm(dir, { recursive: true, force: true })
+        await rm(state, { recursive: true, force: true })
+        cancellations.delete(controller)
+        if (sessionId !== null) active.delete(sessionId)
+      } catch (err) {
+        drainErrors.add(err)
+        throw err
+      }
     }
-    await mkdir(dir, { recursive: true })
-    await mkdir(state, { recursive: true, mode: 0o700 })
+    try {
+      await mkdir(dir, { recursive: true })
+      await mkdir(state, { recursive: true, mode: 0o700 })
+    } catch (err) {
+      drainErrors.add(err)
+      throw err
+    }
     // What it was given and what it wrote, each written again only while
     // the vault still holds it, and what it wrote into new folders, which
     // no copy writes over otherwise.
     const made: Made = new Map()
-    const unread = await copyIn(deps.vault.root, dir, scope.read, made)
+    let unread: string | null
+    try {
+      unread = await copyIn(deps.vault.root, dir, scope.read, made)
+    } catch (err) {
+      drainErrors.add(err)
+      try {
+        await drop()
+      } catch (cleanupError) {
+        drainErrors.add(cleanupError)
+      }
+      throw err
+    }
     if (unread !== null) {
       await drop()
       return { ok: false, message: unread }
@@ -167,6 +192,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
           const leftOut = leftOutMessage(skipped)
           return leftOut === undefined ? {} : { leftOut }
         } catch (err) {
+          drainErrors.add(err)
           log(`${name}: ${(err as Error).message}`)
           return { error: (err as Error).message }
         }
@@ -187,39 +213,50 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
       await drop()
       return gone
     }
-    const started = await deps.own.start(provider.id, {
-      name,
-      prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
-      ...(cols === undefined ? {} : { cols }),
-      ...(rows === undefined ? {} : { rows }),
-      fence: {
-        dir,
-        state,
-        turnEnded: copy,
-        exited: () => {
-          const finalizer = copy()
-            .then(async (result) => {
-              try {
-                await provider.release?.(state)
+    let started: StartResult
+    try {
+      started = await deps.own.start(provider.id, {
+        name,
+        prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
+        ...(cols === undefined ? {} : { cols }),
+        ...(rows === undefined ? {} : { rows }),
+        fence: {
+          dir,
+          state,
+          turnEnded: copy,
+          exited: () => {
+            const finalizer = copy()
+              .then(async (result) => {
+                try {
+                  await provider.release?.(state)
+                  return result
+                } catch (err) {
+                  drainErrors.add(err)
+                  throw new Error(`Could not release agent state: ${String(err)}`)
+                }
+              })
+              .then(async (result) => {
+                await drop()
                 return result
-              } catch (err) {
-                drainErrors.add(err)
-                throw new Error(`Could not release agent state: ${String(err)}`)
-              }
-            })
-            .then(async (result) => {
-              await drop()
-              return result
-            })
-          finalizers.add(finalizer)
-          void finalizer.then(
-            () => finalizers.delete(finalizer),
-            () => finalizers.delete(finalizer),
-          )
-          return finalizer
+              })
+            finalizers.add(finalizer)
+            void finalizer.then(
+              () => finalizers.delete(finalizer),
+              () => finalizers.delete(finalizer),
+            )
+            return finalizer
+          },
         },
-      },
-    })
+      })
+    } catch (err) {
+      drainErrors.add(err)
+      try {
+        await drop()
+      } catch (cleanupError) {
+        drainErrors.add(cleanupError)
+      }
+      throw err
+    }
     if (!started.ok) await drop()
     else {
       sessionId = started.sessionId
@@ -248,11 +285,16 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     },
 
     async leave() {
+      closing = true
+      generation += 1
+      for (const controller of cancellations) controller.abort()
+      await bounded(Promise.all([...starting]), 'Fenced session starts')
       const work = Promise.allSettled([...copies, ...finalizers])
       await bounded(work, 'Fenced session finalization')
       if (active.size > 0) throw new Error(`Fenced PTYs did not exit: ${[...active].join(', ')}`)
       if (drainErrors.size > 0)
         throw new AggregateError([...drainErrors], 'Fenced session cleanup did not complete.')
+      await bounded(swept, 'Fenced startup sweep')
       await rm(deps.scratchRoot, { recursive: true, force: true })
     },
   }
