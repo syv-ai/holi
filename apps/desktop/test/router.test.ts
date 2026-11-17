@@ -30,6 +30,7 @@ const exec = promisify(execFile)
 import { GitHubSession } from '../src/main/github/session'
 import { TokenStore, type SafeStorageLike, type StoredAuth } from '../src/main/github/token-store'
 import { VaultRegistry } from '../src/main/vault/registry'
+import { createManagedCommitProvenance } from '../src/main/managed-commit-provenance'
 
 const REMOTE = 'syv-ai/1brain'
 const TODAY = '2026-07-21'
@@ -225,6 +226,38 @@ describe('subscriptions IPC', () => {
     )
     expect(active.repo.revisionChanges).toHaveBeenCalledOnce()
   })
+  it('suppresses an exact commit recorded by the managed provenance recorder', async () => {
+    const { caller, host, userData, session } = await rig()
+    await caller.vaults.open({ remote: REMOTE })
+    const active = host.active()!
+    await caller.subscriptions.set({ remote: REMOTE, path: '', enabled: true })
+    const baseline = await active.repo.head()
+    const recorder = createManagedCommitProvenance({
+      file: join(userData, 'managed-commit-provenance.json'),
+      remote: REMOTE,
+      identity: () => ({ accountId: 42, generation: 0 }),
+      subscribed: async () => true,
+      subscribedNow: () => true,
+    })
+    const managedTicket = await recorder.begin(active.root)
+    await exec('git', ['-C', active.root, 'config', 'user.name', 'Test'])
+    await exec('git', ['-C', active.root, 'config', 'user.email', 'test@example.invalid'])
+    await writeFile(join(active.root, 'owned.md'), 'owned\n', 'utf8')
+    await exec('git', ['-C', active.root, 'add', 'owned.md'])
+    await exec('git', ['-C', active.root, 'commit', '-m', 'managed'])
+    const sha = await active.repo.head()
+    // This proves the recorder's durable exact identity is consumed by the
+    // registered caller procedure after a process-style restart.
+    await recorder.record(managedTicket, active.root, sha)
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        baseline,
+        changes: [],
+      },
+    )
+  })
+
   it('captures the active repository and userData before awaiting HEAD', async () => {
     const { caller, host, registry, base, userData } = await rig()
     await caller.vaults.open({ remote: REMOTE })
