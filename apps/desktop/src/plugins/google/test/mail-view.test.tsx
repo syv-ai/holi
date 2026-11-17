@@ -644,8 +644,11 @@ test('lists attachments on an open message', async () => {
   )
 
   const article = await openThread()
+  const attachment = within(article).getByRole('button', { name: /q2-deck\.pdf/i })
+  const body = within(article).getByText('see attached')
 
   expect(within(article).getByText('q2-deck.pdf')).toBeInTheDocument()
+  expect(attachment.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })
 
 test('opens an attachment in Gmail rather than downloading it', async () => {
