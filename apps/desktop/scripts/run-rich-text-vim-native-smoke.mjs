@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,22 +12,22 @@ import { externalizeDepsPlugin } from 'electron-vite'
 import { observeChild, startupDiagnostic } from './native-smoke-process.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const evidence = resolve(process.argv[2] ?? (await mkdtemp(join(tmpdir(), 'holi-516-evidence-'))))
+const requestedEvidence = process.argv[2]
+const evidence = requestedEvidence
+  ? resolve(requestedEvidence)
+  : await mkdtemp(join(tmpdir(), 'holi-516-evidence-'))
 const root = await mkdtemp(join(tmpdir(), 'holi-516-native-'))
 let child
 let childState
 let log = ''
 let timedOut = false
 let cancelled = false
-const timeoutMs = Number(process.env.HOLI_516_TIMEOUT_MS ?? 240000)
-const timer = setTimeout(() => {
-  timedOut = true
-  signalOwnedElectron('SIGTERM')
-  setTimeout(() => signalOwnedElectron('SIGKILL'), 5000).unref()
-}, timeoutMs)
+let evidenceOwned = !requestedEvidence
+let timeoutMs = Number(process.env.HOLI_516_TIMEOUT_MS ?? 240000)
+let timer
 
 function signalOwnedElectron(signal) {
-  if (!child?.pid) return
+  if (!child?.pid || childState?.exit) return
   try {
     if (process.platform === 'win32') child.kill(signal)
     else process.kill(-child.pid, signal)
@@ -43,12 +43,70 @@ const cancel = () => {
 process.on('SIGINT', cancel)
 process.on('SIGTERM', cancel)
 
+async function terminateOwnedProcess() {
+  if (!child || !childState || childState.exit) return childState?.exit ?? null
+  signalOwnedElectron('SIGTERM')
+  let outcome = await Promise.race([
+    childState.closed,
+    new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+  ])
+  if (!outcome) {
+    signalOwnedElectron('SIGKILL')
+    outcome = await Promise.race([
+      childState.closed,
+      new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+    ])
+  }
+  if (!outcome) throw new Error('Owned Electron process did not terminate after SIGKILL')
+  return outcome
+}
+
+async function encodeInteractionVideo() {
+  const frames = join(evidence, 'frames')
+  const video = join(evidence, 'interaction.mp4')
+  const result = spawnSync(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-framerate',
+      '8',
+      '-i',
+      join(frames, 'frame-%04d.png'),
+      '-vf',
+      'format=yuv420p',
+      '-c:v',
+      'libx264',
+      '-movflags',
+      '+faststart',
+      video,
+    ],
+    { encoding: 'utf8' },
+  )
+  if (result.error) throw result.error
+  assert.equal(result.status, 0, `ffmpeg interaction capture failed: ${result.stderr}`)
+  await access(video)
+  await rm(frames, { recursive: true, force: true })
+}
+
 try {
-  await mkdir(evidence, { recursive: true })
-  for (const name of ['result.json', 'failure.json', 'electron-smoke.log', 'light.png', 'dark.png'])
-    await rm(join(evidence, name), { force: true })
+  timeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 240000
+  if (requestedEvidence) {
+    await mkdir(dirname(evidence), { recursive: true })
+    try {
+      await access(evidence)
+      throw new Error(`Evidence directory already exists; choose a unique path: ${evidence}`)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+    await mkdir(evidence)
+    evidenceOwned = true
+  }
   for (const dir of ['userData', 'sessionData', 'app-data', 'home', 'vault'])
     await mkdir(join(root, dir), { recursive: true })
+
   await build({
     configFile: false,
     root: desktop,
@@ -138,6 +196,10 @@ try {
     log += chunk
     process.stderr.write(chunk)
   })
+  timer = setTimeout(() => {
+    timedOut = true
+    signalOwnedElectron('SIGTERM')
+  }, timeoutMs)
   const outcome = await Promise.race([
     childState.closed,
     new Promise((resolve) => {
@@ -148,19 +210,49 @@ try {
   if (outcome?.timeout || timedOut || cancelled)
     throw new Error(startupDiagnostic('rich-text Vim acceptance fixture', childState, log))
   assert.equal(outcome.code, 0, `Electron fixture exited ${outcome.code}; ${log}`)
+  const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
+  assert.equal(result.ok, true, 'Electron did not write successful acceptance evidence')
+  assert(result.interactionFrames > 0, 'No native interaction frames were captured')
+  await encodeInteractionVideo()
   console.log(`Evidence: ${evidence}`)
 } catch (error) {
-  await mkdir(evidence, { recursive: true }).catch(() => undefined)
-  await writeFile(
-    join(evidence, 'failure.json'),
-    JSON.stringify({ error: String(error), timedOut, root, log }, null, 2),
-  ).catch(() => undefined)
+  if (evidenceOwned) {
+    await mkdir(evidence, { recursive: true }).catch(() => undefined)
+    await writeFile(
+      join(evidence, 'failure.json'),
+      JSON.stringify({ error: String(error), timedOut, cancelled, root, log }, null, 2),
+    ).catch(() => undefined)
+  }
   throw error
 } finally {
   process.off('SIGINT', cancel)
   process.off('SIGTERM', cancel)
   clearTimeout(timer)
-  if (child && !childState?.exit) signalOwnedElectron('SIGTERM')
-  await writeFile(join(evidence, 'electron-smoke.log'), log).catch(() => undefined)
+  const processExit = await terminateOwnedProcess()
+  if (evidenceOwned)
+    await writeFile(join(evidence, 'electron-smoke.log'), log).catch(() => undefined)
   await rm(root, { recursive: true, force: true })
+  let rootRemoved = false
+  try {
+    await access(root)
+  } catch (error) {
+    rootRemoved = error.code === 'ENOENT'
+  }
+  if (evidenceOwned) {
+    const cleanup = {
+      isolatedRootRemoved: rootRemoved,
+      childTerminated: !child || processExit !== null,
+    }
+    for (const name of ['result.json', 'failure.json']) {
+      const path = join(evidence, name)
+      try {
+        const record = JSON.parse(await readFile(path, 'utf8'))
+        record.cleanup = cleanup
+        await writeFile(path, JSON.stringify(record, null, 2))
+      } catch {
+        // Keep whichever record exists when setup failed early.
+      }
+    }
+  }
+  if (!rootRemoved) throw new Error(`Isolated native-smoke root remains after cleanup: ${root}`)
 }

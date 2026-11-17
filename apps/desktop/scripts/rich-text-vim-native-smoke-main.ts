@@ -7,11 +7,24 @@ const root = process.env.HOLI_516_ROOT!
 const evidence = process.env.HOLI_516_EVIDENCE!
 const vault = join(root, 'vault')
 const note = join(vault, 'notes/acceptance.md')
+const secondaryNote = join(vault, 'notes/secondary.md')
+const fixtureFiles = new Map([
+  ['notes/acceptance.md', note],
+  ['notes/secondary.md', secondaryNote],
+])
 assert.equal(process.env.HOLI_VAULT_ROOT, vault)
 const markdown = `---\ntitle: Native Vim fixture\ntags: [kept]\n---\n\n# Heading\n\nalpha beta alpha\n\n**bold mark** and [link](https://example.test) plus [[Wiki note]]\n\n\`\`\`ts\nconst value = 1\n\`\`\`\n\n- parent\n  - child\n- [ ] task\n\n1. ordered item\n\n| left | right |\n| --- | --- |\n| one | two |\n\n~~~mermaid\nA --> B\n~~~\n`
+type NativeNode = { type: string; attrs?: Record<string, unknown>; content?: NativeNode[] }
+type NativeState = {
+  markdown: string
+  selectedText: string
+  json: { content: NativeNode[] }
+  selection: { from: number; to: number }
+}
 const checks: string[] = []
 let windowRef: BrowserWindow | undefined
 let writes = 0
+let frame = 0
 app.setName('Holi rich text Vim acceptance 516')
 app.setPath('userData', join(root, 'userData'))
 app.setPath('sessionData', join(root, 'sessionData'))
@@ -31,9 +44,11 @@ async function run() {
     join(root, 'sessionData'),
     vault,
     join(vault, 'notes'),
+    join(evidence, 'frames'),
   ])
     await mkdir(dir, { recursive: true })
   await writeFile(note, markdown)
+  await writeFile(secondaryNote, '---\ntitle: Secondary fixture\n---\n\nsecondary alpha beta\n')
   assert.equal(app.getPath('userData'), join(root, 'userData'))
   await app.whenReady()
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) =>
@@ -45,14 +60,16 @@ async function run() {
   )
   ipcMain.handle('rich-text-vim:read', async (event, requested: string) => {
     assert.equal(event.senderFrame?.url, `file://${join(root, 'renderer/index.html')}`)
-    assert.equal(requested, 'notes/acceptance.md')
-    return readFile(note, 'utf8')
+    const file = fixtureFiles.get(requested)
+    assert(file, `Unexpected fixture path: ${requested}`)
+    return readFile(file, 'utf8')
   })
   ipcMain.handle('rich-text-vim:write', async (event, requested: string, text: string) => {
     assert.equal(event.senderFrame?.url, `file://${join(root, 'renderer/index.html')}`)
-    assert.equal(requested, 'notes/acceptance.md')
+    const file = fixtureFiles.get(requested)
+    assert(file, `Unexpected fixture path: ${requested}`)
     assert.equal(typeof text, 'string')
-    await writeFile(note, text)
+    await writeFile(file, text)
     writes++
   })
   windowRef = new BrowserWindow({
@@ -92,6 +109,12 @@ async function run() {
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
     await new Promise((resolve) => setTimeout(resolve, 60))
+    const png = await win.webContents.capturePage()
+    frame += 1
+    await writeFile(
+      join(evidence, 'frames', `frame-${String(frame).padStart(4, '0')}.png`),
+      png.toPNG(),
+    )
   }
   const click = (point: { x: number; y: number }, modifiers: Array<'shift'> = []) => {
     win.webContents.sendInputEvent({ type: 'mouseMove', ...point })
@@ -127,12 +150,54 @@ async function run() {
   await evaluate(`document.querySelector('[role="textbox"]').editor.commands.focus()`)
   win.focus()
   await key('Escape')
-  const state = () => evaluate<any>('window.richTextVimFixture.state()')
+  const state = (which: 'primary' | 'secondary' = 'primary') =>
+    evaluate<NativeState>(`window.richTextVimFixture.state(${JSON.stringify(which)})`)
   const initialState = await state()
   assert(initialState.markdown.includes('alpha beta alpha'))
   assert(initialState.markdown.includes('[[Wiki note]]'))
   assert(initialState.markdown.includes('~~~mermaid'))
+  const initialNodeTypes: string[] = []
+  const visitNodes = (node: NativeNode) => {
+    initialNodeTypes.push(node.type)
+    for (const child of node.content ?? []) visitNodes(child)
+  }
+  for (const node of initialState.json.content) visitNodes(node)
+  assert(initialNodeTypes.includes('wikiLink'), 'fixture has a parsed production wikiLink atom')
+  assert(initialNodeTypes.includes('codeBlock'), 'fixture has production code blocks')
+  assert(
+    initialState.json.content.some((node) => node.type === 'codeBlock'),
+    'Mermaid block is in production schema',
+  )
+  await wait(
+    `document.querySelector('[data-fixture-editor="secondary"] [role="textbox"]')?.editor`,
+    'second production DocumentView editor',
+  )
   mark('production-documentview-mounted-with-rich-markup')
+
+  await evaluate(
+    `window.richTextVimFixture.setup('<p>alpha beta</p>',1,'primary');window.richTextVimFixture.setup('<p>alpha beta</p>',1,'secondary');window.richTextVimFixture.focusOwnership(true,'secondary');window.richTextVimFixture.focus('secondary')`,
+  )
+  await key('Escape')
+  await key('d')
+  await key('w')
+  assert.equal((await state('secondary')).markdown, 'beta')
+  assert.equal((await state('primary')).markdown, 'alpha beta', 'unfocused split is unchanged')
+  await evaluate(
+    `window.richTextVimFixture.focusOwnership(true,'primary');window.richTextVimFixture.focus('primary')`,
+  )
+  await key('Escape')
+  await key('d')
+  await key('w')
+  assert.equal((await state('primary')).markdown, 'beta')
+  assert.equal((await state('secondary')).markdown, 'beta')
+  await evaluate(
+    `window.richTextVimFixture.visibility(false,'primary');window.richTextVimFixture.visibility(true,'primary')`,
+  )
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.isEditable`,
+    'retained split view reactivated',
+  )
+  mark('native-split-document-focus-isolation-and-retained-view')
 
   // Fixture setup selects known production-schema positions; every Vim action is a trusted native key.
   await evaluate(`window.richTextVimFixture.setup('<p>a👩‍💻bc</p>',1)`)
@@ -147,6 +212,32 @@ async function run() {
   await key('Escape')
   assert.equal((await state()).selection.from, (await state()).selection.to)
   mark('native-visual-inclusive-grapheme-and-escape')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>abcdef</p>',1)`)
+  await key('Escape')
+  await key('v')
+  await key('l')
+  await key('d')
+  assert.equal((await state()).markdown, 'cdef', 'vld deletes exactly the two selected characters')
+  mark('native-vld-deletes-exact-visual-selection')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>word   tail</p>',1)`)
+  await key('Escape')
+  await key('c')
+  await key('w')
+  win.webContents.insertText('X')
+  await key('Escape')
+  assert.equal((await state()).markdown, 'X   tail', 'cw keeps spaces following the changed word')
+  mark('native-cw-preserves-trailing-spaces')
+
+  await evaluate(
+    `window.richTextVimFixture.setup('<p><span data-wiki-link="Wiki note">Wiki note</span> after</p>',1)`,
+  )
+  await key('Escape')
+  await key('x')
+  assert.equal((await state()).markdown, 'after', 'native x removes a real wiki-link atom')
+  assert(!(await state()).json.content.some((node) => node.type === 'wikiLink'))
+  mark('native-wiki-link-atom-operation-and-markdown')
 
   await evaluate(`window.richTextVimFixture.setup('<p>a👩‍💻bc</p>',7)`)
   await key('Escape')
@@ -246,6 +337,41 @@ async function run() {
   mark('native-line-delete-retains-list-container')
 
   await evaluate(
+    `window.richTextVimFixture.setup('<ul><li><p>parent</p><ul><li><p>child</p></li></ul></li><li><p>second</p></li></ul>',1);window.richTextVimFixture.atText('child')`,
+  )
+  await key('Escape')
+  await key('d')
+  await key('d')
+  const nestedAfterDelete = await state()
+  assert.equal(nestedAfterDelete.markdown, '- parent\n- second')
+  assert.equal(nestedAfterDelete.json.content[0]?.type, 'bulletList')
+  assert.equal(nestedAfterDelete.json.content[0]?.content?.[0]?.content?.length, 1)
+  mark('native-nested-list-line-delete-preserves-parent')
+
+  await evaluate(
+    `window.richTextVimFixture.setup('<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>first</p></li><li data-type="taskItem" data-checked="true"><p>second</p></li></ul>',1);window.richTextVimFixture.atText('first')`,
+  )
+  await key('Escape')
+  await key('d')
+  await key('d')
+  const taskAfterDelete = await state()
+  assert.equal(taskAfterDelete.markdown, '- [x] second')
+  assert.equal(taskAfterDelete.json.content[0]?.type, 'taskList')
+  assert.equal(taskAfterDelete.json.content[0]?.content?.[0]?.attrs?.checked, true)
+  mark('native-task-list-delete-retains-checked-attribute')
+
+  await evaluate(
+    `window.richTextVimFixture.setup(${JSON.stringify('<pre><code class="language-ts">first\nsecond</code></pre>')},1);window.richTextVimFixture.atText('first')`,
+  )
+  await key('Escape')
+  await key('d')
+  await key('d')
+  const codeAfterDelete = await state()
+  assert.equal(codeAfterDelete.json.content[0]?.type, 'codeBlock')
+  assert.equal(codeAfterDelete.markdown, '```ts\nsecond\n```', 'dd deletes one logical code line')
+  mark('native-codeblock-logical-line-delete')
+
+  await evaluate(
     `window.richTextVimFixture.setup('<table><tbody><tr><td><p>one</p></td></tr><tr><td><p>last</p></td></tr></tbody></table>',3)`,
   )
   await key('Escape')
@@ -309,7 +435,8 @@ async function run() {
     issue: 516,
     checks,
     writes,
-    evidence: ['light.png', 'dark.png'],
+    evidence: ['light.png', 'dark.png', 'interaction.mp4'],
+    interactionFrames: frame,
     isolation: {
       root,
       vault,
@@ -319,12 +446,13 @@ async function run() {
     electron: process.versions.electron,
     coverageNotes: [
       'Keyboard input is delivered by Electron webContents.sendInputEvent, not synthetic DOM KeyboardEvents.',
-      'The runner checks a representative command set and schema integration, not every native Vim motion, atom operation, or multi-occurrence selection.',
-      'Composition, cross-container rejection feedback, dirty-departure retry, delayed external writes, split-pane focus, and interaction video are not represented; this fixture mounts DocumentView without the app shell.',
+      'The fixture uses the production DocumentView and complete document extension schema with a fixed notes.read/notes.write adapter.',
+      'The fixture does not claim app-shell integration: multi-document shell routing, native comment persistence, delayed cross-vault races, and real close-tab UI are not represented.',
     ],
   }
   await writeFile(join(evidence, 'result.json'), JSON.stringify(result, null, 2))
   console.log(`RESULT ${JSON.stringify(result)}`)
+  app.quit()
 }
 
 app.on('window-all-closed', () => app.quit())
