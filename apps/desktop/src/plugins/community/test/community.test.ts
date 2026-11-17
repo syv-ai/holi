@@ -561,6 +561,18 @@ describe('several plugins in one repository', () => {
 })
 
 describe('apps', () => {
+  test('rejects case-folded destination collisions before publishing either app', async () => {
+    const appRoot = join(dir, 'app-collision')
+    await mkdir(join(appRoot, 'apps/Notes.app'), { recursive: true })
+    await mkdir(join(appRoot, 'other/notes.APP'), { recursive: true })
+    await writeFile(join(appRoot, 'apps/Notes.app/index.html'), '<p>one</p>')
+    await writeFile(join(appRoot, 'other/notes.APP/index.html'), '<p>two</p>')
+    await expect(
+      seedApps({ apps: ['apps/Notes.app', 'other/notes.APP'] }, appRoot, vault),
+    ).rejects.toThrow(/colliding destination names/)
+    expect(existsSync(join(vault, 'Notes.app'))).toBe(false)
+  })
+
   test('stages every new app before publishing any, so failed copy retries cleanly', async () => {
     const appRoot = join(dir, 'app-plugin')
     await mkdir(join(appRoot, 'apps/First.app'), { recursive: true })
