@@ -68,6 +68,7 @@ import {
   textOnly,
   type MailboxName,
   type MailCategory,
+  type MailPage,
 } from './gmail'
 import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
@@ -179,6 +180,9 @@ const agendaWindow = ({ from, to }: { from: string; to: string }): AgendaWindow 
   timeMin: from,
   timeMax: to,
 })
+
+const NEEDS_REPLY_CLI_TEXT: unique symbol = Symbol('needs-reply CLI text envelope')
+type CliMailPage = MailPage & { [NEEDS_REPLY_CLI_TEXT]?: true }
 
 const MAIL_CATEGORIES: readonly MailCategory[] = [
   'primary',
@@ -726,33 +730,48 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
     /**
      * A page of threads matching Gmail's own search grammar; no query is the
-     * inbox. Ordinary lists use the cache and history delta. The CLI projects
-     * the page envelope, including its continuation token.
+     * inbox. Ordinary UI lists use the cache and history delta. CLI reads use
+     * a fresh page; --json exposes its continuation token. Ordinary CLI text
+     * remains a thread array; --needs-reply text includes the page envelope.
      */
     'google.search': cap({
       doors: ['ui', 'cli', 'app'],
       appGrant: 'mail',
       cli: {
         args: ['query?'],
-        flags: ['needs-reply', 'include-cc', 'include-automated'],
+        flags: ['needs-reply', 'include-cc', 'include-automated', 'unread'],
+        values: ['pageToken', 'category', 'mailbox'],
         summary:
-          "threads matching Gmail's search grammar (the inbox). --needs-reply is a factual shortlist, not a classification of obligation: it selects incoming mail after the latest sent message, so a new incoming message remains eligible after an older reply; a draft is not a sent reply. The facts replied, lastReplyAt, addressedAs and automated describe Gmail evidence, not semantics: replied means a sent message followed an incoming message, and lastReplyAt is the latest such sent message time. addressedAs is to, cc, neither or unknown; known send-as aliases are matched, unknown recipients remain eligible and are marked unknown. Direct To is the default; --include-cc opts into Cc-only and --include-automated opts into positively recognized automation; absence of automation evidence does not mean a human wrote it. Filters apply to one Gmail page. Continue with --pageToken <token>; an empty filtered page may still have a token and is not exhausted until nextPageToken is null.",
+          "threads matching Gmail's search grammar (the inbox). --needs-reply is a factual shortlist, not a classification of obligation: it selects incoming mail after the latest sent message, so a new incoming message remains eligible after an older reply; a draft is not a sent reply. The facts replied, lastReplyAt, addressedAs and automated describe Gmail evidence, not semantics: replied means a sent message followed an incoming message, and lastReplyAt is the latest such sent message time. addressedAs is the latest incoming message's recipient classification (to, cc, neither or unknown), or null when there is no incoming message; known send-as aliases are matched and unknown recipients remain eligible. Direct To is the default only with --needs-reply; --include-cc opts into Cc-only and --include-automated opts into positively recognized automation only in that mode, and neither flag otherwise filters results. No recognized automation evidence is not proof a human wrote it; automationUnknown marks MIME evidence that was unavailable or truncated and remains eligible. Filters apply to one Gmail page. Use --json to receive nextPageToken and continue with --pageToken <token>; an empty filtered page may still have a token and is not exhausted until nextPageToken is null.",
       },
       params: searchParams,
       run: async (ctx, options) => {
         const data = await dataOf(ctx.remote)
-        return google(() => data.threads(options))
+        const page = (await google(() =>
+          data.threads(options, { freshPage: ctx.door === 'cli' }),
+        )) as CliMailPage
+        if (ctx.door === 'cli' && options.needsReply === true) {
+          Object.defineProperty(page, NEEDS_REPLY_CLI_TEXT, { value: true })
+        }
+        return page
       },
-      cliValue: (page) => ({
-        ...page,
-        threads: fenceThreads(
-          page.threads.map((thread) => ({
-            ...thread,
-            snippet: cleanSearchSnippet(thread.snippet),
-          })),
-        ),
-      }),
-      text: (page) => json(page),
+      cliValue: (page: CliMailPage) => {
+        const value = {
+          ...page,
+          threads: fenceThreads(
+            page.threads.map((thread) => ({
+              ...thread,
+              snippet: cleanSearchSnippet(thread.snippet),
+            })),
+          ),
+        }
+        if (page[NEEDS_REPLY_CLI_TEXT]) {
+          Object.defineProperty(value, NEEDS_REPLY_CLI_TEXT, { value: true })
+        }
+        return value as CliMailPage
+      },
+      text: (page: CliMailPage) =>
+        JSON.stringify(page[NEEDS_REPLY_CLI_TEXT] ? page : page.threads, null, 2),
     }),
 
     /**

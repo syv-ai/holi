@@ -333,6 +333,121 @@ describe('listThreads', () => {
     expect(seen.some((url) => new URL(url).pathname.endsWith('/messages/human-followup'))).toBe(
       false,
     )
+    const mimeProbe = seen
+      .map((value) => new URL(value))
+      .find((url) => url.pathname.endsWith('/messages/invite-message'))
+    expect(mimeProbe?.searchParams.get('format')).toBe('metadata')
+    expect(mimeProbe?.searchParams.get('fields')).toMatch(/^id,threadId,payload\(/)
+    expect(mimeProbe?.searchParams.get('fields')).not.toMatch(/body|data|attachmentId/i)
+  })
+
+  it('marks MIME invitation evidence beyond the inspected depth as unknown', async () => {
+    let nested: Record<string, unknown> = {
+      mimeType: 'multipart/mixed',
+      parts: [{ mimeType: 'text/calendar' }],
+    }
+    for (let depth = 0; depth < 8; depth += 1) {
+      nested = { mimeType: 'multipart/mixed', parts: [nested] }
+    }
+    const { api } = gmail(
+      [{ id: 'nested-thread' }],
+      {
+        'nested-thread': {
+          id: 'nested-thread',
+          messages: [
+            {
+              id: 'nested-message',
+              internalDate: '1000',
+              labelIds: ['INBOX'],
+              payload: { mimeType: 'multipart/mixed' },
+            },
+          ],
+        },
+      },
+      [],
+      undefined,
+      [],
+      {
+        'nested-message': {
+          id: 'nested-message',
+          threadId: 'nested-thread',
+          payload: nested,
+        },
+      },
+    )
+
+    expect((await listThreads(api)).threads[0]).toMatchObject({
+      automated: false,
+      automationUnknown: true,
+    })
+  })
+
+  it('omits a vanished MIME probe per thread without losing the page or continuation', async () => {
+    const incoming = (id: string, threadId: string) => ({
+      id,
+      threadId,
+      internalDate: id === 'gone-message' ? '1000' : '2000',
+      labelIds: ['INBOX'],
+      payload: {
+        mimeType: 'multipart/mixed',
+        headers: [header('Content-Type', 'multipart/mixed')],
+      },
+    })
+    const list = [{ id: 'gone-thread' }, { id: 'live-thread' }]
+    const seen: string[] = []
+    const fetchImpl = vi.fn(async (input: string) => {
+      seen.push(input)
+      const url = new URL(input)
+      const path = url.pathname
+      const messageId = path.split('/').pop()
+      if (path.endsWith('/labels')) return Response.json({ labels: [] })
+      if (path.endsWith('/threads')) {
+        return Response.json(
+          url.searchParams.get('q')?.includes('filename:ics')
+            ? { threads: [] }
+            : { threads: list, nextPageToken: 'continue' },
+        )
+      }
+      if (path.endsWith('/messages/gone-message')) {
+        return new Response('{}', { status: 404 })
+      }
+      if (path.endsWith('/messages/live-message')) {
+        return Response.json({
+          id: messageId,
+          threadId: 'live-thread',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [
+              {
+                mimeType: 'text/calendar',
+                headers: [header('Content-Type', 'text/calendar; method=REQUEST')],
+              },
+            ],
+          },
+        })
+      }
+      const threadId = path.split('/').pop()!
+      const message =
+        threadId === 'gone-thread'
+          ? incoming('gone-message', threadId)
+          : incoming('live-message', threadId)
+      return Response.json({ id: threadId, messages: [message] })
+    }) as unknown as typeof globalThis.fetch
+    const api = new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl })
+
+    const page = await listThreads(api)
+
+    expect(
+      page.threads.map(({ id, automated, automationUnknown }) => ({
+        id,
+        automated,
+        automationUnknown,
+      })),
+    ).toEqual([
+      { id: 'gone-thread', automated: false, automationUnknown: true },
+      { id: 'live-thread', automated: true, automationUnknown: false },
+    ])
+    expect(page.nextPageToken).toBe('continue')
   })
 
   it('keeps recipient identity explicitly unknown when send-as addresses are unavailable', async () => {

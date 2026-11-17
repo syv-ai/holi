@@ -283,6 +283,54 @@ describe('createGoogleData', () => {
     expect(await subject.threads({ needsReply: true })).toMatchObject({
       threads: [{ addressedAs: 'to', needsReply: true }],
     })
+    expect(threadFetches).toBe(3)
+  })
+
+  it('keeps ordinary cache identity lookup failures recoverable', async () => {
+    let identitiesAvailable = false
+    let threadFetches = 0
+    const fetchImpl = vi.fn(async (url: string) => {
+      const path_ = new URL(url).pathname
+      if (path_.includes('/threads/t1')) threadFetches++
+      const body = path_.endsWith('/settings/sendAs')
+        ? identitiesAvailable
+          ? { sendAs: [{ sendAsEmail: 'me@example.com' }] }
+          : null
+        : path_.endsWith('/labels')
+          ? { labels: [] }
+          : path_.endsWith('/profile')
+            ? { historyId: '1' }
+            : path_.endsWith('/threads')
+              ? { threads: [{ id: 't1' }] }
+              : path_.includes('/threads/')
+                ? {
+                    id: 't1',
+                    messages: [
+                      {
+                        id: 'm1',
+                        internalDate: '1000',
+                        labelIds: ['INBOX'],
+                        payload: { headers: [{ name: 'To', value: 'me@example.com' }] },
+                      },
+                    ],
+                  }
+                : {}
+      return {
+        ok: identitiesAvailable || !path_.endsWith('/settings/sendAs'),
+        status: identitiesAvailable || !path_.endsWith('/settings/sendAs') ? 200 : 503,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }
+    }) as unknown as typeof globalThis.fetch
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache,
+    })
+    subject.ensureShape()
+
+    expect((await subject.threads({})).threads[0]!.addressedAs).toBe('unknown')
+    identitiesAvailable = true
+    expect((await subject.threads({})).threads[0]!.addressedAs).toBe('to')
     expect(threadFetches).toBe(2)
   })
 
