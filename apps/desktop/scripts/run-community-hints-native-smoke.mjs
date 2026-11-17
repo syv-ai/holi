@@ -622,8 +622,15 @@ try {
   await sleep(500)
   await writeFile(join(evidence, 'light.png'), await recordFrame('light-hints', 'Native button'))
   const finalButton = (await hints()).find((hint) => hint.target === 'Native button')
-  assert(finalButton?.key, 'native final activation label absent')
+  assert(
+    finalButton?.key && finalButton.key.length > 1,
+    'native final target needs a visible key-selection prefix',
+  )
   await key(finalButton.key[0])
+  await wait(
+    `!!document.querySelector("[data-host-hints] [data-hint-target=\\"Native button\\"]")`,
+    'native key prefix remains visibly selected',
+  )
   await sleep(500)
   await recordFrame('key-selection', 'Native button')
   for (const letter of finalButton.key.slice(1)) await key(letter)
