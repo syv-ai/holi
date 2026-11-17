@@ -113,6 +113,92 @@ export function moveCrashCases() {
   ]
 }
 
+export function moveCheckpointState(caseInfo, operationId, images, root) {
+  const before = {
+    'from.md': images.source,
+    'to.md': null,
+    'back-a.md': images.backA,
+    'back-b.md': images.backB,
+  }
+  const after = {
+    'from.md': null,
+    'to.md': images.moved,
+    'back-a.md': images.movedA,
+    'back-b.md': images.movedB,
+  }
+  let files
+  let journal
+  if (caseInfo.phase === 'journal-before') {
+    files = before
+    journal = false
+  } else if (caseInfo.phase === 'journal-after') {
+    files = before
+    journal = true
+  } else if (caseInfo.phase === 'file-before' || caseInfo.phase === 'file-after') {
+    const order = ['from.md', 'to.md', 'back-a.md', 'back-b.md']
+    const current = order.indexOf(caseInfo.path)
+    assert.notEqual(current, -1, 'Unknown file checkpoint path')
+    const applied = current + (caseInfo.phase === 'file-after' ? 1 : 0)
+    files = Object.fromEntries(
+      order.map((path, index) => [path, index < applied ? after[path] : before[path]]),
+    )
+    journal = true
+  } else if (caseInfo.phase === 'cleanup-before') {
+    files = after
+    journal = true
+  } else if (caseInfo.phase === 'cleanup-after') {
+    files = after
+    journal = false
+  } else if (caseInfo.phase === 'recovery-file-before') {
+    files = { ...before, 'from.md': null }
+    journal = true
+  } else {
+    throw new Error(`Unknown move checkpoint phase: ${caseInfo.phase}`)
+  }
+  return { files, journal, operationId, images, root }
+}
+
+export function validateMoveCheckpointState(state, { caseInfo, operationId, files, journal }) {
+  assert.equal(operationId, state.operationId)
+  const bytes = Object.fromEntries(
+    Object.entries(files).map(([path, value]) => [
+      path,
+      value === null ? null : Buffer.from(value),
+    ]),
+  )
+  const expectedBytes = Object.fromEntries(
+    Object.entries(state.files).map(([path, value]) => [
+      path,
+      value === null ? null : Buffer.from(value),
+    ]),
+  )
+  assert.deepEqual(
+    bytes,
+    expectedBytes,
+    `Wrong native bytes at ${caseInfo.phase}:${caseInfo.path ?? ''}`,
+  )
+  assert.equal(journal !== null, state.journal, `Wrong journal presence at ${caseInfo.phase}`)
+  if (!state.journal) return
+  const expectedChanges = [
+    ['from.md', 'source', null],
+    ['to.md', null, 'moved'],
+    ['back-a.md', 'backA', 'movedA'],
+    ['back-b.md', 'backB', 'movedB'],
+  ].map(([path, before, after]) => ({
+    path,
+    before: before === null ? null : [...new TextEncoder().encode(state.images[before])],
+    after: after === null ? null : [...new TextEncoder().encode(state.images[after])],
+  }))
+  assert.deepEqual(journal, {
+    schema: 2,
+    root: state.root,
+    operationId,
+    from: 'from.md',
+    to: 'to.md',
+    changes: expectedChanges,
+  })
+}
+
 export function validateMoveCheckpoint(marker, context) {
   const { runId, caseInfo, pid, launchedAt, now, root, privatePath } = context
   assert.equal(marker.schemaVersion, 1)

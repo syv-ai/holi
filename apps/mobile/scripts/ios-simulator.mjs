@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -11,6 +21,8 @@ import {
   validateCheckpoint,
   moveCrashCases,
   validateMoveCheckpoint,
+  moveCheckpointState,
+  validateMoveCheckpointState,
 } from './host-checks.mjs'
 import { captureStorageEvidence, readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
@@ -132,7 +144,35 @@ try {
   const library = await realpath(join(canonicalContainer, 'Library'))
   const installedApp = await realpath(await simctl('get_app_container', simulator, bundleId, 'app'))
   const installedBinary = join(installedApp, await plist('CFBundleExecutable'))
+  let activeProcess
+  let lastLaunchedPid
+  const drainProcess = async (processInfo) => {
+    if (!processInfo) return
+    let exited = false
+    try {
+      process.kill(processInfo.pid, 0)
+    } catch (error) {
+      if (error.code === 'ESRCH') return
+      throw error
+    }
+    await simctl('terminate', simulator, bundleId)
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try {
+        process.kill(processInfo.pid, 0)
+      } catch (error) {
+        if (error.code === 'ESRCH') {
+          exited = true
+          break
+        }
+        throw error
+      }
+      await sleep(50)
+    }
+    assert.ok(exited, `Owned app process ${processInfo.pid} did not exit before relaunch`)
+  }
   const launchPhase = async (phase, moveCase) => {
+    const previous = activeProcess
+    await drainProcess(previous)
     await rm(reportPath, { force: true })
     const launchedAt = Date.now()
     const output = await command('xcrun', ['simctl', 'launch', simulator, bundleId], {
@@ -145,7 +185,11 @@ try {
     })
     const pid = Number(output.match(/: (\d+)$/)?.[1])
     assert.ok(Number.isSafeInteger(pid) && pid > 0, `No app PID: ${output}`)
-    appPids.push({ phase, pid, launchedAt })
+    assert.notEqual(pid, previous?.pid, 'Simulator reused the previous app PID')
+    assert.notEqual(pid, lastLaunchedPid, 'Simulator did not launch a fresh app process')
+    lastLaunchedPid = pid
+    activeProcess = { phase, pid, launchedAt }
+    appPids.push(activeProcess)
     await writeFile(join(artifacts, 'processes.json'), JSON.stringify(appPids, null, 2))
     return { pid, launchedAt }
   }
@@ -174,7 +218,6 @@ try {
     assert.equal(await readFile(join(rawRoot, name), 'utf8'), 'updated raw native fixture')
   }
   await simctl('io', simulator, 'screenshot', join(artifacts, 'status.png'))
-  await simctl('terminate', simulator, bundleId)
   const staged = await launchPhase('stage')
   const checkpointPath = join(documents, `holi-stage-checkpoint-${runId}.json`)
   const marker = await waitJson(checkpointPath, staged, 30_000)
@@ -244,18 +287,55 @@ try {
   for (const [name, value] of interruptionArtifacts)
     assert.equal(await readFile(join(interruptionRoot, name), 'utf8'), value)
   process.kill(recoveryProcess.pid, 0)
+  await drainProcess(recoveryProcess)
+  activeProcess = undefined
   const moveEvidence = []
   const moveRootFor = (ordinal) => join(documents, `holi-move-${runId}-${ordinal}`)
   const moveBytes = {
     source: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[from.md| self ]]\r\n',
     moved: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[to.md| self ]]\r\n',
-    backA: 'first [[from.md|  label ]] then [[from.md#Heading]]\r\n',
-    movedA: 'first [[to.md|  label ]] then [[from.md#Heading]]\r\n',
+    backA: 'first [[from.md| label ]] then [[from.md#Heading]]\r\n',
+    movedA: 'first [[to.md| label ]] then [[from.md#Heading]]\r\n',
     backB: '😀 [[from.md|another label]] and [[from.md]]\n',
     movedB: '😀 [[to.md|another label]] and [[to.md]]\n',
   }
+  const verifyMoveBoundary = async (caseInfo, marker) => {
+    const root = moveRootFor(caseInfo.ordinal)
+    const privatePath = stagingDirectory(library, root)
+    const privateInfo = await lstat(privatePath)
+    assert.ok(privateInfo.isDirectory() && !privateInfo.isSymbolicLink())
+    assert.equal(await realpath(privatePath), privatePath)
+    const current = await Promise.all(
+      ['from.md', 'to.md', 'back-a.md', 'back-b.md'].map(async (path) => {
+        try {
+          return [path, await readFile(join(root, path))]
+        } catch (error) {
+          if (error.code === 'ENOENT') return [path, null]
+          throw error
+        }
+      }),
+    )
+    const currentMap = Object.fromEntries(current)
+    const expectedState = moveCheckpointState(caseInfo, marker.operationId, moveBytes, root)
+    let journal = null
+    try {
+      journal = JSON.parse(
+        await readFile(join(privatePath, `move-${marker.operationId}.json`), 'utf8'),
+      )
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+    validateMoveCheckpointState(expectedState, {
+      caseInfo,
+      operationId: marker.operationId,
+      files: currentMap,
+      journal,
+    })
+    return currentMap
+  }
   for (const caseInfo of moveCrashCases()) {
     const root = moveRootFor(caseInfo.ordinal)
+    const privatePath = stagingDirectory(library, root)
     const markerPath = join(documents, `holi-move-checkpoint-${runId}-${caseInfo.ordinal}.json`)
     const stagedMove = await launchPhase('move-stage', caseInfo)
     const marker = await waitJson(markerPath, stagedMove, 30_000)
@@ -269,59 +349,7 @@ try {
     })
     assert.equal(await realpath(root), root)
     assert.equal(await realpath(marker.privatePath), marker.privatePath)
-    const current = await Promise.all(
-      ['from.md', 'to.md', 'back-a.md', 'back-b.md'].map(async (path) => {
-        try {
-          return [path, await readFile(join(root, path), 'utf8')]
-        } catch (error) {
-          if (error.code === 'ENOENT') return [path, null]
-          throw error
-        }
-      }),
-    )
-    const currentMap = Object.fromEntries(current)
-    const beforeImages = {
-      'from.md': moveBytes.source,
-      'to.md': null,
-      'back-a.md': moveBytes.backA,
-      'back-b.md': moveBytes.backB,
-    }
-    const afterImages = {
-      'from.md': null,
-      'to.md': moveBytes.moved,
-      'back-a.md': moveBytes.movedA,
-      'back-b.md': moveBytes.movedB,
-    }
-    if (caseInfo.phase === 'journal-before') {
-      assert.deepEqual(currentMap, beforeImages)
-    } else if (caseInfo.phase === 'cleanup-after') {
-      assert.deepEqual(currentMap, afterImages)
-    } else {
-      const privatePath = stagingDirectory(library, root)
-      assert.equal(await realpath(privatePath), privatePath)
-      const journal = JSON.parse(
-        await readFile(join(privatePath, `move-${marker.operationId}.json`), 'utf8'),
-      )
-      assert.equal(journal.schema, 2)
-      assert.equal(journal.root, root)
-      assert.equal(journal.operationId, marker.operationId)
-      assert.equal(journal.from, 'from.md')
-      assert.equal(journal.to, 'to.md')
-      const journalChanges = Object.fromEntries(
-        journal.changes.map((change) => [change.path, change]),
-      )
-      assert.deepEqual(Object.keys(journalChanges).sort(), Object.keys(beforeImages).sort())
-      for (const path of Object.keys(beforeImages)) {
-        const change = journalChanges[path]
-        const decodeImage = (image) => (image === null ? null : Buffer.from(image).toString('utf8'))
-        assert.equal(decodeImage(change.before), beforeImages[path])
-        assert.equal(decodeImage(change.after), afterImages[path])
-        assert.ok(
-          currentMap[path] === beforeImages[path] || currentMap[path] === afterImages[path],
-          `Unexpected bytes at ${path} on checkpoint ${caseInfo.ordinal}`,
-        )
-      }
-    }
+    const currentMap = await verifyMoveBoundary(caseInfo, marker)
     const runningBinary = await command('ps', ['-p', String(stagedMove.pid), '-o', 'comm='])
     assert.equal(await realpath(runningBinary), installedBinary)
     process.kill(stagedMove.pid, 'SIGKILL')
@@ -339,6 +367,10 @@ try {
       await sleep(50)
     }
     assert.ok(moveGone, `Move process ${caseInfo.ordinal} did not terminate`)
+    await drainProcess(stagedMove)
+    activeProcess = undefined
+    const bytesAfterDrain = await verifyMoveBoundary(caseInfo, marker)
+    assert.deepEqual(bytesAfterDrain, currentMap, 'Boundary bytes changed after process drain')
     const receipt = {
       runId,
       ordinal: caseInfo.ordinal,
@@ -414,12 +446,7 @@ try {
     )
     assert.equal(retainedConflict.operationId, conflictId)
     assert.equal(retainedConflict.from, 'from.md')
-    assert.deepEqual(
-      await readdir(join(root, '.holi-storage-private')).catch((error) =>
-        error.code === 'ENOENT' ? [] : Promise.reject(error),
-      ),
-      [],
-    )
+    assert.deepEqual(await readdir(privatePath), [], 'Cleaned move namespace retained artifacts')
     moveEvidence.push(receipt)
     await writeFile(
       join(artifacts, `move-${caseInfo.ordinal}-evidence.json`),
@@ -438,7 +465,6 @@ try {
         2,
       ),
     )
-    await simctl('terminate', simulator, bundleId)
   }
   await writeFile(
     join(artifacts, 'move-matrix.json'),

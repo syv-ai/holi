@@ -5,6 +5,8 @@ import {
   moveCrashCases,
   runCommand,
   validateMoveCheckpoint,
+  moveCheckpointState,
+  validateMoveCheckpointState,
   validateReport,
   validateSharedGraph,
 } from '../scripts/host-checks.mjs'
@@ -256,6 +258,20 @@ test('native move crash matrix covers every durable event and rejects forged che
   const cases = moveCrashCases()
   assert.equal(cases.length, 13)
   assert.deepEqual(
+    cases.map(({ ordinal, phase, path }) => [ordinal, phase, path]),
+    [
+      [0, 'journal-before', null],
+      [1, 'journal-after', null],
+      ...['from.md', 'to.md', 'back-a.md', 'back-b.md'].flatMap((path, index) => [
+        [2 + index * 2, 'file-before', path],
+        [3 + index * 2, 'file-after', path],
+      ]),
+      [10, 'cleanup-before', 'journal'],
+      [11, 'cleanup-after', 'journal'],
+      [12, 'recovery-file-before', 'to.md'],
+    ],
+  )
+  assert.deepEqual(
     cases.map(({ phase, direction }) => `${phase}:${direction}`),
     [
       'journal-before:before',
@@ -324,4 +340,91 @@ test('host command failures and timeouts cannot pass', async () => {
     runCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeout: 50 }),
     /Timed out/,
   )
+})
+
+test('native move checkpoint states reject interchangeable pre/post evidence', () => {
+  const images = {
+    source: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[from.md| self ]]\r\n',
+    moved: '\uFEFF---\r\ntitle: Source\r\n---\r\n😀 [[to.md| self ]]\r\n',
+    backA: 'first [[from.md| label ]] then [[from.md#Heading]]\r\n',
+    movedA: 'first [[to.md| label ]] then [[from.md#Heading]]\r\n',
+    backB: '😀 [[from.md|another label]] and [[from.md]]\n',
+    movedB: '😀 [[to.md|another label]] and [[to.md]]\n',
+  }
+  const operationId = '22222222-2222-4222-8222-222222222222'
+  const root = '/sandbox/Documents/holi-move-run'
+  const values = (expected) =>
+    Object.fromEntries(
+      Object.entries(expected).map(([path, text]) => [
+        path,
+        text === null ? null : Buffer.from(text),
+      ]),
+    )
+  const journal = {
+    schema: 2,
+    root,
+    operationId,
+    from: 'from.md',
+    to: 'to.md',
+    changes: [
+      { path: 'from.md', before: [...new TextEncoder().encode(images.source)], after: null },
+      { path: 'to.md', before: null, after: [...new TextEncoder().encode(images.moved)] },
+      {
+        path: 'back-a.md',
+        before: [...new TextEncoder().encode(images.backA)],
+        after: [...new TextEncoder().encode(images.movedA)],
+      },
+      {
+        path: 'back-b.md',
+        before: [...new TextEncoder().encode(images.backB)],
+        after: [...new TextEncoder().encode(images.movedB)],
+      },
+    ],
+  }
+  for (const caseInfo of moveCrashCases()) {
+    const state = moveCheckpointState(caseInfo, operationId, images, root)
+    const evidence = {
+      caseInfo,
+      operationId,
+      files: values(state.files),
+      journal: state.journal ? journal : null,
+    }
+    validateMoveCheckpointState(state, evidence)
+    if (caseInfo.phase === 'journal-before' || caseInfo.phase === 'cleanup-after') {
+      assert.throws(() => validateMoveCheckpointState(state, { ...evidence, journal }))
+    } else {
+      assert.throws(() => validateMoveCheckpointState(state, { ...evidence, journal: null }))
+    }
+    if (caseInfo.phase.startsWith('file-')) {
+      const alternate = caseInfo.phase === 'file-before' ? 'file-after' : 'file-before'
+      const swapped = moveCheckpointState(
+        { ...caseInfo, phase: alternate },
+        operationId,
+        images,
+        root,
+      )
+      assert.throws(() =>
+        validateMoveCheckpointState(state, { ...evidence, files: values(swapped.files) }),
+      )
+    }
+    if (caseInfo.phase === 'file-after' && caseInfo.path === 'from.md') {
+      const wrongPrefix = {
+        ...evidence,
+        files: values({ ...state.files, 'from.md': `prefix${images.source}` }),
+      }
+      assert.throws(() => validateMoveCheckpointState(state, wrongPrefix))
+    }
+    if (caseInfo.phase === 'journal-after') {
+      const wrongImage = structuredClone(journal)
+      wrongImage.changes[0].before[0] ^= 1
+      assert.throws(() => validateMoveCheckpointState(state, { ...evidence, journal: wrongImage }))
+    }
+  }
+  const recovery = moveCheckpointState(moveCrashCases()[12], operationId, images, root)
+  assert.deepEqual(recovery.files, {
+    'from.md': null,
+    'to.md': null,
+    'back-a.md': images.backA,
+    'back-b.md': images.backB,
+  })
 })
