@@ -8,7 +8,18 @@ import { MultiCursor, extraSelections } from '../multi-cursor'
 import { configureRichTextVim, RichTextVim } from '../rich-text-vim'
 
 let editor: Editor | null = null
-afterEach(() => editor?.destroy())
+const editors = new Set<Editor>()
+afterEach(() => {
+  for (const ed of editors) ed.destroy()
+  editors.clear()
+  editor = null
+})
+
+function own(ed: Editor) {
+  editor = ed
+  editors.add(ed)
+  return ed
+}
 
 function open(content: string, editable = true) {
   editor = new Editor({
@@ -19,6 +30,7 @@ function open(content: string, editable = true) {
     content,
     editable,
   })
+  own(editor)
   configureRichTextVim(editor.view, true, true, () => editor?.isEditable ?? false)
   return editor
 }
@@ -50,6 +62,7 @@ function openTable(onFeedback?: (message: string) => void) {
     content:
       '<table><tbody><tr><td><p>one</p></td></tr><tr><td><p>last</p></td></tr></tbody></table>',
   })
+  own(editor)
   configureRichTextVim(editor.view, true, true, () => editor?.isEditable ?? false)
   let lastCellPos = 0
   editor.state.doc.descendants((node, pos) => {
@@ -233,7 +246,7 @@ describe('rich-text Vim extension', () => {
       ],
       content: '<p>word word</p>',
     })
-    editor = ed
+    own(ed)
     configureRichTextVim(ed.view, true, true, () => true)
     ed.commands.setTextSelection(2)
     key(ed, 'd', { ctrlKey: true })
@@ -271,6 +284,7 @@ describe('rich-text Vim extension', () => {
       ],
       content: '<p>a<test-atom></test-atom>b</p>',
     })
+    own(editor)
     configureRichTextVim(editor.view, true, true, () => true)
     editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 2)))
     expect(editor.state.selection).toBeInstanceOf(NodeSelection)
@@ -321,6 +335,7 @@ describe('rich-text Vim extension', () => {
       extensions: [StarterKit, atom, RichTextVim.configure({ enabled: false })],
       content: '<p>one<word-atom></word-atom>two, three</p>',
     })
+    own(editor)
     configureRichTextVim(editor.view, true, true, () => true)
     editor.commands.setTextSelection(1)
     key(editor, 'w')
@@ -510,7 +525,7 @@ describe('rich-text Vim extension', () => {
       ],
       content: '<p>word word</p>',
     })
-    editor = multi
+    own(multi)
     configureRichTextVim(multi.view, true, true, () => true)
     multi.commands.setTextSelection(1)
     key(multi, 'd', { ctrlKey: true })
@@ -523,6 +538,7 @@ describe('rich-text Vim extension', () => {
   it('rejects real cross-cell operator and visual destinations before ProseMirror clamps them', () => {
     for (const sequence of [
       ['d', 'j'],
+      ['d', 'w'],
       ['d', 'k'],
       ['d', '2', 'j'],
       ['2', 'd', 'd'],
@@ -538,10 +554,37 @@ describe('rich-text Vim extension', () => {
       const before = table.state.doc
       for (const value of sequence) key(table, value)
       expect(table.state.doc.eq(before), sequence.join('')).toBe(true)
-      if (sequence.join('') === 'dj' || sequence.join('') === 'Vjd')
+      if (sequence.join('') === 'dj' || sequence.join('') === 'dw' || sequence.join('') === 'Vjd')
         expect(feedback).toHaveBeenCalled()
       expect(table.state.doc.firstChild?.type.name).toBe('table')
     }
+
+    const onVisualFeedback = vi.fn()
+    const visualTable = openTable(onVisualFeedback)
+    let visualCellPos = 0
+    visualTable.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'tableCell' && !visualCellPos) visualCellPos = pos
+    })
+    visualTable.commands.setTextSelection(visualCellPos + 2)
+    const beforeVisualMotion = visualTable.state.doc
+    key(visualTable, 'v')
+    key(visualTable, 'w')
+    expect(visualTable.state.doc.eq(beforeVisualMotion)).toBe(true)
+    expect(visualTable.state.selection.empty).toBe(true)
+    expect(onVisualFeedback).toHaveBeenCalled()
+
+    const countedVisual = openTable(onVisualFeedback)
+    let countedCellPos = 0
+    countedVisual.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'tableCell' && !countedCellPos) countedCellPos = pos
+    })
+    countedVisual.commands.setTextSelection(countedCellPos + 2)
+    const beforeCountedVisual = countedVisual.state.doc
+    key(countedVisual, '2')
+    key(countedVisual, 'V')
+    expect(countedVisual.state.doc.eq(beforeCountedVisual)).toBe(true)
+    expect(countedVisual.state.selection.empty).toBe(true)
+    expect(onVisualFeedback).toHaveBeenCalled()
 
     const table = openTable()
     let firstCellPos = 0
@@ -613,6 +656,87 @@ describe('rich-text Vim extension', () => {
     expect(ed.getHTML()).toContain('<strong>alpha</strong>')
   })
 
+  it('uses the displayed visual range once and resets counted commands', () => {
+    const ed = open('<p>abcd efgh ijklmnop</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    key(ed, 'l')
+    key(ed, 'd')
+    expect(text(ed)).toBe('cd efgh ijklmnop')
+
+    ed.commands.setContent('<p>abcd efgh ijklmnop</p>')
+    ed.commands.setTextSelection(5)
+    key(ed, 'v')
+    key(ed, 'h')
+    key(ed, 'd')
+    expect(text(ed)).toBe('abcefgh ijklmnop')
+
+    ed.commands.setContent('<p>one two three four five six seven eight nine ten eleven</p>')
+    ed.commands.setTextSelection(1)
+    for (const value of ['d', '1', '0', 'w']) key(ed, value)
+    expect(text(ed)).toBe('eleven')
+
+    ed.commands.setContent('<p>one two three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '3')
+    key(ed, 'd')
+    expect(text(ed)).toBe('')
+
+    ed.commands.setContent('<p>abcd</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    key(ed, '2')
+    key(ed, 'l')
+    key(ed, 'd')
+    expect(text(ed)).toBe('d')
+  })
+
+  it('keeps yank carets stable, clears transient input on blur and isolates undo groups', () => {
+    const ed = open('<p>one two three</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'y')
+    key(ed, 'w')
+    expect(ed.state.selection.head).toBe(1)
+    key(ed, 'P')
+    expect(text(ed)).toBe('one one two three')
+    key(ed, 'u')
+    expect(text(ed)).toBe('one two three')
+
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    ed.view.dom.dispatchEvent(new Event('blur'))
+    key(ed, 'w')
+    expect(text(ed)).toBe('one two three')
+
+    key(ed, 'd')
+    ed.view.dom.dispatchEvent(new Event('compositionstart'))
+    key(ed, 'w')
+    expect(text(ed)).toBe('one two three')
+
+    key(ed, 'd')
+    configureRichTextVim(ed.view, true, true, () => ed.isEditable)
+    key(ed, 'w')
+    expect(text(ed)).toBe('one two three')
+
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    key(ed, 'l')
+    key(ed, 'y')
+    expect(ed.state.selection.empty).toBe(true)
+    expect(ed.state.selection.head).toBe(1)
+
+    const history = open('<p>one two three</p>')
+    history.commands.setTextSelection(1)
+    key(history, 'd')
+    key(history, 'w')
+    history.view.dispatch(history.state.tr.insertText('X').setTime(Date.now() + 10_000))
+    key(history, 'u')
+    expect(text(history)).toBe('two three')
+    key(history, 'u')
+    expect(text(history)).toBe('one two three')
+  })
+
   it('keeps composition and modified shortcuts out of Vim routing and requests hints for normal f', () => {
     const onHints = vi.fn()
     const ed = new Editor({
@@ -622,7 +746,7 @@ describe('rich-text Vim extension', () => {
       ],
       content: '<p>word</p>',
     })
-    editor = ed
+    own(ed)
     configureRichTextVim(ed.view, true, true, () => true)
     const composition = key(ed, 'x', { isComposing: true })
     expect(composition.defaultPrevented).toBe(false)

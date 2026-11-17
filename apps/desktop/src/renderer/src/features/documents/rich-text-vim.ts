@@ -1,6 +1,6 @@
 import { Extension } from '@tiptap/react'
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
-import type { EditorState } from '@tiptap/pm/state'
+import type { EditorState, Transaction } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { closeHistory, undo, redo } from '@tiptap/pm/history'
 import { requestHostHints } from '@/lib/host-hints'
@@ -56,13 +56,43 @@ function segments(value: string): string[] {
   return Array.from(value)
 }
 
+function resetTransient(state: VimState): VimState {
+  return {
+    ...state,
+    prefix: false,
+    operator: null,
+    count: 0,
+    operatorCount: 1,
+    visualAnchor: null,
+    visualCursor: null,
+    visualLinewise: false,
+    operatorAnchor: null,
+  }
+}
+
 function setMode(view: EditorView, mode: RichTextVimMode, enabled?: boolean) {
   const current = KEY.getState(view.state) ?? EMPTY
   view.dispatch(
     view.state.tr
-      .setMeta(KEY, { ...current, mode, enabled: enabled ?? current.enabled, prefix: false })
+      .setMeta(KEY, { ...resetTransient(current), mode, enabled: enabled ?? current.enabled })
       .setMeta('addToHistory', false),
   )
+}
+
+function closeHistoryBoundary(view: EditorView) {
+  view.dispatch(closeHistory(view.state.tr))
+}
+
+function clearTransient(view: EditorView) {
+  const current = KEY.getState(view.state) ?? EMPTY
+  const tr = view.state.tr.setMeta(KEY, resetTransient(current)).setMeta('addToHistory', false)
+  if (current.visualAnchor !== null && !view.state.selection.empty)
+    tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
+  view.dispatch(tr)
+}
+
+function cappedCount(count: number) {
+  return Math.min(999, Math.max(1, count))
 }
 
 function blocks(state: EditorState) {
@@ -352,6 +382,7 @@ function openLine(view: EditorView, above: boolean, editable: () => boolean) {
   if (!view.editable || !editable()) return
   const line = lineAt(view.state, view.state.selection.head)
   if (!line) return
+  closeHistoryBoundary(view)
   const { state } = view
   const code = line.block.node.type.name === 'codeBlock'
   if (!code && line.from === line.block.from && line.to === line.block.to) {
@@ -384,6 +415,7 @@ function openLine(view: EditorView, above: boolean, editable: () => boolean) {
 
 function insertAt(view: EditorView, where: 'i' | 'a' | 'I' | 'A', editable: () => boolean) {
   if (!view.editable || !editable()) return
+  closeHistoryBoundary(view)
   const { state } = view
   const line = lineAt(state, state.selection.head)
   if (where === 'i' || !line) {
@@ -406,6 +438,7 @@ function insertAt(view: EditorView, where: 'i' | 'a' | 'I' | 'A', editable: () =
 }
 
 function leaveInsert(view: EditorView) {
+  closeHistoryBoundary(view)
   clearExtraSelections(view)
   const { state } = view
   if (!state.selection.empty) select(view, state.selection.from)
@@ -415,22 +448,32 @@ function leaveInsert(view: EditorView) {
   setMode(view, 'normal')
 }
 
-function operatorRange(
-  view: EditorView,
-  start: number,
-  motion: 'w' | 'b' | 'e' | 'h' | 'l' | 'j' | 'k' | '0' | '^' | '$',
-  count: number,
-) {
-  const origin = view.state.selection.head
-  select(view, start)
+type Motion = 'w' | 'b' | 'e' | 'h' | 'l' | 'j' | 'k' | '0' | '^' | '$'
+
+function previewMotion(view: EditorView, start: number, motion: Motion, count: number) {
+  let state = view.state
+  const preview = {
+    get state() {
+      return state
+    },
+    dispatch(transaction: Transaction) {
+      state = state.apply(transaction)
+    },
+  } as EditorView
+  select(preview, start)
   for (let index = 0; index < count; index++) {
-    if (motion === 'w' || motion === 'b' || motion === 'e') wordMotion(view, motion)
-    else if (motion === 'h' || motion === 'l') horizontal(view, motion === 'h' ? -1 : 1)
-    else if (motion === 'j' || motion === 'k') vertical(view, motion === 'j' ? 1 : -1)
-    else if (motion === '0' || motion === '^' || motion === '$') lineMotion(view, motion)
+    const previous = state.selection.head
+    if (motion === 'w' || motion === 'b' || motion === 'e') wordMotion(preview, motion)
+    else if (motion === 'h' || motion === 'l') horizontal(preview, motion === 'h' ? -1 : 1)
+    else if (motion === 'j' || motion === 'k') vertical(preview, motion === 'j' ? 1 : -1)
+    else lineMotion(preview, motion)
+    if (state.selection.head === previous) break
   }
-  const destination = view.state.selection.head
-  return { from: Math.min(origin, destination), to: Math.max(origin, destination) }
+  return state.selection.head
+}
+
+function operatorRange(start: number, destination: number) {
+  return { from: Math.min(start, destination), to: Math.max(start, destination) }
 }
 
 function handleNormal(
@@ -446,17 +489,7 @@ function handleNormal(
       const tr = view.state.tr
       if (current.visualAnchor !== null)
         tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
-      tr.setMeta(KEY, {
-        ...current,
-        prefix: false,
-        operator: null,
-        count: 0,
-        operatorCount: 1,
-        visualAnchor: null,
-        visualCursor: null,
-        visualLinewise: false,
-        operatorAnchor: null,
-      }).setMeta('addToHistory', false)
+      tr.setMeta(KEY, resetTransient(current)).setMeta('addToHistory', false)
       view.dispatch(tr)
       event.preventDefault()
       return true
@@ -501,24 +534,49 @@ function handleNormal(
       key === '$')
   ) {
     const visualOrigin = current.visualCursor ?? current.visualAnchor
+    const count = cappedCount(current.count)
     if (
       (key === 'j' || key === 'k') &&
-      crossesContainerMotion(view.state, visualOrigin, key === 'j' ? 1 : -1)
+      crossesContainerMotion(view.state, visualOrigin, key === 'j' ? 1 : -1, count)
     ) {
-      update({ visualAnchor: null, visualCursor: null, visualLinewise: false, count: 0 })
+      clearTransient(view)
+      settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
+      event.preventDefault()
+      return true
+    }
+    const visualDestination = previewMotion(view, visualOrigin, key as Motion, count)
+    const visualRangePreview = visualRange(
+      view.state,
+      current.visualAnchor,
+      visualDestination,
+      current.visualLinewise,
+    )
+    if (
+      !visualRangePreview ||
+      !safeRange(view.state, visualRangePreview.from, visualRangePreview.to)
+    ) {
+      clearTransient(view)
       settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
       event.preventDefault()
       return true
     }
     select(view, visualOrigin)
-    if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
-    else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
-    else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
-    else lineMotion(view, key)
+    let previous = visualOrigin
+    for (let index = 0; index < count; index++) {
+      if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
+      else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
+      else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
+      else lineMotion(view, key)
+      const destination = view.state.selection.head
+      if (destination === previous) break
+      previous = destination
+    }
     const anchor = Math.min(current.visualAnchor, view.state.doc.content.size)
     const head = view.state.selection.head
     view.dispatch(
-      view.state.tr.setMeta(KEY, { ...current, visualCursor: head }).setMeta('addToHistory', false),
+      view.state.tr
+        .setMeta(KEY, { ...current, visualCursor: head, count: 0 })
+        .setMeta('addToHistory', false),
     )
     setVisualSelection(view, anchor, head, current.visualLinewise)
     event.preventDefault()
@@ -547,6 +605,13 @@ function handleNormal(
       const index = all.findIndex((block) => block.from === line?.block.from)
       const target = all[Math.min(all.length - 1, index + current.count - 1)]
       if (target) visualHead = target.from
+      const range = visualRange(view.state, anchor, visualHead, true)
+      if (!range || !safeRange(view.state, range.from, range.to)) {
+        update({ ...resetTransient(current) })
+        settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
+        event.preventDefault()
+        return true
+      }
     }
     update({
       visualAnchor: anchor,
@@ -562,6 +627,11 @@ function handleNormal(
   }
   if (current.operator) {
     const operator = current.operator
+    if (key !== operator && /^[0-9]$/.test(key) && (current.count > 0 || key !== '0')) {
+      update({ count: Math.min(999, current.count * 10 + Number(key)) })
+      event.preventDefault()
+      return true
+    }
     if (key === operator) {
       const line = lineAt(view.state, view.state.selection.head)
       if (line) {
@@ -574,7 +644,7 @@ function handleNormal(
         ])
         const all = blocks(view.state)
         const blockIndex = all.findIndex((candidate) => candidate.from === block.from)
-        const lineCount = Math.max(1, current.operatorCount)
+        const lineCount = cappedCount(current.operatorCount * (current.count || 1))
         const lastBlock = all[Math.min(all.length - 1, blockIndex + lineCount - 1)] ?? block
         const from = nested ? block.from : block.from - 1
         const to = nested ? lastBlock.to : lastBlock.to + 1
@@ -598,6 +668,7 @@ function handleNormal(
               TextSelection.near(tr.doc.resolve(Math.min(from, tr.doc.content.size)), 1),
             ),
           )
+          closeHistoryBoundary(view)
           if (operator === 'c') setMode(view, 'insert', true)
         }
       }
@@ -617,7 +688,7 @@ function handleNormal(
       key === '$'
     ) {
       const origin = current.operatorAnchor ?? view.state.selection.head
-      const operatorMotionCount = Math.max(1, current.operatorCount * (current.count || 1))
+      const operatorMotionCount = cappedCount(current.operatorCount * (current.count || 1))
       if (
         (key === 'j' || key === 'k') &&
         crossesContainerMotion(view.state, origin, key === 'j' ? 1 : -1, operatorMotionCount)
@@ -627,7 +698,8 @@ function handleNormal(
         event.preventDefault()
         return true
       }
-      const range = operatorRange(view, origin, key, operatorMotionCount)
+      const destination = previewMotion(view, origin, key, operatorMotionCount)
+      const range = operatorRange(origin, destination)
       const from = range.from
       const to = key === 'e' || key === 'l' || key === '$' ? range.to + 1 : range.to
       const safeTo = Math.min(view.state.doc.content.size, Math.max(from, to))
@@ -657,6 +729,7 @@ function handleNormal(
         return true
       }
       const content = view.state.doc.slice(from, safeTo)
+      if (operator === 'y') select(view, origin)
       update({
         operator: null,
         operatorAnchor: null,
@@ -668,20 +741,23 @@ function handleNormal(
         const tr = closeHistory(view.state.tr).delete(from, safeTo)
         view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
         if (operator === 'c') setMode(view, 'insert', true)
+        else closeHistoryBoundary(view)
       }
       event.preventDefault()
       return true
     }
-    update({ operator: null, operatorAnchor: null, count: 0 })
+    update({ ...resetTransient(current) })
   }
   if (current.visualAnchor !== null && (key === 'd' || key === 'c' || key === 'y')) {
-    const range = visualRange(
-      view.state,
-      current.visualAnchor,
-      view.state.selection.head,
-      current.visualLinewise,
-    )
-    if (!range || (key !== 'y' && !safeRange(view.state, range.from, range.to))) {
+    const range = current.visualLinewise
+      ? visualRange(view.state, current.visualAnchor, view.state.selection.head, true)
+      : {
+          from: view.state.selection.from,
+          to: view.state.selection.to,
+          anchor: view.state.selection.anchor,
+          head: view.state.selection.head,
+        }
+    if (!range || !safeRange(view.state, range.from, range.to)) {
       update({ visualAnchor: null, visualCursor: null, visualLinewise: false, count: 0 })
       settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
       event.preventDefault()
@@ -694,10 +770,13 @@ function handleNormal(
       visualLinewise: false,
       register: { content, linewise: current.visualLinewise },
     })
-    if (key !== 'y' && settings.editable() && range.to > range.from) {
+    if (key === 'y') {
+      select(view, Math.min(current.visualAnchor, view.state.doc.content.size))
+    } else if (settings.editable() && range.to > range.from) {
       const tr = closeHistory(view.state.tr).delete(range.from, range.to)
       view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(range.from), 1)))
       if (key === 'c') setMode(view, 'insert', true)
+      else closeHistoryBoundary(view)
     }
     event.preventDefault()
     return true
@@ -736,8 +815,11 @@ function handleNormal(
       const pos = Math.max(0, Math.min(at, view.state.doc.content.size))
       const $pos = view.state.doc.resolve(pos)
       if ($pos.parent.canReplace($pos.index(), $pos.index(), current.register.content.content)) {
-        const tr = view.state.tr.replace(pos, pos, current.register.content)
+        closeHistoryBoundary(view)
+        const tr = closeHistory(view.state.tr).replace(pos, pos, current.register.content)
         view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(pos), 1)).scrollIntoView())
+        closeHistoryBoundary(view)
+        update({ count: 0 })
       } else
         settings.onFeedback?.('Vim register does not fit at this position; no text was changed')
     }
@@ -757,6 +839,7 @@ function handleNormal(
     return true
   }
   if (key === 'f') {
+    if (current.count) update({ count: 0 })
     event.preventDefault()
     event.stopPropagation()
     if (!event.repeat) (settings.onHints ?? ((target) => requestHostHints(target.dom)))(view)
@@ -783,11 +866,15 @@ function handleNormal(
     key === '^' ||
     key === '$'
   ) {
-    for (let index = 0; index < Math.max(1, current.count); index++) {
+    let previous = view.state.selection.head
+    for (let index = 0; index < cappedCount(current.count); index++) {
       if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
       else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
       else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
       else lineMotion(view, key)
+      const destination = view.state.selection.head
+      if (destination === previous) break
+      previous = destination
     }
     if (current.count) update({ count: 0 })
     event.preventDefault()
@@ -804,11 +891,13 @@ function handleNormal(
     const line = last ? lineAt(view.state, last.to) : null
     const positions = line ? graphemeBoundaries(view.state, line.from, line.to) : []
     select(view, positions.length > 1 ? positions.at(-2)! : (positions.at(-1) ?? 0))
+    if (current.count) update({ count: 0 })
     event.preventDefault()
     return true
   }
   if (key === 'x') {
     if (settings.editable()) deleteChar(view)
+    if (current.count) update({ count: 0 })
     event.preventDefault()
     return true
   }
@@ -875,7 +964,16 @@ export const RichTextVim = Extension.create<VimSettings>({
             }
             const visual = mapPosition(value.visualAnchor)
             const cursor = mapPosition(value.visualCursor)
-            const operator = mapPosition(value.operatorAnchor)
+            const operator =
+              value.operatorAnchor === null
+                ? { position: null, invalid: false }
+                : (() => {
+                    const mapped = transaction.mapping.mapResult(value.operatorAnchor, 1)
+                    return {
+                      position: mapped.pos,
+                      invalid: mapped.deleted || mapped.pos > transaction.doc.content.size,
+                    }
+                  })()
             if (visual.invalid || cursor.invalid || operator.invalid) {
               return {
                 ...value,
@@ -933,23 +1031,11 @@ export const RichTextVim = Extension.create<VimSettings>({
         props: {
           handleDOMEvents: {
             blur(view) {
-              const current = KEY.getState(view.state) ?? EMPTY
-              if (current.prefix)
-                view.dispatch(
-                  view.state.tr
-                    .setMeta(KEY, { ...current, prefix: false })
-                    .setMeta('addToHistory', false),
-                )
+              clearTransient(view)
               return false
             },
             compositionstart(view) {
-              const current = KEY.getState(view.state) ?? EMPTY
-              if (current.prefix)
-                view.dispatch(
-                  view.state.tr
-                    .setMeta(KEY, { ...current, prefix: false })
-                    .setMeta('addToHistory', false),
-                )
+              clearTransient(view)
               return false
             },
           },
@@ -1002,21 +1088,15 @@ export function configureRichTextVim(
 ) {
   const current = KEY.getState(view.state) ?? EMPTY
   const shouldEnable = enabled && active && editable()
-  view.dispatch(
-    view.state.tr
-      .setMeta(KEY, {
-        enabled: shouldEnable,
-        mode: shouldEnable ? (current.enabled ? current.mode : 'normal') : '',
-        prefix: false,
-        operator: null,
-        count: 0,
-        operatorCount: 1,
-        visualAnchor: null,
-        visualCursor: null,
-        visualLinewise: false,
-        operatorAnchor: null,
-        register: current.register,
-      })
-      .setMeta('addToHistory', false),
-  )
+  const tr = view.state.tr
+    .setMeta(KEY, {
+      ...resetTransient(current),
+      enabled: shouldEnable,
+      mode: shouldEnable ? (current.enabled ? current.mode : 'normal') : '',
+      register: current.register,
+    })
+    .setMeta('addToHistory', false)
+  if (current.visualAnchor !== null && !view.state.selection.empty)
+    tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
+  view.dispatch(tr)
 }
