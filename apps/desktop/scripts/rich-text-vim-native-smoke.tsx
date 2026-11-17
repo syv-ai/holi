@@ -4,15 +4,18 @@ import { createRoot } from 'react-dom/client'
 import type { Editor } from '@tiptap/react'
 import { vimCodeEditingAtom } from '../src/renderer/src/state/preferences'
 import { activeRemoteAtom, snapshotAtom } from '../src/renderer/src/state/vaults'
+import { documentRunsAtom } from '../src/renderer/src/state/document-runs'
 import { vaultSettingsAtom } from '../src/renderer/src/state/settings'
 import { emptyVaultSnapshot, resolveVaultSettings } from '@holi/shared'
 import { DocumentView } from '../src/renderer/src/features/documents/document-view'
+import { HostHintLayer } from '../src/renderer/src/features/shell/host-hint-layer'
+import { useShortcutDispatcher } from '../src/renderer/src/hooks/use-shortcuts'
 import {
   placeThreads,
   setCommentRanges,
 } from '../src/renderer/src/features/documents/document-comments'
-import { anchorAt, commentThreads, parseCommentsFile, type CommentThread } from '@holi/shared'
-import { flushAllBuffers } from '../src/renderer/src/lib/buffer-registry'
+import { anchorAt, type CommentThread } from '@holi/shared'
+import { flushAllBuffers, freezeBuffers } from '../src/renderer/src/lib/buffer-registry'
 import { TooltipProvider } from '../src/renderer/src/components/ui/tooltip'
 import { Toaster } from '../src/renderer/src/components/ui/sonner'
 import '../src/renderer/src/index.css'
@@ -41,7 +44,7 @@ declare global {
       externalWrite(text: string): Promise<void>
       focus(which?: 'primary' | 'secondary'): void
       mode(enabled: boolean): void
-      visibility(value: boolean): void
+      visibility(value: boolean, which?: 'primary' | 'secondary'): void
       leave(): Promise<{ left: boolean; error?: string }>
       leaveResult(): { left: boolean; error?: string } | null
       failNextWrite(): Promise<void>
@@ -49,7 +52,11 @@ declare global {
       releaseRead(): void
       placeComment(id: string, quote: string): { id: string; from: number; to: number } | null
       commentRange(id: string): { id: string; from: number; to: number; text: string } | null
-      commentText(id: string): string | null
+      commentText(id: string): Promise<string | null>
+      commentSource(id: string): Promise<{ quote: string; line: number } | null>
+      document(path: string, remote?: string): void
+      locked(value: boolean): void
+      freeze(value: boolean): void
     }
   }
 }
@@ -57,9 +64,11 @@ declare global {
 const remote = 'fixture/rich-text-vim'
 const path = 'notes/acceptance.md'
 const secondaryPath = 'notes/secondary.md'
+let activeDocumentPath = path
 const initial = `---\ntitle: Native Vim fixture\ntags: [kept]\n---\n\n# Heading\n\nalpha beta alpha\n\n**bold mark** and [link](https://example.test) plus [[Wiki note]]\n\n\`\`\`ts\nconst value = 1\n\`\`\`\n\n- parent\n  - child\n- [ ] task\n\n1. ordered item\n\n| left | right |\n| --- | --- |\n| one | two |\n\n~~~mermaid\nA --> B\n~~~\n`
 const store = createStore()
 let lastLeaveResult: { left: boolean; error?: string } | null = null
+let releaseFreeze: (() => void) | null = null
 store.set(vimCodeEditingAtom, true)
 store.set(activeRemoteAtom, remote)
 store.set(vaultSettingsAtom, {
@@ -86,9 +95,12 @@ function editor(which: 'primary' | 'secondary' = 'primary'): Editor {
 }
 
 function App() {
+  useShortcutDispatcher()
   const [visible, setVisible] = useState({ primary: true, secondary: true })
   const [focused, setFocused] = useState<'primary' | 'secondary'>('primary')
   const [leaveError, setLeaveError] = useState<string | null>(null)
+  const [documentPath, setDocumentPath] = useState(path)
+  const [remoteValue, setRemoteValue] = useState(remote)
   useEffect(() => {
     Object.assign(window, {
       richTextVimFixture: {
@@ -212,11 +224,11 @@ function App() {
             path,
             text: JSON.stringify({ version: 1, threads: { [id]: thread } }),
           })
-          const sidecar = parseCommentsFile(
-            (await window.richTextVimIO.call('comments.read', { path })) as string,
-          )
-          if (!sidecar) throw new Error('Production comments bridge returned invalid sidecar data')
-          const [loadedThread] = commentThreads(sidecar)
+          const loadedThreads = (await window.richTextVimIO.call('comments.list', {
+            remote,
+            path,
+          })) as CommentThread[]
+          const [loadedThread] = loadedThreads
           if (!loadedThread) throw new Error('Synthetic sidecar thread did not deserialize')
           const [range] = placeThreads(current, '', [loadedThread])
           if (!range) return null
@@ -233,8 +245,62 @@ function App() {
           const end = current.view.posAtDOM(element, element.childNodes.length)
           return { id, from: start, to: end, text: element.textContent ?? '' }
         },
-        commentText(id: string) {
-          return id === 'thread-alpha' ? 'Review this passage' : null
+        async commentText(id: string) {
+          const loaded = (await window.richTextVimIO.call('comments.list', {
+            remote,
+            path,
+          })) as CommentThread[]
+          return loaded.find((thread) => thread.id === id)?.comments[0]?.body ?? null
+        },
+        async commentSource(id: string) {
+          const loaded = (await window.richTextVimIO.call('comments.list', {
+            remote,
+            path,
+          })) as CommentThread[]
+          const anchor = loaded.find((thread) => thread.id === id)?.anchor
+          return anchor ? { quote: anchor.quote, line: anchor.line } : null
+        },
+        document(nextPath: string, nextRemote = remote) {
+          activeDocumentPath = nextPath
+          setRemoteValue(nextRemote)
+          store.set(activeRemoteAtom, nextRemote)
+          store.set(vaultSettingsAtom, {
+            remote: nextRemote,
+            settings: resolveVaultSettings(
+              { app: null, appLocal: null, plugins: null, pluginsLocal: null },
+              [],
+            ),
+          })
+          store.set(snapshotAtom, {
+            ...emptyVaultSnapshot(),
+            docs: [{ path: nextPath, kind: 'note', updatedAt: 'fixture' }],
+          })
+          setDocumentPath(nextPath)
+        },
+        freeze(value: boolean) {
+          if (value && releaseFreeze === null) releaseFreeze = freezeBuffers()
+          else if (!value && releaseFreeze !== null) {
+            releaseFreeze()
+            releaseFreeze = null
+          }
+        },
+        locked(value: boolean) {
+          store.set(
+            documentRunsAtom,
+            value
+              ? {
+                  [activeDocumentPath]: {
+                    kind: 'write',
+                    label: 'Fixture lock',
+                    agent: 'fixture',
+                    provider: 'claude',
+                    sessionId: 'fixture-lock',
+                    status: 'working',
+                    seenWorking: true,
+                  },
+                }
+              : {},
+          )
         },
       },
     })
@@ -256,6 +322,9 @@ function App() {
           }}
         >
           <header className="text-sm">Production DocumentView · disposable fixture</header>
+          <button type="button" aria-label="Native hint target">
+            Hint target
+          </button>
           <div className="flex gap-2">
             <button
               type="button"
@@ -276,7 +345,7 @@ function App() {
           <section className="grid min-h-0 flex-1 grid-cols-2 gap-2">
             <section data-fixture-editor="primary" hidden={!visible.primary} className="min-h-0">
               <DocumentView
-                path={path}
+                path={documentPath}
                 onOpen={() => undefined}
                 visible={visible.primary}
                 focused={focused === 'primary'}
@@ -295,6 +364,9 @@ function App() {
               />
             </section>
           </section>
+          <HostHintLayer
+            scopeKey={`${remoteValue}:${documentPath}:${visible.primary}:${focused}`}
+          />
           <Toaster />
         </main>
       </TooltipProvider>

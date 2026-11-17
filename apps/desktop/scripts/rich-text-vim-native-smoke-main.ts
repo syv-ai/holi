@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import { app, BrowserWindow, clipboard, ipcMain, session } from 'electron'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { commentThreads, parseCommentsFile } from '@holi/shared'
 
 const root = process.env.HOLI_516_ROOT!
+const remote = 'fixture/rich-text-vim'
+const alternateRemote = 'fixture/rich-text-vim-alternate'
 const evidence = process.env.HOLI_516_EVIDENCE!
 const vault = join(root, 'vault')
 const note = join(vault, 'notes/acceptance.md')
@@ -24,6 +27,7 @@ type NativeState = {
   editable: boolean
 }
 const checks: string[] = []
+const nativeResults: Record<string, unknown>[] = []
 let windowRef: BrowserWindow | undefined
 let writes = 0
 let frame = 0
@@ -55,6 +59,8 @@ async function run() {
     await mkdir(dir, { recursive: true })
   await writeFile(note, markdown)
   await writeFile(secondaryNote, '---\ntitle: Secondary fixture\n---\n\nsecondary alpha beta\n')
+  await mkdir(join(vault, '.holi/comments/notes'), { recursive: true })
+  await writeFile(commentsSidecar, JSON.stringify({ version: 1, threads: {} }))
   assert.equal(app.getPath('userData'), join(root, 'userData'))
   await app.whenReady()
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) =>
@@ -90,15 +96,23 @@ async function run() {
       held.resolve(held.text)
     } else throw new Error(`Unexpected fixture control: ${name}`)
   })
-  ipcMain.handle('rich-text-vim:comments', async (_event, operation: string, text?: string) => {
-    if (operation === 'read') return readFile(commentsSidecar, 'utf8')
-    if (operation === 'write' && typeof text === 'string') {
-      await mkdir(join(vault, '.holi/comments/notes'), { recursive: true })
-      await writeFile(commentsSidecar, text)
-      return
-    }
-    throw new Error(`Unexpected comments fixture operation: ${operation}`)
-  })
+  ipcMain.handle(
+    'rich-text-vim:comments',
+    async (_event, operation: string, text?: string, requestedPath?: string) => {
+      if (operation === 'read') return readFile(commentsSidecar, 'utf8')
+      if (operation === 'list') {
+        if (requestedPath !== 'notes/acceptance.md') return []
+        const parsed = parseCommentsFile(await readFile(commentsSidecar, 'utf8'))
+        if (!parsed) throw new Error('Fixture comments sidecar is invalid')
+        return commentThreads(parsed).map((thread) => ({ ...thread, line: thread.anchor.line }))
+      }
+      if (operation === 'write' && typeof text === 'string') {
+        await writeFile(commentsSidecar, text)
+        return
+      }
+      throw new Error(`Unexpected comments fixture operation: ${operation}`)
+    },
+  )
   ipcMain.handle('rich-text-vim:write', async (event, requested: string, text: string) => {
     assert.equal(event.senderFrame?.url, `file://${join(root, 'renderer/index.html')}`)
     const file = fixtureFiles.get(requested)
@@ -560,9 +574,33 @@ async function run() {
 
   await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
   const commentBefore = await evaluate<{ id: string; from: number; to: number } | null>(
-    `window.richTextVimFixture.placeComment('thread-alpha','alpha')`,
+    `window.richTextVimFixture.placeComment('thread-beta','beta')`,
   )
-  assert(commentBefore, 'production comment bridge places the synthetic sidecar anchor')
+  assert(commentBefore, 'production comments.list loads the persisted fixture thread')
+  await key('Escape')
+  await key('y')
+  await key('w')
+  await key('P')
+  const shiftedComment = await evaluate<{
+    id: string
+    from: number
+    to: number
+    text: string
+  } | null>(`window.richTextVimFixture.commentRange('thread-beta')`)
+  assert(shiftedComment, 'surviving anchor remains decorated after native Vim paste')
+  assert.equal(shiftedComment.text, 'beta')
+  assert(shiftedComment.from > commentBefore.from, 'paste maps the surviving range forward')
+  assert.equal(
+    (
+      await evaluate<{ quote: string; line: number } | null>(
+        `window.richTextVimFixture.commentSource('thread-beta')`,
+      )
+    )?.quote,
+    'beta',
+  )
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  await evaluate(`window.richTextVimFixture.placeComment('thread-alpha','alpha')`)
   await key('Escape')
   await key('d')
   await key('w')
@@ -573,14 +611,27 @@ async function run() {
     text: string
   } | null>(`window.richTextVimFixture.commentRange('thread-alpha')`)
   assert.equal((await state()).markdown, 'beta')
-  assert.equal(commentAfterDelete, null, 'deleting anchored text marks its thread orphaned')
+  assert.equal(commentAfterDelete, null, 'fully deleting an anchor removes its decoration')
   assert.equal(
     await evaluate<string>(`window.richTextVimFixture.commentText('thread-alpha')`),
     'Review this passage',
-    'orphaning retains sidecar comment text',
   )
+  const orphanSource = await evaluate<{ quote: string; line: number } | null>(
+    `window.richTextVimFixture.commentSource('thread-alpha')`,
+  )
+  assert.deepEqual(
+    orphanSource,
+    { quote: 'alpha', line: 1 },
+    'deletion leaves the original persisted anchor source intact',
+  )
+  nativeResults.push({
+    scenario: 'comment deletion',
+    rangeAfterDelete: commentAfterDelete,
+    persistedAnchor: orphanSource,
+  })
+
   await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
-  await evaluate(`window.richTextVimFixture.placeComment('thread-alpha','alpha')`)
+  await evaluate(`window.richTextVimFixture.placeComment('thread-change','alpha')`)
   await key('Escape')
   await key('c')
   await key('w')
@@ -591,20 +642,28 @@ async function run() {
     from: number
     to: number
     text: string
-  } | null>(`window.richTextVimFixture.commentRange('thread-alpha')`)
-  assert(commentAfterChange, 'changed anchor maps through the production comment decoration')
+  } | null>(`window.richTextVimFixture.commentRange('thread-change')`)
+  assert(commentAfterChange, 'production decoration maps through the live change transaction')
   assert.equal((await state()).markdown, 'omega beta')
-  assert.equal(commentAfterChange.to - commentAfterChange.from, 5)
+  assert.equal(commentAfterChange.text, 'omega')
   assert.equal(
-    commentAfterChange.text,
-    'omega',
-    'comment range follows the changed passage through ProseMirror mapping',
-  )
-  assert.equal(
-    await evaluate<string>(`window.richTextVimFixture.commentText('thread-alpha')`),
+    await evaluate<string>(`window.richTextVimFixture.commentText('thread-change')`),
     'Review this passage',
   )
-  mark('native-comment-sidecar-anchor-maps-through-delete-and-change')
+  const changedSource = await evaluate<{ quote: string; line: number } | null>(
+    `window.richTextVimFixture.commentSource('thread-change')`,
+  )
+  assert.deepEqual(
+    changedSource,
+    { quote: 'alpha', line: 1 },
+    'mapped display range does not fabricate or rewrite the persisted source anchor',
+  )
+  nativeResults.push({
+    scenario: 'comment change',
+    displayedRange: commentAfterChange,
+    persistedAnchor: changedSource,
+  })
+  mark('native-comment-list-paste-mapping-deletion-orphan-and-source-retention')
 
   const shortcut = process.platform === 'darwin' ? 'meta' : 'control'
   await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
@@ -612,7 +671,7 @@ async function run() {
   await key('v')
   for (let i = 0; i < 5; i++) await key('l')
   await key('c', [shortcut])
-  assert(clipboard.readText() === 'alpha', 'native copy shortcut writes the synthetic selection')
+  assert.equal(clipboard.readText(), 'alpha', 'native copy shortcut writes the synthetic selection')
   await evaluate(`window.richTextVimFixture.setup('<p>target</p>',7)`)
   await key('Escape')
   await key('v', [shortcut])
@@ -621,7 +680,12 @@ async function run() {
     'targetalpha',
     'native paste shortcut inserts the known synthetic text',
   )
-  mark('native-platform-copy-paste-shortcuts-preserve-existing-clipboard')
+  mark('native-platform-copy-paste-shortcuts-use-synthetic-text-under-runner-guard')
+  nativeResults.push({
+    scenario: 'synthetic clipboard copy and paste',
+    copied: 'alpha',
+    pastedDocument: (await state()).markdown,
+  })
 
   // Production schema samples include marks, links, wiki links, code, lists, tables, and Mermaid.
   const schema = initialState.json.content.map((node: { type: string }) => node.type)
@@ -674,18 +738,182 @@ async function run() {
   )
   mark('native-unsupported-cross-container-visual-operations-feedback-and-no-change')
 
-  await evaluate(`window.richTextVimFixture.mode(false)`)
-  await key('a')
-  await evaluate(`window.richTextVimFixture.mode(true)`)
-  await evaluate(`window.richTextVimFixture.visibility(false)`)
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  const beforeHints = (await state()).markdown
+  await key('f')
+  await wait(
+    `document.querySelector('[data-host-hints] [data-hint-target="Native hint target"]')`,
+    'native host-hint shortcut discovers the real fixture control',
+  )
+  await key('Escape')
+  await wait(`!document.querySelector('[data-host-hints]')`, 'native Escape cancels host hints')
+  assert.equal((await state()).markdown, beforeHints, 'f then Escape is not inserted into the note')
+  nativeResults.push({
+    scenario: 'host hints',
+    target: 'Native hint target',
+    noteAfterEscape: (await state()).markdown,
+  })
+  mark('native-host-hint-shortcut-target-and-escape-cancel')
+
+  await key(process.platform === 'darwin' ? 'f' : 'f', [
+    process.platform === 'darwin' ? 'meta' : 'control',
+  ])
+  await wait(`document.querySelector('input[aria-label="Find"]')`, 'native platform find shortcut')
+  await evaluate(`document.querySelector('[role="textbox"]').editor.commands.focus()`)
+  await key('Escape')
+  await wait(
+    `!document.querySelector('input[aria-label="Find"]')`,
+    'native Escape closes find and returns focus',
+  )
+  assert.equal((await state()).markdown, beforeHints, 'find and Escape do not edit the note')
+  nativeResults.push({
+    scenario: 'find and Escape',
+    noteAfterEscape: (await state()).markdown,
+    findClosed: true,
+  })
+  mark('native-find-shortcut-escape-and-no-document-edit')
+
   await evaluate(
-    `window.richTextVimFixture.visibility(true); window.richTextVimFixture.focus('primary')`,
+    `window.richTextVimFixture.setup('<p>alpha beta</p>',1);window.richTextVimFixture.locked(true)`,
   )
   await wait(
-    `document.querySelector('[role="textbox"]')?.editor?.isEditable`,
-    'editor returns after retain transitions',
+    `!document.querySelector('[role="textbox"]')?.editor?.isEditable`,
+    'production document lock',
   )
-  mark('mode-off-and-retained-view-focus-transitions')
+  await key('x')
+  assert.equal(
+    (await state()).markdown,
+    'alpha beta',
+    'native Vim key cannot edit a locked document',
+  )
+  await evaluate(`window.richTextVimFixture.locked(false)`)
+  await wait(
+    `document.querySelector('[role="textbox"]')?.editor?.isEditable`,
+    'document lock clears',
+  )
+  await key('Escape')
+  await key('d')
+  await key('w')
+  assert.equal(
+    (await state()).markdown,
+    'beta',
+    'fresh normal-mode command works after lock clears',
+  )
+  nativeResults.push({
+    scenario: 'document lock',
+    contentAfterLockedKey: 'alpha beta',
+    contentAfterUnlock: (await state()).markdown,
+  })
+  mark('native-document-lock-preserves-input-and-resets-vim-transients')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  await key('v')
+  await key('l')
+  await evaluate(`window.richTextVimFixture.locked(true)`)
+  await wait(
+    `!document.querySelector('[role="textbox"]')?.editor?.isEditable`,
+    'lock after visual selection',
+  )
+  await key('d')
+  assert.equal(
+    (await state()).markdown,
+    'alpha beta',
+    'lock discards pending visual operator without editing',
+  )
+  const lockedVisual = await state()
+  assert.equal(
+    lockedVisual.selection.from,
+    lockedVisual.selection.to,
+    'lock clears the visual selection',
+  )
+  await evaluate(`window.richTextVimFixture.locked(false)`)
+  await wait(`document.querySelector('[role="textbox"]')?.editor?.isEditable`, 'visual lock clears')
+  await key('d')
+  assert.equal(
+    (await state()).markdown,
+    'alpha beta',
+    'post-lock d starts a fresh operator, not the stale visual command',
+  )
+  await key('Escape')
+  await key('d')
+  await key('w')
+  assert.equal((await state()).markdown, 'beta', 'post-lock command starts a new normal-mode epoch')
+  nativeResults.push({
+    scenario: 'visual lock reset',
+    contentAfterLockedOperator: 'alpha beta',
+    contentAfterFreshCommand: (await state()).markdown,
+  })
+  mark('native-lock-clears-visual-mode-and-pending-operator')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  await key('d')
+  await evaluate(`window.richTextVimFixture.freeze(true)`)
+  await wait(
+    `!document.querySelector('[role="textbox"]')?.editor?.isEditable`,
+    'production buffer freeze',
+  )
+  await key('w')
+  assert.equal((await state()).markdown, 'alpha beta', 'native motion does not edit while frozen')
+  await evaluate(`window.richTextVimFixture.freeze(false)`)
+  await wait(
+    `document.querySelector('[role="textbox"]')?.editor?.isEditable`,
+    'production buffer thaw',
+  )
+  await key('w')
+  assert.equal(
+    (await state()).markdown,
+    'alpha beta',
+    'pending operator is cleared across production freeze',
+  )
+  await key('Escape')
+  await key('d')
+  await key('w')
+  assert.equal((await state()).markdown, 'beta', 'fresh command edits after production buffer thaw')
+  nativeResults.push({
+    scenario: 'buffer freeze and thaw',
+    contentWhileFrozen: 'alpha beta',
+    contentAfterStaleMotion: 'alpha beta',
+    contentAfterFreshOperator: (await state()).markdown,
+  })
+  mark('native-buffer-freeze-preserves-text-and-clears-pending-operator')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  await evaluate(`window.richTextVimFixture.visibility(false,'primary')`)
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor && !document.querySelector('[data-fixture-editor="primary"] [role="textbox"]').editor.isEditable`,
+    'hidden retained editor disables editing',
+  )
+  assert.equal(
+    (await state()).markdown,
+    'alpha beta',
+    'hidden render leaves its note content intact',
+  )
+  await key('x')
+  assert.equal(
+    (await state()).markdown,
+    'alpha beta',
+    'native key delivered while hidden does not edit the retained note',
+  )
+  await evaluate(
+    `window.richTextVimFixture.visibility(true,'primary');window.richTextVimFixture.focus('primary')`,
+  )
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.isEditable`,
+    'fresh visible retained epoch',
+  )
+  await key('Escape')
+  await key('x')
+  assert.equal(
+    (await state()).markdown,
+    'lpha beta',
+    'newly visible view accepts native input without stale commands',
+  )
+  nativeResults.push({
+    scenario: 'hidden retained view',
+    contentWhileHidden: 'alpha beta',
+    contentAfterFreshEpoch: (await state()).markdown,
+  })
+  mark('native-hidden-render-disable-and-fresh-retained-view-epoch')
 
   const external = markdown.replace('Native Vim fixture', 'External update fixture')
   await evaluate(
@@ -713,17 +941,29 @@ async function run() {
     `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external snapshot')`,
     'latest snapshot applies while older read is pending',
   )
-  await evaluate(
-    `window.richTextVimFixture.focus('secondary');window.richTextVimFixture.focus('primary')`,
+  await evaluate(`window.richTextVimFixture.document('notes/secondary.md','${alternateRemote}')`)
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('secondary alpha beta')`,
+    'production DocumentView switches path and remote to B',
+  )
+  await evaluate(`window.richTextVimFixture.document('notes/acceptance.md','${remote}')`)
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external snapshot')`,
+    'production DocumentView returns to path and remote A with latest disk text',
   )
   await evaluate(`window.richTextVimFixture.releaseRead()`)
   await wait(
     `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.getText().includes('Latest external snapshot')`,
-    'latest external snapshot wins after delayed stale read and A-B-A focus transition',
+    'latest external snapshot remains after delayed A read resolves across live A-B-A props',
   )
   assert(!(await state()).markdown.includes('Stale delayed snapshot'))
   assert.equal((await state('secondary')).markdown, 'secondary alpha beta')
-  mark('delayed-external-read-stale-result-ignored-across-focus-aba')
+  nativeResults.push({
+    scenario: 'live document path and remote A-B-A',
+    oldResultDiscarded: true,
+    visibleMarkdown: (await state()).markdown,
+  })
+  mark('delayed-external-read-stale-result-ignored-across-live-document-path-remote-aba')
 
   await evaluate(`window.richTextVimFixture.setup('<p>dirty before departure</p>',1)`)
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'END' })
@@ -741,7 +981,8 @@ async function run() {
   assert.equal(failedLeave.left, false)
   assert.match(failedLeave.error ?? '', /fixture disk refusal/)
   assert.equal((await state()).markdown, 'dirty before departure unsaved')
-  assert((await readFile(note, 'utf8')).includes('Latest external snapshot'))
+  const diskAfterRefusal = await readFile(note, 'utf8')
+  assert(diskAfterRefusal.includes('Latest external snapshot'))
   assert.equal((await state()).editable, true, 'failed departure retains editable dirty document')
   const retryButton = await evaluate<{ x: number; y: number }>(
     `(()=>{const r=document.querySelector('[data-fixture-action="retry"]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
@@ -755,14 +996,28 @@ async function run() {
     `document.querySelector('[data-fixture-editor="primary"]')?.hidden`,
     'successful retry leaves document',
   )
+  const diskAfterRetry = await readFile(note, 'utf8')
+  assert(diskAfterRetry.includes('dirty before departure unsaved'))
+  nativeResults.push({
+    scenario: 'failed flush and retry',
+    diskAfterRefusal,
+    diskAfterRetry,
+  })
   mark('dirty-departure-refusal-retains-document-and-retry-flushes-before-switch')
-
+  await evaluate(`window.richTextVimFixture.visibility(true,'primary')`)
+  await wait(
+    `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]')?.editor?.isEditable`,
+    'restore visible editor for native visual evidence',
+  )
   await evaluate(
     `window.richTextVimFixture.setup('<p>alpha beta</p>',1);window.richTextVimFixture.focus('primary')`,
   )
   await key('Escape')
   await key('v')
   await key('l')
+  const visualEvidence = await state()
+  assert.equal(visualEvidence.markdown, 'alpha beta')
+  assert(visualEvidence.selectedText.length > 0, 'screenshot shows a real native visual selection')
   await capture('light.png')
   await evaluate(
     `document.documentElement.dataset.theme='dark';document.documentElement.classList.add('dark')`,
@@ -772,63 +1027,12 @@ async function run() {
     ok: true,
     issue: 516,
     checks,
-    nativeAssertions: [
-      {
-        name: 'native-comment-sidecar-anchor-maps-through-delete-and-change',
-        deletion:
-          'alpha is deleted; its production decoration is absent and sidecar text remains Review this passage',
-        change: 'alpha is replaced with omega; the mapped decoration still covers exactly omega',
-      },
-      {
-        name: 'native-platform-copy-paste-shortcuts-preserve-existing-clipboard',
-        copy: 'selected alpha through native platform copy shortcut',
-        paste: 'native platform paste inserts alpha after target',
-        clipboard:
-          'runner-owned guard restores the complete pasteboard or preserves external changes; no contents recorded',
-      },
-      {
-        name: 'native-mermaid-line-yank-put-delete-undo-preserves-source-and-attrs',
-        paste: 'Mermaid codeBlock duplicated with language=mermaid; before/after paragraphs remain',
-        delete: 'one diagram node removed without touching neighboring nodes',
-        undo: 'diagram restored with language=mermaid and source untouched',
-      },
-      {
-        name: 'native-unsupported-cross-container-visual-operations-feedback-and-no-change',
-        cases: ['table-cell to table-cell', 'paragraph to list item'],
-        feedback: 'Vim selection crosses a list or table; no text was changed',
-      },
-      {
-        name: 'native-task-and-nested-list-put-retains-structure',
-        assertions: [
-          'exact markdown and order',
-          'task checked attributes',
-          'nested list hierarchy',
-        ],
-      },
-    ],
-    expectedScenarios: [
-      {
-        name: 'native-ime-composition-start-update-end-preserves-input',
-        input: 'base',
-        output: 'base漢',
-      },
-      {
-        name: 'native-occurrence-shortcut-vim-operator-clears-extra-edits',
-        input: 'alpha beta alpha',
-        output: 'alpha beta X',
-      },
-      {
-        name: 'delayed-external-read-stale-result-ignored-across-focus-aba',
-        staleSnapshot: 'Stale delayed snapshot',
-        expectedVisibleSnapshot: 'Latest external snapshot',
-        focusPathSequence: ['notes/acceptance.md', 'notes/secondary.md', 'notes/acceptance.md'],
-      },
-      {
-        name: 'dirty-departure-refusal-retains-document-and-retry-flushes-before-switch',
-        refusedWrite: 'fixture disk refusal',
-        expectedSavedText: 'dirty before departure unsaved',
-      },
-    ],
+    nativeAssertions: nativeResults,
+    visualEvidence: {
+      selectedText: visualEvidence.selectedText,
+      screenshots: ['light.png', 'dark.png'],
+      themes: ['light', 'dark'],
+    },
     writes,
     evidence: ['light.png', 'dark.png', 'interaction.mp4'],
     interactionFrames: frame,
@@ -841,10 +1045,11 @@ async function run() {
     electron: process.versions.electron,
     coverageNotes: [
       'Keyboard input is delivered by Electron webContents.sendInputEvent, not synthetic DOM KeyboardEvents.',
-      'The fixture uses the production DocumentView and complete document extension schema with a fixed notes.read/notes.write adapter.',
-      'Comment anchors use production placeThreads and DocumentComments transaction mapping; an independent runner guard restores every captured pasteboard item and type or preserves external changes.',
+      'The fixture uses production DocumentView, live path/remote props, Jotai vault state, buffer freeze, and a disposable notes.read/notes.write adapter.',
+      'Comment text and source anchors are read back from the persisted fixture sidecar through the production comments.list call shape; decorations use production placement and transaction mapping.',
+      'Clipboard interaction uses only the synthetic selected text; the runner-owned independent guard handles restoration and reports sanitized status without recording prior contents.',
       'Mermaid node content, ordered/task lists, wiki-link atoms, code blocks and table structures are exercised through native Vim keyboard input.',
-      'The fixture controls a bounded two-document focus/switch surface; it does not represent shell tab routing.',
+      'The fixture exercises a bounded two-document focus/switch surface and live DocumentView identity changes; it does not represent shell tab routing.',
     ],
   }
   await writeFile(join(evidence, 'result.json'), JSON.stringify(result, null, 2))

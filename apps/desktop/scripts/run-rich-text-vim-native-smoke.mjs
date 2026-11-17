@@ -183,7 +183,7 @@ try {
   if (cancelled) throw new Error('Native fixture cancelled during main build')
   await writeFile(
     join(root, 'preload.cjs'),
-    `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('richTextVimIO',{read:path=>ipcRenderer.invoke('rich-text-vim:read',path),write:(path,text)=>ipcRenderer.invoke('rich-text-vim:write',path,text),call:(name,input)=>{if(name==='notes.read')return ipcRenderer.invoke('rich-text-vim:read',input.path);if(name==='notes.write')return ipcRenderer.invoke('rich-text-vim:write',input.path,input.text);if(name==='comments.read')return ipcRenderer.invoke('rich-text-vim:comments','read');if(name==='comments.write')return ipcRenderer.invoke('rich-text-vim:comments','write',input.text);if(name.startsWith('fixture.'))return ipcRenderer.invoke('rich-text-vim:fixture',name.slice(8));throw new Error('Fixture operation denied: '+name)}});`,
+    `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('richTextVimIO',{read:path=>ipcRenderer.invoke('rich-text-vim:read',path),write:(path,text)=>ipcRenderer.invoke('rich-text-vim:write',path,text),call:(name,input)=>{if(name==='notes.read')return ipcRenderer.invoke('rich-text-vim:read',input.path);if(name==='notes.write')return ipcRenderer.invoke('rich-text-vim:write',input.path,input.text);if(name==='comments.read')return ipcRenderer.invoke('rich-text-vim:comments','read');if(name==='comments.list')return ipcRenderer.invoke('rich-text-vim:comments','list',undefined,input.path);if(name==='comments.write')return ipcRenderer.invoke('rich-text-vim:comments','write',input.text);if(name.startsWith('fixture.'))return ipcRenderer.invoke('rich-text-vim:fixture',name.slice(8));throw new Error('Fixture operation denied: '+name)}});`,
   )
   await writeFile(
     join(root, 'renderer', 'index.html'),
@@ -282,6 +282,28 @@ try {
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true, 'Electron did not write successful acceptance evidence')
   assert(result.interactionFrames > 0, 'No native interaction frames were captured')
+  assert(Array.isArray(result.nativeAssertions), 'Structured native results are missing')
+  const scenario = (name) => {
+    const found = result.nativeAssertions.find((entry) => entry.scenario === name)
+    assert(found, `Missing structured native result: ${name}`)
+    return found
+  }
+  const deletion = scenario('comment deletion')
+  assert.equal(deletion.rangeAfterDelete, null)
+  assert.equal(deletion.persistedAnchor?.quote, 'alpha')
+  const change = scenario('comment change')
+  assert.equal(change.displayedRange?.text, 'omega')
+  assert.equal(change.persistedAnchor?.quote, 'alpha')
+  assert.equal(scenario('host hints').noteAfterEscape, 'alpha beta')
+  assert.equal(scenario('find and Escape').findClosed, true)
+  assert.equal(scenario('visual lock reset').contentAfterLockedOperator, 'alpha beta')
+  assert.equal(scenario('buffer freeze and thaw').contentAfterStaleMotion, 'alpha beta')
+  assert.equal(scenario('hidden retained view').contentWhileHidden, 'alpha beta')
+  assert.equal(scenario('live document path and remote A-B-A').oldResultDiscarded, true)
+  assert(result.visualEvidence?.selectedText, 'Screenshots lack a real native selection')
+  assert.deepEqual(result.visualEvidence.themes, ['light', 'dark'])
+  await access(join(evidence, 'light.png'))
+  await access(join(evidence, 'dark.png'))
   await encodeInteractionVideo()
   console.log(`Evidence: ${evidence}`)
 } catch (error) {
