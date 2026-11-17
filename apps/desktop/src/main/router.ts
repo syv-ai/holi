@@ -2282,7 +2282,7 @@ export function createRouter(deps: RouterDeps) {
                 current === active &&
                 current.remote === remote &&
                 current.root === root &&
-                deps.session.viewer?.accountId === accountId &&
+                (deps.session.viewer?.accountId ?? null) === accountId &&
                 deps.session.generation === accountGeneration
               )
             },

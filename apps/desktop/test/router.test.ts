@@ -207,6 +207,7 @@ describe('subscriptions IPC', () => {
   async function realRepo(path = '') {
     const fixture = await rig()
     const { root, caller, host, userData, session } = fixture
+    if (path !== '') await mkdir(join(root, path), { recursive: true })
     await exec('git', ['init', '-b', 'main', root])
     await exec('git', ['-C', root, 'config', 'user.name', 'Test'])
     await exec('git', ['-C', root, 'config', 'user.email', 'test@example.invalid'])
@@ -248,9 +249,7 @@ describe('subscriptions IPC', () => {
   }
 
   it('returns exact explicit-scope history with conservative ownership through IPC', async () => {
-    const { caller, host } = await rig()
-    await caller.vaults.open({ remote: REMOTE })
-    await caller.subscriptions.set({ remote: REMOTE, path: '', enabled: true })
+    const { caller, host } = await realRepo()
     const active = host.active()!
     const sha = 'a'.repeat(40)
     active.repo.revisionChanges = vi.fn(async () => ({
@@ -270,10 +269,8 @@ describe('subscriptions IPC', () => {
     expect(active.repo.revisionChanges).toHaveBeenCalledOnce()
   })
   it('suppresses an exact commit recorded by the managed provenance recorder', async () => {
-    const { caller, host, userData, session } = await rig()
-    await caller.vaults.open({ remote: REMOTE })
+    const { caller, host, userData, session } = await realRepo()
     const active = host.active()!
-    await caller.subscriptions.set({ remote: REMOTE, path: '', enabled: true })
     const baseline = await active.repo.head()
     const recorder = createManagedCommitProvenance({
       file: join(userData, 'managed-commit-provenance.json'),
@@ -418,19 +415,42 @@ describe('subscriptions IPC', () => {
     )
   })
 
-  it('returns a pending baseline for an unborn repository', async () => {
-    const { caller, root } = await rig()
-    await exec('git', ['init', '-b', 'main', root])
-    await exec('git', [
-      '-C',
-      root,
-      'remote',
-      'add',
-      'origin',
-      'https://github.com/syv-ai/1brain.git',
-    ])
-    await caller.vaults.open({ remote: REMOTE })
-    await caller.subscriptions.set({ remote: REMOTE, path: '', enabled: true })
+  it('rejects a query whose subscription is removed during real traversal', async () => {
+    const { caller, active } = await realRepo()
+    await addFile(active.root, 'race.md')
+    await gitCommit(active.root, ['race.md'], 'race')
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    const original = active.repo.revisionChanges.bind(active.repo)
+    active.repo.revisionChanges = vi.fn(async (...args) => {
+      entered()
+      await gate
+      return original(...args)
+    })
+    try {
+      const query = caller.subscriptions.changes({ remote: REMOTE, path: '' })
+      await started
+      await caller.subscriptions.set({ remote: REMOTE, path: '', enabled: false })
+      release()
+      await expect(query).resolves.toMatchObject({
+        complete: false,
+        history: 'unavailable',
+        changes: [],
+      })
+      expect(active.repo.revisionChanges).toHaveBeenCalledOnce()
+    } finally {
+      release()
+    }
+  })
+
+  it('returns a pending baseline when the subscription has none', async () => {
+    const { caller, active, userData } = await realRepo()
+    const scopeFile = join(userData, 'subscriptions.json')
+    const saved = JSON.parse(await readFile(scopeFile, 'utf8'))
+    saved.remotes[REMOTE][0].baseline = null
+    await writeFile(scopeFile, JSON.stringify(saved), 'utf8')
     await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
       {
         baseline: null,

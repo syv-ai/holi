@@ -9,7 +9,7 @@ import type { SubscriptionScope } from './subscriptions'
 export type SubscriptionChange = {
   sha: string
   path: string
-  ownership: 'own' | 'unknown'
+  ownership: 'unknown'
   reviewed: false
 }
 
@@ -64,25 +64,6 @@ export async function subscriptionChanges(args: {
   if (!identity || origin !== args.remote)
     return { ...pending, tip, history: 'unavailable' as const }
   const history = await args.repo.revisionChanges(args.baseline, tip, args.path)
-  const afterIdentity = await repositoryIdentity(args.root, { createLifetime: false }).catch(
-    () => null,
-  )
-  let afterOrigin = ''
-  try {
-    afterOrigin = canonicalGitHubRemote(
-      await runGit(args.root, ['--no-replace-objects', 'remote', 'get-url', 'origin'], {
-        executionBudget: { maxBuffer: 65536, timeout: 1000 },
-      }),
-    )
-  } catch {
-    return { ...pending, tip, history: 'unavailable' as const }
-  }
-  if (
-    !(await stillCurrent()) ||
-    afterOrigin !== origin ||
-    JSON.stringify(afterIdentity) !== JSON.stringify(identity)
-  )
-    return { ...pending, tip, history: 'unavailable' as const }
   const safeChanges: typeof history.changes = []
   for (const change of history.changes) {
     const { path } = change
@@ -118,9 +99,8 @@ export async function subscriptionChanges(args: {
       // Invalid historical names are not emitted.
     }
   }
-  if (!(await stillCurrent())) return { ...pending, tip, history: 'unavailable' as const }
   const ownership =
-    args.accountId === null
+    args.accountId === null || identity.lifetime === null
       ? new Set<string>()
       : ownedCommitOids({
           file: args.provenanceFile,
@@ -129,7 +109,28 @@ export async function subscriptionChanges(args: {
           accountId: args.accountId,
           oids: safeChanges.map(({ sha }) => sha),
         })
-  if (!(await stillCurrent())) return { ...pending, tip, history: 'unavailable' as const }
+  // Revalidate the exact repository and origin after every traversal await,
+  // including path lstat checks, before any suppression can be returned.
+  const afterIdentity = await repositoryIdentity(args.root, { createLifetime: false }).catch(
+    () => null,
+  )
+  let afterOrigin = ''
+  try {
+    afterOrigin = canonicalGitHubRemote(
+      await runGit(args.root, ['--no-replace-objects', 'remote', 'get-url', 'origin'], {
+        executionBudget: { maxBuffer: 65536, timeout: 1000 },
+      }),
+    )
+  } catch {
+    return { ...pending, tip, history: 'unavailable' as const }
+  }
+  if (
+    afterOrigin !== origin ||
+    JSON.stringify(afterIdentity) !== JSON.stringify(identity) ||
+    !(await stillCurrent()) ||
+    !args.current()
+  )
+    return { ...pending, tip, history: 'unavailable' as const }
   const changes = safeChanges
     .filter((change) => !ownership.has(change.sha))
     .map((change) => ({ ...change, ownership: 'unknown' as const, reviewed: false as const }))
