@@ -539,8 +539,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
+      const origin = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (c === null || origin === null || attached !== origin || current !== c)
+        return { ok: false, message: 'The vault changed before the session started.' }
       const res = await bg.cli.startBg(targetOf(c), {
         ...(name === undefined ? {} : { name }),
         ...(prompt === undefined ? {} : { prompt }),
@@ -556,7 +558,14 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       if (prompt === undefined) unprompted.add(res.id)
       await refresh()
       const opened = await openOn(c, { attach: res.id, cols, rows: r })
-      return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
+      if (!opened.ok) {
+        // A failed terminal open must not leave a hidden background run that a
+        // caller will retry as a second conversation.
+        await bg.cli.stop(targetOf(c), res.id)
+        await refresh()
+        return opened
+      }
+      return { ok: true, sessionId: res.id, terminalId: opened.terminalId }
     },
 
     async launch({ name, prompt, model, allow, deny, appendSystemPrompt, mcpConfig }) {

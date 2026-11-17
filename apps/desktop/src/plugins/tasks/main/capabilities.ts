@@ -8,7 +8,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
-import { completeTask, isClosedStatus, isOverdue, sameLogin } from '@holi/shared'
+import { completeTask, hasLogin, isClosedStatus, isOverdue } from '@holi/shared'
 import {
   isPrivateTask,
   isTaskFilePath,
@@ -292,7 +292,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
       cli: {
         args: [],
         flags: ['overdue', 'open'],
-        values: ['assignee'],
+        values: ['assignee', 'due'],
         summary:
           'list tasks; --due today and --overdue filter by due date; --assignee <login> and --open filter assignments and status',
       },
@@ -318,10 +318,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
         const now = new Date()
         const localNow = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
         return readable.filter((task) => {
-          if (
-            filters.assignee !== undefined &&
-            !task.assignees.some((login) => sameLogin(login, filters.assignee!))
-          )
+          if (filters.assignee !== undefined && !hasLogin(task.assignees, filters.assignee))
             return false
           if (filters.open && isClosedStatus(statuses, task.status)) return false
           if (filters.due === 'today' && task.due?.slice(0, 10) !== today) return false

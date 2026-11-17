@@ -136,6 +136,17 @@ function setup(initial: Row[] = []) {
 }
 
 describe('agent sessions', () => {
+  it('stops a background conversation when opening its terminal fails', async () => {
+    const t = setup()
+    await t.attach()
+    t.terminals.open = () => ({ ok: false, message: 'terminal unavailable' })
+
+    const result = await t.sessions.start({ prompt: 'Catch me up' })
+
+    expect(result).toEqual({ ok: false, message: 'terminal unavailable' })
+    expect(t.cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
+    expect(t.sessions.sessions()).toEqual([])
+  })
   it('lists only live sessions', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb', { pid: undefined, status: undefined })])
     await t.attach()

@@ -161,10 +161,20 @@ export const openSessionAtom = atom(null, async (get, set, id: string): Promise<
 export const startSessionAtom = atom(
   null,
   async (get, set, opts: { name?: string; prompt?: string } = {}): Promise<AgentResult> => {
-    const res = await inVault(get, (remote) =>
-      agentCap.start(remote, { ...opts, ...geometry(get) }),
+    const remote = get(activeRemoteAtom)
+    const revision = get(activeRemoteRevisionValueAtom)
+    const res = await inVault(get, (origin) =>
+      agentCap.start(origin, { ...opts, ...geometry(get) }),
     )
     if (!res.ok) return res
+    if (
+      remote === null ||
+      get(activeRemoteAtom) !== remote ||
+      get(activeRemoteRevisionValueAtom) !== revision
+    ) {
+      await agentCap.stop(remote!, res.sessionId).catch(() => undefined)
+      return { ok: false, message: 'The vault changed before the session opened.' }
+    }
     landSession(get, set, res.sessionId, res.terminalId)
     return { ok: true }
   },
