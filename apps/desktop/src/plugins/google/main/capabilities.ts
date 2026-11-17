@@ -427,7 +427,6 @@ function inviteAnswer(p: Record<string, unknown>): InviteAnswer {
 }
 
 const ok = { ok: true as const }
-const json = (value: unknown): string => JSON.stringify(value, null, 2)
 
 /** `holi google accounts`, as the agent reads it. */
 function accountsText(value: GoogleAccountsOverview): string {

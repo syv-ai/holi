@@ -889,8 +889,9 @@ describe('what other people wrote, at the CLI door', () => {
       const delta = await data.threads({})
       expect(delta.threads[0]).toMatchObject({ id: 'old', needsReply: true, replied: true })
       const ordinaryCli = await cli('search', {})
-      expect(ordinaryCli.value).toMatchObject({ threads: [{ id: 'old' }], nextPageToken: 'next' })
-      expect(JSON.parse(ordinaryCli.text)).toEqual(ordinaryCli.value.threads)
+      const ordinaryPage = ordinaryCli.value as { threads: unknown[]; nextPageToken: string | null }
+      expect(ordinaryPage).toMatchObject({ threads: [{ id: 'old' }], nextPageToken: 'next' })
+      expect(JSON.parse(ordinaryCli.text)).toEqual(ordinaryPage.threads)
 
       const firstArgs = resolveArgv(['google', 'search', '--needs-reply', '--json'], commands, null)
       if (firstArgs.kind !== 'run') throw new Error('needs-reply CLI flags must run')

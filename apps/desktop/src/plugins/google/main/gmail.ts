@@ -1237,7 +1237,8 @@ export function applyLabelDelta(
   change: { added: ReadonlySet<string>; removed: ReadonlySet<string> },
 ): MailThreadSummary {
   const patched = { ...thread }
-  for (const [label, flag] of Object.entries(LABEL_FLAGS) as [string, MailFlag][]) {
+  for (const label of Object.keys(LABEL_FLAGS) as (keyof typeof LABEL_FLAGS)[]) {
+    const flag = LABEL_FLAGS[label]
     if (change.added.has(label)) patched[flag] = true
     else if (change.removed.has(label)) patched[flag] = false
   }
