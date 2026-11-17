@@ -97,6 +97,26 @@ describe('durable note moves', () => {
     expect(string((await storage.read('a.md')).bytes)).toBe('a')
   })
 
+  it('rejects a destination leaf symlink without leaving a recovery journal', async () => {
+    const base = await root()
+    const outside = await root()
+    await writeFile(join(outside, 'target.md'), 'outside bytes')
+    const adapter = createNodeFiles()
+    const storage = createVaultStorage(adapter, { remote: 'holi/leaf-symlink', root: base })
+    const source = await storage.create('source.md', text('source bytes'))
+    await storage.create('backlink.md', text('[[source.md]]'))
+    await symlink(join(outside, 'target.md'), join(base, 'target.md'))
+
+    await expect(storage.move('source.md', 'target.md', source.revision)).rejects.toThrow()
+    expect(await adapter.privateList(await adapter.canonicalRoot(base))).toEqual([])
+    expect(await storage.list()).toContain('source.md')
+    expect((await storage.read('source.md')).bytes).toEqual(text('source bytes'))
+    expect((await storage.read('backlink.md')).bytes).toEqual(text('[[source.md]]'))
+    expect(await readFile(join(outside, 'target.md'), 'utf8')).toBe('outside bytes')
+    await storage.save('source.md', text('still usable'), source.revision)
+    expect((await storage.read('source.md')).bytes).toEqual(text('still usable'))
+  })
+
   it('rejects local-only move paths before creating recovery evidence', async () => {
     const base = await root()
     const adapter = createNodeFiles()

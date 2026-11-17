@@ -347,16 +347,21 @@ export async function moveNote(
   if (journalBytes.length > maxJournalBytes) throw new Error('Move recovery journal is too large')
   // Validate the exact serialized evidence before publishing anything recoverMoves cannot accept.
   validateJournal(journalBytes, root, name)
+  const checkPreconditions = async () => {
+    for (const change of changes) {
+      const current = await adapter.readOptional(root, change.path)
+      if (!equal(current, decode(change.before)))
+        throw new Error(`Move precondition changed at ${change.path}`)
+    }
+  }
+  // Enumeration omits symlinks; inspect every path before recording a move.
+  await checkPreconditions()
   await checkpoint(callback, 'journal', 'before', operationId)
   await adapter.privatePublish(root, name, journalBytes, null)
   await adapter.privateConfirm(root, name, journalBytes)
   await checkpoint(callback, 'journal', 'after', operationId)
   // Revalidate the complete plan immediately before mutation.
-  for (const change of changes) {
-    const current = await adapter.readOptional(root, change.path)
-    if (!equal(current, decode(change.before)))
-      throw new Error(`Move precondition changed at ${change.path}`)
-  }
+  await checkPreconditions()
   await recoverMoves(adapter, root, validatePath, callback)
   const movedBytes = await adapter.read(root, target)
   return { path: target, bytes: movedBytes, revision: revision(movedBytes) }
