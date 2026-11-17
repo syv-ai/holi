@@ -36,12 +36,16 @@ function key(ed: Editor, value: string, options: KeyboardEventInit = {}) {
 
 const text = (ed: Editor) => ed.state.doc.textContent
 
-function openTable() {
+function openTable(onFeedback?: (message: string) => void) {
   editor = new Editor({
     extensions: [
       StarterKit,
       TableKit,
-      RichTextVim.configure({ enabled: false, editable: () => editor?.isEditable ?? false }),
+      RichTextVim.configure({
+        enabled: false,
+        editable: () => editor?.isEditable ?? false,
+        onFeedback,
+      }),
     ],
     content:
       '<table><tbody><tr><td><p>one</p></td></tr><tr><td><p>last</p></td></tr></tbody></table>',
@@ -514,6 +518,73 @@ describe('rich-text Vim extension', () => {
     expect(extraSelections(multi.state)).toHaveLength(1)
     key(multi, 'x')
     expect(extraSelections(multi.state)).toHaveLength(0)
+  })
+
+  it('rejects real cross-cell operator and visual destinations before ProseMirror clamps them', () => {
+    for (const sequence of [
+      ['d', 'j'],
+      ['d', 'k'],
+      ['d', '2', 'j'],
+      ['2', 'd', 'd'],
+      ['V', 'j', 'd'],
+    ]) {
+      const feedback = vi.fn()
+      const table = openTable(feedback)
+      let firstCellPos = 0
+      table.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'tableCell' && !firstCellPos) firstCellPos = pos
+      })
+      table.commands.setTextSelection(firstCellPos + 2)
+      const before = table.state.doc
+      for (const value of sequence) key(table, value)
+      expect(table.state.doc.eq(before), sequence.join('')).toBe(true)
+      if (sequence.join('') === 'dj' || sequence.join('') === 'Vjd')
+        expect(feedback).toHaveBeenCalled()
+      expect(table.state.doc.firstChild?.type.name).toBe('table')
+    }
+
+    const table = openTable()
+    let firstCellPos = 0
+    table.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'tableCell' && !firstCellPos) firstCellPos = pos
+    })
+    table.commands.setTextSelection(firstCellPos + 2)
+    key(table, 'c')
+    key(table, 'c')
+    expect(table.view.dom.dataset.vimMode).toBe('insert')
+    expect(table.state.doc.firstChild?.check()).toBeUndefined()
+    expect(table.state.doc.firstChild?.firstChild?.firstChild?.firstChild?.type.name).toBe(
+      'paragraph',
+    )
+  })
+
+  it('allows same-cell block edits and preserves an empty cell paragraph', () => {
+    const table = openTable()
+    table.commands.setContent(
+      '<table><tbody><tr><td><p>first</p><p>second</p></td></tr><tr><td><p>other</p></td></tr></tbody></table>',
+    )
+    let firstCellPos = 0
+    table.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'tableCell' && !firstCellPos) firstCellPos = pos
+    })
+    table.commands.setTextSelection(firstCellPos + 2)
+    key(table, 'd')
+    key(table, 'j')
+    expect(table.state.doc.textContent).toBe('secondother')
+    expect(table.state.doc.firstChild?.check()).toBeUndefined()
+
+    table.commands.setContent('<table><tbody><tr><td><p></p></td></tr></tbody></table>')
+    firstCellPos = 0
+    table.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'tableCell' && !firstCellPos) firstCellPos = pos
+    })
+    table.commands.setTextSelection(firstCellPos + 1)
+    key(table, 'd')
+    key(table, 'd')
+    expect(table.state.doc.firstChild?.check()).toBeUndefined()
+    expect(table.state.doc.firstChild?.firstChild?.firstChild?.firstChild?.type.name).toBe(
+      'paragraph',
+    )
   })
 
   it('preserves list and table containers for doubled line deletion', () => {

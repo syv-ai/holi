@@ -132,27 +132,27 @@ function containerAt(state: EditorState, pos: number, names: string[]) {
   return null
 }
 
-function structurallyContained(state: EditorState, pos: number) {
-  let contained = false
-  state.doc.descendants((node, start) => {
-    if (
-      ['tableCell', 'tableHeader', 'listItem', 'taskItem'].includes(node.type.name) &&
-      pos >= start &&
-      pos <= start + node.nodeSize
-    )
-      contained = true
-  })
-  return contained
-}
+const STRUCTURAL_CONTAINERS = ['tableCell', 'tableHeader', 'listItem', 'taskItem']
 
 function safeRange(state: EditorState, from: number, to: number) {
-  const names = ['tableCell', 'tableHeader', 'listItem', 'taskItem']
   const touched = blocks(state).filter((block) => block.from <= to && block.to >= from)
-  const origin = containerAt(state, from, names)
+  const origin = containerAt(state, from, STRUCTURAL_CONTAINERS)
   return touched.every((block) => {
-    const nested = containerAt(state, block.from, names)
+    const nested = containerAt(state, block.from, STRUCTURAL_CONTAINERS)
     return origin?.pos === nested?.pos && origin?.type === nested?.type
   })
+}
+
+function crossesContainerMotion(state: EditorState, origin: number, direction: -1 | 1, count = 1) {
+  const all = blocks(state)
+  const source = lineAt(state, origin)?.block
+  if (!source) return false
+  const sourceIndex = all.findIndex((block) => block.from === source.from)
+  const target = all[sourceIndex + direction * count]
+  if (!target) return false
+  const startContainer = containerAt(state, source.from, STRUCTURAL_CONTAINERS)
+  const endContainer = containerAt(state, target.from, STRUCTURAL_CONTAINERS)
+  return startContainer?.pos !== endContainer?.pos || startContainer?.type !== endContainer?.type
 }
 
 function visualRange(state: EditorState, anchor: number, head: number, linewise: boolean) {
@@ -500,7 +500,17 @@ function handleNormal(
       key === '^' ||
       key === '$')
   ) {
-    select(view, current.visualCursor ?? current.visualAnchor)
+    const visualOrigin = current.visualCursor ?? current.visualAnchor
+    if (
+      (key === 'j' || key === 'k') &&
+      crossesContainerMotion(view.state, visualOrigin, key === 'j' ? 1 : -1)
+    ) {
+      update({ visualAnchor: null, visualCursor: null, visualLinewise: false, count: 0 })
+      settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
+      event.preventDefault()
+      return true
+    }
+    select(view, visualOrigin)
     if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
     else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
     else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
@@ -562,8 +572,18 @@ function handleNormal(
           'listItem',
           'taskItem',
         ])
+        const all = blocks(view.state)
+        const blockIndex = all.findIndex((candidate) => candidate.from === block.from)
+        const lineCount = Math.max(1, current.operatorCount)
+        const lastBlock = all[Math.min(all.length - 1, blockIndex + lineCount - 1)] ?? block
         const from = nested ? block.from : block.from - 1
-        const to = nested ? block.to : block.to + 1
+        const to = nested ? lastBlock.to : lastBlock.to + 1
+        if (!safeRange(view.state, from, to)) {
+          update({ operator: null, count: 0, operatorCount: 1 })
+          settings.onFeedback?.('Vim motion crosses a list or table; no text was changed')
+          event.preventDefault()
+          return true
+        }
         const content = view.state.doc.slice(from, to)
         update({
           operator: null,
@@ -597,23 +617,17 @@ function handleNormal(
       key === '$'
     ) {
       const origin = current.operatorAnchor ?? view.state.selection.head
-      const operatorLine = lineAt(view.state, origin)
+      const operatorMotionCount = Math.max(1, current.operatorCount * (current.count || 1))
       if (
         (key === 'j' || key === 'k') &&
-        operatorLine &&
-        structurallyContained(view.state, operatorLine.block.from)
+        crossesContainerMotion(view.state, origin, key === 'j' ? 1 : -1, operatorMotionCount)
       ) {
         update({ operator: null, operatorAnchor: null, count: 0, operatorCount: 1 })
         settings.onFeedback?.('Vim motion crosses a list or table; no text was changed')
         event.preventDefault()
         return true
       }
-      const range = operatorRange(
-        view,
-        origin,
-        key,
-        Math.max(1, current.operatorCount * (current.count || 1)),
-      )
+      const range = operatorRange(view, origin, key, operatorMotionCount)
       const from = range.from
       const to = key === 'e' || key === 'l' || key === '$' ? range.to + 1 : range.to
       const safeTo = Math.min(view.state.doc.content.size, Math.max(from, to))
