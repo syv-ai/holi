@@ -33,7 +33,8 @@ export type NodeFilesCheckpoint = (
     | 'confirm-journal'
     | 'public-sync'
     | 'private-sync'
-    | 'private-directory-sync',
+    | 'private-directory-sync'
+    | 'private-remove-sync',
 ) => Promise<void>
 
 async function safe(root: string, relativePath: string, allowMissingLeaf = false): Promise<string> {
