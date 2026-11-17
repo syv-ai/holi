@@ -196,7 +196,8 @@ export function placeThreads(
 
 interface PendingChangeRange {
   id: string
-  pos: number
+  from: number
+  to: number
 }
 
 interface CommentsState {
@@ -284,9 +285,15 @@ export const DocumentComments = Extension.create<{
               }
             }
             if (!tr.docChanged) {
-              return tr.selectionSet && value.pendingChangeRanges.length > 0
-                ? { ...value, pendingChangeRanges: [] }
-                : value
+              const pendingChangeRanges = tr.selectionSet
+                ? value.pendingChangeRanges.filter((pending) => {
+                    const to = tr.mapping.map(pending.to, 1)
+                    return tr.selection.empty && tr.selection.head === to
+                  })
+                : value.pendingChangeRanges
+              return pendingChangeRanges === value.pendingChangeRanges
+                ? value
+                : { ...value, pendingChangeRanges }
             }
 
             const decorations = value.decorations.map(tr.mapping, tr.doc)
@@ -295,21 +302,27 @@ export const DocumentComments = Extension.create<{
               from: d.from,
               to: d.to,
             }))
-            if (value.pendingChangeRanges.length > 0) {
-              for (const pending of value.pendingChangeRanges) {
-                const from = tr.mapping.map(pending.pos, -1)
-                const to = tr.mapping.map(pending.pos, 1)
-                if (to > from) ranges.push({ id: pending.id, from, to })
+            const pendingChangeRanges: PendingChangeRange[] = []
+            for (const pending of value.pendingChangeRanges) {
+              const from = tr.mapping.map(pending.from, -1)
+              const beforeEnd = tr.mapping.map(pending.to, -1)
+              const to = tr.mapping.map(pending.to, 1)
+              const appended = to > beforeEnd
+              if (appended && tr.selection.empty && tr.selection.head === to) {
+                for (let index = ranges.length - 1; index >= 0; index -= 1) {
+                  if (ranges[index]!.id === pending.id) ranges.splice(index, 1)
+                }
+                ranges.push({ id: pending.id, from, to })
+                pendingChangeRanges.push({ id: pending.id, from, to })
               }
             }
-            const pendingChangeRanges = tr.getMeta('vimChangeInsert')
-              ? value.ranges
-                  .filter((range) => !ranges.some((mapped) => mapped.id === range.id))
-                  .map((range) => ({
-                    id: range.id,
-                    pos: tr.mapping.map(range.from, -1),
-                  }))
-              : []
+            if (tr.getMeta('vimChangeInsert')) {
+              for (const range of value.ranges) {
+                if (ranges.some((mapped) => mapped.id === range.id)) continue
+                const pos = tr.mapping.map(range.from, -1)
+                pendingChangeRanges.push({ id: range.id, from: pos, to: pos })
+              }
+            }
             return {
               active: value.active,
               ranges,

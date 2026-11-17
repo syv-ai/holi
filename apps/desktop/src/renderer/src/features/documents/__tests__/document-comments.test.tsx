@@ -179,6 +179,74 @@ describe('placeThreads', () => {
     expect(threadsAt(ed.state, from + 5)).toEqual(['a'])
   })
 
+  it('keeps a Vim change comment over character-by-character insertions', () => {
+    const ed = open('alpha beta\n')
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('w')
+    for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+
+    const { from, to } = rangeOf(ed, 'omega')
+    expect(ed.state.doc.textBetween(from, to)).toBe('omega')
+    expect(threadsAt(ed.state, from)).toEqual(['a'])
+    expect(threadsAt(ed.state, to - 1)).toEqual(['a'])
+  })
+
+  it('does not extend a replacement comment after deleting at its end', () => {
+    const ed = open('alpha beta\n')
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('w')
+    for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+    const { from, to } = rangeOf(ed, 'omega')
+    ed.view.dispatch(ed.state.tr.delete(to - 1, to))
+    ed.view.dispatch(ed.state.tr.insertText('!', to - 1))
+
+    expect(threadsAt(ed.state, from)).toEqual(['a'])
+    expect(threadsAt(ed.state, to - 1)).toEqual([])
+  })
+
+  it('stops extending a replacement comment after Vim leaves insert mode', () => {
+    const ed = open('alpha beta\n')
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('w')
+    for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+    press('Escape')
+    const end = rangeOf(ed, 'omega').to
+    ed.view.dispatch(ed.state.tr.insertText('!', end))
+
+    expect(threadsAt(ed.state, rangeOf(ed, 'omega').from)).toEqual(['a'])
+    expect(threadsAt(ed.state, end)).toEqual([])
+  })
+
   it('moves a comment range onto text inserted by a Vim change operator', () => {
     const ed = open('alpha beta\n')
     const markdown = ed.getMarkdown()
