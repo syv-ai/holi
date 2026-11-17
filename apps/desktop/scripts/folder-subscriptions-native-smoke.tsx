@@ -14,7 +14,7 @@ store.set(activeRemoteAtom, 'fixture/folder-bells')
 store.set(vaultsAtom, [
   {
     remote: 'fixture/folder-bells',
-    path: '/tmp/holi-folder-bells-vault',
+    path: import.meta.env.VITE_FOLDER_BELL_VAULT,
     name: 'fixture',
     lastOpenedAt: null,
   },
@@ -23,6 +23,12 @@ store.set(snapshotAtom, {
   ...emptyVaultSnapshot(),
   dirs: ['parent', 'parent/nested', 'a-long-folder-name-to-test-row-geometry'],
   docs: [
+    { path: 'brief.md', title: 'Brief', updatedAt: '2026-11-15T00:00:00Z' },
+    {
+      path: 'a-considerably-longer-filename-to-check-the-trailing-action-slot.md',
+      title: 'Long filename',
+      updatedAt: '2026-11-15T00:00:00Z',
+    },
     { path: 'parent/first.md', title: 'First', updatedAt: '2026-11-15T00:00:00Z' },
     { path: 'parent/nested/inside.md', title: 'Inside', updatedAt: '2026-11-15T00:00:00Z' },
   ] as never,

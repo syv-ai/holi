@@ -10,4 +10,6 @@ app.whenReady().then(async () => {
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   })
   await win.loadURL(process.env.HOLI_564_URL!)
+  app.focus({ steal: true })
+  win.focus()
 })

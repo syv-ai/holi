@@ -9,6 +9,7 @@
  * these are main-process shapes and the renderer does not import from main.
  */
 import { atom } from 'jotai'
+import { toast } from 'sonner'
 import { agentCap } from '../agent-cap'
 import { activeRemoteAtom } from '@/plugin-api'
 
@@ -112,8 +113,17 @@ export const loadTurnCountAtom = atom(null, async (get, set, turn: Turn) => {
   const key = rangeKey(turn)
   const remote = get(activeRemoteAtom)
   if (remote === null || get(turnCountsAtom)[key] !== undefined) return
-  const files = await agentCap.turnFiles(remote, { base: turn.base, end: turn.end })
-  set(turnCountsAtom, (counts) => ({ ...counts, [key]: files.length }))
+  try {
+    const files = await agentCap.turnFiles(remote, { base: turn.base, end: turn.end })
+    if (get(activeRemoteAtom) === remote)
+      set(turnCountsAtom, (counts) => ({ ...counts, [key]: files.length }))
+  } catch (error) {
+    if (get(activeRemoteAtom) === remote) {
+      toast.error('Could not load turn changes', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
 })
 
 /**
@@ -124,9 +134,18 @@ export const loadTurnFilesAtom = atom(null, async (get, set) => {
   const turn = get(reviewTurnAtom)
   const remote = get(activeRemoteAtom)
   if (turn === null || remote === null) return
-  const files = await agentCap.turnFiles(remote, { base: turn.base, end: turn.end })
-  // The turn may have been replaced by a newer one while this was in flight.
-  if (get(reviewTurnAtom) === turn) set(turnFilesAtom, files)
+  try {
+    const files = await agentCap.turnFiles(remote, { base: turn.base, end: turn.end })
+    // The turn or vault may have changed while this was in flight.
+    if (get(reviewTurnAtom) === turn && get(activeRemoteAtom) === remote) set(turnFilesAtom, files)
+  } catch (error) {
+    if (get(reviewTurnAtom) === turn && get(activeRemoteAtom) === remote) {
+      set(turnFilesAtom, [])
+      toast.error('Could not load turn changes', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
 })
 
 /** One file's diff across the turn. */
@@ -136,10 +155,28 @@ export const loadTurnDiffAtom = atom(null, async (get, set, path: string) => {
   if (turn === null || remote === null) return
   set(selectedTurnPathAtom, path)
   set(turnDiffAtom, null)
-  const diff = await agentCap.turnDiff(remote, { base: turn.base, end: turn.end, path })
-  // Two rows clicked in quick succession: the slower answer must not land on the
-  // faster one's row. Same guard `history.ts` puts on its own diff load.
-  if (get(selectedTurnPathAtom) === path && get(reviewTurnAtom) === turn) set(turnDiffAtom, diff)
+  try {
+    const diff = await agentCap.turnDiff(remote, { base: turn.base, end: turn.end, path })
+    // Two rows clicked in quick succession: the slower answer must not land on the
+    // faster one's row. Same guard `history.ts` puts on its own diff load.
+    if (
+      get(selectedTurnPathAtom) === path &&
+      get(reviewTurnAtom) === turn &&
+      get(activeRemoteAtom) === remote
+    )
+      set(turnDiffAtom, diff)
+  } catch (error) {
+    if (
+      get(selectedTurnPathAtom) === path &&
+      get(reviewTurnAtom) === turn &&
+      get(activeRemoteAtom) === remote
+    ) {
+      set(selectedTurnPathAtom, null)
+      toast.error('Could not load turn change', {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
 })
 
 /**
