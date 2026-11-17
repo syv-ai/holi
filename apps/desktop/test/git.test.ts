@@ -13,10 +13,10 @@
  */
 import { execFile } from 'node:child_process'
 import { commitChanges } from './commit-changes'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import {
   cleanupFixtures,
   commitFile,
@@ -1313,6 +1313,59 @@ describe('changedFiles', () => {
       reason: 'limit',
       changes: [],
     })
+  })
+
+  it('returns an explicit limit when a git traversal exceeds its output budget', async () => {
+    const dir = await makeClone(await makeRemote())
+    const baseline = await openRepo(dir).head()
+    await commitFile(dir, 'scope/one.md', 'one\n')
+    const tip = await openRepo(dir).head()
+    const actualGit = (await exec('which', ['git'])).stdout.trim()
+    const wrapper = join(await tmp('holi-git-output-cap-'), 'git-wrapper')
+    await writeFile(
+      wrapper,
+      [
+        '#!/bin/sh',
+        'for arg do',
+        '  if [ "$arg" = diff-tree ]; then',
+        '    head -c 9000000 /dev/zero',
+        '    exit 0',
+        '  fi',
+        'done',
+        `exec ${actualGit} "$@"`,
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await chmod(wrapper, 0o755)
+    const repo = openRepo(dir, { gitPath: wrapper })
+
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toEqual({
+      complete: false,
+      reason: 'limit',
+      changes: [],
+    })
+  })
+
+  it('returns an explicit limit when the traversal time budget is exhausted', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await commitFile(dir, 'scope/one.md', 'one\n')
+    const tip = await repo.head()
+    // The first read starts the 5-second budget; the next command sees its
+    // deadline already elapsed. This exercises the real git adapter without
+    // relying on machine speed or sleeping.
+    const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValue(6000)
+    try {
+      expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toEqual({
+        complete: false,
+        reason: 'limit',
+        changes: [],
+      })
+    } finally {
+      clock.mockRestore()
+    }
   })
 
   it('refuses history with a shallow boundary or a missing intermediate commit', async () => {

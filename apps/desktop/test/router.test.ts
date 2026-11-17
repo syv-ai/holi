@@ -221,9 +221,27 @@ describe('subscriptions IPC', () => {
     ])
     await writeFile(join(root, 'seed.md'), 'seed\\n', 'utf8')
     await gitCommit(root, ['seed.md'], 'seed')
+    // Keep the canonical GitHub origin for ownership checks, but rewrite Git's
+    // transport to a disposable local bare repo before host.open can sync it.
+    const localRemote = join(fixture.base, 'query-origin.git')
+    await exec('git', ['clone', '--bare', root, localRemote])
+    await exec('git', [
+      '-C',
+      root,
+      'config',
+      '--local',
+      `url.file://${localRemote}.insteadOf`,
+      'https://github.com/syv-ai/1brain.git',
+    ])
     await caller.vaults.open({ remote: REMOTE })
+    const active = host.active()!
+    // Subscription query fixtures have immutable commit history. Never permit
+    // host lifecycle sync to contact any transport, even the local mirror.
+    active.repo.push = vi.fn(async () => {})
+    active.repo.pull = vi.fn(async () => ({ kind: 'up-to-date' as const }))
+    active.repo.fetch = vi.fn(async () => {})
     await caller.subscriptions.set({ remote: REMOTE, path, enabled: true })
-    return { ...fixture, active: host.active()!, session }
+    return { ...fixture, active, session }
   }
 
   async function gitCommit(root: string, paths: string[], message: string, author?: string) {
@@ -353,15 +371,24 @@ describe('subscriptions IPC', () => {
     )
   })
 
-  it('retains unknown branch commits and the merge commit in the graph', async () => {
-    const { caller, active } = await realRepo()
+  it('retains unknown branch commits but suppresses the exact recorded merge', async () => {
+    const { caller, active, userData, session } = await realRepo()
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+    const recorder = createManagedCommitProvenance({
+      file: join(userData, 'managed-commit-provenance.json'),
+      remote: REMOTE,
+      identity: () => ({ accountId: 42, generation: 0 }),
+      subscribed: async () => true,
+      subscribedNow: async () => true,
+    })
     const base = await active.repo.head()
     await exec('git', ['-C', active.root, 'checkout', '-b', 'side'])
     await addFile(active.root, 'branch.md')
     const branch = await gitCommit(active.root, ['branch.md'], 'branch')
     await exec('git', ['-C', active.root, 'checkout', 'main'])
     await addFile(active.root, 'main.md')
-    await gitCommit(active.root, ['main.md'], 'main')
+    const mainCommit = await gitCommit(active.root, ['main.md'], 'main')
+    const ticket = await recorder.begin(active.root)
     await exec('git', [
       '-C',
       active.root,
@@ -374,10 +401,14 @@ describe('subscriptions IPC', () => {
       'merge',
     ])
     const merge = await active.repo.head()
+    await recorder.record(ticket, active.root, merge!)
     const result = await caller.subscriptions.changes({ remote: REMOTE, path: '' })
     expect(result).toMatchObject({ baseline: base, complete: true, history: 'ok' })
-    expect(result.changes.map(({ sha }) => sha)).toContain(branch)
-    expect(result.changes.map(({ sha }) => sha)).toContain(merge)
+    expect(result.changes.map(({ sha }) => sha)).toHaveLength(2)
+    expect(result.changes.map(({ sha }) => sha)).toEqual(
+      expect.arrayContaining([mainCommit, branch]),
+    )
+    expect(result.changes.map(({ sha }) => sha)).not.toContain(merge)
   })
 
   it('reports null and missing baselines as explicitly incomplete', async () => {
@@ -502,6 +533,11 @@ describe('subscriptions IPC', () => {
   ])('rejects real history when %s during traversal', async (_context, invalidate) => {
     const fixture = await realRepo()
     const { caller, active } = fixture
+    await writeFile(
+      join(active.root, '.git', 'holi-managed-provenance-id'),
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n',
+      'utf8',
+    )
     await addFile(active.root, 'context-race.md')
     await gitCommit(active.root, ['context-race.md'], 'context race')
     const original = active.repo.revisionChanges.bind(active.repo)
@@ -534,6 +570,9 @@ describe('subscriptions IPC', () => {
   it('does not let provenance from another root suppress the same commit OID', async () => {
     const first = await realRepo()
     const second = await realRepo()
+    const lifetime = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc\n'
+    for (const active of [first.active, second.active])
+      await writeFile(join(active.root, '.git', 'holi-managed-provenance-id'), lifetime, 'utf8')
     await addFile(first.active.root, 'shared.md')
     const sha = await gitCommit(first.active.root, ['shared.md'], 'shared history')
     const baseline = await exec('git', ['-C', first.active.root, 'rev-parse', `${sha}^`])
@@ -601,6 +640,22 @@ describe('subscriptions IPC', () => {
     }
   })
 
+  it('reports a true unborn HEAD as a pending baseline', async () => {
+    const { caller, active } = await realRepo()
+    // Host setup seeds an initial commit. Removing only the branch ref leaves
+    // HEAD symbolic but genuinely unborn, while preserving all stored objects.
+    await exec('git', ['-C', active.root, 'update-ref', '-d', 'refs/heads/main'])
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        baseline: expect.any(String),
+        tip: null,
+        complete: false,
+        history: 'pending-baseline',
+        changes: [],
+      },
+    )
+  })
+
   it('returns a pending baseline when the subscription has none', async () => {
     const { caller, active, userData } = await realRepo()
     const scopeFile = join(userData, 'subscriptions.json')
@@ -666,11 +721,31 @@ describe('subscriptions IPC', () => {
     await exec('git', ['-C', active.root, 'config', 'core.excludesFile', '/dev/null'])
     await writeFile(join(active.root, '.gitignore'), 'node_modules/\\n', 'utf8')
     await symlink(tmpdir(), join(active.root, 'outside-link'))
-    for (const path of ['safe.md', 'USER.local.md', '.env.token', 'node_modules/ignored.md'])
+    await mkdir(join(active.root, 'swapped'), { recursive: true })
+    for (const path of [
+      'safe.md',
+      'USER.local.md',
+      '.env.token',
+      'node_modules/ignored.md',
+      '.DS_Store',
+      'Thumbs.db',
+      '.holi-tmp-note.md',
+      'swapped/historical.md',
+    ])
       await addFile(active.root, path)
     await gitCommit(
       active.root,
-      ['.gitignore', 'safe.md', 'USER.local.md', '.env.token', 'node_modules/ignored.md'],
+      [
+        '.gitignore',
+        'safe.md',
+        'USER.local.md',
+        '.env.token',
+        'node_modules/ignored.md',
+        '.DS_Store',
+        'Thumbs.db',
+        '.holi-tmp-note.md',
+        'swapped/historical.md',
+      ],
       'fenced',
     )
     await exec('git', ['-C', active.root, 'add', '-f', 'outside-link'])
@@ -683,14 +758,33 @@ describe('subscriptions IPC', () => {
       '-m',
       'symlink',
     ])
+    // The path was ordinary content when committed; replacing its ancestor
+    // with a symlink before the query must still fence its old history.
+    await rm(join(active.root, 'swapped'), { recursive: true })
+    await symlink(tmpdir(), join(active.root, 'swapped'))
     const result = await caller.subscriptions.changes({ remote: REMOTE, path: '' })
     expect(result.changes.map(({ path }) => path)).toContain('safe.md')
-    for (const path of ['USER.local.md', '.env.token', 'node_modules/ignored.md', 'outside-link'])
+    for (const path of [
+      'USER.local.md',
+      '.env.token',
+      'node_modules/ignored.md',
+      '.DS_Store',
+      'Thumbs.db',
+      '.holi-tmp-note.md',
+      'swapped/historical.md',
+      'outside-link',
+    ])
       expect(result.changes.map(({ path }) => path)).not.toContain(path)
   })
 
   it('does not create provenance or mutate scope state and treats absent/corrupt records as unknown', async () => {
-    const { caller, active, userData } = await realRepo()
+    const { caller, active, userData, session } = await realRepo()
+    await writeFile(
+      join(active.root, '.git', 'holi-managed-provenance-id'),
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd\n',
+      'utf8',
+    )
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
     await addFile(active.root, 'unknown.md')
     const sha = await gitCommit(active.root, ['unknown.md'], 'manual')
     const scopeFile = join(userData, 'subscriptions.json')
@@ -713,10 +807,77 @@ describe('subscriptions IPC', () => {
     )
   })
 
+  it('treats a malformed lifetime marker as unavailable ownership without repairing it', async () => {
+    const { caller, active, session } = await realRepo()
+    Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+    await addFile(active.root, 'manual.md')
+    const sha = await gitCommit(active.root, ['manual.md'], 'manual')
+    const marker = join(active.root, '.git', 'holi-managed-provenance-id')
+    await writeFile(marker, 'not-a-uuid\n', 'utf8')
+
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        complete: true,
+        changes: [{ sha, path: 'manual.md', ownership: 'unknown', reviewed: false }],
+      },
+    )
+    expect(await readFile(marker, 'utf8')).toBe('not-a-uuid\n')
+  })
+
+  it('accepts a case-preserved canonical GitHub origin through the registered caller', async () => {
+    const { caller, active } = await realRepo()
+    await addFile(active.root, 'case.md')
+    const sha = await gitCommit(active.root, ['case.md'], 'case')
+    await exec('git', [
+      '-C',
+      active.root,
+      'remote',
+      'set-url',
+      'origin',
+      'https://github.com/Syv-AI/1Brain.git',
+    ])
+
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        complete: true,
+        history: 'ok',
+        changes: expect.arrayContaining([expect.objectContaining({ sha, path: 'case.md' })]),
+      },
+    )
+  })
+
   it('captures the active repository and userData before awaiting HEAD', async () => {
-    const { caller, host, registry, base, userData } = await rig()
+    const { caller, host, registry, base, userData, root } = await rig()
+    // This fixture also opens a real host. Keep its canonical origin but route
+    // any startup transport to a disposable local bare repository.
+    await exec('git', ['init', '-b', 'main', root])
+    await exec('git', ['-C', root, 'config', 'user.name', 'Test'])
+    await exec('git', ['-C', root, 'config', 'user.email', 'test@example.invalid'])
+    await exec('git', [
+      '-C',
+      root,
+      'remote',
+      'add',
+      'origin',
+      'https://github.com/syv-ai/1brain.git',
+    ])
+    await exec('git', ['-C', root, 'add', '-A'])
+    await exec('git', ['-C', root, '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'seed'])
+    const localRemote = join(base, 'capture-origin.git')
+    await exec('git', ['clone', '--bare', root, localRemote])
+    await exec('git', [
+      '-C',
+      root,
+      'config',
+      '--local',
+      `url.file://${localRemote}.insteadOf`,
+      'https://github.com/syv-ai/1brain.git',
+    ])
     await caller.vaults.open({ remote: REMOTE })
     const activeA = host.active()!
+    activeA.repo.push = vi.fn(async () => {})
+    activeA.repo.pull = vi.fn(async () => ({ kind: 'up-to-date' as const }))
+    activeA.repo.fetch = vi.fn(async () => {})
     let release!: (sha: string) => void
     const delayed = new Promise<string>((resolve) => (release = resolve))
     const capturedHead = vi.fn(() => delayed)
@@ -728,6 +889,29 @@ describe('subscriptions IPC', () => {
     const betaRoot = join(base, 'beta-subscriptions')
     await mkdir(betaRoot, { recursive: true })
     await seedVault(betaRoot)
+    await exec('git', ['init', '-b', 'main', betaRoot])
+    await exec('git', ['-C', betaRoot, 'config', 'user.name', 'Test'])
+    await exec('git', ['-C', betaRoot, 'config', 'user.email', 'test@example.invalid'])
+    await exec('git', [
+      '-C',
+      betaRoot,
+      'remote',
+      'add',
+      'origin',
+      'https://github.com/syv-ai/beta-subscriptions.git',
+    ])
+    await exec('git', ['-C', betaRoot, 'add', '-A'])
+    await exec('git', ['-C', betaRoot, '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'seed'])
+    const betaRemote = join(base, 'beta-origin.git')
+    await exec('git', ['clone', '--bare', betaRoot, betaRemote])
+    await exec('git', [
+      '-C',
+      betaRoot,
+      'config',
+      '--local',
+      `url.file://${betaRemote}.insteadOf`,
+      'https://github.com/syv-ai/beta-subscriptions.git',
+    ])
     await registry.add({
       remote: 'syv-ai/beta-subscriptions',
       path: betaRoot,
@@ -735,6 +919,10 @@ describe('subscriptions IPC', () => {
       lastOpenedAt: '2026-07-01T00:00:00Z',
     })
     await caller.vaults.open({ remote: 'syv-ai/beta-subscriptions' })
+    const activeB = host.active()!
+    activeB.repo.push = vi.fn(async () => {})
+    activeB.repo.pull = vi.fn(async () => ({ kind: 'up-to-date' as const }))
+    activeB.repo.fetch = vi.fn(async () => {})
     release('a'.repeat(40))
     await setting
 
