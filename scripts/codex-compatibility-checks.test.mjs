@@ -5,7 +5,8 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runCompatibility } from './codex-compatibility.mjs'
-import { checkProbe, exactVersion, isolatedEnvironment } from './codex-compatibility-checks.mjs'
+import { checkProbe, isolatedEnvironment } from './compatibility-checks.mjs'
+import { exactVersion } from './codex-compatibility-checks.mjs'
 
 test('drops inherited credentials and config variables', () => {
   const inherited = {
@@ -14,7 +15,7 @@ test('drops inherited credentials and config variables', () => {
     OPENAI_API_KEY: 'must-not-exist',
     npm_config_userconfig: '/real/config',
   }
-  const clean = isolatedEnvironment('/scratch', inherited.PATH)
+  const clean = isolatedEnvironment('/scratch', 'CODEX_HOME', inherited.PATH)
   assert.equal('GH_TOKEN' in clean, false)
   assert.equal('OPENAI_API_KEY' in clean, false)
   assert.equal(clean.HOME, '/scratch/home')
@@ -39,12 +40,19 @@ test('matches only the exact CLI version', () => {
 
 test('classifies missing options, timeouts and nonzero probes', () => {
   assert.match(
-    checkProbe({ status: 0 }, ['--json'], 'Usage: codex exec'),
+    checkProbe({ status: 0 }, ['--json'], 'Usage: codex exec', {
+      label: 'options',
+      separators: ',',
+    }),
     /missing consumed options/,
   )
-  assert.equal(checkProbe({ status: null, error: { code: 'ETIMEDOUT' } }, [], ''), 'timed out')
-  assert.equal(checkProbe({ status: 2 }, [], ''), 'exit 2')
-  assert.equal(checkProbe({ status: 0 }, ['--json'], ' --json'), null)
+  const options = { label: 'options', separators: ',' }
+  assert.equal(
+    checkProbe({ status: null, error: { code: 'ETIMEDOUT' } }, [], '', options),
+    'timed out',
+  )
+  assert.equal(checkProbe({ status: 2 }, [], '', options), 'exit 2')
+  assert.equal(checkProbe({ status: 0 }, ['--json'], ' --json', options), null)
 })
 
 test('runs isolated install and CLI probes without leaking install output into JSON', async () => {
