@@ -1,4 +1,6 @@
-import { isInIgnoredDir, isLocalOnlyPath, vaultRelPath } from '@holi/shared'
+import { isInIgnoredDir, isLocalOnlyPath, isSecretPath, vaultRelPath } from '@holi/shared'
+import { lstat } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { runGit, type GitRepo } from '../git'
 import { ownedCommitOids, repositoryIdentity } from '../managed-commit-provenance'
 import { canonicalGitHubRemote } from '../mdx-trust'
@@ -81,13 +83,42 @@ export async function subscriptionChanges(args: {
     JSON.stringify(afterIdentity) !== JSON.stringify(identity)
   )
     return { ...pending, tip, history: 'unavailable' as const }
-  const safeChanges = history.changes.filter(({ path }) => {
+  const safeChanges: typeof history.changes = []
+  for (const change of history.changes) {
+    const { path } = change
     try {
-      return vaultRelPath(path) === path && !isLocalOnlyPath(path) && !isInIgnoredDir(path)
+      if (
+        vaultRelPath(path) !== path ||
+        isLocalOnlyPath(path) ||
+        isSecretPath(path) ||
+        isInIgnoredDir(path)
+      )
+        continue
+      // Current symlinks can expose an outside target even though history
+      // returns only the link's name. Walk each existing component without
+      // following links; deleted paths remain eligible for historical review.
+      const parts = path.split('/')
+      let cursor = args.root
+      let unsafe = false
+      for (const part of parts) {
+        cursor = resolve(cursor, part)
+        try {
+          if ((await lstat(cursor)).isSymbolicLink()) {
+            unsafe = true
+            break
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') break
+          unsafe = true
+          break
+        }
+      }
+      if (!unsafe) safeChanges.push(change)
     } catch {
-      return false
+      // Invalid historical names are not emitted.
     }
-  })
+  }
+  if (!(await stillCurrent())) return { ...pending, tip, history: 'unavailable' as const }
   const ownership =
     args.accountId === null
       ? new Set<string>()
@@ -98,11 +129,10 @@ export async function subscriptionChanges(args: {
           accountId: args.accountId,
           oids: safeChanges.map(({ sha }) => sha),
         })
-  const changes = safeChanges.map((change) => ({
-    ...change,
-    ownership: ownership.has(change.sha) ? ('own' as const) : ('unknown' as const),
-    reviewed: false as const,
-  }))
+  if (!(await stillCurrent())) return { ...pending, tip, history: 'unavailable' as const }
+  const changes = safeChanges
+    .filter((change) => !ownership.has(change.sha))
+    .map((change) => ({ ...change, ownership: 'unknown' as const, reviewed: false as const }))
   return {
     baseline: args.baseline,
     tip,
