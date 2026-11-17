@@ -9,6 +9,7 @@
  * back once the overlay has gone.
  */
 import { useAtomValue } from 'jotai'
+import { registerAsyncHostHintAdapter } from '@/plugin-api'
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -43,6 +44,7 @@ import { IconButton } from '@/composites/icon-button'
 import { activeRemoteAtom, openExternal, vimCodeEditingAtom } from '@/plugin-api'
 import { addressFor, type PageInfo } from '../shared/page'
 import { browserCap } from './browser-cap'
+import { createBrowserHintAdapter } from './browser-hints'
 import { addressAskAtom, BROWSER, pagesAtom, vimModesAtom } from './state'
 
 /** What of Holi's can be drawn over a page: Radix's floating content and
@@ -192,10 +194,57 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
   const input = useRef<HTMLInputElement>(null)
   const [typed, setTyped] = useState<string | null>(null)
   const configuredVim = useRef('')
-
   const showsPage = page !== undefined && page.url !== '' && page.error === null
   const vimPageReady = showsPage && page?.loading === false
   const still = usePlacement(remote, id, visible && showsPage, host)
+
+  useEffect(() => {
+    if (
+      remote === null ||
+      id === undefined ||
+      !visible ||
+      !vimEnabled ||
+      !vimPageReady ||
+      vimMode === undefined ||
+      host.current === null ||
+      page === undefined
+    )
+      return
+    let active = true
+    const ownerElement = host.current
+    let origin: string
+    try {
+      origin = new URL(page.url).origin
+    } catch {
+      return
+    }
+    const adapter = createBrowserHintAdapter({
+      remote,
+      tab: id,
+      nonce: vimMode.nonce,
+      attachment: vimMode.attachment,
+      origin,
+      ownerElement,
+      current: () =>
+        active &&
+        visible &&
+        vimEnabled &&
+        vimPageReady &&
+        page?.id === id &&
+        page.url !== '' &&
+        page.error === null &&
+        vimMode?.nonce === adapterNonce &&
+        vimMode?.attachment === adapterAttachment,
+    })
+    const adapterNonce = vimMode.nonce
+    const adapterAttachment = vimMode.attachment
+    const unregister = registerAsyncHostHintAdapter(ownerElement, adapter)
+    return () => {
+      active = false
+      unregister()
+      adapter.dispose()
+    }
+  }, [remote, id, visible, vimEnabled, vimPageReady, vimMode, page])
 
   useEffect(() => {
     if (remote === null || id === undefined || vimMode === undefined) return
