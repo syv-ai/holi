@@ -91,7 +91,7 @@
       "entry": [
         "nativescript.config.ts!",
         "webpack.config.js!",
-        // The native verification driver is also a production check entry.
+        // The Simulator driver is run by the package's test:ios script.
         "scripts/ios-simulator.mjs!",
         "test/*.test.mjs",
       ],

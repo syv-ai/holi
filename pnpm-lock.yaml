@@ -418,7 +418,6 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.1.1)(jsdom@25.0.1)(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.108.2)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
-
     optionalDependencies:
       node-win-x64:
         specifier: 24.18.0
