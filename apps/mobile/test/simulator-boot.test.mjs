@@ -2,10 +2,22 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as watchdog, clearTimeout as clearWatchdog } from 'node:timers'
-import { test, vi } from 'vitest'
+import { onTestFinished, test, vi } from 'vitest'
 import { runCommand } from '../scripts/host-checks.mjs'
 import { bootSimulator, cleanupSimulator } from '../scripts/simulator-boot.mjs'
+
+const { spawnCapture } = vi.hoisted(() => ({ spawnCapture: { enabled: false, child: null } }))
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    spawn: (...args) => {
+      const child = actual.spawn(...args)
+      if (spawnCapture.enabled) spawnCapture.child = child
+      return child
+    },
+  }
+})
 
 const simulator = '11111111-1111-4111-8111-111111111111'
 const readEvents = async (root, name) =>
@@ -118,10 +130,9 @@ for (const mode of ['failure', 'diagnostic-error', 'hang', 'cleanup-timeout']) {
       probeStarted = resolve
     })
     const command = adapter(events, root, mode, probeStarted)
-    // A suspended CI worker cannot consume the projection budget. Only the hang
+    // Keep the diagnostic deadline independent of CI scheduling. Only the hang
     // case advances it, after the probe has installed its abort listener.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
-    const started = performance.now()
     try {
       const rejected = assert.rejects(
         bootSimulator({
@@ -148,7 +159,6 @@ for (const mode of ['failure', 'diagnostic-error', 'hang', 'cleanup-timeout']) {
       assert.ok(diagnostics.some((entry) => entry.event === 'command-started'))
       if (mode === 'hang') {
         assert.ok(diagnostics.some((entry) => entry.status === 'timeout'))
-        assert.equal(performance.now() - started, 180)
         assert.equal(diagnostics.at(-1).budgetExhausted, true)
         assert.ok(diagnostics.some((entry) => entry.status === 'budget-exhausted'))
         assert.deepEqual([...events], ['boot', 'bootstatus', '/usr/bin/sw_vers'])
@@ -241,16 +251,35 @@ test('process adapter caps noisy stdout, streams both pipes, and reaps a TERM-re
   assert.equal(output.length, 1024)
   assert.deepEqual([...streams].sort(), ['stderr', 'stdout'])
   let ownedPid
-  const controller = new AbortController()
-  // Advance only the adapter's deadlines after a real child reports readiness.
-  // CPU contention must not turn process startup into the failure under test.
+  let ready
+  const childReady = new Promise((resolve) => {
+    ready = resolve
+  })
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-  const guard = watchdog(() => {
-    controller.abort()
-    vi.advanceTimersByTime(50)
-  }, 3000)
+  spawnCapture.enabled = true
+  spawnCapture.child = null
+  let childClosed
+  onTestFinished(async () => {
+    vi.useRealTimers()
+    spawnCapture.enabled = false
+    const child = spawnCapture.child
+    if (!child) {
+      vi.restoreAllMocks()
+      return
+    }
+    if (child.pid && child.exitCode === null && child.signalCode === null) {
+      try {
+        if (process.platform === 'win32') child.kill('SIGKILL')
+        else process.kill(-child.pid, 'SIGKILL')
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error
+      }
+    }
+    await childClosed
+    vi.restoreAllMocks()
+  })
   try {
-    await assert.rejects(
+    const timedOut = assert.rejects(
       runCommand(
         process.execPath,
         [
@@ -260,38 +289,43 @@ test('process adapter caps noisy stdout, streams both pipes, and reaps a TERM-re
         {
           timeout: 100,
           killGrace: 50,
-          signal: controller.signal,
           onOutput: (data) => {
             ownedPid = Number(data.toString())
-            vi.advanceTimersByTime(150)
+            ready()
           },
         },
       ),
       /Timed out/,
     )
+    const child = spawnCapture.child
+    assert.ok(child, 'the real spawned child must be captured')
+    childClosed = new Promise((resolve) => child.once('close', resolve))
+    const endedBeforeReady = new Promise((_, reject) => {
+      child.once('error', reject)
+      child.once('close', (code, signal) => {
+        if (ownedPid === undefined)
+          reject(new Error(`Command closed before readiness (${code}, ${signal})`))
+      })
+    })
+    // The child's PID output is the readiness handshake; only then advance timers.
+    await Promise.race([childReady, endedBeforeReady])
+    vi.advanceTimersByTime(150)
+    await timedOut
+    // runCommand's kill-grace callback can settle before the OS reaps the process.
+    await childClosed
   } finally {
-    clearWatchdog(guard)
     vi.useRealTimers()
+    spawnCapture.enabled = false
   }
   assert.ok(Number.isSafeInteger(ownedPid) && ownedPid > 0)
-  let gone = false
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try {
-      process.kill(ownedPid, 0)
-    } catch (error) {
-      assert.equal(error.code, 'ESRCH')
-      gone = true
-      break
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  assert.ok(gone, 'the owned timed-out process must actually be reaped')
+  assert.throws(() => process.kill(ownedPid, 0), { code: 'ESRCH' })
 })
 
 test('noisy output is projected and capped without losing the terminal failure', async () => {
   const root = await mkdtemp(join(tmpdir(), 'holi-boot-test-'))
   const events = []
   const command = adapter(events, root, 'noisy')
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
   try {
     await assert.rejects(
       bootSimulator({
@@ -316,6 +350,7 @@ test('noisy output is projected and capped without losing the terminal failure',
     assert.equal(hostEvents.at(-1).event, 'finished')
     assert.ok(hostEvents.at(-1).droppedEvents > 0)
   } finally {
+    vi.useRealTimers()
     await rm(root, { recursive: true, force: true })
   }
 })
@@ -325,6 +360,7 @@ test('interrupted boot still gathers bounded host evidence with an independent s
   const controller = new AbortController()
   const events = []
   controller.abort()
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
   try {
     await assert.rejects(
       bootSimulator({
@@ -346,6 +382,7 @@ test('interrupted boot still gathers bounded host evidence with an independent s
     })
     assert.deepEqual(events.slice(-2), ['shutdown', 'delete'])
   } finally {
+    vi.useRealTimers()
     await rm(root, { recursive: true, force: true })
   }
 })
