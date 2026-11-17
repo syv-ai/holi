@@ -69,6 +69,7 @@ export function MdxTrustControl({ remote, path, visible, focused, onTrustContext
   )
 
   useEffect(() => {
+    onTrustContextChange?.(null, false)
     if (!current()) return
     let live = true
     setLoad(null)
