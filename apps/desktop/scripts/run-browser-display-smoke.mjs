@@ -7,18 +7,33 @@ import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'vite'
 import react from '@vitejs/plugin-react'
-import { readFileSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { externalizeDepsPlugin } from 'electron-vite'
+
+function killElectronTree(child, signal = 'SIGTERM') {
+  if (!child?.pid) return
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+    } else {
+      process.kill(-child.pid, signal)
+    }
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error
+  }
+}
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(
   process.argv[2] ?? join(tmpdir(), `holi-553-evidence-${Date.now()}-${process.pid}`),
 )
 const fixture = join(desktop, 'scripts/browser-display-fixture')
-const toolbarAcceptance = process.env.HOLI_553_UI === '1'
+const hintsAcceptance = process.env.HOLI_524_HINTS === '1'
+const toolbarAcceptance = process.env.HOLI_553_UI === '1' || hintsAcceptance
 const recordingPath = join(evidence, 'interaction.mp4')
-const root = await mkdtemp(join(tmpdir(), 'holi-523-smoke-'))
+const root = await mkdtemp(join(tmpdir(), 'holi-524-browser-hints-'))
+process.once('exit', () => rmSync(root, { recursive: true, force: true }))
 await mkdir(evidence, { recursive: true })
 const fixtureRoot = join(root, 'app-frame-renderer')
 await mkdir(fixtureRoot, { recursive: true })
@@ -88,6 +103,10 @@ for (const name of [
   'ui-light.png',
   'ui-dark.png',
   'interaction.mp4',
+  'hints-result.json',
+  'hints-page-light.png',
+  'hints-page-dark.png',
+  'hints-shell-light.png',
 ])
   await rm(join(evidence, name), { force: true })
 let child
@@ -113,7 +132,14 @@ try {
     build: { outDir: join(root, 'renderer'), emptyOutDir: true, minify: false },
   })
   const source = join(desktop, 'scripts/browser-display-smoke.ts')
-  const sequence = readFileSync(join(fixture, 'toolbar-sequence.ts'), 'utf8')
+  const toolbarSequence = readFileSync(join(fixture, 'toolbar-sequence.ts'), 'utf8')
+  const hintsSequence = readFileSync(join(fixture, 'hints-sequence.ts'), 'utf8')
+  const sequence = hintsAcceptance
+    ? toolbarSequence.replace(
+        '  await host.stopAll()\n',
+        `${hintsSequence}\n  await host.stopAll()\n`,
+      )
+    : toolbarSequence
   await build({
     configFile: false,
     root: desktop,
@@ -138,7 +164,7 @@ try {
           )
           return forwarding.replace(
             '  assert.equal(listeners.size, 0)',
-            `${toolbarAcceptance ? sequence : ''}\n  assert.equal(listeners.size, 0)`,
+            `${toolbarAcceptance || hintsAcceptance ? sequence : ''}\n  assert.equal(listeners.size, 0)`,
           )
         },
       },
@@ -186,8 +212,10 @@ try {
       .update(
         [
           'apps/desktop/src/plugins/browser/main/page-script.js',
+          'apps/desktop/scripts/browser-display-fixture/entry.tsx',
           'apps/desktop/scripts/browser-display-smoke.ts',
           'apps/desktop/scripts/browser-display-fixture/toolbar-sequence.ts',
+          'apps/desktop/scripts/browser-display-fixture/hints-sequence.ts',
           'apps/desktop/scripts/run-browser-display-smoke.mjs',
         ]
           .map((path) => `${path}\0${readFileSync(join(desktop, '..', '..', path))}`)
@@ -196,7 +224,11 @@ try {
       .digest('hex'),
   }
   delete env.ELECTRON_RUN_AS_NODE
-  const launch = spawn(electron, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  const launch = spawn(electron, [root], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
+  })
   child = launch
   child.stdout.on('data', (chunk) => {
     log += chunk
@@ -217,7 +249,7 @@ try {
       closed,
       new Promise((_, reject) => {
         timeout = setTimeout(() => {
-          child.kill()
+          killElectronTree(child)
           reject(new Error('Electron smoke timed out'))
         }, 150_000)
       }),
@@ -320,6 +352,22 @@ try {
     'production-app-frame-a-to-b-to-a-invalidates-delayed-real-capture',
     'production-app-frame-navigation-replacement-cannot-reach-hostbridge',
     'native-child-dom-removal-revokes-lease-and-suppresses-queued-bridge-reply',
+    ...(hintsAcceptance
+      ? [
+          'native-page-f-discovers-production-page-and-host-labels',
+          'page-label-activation-produces-trusted-native-button-click',
+          'supported-field-handoff-enters-insert-and-receives-native-typing',
+          'native-prefix-backspace-and-escape-clear-request-scoped-labels',
+          'overlay-change-invalidates-page-and-host-labels',
+          'hide-return-invalidates-old-page-and-host-labels',
+          'page-dom-mutation-invalidates-visible-labels-and-actions',
+          'native-page-scroll-invalidates-page-and-host-labels',
+          'shell-zoom-invalidates-page-and-host-labels',
+          'preference-off-insert-and-modified-keys-pass-through',
+          'page-label-activation-produces-trusted-native-link-click',
+          'native-page-light-dark-and-shell-evidence-captured',
+        ]
+      : []),
     'root-renderer-reload-revokes-old-lease-and-fresh-frame-reads-own-note',
     'native-svg-replacement-revokes-before-subsequent-capability-use-b',
     'revoked-app-lease-denied-b',
@@ -390,6 +438,17 @@ try {
   for (const name of result.screenshots) {
     assert((await stat(join(evidence, name))).size > 0, `missing screenshot: ${name}`)
   }
+  if (hintsAcceptance) {
+    const hints = JSON.parse(await readFile(join(evidence, 'hints-result.json'), 'utf8'))
+    assert.equal(hints.ok, true)
+    assert.equal(hints.source, env.HOLI_553_SHA)
+    assert.equal(hints.sourceHash, env.HOLI_553_SOURCE_HASH)
+    assert.deepEqual(hints.runtimeErrors, [])
+    for (const name of hints.evidence) {
+      assert((await stat(join(evidence, name))).size > 0, `missing hints evidence: ${name}`)
+    }
+    assert((await stat(recordingPath)).size > 0, 'missing native interaction video')
+  }
   if (toolbarAcceptance) {
     for (const name of ['ui-light.png', 'ui-dark.png'])
       assert((await stat(join(evidence, name))).size > 0, `missing screenshot: ${name}`)
@@ -423,7 +482,7 @@ try {
   }
 } finally {
   if (child && child.exitCode === null) {
-    child.kill('SIGTERM')
+    killElectronTree(child, 'SIGTERM')
     const exited = await Promise.race([
       closed.then(
         () => true,
@@ -432,7 +491,7 @@ try {
       new Promise((resolve) => setTimeout(() => resolve(false), 5_000)),
     ])
     if (!exited) {
-      child.kill('SIGKILL')
+      killElectronTree(child, 'SIGKILL')
       await closed.catch(() => {})
     }
   }

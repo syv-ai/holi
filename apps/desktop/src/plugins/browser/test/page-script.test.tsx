@@ -22,6 +22,7 @@ interface HoliPage {
       theme?: 'light' | 'dark',
     ): boolean
     clear(request: number): boolean
+    inspect(): { key: string; label: string }[]
     activate(request: number, id: string): { x: number; y: number; field: boolean } | null
   }
   vim: {
@@ -128,10 +129,24 @@ test('visible hint targets are separate from CLI refs and activation rechecks ge
   const targets = holi().hints.discover(4)!
   expect(targets).toHaveLength(1)
   expect(targets[0]?.label).toBe('Sign in')
-  expect(holi().hints.present(4, 1, [{ id: targets[0]!.id, key: 'A' }])).toBe(true)
+  expect(holi().hints.present(4, 1, [{ id: targets[0]!.id, key: 'a' }])).toBe(true)
   expect(holi().hints.activate(4, targets[0]!.id)).toEqual({ x: 30, y: 30, field: false })
   expect(holi().hints.clear(4)).toBe(true)
   expect(holi().hints.activate(4, targets[0]!.id)).toBeNull()
+})
+
+test('hint labels use host key case and update in place', () => {
+  const button = document.querySelector('button[type=submit]')!
+  button.getBoundingClientRect = () =>
+    ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+  document.elementFromPoint = vi.fn(() => button)
+  const targets = holi().hints.discover(5)!
+  expect(holi().hints.present(5, 1, [{ id: targets[0]!.id, key: 'a' }])).toBe(true)
+  const overlay = document.querySelector('[aria-hidden=true]')
+  expect(holi().hints.inspect()).toEqual([{ key: 'a', label: 'Sign in' }])
+  expect(holi().hints.present(5, 2, [{ id: targets[0]!.id, key: 'b' }])).toBe(true)
+  expect(document.querySelector('[aria-hidden=true]')).toBe(overlay)
+  expect(holi().hints.inspect()).toEqual([{ key: 'b', label: 'Sign in' }])
 })
 
 test('vim mode uses native selections and blocks unsupported edits synchronously', () => {

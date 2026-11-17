@@ -41,6 +41,7 @@
         "scripts/browser-display-fixture/entry.tsx",
         "scripts/browser-display-fixture/preload.cjs",
         "scripts/browser-display-fixture/toolbar-sequence.ts",
+        "scripts/browser-display-fixture/hints-sequence.ts",
         "scripts/mail-markers-smoke-main.ts",
         "scripts/mail-markers-smoke-renderer.tsx",
         // Native file-subscription smoke entries are built by the disposable MJS runner.
