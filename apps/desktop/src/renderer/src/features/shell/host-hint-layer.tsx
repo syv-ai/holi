@@ -8,6 +8,10 @@ import {
   HOST_HINT_REQUEST,
   HOST_HINT_SURFACE,
   captureHostHintAdapters,
+  captureAsyncHostHintAdapters,
+  hintLabel,
+  type AsyncHostHintAdapter,
+  type AsyncHostHintTarget,
   hostHintsUnchanged,
   registerHostHintSurface,
   type HostHintAdapter,
@@ -23,6 +27,12 @@ interface HintSession {
   adapter?: HostHintAdapter
   root: HTMLElement
   adapters: HostHintAdapter[]
+  asyncAdapters: AsyncHostHintAdapter[]
+  asyncTargets: Map<AsyncHostHintAdapter, readonly AsyncHostHintTarget[]>
+  request: number
+  pending: boolean
+  buffered: string
+  asyncLabels: Map<AsyncHostHintAdapter, { id: string; key: string }[]>
 }
 
 /** The shell owns transient input; editors only request it through the library seam. */
@@ -32,33 +42,58 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
   const [session, setSession] = useState<HintSession | null>(null)
   const current = useRef<HintSession | null>(null)
   const unsubscribe = useRef<(() => void) | null>(null)
+  const asyncLifetime = useRef<{ request: number; controller: AbortController } | null>(null)
+  const requestNumber = useRef(0)
+  const revisionNumber = useRef(0)
   const change = useCallback(
     (next: HintSession | null) => {
-      if (next !== current.current) {
+      const previous = current.current
+      if (next?.request !== previous?.request) {
         unsubscribe.current?.()
         unsubscribe.current = null
+        const lifetime = asyncLifetime.current
+        if (lifetime) {
+          lifetime.controller.abort()
+          for (const source of previous?.asyncAdapters ?? []) source.clear(lifetime.request)
+          asyncLifetime.current = null
+        }
       }
       current.current = next
+      if (next && previous?.request === next.request && previous.prefix !== next.prefix) {
+        const revision = ++revisionNumber.current
+        for (const [source, labels] of next.asyncLabels) {
+          void source
+            .present(
+              next.request,
+              revision,
+              labels.filter((label) => label.key.startsWith(next.prefix)),
+            )
+            .catch(() => undefined)
+        }
+      }
       const sources = new Set([
         ...(next?.adapters ?? []),
         ...(next?.adapter ? [next.adapter] : []),
         ...(next?.targets.flatMap((target) => (target.adapter ? [target.adapter] : [])) ?? []),
       ])
-      const disposers = [...sources]
-        .filter((source) => source.subscribe)
-        .map((source) =>
-          source.subscribe!(
-            () => change(null),
-            (event) => {
-              const route = store.get(hostHintKeyAtom)
-              if (!route?.(event)) return false
-              event.preventDefault()
-              event.stopImmediatePropagation()
-              return true
-            },
-          ),
-        )
-      if (disposers.length) unsubscribe.current = () => disposers.forEach((dispose) => dispose())
+      if (next?.request !== previous?.request) {
+        const routeKey = (event: KeyboardEvent) => {
+          const route = store.get(hostHintKeyAtom)
+          if (!route?.(event)) return false
+          event.preventDefault()
+          event.stopImmediatePropagation()
+          return true
+        }
+        const disposers = [...sources]
+          .filter((source) => source.subscribe)
+          .map((source) => source.subscribe!(() => change(null), routeKey))
+        if (next) {
+          for (const source of next.asyncAdapters) {
+            disposers.push(source.subscribe(next.request, () => change(null), routeKey))
+          }
+        }
+        if (disposers.length) unsubscribe.current = () => disposers.forEach((dispose) => dispose())
+      }
       setSession(next)
     },
     [store],
@@ -78,10 +113,100 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         ) ??
         document.body
       const adapters = adapter === undefined ? captureHostHintAdapters(root) : [adapter]
+      const asyncAdapters = captureAsyncHostHintAdapters(root)
       const targets = discoverHostHintTargets(root, adapter)
-      change(
-        targets.length || adapters.length ? { targets, prefix: '', adapter, root, adapters } : null,
-      )
+      const request = ++requestNumber.current
+      if (!targets.length && !adapters.length && !asyncAdapters.length) {
+        change(null)
+        return
+      }
+      const controller = new AbortController()
+      asyncLifetime.current = { request, controller }
+      const next: HintSession = {
+        targets,
+        prefix: '',
+        adapter,
+        root,
+        adapters,
+        asyncAdapters,
+        asyncTargets: new Map(),
+        request,
+        pending: asyncAdapters.length > 0,
+        buffered: '',
+        asyncLabels: new Map(),
+      }
+      change(next)
+      if (asyncAdapters.length) {
+        const discoveries = Promise.all(
+          asyncAdapters.map(async (source) => {
+            try {
+              return [source, await source.discover(request, controller.signal)] as const
+            } catch {
+              return [source, null] as const
+            }
+          }),
+        )
+        void Promise.race([
+          discoveries,
+          new Promise<NonNullable<Awaited<typeof discoveries>>>((resolve) =>
+            window.setTimeout(() => resolve([]), 120),
+          ),
+        ]).then((results) => {
+          if (controller.signal.aborted || current.current?.request !== request) return
+          const asyncTargets = new Map(
+            results.filter(
+              (entry): entry is readonly [AsyncHostHintAdapter, readonly AsyncHostHintTarget[]] =>
+                Boolean(entry[1]),
+            ),
+          )
+          const native = current.current.targets
+          const entries = [
+            ...native.map((target) => ({ x: target.x, y: target.y, target })),
+            ...[...asyncTargets].flatMap(([source, items]) =>
+              items.map((target) => ({ x: target.x, y: target.y, source, target })),
+            ),
+          ].sort((a, b) => a.y - b.y || a.x - b.x)
+          const count = entries.length
+          const labelsBySource = new Map<AsyncHostHintAdapter, { id: string; key: string }[]>()
+          const revisedTargets = native.map((target) => ({ ...target, key: '' }))
+          for (const entry of entries) {
+            const key = hintLabel(entries.indexOf(entry), count)
+            if ('source' in entry) {
+              const labels = labelsBySource.get(entry.source) ?? []
+              labels.push({ id: (entry.target as AsyncHostHintTarget).id, key })
+              labelsBySource.set(entry.source, labels)
+            } else {
+              const target = entry.target as HostHintTarget
+              const index = native.indexOf(target)
+              if (index >= 0) revisedTargets[index] = { ...target, key }
+            }
+          }
+          const populated = {
+            ...current.current,
+            targets: revisedTargets,
+            asyncTargets,
+            asyncLabels: labelsBySource,
+            pending: false,
+          }
+          change(populated)
+          void Promise.all(
+            asyncAdapters.map(async (source) => {
+              const labels = labelsBySource.get(source) ?? []
+              try {
+                await source.present(request, ++revisionNumber.current, labels)
+              } catch {
+                // An unavailable source should not take away hints from other sources.
+              }
+            }),
+          )
+          const lifetimePrefix = populated.buffered
+          if (lifetimePrefix) {
+            const latest = current.current
+            if (latest?.request === request)
+              change({ ...latest, prefix: lifetimePrefix, buffered: '' })
+          }
+        })
+      }
     },
     [change],
   )
@@ -187,6 +312,18 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         return true
       }
       if (event.repeat) return true
+      if (active.pending) {
+        if (event.key === 'Backspace') {
+          change({ ...active, buffered: active.buffered.slice(0, -1) })
+          return true
+        }
+        if (event.key.length === 1 && !event.shiftKey) {
+          change({ ...active, buffered: active.buffered + event.key })
+          return true
+        }
+        cancel()
+        return false
+      }
       if (event.key === 'Backspace') {
         change({ ...active, prefix: active.prefix.slice(0, -1) })
         return true
@@ -196,12 +333,45 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         return false
       }
       const prefix = active.prefix + event.key
+      const asyncMatches = [...active.asyncTargets]
+        .flatMap(([source, targets]) =>
+          targets.map((target) => ({
+            source,
+            target,
+            key: hintLabel(
+              [...active.targets, ...[...active.asyncTargets.values()].flat()]
+                .sort((a, b) => a.y - b.y || a.x - b.x)
+                .findIndex((item) => item === target),
+              active.targets.length +
+                [...active.asyncTargets.values()].reduce((n, items) => n + items.length, 0),
+            ),
+          })),
+        )
+        .filter((entry) => entry.key.startsWith(prefix))
       const matches = active.targets.filter((target) => target.key.startsWith(prefix))
       const found = matches.find((target) => target.key === prefix)
+      const asyncFound = asyncMatches.find((entry) => entry.key === prefix)
       if (found) {
         cancel()
         activateHostHint(found)
-      } else if (matches.length) change({ ...active, prefix })
+      } else if (asyncFound) {
+        const selected = asyncFound.source
+        unsubscribe.current?.()
+        unsubscribe.current = null
+        const lifetime = asyncLifetime.current
+        asyncLifetime.current = null
+        if (lifetime) {
+          lifetime.controller.abort()
+          for (const source of active.asyncAdapters)
+            if (source !== selected) source.clear(active.request)
+        }
+        current.current = null
+        setSession(null)
+        void selected
+          .activate(active.request, asyncFound.target.id)
+          .catch(() => undefined)
+          .finally(() => selected.clear(active.request))
+      } else if (matches.length || asyncMatches.length) change({ ...active, prefix })
       else cancel()
       return true
     }

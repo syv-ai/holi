@@ -27,6 +27,8 @@ import { HostHintLayer } from '../host-hint-layer'
 import {
   HOST_HINT_SURFACE,
   registerHostHintAdapter,
+  registerAsyncHostHintAdapter,
+  type AsyncHostHintAdapter,
   requestAdaptedHostHints,
   type HostHintAdapter,
 } from '@/lib/host-hints'
@@ -569,4 +571,90 @@ test('nested portalled overlays use their focused top layer and Escape leaves th
   await userEvent.keyboard('{Escape}')
   expect(screen.getByRole('menu')).toBeInTheDocument()
   expect(screen.getByRole('menuitem')).toHaveFocus()
+})
+
+test('async targets share allocated labels with native controls and activate through their owner', async () => {
+  const calls: string[] = []
+  let remoteKey = ''
+  const adapter: AsyncHostHintAdapter = {
+    discover: async () => [{ id: 'remote', label: 'Remote item', x: 200, y: 100 }],
+    present: vi.fn(async (_request, _revision, labels) => {
+      remoteKey = labels[0]?.key ?? ''
+      calls.push(`present:${remoteKey}`)
+      return true
+    }),
+    clear: vi.fn(() => calls.push('clear')),
+    activate: vi.fn(async () => {
+      calls.push('activate')
+      return true
+    }),
+    subscribe: () => vi.fn(),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <Button>Local</Button>
+      <div data-testid="owner" />
+    </section>,
+  )
+  registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+  screen.getByRole('button', { name: 'Local' }).focus()
+  await userEvent.keyboard('f')
+  await act(async () => await Promise.resolve())
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['Local'])
+  await userEvent.keyboard(remoteKey)
+  expect(adapter.activate).toHaveBeenCalledWith(expect.any(Number), 'remote')
+  expect(calls.indexOf('activate')).toBeLessThan(calls.indexOf('clear'))
+})
+
+test('pending async discovery buffers typeahead and Escape makes its result inert', async () => {
+  let resolve!: (targets: readonly { id: string; label: string; x: number; y: number }[]) => void
+  const adapter: AsyncHostHintAdapter = {
+    discover: () =>
+      new Promise((done) => {
+        resolve = done
+      }),
+    present: vi.fn(async () => true),
+    clear: vi.fn(),
+    activate: vi.fn(async () => true),
+    subscribe: () => vi.fn(),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <Button>Local</Button>
+      <div data-testid="owner" />
+    </section>,
+  )
+  registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+  screen.getByRole('button', { name: 'Local' }).focus()
+  await userEvent.keyboard('fa')
+  expect(hints()).toHaveLength(0)
+  await userEvent.keyboard('{Escape}')
+  await act(async () => resolve([{ id: 'late', label: 'Late', x: 200, y: 100 }]))
+  expect(adapter.present).not.toHaveBeenCalled()
+  expect(adapter.activate).not.toHaveBeenCalled()
+})
+
+test('async discovery errors leave native host hints usable and clear once on cancellation', async () => {
+  const adapter: AsyncHostHintAdapter = {
+    discover: async () => {
+      throw new Error('unavailable')
+    },
+    present: vi.fn(async () => true),
+    clear: vi.fn(),
+    activate: vi.fn(async () => true),
+    subscribe: () => vi.fn(),
+  }
+  setup(
+    <section data-pane="one" data-pane-focused>
+      <Button>Local</Button>
+      <div data-testid="owner" />
+    </section>,
+  )
+  registerAsyncHostHintAdapter(screen.getByTestId('owner'), adapter)
+  screen.getByRole('button', { name: 'Local' }).focus()
+  await userEvent.keyboard('f')
+  await act(async () => await Promise.resolve())
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual(['Local'])
+  await userEvent.keyboard('{Escape}')
+  expect(adapter.clear).toHaveBeenCalledOnce()
 })
