@@ -69,6 +69,24 @@ describe('MDX diagnostics lease acquisition', () => {
     await expect(acquisition).rejects.toThrow('MDX context changed')
   })
 
+  test('invalid paths do not reserve pending capacity', async () => {
+    const { diagnostics } = await fixture()
+    await expect(
+      diagnostics.acquire({ remote: identity.remote, path: '../escape.mdx', context: 'token' }),
+    ).rejects.toThrow()
+    const leases = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        diagnostics.acquire({
+          remote: identity.remote,
+          path: 'docs/page.mdx',
+          context: 'token',
+        }),
+      ),
+    )
+    expect(leases).toHaveLength(4)
+    diagnostics.close()
+  })
+
   test('pending acquisitions reserve capacity', async () => {
     const rootGate = gate<string>()
     const { diagnostics, root } = await fixture({ root: () => rootGate.promise })
@@ -79,6 +97,69 @@ describe('MDX diagnostics lease acquisition', () => {
     diagnostics.invalidate()
     rootGate.resolve(root)
     await Promise.all(requests.slice(0, 4).map((request) => expect(request).rejects.toThrow()))
+    diagnostics.close()
+  })
+
+  test('path invalidation cancels only matching leases and pending acquisitions', async () => {
+    const rootGate = gate<string>()
+    const { diagnostics, root } = await fixture({ root: () => rootGate.promise })
+    const pending = diagnostics.acquire({
+      remote: identity.remote,
+      path: 'docs/page.mdx',
+      context: 'token',
+    })
+    diagnostics.invalidatePath(identity.remote, 'docs')
+    rootGate.resolve(root)
+    await expect(pending).rejects.toThrow('MDX context changed')
+    const page = await diagnostics.acquire({
+      remote: identity.remote,
+      path: 'docs/page.mdx',
+      context: 'token',
+    })
+    const other = await diagnostics
+      .acquire({
+        remote: identity.remote,
+        path: 'unrelated.mdx',
+        context: 'token',
+      })
+      .catch(async () => {
+        await writeFile(join(root, 'unrelated.mdx'), '# other')
+        return diagnostics.acquire({
+          remote: identity.remote,
+          path: 'unrelated.mdx',
+          context: 'token',
+        })
+      })
+    diagnostics.invalidatePath(identity.remote, 'docs/page.mdx')
+    await expect(
+      diagnostics.compile({ lease: page.lease, generation: 1, source: '# invalidated' }),
+    ).rejects.toThrow()
+    await expect(
+      diagnostics.compile({ lease: other.lease, generation: 1, source: '# still live' }),
+    ).resolves.toEqual([])
+    diagnostics.close()
+  })
+
+  test('cancellation during the final path check cannot return diagnostics', async () => {
+    const finalTrust = gate<boolean>()
+    let trustedCalls = 0
+    const { diagnostics } = await fixture({
+      trusted: async () => {
+        trustedCalls += 1
+        if (trustedCalls === 11) return finalTrust.promise
+        return true
+      },
+    })
+    const lease = await diagnostics.acquire({
+      remote: identity.remote,
+      path: 'docs/page.mdx',
+      context: 'token',
+    })
+    const compiling = diagnostics.compile({ lease: lease.lease, generation: 1, source: '# page' })
+    while (trustedCalls < 11) await new Promise((resolve) => setTimeout(resolve, 0))
+    diagnostics.cancel({ lease: lease.lease, generation: 2 })
+    finalTrust.resolve(true)
+    await expect(compiling).rejects.toThrow(/superseded|cancelled/i)
     diagnostics.close()
   })
 

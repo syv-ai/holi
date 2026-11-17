@@ -39,6 +39,7 @@ export interface MdxDiagnostics {
   compile(input: { lease: string; generation: number; source: string }): Promise<MdxDiagnostic[]>
   release(input: { lease: string }): { ok: true }
   invalidate(): void
+  invalidatePath(remote: string, path: string): void
   close(): void
 }
 
@@ -53,6 +54,13 @@ export function createMdxDiagnostics(options: {
   let pending = 0
   let epoch = 0
   let closed = false
+  const pendingAcquisitions = new Set<{
+    remote: string
+    path: string
+    invalidated: boolean
+  }>()
+  const sameOrDescendant = (candidate: string, path: string) =>
+    candidate === path || candidate.startsWith(`${path}/`)
   const fail = (message: string): never => {
     throw new Error(message)
   }
@@ -105,20 +113,25 @@ export function createMdxDiagnostics(options: {
   }
   return {
     async acquire(input) {
+      const path = vaultRelPath(input.path)
       if (closed || leases.size + pending >= MAX_LEASES) fail('MDX diagnostics lease limit reached')
       pending += 1
       const acquisitionEpoch = epoch
-      const valid = () => !closed && acquisitionEpoch === epoch
+      const pendingAcquisition = {
+        remote: input.remote.toLowerCase(),
+        path: path.toLowerCase(),
+        invalidated: false,
+      }
+      pendingAcquisitions.add(pendingAcquisition)
+      const valid = () => !closed && acquisitionEpoch === epoch && !pendingAcquisition.invalidated
       try {
         const identity = options.context(input.context, input.remote)
         if (identity === null) throw new Error('MDX context unavailable')
-        if (
-          !options.authorize(identity, input.remote) ||
-          !(await options.trusted(identity)) ||
-          !options.authorize(identity, input.remote)
-        )
+        if (!options.authorize(identity, input.remote)) fail('MDX context unavailable')
+        const initiallyTrusted = await options.trusted(identity)
+        if (!valid()) fail('MDX context changed')
+        if (!initiallyTrusted || !options.authorize(identity, input.remote))
           fail('MDX context unavailable')
-        const path = vaultRelPath(input.path)
         if (
           !/\.mdx$/i.test(path) ||
           isSecretPath(path) ||
@@ -128,25 +141,25 @@ export function createMdxDiagnostics(options: {
           fail('MDX path unavailable')
         const root = await options.root(identity.remote)
         if (!valid()) fail('MDX context changed')
-        if (
-          !options.authorize(identity, input.remote) ||
-          !(await options.trusted(identity)) ||
-          !options.authorize(identity, input.remote)
-        )
+        if (!options.authorize(identity, input.remote)) fail('MDX context changed')
+        const trustedAfterRoot = await options.trusted(identity)
+        if (!valid()) fail('MDX context changed')
+        if (!trustedAfterRoot || !options.authorize(identity, input.remote))
           fail('MDX context changed')
         const canonicalRoot = await realpath(root)
         if (!valid()) fail('MDX context changed')
-        if (
-          !options.authorize(identity, input.remote) ||
-          !(await options.trusted(identity)) ||
-          !options.authorize(identity, input.remote)
-        )
+        if (!options.authorize(identity, input.remote)) fail('MDX context changed')
+        const trustedAfterRealpath = await options.trusted(identity)
+        if (!valid()) fail('MDX context changed')
+        if (!trustedAfterRealpath || !options.authorize(identity, input.remote))
           fail('MDX context changed')
         const canonical = await exactPath(canonicalRoot, path)
         if (!valid()) fail('MDX context changed')
+        if (!options.authorize(identity, input.remote)) fail('MDX context changed')
+        const trustedAfterExactPath = await options.trusted(identity)
+        if (!valid()) fail('MDX context changed')
         if (
-          !options.authorize(identity, input.remote) ||
-          !(await options.trusted(identity)) ||
+          !trustedAfterExactPath ||
           !options.authorize(identity, input.remote) ||
           canonical === null ||
           canonical !== join(canonicalRoot, path)
@@ -154,9 +167,11 @@ export function createMdxDiagnostics(options: {
           throw new Error('MDX file unavailable')
         const info = await stat(canonical).catch(() => null)
         if (!valid()) fail('MDX context changed')
+        if (!options.authorize(identity, input.remote)) fail('MDX context changed')
+        const trustedAfterStat = await options.trusted(identity)
+        if (!valid()) fail('MDX context changed')
         if (
-          !options.authorize(identity, input.remote) ||
-          !(await options.trusted(identity)) ||
+          !trustedAfterStat ||
           !options.authorize(identity, input.remote) ||
           info === null ||
           !info.isFile()
@@ -203,6 +218,7 @@ export function createMdxDiagnostics(options: {
         leases.set(id, lease)
         return { lease: id }
       } finally {
+        pendingAcquisitions.delete(pendingAcquisition)
         pending -= 1
       }
     },
@@ -253,6 +269,12 @@ export function createMdxDiagnostics(options: {
         )
           fail('MDX compile superseded')
         const after = await pathState(lease)
+        if (
+          lease.controller !== controller ||
+          input.generation !== lease.highGeneration ||
+          controller.signal.aborted
+        )
+          fail('MDX compile superseded')
         if (!after || after.fingerprint !== lease.fingerprint || !current(lease)) {
           drop(lease)
           fail('MDX context changed')
@@ -270,6 +292,24 @@ export function createMdxDiagnostics(options: {
     invalidate() {
       epoch += 1
       for (const lease of [...leases.values()]) drop(lease)
+    },
+    invalidatePath(remote, path) {
+      const normalized = vaultRelPath(path).toLowerCase()
+      const canonicalRemote = remote.toLowerCase()
+      for (const acquisition of pendingAcquisitions) {
+        if (
+          acquisition.remote === canonicalRemote &&
+          sameOrDescendant(acquisition.path, normalized)
+        )
+          acquisition.invalidated = true
+      }
+      for (const lease of [...leases.values()]) {
+        if (
+          lease.identity.remote.toLowerCase() === remote.toLowerCase() &&
+          sameOrDescendant(lease.path.toLowerCase(), normalized)
+        )
+          drop(lease)
+      }
     },
     close() {
       epoch += 1
