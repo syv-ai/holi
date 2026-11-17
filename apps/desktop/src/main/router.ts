@@ -1344,7 +1344,6 @@ export function createRouter(deps: RouterDeps) {
     input: { remote: string; context: string },
     approve: boolean,
   ): Promise<{ trusted: boolean }> {
-    const transitionEpoch = mdxTrustTransitionEpoch
     const context = trustContext?.token === input.context ? trustContext : null
     if (
       mdxTrustTransition > 0 ||
