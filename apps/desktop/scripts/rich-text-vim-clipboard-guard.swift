@@ -51,7 +51,7 @@ func currentItems() -> [NSPasteboardItem] {
 
 func isFixtureOwned() -> Bool {
   let items = currentItems()
-  items.contains { item in
+  return items.contains { item in
     guard let text = item.string(forType: .string) else { return false }
     return text.contains(fixtureToken)
   }
@@ -97,13 +97,8 @@ func restore() -> Bool {
     for (type, bytes) in savedItem.values { item.setData(bytes, forType: type) }
     return item
   }
-  let wrote: Bool
-  if restoredItems.isEmpty {
-    pasteboard.clearContents()
-    wrote = true
-  } else {
-    wrote = pasteboard.writeObjects(restoredItems)
-  }
+  pasteboard.clearContents()
+  let wrote = restoredItems.isEmpty || pasteboard.writeObjects(restoredItems)
   let verified = wrote && matches(saved)
   emit(GuardStatus(event: "restored", itemCount: saved.count, typeCount: countTypes(saved), restored: wrote, verified: verified, preservedExternalChange: false, unchanged: false))
   return verified

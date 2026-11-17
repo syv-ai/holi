@@ -14,7 +14,7 @@ import { externalizeDepsPlugin } from 'electron-vite'
 import { observeChild, startupDiagnostic } from './native-smoke-process.mjs'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const requestedEvidence = process.argv[2]
+const requestedEvidence = process.argv.slice(2).find((argument) => argument !== '--')
 const evidence = requestedEvidence
   ? resolve(requestedEvidence)
   : await mkdtemp(join(tmpdir(), 'holi-516-evidence-'))
