@@ -1378,14 +1378,7 @@ export function createRouter(deps: RouterDeps) {
         throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
       await (approve ? deps.mdxTrust.approve : deps.mdxTrust.revoke)(
         { accountId: context.accountId, remote },
-        () =>
-          mdxTrustTransitionEpoch === operationEpoch &&
-          deps.session.generation === context.accountGeneration &&
-          String(deps.session.viewer?.accountId) === context.accountId &&
-          context.remote === remote &&
-          deps.host.active() === context.active &&
-          vaultOpenRevision === context.openRevision &&
-          completedVaultOpenRevision === context.openRevision,
+        stillOwned,
       )
       if (!stillOwned())
         throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'MDX trust context changed' })
