@@ -151,7 +151,7 @@ for (const mode of ['failure', 'diagnostic-error', 'hang', 'cleanup-timeout']) {
         assert.equal(performance.now() - started, 180)
         assert.equal(diagnostics.at(-1).budgetExhausted, true)
         assert.ok(diagnostics.some((entry) => entry.status === 'budget-exhausted'))
-        assert.deepEqual(events, ['boot', 'bootstatus', '/usr/bin/sw_vers'])
+        assert.deepEqual([...events], ['boot', 'bootstatus', '/usr/bin/sw_vers'])
       } else {
         assert.ok(
           diagnostics.some(
