@@ -445,6 +445,162 @@ describe('subscriptions IPC', () => {
     }
   })
 
+  it.each([
+    [
+      'the signed-in account changes',
+      async ({ session }: Awaited<ReturnType<typeof realRepo>>) => {
+        Object.defineProperty(session, 'viewer', {
+          configurable: true,
+          value: { accountId: 42 },
+        })
+      },
+    ],
+    [
+      'the auth generation changes for the same account',
+      async ({ session }: Awaited<ReturnType<typeof realRepo>>) => {
+        const generation = session.generation
+        vi.spyOn(session, 'generation', 'get')
+          .mockReturnValueOnce(generation)
+          .mockReturnValue(generation + 1)
+      },
+    ],
+    [
+      'the active runtime changes',
+      async ({ host }: Awaited<ReturnType<typeof realRepo>>) => {
+        vi.spyOn(host, 'active').mockReturnValue(null)
+      },
+    ],
+    [
+      'the origin remote changes',
+      async ({ active }: Awaited<ReturnType<typeof realRepo>>) => {
+        await exec('git', [
+          '-C',
+          active.root,
+          'remote',
+          'set-url',
+          'origin',
+          'https://github.com/other/repo.git',
+        ])
+      },
+    ],
+    [
+      'the repository lifetime marker changes',
+      async ({ active }: Awaited<ReturnType<typeof realRepo>>) => {
+        const marker = join(active.root, '.git', 'holi-managed-provenance-id')
+        await writeFile(marker, 'replacement-lifetime\\n', 'utf8')
+      },
+    ],
+    [
+      'the saved baseline changes',
+      async ({ caller, userData }: Awaited<ReturnType<typeof realRepo>>) => {
+        const file = join(userData, 'subscriptions.json')
+        const saved = JSON.parse(await readFile(file, 'utf8'))
+        saved.remotes[REMOTE][0].baseline = 'f'.repeat(40)
+        await writeFile(file, JSON.stringify(saved), 'utf8')
+      },
+    ],
+  ])('rejects real history when %s during traversal', async (_context, invalidate) => {
+    const fixture = await realRepo()
+    const { caller, active } = fixture
+    await addFile(active.root, 'context-race.md')
+    await gitCommit(active.root, ['context-race.md'], 'context race')
+    const original = active.repo.revisionChanges.bind(active.repo)
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    active.repo.revisionChanges = vi.fn(async (...args) => {
+      entered()
+      await gate
+      return original(...args)
+    })
+
+    try {
+      const query = caller.subscriptions.changes({ remote: REMOTE, path: '' })
+      await started
+      await invalidate(fixture)
+      release()
+      await expect(query).resolves.toMatchObject({
+        complete: false,
+        history: 'unavailable',
+        changes: [],
+      })
+      expect(active.repo.revisionChanges).toHaveBeenCalledOnce()
+    } finally {
+      release()
+    }
+  })
+
+  it('does not let provenance from another root suppress the same commit OID', async () => {
+    const first = await realRepo()
+    const second = await realRepo()
+    await addFile(first.active.root, 'shared.md')
+    const sha = await gitCommit(first.active.root, ['shared.md'], 'shared history')
+    const baseline = await exec('git', ['-C', first.active.root, 'rev-parse', `${sha}^`])
+    await exec('git', ['-C', second.active.root, 'fetch', first.active.root, sha])
+    await exec('git', ['-C', second.active.root, 'checkout', '--detach', sha])
+    const secondScope = join(second.userData, 'subscriptions.json')
+    const saved = JSON.parse(await readFile(secondScope, 'utf8'))
+    saved.remotes[REMOTE][0].baseline = baseline.stdout.trim()
+    await writeFile(secondScope, JSON.stringify(saved), 'utf8')
+
+    const recorder = createManagedCommitProvenance({
+      file: join(first.userData, 'managed-commit-provenance.json'),
+      remote: REMOTE,
+      identity: () => ({ accountId: 42, generation: 0 }),
+      subscribed: async () => true,
+      subscribedNow: () => true,
+    })
+    const ticket = await recorder.begin(first.active.root)
+    await recorder.record(ticket, first.active.root, sha)
+    await writeFile(
+      join(second.userData, 'managed-commit-provenance.json'),
+      await readFile(join(first.userData, 'managed-commit-provenance.json'), 'utf8'),
+      'utf8',
+    )
+    for (const session of [first.session, second.session])
+      Object.defineProperty(session, 'viewer', { configurable: true, value: { accountId: 42 } })
+
+    await expect(
+      second.caller.subscriptions.changes({ remote: REMOTE, path: '' }),
+    ).resolves.toMatchObject({
+      complete: true,
+      changes: [{ sha, path: 'shared.md', ownership: 'unknown', reviewed: false }],
+    })
+  })
+
+  it('keeps the captured HEAD when HEAD advances during real traversal', async () => {
+    const { caller, active } = await realRepo()
+    await addFile(active.root, 'captured-tip.md')
+    const capturedTip = await gitCommit(active.root, ['captured-tip.md'], 'captured tip')
+    const original = active.repo.revisionChanges.bind(active.repo)
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    active.repo.revisionChanges = vi.fn(async (...args) => {
+      entered()
+      await gate
+      return original(...args)
+    })
+
+    try {
+      const query = caller.subscriptions.changes({ remote: REMOTE, path: '' })
+      await started
+      await addFile(active.root, 'later.md')
+      await gitCommit(active.root, ['later.md'], 'later tip')
+      release()
+      await expect(query).resolves.toMatchObject({
+        tip: capturedTip,
+        complete: true,
+        history: 'ok',
+      })
+      expect(active.repo.revisionChanges).toHaveBeenCalledOnce()
+    } finally {
+      release()
+    }
+  })
+
   it('returns a pending baseline when the subscription has none', async () => {
     const { caller, active, userData } = await realRepo()
     const scopeFile = join(userData, 'subscriptions.json')
