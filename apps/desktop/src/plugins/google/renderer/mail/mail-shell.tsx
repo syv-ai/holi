@@ -23,6 +23,7 @@ import {
   useHasCapability,
   sessionAtom,
 } from '@/plugin-api'
+import { beginMailCatchUp, finishMailCatchUp, mailCatchUpByVaultAtom } from './mail-catch-up'
 import type { ComposeIntent } from '../compose-intent'
 import { MailComposer, type MailComposerHandle } from '../mail-composer'
 import { ComposeSessionGate } from '../compose-session'
@@ -56,11 +57,10 @@ export function MailShell({
   const agent = useAgentService()
   const tasksAvailability = useCapabilityAvailability(TASKS_CREATE)
   const login = useAtomValue(sessionAtom)?.login ?? null
-  const catchUpPendingRef = useRef(false)
-  const [catchUpPending, setCatchUpPending] = useState(false)
+  const catchUpStates = useAtomValue(mailCatchUpByVaultAtom)
+  const catchUpState = remote === null ? undefined : catchUpStates.get(remote)
   const [catchUpError, setCatchUpError] = useState<string | null>(null)
   const [catchUpRetryable, setCatchUpRetryable] = useState(true)
-  const [recoverySessionId, setRecoverySessionId] = useState<string | null>(null)
   const catchUpContext = useRef({ remote, revision: remoteRevision })
   useEffect(() => {
     if (
@@ -71,11 +71,10 @@ export function MailShell({
     catchUpContext.current = { remote, revision: remoteRevision }
     setCatchUpError(null)
     setCatchUpRetryable(true)
-    setRecoverySessionId(null)
   }, [remote, remoteRevision])
 
   const catchUp = () => {
-    if (catchUpPendingRef.current || recoverySessionId !== null) return
+    if (catchUpState !== undefined) return
     if (login === null) {
       setCatchUpError('Sign in to GitHub to catch up on tasks assigned to you.')
       return
@@ -88,13 +87,12 @@ export function MailShell({
       setCatchUpError('Open a vault to start a catch-up conversation.')
       return
     }
-    catchUpPendingRef.current = true
-    setCatchUpPending(true)
-    setCatchUpError(null)
-    setCatchUpRetryable(true)
-    setRecoverySessionId(null)
     const origin = remote
     const originRevision = store.get(activeRemoteRevisionValueAtom)
+    const admissionId = beginMailCatchUp(store, origin, originRevision)
+    if (admissionId === null) return
+    setCatchUpError(null)
+    setCatchUpRetryable(true)
     const prompt = [
       `Catch me up in vault ${origin}. The signed-in GitHub login is ${login}.`,
       '',
@@ -110,32 +108,38 @@ export function MailShell({
     void agent
       .start({ name: 'Mail catch-up', prompt })
       .then((result) => {
-        if (
-          store.get(activeRemoteAtom) !== origin ||
-          store.get(activeRemoteRevisionValueAtom) !== originRevision
-        )
+        if (result.ok) {
+          finishMailCatchUp(store, origin, admissionId, { kind: 'done' })
           return
-        if (!result.ok) {
-          setCatchUpError(result.message)
-          setCatchUpRetryable(!result.cleanupUnconfirmed)
-          setRecoverySessionId(result.cleanupUnconfirmed ? (result.sessionId ?? null) : null)
+        }
+        if (result.cleanupUnconfirmed) {
+          finishMailCatchUp(store, origin, admissionId, {
+            kind: 'uncertain',
+            error: result.message,
+            sessionId: result.sessionId ?? null,
+          })
+        } else {
+          finishMailCatchUp(store, origin, admissionId, { kind: 'failed' })
+          if (
+            store.get(activeRemoteAtom) === origin &&
+            store.get(activeRemoteRevisionValueAtom) === originRevision
+          )
+            setCatchUpError(result.message)
         }
       })
       .catch((error: unknown) => {
+        finishMailCatchUp(store, origin, admissionId, { kind: 'failed' })
         if (
           store.get(activeRemoteAtom) === origin &&
           store.get(activeRemoteRevisionValueAtom) === originRevision
         )
           setCatchUpError(error instanceof Error ? error.message : 'Could not start catch-up.')
       })
-      .finally(() => {
-        catchUpPendingRef.current = false
-        setCatchUpPending(false)
-      })
   }
   const recoverCatchUp = () => {
-    if (agent === null || recoverySessionId === null) return
-    void agent.show({ session: recoverySessionId, live: true }).then((result) => {
+    if (agent === null || catchUpState?.kind !== 'uncertain' || catchUpState.sessionId === null)
+      return
+    void agent.show({ session: catchUpState.sessionId, live: true }).then((result) => {
       if (!result.ok) setCatchUpError(result.message)
     })
   }
@@ -146,10 +150,10 @@ export function MailShell({
       account={currentSub}
       className={className}
       visible={visible}
-      catchUpPending={catchUpPending}
-      catchUpError={catchUpError}
-      catchUpRetryable={catchUpRetryable}
-      catchUpRecovery={recoverySessionId !== null}
+      catchUpPending={catchUpState?.kind === 'pending'}
+      catchUpError={catchUpState?.kind === 'uncertain' ? catchUpState.error : catchUpError}
+      catchUpRetryable={catchUpState?.kind === 'uncertain' ? false : catchUpRetryable}
+      catchUpRecovery={catchUpState?.kind === 'uncertain' && catchUpState.sessionId !== null}
       onCatchUp={catchUp}
       onCatchUpRecovery={recoverCatchUp}
     />

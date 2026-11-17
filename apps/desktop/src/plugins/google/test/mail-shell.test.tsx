@@ -9,6 +9,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { atom, getDefaultStore } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
+import { mailCatchUpByVaultAtom } from '../renderer/mail/mail-catch-up'
 import { ConnectionsSection } from '../renderer/connections-section'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
@@ -209,6 +210,7 @@ beforeEach(() => {
     targets: atom({ default: 'new' }),
   })
   tasksAvailabilityMock.mockReset().mockReturnValue('available')
+  getDefaultStore().set(mailCatchUpByVaultAtom, new Map())
   getDefaultStore().set(sessionAtom, { login: 'ada' } as never)
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
   resetMailImagesForTests()
@@ -854,6 +856,87 @@ test('renders all configured marker symbols in the app-shell list', async () => 
     ids: ['blue', 'red', 'yellow'],
     expectedAccountSub: 'a',
   })
+})
+
+test('simultaneous Mail surfaces share one catch-up admission', async () => {
+  const user = userEvent.setup()
+  let finish!: (value: { ok: true }) => void
+  agentStartMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  render(
+    <>
+      <MailShell />
+      <MailShell />
+    </>,
+  )
+  await screen.findAllByRole('button', { name: 'Catch me up' })
+  const buttons = screen.getAllByRole('button', { name: 'Catch me up' })
+  await user.click(buttons[0]!)
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
+  await waitFor(() =>
+    expect(screen.getAllByRole('button', { name: 'Starting catch-up' })).toHaveLength(2),
+  )
+  await user.click(screen.getAllByRole('button', { name: 'Starting catch-up' })[1]!)
+  expect(agentStartMock).toHaveBeenCalledTimes(1)
+  finish({ ok: true })
+})
+
+test('catch-up admission survives Mail unmount while startup is pending', async () => {
+  const user = userEvent.setup()
+  let finish!: (value: { ok: true }) => void
+  agentStartMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  const first = render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
+  first.unmount()
+
+  render(<MailShell />)
+  expect(await screen.findByRole('button', { name: 'Starting catch-up' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Starting catch-up' }))
+  expect(agentStartMock).toHaveBeenCalledTimes(1)
+  finish({ ok: true })
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Catch me up' })).toBeEnabled())
+})
+
+test('catch-up uncertainty survives Mail remount and vault A-B-A for its origin', async () => {
+  const user = userEvent.setup()
+  const show = vi.fn().mockResolvedValue({ ok: true })
+  agentServiceMock.mockReturnValue({
+    start: agentStartMock,
+    show,
+    ask: vi.fn(),
+    targets: atom({ default: 'new' }),
+  })
+  let finish!: (value: {
+    ok: false
+    cleanupUnconfirmed: true
+    message: string
+    sessionId: string
+  }) => void
+  agentStartMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  const first = render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  await waitFor(() => expect(agentStartMock).toHaveBeenCalledTimes(1))
+  first.unmount()
+
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/other')
+  finish({
+    ok: false,
+    cleanupUnconfirmed: true,
+    message: 'Cleanup unconfirmed: session may still be running.',
+    sessionId: 'origin-survivor',
+  })
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  expect(screen.queryByRole('alert')).toBeNull()
+
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
+  expect(await screen.findByRole('alert')).toHaveTextContent('Cleanup unconfirmed')
+  expect(screen.getByRole('button', { name: 'Catch me up' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Open surviving session' }))
+  expect(show).toHaveBeenCalledWith({ session: 'origin-survivor', live: true })
+  expect(agentStartMock).toHaveBeenCalledTimes(1)
 })
 
 test('catch-up starts a read-only prompt for the signed-in login without opening mail', async () => {
