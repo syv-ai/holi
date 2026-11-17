@@ -251,6 +251,38 @@ test('a rejected activation clears its captured request even after a new request
   fixture.adapter.dispose()
 })
 
+test('keeps the exact request key route live until delayed activation settles', async () => {
+  const fixture = setup()
+  await fixture.adapter.discover(4, new AbortController().signal)
+  const wireRequest = input('browser.hints-discover')[0].request as number
+  const routed: KeyboardEvent[] = []
+  const unsubscribe = fixture.adapter.subscribe(
+    4,
+    () => undefined,
+    (event) => {
+      routed.push(event)
+      return event.key === 'Escape'
+    },
+  )
+  let finish!: (value: boolean) => void
+  run.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  const activation = fixture.adapter.activate(4, 'target-1')
+  await Promise.resolve()
+
+  fixture.event(wireRequest, fixture.ownerOrigin, 'key', { key: 'Escape', code: 'Escape' })
+  expect(routed).toHaveLength(1)
+  expect(routed[0]).toMatchObject({ key: 'Escape', code: 'Escape' })
+  expect(input('browser.hints-clear')).toHaveLength(0)
+
+  finish(true)
+  expect(await activation).toBe(true)
+  expect(input('browser.hints-clear')).toHaveLength(1)
+  fixture.event(wireRequest, fixture.ownerOrigin, 'key', { key: 'Escape', code: 'Escape' })
+  expect(routed).toHaveLength(1)
+  unsubscribe()
+  fixture.adapter.dispose()
+})
+
 test('routes only keys owned by the matching request and opaque origin', async () => {
   const fixture = setup()
   await fixture.adapter.discover(4, new AbortController().signal)

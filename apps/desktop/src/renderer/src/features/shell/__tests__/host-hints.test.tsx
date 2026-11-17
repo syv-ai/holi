@@ -148,6 +148,34 @@ test('the preference defaults off, unregisters shortcut help and disables in-fli
   expect(hints()).toHaveLength(0)
 })
 
+test('Escape reaches dialogs and text fields when no hint session owns it', async () => {
+  const close = vi.fn()
+  const key = vi.fn()
+  setup(
+    <>
+      <div
+        role="dialog"
+        aria-label="Dialog"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') close()
+        }}
+      >
+        <input aria-label="Dialog field" />
+      </div>
+      <input aria-label="Outside field" onKeyDown={key} />
+    </>,
+  )
+
+  screen.getByLabelText('Dialog field').focus()
+  await userEvent.keyboard('{Escape}')
+  expect(close).toHaveBeenCalledOnce()
+  expect(hints()).toHaveLength(0)
+
+  screen.getByLabelText('Outside field').focus()
+  await userEvent.keyboard('{Escape}')
+  expect(key).toHaveBeenCalledOnce()
+})
+
 test('Escape cancels without activating or moving focus; help and platform shortcuts still work', async () => {
   const click = vi.fn()
   setup(<Button onClick={click}>Action</Button>)
@@ -785,6 +813,9 @@ test.each(['blur', 'pointer', 'request', 'preference', 'escape', 'surface'] as c
   async (reason) => {
     let finish!: (value: boolean) => void
     let remoteKey = ''
+    let subscriptions = 0
+    let unsubscriptions = 0
+    let routeSelectedKey: ((event: KeyboardEvent) => boolean) | undefined
     const adapter: AsyncHostHintAdapter = {
       discover: async () =>
         Array.from({ length: 30 }, (_, index) => ({
@@ -806,7 +837,18 @@ test.each(['blur', 'pointer', 'request', 'preference', 'escape', 'surface'] as c
             finish = resolve
           }),
       ),
-      subscribe: () => vi.fn(),
+      subscribe: (_request, invalidate, routeKey) => {
+        subscriptions++
+        routeSelectedKey = (event) => {
+          const routed = routeKey(event)
+          if (routed) invalidate()
+          return routed
+        }
+        return () => {
+          unsubscriptions++
+          routeSelectedKey = undefined
+        }
+      },
     }
     setup(
       <section data-pane="one" data-pane-focused>
@@ -821,6 +863,9 @@ test.each(['blur', 'pointer', 'request', 'preference', 'escape', 'surface'] as c
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
     await userEvent.keyboard(remoteKey)
     expect(adapter.activate).toHaveBeenCalledOnce()
+    await userEvent.keyboard('f')
+    expect(hints()).toHaveLength(0)
+    expect(adapter.activate).toHaveBeenCalledOnce()
     if (reason === 'blur') fireEvent.blur(window)
     if (reason === 'pointer') fireEvent.pointerDown(window)
     if (reason === 'request') {
@@ -829,7 +874,15 @@ test.each(['blur', 'pointer', 'request', 'preference', 'escape', 'surface'] as c
       )
     }
     if (reason === 'preference') await act(async () => store.set(vimCodeEditingAtom, false))
-    if (reason === 'escape') await userEvent.keyboard('{Escape}')
+    if (reason === 'escape') {
+      const ownerEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
+      expect(routeSelectedKey?.(ownerEscape)).toBe(true)
+      expect(ownerEscape.defaultPrevented).toBe(true)
+    }
     if (reason === 'surface') {
       const owner = screen.getByTestId('owner')
       const shadow = owner.attachShadow({ mode: 'open' })
@@ -844,6 +897,17 @@ test.each(['blur', 'pointer', 'request', 'preference', 'escape', 'surface'] as c
     expect(adapter.clear).toHaveBeenCalledOnce()
     await act(async () => finish(true))
     expect(adapter.clear).toHaveBeenCalledOnce()
+    expect(subscriptions).toBe(reason === 'request' ? 3 : 2)
+    expect(unsubscriptions).toBe(2)
+    if (reason === 'escape') {
+      const unownedEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
+      act(() => window.dispatchEvent(unownedEscape))
+      expect(unownedEscape.defaultPrevented).toBe(false)
+    }
   },
 )
 
