@@ -150,24 +150,44 @@ export function browserHintCapabilities(pages: BrowserHintPages) {
     const request = p['request']
     if (!Number.isSafeInteger(request) || (request as number) < 1)
       throw new CapabilityError('BAD_REQUEST', 'request must be a positive safe integer')
-    if (nonce.length > 128 || attachment.length > 128)
+    if (
+      !tab ||
+      tab.length > 128 ||
+      !nonce ||
+      nonce.length > 128 ||
+      !attachment ||
+      attachment.length > 128
+    )
       throw new CapabilityError('BAD_REQUEST', 'hint owner fields are too long')
     return { tab, nonce, attachment, request: request as number }
   }
+  // Capability transport keeps operation arguments under `p`; scope calls are
+  // direct, while snapshot operations carry `{ owner, p }`.
   const ownerParams = (raw: unknown) => {
-    const p = paramsObject(raw)
-    const owner = p['owner'] as PageHintOwner
+    const envelope = paramsObject(raw)
+    const p = paramsObject(envelope['p'])
+    const owner = envelope['owner'] as PageHintOwner
     if (
       !owner ||
       typeof owner !== 'object' ||
       typeof owner.tab !== 'string' ||
+      owner.tab.length < 1 ||
+      owner.tab.length > 128 ||
       typeof owner.nonce !== 'string' ||
+      owner.nonce.length < 1 ||
+      owner.nonce.length > 128 ||
       typeof owner.attachment !== 'string' ||
+      owner.attachment.length < 1 ||
+      owner.attachment.length > 128 ||
       typeof owner.origin !== 'string' ||
+      owner.origin.length < 1 ||
       owner.origin.length > 128 ||
       !Number.isSafeInteger(owner.request) ||
       !Number.isSafeInteger(owner.snapshot) ||
-      !Number.isSafeInteger(owner.geometry)
+      !Number.isSafeInteger(owner.geometry) ||
+      owner.request < 1 ||
+      owner.snapshot < 1 ||
+      owner.geometry < 0
     )
       throw new CapabilityError('BAD_REQUEST', 'invalid hint owner')
     return { owner, p }
@@ -187,20 +207,27 @@ export function browserHintCapabilities(pages: BrowserHintPages) {
           theme = p['theme']
         if (
           !Number.isSafeInteger(revision) ||
+          (revision as number) < 1 ||
           !Array.isArray(labels) ||
           labels.length > 200 ||
           labels.some(
             (v) =>
               !v ||
               typeof v.id !== 'string' ||
+              v.id.length < 1 ||
               v.id.length > 64 ||
               typeof v.key !== 'string' ||
-              !/^[A-Z]{1,4}$/.test(v.key),
+              !/^[a-z]{1,4}$/.test(v.key),
           ) ||
           (theme !== 'light' && theme !== 'dark')
         )
           throw new CapabilityError('BAD_REQUEST', 'invalid hint labels, theme or revision')
-        return pages.presentHints(owner, revision as number, labels as PageHintLabel[], theme)
+        return pages.presentHints(
+          owner,
+          revision as number,
+          labels as PageHintLabel[],
+          theme as 'light' | 'dark',
+        )
       },
     }),
     'browser.hints-clear': cap({

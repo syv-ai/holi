@@ -14,16 +14,17 @@ interface HoliPage {
   valueOf(ref: number): string | null
   fill(ref: number, text: string): boolean
   hints: {
-    discover(request: number): { id: string; label: string; x: number; y: number }[] | null
+    discover(owner: HintOwner): { id: string; label: string; x: number; y: number }[] | null
     present(
-      request: number,
+      owner: HintOwner,
       revision: number,
       labels: { id: string; key: string }[],
       theme?: 'light' | 'dark',
     ): boolean
-    clear(request: number): boolean
+    clear(owner: HintOwner): boolean
     inspect(): { key: string; label: string }[]
-    activate(request: number, id: string): { x: number; y: number; field: boolean } | null
+    poll(): { type: string }[]
+    activate(owner: HintOwner, id: string): { x: number; y: number; field: boolean } | null
   }
   vim: {
     documentNonce(): string
@@ -33,11 +34,36 @@ interface HoliPage {
   }
 }
 
+interface HintOwner {
+  tab: string
+  nonce: string
+  attachment: string
+  request: number
+  origin: string
+  snapshot: number
+  geometry: number
+}
+const keydownListeners: EventListener[] = []
 const holi = (): HoliPage => (globalThis as unknown as { __holiPage: HoliPage }).__holiPage
+const hintOwner = (request: number): HintOwner => ({
+  tab: 'tab',
+  nonce: 'doc',
+  attachment: 'attach',
+  request,
+  origin: 'opaque-token',
+  snapshot: 1,
+  geometry: 1,
+})
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn()
   document.elementFromPoint = vi.fn(() => null)
+  const nativeAddEventListener = document.addEventListener.bind(document)
+  vi.spyOn(document, 'addEventListener').mockImplementation((type, listener, options) => {
+    if (type === 'keydown' && typeof listener === 'function')
+      keydownListeners.push(listener as EventListener)
+    nativeAddEventListener(type, listener, options)
+  })
   new Function(SCRIPT)()
 })
 
@@ -103,11 +129,18 @@ test('a number finds its control until it leaves the page', () => {
   expect(holi().point(7)).toBeNull()
 })
 
+test('untrusted synthetic page key events cannot create hint requests', () => {
+  const event = { isTrusted: false } as KeyboardEvent
+  for (const listener of keydownListeners) listener(event)
+  expect(holi().hints.poll()).toEqual([])
+})
+
 test('hint requests reject stale operations and themes are bounded', () => {
-  expect(holi().hints.discover(3)).not.toBeNull()
-  expect(holi().hints.discover(2)).toBeNull()
-  expect(holi().hints.present(3, 1, [], 'system' as 'light')).toBe(false)
-  expect(holi().hints.clear(2)).toBe(false)
+  const owner = hintOwner(3)
+  expect(holi().hints.discover(owner)).not.toBeNull()
+  expect(holi().hints.discover(hintOwner(2))).toBeNull()
+  expect(holi().hints.present(owner, 1, [], 'system' as 'light')).toBe(false)
+  expect(holi().hints.clear(hintOwner(2))).toBe(false)
 })
 
 test('visible hint targets are separate from CLI refs and activation rechecks geometry', () => {
@@ -126,13 +159,15 @@ test('visible hint targets are separate from CLI refs and activation rechecks ge
     }) as DOMRect
   document.elementFromPoint = vi.fn(() => button)
   holi().read(12_000)
-  const targets = holi().hints.discover(4)!
+  const owner = hintOwner(4)
+  const targets = holi().hints.discover(owner)!
   expect(targets).toHaveLength(1)
   expect(targets[0]?.label).toBe('Sign in')
-  expect(holi().hints.present(4, 1, [{ id: targets[0]!.id, key: 'a' }])).toBe(true)
-  expect(holi().hints.activate(4, targets[0]!.id)).toEqual({ x: 30, y: 30, field: false })
-  expect(holi().hints.clear(4)).toBe(true)
-  expect(holi().hints.activate(4, targets[0]!.id)).toBeNull()
+  expect(holi().hints.present(owner, 1, [{ id: targets[0]!.id, key: 'a' }])).toBe(true)
+  expect(holi().hints.activate(owner, targets[0]!.id)).toEqual({ x: 30, y: 30, field: false })
+  expect(holi().hints.clear(owner)).toBe(true)
+  expect(holi().hints.discover(owner)).toBeNull()
+  expect(holi().hints.activate(owner, targets[0]!.id)).toBeNull()
 })
 
 test('hint labels use host key case and update in place', () => {
@@ -140,11 +175,12 @@ test('hint labels use host key case and update in place', () => {
   button.getBoundingClientRect = () =>
     ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
   document.elementFromPoint = vi.fn(() => button)
-  const targets = holi().hints.discover(5)!
-  expect(holi().hints.present(5, 1, [{ id: targets[0]!.id, key: 'a' }])).toBe(true)
+  const owner = hintOwner(5)
+  const targets = holi().hints.discover(owner)!
+  expect(holi().hints.present(owner, 1, [{ id: targets[0]!.id, key: 'a' }])).toBe(true)
   const overlay = document.querySelector('[aria-hidden=true]')
   expect(holi().hints.inspect()).toEqual([{ key: 'a', label: 'Sign in' }])
-  expect(holi().hints.present(5, 2, [{ id: targets[0]!.id, key: 'b' }])).toBe(true)
+  expect(holi().hints.present(owner, 2, [{ id: targets[0]!.id, key: 'b' }])).toBe(true)
   expect(document.querySelector('[aria-hidden=true]')).toBe(overlay)
   expect(holi().hints.inspect()).toEqual([{ key: 'b', label: 'Sign in' }])
 })
@@ -834,4 +870,69 @@ test('fills a field and picks an option, as typing would', () => {
   expect(holi().fill(6, 'Sweden')).toBe(true)
   expect(holi().valueOf(6)).toBe('Sweden')
   expect(holi().fill(6, 'Norway')).toBe(false)
+})
+
+test('active hint capture precedes field Vim handling and queues raw control keys', () => {
+  const input = document.createElement('input')
+  document.body.append(input)
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 70, nonce)).toBe(true)
+  input.focus()
+  const owner = hintOwner(70)
+  expect(holi().hints.discover(owner)).not.toBeNull()
+  const event = (key: string) =>
+    ({
+      isTrusted: true,
+      key,
+      code: key === 'Backspace' ? 'Backspace' : `Key${key.toUpperCase()}`,
+      repeat: false,
+      isComposing: false,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+    }) as unknown as KeyboardEvent
+  const f = event('f')
+  keydownListeners[0]!(f)
+  keydownListeners.at(-1)!(f)
+  const escape = event('Escape')
+  keydownListeners[0]!(escape)
+  const backspace = event('Backspace')
+  keydownListeners[0]!(backspace)
+  expect(
+    holi()
+      .hints.poll()
+      .map(({ type }) => type),
+  ).toEqual(['key', 'key', 'key'])
+  expect(f.preventDefault).toHaveBeenCalled()
+  expect(holi().vim.mode().mode).toBe('insert')
+})
+
+test('hint queue overflow retires the session instead of dropping arbitrary keys', () => {
+  const input = document.createElement('input')
+  document.body.append(input)
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 71, nonce)).toBe(true)
+  input.focus()
+  const owner = hintOwner(71)
+  expect(holi().hints.discover(owner)).not.toBeNull()
+  const listener = keydownListeners[0]!
+  for (let index = 0; index < 33; index++)
+    listener({
+      isTrusted: true,
+      key: 'a',
+      code: 'KeyA',
+      repeat: false,
+      isComposing: false,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    } as unknown as KeyboardEvent)
+  expect(holi().hints.poll()).toEqual([{ type: 'revoke', owner }])
+  expect(holi().hints.activate(owner, '0')).toBeNull()
 })

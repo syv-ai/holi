@@ -651,6 +651,28 @@
     return adjacentStart + (stops[Math.min(column, stops.length - 1)] ?? 0)
   }
   const onVimKey = (event) => {
+    if (!event.isTrusted) return
+    if (hintOwner && !hintClosed && eligibleNow()) {
+      if (event.isComposing || event.repeat || event.metaKey || event.ctrlKey || event.altKey)
+        return
+      if (event.key === 'Escape' || event.key === 'Backspace' || /^[a-zA-Z]$/.test(event.key)) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        queueHintEvent({
+          type: 'key',
+          key: event.key,
+          code: event.code,
+          repeat: event.repeat,
+          isComposing: event.isComposing,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          altKey: event.altKey,
+          shiftKey: event.shiftKey,
+          owner: { ...hintOwner },
+        })
+      }
+      return
+    }
     const target = event.target
     flushHostMutations()
     if (
@@ -811,6 +833,12 @@
       vimField = null
       vimObservedHost = false
       verticalColumn = null
+      hintOwner = null
+      hintClosed = true
+      hintSnapshot.clear()
+      hintRoot?.remove()
+      hintRoot = null
+      hintEvents.length = 0
       return vimNonce
     },
     configure(enabled, revision, nonce) {
@@ -837,19 +865,36 @@
     },
   }
   // Browser hints own a separate target snapshot; CLI refs above are never reused.
-  let hintRequest = 0
+  let hintOwner = null
+  let hintClosed = true
   let hintRevision = 0
   let hintSnapshot = new Map()
   let hintRoot = null
+  const hintOwnedRoots = new WeakSet()
   let hintShadow = null
   let visibleHintLabels = []
   const hintEvents = []
   let hintGeometry = 0
+  const queueHintEvent = (event) => {
+    if (hintEvents.length >= 32) {
+      const owner = hintOwner && { ...hintOwner }
+      hintEvents.length = 0
+      hintSnapshot.clear()
+      hintRoot?.remove()
+      hintRoot = null
+      hintClosed = true
+      if (owner) hintEvents.push({ type: 'revoke', owner })
+      return false
+    }
+    hintEvents.push(event)
+    return true
+  }
   const hintSelector =
     'a[href],button,input[type="button"],input[type="submit"],input[type="reset"],[role="button"],[role="link"],[role="tab"],[role="menuitem"],summary'
   function hintTargets() {
     const result = []
-    for (const element of document.querySelectorAll(hintSelector)) {
+    const selector = `${hintSelector},input:not([type]),input[type="text"],input[type="email"],input[type="url"],input[type="tel"],input[type="search"],textarea,[contenteditable="true"]`
+    for (const element of document.querySelectorAll(selector)) {
       if (
         !element.isConnected ||
         hidden(element) ||
@@ -899,8 +944,9 @@
     }
     return result
   }
-  function clearHints(request) {
-    if (request !== hintRequest) return false
+  function clearHints(owner) {
+    if (!sameHintOwner(owner, hintOwner)) return false
+    hintClosed = true
     hintSnapshot.clear()
     hintRoot?.remove()
     hintRoot = null
@@ -908,6 +954,7 @@
   }
   const invalidateHints = () => {
     hintGeometry++
+    if (hintOwner && !hintClosed) queueHintEvent({ type: 'revoke', owner: { ...hintOwner } })
     if (hintRoot) {
       hintRoot.remove()
       hintRoot = null
@@ -925,12 +972,8 @@
     addEventListener(eventName, invalidateHints, true)
   new MutationObserver((records) => {
     if (
-      records.every(
-        (record) =>
-          hintRoot &&
-          (record.target === hintRoot ||
-            hintRoot.contains(record.target) ||
-            [...record.addedNodes].includes(hintRoot)),
+      records.every((record) =>
+        [...record.addedNodes, ...record.removedNodes].some((node) => hintOwnedRoots.has(node)),
       )
     )
       return
@@ -939,6 +982,7 @@
   document.addEventListener(
     'keydown',
     (event) => {
+      if (!event.isTrusted || (hintOwner && !hintClosed)) return
       if (
         !vimEnabled ||
         !eligibleNow() ||
@@ -953,11 +997,11 @@
       if (event.key.toLowerCase() === 'f') {
         event.preventDefault()
         event.stopImmediatePropagation()
-        hintEvents.push({ type: 'request' })
+        queueHintEvent({ type: 'request' })
       } else if (hintSnapshot.size && event.key.length === 1 && /^[a-zA-Z]$/.test(event.key)) {
         event.preventDefault()
         event.stopImmediatePropagation()
-        hintEvents.push({
+        queueHintEvent({
           type: 'key',
           key: event.key,
           code: event.code,
@@ -972,23 +1016,72 @@
     },
     true,
   )
+  const hintField = (element) =>
+    element.matches(
+      'textarea,[contenteditable="true"],input:not([type]),input[type="text"],input[type="email"],input[type="url"],input[type="tel"],input[type="search"]',
+    )
+  const sameHintOwner = (a, b) =>
+    !!a &&
+    !!b &&
+    a.tab === b.tab &&
+    a.nonce === b.nonce &&
+    a.attachment === b.attachment &&
+    a.request === b.request &&
+    a.origin === b.origin &&
+    a.snapshot === b.snapshot &&
+    a.geometry === b.geometry
   const hints = {
     poll() {
       return hintEvents.splice(0)
     },
-    discover(request) {
-      if (!Number.isSafeInteger(request) || request < 1 || request < hintRequest) return null
-      clearHints(hintRequest)
-      hintRequest = request
-      hintRevision = 0
-      return hintTargets().map(({ id, label, x, y, element, rect }) => {
-        hintSnapshot.set(id, { element, rect, x, y, request })
-        return { id, label, x, y }
-      })
-    },
-    present(request, revision, labels, theme = 'light') {
+    discover(owner) {
       if (
-        request !== hintRequest ||
+        !owner ||
+        !Number.isSafeInteger(owner.request) ||
+        owner.request < 1 ||
+        !Number.isSafeInteger(owner.snapshot) ||
+        !Number.isSafeInteger(owner.geometry)
+      )
+        return null
+      if (
+        hintOwner &&
+        (owner.nonce !== hintOwner.nonce || owner.attachment !== hintOwner.attachment)
+      ) {
+        hintOwner = null
+        hintClosed = true
+        hintRevision = 0
+        hintSnapshot.clear()
+        hintRoot?.remove()
+        hintRoot = null
+        hintEvents.length = 0
+      }
+      if (hintOwner && owner.request < hintOwner.request) return null
+      if (
+        hintOwner &&
+        owner.request === hintOwner.request &&
+        (hintClosed || owner.snapshot <= hintOwner.snapshot)
+      )
+        return null
+      if (owner.geometry < hintGeometry) return null
+      hintSnapshot.clear()
+      hintRoot?.remove()
+      hintRoot = null
+      hintOwner = { ...owner }
+      hintClosed = false
+      hintRevision = 0
+      hintGeometry = owner.geometry
+      return hintTargets()
+        .slice(0, 200)
+        .map(({ id, label, x, y, element, rect }) => {
+          hintSnapshot.set(id, { element, rect, x, y, owner: { ...owner } })
+          return { id, label, x, y }
+        })
+    },
+    present(owner, revision, labels, theme = 'light') {
+      if (
+        !sameHintOwner(owner, hintOwner) ||
+        hintClosed ||
+        hintGeometry !== owner.geometry ||
         !Number.isSafeInteger(revision) ||
         revision <= hintRevision ||
         !Array.isArray(labels) ||
@@ -996,10 +1089,26 @@
       )
         return false
       if (theme !== 'light' && theme !== 'dark') return false
+      const ids = new Set()
+      for (const item of labels) {
+        if (
+          !item ||
+          typeof item.id !== 'string' ||
+          item.id.length > 64 ||
+          ids.has(item.id) ||
+          typeof item.key !== 'string' ||
+          !/^[a-z]{1,4}$/.test(item.key)
+        )
+          return false
+        const target = hintSnapshot.get(item.id)
+        if (!target || !sameHintOwner(target.owner, owner)) return false
+        ids.add(item.id)
+      }
       hintRevision = revision
       if (!hintRoot || !hintShadow) {
         const root = document.createElement('div')
         root.setAttribute('aria-hidden', 'true')
+        hintOwnedRoots.add(root)
         root.style.cssText =
           'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;'
         hintShadow = root.attachShadow({ mode: 'closed' })
@@ -1013,7 +1122,7 @@
         const target = hintSnapshot.get(item.id)
         if (
           !target ||
-          target.request !== request ||
+          !sameHintOwner(target.owner, owner) ||
           typeof item.key !== 'string' ||
           !/^[a-z]{1,4}$/.test(item.key)
         )
@@ -1032,10 +1141,9 @@
       }))
       return true
     },
-    clear(request) {
-      if (!Number.isSafeInteger(request) || request < hintRequest) return false
-      hintRequest = request
-      return clearHints(request)
+    clear(owner) {
+      if (!sameHintOwner(owner, hintOwner)) return false
+      return clearHints(owner)
     },
     // Read-only isolated-world evidence for the native acceptance fixture. The
     // closed shadow root remains inaccessible to page scripts and web content.
@@ -1043,10 +1151,21 @@
       if (!hintRoot || !hintShadow) return []
       return visibleHintLabels.map((item) => ({ ...item }))
     },
-    activate(request, id) {
-      if (request !== hintRequest) return null
+    enterInsert(owner, id) {
+      if (!sameHintOwner(owner, hintOwner) || hintClosed || hintGeometry !== owner.geometry)
+        return false
       const target = hintSnapshot.get(id)
-      if (!target || !target.element.isConnected) return null
+      if (!target || !hintField(target.element)) return false
+      vimField = target.element
+      vimMode = 'insert'
+      verticalColumn = null
+      return true
+    },
+    activate(owner, id) {
+      if (!sameHintOwner(owner, hintOwner) || hintClosed || hintGeometry !== owner.geometry)
+        return null
+      const target = hintSnapshot.get(id)
+      if (!target || !sameHintOwner(target.owner, owner) || !target.element.isConnected) return null
       const rect = target.element.getBoundingClientRect()
       if (
         Math.abs(rect.x - target.rect[0]) > 1 ||
@@ -1060,7 +1179,7 @@
       return {
         x: target.x,
         y: target.y,
-        field: target.element.matches('input,textarea,[contenteditable="true"]'),
+        field: hintField(target.element),
       }
     },
   }
