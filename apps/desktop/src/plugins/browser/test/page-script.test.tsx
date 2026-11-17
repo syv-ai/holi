@@ -29,6 +29,7 @@ interface HoliPage {
     inspect(): { key: string; label: string }[]
     poll(): { type: string; capture?: number }[]
     activate(owner: HintOwner, id: string): { x: number; y: number; field: boolean } | null
+    enterInsert(owner: HintOwner, id: string): boolean
   }
   vim: {
     documentNonce(): string
@@ -205,6 +206,29 @@ test('external removal of the owned overlay revokes the captured owner', async (
   expect(holi().hints.activate(owner, targets[0]!.id)).toBeNull()
 })
 
+test('hint discovery includes enabled native and ARIA controls but not disabled controls', () => {
+  const form = document.createElement('form')
+  form.innerHTML = `
+    <input type="checkbox" aria-label="Accept">
+    <input type="radio" aria-label="Choice">
+    <select aria-label="Region"><option>North</option></select>
+    <button disabled>Disabled button</button>
+    <input type="checkbox" aria-label="Disabled check" disabled>
+    <button role="switch" aria-label="Notifications">Toggle</button>`
+  document.body.append(form)
+  const controls = [...form.querySelectorAll<HTMLElement>('input,select,button')]
+  controls.forEach((element, index) => {
+    const x = 10 + index * 50
+    element.getBoundingClientRect = () =>
+      ({ x, y: 20, width: 40, height: 20, left: x, top: 20, right: x + 40, bottom: 40 }) as DOMRect
+  })
+  document.elementFromPoint = vi.fn((x) => controls[Math.floor((x - 30) / 50)] ?? null)
+  const targets = holi().hints.discover(hintOwner(406))!
+  expect(targets.map(({ label }) => label)).toEqual(['Accept', 'Choice', 'Region', 'Notifications'])
+  for (const { id } of targets.slice(0, 3))
+    expect(holi().hints.enterInsert(hintOwner(406), id)).toBe(false)
+})
+
 test('visible hint targets are separate from CLI refs and activation rechecks geometry', () => {
   const button = document.querySelector('button[type=submit]')!
   button.setAttribute('aria-label', 'Sign in')
@@ -231,6 +255,48 @@ test('visible hint targets are separate from CLI refs and activation rechecks ge
   expect(holi().hints.clear(owner)).toBe(true)
   expect(holi().hints.discover(owner)).toBeNull()
   expect(holi().hints.activate(owner, targets[0]!.id)).toBeNull()
+})
+
+test('animation-frame geometry monitoring revokes moved targets and stops after clear', () => {
+  const button = document.querySelector<HTMLElement>('button[type=submit]')!
+  let x = 10
+  button.getBoundingClientRect = () =>
+    ({ x, y: 20, width: 40, height: 20, left: x, top: 20, right: x + 40, bottom: 40 }) as DOMRect
+  document.elementFromPoint = vi.fn(() => button)
+  const callbacks = new Map<number, FrameRequestCallback>()
+  let nextFrame = 0
+  const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    const id = ++nextFrame
+    callbacks.set(id, callback)
+    return id
+  })
+  const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+    callbacks.delete(id)
+  })
+  const runFrame = () => {
+    const [id, callback] = callbacks.entries().next().value!
+    callbacks.delete(id)
+    callback(16)
+  }
+  try {
+    const owner = hintOwner(407)
+    const target = holi().hints.discover(owner)![0]!
+    expect(presentHints(owner, 1, [{ id: target.id, key: 'a' }])).toBe(true)
+    x = 80
+    runFrame()
+    expect(holi().hints.poll()).toContainEqual({ type: 'revoke', owner })
+    expect(holi().hints.inspect()).toEqual([])
+    const fresh = hintOwner(408)
+    const freshTarget = holi().hints.discover(fresh)![0]!
+    expect(presentHints(fresh, 1, [{ id: freshTarget.id, key: 'b' }])).toBe(true)
+    expect(holi().hints.clear(fresh)).toBe(true)
+    expect(callbacks.size).toBe(0)
+    expect(raf).toHaveBeenCalled()
+    expect(cancel).toHaveBeenCalled()
+  } finally {
+    raf.mockRestore()
+    cancel.mockRestore()
+  }
 })
 
 test('hint badges do not intercept native target activation', () => {
