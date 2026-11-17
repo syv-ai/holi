@@ -67,9 +67,12 @@ const releaseResult = {
   port: 4312,
   lease: '123e4567-e89b-12d3-a456-426614174000',
 } as const
-let activeElementDescriptor: PropertyDescriptor | undefined
-let elementFromPointDescriptor: PropertyDescriptor | undefined
-let visualViewportDescriptor: PropertyDescriptor | undefined
+const originalActiveElementDescriptor = Object.getOwnPropertyDescriptor(document, 'activeElement')
+const originalElementFromPointDescriptor = Object.getOwnPropertyDescriptor(
+  document,
+  'elementFromPoint',
+)
+const originalVisualViewportDescriptor = Object.getOwnPropertyDescriptor(window, 'visualViewport')
 
 function renderHintLifecycle(path = 'index.dash.md') {
   const layout = installHintLayout()
@@ -93,9 +96,7 @@ async function loadedGuest() {
   const frame = (await screen.findByLabelText('Dash: index.dash.md')) as HTMLIFrameElement
   layoutFrame(frame)
   frame.focus()
-  activeElementDescriptor = Object.getOwnPropertyDescriptor(document, 'activeElement')
   Object.defineProperty(document, 'activeElement', { configurable: true, get: () => frame })
-  elementFromPointDescriptor = Object.getOwnPropertyDescriptor(document, 'elementFromPoint')
   Object.defineProperty(document, 'elementFromPoint', {
     configurable: true,
     value: () => frame,
@@ -141,18 +142,15 @@ function guestSnapshot(nonce: string, revision = 1, label = 'Save') {
 
 afterEach(async () => {
   cleanup()
-  if (activeElementDescriptor)
-    Object.defineProperty(document, 'activeElement', activeElementDescriptor)
+  if (originalActiveElementDescriptor)
+    Object.defineProperty(document, 'activeElement', originalActiveElementDescriptor)
   else Reflect.deleteProperty(document, 'activeElement')
-  if (elementFromPointDescriptor)
-    Object.defineProperty(document, 'elementFromPoint', elementFromPointDescriptor)
+  if (originalElementFromPointDescriptor)
+    Object.defineProperty(document, 'elementFromPoint', originalElementFromPointDescriptor)
   else Reflect.deleteProperty(document, 'elementFromPoint')
-  if (visualViewportDescriptor)
-    Object.defineProperty(window, 'visualViewport', visualViewportDescriptor)
+  if (originalVisualViewportDescriptor)
+    Object.defineProperty(window, 'visualViewport', originalVisualViewportDescriptor)
   else Reflect.deleteProperty(window, 'visualViewport')
-  activeElementDescriptor = undefined
-  elementFromPointDescriptor = undefined
-  visualViewportDescriptor = undefined
   vi.restoreAllMocks()
   // Lease releases run after the resolved acquire, including cleanup's unmounts.
   await Promise.resolve()
@@ -295,7 +293,6 @@ test('community guest hints are disabled unless Vim editing and the focused load
       toJSON: () => ({}),
     }),
   })
-  elementFromPointDescriptor = Object.getOwnPropertyDescriptor(document, 'elementFromPoint')
   Object.defineProperty(document, 'elementFromPoint', {
     configurable: true,
     value: () => iframe,
@@ -304,7 +301,6 @@ test('community guest hints are disabled unless Vim editing and the focused load
   iframe.focus()
   // JSDOM does not make an iframe the active element when focused; model the
   // browser state the adapter deliberately requires before enabling guest keys.
-  activeElementDescriptor = Object.getOwnPropertyDescriptor(document, 'activeElement')
   Object.defineProperty(document, 'activeElement', { configurable: true, get: () => iframe })
   fireEvent.load(iframe)
   await act(async () => {
@@ -777,7 +773,6 @@ test('zoom, visual viewport resize, and scroll cancel live labels and rearm agai
     pageLeft = 0
     pageTop = 0
   }
-  visualViewportDescriptor = Object.getOwnPropertyDescriptor(window, 'visualViewport')
   const viewport = new ViewportEvents() as VisualViewport
   Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
   capability.acquire.mockResolvedValue(releaseResult)
