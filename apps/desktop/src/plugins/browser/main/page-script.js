@@ -1205,7 +1205,7 @@
           return false
         const badge = document.createElement('span')
         badge.textContent = item.key
-        badge.style.cssText = `all:initial;position:fixed;left:${Math.round(target.x)}px;top:${Math.round(target.y)}px;transform:translate(-50%,-50%);padding:2px 5px;background:${theme === 'dark' ? '#facc15' : '#1d4ed8'};color:${theme === 'dark' ? '#111827' : '#ffffff'};font:600 12px monospace;border-radius:3px;box-shadow:0 1px 4px #0008;`
+        badge.style.cssText = `all:initial;position:fixed;left:${Math.round(target.x)}px;top:${Math.round(target.y)}px;transform:translate(-50%,-50%);padding:2px 5px;background:${theme === 'dark' ? '#facc15' : '#1d4ed8'};color:${theme === 'dark' ? '#111827' : '#ffffff'};font:600 12px monospace;border-radius:3px;box-shadow:0 1px 4px #0008;pointer-events:none;`
         shadow.append(badge)
       }
       visibleHintLabels = labels.map((item) => ({
