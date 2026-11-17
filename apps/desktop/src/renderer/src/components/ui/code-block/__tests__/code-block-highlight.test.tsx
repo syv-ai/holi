@@ -26,7 +26,7 @@ describe('code block diff state', () => {
         return {
           number: line,
           text,
-          tokens: [{ content: text }],
+          tokens: [{ content: text, color: 'red' }],
           state: diff ? { diff } : undefined,
         }
       }) satisfies CodeBlockLine[]
@@ -43,7 +43,11 @@ describe('code block diff state', () => {
     )
 
     await waitFor(() =>
-      expect(document.querySelectorAll('[data-slot="code-block-line"]')).toHaveLength(4),
+      expect(
+        document
+          .querySelector<HTMLElement>('[data-slot="code-block-token"]')
+          ?.style.getPropertyValue('--cb-c'),
+      ).toBe('red'),
     )
     const rows = Array.from(document.querySelectorAll('[data-slot="code-block-line"]'))
     expect(rows.map((row) => row.getAttribute('data-diff'))).toEqual([null, 'remove', null, 'add'])
