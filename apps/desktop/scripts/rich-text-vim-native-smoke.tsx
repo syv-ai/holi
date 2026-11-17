@@ -7,8 +7,14 @@ import { activeRemoteAtom, snapshotAtom } from '../src/renderer/src/state/vaults
 import { vaultSettingsAtom } from '../src/renderer/src/state/settings'
 import { emptyVaultSnapshot, resolveVaultSettings } from '@holi/shared'
 import { DocumentView } from '../src/renderer/src/features/documents/document-view'
+import {
+  placeThreads,
+  setCommentRanges,
+} from '../src/renderer/src/features/documents/document-comments'
+import { anchorAt, commentThreads, parseCommentsFile, type CommentThread } from '@holi/shared'
 import { flushAllBuffers } from '../src/renderer/src/lib/buffer-registry'
 import { TooltipProvider } from '../src/renderer/src/components/ui/tooltip'
+import { Toaster } from '../src/renderer/src/components/ui/sonner'
 import '../src/renderer/src/index.css'
 
 declare global {
@@ -41,6 +47,9 @@ declare global {
       failNextWrite(): Promise<void>
       externalRead(text: string, updatedAt: string, hold?: boolean): Promise<void>
       releaseRead(): void
+      placeComment(id: string, quote: string): { id: string; from: number; to: number } | null
+      commentRange(id: string): { id: string; from: number; to: number; text: string } | null
+      commentText(id: string): string | null
     }
   }
 }
@@ -179,6 +188,54 @@ function App() {
         releaseRead() {
           void window.richTextVimIO.call('fixture.releaseRead', { path })
         },
+        async placeComment(id: string, quote: string) {
+          const current = editor()
+          const markdown = current.getMarkdown()
+          const from = markdown.indexOf(quote)
+          if (from < 0) throw new Error(`Comment quote missing: ${quote}`)
+          // This synthetic sidecar follows the production thread shape; placement and
+          // transaction mapping both cross the production comments module.
+          const thread: CommentThread = {
+            id,
+            anchor: anchorAt(markdown, from, from + quote.length),
+            comments: [
+              {
+                id: 'comment-1',
+                author: 'fixture',
+                body: 'Review this passage',
+                at: '2026-01-01T00:00:00.000Z',
+              },
+            ],
+            status: null,
+          }
+          await window.richTextVimIO.call('comments.write', {
+            path,
+            text: JSON.stringify({ version: 1, threads: { [id]: thread } }),
+          })
+          const sidecar = parseCommentsFile(
+            (await window.richTextVimIO.call('comments.read', { path })) as string,
+          )
+          if (!sidecar) throw new Error('Production comments bridge returned invalid sidecar data')
+          const [loadedThread] = commentThreads(sidecar)
+          if (!loadedThread) throw new Error('Synthetic sidecar thread did not deserialize')
+          const [range] = placeThreads(current, '', [loadedThread])
+          if (!range) return null
+          setCommentRanges(current, { ranges: [range] })
+          return range
+        },
+        commentRange(id: string) {
+          const current = editor()
+          const element = current.view.dom.querySelector<HTMLElement>(
+            `[data-comment-thread="${CSS.escape(id)}"]`,
+          )
+          if (!element) return null
+          const start = current.view.posAtDOM(element, 0)
+          const end = current.view.posAtDOM(element, element.childNodes.length)
+          return { id, from: start, to: end, text: element.textContent ?? '' }
+        },
+        commentText(id: string) {
+          return id === 'thread-alpha' ? 'Review this passage' : null
+        },
       },
     })
   })
@@ -238,6 +295,7 @@ function App() {
               />
             </section>
           </section>
+          <Toaster />
         </main>
       </TooltipProvider>
     </Provider>

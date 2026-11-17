@@ -159,7 +159,7 @@ try {
   if (cancelled) throw new Error('Native fixture cancelled during main build')
   await writeFile(
     join(root, 'preload.cjs'),
-    `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('richTextVimIO',{read:path=>ipcRenderer.invoke('rich-text-vim:read',path),write:(path,text)=>ipcRenderer.invoke('rich-text-vim:write',path,text),call:(name,input)=>{if(name==='notes.read')return ipcRenderer.invoke('rich-text-vim:read',input.path);if(name==='notes.write')return ipcRenderer.invoke('rich-text-vim:write',input.path,input.text);if(name.startsWith('fixture.'))return ipcRenderer.invoke('rich-text-vim:fixture',name.slice(8));throw new Error('Fixture operation denied: '+name)}});`,
+    `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('richTextVimIO',{read:path=>ipcRenderer.invoke('rich-text-vim:read',path),write:(path,text)=>ipcRenderer.invoke('rich-text-vim:write',path,text),call:(name,input)=>{if(name==='notes.read')return ipcRenderer.invoke('rich-text-vim:read',input.path);if(name==='notes.write')return ipcRenderer.invoke('rich-text-vim:write',input.path,input.text);if(name==='comments.read')return ipcRenderer.invoke('rich-text-vim:comments','read');if(name==='comments.write')return ipcRenderer.invoke('rich-text-vim:comments','write',input.text);if(name.startsWith('fixture.'))return ipcRenderer.invoke('rich-text-vim:fixture',name.slice(8));throw new Error('Fixture operation denied: '+name)}});`,
   )
   await writeFile(
     join(root, 'renderer', 'index.html'),
