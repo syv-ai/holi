@@ -608,7 +608,7 @@
       'late prefix must retain exact discovered owner',
     )
     await until(
-      async () => (await pageLabelsFor(page)).length <= labelsBeforePrefix.length,
+      async () => JSON.stringify(await pageLabelsFor(page)) !== JSON.stringify(labelsBeforePrefix),
       'late prefix updates page hint presentation',
     )
     assert.equal(
