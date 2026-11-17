@@ -210,6 +210,37 @@ const turn = (root: string, on: boolean) =>
   writeVaultSettings(root, { committed: { plugins: { fake: on } } })
 
 describe('app frame activation leases', () => {
+  it('keeps wanted startup alive across unchanged snapshots while it awaits external work', async () => {
+    const root = await tempDir()
+    let release: () => void = () => {}
+    let entered: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const starting = new Promise<void>((resolve) => (entered = resolve))
+    let registrations = 0
+    const joining: MainPlugin = {
+      info: { id: 'joining', label: 'Joining', default: true },
+      async activate(ctx) {
+        entered()
+        await gate
+        ctx.register(['joining'], {
+          'joining.ping': cap({ doors: ['ui'], params: noParams, run: async () => 'pong' }),
+        })
+        registrations++
+        return () => {}
+      },
+    }
+    const h = rig({ plugins: [joining] })
+    const opening = h.enter(openVault('o/r', root))
+    await starting
+    const scan1 = h.reconcile('snapshot')
+    const scan2 = h.reconcile('snapshot')
+    release()
+    await Promise.all([opening, scan1, scan2])
+    expect(registrations).toBe(1)
+    expect(h.registry.has('joining.ping', 'o/r')).toBe(true)
+    await h.host.stop('o/r')
+  })
+
   it('binds issued frame authority to its activation and presentation window', async () => {
     const root = await tempDir()
     const win = { isDestroyed: () => false } as unknown as import('electron').BrowserWindow

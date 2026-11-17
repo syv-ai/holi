@@ -420,6 +420,8 @@ export async function openActiveVault(args: {
    *  from `conflictPaths` alone, which is also the sticky banner over a clean
    *  tree, and from a merge someone started in a terminal, which is neither. */
   let reconciling = false
+  /** User-requested git mutations admitted before a sync hold; included in drain. */
+  let maintenanceInFlight = 0
   /** When the remote last answered, and the last failure's words. */
   let lastSyncAt: string | null = null
   let lastError: string | null = null
@@ -1435,7 +1437,14 @@ export async function openActiveVault(args: {
         setState({ kind: 'paused', reason, manual: true })
       },
       async drainSync() {
-        while (!closed && (committing || pullInFlight || pushInFlight || deliveryVerifying)) {
+        while (
+          !closed &&
+          (committing ||
+            pullInFlight ||
+            pushInFlight ||
+            deliveryVerifying ||
+            maintenanceInFlight > 0)
+        ) {
           await new Promise((resolve) => setTimeout(resolve, 10))
         }
         if (closed) throw new Error('vault closed while waiting for sync to drain')
@@ -1467,33 +1476,39 @@ export async function openActiveVault(args: {
         await refreshState()
       },
       async reconcile() {
-        if (closed) return { paths: [] }
-        const from = await args.repo.head().catch(() => null)
-        const result = await args.repo.remerge()
-        if (result.kind === 'conflict') {
-          log(
-            'git',
-            'info',
-            `Reconciling ${result.paths.length} conflicted file${result.paths.length === 1 ? '' : 's'}`,
-            result.paths.join('\n'),
-          )
-          // Markers + MERGE_HEAD are now in the tree; refresh the (fresh) paths.
-          conflictPaths = result.paths
-          reconciling = true
-          reconcileFrom = from
+        if (closed || manualPause !== null) return { paths: [] }
+        maintenanceInFlight++
+        try {
+          const from = await args.repo.head().catch(() => null)
+          if (closed || manualPause !== null) return { paths: [] }
+          const result = await args.repo.remerge()
+          if (result.kind === 'conflict') {
+            log(
+              'git',
+              'info',
+              `Reconciling ${result.paths.length} conflicted file${result.paths.length === 1 ? '' : 's'}`,
+              result.paths.join('\n'),
+            )
+            // Markers + MERGE_HEAD are now in the tree; refresh the (fresh) paths.
+            conflictPaths = result.paths
+            reconciling = true
+            reconcileFrom = from
+            await refreshState()
+            return { paths: result.paths }
+          }
+          // It merged clean (or was already up-to-date): clear the sticky banner and
+          // return to normal. A merge commit, if any, still needs pushing.
+          conflictPaths = null
+          await rescan()
+          if (result.kind === 'merged' && !closed) {
+            args.onPulled?.({ from: result.from, to: result.to })
+          }
+          schedulePush()
           await refreshState()
-          return { paths: result.paths }
+          return { paths: [] }
+        } finally {
+          maintenanceInFlight--
         }
-        // It merged clean (or was already up-to-date): clear the sticky banner and
-        // return to normal. A merge commit, if any, still needs pushing.
-        conflictPaths = null
-        await rescan()
-        if (result.kind === 'merged' && !closed) {
-          args.onPulled?.({ from: result.from, to: result.to })
-        }
-        schedulePush()
-        await refreshState()
-        return { paths: [] }
       },
       /**
        * The reconcile's escape hatch.
@@ -1504,12 +1519,18 @@ export async function openActiveVault(args: {
        * it. Clearing would report a teammate's waiting change as dealt with.
        */
       async abandon() {
-        if (closed || !reconciling) return
-        await args.repo.abortMerge()
-        log('git', 'info', 'Merge abandoned: the conflict is waiting again')
-        reconciling = false
-        reconcileFrom = null
-        await refreshState()
+        if (closed || manualPause !== null || !reconciling) return
+        maintenanceInFlight++
+        try {
+          if (closed || manualPause !== null) return
+          await args.repo.abortMerge()
+          log('git', 'info', 'Merge abandoned: the conflict is waiting again')
+          reconciling = false
+          reconcileFrom = null
+          await refreshState()
+        } finally {
+          maintenanceInFlight--
+        }
       },
 
       async close() {

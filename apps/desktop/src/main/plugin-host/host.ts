@@ -1138,8 +1138,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       const configuration = ++state.configuration
       // A superseded read must not overwrite dispatch's current enablement.
       forget(vault.remote)
-      for (const lease of state.leases) {
-        if (!lease.established) lease.cancel()
+      // A snapshot does not change enablement. Keep a startup suspended on
+      // external work (for example a sync drain) alive until the fresh setting
+      // read below proves that its plugin is no longer wanted.
+      if (why !== 'snapshot') {
+        for (const lease of state.leases) {
+          if (!lease.established) lease.cancel()
+        }
       }
       if (why === 'settings' || why === 'snapshot') {
         const configured = (await read(vault.root)).running

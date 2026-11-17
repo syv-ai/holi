@@ -213,7 +213,10 @@ describe('migrateTemplates', () => {
     expect(
       await readFile(join(root, '.holi/document-templates/brand-special/template.typ')),
     ).toEqual(branded)
-    expect(await listTemplates(root)).toHaveLength(1)
+    expect((await listTemplates(root)).map((template) => template.name)).toEqual([
+      'Report',
+      'Syv.ai proposal',
+    ])
     await migrateTemplates(root, {})
   })
 
@@ -232,6 +235,40 @@ describe('migrateTemplates', () => {
     await migrateTemplates(root, seed)
     expect(await readFile(join(base, 'template.typ'))).toEqual(first)
     expect((await stat(join(base, 'template.typ'))).mtimeMs).toBe(before.mtimeMs)
+  })
+
+  it('preserves Report edits after the restoration journal is completed', async () => {
+    const root = await vault()
+    const dir = join(root, '.holi/document-templates/report')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'template.json'), JSON.stringify({ name: 'Syv.ai report' }))
+    const seed = {
+      '.holi/document-templates/report/template.json': '{"name":"Report"}',
+      '.holi/document-templates/report/template.typ': 'seed',
+    }
+    await migrateTemplates(root, seed)
+    await writeFile(join(dir, 'template.typ'), 'my Report')
+    await expect(migrateTemplates(root, seed)).resolves.toBeUndefined()
+    expect(await readFile(join(dir, 'template.typ'), 'utf8')).toBe('my Report')
+  })
+
+  it('refuses a stale restoration journal before changing unexpected occupants', async () => {
+    const root = await vault()
+    const dir = join(root, '.holi/document-templates/report')
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await mkdir(dir, { recursive: true })
+    await writeFile(
+      join(root, '.holi/state/pdf-report-restore.local.json'),
+      '{"migration":"canonical-report-v1"}\n',
+    )
+    await writeFile(join(dir, 'custom.typ'), 'custom')
+    const seed = {
+      '.holi/document-templates/report/template.json': '{"name":"Report"}',
+      '.holi/document-templates/report/template.typ': 'seed',
+    }
+    await expect(migrateTemplates(root, seed)).rejects.toThrow(/unexpected occupant/)
+    expect(await readFile(join(dir, 'custom.typ'), 'utf8')).toBe('custom')
+    await expect(readFile(join(dir, 'template.typ'))).rejects.toThrow()
   })
 
   it('refuses an unrelated occupant during restoration without overwriting it', async () => {
