@@ -37,7 +37,12 @@ export type NodeFilesCheckpoint = (
     | 'private-remove-sync',
 ) => Promise<void>
 
-async function safe(root: string, relativePath: string, allowMissingLeaf = false): Promise<string> {
+async function safe(
+  root: string,
+  relativePath: string,
+  allowMissingLeaf = false,
+  createParents = allowMissingLeaf,
+): Promise<string> {
   const canonical = await realpath(root)
   const segments = relativePath.split('/')
   let current = canonical
@@ -57,7 +62,7 @@ async function safe(root: string, relativePath: string, allowMissingLeaf = false
         throw new Error('Directory collision')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || !allowMissingLeaf) throw error
-      if (index < segments.length - 1) await mkdir(current)
+      if (index < segments.length - 1 && createParents) await mkdir(current)
     }
   }
   const resolved = relative(canonical, current)
@@ -162,6 +167,9 @@ export function createNodeFiles(checkpoint?: NodeFilesCheckpoint): NativeFiles {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
         throw error
       }
+    },
+    async checkMovePath(root, path) {
+      await safe(root, path, true, false)
     },
     async confirm(root, path, expected) {
       await checkpoint?.('confirm-file')

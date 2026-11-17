@@ -16,7 +16,12 @@ function directory(path: string): void {
   else if (kind !== 'directory') throw new Error('Directory collision or symlink')
 }
 
-function checkedPath(root: string, relative: string, createParents = false): string {
+function checkedPath(
+  root: string,
+  relative: string,
+  createParents = false,
+  strictSpelling = false,
+): string {
   const pieces = relative.split('/')
   if (
     pieces.some(
@@ -34,7 +39,7 @@ function checkedPath(root: string, relative: string, createParents = false): str
     const next = `${current}/${name}`
     const kind = nativeIO.kind(next)
     if (
-      (createParents || kind === null) &&
+      (strictSpelling || createParents || kind === null) &&
       names.some((entry) => entry !== name && collisionKey(entry) === collisionKey(name))
     )
       throw new Error('Filesystem spelling collision')
@@ -180,6 +185,9 @@ export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
       stages(root)
       const path = checkedPath(root, relative)
       return nativeIO.kind(path) === null ? null : nativeIO.read(path)
+    },
+    async checkMovePath(root, relative) {
+      checkedPath(root, relative, false, true)
     },
     async confirm(root, relative, expected) {
       stages(root)

@@ -23,6 +23,8 @@ export interface NativeFiles {
   list(root: string): Promise<Entry[]>
   read(root: string, relativePath: string): Promise<Uint8Array>
   readOptional(root: string, relativePath: string): Promise<Uint8Array | null>
+  /** Reject spelling collisions on every path component without creating directories. */
+  checkMovePath(root: string, relativePath: string): Promise<void>
   /** Verify the visible image and make its file/directory entry durable. */
   confirm(root: string, relativePath: string, expected: Uint8Array | null): Promise<void>
   publish(
