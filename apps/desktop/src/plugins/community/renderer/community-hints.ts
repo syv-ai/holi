@@ -11,6 +11,27 @@ import {
 } from '@/plugin-api'
 
 /** Own one opt-in guest document; this adapter never reads cross-origin DOM. */
+export function communityFramePaneFocused(frame: HTMLIFrameElement): boolean {
+  const pane = frame.closest<HTMLElement>('[data-pane]')
+  if (!pane) return false
+  const visiblePanes = [...document.querySelectorAll<HTMLElement>('[data-pane]')].filter(
+    (candidate) => {
+      if (candidate.hidden || candidate.closest('[hidden],[inert]')) return false
+      for (let node: HTMLElement | null = candidate; node; node = node.parentElement) {
+        const style = getComputedStyle(node)
+        if (
+          style.display === 'none' ||
+          style.visibility === 'hidden' ||
+          (style.opacity !== '' && Number(style.opacity) === 0)
+        )
+          return false
+      }
+      return true
+    },
+  )
+  return visiblePanes.length <= 1 || pane.getAttribute('data-pane-focused') === 'true'
+}
+
 export function createCommunityHintAdapter(
   frame: HTMLIFrameElement,
   request: typeof requestAdaptedHostHints = requestAdaptedHostHints,
@@ -61,10 +82,7 @@ export function createCommunityHintAdapter(
     const top = viewport?.offsetTop ?? 0
     const right = left + (viewport?.width ?? window.innerWidth)
     const bottom = top + (viewport?.height ?? window.innerHeight)
-    const pane = frame.closest<HTMLElement>('[data-pane]')
-    const panes = document.querySelectorAll('[data-pane]')
-    const focused =
-      pane !== null && (panes.length <= 1 || pane.getAttribute('data-pane-focused') === 'true')
+    const focused = communityFramePaneFocused(frame)
     return (
       focused &&
       rect.width > 0 &&
@@ -111,11 +129,20 @@ export function createCommunityHintAdapter(
       post({ type: 'holi-hints:session', nonce, revision: data.revision, active: true })
       return
     }
+    if (data.type === 'holi-hints:clear') {
+      if (data.revision !== revision || !session) return
+      session = false
+      invalidateSession?.()
+      invalidateSession = null
+      return
+    }
     if (data.type === 'holi-hints:key') {
       if (!session) return
       if (data.key.length !== 1 && data.key !== 'Escape' && data.key !== 'Backspace') {
         session = false
         post({ type: 'holi-hints:clear', nonce })
+        invalidateSession?.()
+        invalidateSession = null
         return
       }
       const event = new KeyboardEvent('keydown', { key: data.key, bubbles: true, cancelable: true })
@@ -128,6 +155,8 @@ export function createCommunityHintAdapter(
       }
       session = false
       post({ type: 'holi-hints:clear', nonce })
+      invalidateSession?.()
+      invalidateSession = null
     }
   }
   const thisAdapter: HostHintAdapter = {
@@ -174,11 +203,11 @@ export function createCommunityHintAdapter(
     unchanged(targets: readonly HostHintTarget[]) {
       return (
         frameVisible() &&
-        snapshot !== null &&
-        targets.every((target) => {
-          const token = target.token as { id?: unknown; revision?: unknown } | undefined
-          return token?.revision === revision && snapshot?.some((item) => item.id === token.id)
-        })
+        (snapshot === null ||
+          targets.every((target) => {
+            const token = target.token as { id?: unknown; revision?: unknown } | undefined
+            return token?.revision === revision && snapshot?.some((item) => item.id === token.id)
+          }))
       )
     },
     capture() {

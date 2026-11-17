@@ -193,6 +193,42 @@ describe('community frame hint protocol', () => {
     await Promise.resolve()
   })
 
+  it('rearms a fresh snapshot after each mutation-free activation', () => {
+    setup()
+    const button = document.querySelector('button')!
+    const click = vi.fn()
+    button.addEventListener('click', click)
+    init()
+    let snapshot = sent('holi-hints:snapshot').at(-1)!
+    activate(snapshot.revision, snapshot.targets[0]!.id)
+    expect(click).toHaveBeenCalledTimes(1)
+    snapshot = sent('holi-hints:snapshot').at(-1)!
+    expect(snapshot.revision).toBeGreaterThan(1)
+    activate(snapshot.revision, snapshot.targets[0]!.id)
+    expect(click).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears on unsupported keys but lets modified shortcuts pass through', () => {
+    setup()
+    init()
+    let snapshot = sent('holi-hints:snapshot').at(-1)!
+    host({ type: 'holi-hints:session', nonce, revision: snapshot.revision, active: true })
+    const unsupported = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+    window.dispatchEvent(unsupported)
+    expect(unsupported.defaultPrevented).toBe(true)
+    expect(sent('holi-hints:clear').at(-1)).toMatchObject({ revision: snapshot.revision })
+    snapshot = sent('holi-hints:snapshot').at(-1)!
+    host({ type: 'holi-hints:session', nonce, revision: snapshot.revision, active: true })
+    const modified = new KeyboardEvent('keydown', {
+      key: 's',
+      ctrlKey: true,
+      cancelable: true,
+    })
+    window.dispatchEvent(modified)
+    expect(modified.defaultPrevented).toBe(false)
+    expect(sent('holi-hints:clear').at(-1)).toMatchObject({ revision: snapshot.revision })
+  })
+
   it('does not activate while disabled, editing, composing, hidden, or covered', () => {
     setup()
     const button = document.querySelector('button')!

@@ -35,7 +35,7 @@ export type FrameHintsMessage =
   | { type: 'holi-hints:start'; nonce: string; revision: number }
   | { type: 'holi-hints:key'; nonce: string; key: string }
   | { type: 'holi-hints:session'; nonce: string; revision: number; active: boolean }
-  | { type: 'holi-hints:clear'; nonce: string }
+  | { type: 'holi-hints:clear'; nonce: string; revision?: number }
   | { type: 'holi-hints:activate'; nonce: string; revision: number; id: string }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -75,8 +75,12 @@ export function isFrameHintsMessage(value: unknown): value is FrameHintsMessage 
     case 'holi-hints:init':
       return exact(value, ['type', 'nonce', 'enabled']) && value.enabled === true
     case 'holi-hints:disable':
-    case 'holi-hints:clear':
       return exact(value, ['type', 'nonce'])
+    case 'holi-hints:clear':
+      return (
+        exact(value, ['type', 'nonce']) ||
+        (exact(value, ['type', 'nonce', 'revision']) && revision(value.revision))
+      )
     case 'holi-hints:snapshot':
       if (!exact(value, ['type', 'nonce', 'revision', 'targets']) || !revision(value.revision))
         return false

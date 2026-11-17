@@ -228,11 +228,7 @@ export function hostHintsUnchanged(
   root = targets[0]?.root,
 ): boolean {
   if (!root?.isConnected) return false
-  const adapters = new Set([
-    ...adaptersFor(root),
-    ...targets.flatMap((target) => (target.adapter ? [target.adapter] : [])),
-    ...(requestAdapter ? [requestAdapter] : []),
-  ])
+  const adapters = new Set(targets.flatMap((target) => (target.adapter ? [target.adapter] : [])))
   for (const source of adapters) {
     const adapted = targets.filter((target) => target.adapter === source)
     if (!source.unchanged(adapted)) return false
