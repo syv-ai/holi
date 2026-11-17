@@ -877,7 +877,7 @@ test('MDX trust requires explicit confirmation and can be cancelled or approved'
   )
 })
 
-test('MDX teardown never clears JSON diagnostics while the editor remains mounted', async () => {
+test('MDX teardown preserves another linter’s diagnostics in a mounted non-MDX editor', async () => {
   read.mockResolvedValue('{ invalid json')
   historyList.mockResolvedValue([])
   const store = createStore()
@@ -894,7 +894,21 @@ test('MDX teardown never clears JSON diagnostics while the editor remains mounte
       <FileView path="config.json" visible />
     </Provider>,
   )
-  await waitFor(() => expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument())
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    expect(node).not.toBeNull()
+    return node!
+  })
+  const { EditorView } = await import('@codemirror/view')
+  const { setDiagnostics } = await import('@codemirror/lint')
+  const { jsonParseLinter } = await import('@codemirror/lang-json')
+  const editor = EditorView.findFromDOM(content)!
+  // The JSON editor gates saves, but installs no background linter. Populate
+  // CodeMirror's shared diagnostic field with a real independent parser result.
+  const diagnostics = await jsonParseLinter()(editor)
+  expect(diagnostics.length).toBeGreaterThan(0)
+  act(() => editor.dispatch(setDiagnostics(editor.state, diagnostics)))
+  expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument()
   rendered.rerender(
     <Provider store={store}>
       <FileView path="config.json" visible={false} />
