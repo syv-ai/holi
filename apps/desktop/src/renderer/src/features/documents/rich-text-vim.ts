@@ -17,9 +17,25 @@ type VimSettings = {
   escapeOwned?: () => boolean
 }
 
-type VimState = { enabled: boolean; mode: RichTextVimMode; prefix: boolean }
+type VimState = {
+  enabled: boolean
+  mode: RichTextVimMode
+  prefix: boolean
+  operator: 'd' | 'c' | 'y' | null
+  count: number
+  visualAnchor: number | null
+  register: { content: import('@tiptap/pm/model').Slice; linewise: boolean } | null
+}
 const KEY = new PluginKey<VimState>('richTextVim')
-const EMPTY: VimState = { enabled: false, mode: '', prefix: false }
+const EMPTY: VimState = {
+  enabled: false,
+  mode: '',
+  prefix: false,
+  operator: null,
+  count: 0,
+  visualAnchor: null,
+  register: null,
+}
 const WORD = /^[\p{L}\p{N}_][\p{L}\p{N}\p{M}_]*$/u
 
 function segments(value: string): string[] {
@@ -323,6 +339,24 @@ function leaveInsert(view: EditorView) {
   setMode(view, 'normal')
 }
 
+function operatorRange(
+  view: EditorView,
+  start: number,
+  motion: 'w' | 'b' | 'e' | 'h' | 'l' | 'j' | 'k' | '0' | '^' | '$',
+  count: number,
+) {
+  const origin = view.state.selection.head
+  select(view, start)
+  for (let index = 0; index < count; index++) {
+    if (motion === 'w' || motion === 'b' || motion === 'e') wordMotion(view, motion)
+    else if (motion === 'h' || motion === 'l') horizontal(view, motion === 'h' ? -1 : 1)
+    else if (motion === 'j' || motion === 'k') vertical(view, motion === 'j' ? 1 : -1)
+    else if (motion === '0' || motion === '^' || motion === '$') lineMotion(view, motion)
+  }
+  const destination = view.state.selection.head
+  return { from: Math.min(origin, destination), to: Math.max(origin, destination) }
+}
+
 function handleNormal(
   view: EditorView,
   event: KeyboardEvent,
@@ -358,6 +392,31 @@ function handleNormal(
   )
     return false
   if (!plain) return false
+  const update = (patch: Partial<VimState>) =>
+    view.dispatch(
+      view.state.tr
+        .setMeta(KEY, { ...current, ...patch })
+        .setMeta('addToHistory', false),
+    )
+  if (key === 'Escape' && current.visualAnchor !== null) {
+    update({ visualAnchor: null, operator: null, count: 0 })
+    select(view, view.state.selection.head)
+    event.preventDefault()
+    return true
+  }
+  if (current.visualAnchor !== null && (key === 'h' || key === 'j' || key === 'k' || key === 'l' || key === 'w' || key === 'b' || key === 'e' || key === '0' || key === '^' || key === '$')) {
+    if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
+    else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
+    else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
+    else lineMotion(view, key)
+    const anchor = view.state.doc.resolve(Math.min(current.visualAnchor, view.state.doc.content.size))
+    const head = view.state.selection.head
+    const from = Math.min(anchor.pos, head)
+    const to = Math.max(anchor.pos, head)
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)).setMeta('addToHistory', false))
+    event.preventDefault()
+    return true
+  }
   if (current.prefix && key === 'g') {
     select(view, 0)
     setMode(view, 'normal')
@@ -369,6 +428,78 @@ function handleNormal(
       view.state.tr.setMeta(KEY, { ...current, prefix: false }).setMeta('addToHistory', false),
     )
   if (key === 'Tab' || key === 'Enter' || key === 'Backspace' || key === 'Delete') {
+    event.preventDefault()
+    return true
+  }
+  if (key === 'v') {
+    update({ visualAnchor: view.state.selection.head, operator: null, count: 0 })
+    event.preventDefault()
+    return true
+  }
+  if (current.operator) {
+    const operator = current.operator
+    if (key === operator) {
+      const line = lineAt(view.state, view.state.selection.head)
+      if (line) {
+        const { block } = line
+        const from = block.from - 1
+        const to = block.to + 1
+        const content = view.state.doc.slice(from, to)
+        update({ operator: null, count: 0, register: { content, linewise: true } })
+        if (operator !== 'y' && settings.editable()) {
+          const tr = view.state.tr.delete(from, to)
+          view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(from, tr.doc.content.size)), 1)))
+          if (operator === 'c') setMode(view, 'insert', true)
+        }
+      }
+      event.preventDefault()
+      return true
+    }
+    if (key === 'w' || key === 'b' || key === 'e' || key === 'h' || key === 'l' || key === 'j' || key === 'k' || key === '0' || key === '^' || key === '$') {
+      const origin = view.state.selection.head
+      const range = operatorRange(view, origin, key, Math.max(1, current.count || 1))
+      const from = range.from
+      const to = key === 'w' || key === 'e' || key === 'l' || key === '$' ? range.to + 1 : range.to
+      const safeTo = Math.min(view.state.doc.content.size, Math.max(from, to))
+      const content = view.state.doc.slice(from, safeTo)
+      update({ operator: null, count: 0, register: { content, linewise: false } })
+      if (operator !== 'y' && settings.editable() && safeTo > from) {
+        const tr = view.state.tr.delete(from, safeTo)
+        view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
+        if (operator === 'c') setMode(view, 'insert', true)
+      }
+      event.preventDefault()
+      return true
+    }
+    update({ operator: null, count: 0 })
+  }
+  if (current.visualAnchor !== null && (key === 'd' || key === 'c' || key === 'y')) {
+    const { from, to } = view.state.selection
+    const content = view.state.doc.slice(from, to)
+    update({ visualAnchor: null, register: { content, linewise: false } })
+    if (key !== 'y' && settings.editable() && to > from) {
+      const tr = view.state.tr.delete(from, to)
+      view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)))
+      if (key === 'c') setMode(view, 'insert', true)
+    }
+    event.preventDefault()
+    return true
+  }
+  if (key === 'd' || key === 'c' || key === 'y') {
+    update({ operator: key })
+    event.preventDefault()
+    return true
+  }
+  if ((key === 'p' || key === 'P') && current.register && settings.editable()) {
+    const at = view.state.selection.head + (key === 'p' && !current.register.linewise ? 1 : 0)
+    const pos = Math.max(0, Math.min(at, view.state.doc.content.size))
+    const tr = view.state.tr.replace(pos, pos, current.register.content)
+    view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(pos), 1)).scrollIntoView())
+    event.preventDefault()
+    return true
+  }
+  if (/^[1-9]$/.test(key)) {
+    update({ count: Math.min(999, current.count * 10 + Number(key)) })
     event.preventDefault()
     return true
   }
@@ -395,23 +526,20 @@ function handleNormal(
     event.preventDefault()
     return true
   }
-  if (key === 'h' || key === 'l') {
-    horizontal(view, key === 'h' ? -1 : 1)
+  if (key === 'h' || key === 'l' || key === 'j' || key === 'k' || key === 'w' || key === 'b' || key === 'e' || key === '^' || key === '$') {
+    for (let index = 0; index < Math.max(1, current.count); index++) {
+      if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
+      else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
+      else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
+      else lineMotion(view, key)
+    }
+    if (current.count) update({ count: 0 })
     event.preventDefault()
     return true
   }
-  if (key === 'j' || key === 'k') {
-    vertical(view, key === 'j' ? 1 : -1)
-    event.preventDefault()
-    return true
-  }
-  if (key === 'w' || key === 'b' || key === 'e') {
-    wordMotion(view, key)
-    event.preventDefault()
-    return true
-  }
-  if (key === '0' || key === '^' || key === '$') {
+  if (key === '0') {
     lineMotion(view, key)
+    if (current.count) update({ count: 0 })
     event.preventDefault()
     return true
   }
@@ -462,7 +590,10 @@ export const RichTextVim = Extension.create<VimSettings>({
           }),
           apply(transaction, value) {
             const meta = transaction.getMeta(KEY) as VimState | undefined
-            return meta ? meta : value
+            if (meta) return meta
+            if (value.visualAnchor !== null && transaction.docChanged)
+              return { ...value, visualAnchor: transaction.mapping.map(value.visualAnchor, -1) }
+            return value
           },
         },
         view(view) {
@@ -559,6 +690,10 @@ export function configureRichTextVim(
         enabled: shouldEnable,
         mode: shouldEnable ? (current.enabled ? current.mode : 'normal') : '',
         prefix: false,
+        operator: null,
+        count: 0,
+        visualAnchor: null,
+        register: current.register,
       })
       .setMeta('addToHistory', false),
   )
