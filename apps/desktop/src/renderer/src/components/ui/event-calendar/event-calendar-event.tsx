@@ -491,7 +491,7 @@ function EventCalendarEvent<TData = unknown>({
         onPointerDown?.(e)
         e.stopPropagation()
         // suppress the trailing slot-create click when this press yields no drag
-        markChipPress()
+        markChipPress(instance)
         if (interactive) gestures.beginMove(e, segment)
       }}
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
