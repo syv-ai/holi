@@ -883,7 +883,10 @@ describe('the calendar view', () => {
     await user.type(title, 'Deferred event')
     await user.click(within(card).getByRole('button', { name: 'Add event' }))
     expect(within(card).getByRole('button', { name: 'Saving…' })).toBeDisabled()
-    expect(within(card).getByRole('button', { name: 'Close' })).toBeEnabled()
+    const closeButtons = within(card).getAllByRole('button', { name: 'Close' })
+    expect(closeButtons).toHaveLength(2)
+    expect(closeButtons.filter((button) => !(button as HTMLButtonElement).disabled)).toHaveLength(1)
+    expect(closeButtons.filter((button) => (button as HTMLButtonElement).disabled)).toHaveLength(1)
     expect(scheduleMock).toHaveBeenCalledTimes(1)
     const input = scheduleMock.mock.calls[0]![0] as MeetingInput
     resolve({

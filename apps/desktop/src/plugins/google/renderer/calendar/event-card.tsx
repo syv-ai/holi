@@ -633,7 +633,7 @@ function EventForm({
     setGuests(restoredGuests)
     setMeet(restored.meet)
     onMeetingDraftChange({ guests: restoredGuests, meet: restored.meet })
-  }, [restored, onMeetingDraftChange])
+  }, [restored, onDraftChange, onMeetingDraftChange])
   const locked = meeting.busy || meeting.submitted !== null
   const disabled = saving || meeting.loading || meeting.busy
   const shownError = validation ?? meeting.error ?? error
