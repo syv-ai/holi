@@ -346,9 +346,6 @@
   // in the same native turn. The exact cancellation must reach the host even
   // though discovery never starts; it must not produce toolbar fallback labels.
   await pageEval(`document.body.tabIndex=-1;document.body.focus()`)
-  const clearsBeforePrediscoveryCancel = hintUiCalls.filter(
-    (call) => call.name === 'browser.hints-clear',
-  ).length
   await captureFrame(page)
   await pageEval(`(() => {
     window.qaCancelKeyUps=[]
@@ -378,12 +375,27 @@
       { code: `__holiPage.hints.poll=qaSavedHintPoll;delete globalThis.qaSavedHintPoll` },
     ])
   }
-  await until(
-    () =>
-      hintUiCalls.filter((call) => call.name === 'browser.hints-clear').length >
-      clearsBeforePrediscoveryCancel,
-    'cancelled pre-discovery request reaches host adapter',
-  )
+  await until(() => {
+    const freshEvents = sent
+      .filter((event) => event.remote === 'A' && event.name === 'hints')
+      .slice(hintsEventsBefore)
+    const request = freshEvents.find((event) => (event.payload as any).type === 'request')
+      ?.payload as any
+    return (
+      request !== undefined &&
+      freshEvents.some((event) => {
+        const cancel = event.payload as any
+        return (
+          cancel.type === 'cancel' &&
+          cancel.tab === request.tab &&
+          cancel.nonce === request.nonce &&
+          cancel.attachment === request.attachment &&
+          cancel.request === request.request &&
+          cancel.origin === request.origin
+        )
+      })
+    )
+  }, 'production emits exact native request cancellation')
   const requestEvent = sent
     .slice()
     .filter((event) => event.remote === 'A' && event.name === 'hints')
@@ -396,9 +408,30 @@
     .find((event) => (event.payload as any).type === 'cancel')
   assert(requestEvent && cancelEvent, 'native request and cancel were not emitted by production')
   assert.deepEqual(cancelEvent.payload, { ...requestEvent.payload, type: 'cancel' })
-  const cancelledWire = hintUiCalls
-    .filter((call) => call.name === 'browser.hints-clear')
-    .at(-1)!.params
+  await until(
+    () =>
+      hintUiCalls.some((call) => {
+        const cancel = cancelEvent.payload as any
+        return (
+          call.name === 'browser.hints-clear' &&
+          call.params.tab === cancel.tab &&
+          call.params.nonce === cancel.nonce &&
+          call.params.attachment === cancel.attachment &&
+          call.params.request === cancel.request
+        )
+      }),
+    'exact pre-discovery request is cleared by coordinator',
+  )
+  const cancelledWire = hintUiCalls.find((call) => {
+    const cancel = cancelEvent.payload as any
+    return (
+      call.name === 'browser.hints-clear' &&
+      call.params.tab === cancel.tab &&
+      call.params.nonce === cancel.nonce &&
+      call.params.attachment === cancel.attachment &&
+      call.params.request === cancel.request
+    )
+  })!.params
   assert.deepEqual(
     {
       tab: cancelledWire.tab,

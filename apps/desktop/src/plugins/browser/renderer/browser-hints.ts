@@ -57,7 +57,12 @@ export function createBrowserHintAdapter(
   const invalidators = new Map<number, () => void>()
   const subscriptionsByRequest = new Map<
     number,
-    { wire: PageHintScope | null; origin: string | null; cancelled: boolean }
+    {
+      wire: PageHintScope | null
+      origin: string | null
+      owner: PageHintOwner | null
+      cancelled: boolean
+    }
   >()
   const retired = new WeakSet<Pending>()
   let generation = 0
@@ -135,7 +140,9 @@ export function createBrowserHintAdapter(
         record.wire.tab === event.tab &&
         record.wire.nonce === event.nonce &&
         record.wire.attachment === event.attachment &&
-        record.origin === event.origin,
+        record.origin === event.origin &&
+        (event.type !== 'revoke' ||
+          (record.owner?.snapshot === event.snapshot && record.owner.geometry === event.geometry)),
     )
     if (!match && !subscribed) return
     const [request, item] = match ?? [0, undefined]
@@ -197,6 +204,11 @@ export function createBrowserHintAdapter(
         )
           return null
         item.owner = found.owner as PageHintOwner
+        const liveSubscription = subscriptionsByRequest.get(request)
+        if (liveSubscription?.wire === wire) {
+          liveSubscription.origin = item.owner.origin
+          liveSubscription.owner = item.owner
+        }
         snapshot = found
         revision = 0
         return found.targets.map(({ id, label, x, y }) => ({ id, label, x, y }))
@@ -268,10 +280,12 @@ export function createBrowserHintAdapter(
       const pendingPageRequest = [...pending.entries()]
         .filter(([pendingRequest]) => pendingRequest < 0)
         .at(-1)?.[1]
+      const ownedRequest = pending.get(request) ?? pendingPageRequest
       invalidators.set(request, invalidate)
       const record = {
-        wire: pendingPageRequest?.wire ?? null,
-        origin: pendingPageRequest?.requestOrigin ?? null,
+        wire: ownedRequest?.wire ?? null,
+        origin: ownedRequest?.owner?.origin ?? ownedRequest?.requestOrigin ?? null,
+        owner: ownedRequest?.owner ?? null,
         cancelled: false,
       }
       subscriptionsByRequest.set(request, record)
@@ -284,7 +298,7 @@ export function createBrowserHintAdapter(
           record.wire.nonce === event.nonce &&
           record.wire.attachment === event.attachment &&
           record.origin === event.origin
-        if (!exact || (item && !matches(event, item))) return
+        if (!exact || !item || record.cancelled || !matches(event, item)) return
         if (event.type !== 'key' || !event.key) return
         const keyEvent = new KeyboardEvent('keydown', {
           key: event.key,
@@ -305,7 +319,10 @@ export function createBrowserHintAdapter(
       listeners.set(key, eventSet)
       const requestHandler = (event: Event) => {
         const detail = (event as CustomEvent<{ source?: HTMLElement }>).detail
-        if (detail?.source === context.ownerElement) invalidate()
+        if (detail?.source === context.ownerElement && !record.cancelled) {
+          record.cancelled = true
+          invalidate()
+        }
       }
       window.addEventListener(HOST_HINT_REQUEST, requestHandler)
       const off = () => {
@@ -330,7 +347,7 @@ export function createBrowserHintAdapter(
       // Retire the latest subscribed request while its coordinator callback is still
       // registered; unrelated host sessions have no callback here.
       const activeRequest = [...invalidators.keys()]
-        .filter((request) => request > 0)
+        .filter((request) => request > 0 && !subscriptionsByRequest.get(request)?.cancelled)
         .sort((a, b) => b - a)[0]
       if (activeRequest !== undefined) invalidators.get(activeRequest)?.()
       for (const [request, item] of [...pending]) {
