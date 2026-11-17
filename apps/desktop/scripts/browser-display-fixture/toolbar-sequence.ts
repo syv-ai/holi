@@ -6,6 +6,10 @@
     if (event.sender !== win.webContents || id !== 'browser') return
     for (const listener of [...listeners]) listener(message)
   })
+  // Native-fixture-only delay at this adapter's UI capability seam. It cannot
+  // evaluate renderer/guest code and does not exist in the production app.
+  let hintActivationGate: { wait: Promise<void>; entered(): void } | undefined
+  const hintUiCalls: { name: string; params: any }[] = []
   ipcMain.handle('qa:trpc', async (event, op) => {
     assert.equal(event.sender, win.webContents)
     assert.equal(op.path, 'cap.run')
@@ -13,6 +17,13 @@
     assert(name.startsWith('browser.'))
     assert(['A', 'B'].includes(remote))
     try {
+      if (name.startsWith('browser.hints-')) {
+        hintUiCalls.push({ name, params: paramsJson ? JSON.parse(paramsJson) : undefined })
+        if (name === 'browser.hints-activate' && hintActivationGate) {
+          hintActivationGate.entered()
+          await hintActivationGate.wait
+        }
+      }
       const result = await registry.run(
         name,
         'ui',

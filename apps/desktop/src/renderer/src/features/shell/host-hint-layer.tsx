@@ -1,3 +1,4 @@
+import { isHintPresentation, type HintPresentation } from '@holi/shared'
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useAtomValue, useStore } from 'jotai'
@@ -40,6 +41,27 @@ function withinDeadline<T>(promise: Promise<T>, fallback: T): Promise<T> {
   })
 }
 
+function resolvedPresentation(): HintPresentation | undefined {
+  const kbd = document.querySelector('[data-host-hint-presentation]')
+  if (!kbd) return undefined
+  const style = getComputedStyle(kbd)
+  const presentation = {
+    backgroundColor: style.backgroundColor,
+    color: style.color,
+    fontFamily: style.fontFamily,
+    fontSize: parseFloat(style.fontSize),
+    fontWeight: parseFloat(style.fontWeight),
+    lineHeight: parseFloat(style.lineHeight),
+    height: parseFloat(style.height),
+    minWidth: parseFloat(style.minWidth),
+    paddingInline: parseFloat(style.paddingLeft),
+    paddingBlock: parseFloat(style.paddingTop),
+    borderRadius: parseFloat(style.borderRadius),
+    letterSpacing: style.letterSpacing === 'normal' ? 0 : parseFloat(style.letterSpacing),
+  }
+  return isHintPresentation(presentation) ? presentation : undefined
+}
+
 function presentWithinDeadline(
   source: AsyncHostHintAdapter,
   request: number,
@@ -47,7 +69,7 @@ function presentWithinDeadline(
   labels: readonly { id: string; key: string }[],
 ): Promise<boolean> {
   return withinDeadline(
-    Promise.resolve().then(() => source.present(request, revision, labels)),
+    Promise.resolve().then(() => source.present(request, revision, labels, resolvedPresentation())),
     false,
   )
 }
@@ -476,11 +498,13 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         records.every((record) => {
           const element =
             record.target instanceof Element ? record.target : record.target.parentElement
-          if (element?.closest('[data-host-hints]')) return true
+          if (element?.closest('[data-host-hints],[data-host-hint-presentation]')) return true
           return (
             record.type === 'childList' &&
             [...record.addedNodes, ...record.removedNodes].every(
-              (node) => node instanceof Element && node.matches('[data-host-hints]'),
+              (node) =>
+                node instanceof Element &&
+                node.matches('[data-host-hints],[data-host-hint-presentation]'),
             )
           )
         })
@@ -511,29 +535,38 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
     }
   }, [enabled, scopeKey, store, change, start])
 
-  if (!enabled || !session) return null
+  if (!enabled) return null
   // A fixed, pointer-transparent annotation layer, not a modal or focus trap.
   return createPortal(
-    <div
-      data-host-hints
-      aria-label="Vim host hints"
-      className="pointer-events-none fixed inset-0 z-60"
-    >
-      {session.targets
-        .filter((target) => target.key.startsWith(session.prefix))
-        .map((target) => (
-          <Kbd
-            key={target.key}
-            aria-hidden="true"
-            data-hint-key={target.key}
-            data-hint-target={target.label}
-            className="absolute top-(--hint-y) left-(--hint-x) -translate-x-1/2 -translate-y-1/2"
-            style={{ '--hint-x': `${target.x}px`, '--hint-y': `${target.y}px` } as CSSProperties}
-          >
-            {target.key}
-          </Kbd>
-        ))}
-    </div>,
+    <>
+      <Kbd data-host-hint-presentation aria-hidden="true" className="invisible absolute">
+        a
+      </Kbd>
+      {session ? (
+        <div
+          data-host-hints
+          aria-label="Vim host hints"
+          className="pointer-events-none fixed inset-0 z-60"
+        >
+          {session.targets
+            .filter((target) => target.key.startsWith(session.prefix))
+            .map((target) => (
+              <Kbd
+                key={target.key}
+                aria-hidden="true"
+                data-hint-key={target.key}
+                data-hint-target={target.label}
+                className="absolute top-(--hint-y) left-(--hint-x) -translate-x-1/2 -translate-y-1/2"
+                style={
+                  { '--hint-x': `${target.x}px`, '--hint-y': `${target.y}px` } as CSSProperties
+                }
+              >
+                {target.key}
+              </Kbd>
+            ))}
+        </div>
+      ) : null}
+    </>,
     document.body,
   )
 }

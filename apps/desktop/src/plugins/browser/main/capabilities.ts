@@ -10,7 +10,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { fenceUntrusted } from '@holi/shared'
+import { fenceUntrusted, isHintPresentation, type HintPresentation } from '@holi/shared'
 import {
   cap,
   CapabilityError,
@@ -78,6 +78,7 @@ export interface BrowserHintPages extends Pages {
     revision: number,
     labels: PageHintLabel[],
     theme: 'light' | 'dark',
+    presentation: HintPresentation,
   ): Promise<boolean>
   clearHints(scope: PageHintScope): Promise<void>
   activateHint(owner: PageHintOwner, id: string): Promise<boolean>
@@ -219,7 +220,8 @@ export function browserHintCapabilities(pages: BrowserHintPages) {
               typeof v.key !== 'string' ||
               !/^[a-z]{1,4}$/.test(v.key),
           ) ||
-          (theme !== 'light' && theme !== 'dark')
+          (theme !== 'light' && theme !== 'dark') ||
+          !isHintPresentation(p['presentation'])
         )
           throw new CapabilityError('BAD_REQUEST', 'invalid hint labels, theme or revision')
         return pages.presentHints(
@@ -227,6 +229,7 @@ export function browserHintCapabilities(pages: BrowserHintPages) {
           revision as number,
           labels as PageHintLabel[],
           theme as 'light' | 'dark',
+          p['presentation'],
         )
       },
     }),

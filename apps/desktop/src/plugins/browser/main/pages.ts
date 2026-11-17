@@ -1,3 +1,4 @@
+import type { HintPresentation } from '@holi/shared'
 /**
  * The browser's pages: **the only file in `browser/` that imports Electron**,
  * loaded when a vault that runs the plugin opens (docs/features/browser.md).
@@ -254,6 +255,7 @@ export function createPages(deps: PagesDeps): Pages & {
     revision: number,
     labels: PageHintLabel[],
     theme: 'light' | 'dark',
+    presentation: HintPresentation,
   ): Promise<boolean>
   clearHints(scope: PageHintScope): Promise<void>
   activateHint(owner: PageHintOwner, id: string): Promise<boolean>
@@ -637,6 +639,7 @@ export function createPages(deps: PagesDeps): Pages & {
     revision: number,
     labels: PageHintLabel[],
     theme: 'light' | 'dark',
+    presentation: HintPresentation,
   ): Promise<boolean> {
     const tab = tabs.get(owner.tab)
     if (
@@ -652,7 +655,7 @@ export function createPages(deps: PagesDeps): Pages & {
     const lease = tab.shownLease
     const result = await inPage<boolean>(
       tab,
-      `__holiPage.hints.present(${JSON.stringify(owner)}, ${revision}, ${JSON.stringify(labels)}, ${JSON.stringify(theme)})`,
+      `__holiPage.hints.present(${JSON.stringify(owner)}, ${revision}, ${JSON.stringify(labels)}, ${JSON.stringify(theme)}, ${JSON.stringify(presentation)})`,
     ).catch(() => false)
     return (
       result &&

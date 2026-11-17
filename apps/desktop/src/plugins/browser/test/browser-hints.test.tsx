@@ -1,3 +1,4 @@
+import { presentation } from './hint-presentation'
 import { beforeEach, expect, test, vi } from 'vitest'
 
 const run = vi.hoisted(() => vi.fn())
@@ -307,5 +308,48 @@ test('routes only keys owned by the matching request and opaque origin', async (
   })
   expect(routed).toHaveLength(1)
   expect(routed[0]).toMatchObject({ key: 'x', code: 'KeyX', ctrlKey: true })
+  fixture.adapter.dispose()
+})
+
+test.each(['light', 'dark'])(
+  'forwards resolved installed Kbd appearance using actual data-theme %s stamp',
+  async (theme) => {
+    const fixture = setup()
+    document.documentElement.dataset.theme = theme
+    document.documentElement.classList.remove('dark')
+    await fixture.adapter.discover(1, new AbortController().signal)
+    expect(await fixture.adapter.present(1, 1, [{ id: 'target-1', key: 'a' }], presentation)).toBe(
+      true,
+    )
+    expect(input('browser.hints-present')[0].p).toEqual({
+      revision: 1,
+      labels: [{ id: 'target-1', key: 'a' }],
+      theme,
+      presentation,
+    })
+    fixture.adapter.dispose()
+    delete document.documentElement.dataset.theme
+  },
+)
+
+test('consumed Escape cancels the selected request during delayed activation and rejects late settlement', async () => {
+  const fixture = setup()
+  await fixture.adapter.discover(4, new AbortController().signal)
+  const wire = input('browser.hints-discover')[0]
+  let finish!: (value: boolean) => void
+  run.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  const activation = fixture.adapter.activate(4, 'target-1')
+  const route = vi.fn((event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return false
+    fixture.adapter.clear(4)
+    return true
+  })
+  fixture.adapter.subscribe(4, () => undefined, route)
+  fixture.event(wire.request, fixture.ownerOrigin, 'key', { key: 'Escape' })
+  expect(route).toHaveBeenCalledOnce()
+  expect(input('browser.hints-clear')).toEqual([wire])
+  finish(true)
+  expect(await activation).toBe(false)
+  expect(input('browser.hints-clear')).toHaveLength(1)
   fixture.adapter.dispose()
 })

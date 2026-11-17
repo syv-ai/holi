@@ -60,6 +60,8 @@ async function run(): Promise<void> {
     response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body { color: CanvasText; background: Canvas; font: 16px sans-serif; }</style><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
       <main><h1>Browser page owned by vault ${request.url === '/b' ? 'B' : 'A'}</h1>
       <label>Search <input aria-label="Search" id="search"></label><button id="trusted-button">Submit</button><a id="trusted-link" href="#clicked">Trusted link</a>
+      <button style="opacity:0">Transparent exclusion</button><div style="opacity:0"><button>Ancestor transparent exclusion</button></div>
+      <div inert><button>Inert exclusion</button></div><div aria-hidden="true"><button>Aria hidden exclusion</button></div>
       <button id="disabled-hint" disabled>Disabled exclusion</button><button id="hidden-hint" hidden>Hidden exclusion</button>
       <div style="position:relative"><button>Occluded exclusion</button><span style="position:absolute;inset:0;z-index:1"></span></div>
       <div style="width:1px;height:1px;overflow:hidden"><button style="margin-left:50px">Clipped exclusion</button></div>
