@@ -14,13 +14,15 @@
  * latest commit and History, the same as a document's (`FileHistoryButton`).
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { fileKind } from '@holi/shared'
+import { fileKind, type MdxCompileState } from '@holi/shared'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
 import { findNext, findPrevious } from '@codemirror/search'
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view'
+import { setDiagnostics } from '@codemirror/lint'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { FileTextIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -144,6 +146,8 @@ function TextEditor({
   onVimModeChange,
   visible,
   focused,
+  mdxTrustContext,
+  mdxTrusted,
 }: {
   path: string
   text: string
@@ -153,6 +157,8 @@ function TextEditor({
   onVimModeChange: (mode: string) => void
   visible: boolean
   focused: boolean
+  mdxTrustContext: string | null
+  mdxTrusted: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -165,6 +171,9 @@ function TextEditor({
   const callbacks = useRef({ onSaved, onSaveState })
   callbacks.current = { onSaved, onSaveState }
   const [view, setView] = useState<EditorView | null>(null)
+  const [mdxState, setMdxState] = useState<MdxCompileState>({ kind: 'checking' })
+  const mdxGeneration = useRef(0)
+  const mdxTimer = useRef<number | undefined>(undefined)
   /** The find bar, open while set; a new request refocuses it. */
   const [find, setFind] = useState<FindRequest | null>(null)
   const [count, setCount] = useState<FindCount>({ total: 0, current: null })
@@ -176,6 +185,64 @@ function TextEditor({
   const visibility = useRef(visible)
   const focusState = useRef(focused)
   focusState.current = focused
+
+  const scheduleMdxCompile = useCallback(
+    (current: EditorView, source: string, immediate = false) => {
+      const generation = ++mdxGeneration.current
+      window.clearTimeout(mdxTimer.current)
+      current.dispatch(setDiagnostics(current.state, []))
+      if (!/\.mdx$/i.test(path)) return
+      if (!visible) {
+        setMdxState({
+          kind: 'unavailable',
+          message: 'MDX diagnostics pause while this view is hidden.',
+        })
+        return
+      }
+      if (!mdxTrusted || mdxTrustContext === null) {
+        setMdxState({ kind: 'unavailable', message: 'Approve this vault to check MDX syntax.' })
+        return
+      }
+      setMdxState({ kind: 'checking' })
+      mdxTimer.current = window.setTimeout(
+        () => {
+          void trpc.mdxTrust.compile
+            .mutate({ remote: remote!, path, context: mdxTrustContext, source })
+            .then((diagnostics) => {
+              if (generation !== mdxGeneration.current || viewRef.current !== current) return
+              const mapped = diagnostics.map((diagnostic) => {
+                const line = current.state.doc.line(
+                  Math.min(diagnostic.line, current.state.doc.lines),
+                )
+                const from = Math.min(line.from + Math.max(0, diagnostic.column - 1), line.to)
+                return {
+                  from,
+                  to: Math.min(from + 1, line.to),
+                  severity: 'error' as const,
+                  message: diagnostic.message,
+                }
+              })
+              current.dispatch(setDiagnostics(current.state, mapped))
+              setMdxState(
+                mapped.length === 0 ? { kind: 'clean' } : { kind: 'syntax-error', diagnostics },
+              )
+            })
+            .catch((error: unknown) => {
+              if (generation !== mdxGeneration.current || viewRef.current !== current) return
+              setMdxState({
+                kind: 'unavailable',
+                message: error instanceof Error ? error.message : String(error),
+              })
+            })
+        },
+        immediate ? 0 : 300,
+      )
+    },
+    [mdxTrusted, mdxTrustContext, path, remote, visible],
+  )
+
+  const scheduleMdxRef = useRef(scheduleMdxCompile)
+  scheduleMdxRef.current = scheduleMdxCompile
 
   const publishCurrentSelection = useCallback(
     (current: EditorView) => {
@@ -199,6 +266,7 @@ function TextEditor({
   )
 
   useEffect(() => {
+    const mdxGenerationRef = mdxGeneration
     const host = hostRef.current
     if (host === null || remote === null) return
     // Where this file was left, when it was open before: the caret clamped
@@ -287,11 +355,9 @@ function TextEditor({
                 })
               }
             }
-            if (
-              !update.docChanged ||
-              update.transactions.some((tr) => tr.annotation(externalReload))
-            )
-              return
+            if (!update.docChanged) return
+            scheduleMdxRef.current(update.view, update.state.doc.toString())
+            if (update.transactions.some((tr) => tr.annotation(externalReload))) return
             dirty.current = true
             window.clearTimeout(saveTimer.current)
             saveTimer.current = window.setTimeout(
@@ -330,6 +396,8 @@ function TextEditor({
       },
     )
     return () => {
+      mdxGenerationRef.current++
+      window.clearTimeout(mdxTimer.current)
       unregister()
       leaveWriter.current = null
       scroller.removeEventListener('scroll', noteScroll)
@@ -342,6 +410,22 @@ function TextEditor({
       setFind(null)
     }
   }, [remote, path, memory, vim.extension])
+
+  useEffect(() => {
+    const current = viewRef.current
+    if (current === null || !/\.mdx$/i.test(path)) return
+    if (!visible) {
+      mdxGeneration.current++
+      window.clearTimeout(mdxTimer.current)
+      current.dispatch(setDiagnostics(current.state, []))
+      setMdxState({
+        kind: 'unavailable',
+        message: 'MDX diagnostics pause while this view is hidden.',
+      })
+      return
+    }
+    scheduleMdxRef.current(current, current.state.doc.toString())
+  }, [visible, path, mdxTrustContext, mdxTrusted, view])
 
   useEffect(() => {
     const wasVisible = visibility.current
@@ -406,6 +490,35 @@ function TextEditor({
       onKeyDownCapture={vim.onKeyDownCapture}
       onKeyDown={vim.onKeyDown}
     >
+      {/\.mdx$/i.test(path) ? (
+        <div
+          className="flex min-h-8 shrink-0 items-center gap-2 px-4 py-1 text-sm"
+          aria-live="polite"
+        >
+          <span>
+            {mdxState.kind === 'checking'
+              ? 'Checking MDX…'
+              : mdxState.kind === 'clean'
+                ? 'MDX syntax is valid'
+                : mdxState.kind === 'syntax-error'
+                  ? `${mdxState.diagnostics.length} MDX diagnostic${mdxState.diagnostics.length === 1 ? '' : 's'}`
+                  : `MDX diagnostics unavailable: ${mdxState.message}`}
+          </span>
+          {mdxState.kind === 'unavailable' && mdxTrusted && visible ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const current = viewRef.current
+                if (current) scheduleMdxRef.current(current, current.state.doc.toString(), true)
+              }}
+            >
+              Retry
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {view && find ? (
         <div className="absolute top-2 right-4 z-40">
           <CodeFindBar view={view} request={find} count={count} onClose={() => setFind(null)} />
@@ -436,6 +549,13 @@ function TextFileView({
   const [attempt, setAttempt] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [vimMode, setVimMode] = useState('')
+  const [mdxTrust, setMdxTrust] = useState<{ context: string | null; trusted: boolean }>({
+    context: null,
+    trusted: false,
+  })
+  const setMdxTrustSnapshot = useCallback((context: string | null, trusted: boolean) => {
+    setMdxTrust({ context, trusted })
+  }, [])
   const writeGeneration = useRef(0)
 
   useEffect(() => {
@@ -493,7 +613,13 @@ function TextFileView({
       />
       {/\.mdx$/i.test(path) && remote !== null ? (
         <div data-testid="mdx-trust-region" className="min-w-0 shrink-0 border-b px-4 py-2">
-          <MdxTrustControl remote={remote} path={path} visible={visible} focused={focused} />
+          <MdxTrustControl
+            remote={remote}
+            path={path}
+            visible={visible}
+            focused={focused}
+            onTrustContextChange={setMdxTrustSnapshot}
+          />
         </div>
       ) : null}
       {load.kind === 'error' ? (
@@ -518,6 +644,8 @@ function TextFileView({
           onVimModeChange={setVimMode}
           visible={visible}
           focused={focused}
+          mdxTrustContext={mdxTrust.context}
+          mdxTrusted={mdxTrust.trusted}
         />
       )}
     </div>
