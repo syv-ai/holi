@@ -10,7 +10,7 @@
  * **The rule that contains the cost:** parse only plumbing commands and
  * `--porcelain=v2`. Human-readable output is not a stable interface.
  */
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFile, lstat, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -23,6 +23,7 @@ import {
   shownPathOrNull,
 } from '@holi/shared'
 import { writeMemoryIndex } from './vault/hooks/memory-index'
+import { rawCommitParents, traceHasOnlyManagedBuiltins } from './git-provenance-evidence'
 
 /**
  * A git command that ran and failed.
@@ -51,6 +52,12 @@ export class GitMissingError extends Error {
 }
 
 /** A bounded historical read could not complete within its fixed resource budget. */
+class GitEvidenceCommandError extends Error {
+  constructor(readonly code: number) {
+    super('Git evidence command failed.')
+  }
+}
+
 class GitResourceError extends Error {
   constructor(readonly kind: 'time' | 'output') {
     super(`Historical Git read exceeded its ${kind === 'time' ? 'time' : 'output'} resource limit.`)
@@ -378,145 +385,102 @@ async function readGitEvidence(
     env: { ...opts.env, GIT_NO_REPLACE_OBJECTS: '1' },
     executionBudget: { maxBuffer: 65536, timeout },
   })
-  if (!result.ok) throw new Error('Git evidence read failed')
+  if (!result.ok) throw new GitEvidenceCommandError(result.code)
+
   return result.stdout.trim()
 }
 
-/** Parse the raw commit headers once for both provenance paths. */
-function rawCommitParents(raw: string): string[] {
-  const separator = raw.indexOf('\n\n')
-  if (separator < 0) throw new Error('Malformed commit object')
-  return raw
-    .slice(0, separator)
-    .split('\n')
-    .filter((line) => line.startsWith('parent '))
-    .map((line) => line.slice('parent '.length))
+/** Run an invocation with Trace2 on a private fd3 pipe, never stderr. The Git
+ * operation is not bounded by provenance: only waiting for a detached descendant
+ * to close the observation pipe is bounded. */
+async function tryGitObservedOnce(
+  cwd: string,
+  args: string[],
+  opts: RunOpts,
+): Promise<{ outcome: GitOutcome; trace: string; complete: boolean }> {
+  const gitPath = opts.gitPath ?? 'git'
+  const askpass = await ensureAskpass()
+  const token = opts.token?.() ?? ''
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: askpass,
+    HOLI_GIT_TOKEN: token,
+    LC_ALL: 'C',
+    ...opts.env,
+    GIT_TRACE2_EVENT: '3',
+  }
+  if (WINDOWS) env.GCM_INTERACTIVE = 'never'
+  return new Promise((resolve, reject) => {
+    const child = spawn(gitPath, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] })
+    const output: Buffer[] = []
+    const errors: Buffer[] = []
+    const traces: Buffer[] = []
+    let outputSize = 0
+    let errorSize = 0
+    let traceSize = 0
+    let traceOverflow = false
+    let traceEnded = false
+    const append = (target: Buffer[], chunk: Buffer, size: number, limit: number): number => {
+      if (size + chunk.length <= limit) target.push(chunk)
+      return size + chunk.length
+    }
+    child.stdout!.on('data', (chunk: Buffer) => {
+      outputSize = append(output, chunk, outputSize, MAX_BUFFER)
+    })
+    child.stderr!.on('data', (chunk: Buffer) => {
+      errorSize = append(errors, chunk, errorSize, MAX_BUFFER)
+    })
+    child.stdio[3]!.on('data', (chunk: Buffer) => {
+      traceSize += chunk.length
+      if (traceSize > 256 * 1024) traceOverflow = true
+      else traces.push(Buffer.from(chunk))
+    })
+    child.stdio[3]!.on('end', () => {
+      traceEnded = true
+    })
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      reject(error.code === 'ENOENT' ? new GitMissingError(gitPath) : error)
+    })
+    child.on('exit', (code, signal) => {
+      const waitForTrace = new Promise<void>((done) => {
+        if (traceEnded) return done()
+        const timer = setTimeout(done, 1000)
+        child.stdio[3]!.once('end', () => {
+          clearTimeout(timer)
+          done()
+        })
+      })
+      void waitForTrace.then(() => {
+        const stderr = Buffer.concat(errors).toString()
+        const outcomeCode = code ?? (signal ? 1 : 0)
+        resolve({
+          outcome: {
+            ok: outcomeCode === 0,
+            code: outcomeCode,
+            stdout: Buffer.concat(output).toString(),
+            stderr,
+          },
+          trace: Buffer.concat(traces).toString(),
+          complete:
+            traceEnded && !traceOverflow && outputSize <= MAX_BUFFER && errorSize <= MAX_BUFFER,
+        })
+      })
+    })
+    child.stdin!.end()
+  })
 }
 
-/**
- * Trace2 is directed to the command's inherited stderr pipe, not a file a hook
- * can truncate or rewrite. Ordinary stderr is interleaved, so only JSON event
- * lines are parsed; any malformed Trace2-shaped line makes the observation
- * unknown. The output cap is deliberately much smaller than execFile's cap.
- */
-function traceHasOnlyManagedBuiltins(
-  stderr: string,
-  rootCommand: 'merge' | 'commit',
-  code: number,
-): boolean {
-  const maxBytes = 256 * 1024
-  if (Buffer.byteLength(stderr) > maxBytes || !stderr.endsWith('\n')) return false
-  const events: Record<string, unknown>[] = []
-  for (const line of stderr.split('\n')) {
-    if (line === '') continue
-    if (!line.startsWith('{')) continue
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(line)
-    } catch {
-      return false
-    }
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false
-    const event = parsed as Record<string, unknown>
-    if (typeof event.event !== 'string' || typeof event.sid !== 'string') return false
-    events.push(event)
-    if (events.length > 2048) return false
+async function tryGitObserved(
+  cwd: string,
+  args: string[],
+  opts: RunOpts,
+): Promise<{ outcome: GitOutcome; trace: string; complete: boolean }> {
+  for (let attempt = 1; ; attempt++) {
+    const observation = await tryGitObservedOnce(cwd, args, opts)
+    if (attempt >= LOCK_ATTEMPTS || !isIndexLockFailure(observation.outcome)) return observation
+    await new Promise((resolve) => setTimeout(resolve, LOCK_BACKOFF_MS))
   }
-  if (events.length === 0) return false
-
-  const sessions = new Map<string, { started: boolean; command: string | null; exits: number[] }>()
-  const childStarts = new Map<string, { command: string }>()
-  const childExits = new Map<string, number>()
-  let rootSid: string | null = null
-  let rootExit: number | null = null
-  for (const event of events) {
-    const sid = event.sid as string
-    const state = sessions.get(sid) ?? { started: false, command: null, exits: [] }
-    sessions.set(sid, state)
-    switch (event.event) {
-      case 'start':
-        if (state.started) return false
-        state.started = true
-        if (rootSid === null) rootSid = sid
-        break
-      case 'cmd_name':
-        if (typeof event.name !== 'string' || state.command !== null) return false
-        state.command = event.name
-        break
-      case 'child_start': {
-        if (
-          !Number.isInteger(event.child_id) ||
-          event.use_shell !== false ||
-          !Array.isArray(event.argv)
-        )
-          return false
-        const argv = event.argv
-        const command =
-          argv.length === 3 && argv[0] === 'git' && argv[1] === 'stash' && argv[2] === 'create'
-            ? 'stash'
-            : argv.length === 6 &&
-                argv[0] === 'git' &&
-                argv[1] === 'maintenance' &&
-                argv[2] === 'run' &&
-                argv[3] === '--auto' &&
-                argv[4] === '--no-quiet' &&
-                argv[5] === '--detach'
-              ? 'maintenance'
-              : null
-        if (command === null || sid !== rootSid) return false
-        const key = `${sid}:${event.child_id}`
-        if (
-          childStarts.has(key) ||
-          [...childStarts.values()].some((child) => child.command === command)
-        )
-          return false
-        childStarts.set(key, { command })
-        break
-      }
-      case 'child_exit': {
-        if (!Number.isInteger(event.child_id) || !Number.isInteger(event.code)) return false
-        const key = `${sid}:${event.child_id}`
-        if (!childStarts.has(key)) return false
-        // Git versions can report maintenance's completion twice. Identical
-        // repeated parent notifications do not make the child ambiguous.
-        const previous = childExits.get(key)
-        if (previous !== undefined && previous !== event.code) return false
-        childExits.set(key, event.code as number)
-        break
-      }
-      case 'exit':
-        if (!Number.isInteger(event.code)) return false
-        state.exits.push(event.code as number)
-        if (sid === rootSid) rootExit = event.code as number
-        break
-    }
-  }
-  if (rootSid === null || rootExit !== code) return false
-  const root = sessions.get(rootSid)
-  if (!root?.started || root.command !== rootCommand || root.exits.length !== 1) return false
-  if (root.exits[0] !== code || childExits.size !== childStarts.size) return false
-
-  // Child processes must have their own complete Trace2 session, and no nested
-  // child execution is allowed under an otherwise-recognized builtin.
-  for (const child of childStarts.values()) {
-    const candidates = [...sessions.entries()].filter(
-      ([sid, session]) => sid !== rootSid && session.command === child.command,
-    )
-    if (candidates.length !== 1) return false
-    const [sid, session] = candidates[0]!
-    if (!session.started || session.exits.length === 0) return false
-    if (session.exits.some((exitCode) => exitCode !== session.exits[0])) return false
-    const matchingStart = [...childStarts.entries()].find(
-      ([, value]) => value.command === child.command,
-    )
-    if (matchingStart === undefined || childExits.get(matchingStart[0]) !== session.exits[0])
-      return false
-    if (events.some((event) => event.event === 'child_start' && event.sid === sid)) return false
-  }
-  for (const [sid, session] of sessions) {
-    if (sid !== rootSid && (!session.started || session.exits.length === 0)) return false
-  }
-  return true
 }
 
 function isMissingObject(stderr: string): boolean {
@@ -802,18 +766,18 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       const incoming = await runGit(root, ['rev-list', '--count', `HEAD..${target}`], opts)
       if (incoming === '0') return { kind: 'up-to-date' }
 
-      // Trace2 goes to stderr's inherited pipe. Unlike a trace file, a hook
-      // cannot rewind events Git emitted before launching it.
       const mergeOpts: RunOpts =
+        marker === null ? opts : { ...opts, env: { ...opts.env, GIT_REFLOG_ACTION: marker } }
+      const mergeObservation =
         marker === null
-          ? opts
-          : {
-              ...opts,
-              env: { ...opts.env, GIT_REFLOG_ACTION: marker, GIT_TRACE2_EVENT: '2' },
-            }
-      const merge = await tryGit(root, ['merge', '--no-edit', target], mergeOpts)
+          ? null
+          : await tryGitObserved(root, ['merge', '--no-edit', target], mergeOpts)
+      const merge =
+        mergeObservation?.outcome ?? (await tryGit(root, ['merge', '--no-edit', target], mergeOpts))
       const mergeTraceComplete =
-        marker !== null && traceHasOnlyManagedBuiltins(merge.stderr, 'merge', merge.code)
+        mergeObservation !== null &&
+        mergeObservation.complete &&
+        traceHasOnlyManagedBuiltins(mergeObservation.trace, 'merge', merge.code)
       let settlementTraceComplete = true
       if (!merge.ok) {
         if (!(await isMerging())) {
@@ -841,10 +805,14 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
         // deletes no kept file (`followNoteComments`), and memory-index writes
         // the index this merge just wrote.
         const settleArgs = [...(await identityArgs()), 'commit', '--no-verify', '--no-edit']
-        const settleCommit = await tryGit(root, settleArgs, mergeOpts)
+        const settlementObservation =
+          marker === null ? null : await tryGitObserved(root, settleArgs, mergeOpts)
+        const settleCommit =
+          settlementObservation?.outcome ?? (await tryGit(root, settleArgs, mergeOpts))
         settlementTraceComplete =
-          marker !== null &&
-          traceHasOnlyManagedBuiltins(settleCommit.stderr, 'commit', settleCommit.code)
+          settlementObservation !== null &&
+          settlementObservation.complete &&
+          traceHasOnlyManagedBuiltins(settlementObservation.trace, 'commit', settleCommit.code)
         if (!settleCommit.ok) {
           throw new GitError(
             `git ${settleArgs[0]} failed (${settleCommit.code}): ${settleCommit.stderr.split('\n')[0] ?? ''}`,
@@ -869,6 +837,12 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
         try {
           evidenceDeadline = Date.now() + 1000
           const evidence = boundedMergeEvidence
+          try {
+            await evidence(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])
+            throw new Error('Merge state remains active after settlement')
+          } catch (error) {
+            if (!(error instanceof GitEvidenceCommandError && error.code === 1)) throw error
+          }
           if ((await evidence(['rev-parse', '--verify', 'HEAD'])) !== after)
             throw new Error('HEAD changed during merge evidence collection')
           const entries = (await evidence(['reflog', 'show', '-n2', '--format=%H%x00%gs', 'HEAD']))
@@ -1393,10 +1367,19 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
         return { ok: false }
       }
     }
+    const mergeHeadExists = async (): Promise<boolean> => {
+      try {
+        await evidence(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])
+        return true
+      } catch (error) {
+        if (error instanceof GitEvidenceCommandError && error.code === 1) return false
+        throw error
+      }
+    }
     if (recorder !== undefined && ticket !== null) {
       marker = `holi-managed-commit:${randomUUID()}`
       try {
-        if (!(await probe(['rev-parse', '--verify', 'MERGE_HEAD'])).ok) {
+        if (!(await mergeHeadExists())) {
           const head = await probe(['rev-parse', '--verify', 'HEAD'])
           beforeHead = head.ok ? await evidence(['rev-parse', '--verify', 'HEAD']) : null
           // One previous entry and its exact parent are enough to anchor a
@@ -1443,7 +1426,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
           !/^tree (?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headers[0]!) ||
           parents.length > 1 ||
           (parents[0] ?? null) !== beforeHead ||
-          (await probe(['rev-parse', '--verify', 'MERGE_HEAD'])).ok
+          (await mergeHeadExists())
         )
           throw new Error('Commit object is not the managed non-merge invocation')
         exactOid = oid
