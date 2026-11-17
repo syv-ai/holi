@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { listTemplates } from '../main/templates'
+import { listTemplates, migrateTemplates } from '../main/templates'
 
 const dirs: string[] = []
 async function vault(): Promise<string> {
@@ -35,6 +35,17 @@ describe('listTemplates', () => {
     await seed(root, '_brand', { name: 'Brand', fields: [] })
     const names = (await listTemplates(root)).map((t) => t.slug)
     expect(names).toEqual(['proposal'])
+  })
+
+  it('does not expose the exact retired manifest name', async () => {
+    const root = await vault()
+    await seed(root, 'anything', { name: 'Syv.ai report', fields: [] })
+    await seed(root, 'report', { name: 'Report', fields: [] })
+    await seed(root, 'custom', { name: 'Custom syv.ai report', fields: [] })
+    expect((await listTemplates(root)).map((template) => template.name)).toEqual([
+      'Custom syv.ai report',
+      'Report',
+    ])
   })
 
   it('reads a template dir + manifest into a Template', async () => {
@@ -142,5 +153,41 @@ describe('listTemplates', () => {
     await seed(root, 'p', { name: 'P', fields: [{ key: 'a', type: 'text' }] })
     const t = (await listTemplates(root))[0]!
     expect(t.warnings).toEqual([])
+  })
+})
+
+describe('migrateTemplates', () => {
+  it('removes modified obsolete contents and restores seeded Report at the report slug', async () => {
+    const root = await vault()
+    const old = join(root, '.holi/document-templates/report')
+    await mkdir(join(old, 'nested'), { recursive: true })
+    await writeFile(join(old, 'template.json'), JSON.stringify({ name: 'Syv.ai report' }))
+    await writeFile(join(old, 'template.typ'), 'customized')
+    await writeFile(join(old, 'nested', 'asset.bin'), Buffer.from([0, 255, 1]))
+    const seed = {
+      '.holi/document-templates/report/template.json': '{"name":"Report"}',
+      '.holi/document-templates/report/template.typ': 'seed report',
+    }
+    await migrateTemplates(root, seed)
+    expect(await readFile(join(old, 'template.typ'), 'utf8')).toBe('seed report')
+    expect(await readFile(join(old, 'template.json'), 'utf8')).toBe('{"name":"Report"}')
+    expect(await readFile(join(old, 'nested/asset.bin')).catch(() => null)).toBeNull()
+    const reportBytes = await readFile(join(old, 'template.typ'))
+    await migrateTemplates(root, seed)
+    expect(await readFile(join(old, 'template.typ'))).toEqual(reportBytes)
+  })
+
+  it('removes an obsolete arbitrary slug without changing supported templates', async () => {
+    const root = await vault()
+    await seed(root, 'legacy', { name: 'Syv.ai report' })
+    await writeFile(join(root, '.holi/document-templates/legacy/template.typ'), 'edited')
+    await seed(root, 'report', { name: 'Report' })
+    const before = await readFile(join(root, '.holi/document-templates/report/template.typ'))
+    await migrateTemplates(root, {})
+    expect(await readFile(join(root, '.holi/document-templates/report/template.typ'))).toEqual(
+      before,
+    )
+    expect(await listTemplates(root)).toHaveLength(1)
+    await migrateTemplates(root, {})
   })
 })
