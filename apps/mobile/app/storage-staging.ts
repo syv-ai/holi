@@ -1,12 +1,20 @@
 export const stageNamePattern =
   /^stage-[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}\.tmp$/i
 
+/** Prior root-byte layout. Only recognized direct artifacts are migrated from here. */
+export function legacyStagingDirectory(library: string, root: string): string {
+  const key = Array.from(unescape(encodeURIComponent(root)), (char) =>
+    char.charCodeAt(0).toString(16).padStart(2, '0'),
+  ).join('')
+  return `${library}/HoliVaultStorage/${key.match(/.{1,64}/g)?.join('/') ?? ''}`
+}
+
 /** Lossless root namespace shared by the native implementation and its host verifier. */
 export function stagingDirectory(library: string, root: string): string {
   const key = Array.from(unescape(encodeURIComponent(root)), (char) =>
     char.charCodeAt(0).toString(16).padStart(2, '0'),
   ).join('')
-  return `${library}/HoliVaultStorage/${key.match(/.{1,64}/g)?.join('/') ?? ''}`
+  return `${library}/HoliVaultStorage/${key.match(/.{1,64}/g)?.join('/') ?? ''}/artifacts`
 }
 
 export const interruptionBefore = '\uFEFForiginal durable bytes\r\nCafe\u0301\r\n'

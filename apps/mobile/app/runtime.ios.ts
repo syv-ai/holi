@@ -4,6 +4,7 @@ import { createNativeFiles, nativeFiles } from './native-files.ios'
 import { runVaultStorageCheck } from './vault-storage-check'
 import { nativeIO } from './native-posix.ios'
 import { createVaultStorage } from './vault-storage'
+import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
 
@@ -45,6 +46,7 @@ export async function checkCompatibility(): Promise<string> {
   let secondRoot: string | undefined
   let evidence: Record<string, unknown>
   let rawNames: unknown
+  let prefixNamespace: Record<string, unknown>
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
@@ -153,6 +155,71 @@ export async function checkCompatibility(): Promise<string> {
       if (error.value || !made)
         throw new Error(error.value?.localizedDescription ?? `Could not create ${name} fixture`)
     }
+    phase = 'prefix-private-namespace-proof'
+    operation = 'exercisePrefixRoots'
+    const namespacePrefix = `${documents}/holi-prefix-${runId}-`
+    const padding = 'a'.repeat((32 - (nativeUtf8(namespacePrefix).length % 32)) % 32)
+    const prefixRoot = `${namespacePrefix}${padding}`
+    const nestedRoot = `${prefixRoot}x`
+    const createPrefixRoot = (root: string) => {
+      const error = new interop.Reference<NSError>()
+      const created = manager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(
+        root,
+        true,
+        null,
+        error,
+      )
+      if (error.value || !created)
+        throw new Error(error.value?.localizedDescription ?? 'Could not create prefix fixture')
+    }
+    createPrefixRoot(prefixRoot)
+    createPrefixRoot(nestedRoot)
+    if (nativeUtf8(prefixRoot).length % 32 !== 0)
+      throw new Error('Prefix fixture root is not chunk-aligned')
+    const prefixPrivate = stagingDirectory(knownFolders.ios.library().path, prefixRoot)
+    const nestedPrivate = stagingDirectory(knownFolders.ios.library().path, nestedRoot)
+    const prefixStore = createVaultStorage(nativeFiles, {
+      remote: 'holi/prefix-a',
+      root: prefixRoot,
+    })
+    const nestedStore = createVaultStorage(nativeFiles, {
+      remote: 'holi/prefix-b',
+      root: nestedRoot,
+    })
+    await nestedStore.create('same/note.md', nativeUtf8('root B bytes'))
+    await prefixStore.create('same/note.md', nativeUtf8('root A bytes'))
+    const poisonName = 'move-00000000-0000-4000-8000-000000000589.json'
+    const poisonBytes = nativeUtf8('{malformed B journal')
+    await nativeFiles.privatePublish(nestedRoot, poisonName, poisonBytes, null)
+    const prefixRead = await prefixStore.read('same/note.md')
+    const prefixSaved = await prefixStore.save(
+      'same/note.md',
+      nativeUtf8('root A saved'),
+      prefixRead.revision,
+    )
+    const prefixList = await prefixStore.list()
+    if (
+      String.fromCharCode(...prefixSaved.bytes) !== 'root A saved' ||
+      String.fromCharCode(...(await nestedStore.read('same/note.md')).bytes) !== 'root B bytes' ||
+      prefixList.length !== 1 ||
+      prefixList[0] !== 'same/note.md' ||
+      nestedPrivate.startsWith(`${prefixPrivate}/`) ||
+      prefixPrivate.startsWith(`${nestedPrivate}/`)
+    )
+      throw new Error('Prefix private namespace isolation failed')
+    prefixNamespace = {
+      rootA: prefixRoot,
+      rootB: nestedRoot,
+      privateA: prefixPrivate,
+      privateB: nestedPrivate,
+      bytesA: 'root A saved',
+      bytesB: 'root B bytes',
+      poisonName,
+      poisonBytes: '{malformed B journal',
+      poisonRetained:
+        (await nativeFiles.privateRead(nestedRoot, poisonName)).length === poisonBytes.length,
+    }
+    if (!prefixNamespace.poisonRetained) throw new Error('B journal evidence was not retained')
     phase = 'shared-storage-scenarios'
     operation = 'runVaultStorageCheck'
     const storage = await runVaultStorageCheck(nativeFiles, storageRoot, secondRoot, (fault) =>
@@ -164,6 +231,7 @@ export async function checkCompatibility(): Promise<string> {
     evidence = {
       corpus,
       storage,
+      prefixNamespace,
       nativeFilenameSpellings: true,
       nativeFilenameRoots: rawNames,
       storageRoot,

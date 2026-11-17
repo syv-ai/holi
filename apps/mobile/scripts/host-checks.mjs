@@ -13,7 +13,7 @@ import {
 } from '../app/storage-staging.ts'
 
 export function validateReport(report, context) {
-  const { runId, launchedAt, now, osVersion, storageRoot, phase = 'normal' } = context
+  const { runId, launchedAt, now, osVersion, storageRoot, library, phase = 'normal' } = context
   assert.match(runId, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i)
   assert.equal(report.schemaVersion, 2)
   assert.equal(report.phase, phase)
@@ -74,6 +74,24 @@ export function validateReport(report, context) {
     saved: 'updated raw native fixture',
   }))
   assert.equal(report.nativeFilenameSpellings, true)
+  const prefix = join(storageRoot, `holi-prefix-${runId}-`)
+  const padding = 'a'.repeat((32 - (Buffer.byteLength(prefix) % 32)) % 32)
+  const rootA = `${prefix}${padding}`
+  const rootB = `${rootA}x`
+  assert.deepEqual(report.prefixNamespace, {
+    rootA,
+    rootB,
+    privateA: stagingDirectory(library, rootA),
+    privateB: stagingDirectory(library, rootB),
+    bytesA: 'root A saved',
+    bytesB: 'root B bytes',
+    poisonName: 'move-00000000-0000-4000-8000-000000000589.json',
+    poisonBytes: '{malformed B journal',
+    poisonRetained: true,
+  })
+  assert.equal(Buffer.byteLength(rootA) % 32, 0)
+  assert.ok(!report.prefixNamespace.privateB.startsWith(`${report.prefixNamespace.privateA}/`))
+  assert.ok(!report.prefixNamespace.privateA.startsWith(`${report.prefixNamespace.privateB}/`))
   assert.deepEqual(report.rawNames, names)
   assert.deepEqual(report.nativeFilenameRoots, names)
 }
