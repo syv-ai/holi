@@ -361,7 +361,7 @@ try {
   )
   await key('Escape')
   assertions.push(
-    'native activation adds a live target; mutation invalidates labels, real stale snapshots and source/origin/nonce/revision replays are rejected, and fresh labels include the new target',
+    'native activation adds a live target; mutation invalidates labels, stale nonce/revision snapshots are rejected, and fresh labels include the new target',
   )
   const shot = async (name) => {
     const result = await cdp('Page.captureScreenshot', { format: 'png', fromSurface: true })
@@ -572,6 +572,10 @@ try {
   )
   assertions.push(
     'split panes restrict guest hints to the exact focused pane; focus changes cancel and a hidden pane does not interfere with the primary pane',
+  )
+  await evaluate(
+    '(()=>{const activate=document.querySelector("#activate");const prefixes=document.createElement("div");prefixes.className="key-padding";prefixes.setAttribute("aria-label","Native hint prefix fixtures");prefixes.style.cssText="display:flex;flex-wrap:wrap;gap:1px;margin:4px 0";for(let index=1;index<=40;index++){const button=document.createElement("button");button.type="button";button.textContent="Prefix fixture "+String(index).padStart(2,"0");button.style.cssText="font-size:10px;margin:1px;padding:2px";prefixes.append(button)}activate.before(prefixes)})()',
+    true,
   )
   await focusGuest()
   const recordingStartedAt = process.hrtime.bigint()
