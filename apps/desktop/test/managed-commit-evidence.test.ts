@@ -1,4 +1,4 @@
-import { chmod, readFile, writeFile } from 'node:fs/promises'
+import { access, chmod, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { openRepo } from '../src/main/git'
@@ -97,6 +97,55 @@ exec git "$@"
         commands.filter((line) => line.includes('reflog')).every((line) => /-n\d+/.test(line)),
       ).toBe(true)
       expect(await plainGit(root, ['rev-list', '--count', 'HEAD'])).toBe('2')
+    },
+    15000,
+  )
+  it.each(['timeout', 'overflow'] as const)(
+    'records unknown when only the final MERGE_HEAD probe has %s',
+    async (failure) => {
+      const root = await makeClone(await makeRemote())
+      const dir = await tmp('holi-final-merge-head-')
+      const script = join(dir, 'git')
+      const calls = join(dir, 'calls')
+      const fired = join(dir, 'fired')
+      await writeFile(
+        script,
+        `#!/bin/sh
+printf '%s\n' "$*" >> "$EVIDENCE_CALLS"
+case " $* " in
+  *'rev-parse --verify --quiet MERGE_HEAD'*)
+    if [ -f "$EVIDENCE_ROOT/.git/commit-landed" ]; then
+      touch "$EVIDENCE_FIRED"
+      ${failure === 'overflow' ? "head -c 2097152 /dev/zero | tr '\\000' x; exit 0" : 'exec sleep 10'}
+    fi
+    ;;
+esac
+if [ "$1" = commit ]; then
+  git "$@"
+  status=$?
+  touch "$EVIDENCE_ROOT/.git/commit-landed"
+  exit "$status"
+fi
+exec git "$@"
+`,
+      )
+      await chmod(script, 0o755)
+      await writeFile(join(root, 'note.md'), 'managed\n')
+      const records: Array<string | null> = []
+      const oid = await openRepo(root, {
+        gitPath: script,
+        env: { EVIDENCE_ROOT: root, EVIDENCE_CALLS: calls, EVIDENCE_FIRED: fired },
+        commitProvenance: {
+          begin: () => ({}),
+          record: async (_ticket, _root, exact) => records.push(exact),
+        },
+      }).commitAll('managed', ['note.md'])
+      expect(oid).toMatch(/^[0-9a-f]{40}$/)
+      expect(records).toEqual([null])
+      await expect(access(fired)).resolves.toBeUndefined()
+      const commands = (await readFile(calls, 'utf8')).trim().split('\n')
+      expect(commands.filter((line) => /(?:^| )commit(?: |$)/.test(line))).toHaveLength(1)
+      expect(commands.filter((line) => line.includes('MERGE_HEAD'))).toHaveLength(2)
     },
     15000,
   )
