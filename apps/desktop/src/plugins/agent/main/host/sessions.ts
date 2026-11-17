@@ -62,6 +62,8 @@ export interface AgentSessionsDeps {
   /** Tell the plugins built on the agent, in main: the session list as it is
    *  pushed (`sessions`) and each turn's end (`turn-end`). */
   publish?(name: string, payload: unknown): void
+  /** Revokes PTY/session admission when this vault activation is invalidated. */
+  activationSignal?: AbortSignal
   /** The provider whose supervisor runs these sessions. */
   provider: Pick<
     BackgroundProvider,
@@ -178,9 +180,9 @@ export interface AgentSessions {
    * session's. `forget` is its process gone mid-turn: nothing recorded. The
    * listing never names such an id, so its reconcile leaves these alone.
    */
-  bracket(id: string, edge: 'begin' | 'end' | 'forget'): void
+  bracket(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<string | null>
   /** Let go of the vault: optionally stop its live sessions, close every
-   *  terminal, stop watching its config directory. Bounded; never rejects. */
+   *  terminal, stop watching its config directory. Bounded; reports unconfirmed drains. */
   leave(opts?: { stopSessions?: boolean }): Promise<void>
 }
 
@@ -367,7 +369,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   async function ensureCurrent(): Promise<Current | null> {
-    if (leaving !== null) return null
+    if (deps.activationSignal?.aborted || leaving !== null) return null
     const vault = attached
     if (vault === null) return null
     if (current?.remote === vault.remote) return current
@@ -398,7 +400,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     const c = current
     if (c === null) return
     const stdout = await bg.cli.list(targetOf(c))
-    if (current !== c) return // the vault moved while we read
+    if (current !== c || deps.activationSignal?.aborted) return // the vault moved while we read
     rows = bg.parseListing(stdout, c.root)
     const liveRows = live()
     const liveIds = new Set(liveRows.map((r) => r.id))
@@ -491,6 +493,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       c.spawnChecked = true
       notice = await firstSpawnNotice(provider, c.configDir)
     }
+    if (deps.activationSignal?.aborted || current !== c)
+      return { ok: false, message: 'The vault was left before the terminal opened.' }
     const target = targetOf(c)
     const res = deps.terminals.open({
       remote: c.remote,
@@ -545,6 +549,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
       if (!res.ok) return res
+      if (deps.activationSignal?.aborted || current !== c) {
+        await bg.cli.stop(targetOf(c), res.id)
+        return { ok: false, message: 'The vault closed as the session started.' }
+      }
       if (prompt === undefined) unprompted.add(res.id)
       await refresh()
       const opened = await openOn(c, { attach: res.id, cols, rows: r })
@@ -564,7 +572,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(mcpConfig === undefined ? {} : { mcpConfig }),
       })
       if (!res.ok) return res
-      if (current !== c) {
+      if (deps.activationSignal?.aborted || current !== c) {
         // The leave read the sessions to stop before this one was listed, so
         // it would go on running in the vault left while its caller is told
         // it failed: stop it here.
@@ -638,6 +646,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       const name = label === 'New session' ? undefined : `${label} (copy)`
       const res = await bg.cli.forkBg(targetOf(c), row.sessionId, name)
       if (!res.ok) return res
+      if (deps.activationSignal?.aborted || current !== c) {
+        await bg.cli.stop(targetOf(c), res.id)
+        return { ok: false, message: 'The vault closed as the session started.' }
+      }
       await refresh()
       const opened = await openOn(c, { attach: res.id, ...geometry })
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
@@ -725,8 +737,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         return
       }
       bracketed.delete(id)
-      if (edge === 'end') coordinator.end(id)
-      else coordinator.forget(id)
+      if (edge === 'end') return coordinator.end(id)
+      coordinator.forget(id)
     },
 
     async leave({ stopSessions = true } = {}) {
@@ -754,13 +766,22 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           if (stopped.ok && unprompted.has(row.id)) await bg.cli.rm(targetOf(c), row.id)
         }),
       )
-      await Promise.race([
-        stops,
-        new Promise((r) => setTimeout(r, deps.leaveCapMs ?? LEAVE_CAP_MS)),
-      ])
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Agent sessions did not stop before vault teardown timed out.')),
+          deps.leaveCapMs ?? LEAVE_CAP_MS,
+        )
+      })
+      try {
+        await Promise.race([stops, timedOut])
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
     }
     await deps.terminals.closeAll()
     for (const id of [...coordinator.working]) coordinator.forget(id)
+    await coordinator.drain()
     bracketed.clear()
     workingPid.clear()
     unprompted.clear()

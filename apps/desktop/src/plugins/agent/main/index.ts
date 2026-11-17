@@ -91,6 +91,7 @@ export const agentMain: MainPlugin = {
       },
     })
     let started: ReturnType<typeof createAgentSessions> | undefined
+    const activationOwners: Array<() => unknown | Promise<unknown>> = [() => harnesses.dispose()]
     const assertActive = (): void => {
       if (ctx.activationSignal.aborted)
         throw new Error(`agent activation for ${ctx.remote} was cancelled`)
@@ -106,6 +107,7 @@ export const agentMain: MainPlugin = {
       )
       assertActive()
       const terminals = createAgentTerminals({ emit: ctx.emit })
+      activationOwners.push(() => terminals.closeAll())
       const sessionLog = createSessionLog(ctx.log)
       // Capabilities and provider hooks belong to this activation's vault, not
       // whichever vault the renderer currently displays.
@@ -121,9 +123,11 @@ export const agentMain: MainPlugin = {
       let ownPast: SessionSummary[] = []
       let jobRows: SessionSummary[] = []
       const pushHistory = (): void => {
+        if (ctx.activationSignal.aborted) return
         ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
       }
       const pushSessions = (): void => {
+        if (ctx.activationSignal.aborted) return
         const all = [...background, ...piSessions, ...own, ...jobRows]
         ctx.emit(ctx.remote, 'sessions', all)
         ctx.publish('sessions', all)
@@ -131,6 +135,7 @@ export const agentMain: MainPlugin = {
       }
 
       const sessions = createAgentSessions({
+        activationSignal: ctx.activationSignal,
         emit: (remote, name, payload) => {
           if (name === 'history' && remote === ctx.remote) {
             backgroundPast = payload as SessionSummary[]
@@ -144,7 +149,7 @@ export const agentMain: MainPlugin = {
         // Each turn's end, for the plugins built on the agent (automations
         // close a run once it is done), and for the activity log.
         publish: (name, payload) => {
-          if (name !== 'turn-end') return
+          if (ctx.activationSignal.aborted || name !== 'turn-end') return
           ctx.publish(name, payload)
           sessionLog.turnEnd((payload as { id: string }).id)
         },
@@ -156,6 +161,7 @@ export const agentMain: MainPlugin = {
         snapshot: worktreeEnd,
       })
       started = sessions
+      activationOwners.push(() => sessions.leave({ stopSessions: false }))
       // Fix the session host to this activation's vault before exposing any
       // provider hook routes; early hook reports queue against this owner.
       await sessions.ensure(ctx)
@@ -176,9 +182,11 @@ export const agentMain: MainPlugin = {
         },
       })
       piBackground.setVault(ctx.remote, ctx.root)
+      activationOwners.push(() => piBackground.leave())
       const ptyHistory = jsonFileStore(join(ctx.userData, 'agent-pty-history.json'), parsePastFile)
       const ptySessions = createPtySessions({
         vault: { remote: ctx.remote, root: ctx.root },
+        activationSignal: ctx.activationSignal,
         past: {
           read: async () => (await ptyHistory.read())[ctx.remote] ?? [],
           write: async (list) => {
@@ -200,13 +208,9 @@ export const agentMain: MainPlugin = {
           void pushHistory()
         },
       })
-      void ptySessions.past().then((list) => {
-        ownPast = list
-        pushHistory()
-      })
-      void ptySessions.past().then((list) => {
-        ownPast = list
-      })
+      activationOwners.push(() => ptySessions.leave())
+      ownPast = await ptySessions.past()
+      pushHistory()
       // Prompts run unwatched by a provider without a supervisor: in a scratch
       // folder of their own, or in the vault, whose turns pause sync and are
       // recorded like a session's. Scratch is private to this canonical vault
@@ -216,20 +220,25 @@ export const agentMain: MainPlugin = {
       const jobs = createJobs({
         vault,
         scratchRoot: scratchRoots.jobs,
+        activationSignal: ctx.activationSignal,
         bracket: (id, edge) => sessions.bracket(id, edge),
         onChange: (list) => {
           jobRows = list
           pushSessions()
         },
       })
+      activationOwners.push(() => jobs.leave())
       // Sessions Holi runs fenced to a folder of its own, what they wrote
       // copied back as each turn ends.
       const fenced = createFencedSessions({
         vault,
         scratchRoot: scratchRoots.fenced,
         own: ptySessions,
+        activationSignal: ctx.activationSignal,
         copyBack: jobs.copyBack,
       })
+      activationOwners.unshift(() => fenced.closing())
+      activationOwners.push(() => fenced.leave())
       // What the agent and Holi want the person to see: an entry in the
       // vault's inbox, and a banner while Holi is out of sight.
       const inbox = createInbox({
@@ -238,6 +247,7 @@ export const agentMain: MainPlugin = {
         changed: (view) => ctx.emit(ctx.remote, 'inbox', view),
       })
       const unproviders = harnesses.subscribe(() => ctx.emit(ctx.remote, 'providers', null))
+      activationOwners.push(() => unproviders())
       ctx.register(AGENT_NAMESPACES, {
         ...agentCapabilities({
           sessions: started,
@@ -267,25 +277,31 @@ export const agentMain: MainPlugin = {
         raise: (notice) => inbox.raise(notice),
         log: (msg) => console.error(`[agent] ${msg}`),
       })
+      activationOwners.push(() => unwatchNeedsYou())
       // A teammate's comment that mentions the person, found after a pull.
       const unmention = ctx.onMention((mention) => {
+        if (ctx.activationSignal.aborted) return
         void inbox
           .raise(mentionNotice(mention))
           .catch((err: unknown) => console.error('[agent] mention:', err))
       })
+      activationOwners.push(() => unmention())
       // Keystrokes and resizes, in the order they were typed. The host drops
       // any about a vault that is not the open one.
       ctx.on('pty-write', (_remote, payload) => {
+        if (ctx.activationSignal.aborted) return
         const p = payload as { id?: unknown; data?: unknown }
         if (typeof p?.id === 'string' && typeof p.data === 'string') terminals.write(p.id, p.data)
       })
       ctx.on('pty-resize', (_remote, payload) => {
+        if (ctx.activationSignal.aborted) return
         const p = payload as { id?: unknown; cols?: unknown; rows?: unknown }
         if (typeof p?.id === 'string' && typeof p.cols === 'number' && typeof p.rows === 'number') {
           terminals.resize(p.id, p.cols, p.rows)
         }
       })
       ctx.on('pty-appearance', (_remote, payload) => {
+        if (ctx.activationSignal.aborted) return
         const p = payload as { id?: unknown; appearance?: unknown }
         if (typeof p?.id === 'string') terminals.setAppearance(p.id, p.appearance)
       })
@@ -295,6 +311,7 @@ export const agentMain: MainPlugin = {
       for (const p of providers().filter((x) => x.custom !== true)) {
         p.capabilities.turns?.routes(ctx, {
           onTurn: async (remote, id, active, pending, pid) => {
+            if (ctx.activationSignal.aborted) return null
             if (PTY_SESSION_ID.test(id)) {
               if (remote === ctx.remote) ptySessions.noteTurn(id, active)
               return null
@@ -306,13 +323,18 @@ export const agentMain: MainPlugin = {
             return runGit(ctx.root, ['rev-parse', '--verify', `${commit}^{tree}`]).catch(() => null)
           },
           // A session's status line: how much of its context is used.
-          onStatus: (remote, id, status) => sessions.noteStatus(remote, id, status),
+          onStatus: (remote, id, status) => {
+            if (!ctx.activationSignal.aborted) sessions.noteStatus(remote, id, status)
+          },
           onConversation: (remote, id, about) => {
-            if (remote === ctx.remote) ptySessions.noteConversation(id, about)
+            if (!ctx.activationSignal.aborted && remote === ctx.remote)
+              ptySessions.noteConversation(id, about)
           },
           // Where a background session takes messages: its inbox socket, kept
           // in memory.
-          onChannel: (remote, id, channel) => sessions.noteChannel(remote, id, channel),
+          onChannel: (remote, id, channel) => {
+            if (!ctx.activationSignal.aborted) sessions.noteChannel(remote, id, channel)
+          },
         })
       }
       // `holi-signal`, from a session of a harness a person added: whichever
@@ -320,7 +342,7 @@ export const agentMain: MainPlugin = {
       // through their own hooks.
       const unsignal = registerSignalRoute(ctx, {
         onSignal: (remote, id, signal) => {
-          if (remote !== ctx.remote) return
+          if (ctx.activationSignal.aborted || remote !== ctx.remote) return
           const provider = ptySessions.providerOf(id)
           if (provider === null || isIntegration(provider)) return
           if (signal.kind === 'status') return ptySessions.noteStatus(id, signal)
@@ -330,6 +352,7 @@ export const agentMain: MainPlugin = {
           ptySessions.noteTurn(id, false)
         },
       })
+      activationOwners.push(() => unsignal())
       // Quitting stops the vault's sessions, so it asks first when one of them
       // is working or waiting on you: that turn is cut short. Idle sessions
       // stop without a question; their conversations stay in the agents list.
@@ -362,15 +385,21 @@ export const agentMain: MainPlugin = {
       sweep()
       const sweepTimer = setInterval(sweep, SWEEP_EVERY_MS)
       sweepTimer.unref?.()
+      activationOwners.push(
+        () => clearInterval(sweepTimer),
+        () => sweeping,
+      )
       // The per-turn hook reads the focused note, and its selected lines, from a
       // file in this clone.
-      const unreport = ctx.onReport((report) =>
+      const unreport = ctx.onReport((report) => {
+        if (ctx.activationSignal.aborted) return
         sessions.setFocus({
           focusedPath: report.focusedPath,
           selection: report.selection,
           openPaths: report.openPaths,
-        }),
-      )
+        })
+      })
+      activationOwners.push(() => unreport())
       // Stopping stops the vault's sessions (the renderer asked first if one
       // was busy). Background ones stay in the agents list and resume when
       // opened; the ones Holi runs end with it.
@@ -410,15 +439,12 @@ export const agentMain: MainPlugin = {
       // activation step fails. Join any pending attach and release it before
       // allowing a retry to create another session host.
       const failures: unknown[] = [err]
-      try {
-        await started?.leave({ stopSessions: false })
-      } catch (cleanupError) {
-        failures.push(cleanupError)
-      }
-      try {
-        await harnesses.dispose()
-      } catch (cleanupError) {
-        failures.push(cleanupError)
+      for (const cleanup of activationOwners) {
+        try {
+          await cleanup()
+        } catch (cleanupError) {
+          failures.push(cleanupError)
+        }
       }
       if (failures.length === 1) throw err
       const failure = new AggregateError(failures, 'agent activation failed')

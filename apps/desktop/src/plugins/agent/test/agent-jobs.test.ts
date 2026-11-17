@@ -145,7 +145,13 @@ function scripted(script: string): JobsProvider {
 
 async function rig(
   body: string,
-  opts: { keepMs?: number; afterWrite?: (rel: string) => Promise<void> | void } = {},
+  opts: {
+    keepMs?: number
+    afterWrite?: (rel: string) => Promise<void> | void
+    activationSignal?: AbortSignal
+    bracket?: (id: string, edge: 'begin' | 'end' | 'forget') => unknown | Promise<unknown>
+    scratchRoot?: string
+  } = {},
 ) {
   const root = await temp('holi-job-vault-')
   const userData = await temp('holi-job-data-')
@@ -156,10 +162,11 @@ async function rig(
   const lists: SessionSummary[][] = []
   const jobs = createJobs({
     vault: { remote: 'syv/vault', root },
-    scratchRoot: join(userData, 'agent-jobs'),
+    scratchRoot: opts.scratchRoot ?? join(userData, 'agent-jobs'),
     onChange: (list) => lists.push(list),
     killGraceMs: 200,
     log: () => {},
+    ...(opts.bracket === undefined ? {} : { bracket: opts.bracket }),
     ...opts,
   })
   const ended = (id: string) =>
@@ -175,6 +182,16 @@ async function rig(
 }
 
 describe('a job', () => {
+  it('reports an initial sweep failure without an unowned rejection', async () => {
+    const userData = await temp('holi-job-data-')
+    const blocker = join(userData, 'not-a-directory')
+    await writeFile(blocker, 'file')
+    const { jobs, provider } = await rig(SUCCESS, { scratchRoot: join(blocker, 'jobs') })
+    await expect(
+      jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE }),
+    ).resolves.toMatchObject({ ok: false, message: expect.stringContaining('sweep') })
+  })
+
   it('runs in a scratch folder and copies back only what it wrote in scope', async () => {
     const { root, userData, jobs, provider, ended } = await rig(SUCCESS)
     const started = await jobs.start({
@@ -247,6 +264,35 @@ describe('a job', () => {
     expect(jobs.sessions()).toEqual([])
   })
 
+  it('aborts queued follow-ups immediately when activation is invalidated', async () => {
+    const activation = new AbortController()
+    const body = [
+      "const fs = require('node:fs')",
+      "fs.appendFileSync(require('node:path').join(__dirname, 'starts'), 'x')",
+      event({ type: 'thread.started', thread_id: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51' }),
+      event({ type: 'turn.started' }),
+      'setInterval(() => {}, 1000)',
+    ].join('\n')
+    const { userData, jobs, provider, ended } = await rig(body, {
+      activationSignal: activation.signal,
+    })
+    const started = await jobs.start({
+      provider,
+      name: 'queued',
+      prompt: 'first',
+      allow: ['Edit(tilbud/**)'],
+    })
+    const id = (started as { sessionId: string }).sessionId
+    await vi.waitFor(async () => expect(await readFile(join(userData, 'starts'), 'utf8')).toBe('x'))
+    jobs.message(id, 'must not run')
+    activation.abort()
+    expect(await ended(id)).toMatchObject({ outcome: 'failed', error: 'Stopped.' })
+    expect(await readFile(join(userData, 'starts'), 'utf8')).toBe('x')
+    expect(jobs.sessions()).toHaveLength(1)
+    await jobs.leave()
+    expect(jobs.sessions()).toEqual([])
+  })
+
   it('is stopped by Stop, and by leaving the vault', async () => {
     const { userData, jobs, provider, ended } = await rig(HANG)
     const a = await jobs.start({ provider, name: 'a', prompt: 'go', scope: SCOPE })
@@ -279,13 +325,17 @@ describe('a job', () => {
 
   it('stops where a Stop comes in during the copy back', async () => {
     let id = ''
-    let jobs: Awaited<ReturnType<typeof rig>>['jobs'] | undefined
+    let stopped: Promise<{ ok: boolean; message?: string }> | undefined
+    let enterCopy!: () => void
+    let resumeCopy!: () => void
+    const entered = new Promise<void>((resolve) => (enterCopy = resolve))
+    const continueCopy = new Promise<void>((resolve) => (resumeCopy = resolve))
     const r = await rig(WRITES(5, 1), {
       afterWrite: async () => {
-        await jobs!.stop(id)
+        enterCopy()
+        await continueCopy
       },
     })
-    jobs = r.jobs
     const started = await r.jobs.start({
       provider: r.provider,
       name: 'x',
@@ -293,7 +343,17 @@ describe('a job', () => {
       scope: SCOPE,
     })
     id = (started as { sessionId: string }).sessionId
+    await entered
+    let stopFinished = false
+    stopped = r.jobs.stop(id).then((result) => {
+      stopFinished = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(stopFinished).toBe(false)
+    resumeCopy()
     const row = await r.ended(id)
+    expect(await stopped).toEqual({ ok: true })
     expect(row).toMatchObject({ outcome: 'failed', error: 'Stopped.' })
     // One file landed before the Stop; the finished marker never did.
     const written = (await readdir(join(r.root, 'notes/Plan.app'))).sort()
@@ -695,7 +755,10 @@ describe('a job in the vault', () => {
     event({ type: 'turn.completed', usage: { input_tokens: 1600, output_tokens: 400 } }),
   ].join('\n')
 
-  async function vaultRig(followUp = FOLLOW) {
+  async function vaultRig(
+    followUp = FOLLOW,
+    bracket?: (id: string, edge: 'begin' | 'end' | 'forget') => unknown | Promise<unknown>,
+  ) {
     const root = await temp('holi-job-vault-')
     const userData = await temp('holi-job-data-')
     const first = join(userData, 'first.js')
@@ -707,12 +770,88 @@ describe('a job in the vault', () => {
       vault: { remote: 'syv/vault', root },
       scratchRoot: join(userData, 'agent-jobs'),
       onChange: () => {},
-      bracket: (id, edge) => edges.push(`${edge}:${id}`),
+      bracket: bracket ?? ((id, edge) => edges.push(`${edge}:${id}`)),
       killGraceMs: 200,
       log: () => {},
     })
     return { root, jobs, edges, ...turns(first, next) }
   }
+
+  it('keeps stop draining through bracket persistence after process close', async () => {
+    let reachEnd!: () => void
+    let finishEnd!: () => void
+    const reachedEnd = new Promise<void>((resolve) => (reachEnd = resolve))
+    const endGate = new Promise<void>((resolve) => (finishEnd = resolve))
+    const { jobs, provider } = await vaultRig(FOLLOW, async (_id, edge) => {
+      if (edge === 'end') {
+        reachEnd()
+        await endGate
+      }
+    })
+    const started = await jobs.start({
+      provider,
+      name: 'x',
+      prompt: 'go',
+      allow: ['Write(tilbud/**)'],
+    })
+    if (!started.ok) throw new Error(started.message)
+    const id = started.sessionId
+    await reachedEnd
+    let stopped = false
+    const stopping = jobs.stop(id).then(() => (stopped = true))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(stopped).toBe(false)
+    expect(jobs.sessions().find((row) => row.id === id)).toMatchObject({ state: 'idle' })
+    finishEnd()
+    await stopping
+    await jobs.leave()
+  })
+
+  it('revokes message admission synchronously when retirement starts', async () => {
+    const { jobs, provider } = await vaultRig()
+    const started = await jobs.start({
+      provider,
+      name: 'x',
+      prompt: 'go',
+      allow: ['Write(tilbud/**)'],
+    })
+    if (!started.ok) throw new Error(started.message)
+    await vi.waitFor(() => {
+      const row = jobs.sessions().find((session) => session.id === started.sessionId)
+      if (row?.outcome === undefined) throw new Error('still running')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await jobs.stop(started.sessionId)
+    expect(() => jobs.message(started.sessionId, 'too late')).toThrow('That job has ended.')
+    await jobs.leave()
+  })
+
+  it('preserves failed leave ownership and retries after a late bracket close', async () => {
+    let reachEnd!: () => void
+    let finishEnd!: () => void
+    const reachedEnd = new Promise<void>((resolve) => (reachEnd = resolve))
+    const endGate = new Promise<void>((resolve) => (finishEnd = resolve))
+    const { jobs, provider } = await vaultRig(FOLLOW, async (_id, edge) => {
+      if (edge === 'end') {
+        reachEnd()
+        await endGate
+      }
+    })
+    const started = await jobs.start({
+      provider,
+      name: 'x',
+      prompt: 'go',
+      allow: ['Write(tilbud/**)'],
+    })
+    if (!started.ok) throw new Error(started.message)
+    await reachedEnd
+    await expect(jobs.leave()).rejects.toThrow('did not drain')
+    expect(jobs.has(started.sessionId)).toBe(true)
+    finishEnd()
+    await vi.waitFor(() => expect(jobs.sessions()[0]?.state).toBe('idle'))
+    await jobs.leave()
+    expect(jobs.has(started.sessionId)).toBe(false)
+  })
 
   it('writes only named folders and reports the latest cumulative usage total', async () => {
     const { root, jobs, edges, provider, runs } = await vaultRig()
@@ -1382,6 +1521,15 @@ describe('a fenced session', () => {
     await vi.waitFor(() => expect(readdir(fence.state)).rejects.toThrow())
   })
 
+  it('fails its drain and retains ownership when provider state release fails', async () => {
+    const release = vi.fn(async () => {
+      throw new Error('provider state is busy')
+    })
+    const { fenced, fence } = await fencedRig(release)
+    await expect(fence.exited()).rejects.toThrow(/Could not release agent state/)
+    await expect(fenced.leave()).rejects.toThrow(/Fenced PTYs did not exit/)
+  })
+
   it('opens no session once the vault is being left', async () => {
     const { fenced, own } = await fencedRig()
     own.start.mockClear()
@@ -1400,7 +1548,7 @@ describe('a fenced session', () => {
   })
 
   it('says why when its session does not start', async () => {
-    const { fenced, own } = await fencedRig()
+    const { fenced, own, fence } = await fencedRig()
     own.start.mockResolvedValueOnce({ ok: false, message: 'Codex is not installed.' } as never)
     const res = await fenced.start({
       provider: { id: 'codex' } as never,
@@ -1409,6 +1557,7 @@ describe('a fenced session', () => {
       scope: SCOPE,
     })
     expect(res).toEqual({ ok: false, message: 'Codex is not installed.' })
+    await fence.exited()
     await fenced.leave()
   })
 })

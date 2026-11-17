@@ -23,6 +23,7 @@ function setup(
     write(rows: import('../main/claude/listing').SessionSummary[]): Promise<void>
   },
   capabilities: AgentProvider['capabilities'] = {},
+  closeTerminal?: (id: string, exit: () => void) => Promise<void>,
 ) {
   vi.useFakeTimers()
   const asked: TerminalOpts[] = []
@@ -57,7 +58,9 @@ function setup(
       },
       close: async (id) => {
         closed.push(id)
-        opened[Number(id.slice(5)) - 1]?.onExit?.()
+        const exit = () => opened[Number(id.slice(5)) - 1]?.onExit?.()
+        if (closeTerminal !== undefined) return closeTerminal(id, exit)
+        exit()
       },
       paste: (id, text) => {
         pastes.push([id, text])
@@ -199,6 +202,16 @@ describe('sessions Holi runs', () => {
     })
   })
 
+  it('does not report a successful stop when terminal close rejects', async () => {
+    const t = setup('codex', undefined, {}, async () => {
+      throw new Error('kill failed')
+    })
+    const started = await t.sessions.start('codex', {})
+    if (!started.ok) throw new Error(started.message)
+    await expect(t.sessions.stop(started.sessionId)).rejects.toThrow(/kill failed/)
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+  })
+
   it('pastes an ask unsent, and stops by ending its terminal', async () => {
     const t = setup()
     const res = await t.sessions.start('codex', {})
@@ -283,8 +296,7 @@ describe('sessions Holi runs', () => {
 
     const reopened = setup('pi', store)
     const opening = reopened.sessions.reopen(started.sessionId, {})
-    for (let i = 0; i < 10 && reopened.opened.length === 0; i++) await Promise.resolve()
-    expect(reopened.opened).toHaveLength(1)
+    await vi.waitFor(() => expect(reopened.opened).toHaveLength(1))
     await reopened.sessions.stop(started.sessionId)
     expect(await opening).toMatchObject({ ok: true })
     expect(await reopened.sessions.past()).toEqual([
@@ -500,13 +512,19 @@ describe('sessions Holi runs', () => {
     if (!started.ok) throw new Error(started.message)
     t.opened[0]?.onInput?.('\r')
 
-    const stopping = t.sessions.stop(started.sessionId)
-    await stopping
+    let stopped = false
+    const stopping = t.sessions.stop(started.sessionId).then((result) => {
+      stopped = true
+      return result
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
     expect(t.sessions.has(started.sessionId)).toBe(true)
     expect(t.sessions.sessions()[0]).toMatchObject({ id: started.sessionId, copying: true })
     expect(t.edges).toEqual([`begin:${started.sessionId}`])
 
     finish({ error: 'Final copy failed.' })
+    await stopping
     await vi.waitFor(() =>
       expect(t.sessions.sessions()[0]).toMatchObject({
         id: started.sessionId,
@@ -516,6 +534,30 @@ describe('sessions Holi runs', () => {
     )
     expect(t.sessions.has(started.sessionId)).toBe(false)
     expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
+  })
+
+  it('commits a failed append before a later append and retains a failed teardown owner', async () => {
+    let writes = 0
+    let history: import('../main/claude/listing').SessionSummary[] = []
+    const store = {
+      read: async () => history,
+      write: async (rows: typeof history) => {
+        writes += 1
+        if (writes === 1) throw new Error('write failed')
+        history = rows
+      },
+    }
+    const t = setup('pi', store)
+    const first = await t.sessions.start('pi', { prompt: 'First' })
+    const second = await t.sessions.start('pi', { prompt: 'Second' })
+    if (!first.ok || !second.ok) throw new Error('Pi session did not start')
+
+    await expect(t.sessions.leave()).rejects.toThrow(/PTY sessions did not drain/)
+    expect(writes).toBe(2)
+    expect(history.map((row) => row.id)).toEqual([second.sessionId, first.sessionId])
+    expect(t.sessions.has(first.sessionId)).toBe(true)
+    await t.sessions.leave()
+    expect(t.sessions.has(first.sessionId)).toBe(false)
   })
 
   it('persists active and already-exited Pi sessions when leaving the vault', async () => {
