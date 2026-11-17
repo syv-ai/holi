@@ -113,6 +113,66 @@ describe('durable note moves', () => {
     )
   })
 
+  it('refuses conflicting preimages and preserves the recovery journal', async () => {
+    const base = await root()
+    const adapter = createNodeFiles()
+    const storage = createVaultStorage(adapter, { remote: 'holi/conflict', root: base })
+    await storage.create('note.md', text('newer user bytes'))
+    const id = randomUUID()
+    const journal = {
+      schema: 1,
+      root: await adapter.canonicalRoot(base),
+      operationId: id,
+      changes: [
+        { path: 'note.md', before: [...text('old bytes')], after: [...text('renamed bytes')] },
+        { path: 'target.md', before: null, after: [...text('newer user bytes')] },
+      ],
+    }
+    await adapter.privatePublish(
+      journal.root,
+      `move-${id}.json`,
+      text(JSON.stringify(journal)),
+      null,
+    )
+    await expect(storage.list()).rejects.toThrow()
+    expect(await readFile(join(base, 'note.md'), 'utf8')).toBe('newer user bytes')
+    expect(await adapter.privateList(journal.root)).toContain(`move-${id}.json`)
+  })
+
+  it('can be interrupted repeatedly during recovery without losing the operation', async () => {
+    const base = await root()
+    const setup = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/recovery-setup',
+      root: base,
+    })
+    const source = await setup.create('from.md', text('source'))
+    await setup.create('back.md', text('[[from.md]]'))
+    const interruptedMove = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/recovery-interrupt',
+      root: base,
+      checkpoint: async (event) => {
+        if (event.phase === 'file-after' && event.path === 'from.md')
+          throw new Error('pause after unlink')
+      },
+    })
+    await expect(interruptedMove.move('from.md', 'to.md', source.revision)).rejects.toThrow()
+    const interruptedRecovery = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/recovery-interrupt-again',
+      root: base,
+      checkpoint: async (event) => {
+        if (event.phase === 'file-before') throw new Error('pause during recovery')
+      },
+    })
+    await expect(interruptedRecovery.list()).rejects.toThrow()
+    const recovered = createVaultStorage(createNodeFiles(), {
+      remote: 'holi/recovered',
+      root: base,
+    })
+    expect(await recovered.list()).toContain('to.md')
+    expect(await recovered.list()).not.toContain('from.md')
+    expect(string((await recovered.read('back.md')).bytes)).toBe('[[to.md]]')
+  })
+
   it('serializes separate handles for one root and isolates identical paths across roots', async () => {
     const a = await root()
     const b = await root()
