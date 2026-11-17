@@ -429,6 +429,42 @@ describe('MDX trust through the router', () => {
     })
   })
 
+  it('retires compile authority before a revoke waits for registry lookup', async () => {
+    const { caller, registry } = await rig({ signedIn: auth(42, 'alice') })
+    const untrusted = await caller.mdxTrust.status({ remote: REMOTE })
+    await caller.mdxTrust.approve({ remote: REMOTE, context: untrusted.context! })
+    const trusted = await caller.mdxTrust.status({ remote: REMOTE })
+    const root = (await registry.list())[0]!.path
+    await writeFile(join(root, 'page.mdx'), '# source')
+    const lease = await caller.mdxTrust.acquireDiagnosticsLease({
+      remote: REMOTE,
+      path: 'page.mdx',
+      context: trusted.context!,
+    })
+    const read = gate<void>()
+    const entered = gate<void>()
+    const list = registry.list.bind(registry)
+    vi.spyOn(registry, 'list').mockImplementation(async () => {
+      entered.resolve()
+      await read.promise
+      return list()
+    })
+    const revoking = caller.mdxTrust.revoke({ remote: REMOTE, context: trusted.context! })
+    await entered.promise
+    await expect(
+      caller.mdxTrust.compile({ lease: lease.lease, generation: 1, source: '# old source' }),
+    ).rejects.toThrow()
+    read.resolve()
+    await revoking
+    await expect(
+      caller.mdxTrust.compile({ lease: lease.lease, generation: 2, source: '# old source again' }),
+    ).rejects.toThrow()
+    await expect(caller.mdxTrust.status({ remote: REMOTE })).resolves.toMatchObject({
+      trusted: false,
+      identityAvailable: true,
+    })
+  })
+
   it('blocks status and acquisition throughout a pending revoke, then recovers via fresh status', async () => {
     const entered = gate<void>()
     const release = gate<void>()

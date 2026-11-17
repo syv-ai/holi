@@ -39,8 +39,16 @@ export function useMdxDiagnostics(input: Scope) {
   const latestSource = useRef<string | null>(null)
   const active = useRef(true)
   const refreshAttempt = useRef('')
-  const clear = useCallback((target: EditorView | null) => {
-    if (target && target.dom.isConnected) target.dispatch(setDiagnostics(target.state, []))
+  const clear = useCallback((target: EditorView | null, owner: Scope | null) => {
+    if (
+      target &&
+      owner &&
+      owner.view === target &&
+      /^.+\.mdx$/i.test(owner.path) &&
+      ownerScope.current === owner &&
+      target.dom.isConnected
+    )
+      target.dispatch(setDiagnostics(target.state, []))
   }, [])
 
   const schedule = useCallback(
@@ -55,7 +63,7 @@ export function useMdxDiagnostics(input: Scope) {
       const next = ++generation.current
       latestSource.current = source
       window.clearTimeout(timer.current)
-      clear(target)
+      clear(target, expectedScope)
       setState({ kind: 'checking' })
       const current = () =>
         active.current &&
@@ -118,12 +126,13 @@ export function useMdxDiagnostics(input: Scope) {
       view && remote && /^.+\.mdx$/i.test(path) && visible && trusted && context,
     )
     const id = ++lifetime.current
+    clear(ownerScope.current?.view ?? null, ownerScope.current)
     ownerScope.current = scope
     active.current = true
     latestSource.current = eligible && view ? view.state.doc.toString() : null
     generation.current = 0
     window.clearTimeout(timer.current)
-    clear(view)
+    clear(view, scope)
     if (!eligible || !view || !remote || !context) {
       setState({
         kind: 'unavailable',
@@ -173,6 +182,7 @@ export function useMdxDiagnostics(input: Scope) {
     return () => {
       active.current = false
       window.clearTimeout(timer.current)
+      clear(view, scope)
       const current = lease.current
       lease.current = null
       if (current) release(current)
@@ -186,7 +196,7 @@ export function useMdxDiagnostics(input: Scope) {
       const currentScope = renderedScope.current
       if (ownerScope.current !== currentScope) return
       latestSource.current = source
-      clear(target)
+      clear(target, currentScope)
       setState({ kind: 'checking' })
       const currentLease = lease.current
       if (!currentLease) return

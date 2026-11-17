@@ -27,6 +27,8 @@ let identity = {
 let win: BrowserWindow | null = null
 let recoveredWindows = 0
 let savedWrites = 0
+let guestCreations = 0
+let compileSources = 0
 let installedSessionPolicy = false
 const blockedRequests: string[] = []
 const guestProbes: Array<{ url: string; result: Record<string, unknown> }> = []
@@ -42,7 +44,10 @@ const diagnostics = createMdxDiagnostics({
     return vault
   },
   trusted: async (candidate) => candidate === identity && trustStore.status(owner()),
-  compile: (source, signal) => compiler.compile(source, signal),
+  compile: (source, signal) => {
+    compileSources += 1
+    return compiler.compile(source, signal)
+  },
 })
 
 const invoke = (channel: string, handler: (...args: any[]) => any) =>
@@ -60,6 +65,8 @@ invoke('smoke:status', async () => ({
   vault,
   recoveredWindows,
   savedWrites,
+  guestCreations,
+  compileSources,
   blockedRequests,
   guestProbes,
   accountGeneration,
@@ -190,6 +197,7 @@ invoke('smoke:scenarios', async () => {
 
 app.on('web-contents-created', (_event, contents: WebContents) => {
   if (contents.session !== session.defaultSession) {
+    guestCreations += 1
     contents.once('did-finish-load', () => {
       if (contents.getURL() !== 'https://mdx-compiler.invalid/guest.html') return
       void contents

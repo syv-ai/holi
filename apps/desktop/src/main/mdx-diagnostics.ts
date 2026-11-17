@@ -74,7 +74,7 @@ export function createMdxDiagnostics(options: {
     lease.closed = true
     lease.controller?.abort()
     lease.controller = null
-    lease.watcher.close()
+    lease.watcher?.close()
     leases.delete(lease.id)
   }
   const pathState = async (lease: Lease) => {
@@ -124,6 +124,7 @@ export function createMdxDiagnostics(options: {
       }
       pendingAcquisitions.add(pendingAcquisition)
       const valid = () => !closed && acquisitionEpoch === epoch && !pendingAcquisition.invalidated
+      let unpublishedLease: Lease | null = null
       try {
         const identity = options.context(input.context, input.remote)
         if (identity === null) throw new Error('MDX context unavailable')
@@ -190,6 +191,7 @@ export function createMdxDiagnostics(options: {
           controller: null,
           closed: false,
         }
+        unpublishedLease = lease
         try {
           lease.watcher = watch(dirname(canonical), { persistent: false }, (_event, name) => {
             if (name !== null && name.toString() !== basename(canonical)) return
@@ -231,7 +233,11 @@ export function createMdxDiagnostics(options: {
           fail('MDX context changed')
         }
         leases.set(id, lease)
+        unpublishedLease = null
         return { lease: id }
+      } catch (error) {
+        if (unpublishedLease !== null) drop(unpublishedLease)
+        throw error
       } finally {
         pendingAcquisitions.delete(pendingAcquisition)
         pending -= 1

@@ -877,6 +877,46 @@ test('MDX trust requires explicit confirmation and can be cancelled or approved'
   )
 })
 
+test('MDX teardown never clears JSON diagnostics while the editor remains mounted', async () => {
+  read.mockResolvedValue('{ invalid json')
+  historyList.mockResolvedValue([])
+  const store = createStore()
+  lastStore = store
+  store.set(activeRemoteAtom, 'syv-ai/site')
+  store.set(openedRemoteAtom, 'syv-ai/site')
+  store.set(sessionAtom, { login: 'fixture-user' })
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    files: [{ path: 'config.json', updatedAt: '2026-10-23T10:00:00Z' }],
+  })
+  const rendered = render(
+    <Provider store={store}>
+      <FileView path="config.json" visible />
+    </Provider>,
+  )
+  await waitFor(() => expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument())
+  rendered.rerender(
+    <Provider store={store}>
+      <FileView path="config.json" visible={false} />
+    </Provider>,
+  )
+  expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument()
+  rendered.rerender(
+    <Provider store={store}>
+      <FileView path="config.json" visible />
+    </Provider>,
+  )
+  expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...emptyVaultSnapshot(),
+      files: [{ path: 'config.json', updatedAt: '2026-10-24T10:00:00Z' }],
+    }),
+  )
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+  expect(document.querySelector('.cm-lintRange-error')).toBeInTheDocument()
+})
+
 test('trusted MDX diagnostics consume the current source without changing save behavior', async () => {
   const hostile = '# source\\n{globalThis.__mdxShouldNotRun = true}'
   read.mockResolvedValue(hostile)
