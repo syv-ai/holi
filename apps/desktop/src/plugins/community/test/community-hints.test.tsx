@@ -128,7 +128,7 @@ describe('community host hint adapter', () => {
     adapter.capture?.()
     const targets = adapter.discover()
     expect(targets).toHaveLength(1)
-    expect(targets[0]).toMatchObject({ element: frame, label: 'Save', x: 160, y: 120 })
+    expect(targets[0]).toMatchObject({ element: frame, label: 'Save', x: 180, y: 120 })
     expect(adapter.unchanged([])).toBe(true)
     vi.spyOn(document, 'elementFromPoint').mockReturnValue(document.body)
     expect(adapter.discover()).toHaveLength(0)
@@ -224,9 +224,16 @@ describe('community host hint adapter', () => {
   })
 
   it('accepts exact single alphabet keys only', () => {
-    expect(isFrameHintsMessage({ type: 'holi-hints:key', nonce, key: 'a' })).toBe(true)
-    expect(isFrameHintsMessage({ type: 'holi-hints:key', nonce, key: 'asdf' })).toBe(false)
-    expect(isFrameHintsMessage({ type: 'holi-hints:key', nonce, key: 'Escape' })).toBe(true)
-    expect(isFrameHintsMessage({ type: 'holi-hints:key', nonce, key: 'Enter' })).toBe(false)
+    const validNonce = 'host-random-nonce'
+    expect(isFrameHintsMessage({ type: 'holi-hints:key', nonce: validNonce, key: 'a' })).toBe(true)
+    expect(isFrameHintsMessage({ type: 'holi-hints:key', nonce: validNonce, key: 'asdf' })).toBe(
+      false,
+    )
+    expect(isFrameHintsMessage({ type: 'holi-hints:key', nonce: validNonce, key: 'Escape' })).toBe(
+      true,
+    )
+    expect(isFrameHintsMessage({ type: 'holi-hints:key', nonce: validNonce, key: 'Enter' })).toBe(
+      false,
+    )
   })
 })

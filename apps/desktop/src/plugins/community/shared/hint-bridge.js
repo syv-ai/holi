@@ -33,7 +33,7 @@
         style.display === 'none' ||
         style.visibility === 'hidden' ||
         style.visibility === 'collapse' ||
-        Number(style.opacity) === 0
+        (style.opacity !== '' && Number(style.opacity) === 0)
       )
         return false
     }
@@ -84,7 +84,7 @@
         style.display === 'none' ||
         style.visibility === 'hidden' ||
         style.visibility === 'collapse' ||
-        Number(style.opacity) === 0 ||
+        (style.opacity !== '' && Number(style.opacity) === 0) ||
         (node === element && style.pointerEvents === 'none')
       )
         return false
@@ -215,7 +215,11 @@
       typeof data.nonce === 'string' &&
       data.nonce.length > 0 &&
       data.nonce.length <= 128 &&
-      event.source === window.parent
+      event.source === window.parent &&
+      (!enabled ||
+        (event.source === hostWindow &&
+          (hostOrigin === null || event.origin === hostOrigin) &&
+          data.nonce === nonce))
     ) {
       nonce = data.nonce
       hostWindow = window.parent
