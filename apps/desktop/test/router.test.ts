@@ -203,6 +203,28 @@ describe('pasted Holi links', () => {
 })
 
 describe('subscriptions IPC', () => {
+  it('returns exact explicit-scope history with conservative ownership through IPC', async () => {
+    const { caller, host } = await rig()
+    await caller.vaults.open({ remote: REMOTE })
+    await caller.subscriptions.set({ remote: REMOTE, path: '', enabled: true })
+    const active = host.active()!
+    const sha = 'a'.repeat(40)
+    active.repo.revisionChanges = vi.fn(async () => ({
+      complete: true,
+      reason: 'ok' as const,
+      changes: [{ sha, path: 'note.md' }],
+    }))
+
+    await expect(caller.subscriptions.changes({ remote: REMOTE, path: '' })).resolves.toMatchObject(
+      {
+        baseline: expect.any(String),
+        complete: true,
+        history: 'ok',
+        changes: [{ sha, path: 'note.md', ownership: 'unknown', reviewed: false }],
+      },
+    )
+    expect(active.repo.revisionChanges).toHaveBeenCalledOnce()
+  })
   it('captures the active repository and userData before awaiting HEAD', async () => {
     const { caller, host, registry, base, userData } = await rig()
     await caller.vaults.open({ remote: REMOTE })
