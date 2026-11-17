@@ -349,7 +349,7 @@ async function main(): Promise<void> {
   const mdxTrust = createMdxTrustStore(join(app.getPath('userData'), 'mdx-trust.json'))
   const mdxCompiler = createMdxCompiler(join(app.getAppPath(), 'out/mdx-compiler'))
   session.onGenerationChange(() => mdxCompiler.invalidate())
-  app.on('before-quit', () => {
+  app.on('will-quit', () => {
     closeMdxDiagnostics()
     mdxCompiler.close()
   })
