@@ -870,20 +870,25 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         cancel: lease.cancel,
       }
     } catch (err) {
+      const cancelled = controller.signal.aborted
       lease.cancel()
       lease.phase = 'closed'
       state.leases.delete(lease)
       eventsLive = false
-      console.error(`[plugins] ${id} did not start:`, err)
-      state.failed.set(id, err instanceof Error ? err.message : String(err))
-      deps.activity?.({
-        channel: 'plugins',
-        level: 'error',
-        message: `${plugin.info.label} did not start`,
-        detail: err instanceof Error ? err.message : String(err),
-        remote,
-        plugin: id,
-      })
+      // Superseded startup is retried by the newest reconciliation. Only an
+      // actual startup failure latches the failure shown in plugin settings.
+      if (!cancelled) {
+        console.error(`[plugins] ${id} did not start:`, err)
+        state.failed.set(id, err instanceof Error ? err.message : String(err))
+        deps.activity?.({
+          channel: 'plugins',
+          level: 'error',
+          message: `${plugin.info.label} did not start`,
+          detail: err instanceof Error ? err.message : String(err),
+          remote,
+          plugin: id,
+        })
+      }
       const cleanupFailures = undoAll(id, undos)
       if (cleanupFailures.length > 0) {
         const failure = new AggregateError(
@@ -1138,13 +1143,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       const configuration = ++state.configuration
       // A superseded read must not overwrite dispatch's current enablement.
       forget(vault.remote)
-      // A snapshot does not change enablement. Keep a startup suspended on
-      // external work (for example a sync drain) alive until the fresh setting
-      // read below proves that its plugin is no longer wanted.
-      if (why !== 'snapshot') {
-        for (const lease of state.leases) {
-          if (!lease.established) lease.cancel()
-        }
+      for (const lease of state.leases) {
+        if (!lease.established) lease.cancel()
       }
       if (why === 'settings' || why === 'snapshot') {
         const configured = (await read(vault.root)).running

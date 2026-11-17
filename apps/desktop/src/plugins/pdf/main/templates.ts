@@ -86,7 +86,7 @@ export async function migrateTemplates(
     if (signal?.aborted) throw new Error('PDF template migration cancelled')
   }
   const publish = async (rel: string, bytes: Buffer): Promise<void> => {
-    const tempRel = `${rel}.${randomUUID()}.tmp`
+    const tempRel = `.holi/state/pdf-template-${randomUUID()}.local.tmp`
     try {
       const tempPath = await safe(tempRel)
       check()
@@ -129,8 +129,7 @@ export async function migrateTemplates(
 
   const removeTree = async (rel: string): Promise<void> => {
     check()
-    const valid = vaultRelPath(rel)
-    if (!valid) throw new Error(`unsafe template migration path: ${rel}`)
+    vaultRelPath(rel)
     const parentRel = rel.slice(0, rel.lastIndexOf('/'))
     const leaf = rel.slice(rel.lastIndexOf('/') + 1)
     const parent = await safe(parentRel)
@@ -169,7 +168,9 @@ export async function migrateTemplates(
     )
       continue
     if (entry.name === REPORT_SLUG && seededFiles.length > 0 && !restoring) {
-      await mkdir(await safe('.holi/state'), { recursive: true })
+      const stateDir = await safe('.holi/state')
+      check()
+      await mkdir(stateDir, { recursive: true })
       await publish(RESTORE_STATE, Buffer.from(RESTORE_CONTENT))
       restoring = true
     }
@@ -226,6 +227,7 @@ export async function migrateTemplates(
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     await publish(reportManifest, Buffer.from(seed[reportManifest]!))
   }
+  const statePath = await safe(RESTORE_STATE)
   check()
-  await unlink(await safe(RESTORE_STATE))
+  await unlink(statePath)
 }

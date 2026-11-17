@@ -1623,7 +1623,7 @@ describe('the lifecycle', () => {
     await host.stop('o/r')
     finish()
     await expect(holding).rejects.toThrow(/cancelled/)
-    expect(log.slice(-2)).toEqual(['stop base', 'resume'])
+    expect(log.slice(-2)).toEqual(['pause pending', 'resume'])
   })
 
   it('releases a failed drain and does not hold another vault', async () => {
@@ -1631,13 +1631,14 @@ describe('the lifecycle', () => {
     const log: string[] = []
     const contexts = new Map<string, PluginCtx>()
     const plugins = [logged(log, 'base', {}, (ctx) => (contexts.set(ctx.remote, ctx), () => {}))]
-    const { host, enter } = rig({ plugins })
-    await enter(
+    const { host } = rig({ plugins, roots })
+    await host.reconcile(
       openVault('o/a', roots['o/a']!, log, async () => {
         throw new Error('drain failed')
       }),
+      'open',
     )
-    await enter(openVault('o/b', roots['o/b']!, log))
+    await host.reconcile(openVault('o/b', roots['o/b']!, log), 'open')
     await expect(contexts.get('o/a')!.pauseSyncAndDrain('failed')).rejects.toThrow('drain failed')
     expect(log).toContain('pause failed')
     expect(log.slice(-1)).toEqual(['resume'])

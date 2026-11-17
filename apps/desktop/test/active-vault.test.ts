@@ -1726,6 +1726,45 @@ describe('ActiveVault — sync', () => {
     expect(active.syncState()).toEqual({ kind: 'conflict', paths: ['README.md'] })
   })
 
+  it('drains admitted abandon work and refuses another abandon during a migration hold', async () => {
+    const { active, dir, teammate } = await withTeammate({
+      pullIntervalMs: 60_000,
+      healIntervalMs: 60_000,
+      commitQuietMs: 60_000,
+    })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await active.commitNow()
+    await active.pushNow()
+    await active.reconcile()
+    let entered!: () => void
+    let finish!: () => void
+    const admitted = new Promise<void>((resolve) => (entered = resolve))
+    const gate = new Promise<void>((resolve) => (finish = resolve))
+    const abort = active.repo.abortMerge.bind(active.repo)
+    let calls = 0
+    active.repo.abortMerge = async () => {
+      calls++
+      entered()
+      await gate
+      return abort()
+    }
+    const abandoning = active.abandon()
+    await admitted
+    active.pause('PDF migration')
+    let drained = false
+    const draining = active.drainSync().then(() => (drained = true))
+    await sleep(20)
+    expect(drained).toBe(false)
+    await active.abandon()
+    expect(calls).toBe(1)
+    finish()
+    await abandoning
+    await draining
+    expect(drained).toBe(true)
+    expect((await active.repo.status()).merging).toBe(false)
+  })
+
   it('survives the agent turn ending — a turn is not the reconcile', async () => {
     // Git coexistence pauses the vault for the assistant's turn and `resume()`
     // lifts it, clearing the sticky conflict pause on the way out (the conflict
