@@ -1061,26 +1061,22 @@ test('catch-up ignores a stale A-B-A completion', async () => {
   expect(screen.queryByRole('alert')).toBeNull()
 })
 
-test('catch-up rejects missing login, vault, or agent before starting', async () => {
+test.each([
+  { missing: 'login', message: /sign in to GitHub/i },
+  { missing: 'vault', message: /no vault is open/i },
+  { missing: 'agent', message: /no agent is running/i },
+])('catch-up rejects missing $missing before starting', async ({ missing, message }) => {
   const user = userEvent.setup()
+  if (missing === 'login') getDefaultStore().set(sessionAtom, null)
+  if (missing === 'vault') getDefaultStore().set(activeRemoteAtom, null)
+  if (missing === 'agent') agentServiceMock.mockReturnValue(null)
   render(<MailShell />)
-  await screen.findByRole('list', { name: 'Inbox' })
 
-  getDefaultStore().set(sessionAtom, null)
-  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
-  expect(await screen.findByRole('alert')).toHaveTextContent(/sign in to GitHub/i)
-  expect(agentStartMock).not.toHaveBeenCalled()
-
-  getDefaultStore().set(sessionAtom, { login: 'ada' } as never)
-  getDefaultStore().set(activeRemoteAtom, null)
-  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
-  expect(await screen.findByRole('alert')).toHaveTextContent(/open a vault/i)
-  expect(agentStartMock).not.toHaveBeenCalled()
-
-  getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
-  agentServiceMock.mockReturnValue(null)
-  await user.click(screen.getByRole('button', { name: 'Catch me up' }))
-  expect(await screen.findByRole('alert')).toHaveTextContent(/no agent is running/i)
+  if (missing !== 'vault') {
+    await screen.findByRole('list', { name: 'Inbox' })
+    await user.click(screen.getByRole('button', { name: 'Catch me up' }))
+  }
+  expect(await screen.findByRole('alert')).toHaveTextContent(message)
   expect(agentStartMock).not.toHaveBeenCalled()
 })
 
