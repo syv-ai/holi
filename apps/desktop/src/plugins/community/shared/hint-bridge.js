@@ -177,9 +177,8 @@
       return
     if (event.altKey || event.ctrlKey || event.metaKey) {
       if (sessionActive) {
-        event.preventDefault()
         sessionActive = false
-        send({ type: 'holi-hints:clear' })
+        send({ type: 'holi-hints:clear', revision })
       }
       return
     }
@@ -196,7 +195,7 @@
     ) {
       event.preventDefault()
       sessionActive = false
-      send({ type: 'holi-hints:clear' })
+      send({ type: 'holi-hints:clear', revision })
       return
     }
     event.preventDefault()
@@ -288,6 +287,7 @@
       sessionActive = false
       targets.clear()
       item.element.click()
+      snapshot()
     }
   }
   const compositionStart = () => {

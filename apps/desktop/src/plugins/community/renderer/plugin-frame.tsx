@@ -17,7 +17,7 @@ import {
   registerHostHintAdapter,
   vimCodeEditingAtom,
 } from '@/plugin-api'
-import { createCommunityHintAdapter } from './community-hints'
+import { communityFramePaneFocused, createCommunityHintAdapter } from './community-hints'
 import { Button } from '@/components/ui/button'
 import { communityCap } from './community-cap'
 import {
@@ -274,13 +274,6 @@ export function PluginFrame({
 }
 
 /** Use a non-running claim only to explain the next step, not to select a server. */
-function communityFramePaneFocused(frame: HTMLIFrameElement): boolean {
-  const pane = frame.closest<HTMLElement>('[data-pane]')
-  if (!pane) return false
-  const panes = document.querySelectorAll('[data-pane]')
-  return panes.length <= 1 || pane.getAttribute('data-pane-focused') === 'true'
-}
-
 function unavailableReason(row: PluginRow | null): string {
   if (row === null) return 'No installed or pinned plugin claims this file.'
   if (!row.on) return `${row.name} is turned off in this vault.`

@@ -7,7 +7,7 @@ import {
   discoverHostHintTargets,
   hostHintsUnchanged,
 } from '@/plugin-api'
-import { createCommunityHintAdapter } from '../renderer/community-hints'
+import { communityFramePaneFocused, createCommunityHintAdapter } from '../renderer/community-hints'
 import { isFrameHintsMessage, type FrameHintsMessage } from '../shared/frame-hints'
 
 const origin = 'http://127.0.0.1:4312'
@@ -139,6 +139,38 @@ describe('community host hint adapter', () => {
     expect(adapter.discover()).toHaveLength(0)
   })
 
+  it('ignores parked retained panes and follows the focused pane after A-B-A', () => {
+    setup()
+    const first = frame.closest<HTMLElement>('[data-pane]')!
+    const parked = document.createElement('main')
+    parked.setAttribute('data-pane', '')
+    parked.setAttribute('data-pane-focused', 'true')
+    parked.hidden = true
+    parked.innerHTML = '<iframe></iframe>'
+    document.body.append(parked)
+    expect(communityFramePaneFocused(frame)).toBe(true)
+    parked.hidden = false
+    first.removeAttribute('data-pane-focused')
+    expect(communityFramePaneFocused(frame)).toBe(false)
+    first.setAttribute('data-pane-focused', 'true')
+    expect(communityFramePaneFocused(frame)).toBe(true)
+    snapshot()
+    expect(adapter.discover()).toHaveLength(1)
+  })
+
+  it('does not let an opted-out guest adapter veto host-only targets', () => {
+    setup()
+    const root = frame.closest<HTMLElement>('[data-pane]')!
+    const guestAdapter: HostHintAdapter = {
+      discover: () => [],
+      unchanged: () => false,
+      activate: () => false,
+      guestOnly: true,
+    }
+    unregisterAdapter = registerHostHintAdapter(frame, guestAdapter)
+    expect(hostHintsUnchanged([], guestAdapter, root)).toBe(true)
+  })
+
   it('runs through core discovery, session routing, and activation for a verified snapshot', () => {
     setup()
     const root = frame.closest<HTMLElement>('[data-pane]')!
@@ -165,6 +197,19 @@ describe('community host hint adapter', () => {
     expect(route).toHaveBeenCalledWith(expect.objectContaining({ key: 'a' }))
     expect(sent().at(-1)).toMatchObject({ type: 'holi-hints:activate', id: 'save', revision: 1 })
     expect(cancel).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
+  it('cancels only the matching guest hint session on clear', () => {
+    setup()
+    snapshot(6)
+    const cancel = vi.fn()
+    const unsubscribe = adapter.subscribe!(cancel)
+    guest({ type: 'holi-hints:start', nonce, revision: 6 })
+    guest({ type: 'holi-hints:clear', nonce, revision: 5 })
+    expect(cancel).not.toHaveBeenCalled()
+    guest({ type: 'holi-hints:clear', nonce, revision: 6 })
+    expect(cancel).toHaveBeenCalledTimes(1)
     unsubscribe()
   })
 
