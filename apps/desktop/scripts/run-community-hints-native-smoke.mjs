@@ -581,8 +581,8 @@ try {
   )
   await key(finalButton.key[0])
   await wait(
-    `!!document.querySelector("[data-host-hints] [data-hint-target=\\"Native button\\"]")`,
-    'native key prefix remains visibly selected',
+    `(()=>{const labels=[...document.querySelectorAll("[data-host-hints] [data-hint-key]")];return labels.length>0&&labels.every(e=>e.getAttribute("data-hint-key").startsWith(${JSON.stringify(finalButton.key[0])}))&&labels.some(e=>e.getAttribute("data-hint-target")==="Native button"&&e.getAttribute("data-hint-key")==${JSON.stringify(finalButton.key)})})()`,
+    'native key prefix filters visible labels',
   )
   await sleep(500)
   await recorder.recordFrame('key-selection', 'Native button')
