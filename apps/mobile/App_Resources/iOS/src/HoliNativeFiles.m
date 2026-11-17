@@ -308,10 +308,22 @@ static BOOL HNFIsFault(NSString *fault, NSString *stage) {
   else
     result = rename(from, to);
   int saved = errno;
+  if (result != 0) {
+    free(from);
+    free(to);
+    HNFSetError(error, exclusive ? @"renamex_np" : @"rename", saved);
+    return NO;
+  }
+  char *slash = strrchr(to, '/');
+  if (slash) *slash = 0;
+  int dir = open(slash ? to : ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+  int syncResult = dir < 0 ? -1 : fsync(dir);
+  int syncError = errno;
+  if (dir >= 0) close(dir);
   free(from);
   free(to);
-  if (result != 0) {
-    HNFSetError(error, exclusive ? @"renamex_np" : @"rename", saved);
+  if (syncResult != 0) {
+    HNFSetError(error, @"fsync-published-directory", syncError);
     return NO;
   }
   return YES;
@@ -326,6 +338,27 @@ static BOOL HNFIsFault(NSString *fault, NSString *stage) {
   free(path);
   if (result != 0) {
     HNFSetError(error, @"unlink", saved);
+    return NO;
+  }
+  return YES;
+}
+
+- (BOOL)syncDirectory:(NSData *)pathBytes error:(NSError **)error {
+  char *path = HNFPath(pathBytes, error);
+  if (!path)
+    return NO;
+  int fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+  int saved = errno;
+  free(path);
+  if (fd < 0) {
+    HNFSetError(error, @"open-directory", saved);
+    return NO;
+  }
+  int result = fsync(fd);
+  saved = errno;
+  close(fd);
+  if (result != 0) {
+    HNFSetError(error, @"fsync-directory", saved);
     return NO;
   }
   return YES;

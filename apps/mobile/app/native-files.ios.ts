@@ -141,11 +141,59 @@ export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
       stages(root)
       return nativeIO.read(checkedPath(root, relative))
     },
+    async readOptional(root, relative) {
+      stages(root)
+      const path = checkedPath(root, relative)
+      return nativeIO.kind(path) === null ? null : nativeIO.read(path)
+    },
     async create(root, relative, bytes) {
       await publish(root, relative, bytes, null)
     },
     async publish(root, relative, bytes, expected) {
       await publish(root, relative, bytes, expected)
+    },
+    async privateList(root) {
+      const path = stages(root)
+      return nativeIO.names(path).filter((name) => !stageNamePattern.test(name))
+    },
+    async privateRead(root, name) {
+      if (!/^move-[0-9a-f-]+\.json$/i.test(name)) throw new Error('Invalid private artifact name')
+      const path = `${stages(root)}/${name}`
+      if (nativeIO.kind(path) !== 'regular') throw new Error('Invalid private journal file')
+      return nativeIO.read(path)
+    },
+    async privatePublish(root, name, bytes, expected) {
+      if (!/^move-[0-9a-f-]+\.json$/i.test(name)) throw new Error('Invalid private artifact name')
+      const directoryPath = stages(root)
+      const target = `${directoryPath}/${name}`
+      const kind = nativeIO.kind(target)
+      if (
+        expected === null
+          ? kind !== null
+          : kind !== 'regular' || !equal(nativeIO.read(target), expected)
+      )
+        throw new Error('Stale private journal')
+      const stage = `${directoryPath}/stage-${NSUUID.UUID().UUIDString}.tmp`
+      nativeIO.writeExclusive(stage, bytes, options.fault)
+      try {
+        nativeIO.publish(stage, target, expected === null, options.fault)
+      } catch (error) {
+        if (nativeIO.kind(stage) === 'regular') nativeIO.removeFile(stage)
+        throw error
+      }
+    },
+    async privateRemove(root, name, expected) {
+      const target = `${stages(root)}/${name}`
+      if (nativeIO.kind(target) !== 'regular' || !equal(nativeIO.read(target), expected))
+        throw new Error('Stale private journal removal')
+      nativeIO.removeFile(target)
+      nativeIO.syncDirectory(`${target.slice(0, target.lastIndexOf('/'))}`)
+    },
+    async remove(root, relative, expected) {
+      const target = checkedPath(root, relative)
+      if (!equal(nativeIO.read(target), expected)) throw new Error('Stale bytes')
+      nativeIO.removeFile(target)
+      nativeIO.syncDirectory(target.slice(0, target.lastIndexOf('/')))
     },
   }
 }
