@@ -98,7 +98,12 @@ export const communityMain: MainPlugin = {
         signal: attachment.signal,
       })
       if (signal.aborted) return
-      await seedRunningApps(ctx.root, { store, consent })
+      await seedRunningApps(ctx.root, {
+        store,
+        consent,
+        signal: attachment.signal,
+        live: attachment.isLive,
+      })
       if (signal.aborted) return
       await linkRunningCommands(ctx.root, { store, consent })
       if (signal.aborted) return

@@ -1,8 +1,9 @@
 import { lstat, mkdir, realpath, rmdir } from 'node:fs/promises'
-import { join, relative, resolve, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { pluginPinPath, vaultRelPath, type PluginPin } from '@holi/shared'
-import { writeAtomic, gitignoreWith, CapabilityError } from '../../../main/plugin-api'
-import { readBoundedRegularText, readManifest } from './fetch'
+import { writeAtomic, gitignoreWith, withFileLock, CapabilityError } from '../../../main/plugin-api'
+import { readManifest } from './fetch'
+import { assertSafePublicationPath, readOptionalPublicationText } from './publication-files'
 import {
   assertCheckoutIdentity,
   assertManifestPinned,
@@ -25,33 +26,6 @@ export interface PinPublication {
   live?: () => boolean
   guard(): Promise<void>
   onBackups?(paths: string[]): void
-}
-
-const safePath = async (root: string, path: string) => {
-  const canonicalRoot = await realpath(root)
-  if (canonicalRoot !== resolve(root)) throw new Error('vault root is not canonical')
-  const rel = relative(canonicalRoot, resolve(path))
-  if (rel.startsWith('..') || resolve(path) !== join(canonicalRoot, rel))
-    throw new Error('publication path escapes the vault')
-  let current = canonicalRoot
-  for (const part of rel.split(sep).slice(0, -1)) {
-    current = join(current, part)
-    const info = await lstat(current).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null
-      throw error
-    })
-    if (info?.isSymbolicLink() || (info !== null && !info.isDirectory()))
-      throw new Error(`unsafe vault path ancestor: ${current}`)
-  }
-}
-
-const readPinText = async (path: string) => {
-  try {
-    return await readBoundedRegularText(path, 'plugin pin')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    throw error
-  }
 }
 
 /** Publishes one authenticated release's guide, app and ignore assets before its exact pin. */
@@ -86,10 +60,8 @@ export async function publishPin(input: PinPublication): Promise<void> {
   }
   const guard = async () => {
     ensureLive()
-    await safePath(root, pinPath)
+    await assertSafePublicationPath(root, pinPath)
     await validateSource()
-    if ((await readPinText(pinPath)) !== input.originalPinText)
-      throw new CapabilityError('CONFLICT', `${id} vault pin changed during publication`)
     const current = await store.get(id)
     if (
       !current ||
@@ -99,10 +71,13 @@ export async function publishPin(input: PinPublication): Promise<void> {
     )
       throw new CapabilityError('CONFLICT', `${id} changed during publication`)
     await input.guard()
+    const currentPin = await readOptionalPublicationText(pinPath, 'plugin pin')
     ensureLive()
+    if (currentPin !== input.originalPinText)
+      throw new CapabilityError('CONFLICT', `${id} vault pin changed during publication`)
   }
-  await safePath(root, pinPath)
-  await safePath(root, join(root, '.holi', 'state', 'marker'))
+  await assertSafePublicationPath(root, pinPath)
+  await assertSafePublicationPath(root, join(root, '.holi', 'state', 'marker'))
   await validateSource()
   const expectedSnapshots = await prepareAuthenticatedRelease({
     root: expectedRoot,
@@ -127,7 +102,7 @@ export async function publishPin(input: PinPublication): Promise<void> {
   }
   await guard()
   const ignorePath = join(root, '.gitignore')
-  const originalIgnore = await readPinText(ignorePath)
+  const originalIgnore = await readOptionalPublicationText(ignorePath, '.gitignore')
   const guides = await writeSkills(install.manifest, codeDir, root, {
     guard,
     expectedSnapshots,
@@ -135,24 +110,31 @@ export async function publishPin(input: PinPublication): Promise<void> {
   })
   const backups = guides.filter((path) => path.endsWith('(guide backups)'))
   if (backups.length) input.onBackups?.(backups)
-  await seedApps(install.manifest, codeDir, root, { guard, signal: input.signal })
+  await seedApps(install.manifest, codeDir, root, {
+    guard,
+    signal: input.signal,
+    release: { root: expectedRoot, commit: source.commit, sourcePath: source.path },
+  })
   await guard()
   if ((install.manifest.ignore ?? []).length) {
     const updated = gitignoreWith(originalIgnore, install.manifest.ignore ?? [])
     if (updated !== null)
-      await writeAtomic(root, vaultRelPath('.gitignore'), updated, async () => {
-        await guard()
-        if ((await readPinText(ignorePath)) !== originalIgnore)
-          throw new CapabilityError('CONFLICT', 'vault .gitignore changed during publication')
-        await guard()
-      })
+      await withFileLock(resolve(ignorePath), () =>
+        writeAtomic(root, vaultRelPath('.gitignore'), updated, async () => {
+          await guard()
+          const current = await readOptionalPublicationText(ignorePath, '.gitignore')
+          ensureLive()
+          if (current !== originalIgnore)
+            throw new CapabilityError('CONFLICT', 'vault .gitignore changed during publication')
+        }),
+      )
   }
   await guard()
   const pinDir = join(root, '.holi/plugins', id)
   let ownedIdentity: string | null = null
   try {
     await guard()
-    await safePath(root, pinPath)
+    await assertSafePublicationPath(root, pinPath)
     await mkdir(join(root, '.holi/plugins'), { recursive: true })
     const before = await lstat(pinDir).catch((error: NodeJS.ErrnoException) =>
       error.code === 'ENOENT' ? null : Promise.reject(error),
@@ -162,11 +144,13 @@ export async function publishPin(input: PinPublication): Promise<void> {
       const created = await lstat(pinDir)
       ownedIdentity = `${created.dev}:${created.ino}`
     }
-    await writeAtomic(
-      root,
-      vaultRelPath(pluginPinPath(id)),
-      `${JSON.stringify(pin, null, 2)}\n`,
-      guard,
+    await withFileLock(resolve(pinPath), () =>
+      writeAtomic(
+        root,
+        vaultRelPath(pluginPinPath(id)),
+        `${JSON.stringify(pin, null, 2)}\n`,
+        guard,
+      ),
     )
   } catch (error) {
     if (ownedIdentity !== null) {

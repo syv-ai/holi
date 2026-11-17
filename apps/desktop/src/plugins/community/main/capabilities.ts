@@ -8,8 +8,8 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { randomUUID } from 'node:crypto'
-import { lstat, realpath, readdir, readFile, rm } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { lstat, realpath, readdir, readFile, rm, rmdir } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   isCommunityPluginId,
   isPluginPath,
@@ -32,6 +32,7 @@ import {
   paramsObject,
   flagParam,
   readVaultSettings,
+  withFileLock,
   stringParam,
   toolPath,
   type CapabilityTable,
@@ -51,6 +52,7 @@ import {
 import { searchPlugins } from './search'
 import { refreshSkills, seedApps, writeSkills } from './skills'
 import { publishPin } from './pin-publication'
+import { readOptionalPublicationText } from './publication-files'
 import {
   assertCheckoutIdentity,
   assertManifestPinned,
@@ -150,15 +152,6 @@ export interface CommunityDeps {
    *  `toolPath()`: a Dock-launched Holi's own `PATH` lacks the folders the
    *  person's shell, and so the agent's commands, have. */
   searchPath?(): string
-}
-
-async function readOptionalBoundedRegularText(path: string, label: string): Promise<string | null> {
-  try {
-    return await readBoundedRegularText(path, label)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    throw error
-  }
 }
 
 /** The vault's pins, by id; an unreadable one is left out. */
@@ -382,6 +375,7 @@ export async function refreshInstalledPins(
     const install = installs.find((item) => item.id === pin.id)
     if (
       !settings.plugins.vault[pin.id] ||
+      settings.plugins.localOff.includes(pin.id) ||
       install === undefined ||
       install.source.kind !== 'release' ||
       install.source.repo !== pin.repo ||
@@ -407,7 +401,7 @@ export async function refreshInstalledPins(
           deps.store.get(install.id),
           deps.consent.has(install.id, source.commit),
           readVaultSettings(root),
-          readOptionalBoundedRegularText(join(root, pluginPinPath(pin.id)), 'plugin pin'),
+          readOptionalPublicationText(join(root, pluginPinPath(pin.id)), 'plugin pin'),
         ])
         if (
           currentInstall === null ||
@@ -417,6 +411,7 @@ export async function refreshInstalledPins(
           currentInstall.setup !== 'ok' ||
           !consented ||
           currentSettings.plugins.vault[install.id] !== true ||
+          currentSettings.plugins.localOff.includes(install.id) ||
           currentPinText !== text
         )
           throw new Error('automatic community update authorization changed')
@@ -632,7 +627,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
           if (install.manifest.setup === undefined) {
             await deps.store.setSetup(id, 'ok')
-            await seedRunningApps(ctx.root, deps)
+            await seedRunningApps(ctx.root, { ...deps, signal: deps.signal, live: deps.live })
             await linkRunningCommands(ctx.root, deps)
             await checkAfterSetup(ctx.root, id)
             return true
@@ -656,7 +651,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           // Set up in a vault that runs it: its apps and commands arrive now, not
           // at the next open.
           if (ok) {
-            await seedRunningApps(ctx.root, deps)
+            await seedRunningApps(ctx.root, { ...deps, signal: deps.signal, live: deps.live })
             await linkRunningCommands(ctx.root, deps)
             await checkAfterSetup(ctx.root, id)
           }
@@ -702,6 +697,15 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
               `${id} is a folder on this machine; pin a release`,
             )
           const source = install.source
+          const [consented, settings] = await Promise.all([
+            deps.consent.has(id, source.commit),
+            readVaultSettings(ctx.root),
+          ])
+          if (install.setup !== 'ok' || !consented || settings.plugins.localOff.includes(id))
+            throw new CapabilityError(
+              'FORBIDDEN',
+              `${id} is not consented, setup-ready and enabled here`,
+            )
           const pin: PluginPin = {
             ...install.manifest,
             repo: source.repo,
@@ -710,9 +714,27 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           }
           const pinPath = join(ctx.root, pluginPinPath(id))
           await assertSafeVaultPath(ctx.root, pinPath)
-          const originalPinText = await readOptionalBoundedRegularText(pinPath, 'plugin pin')
+          const originalPinText = await readOptionalPublicationText(pinPath, 'plugin pin')
           const guard = async () => {
             ensureLive()
+            const [current, consented, settings] = await Promise.all([
+              deps.store.get(id),
+              deps.consent.has(id, source.commit),
+              readVaultSettings(ctx.root),
+            ])
+            if (
+              !current ||
+              current.source.kind !== 'release' ||
+              JSON.stringify(current.source) !== JSON.stringify(source) ||
+              canonicalJson(current.manifest) !== canonicalJson(install.manifest) ||
+              current.setup !== 'ok' ||
+              !consented ||
+              settings.plugins.localOff.includes(id)
+            )
+              throw new CapabilityError(
+                'FORBIDDEN',
+                `${id} is not consented, setup-ready and enabled`,
+              )
             await assertNoCompetingSkillClaims(ctx.root, id, install.manifest.skills ?? [], {
               allowIncompleteOwnPin: originalPinText === null,
             })
@@ -736,6 +758,64 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           })
           await linkRunningCommands(ctx.root, deps)
           syncErrors.delete(backupKey)
+        }),
+    }),
+
+    // Prepare a folder install before relinquishing the vault's release pin.
+    // The exact install and pin snapshots bind this multi-file operation.
+    'community.adoptFolder': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }) =>
+        admit(async () => {
+          ensureLive()
+          const install = await installOf(id)
+          if (install.source.kind !== 'dev')
+            throw new CapabilityError('FORBIDDEN', `${id} is not a folder installation`)
+          const pinPath = join(ctx.root, pluginPinPath(id))
+          await assertSafeVaultPath(ctx.root, pinPath)
+          const originalPin = await readOptionalPublicationText(pinPath, 'plugin pin')
+          if (originalPin === null)
+            throw new CapabilityError('CONFLICT', `${id} has no release pin`)
+          const guard = async () => {
+            ensureLive()
+            const [current, currentPin] = await Promise.all([
+              deps.store.get(id),
+              readOptionalPublicationText(pinPath, 'plugin pin'),
+            ])
+            if (
+              !current ||
+              current.source.kind !== 'dev' ||
+              JSON.stringify(current.source) !== JSON.stringify(install.source) ||
+              canonicalJson(current.manifest) !== canonicalJson(install.manifest) ||
+              currentPin !== originalPin
+            )
+              throw new CapabilityError('CONFLICT', `${id} folder installation or pin changed`)
+            await assertNoCompetingSkillClaims(ctx.root, id, install.manifest.skills ?? [])
+            ensureLive()
+          }
+          await guard()
+          const codeDir = deps.store.codeDir(install)
+          const skills = await writeSkills(install.manifest, codeDir, ctx.root, { guard })
+          const apps = await seedApps(install.manifest, codeDir, ctx.root, {
+            guard,
+            signal: deps.signal,
+          })
+          await guard()
+          await withFileLock(resolve(pinPath), async () => {
+            const finalPin = await readOptionalPublicationText(pinPath, 'plugin pin')
+            ensureLive()
+            if (finalPin !== originalPin)
+              throw new CapabilityError('CONFLICT', `${id} folder pin changed before adoption`)
+            await rm(pinPath, { force: true })
+            await rmdir(dirname(pinPath)).catch(() => {})
+          })
+          const key = `${ctx.root}\0${id}`
+          const backups = skills.filter((path) => path.endsWith('(guide backups)'))
+          if (backups.length)
+            syncBackups.set(key, [...new Set([...(syncBackups.get(key) ?? []), ...backups])])
+          await linkRunningCommands(ctx.root, deps)
+          return [...skills, ...apps]
         }),
     }),
 
@@ -1173,14 +1253,46 @@ function parseServerKey(key: string): { root: string; id: string; path: string }
  */
 export async function seedRunningApps(
   root: string,
-  deps: Pick<CommunityDeps, 'store' | 'consent'>,
+  deps: Pick<CommunityDeps, 'store' | 'consent'> & { signal?: AbortSignal; live?: () => boolean },
 ): Promise<string[]> {
   const written: string[] = []
   for (const row of await listPlugins(root, deps)) {
     if (!row.running || row.apps.length === 0) continue
     const install = await deps.store.get(row.id)
     if (install === null) continue
-    written.push(...(await seedApps(install.manifest, deps.store.codeDir(install), root)))
+    const guard = async () => {
+      if (deps.live?.() === false || deps.signal?.aborted)
+        throw new CapabilityError('FORBIDDEN', 'community attachment is closed')
+      const [current, settings, consented] = await Promise.all([
+        deps.store.get(row.id),
+        readVaultSettings(root),
+        install.source.kind === 'release'
+          ? deps.consent.has(install.id, install.source.commit)
+          : Promise.resolve(true),
+      ])
+      if (
+        current === null ||
+        JSON.stringify(current.source) !== JSON.stringify(install.source) ||
+        canonicalJson(current.manifest) !== canonicalJson(install.manifest) ||
+        current.setup !== 'ok' ||
+        !consented ||
+        settings.plugins.vault[row.id] !== true ||
+        settings.plugins.localOff.includes(row.id) ||
+        deps.live?.() === false ||
+        deps.signal?.aborted
+      )
+        throw new CapabilityError('FORBIDDEN', `${row.id} app seeding authorization changed`)
+    }
+    const options: Parameters<typeof seedApps>[3] = { guard, signal: deps.signal }
+    if (install.source.kind === 'release')
+      Object.assign(options, {
+        release: {
+          root: resolve(deps.store.releaseDir(install.id, install.source.commit)),
+          commit: install.source.commit,
+          sourcePath: install.source.path,
+        },
+      })
+    written.push(...(await seedApps(install.manifest, deps.store.codeDir(install), root, options)))
   }
   return written
 }
