@@ -32,7 +32,12 @@ describe('planVimOperator', () => {
         })
         expect(plan.kind).toBe('ready')
         if (plan.kind !== 'ready' || !plan.mutation) throw new Error('expected a mutation plan')
-        const tr = editor.state.tr.delete(plan.mutation.range.from, plan.mutation.range.to)
+        const edits = plan.mutation.kind === 'sequence' ? plan.mutation.edits : [plan.mutation]
+        const tr = editor.state.tr
+        for (const edit of edits) {
+          if (edit.kind === 'delete') tr.delete(edit.range.from, edit.range.to)
+          else tr.replaceWith(edit.range.from, edit.range.to, edit.replacement.content)
+        }
         expect(tr.doc.textContent).toBe('o')
         expect(plan.caret).toEqual({
           position: operator === 'd' ? 1 : 2,
@@ -98,6 +103,42 @@ describe('planVimOperator', () => {
     }
   })
 
+  it('counts doubled operators across global logical lines and rejects partial blocks', () => {
+    for (const content of [
+      '<p>before</p><pre><code>first\nsecond</code></pre><p>after</p>',
+      '<p>before</p><p>first<br>second</p><p>after</p>',
+    ])
+      withEditor(content, (editor) => {
+        let origin = 0
+        editor.state.doc.descendants((node, pos) => {
+          if (node.isText && node.text === 'before') origin = pos
+        })
+        for (const operator of ['d', 'c', 'y'] as const) {
+          const partial = planVimOperator(editor.state, {
+            operator,
+            target: { kind: 'doubled', origin, count: 2 },
+          })
+          expect(partial.kind).toBe('rejected')
+        }
+        const plan = planVimOperator(editor.state, {
+          operator: 'd',
+          target: { kind: 'doubled', origin, count: 3 },
+        })
+        expect(plan.kind).toBe('ready')
+        if (plan.kind !== 'ready' || !plan.mutation) return
+        const edits = plan.mutation.kind === 'sequence' ? plan.mutation.edits : [plan.mutation]
+        const tr = editor.state.tr
+        for (const edit of edits) {
+          if (edit.kind === 'delete') tr.delete(edit.range.from, edit.range.to)
+          else tr.replaceWith(edit.range.from, edit.range.to, edit.replacement.content)
+        }
+        expect(tr.doc.toJSON()).toEqual({
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'after' }] }],
+        })
+      })
+  })
+
   it('returns no-op and rejected plans without changing source state', () => {
     withEditor(
       '<p>word</p><table><tbody><tr><td><p>cell</p></td><td><p>other</p></td></tr></tbody></table>',
@@ -148,16 +189,14 @@ describe('planVimOperator', () => {
           for (const request of requests) {
             const plan = planVimOperator(editor.state, request)
             if (plan.kind !== 'ready' || !plan.mutation) continue
-            expect(plan.mutation.range.from).toBeGreaterThanOrEqual(0)
-            expect(plan.mutation.range.to).toBeLessThanOrEqual(editor.state.doc.content.size)
-            const tr =
-              plan.mutation.kind === 'delete'
-                ? editor.state.tr.delete(plan.mutation.range.from, plan.mutation.range.to)
-                : editor.state.tr.replaceWith(
-                    plan.mutation.range.from,
-                    plan.mutation.range.to,
-                    plan.mutation.replacement.content,
-                  )
+            const edits = plan.mutation.kind === 'sequence' ? plan.mutation.edits : [plan.mutation]
+            const tr = editor.state.tr
+            for (const edit of edits) {
+              expect(edit.range.from).toBeGreaterThanOrEqual(0)
+              expect(edit.range.to).toBeLessThanOrEqual(editor.state.doc.content.size)
+              if (edit.kind === 'delete') tr.delete(edit.range.from, edit.range.to)
+              else tr.replaceWith(edit.range.from, edit.range.to, edit.replacement.content)
+            }
             expect(tr.doc.check()).toBeUndefined()
           }
         },
@@ -194,8 +233,12 @@ describe('planVimOperator', () => {
                 expect(plan.contentRange.from).toBeGreaterThanOrEqual(0)
                 expect(plan.contentRange.to).toBeLessThanOrEqual(doc.content.size)
                 if (plan.mutation) {
-                  expect(plan.mutation.range.from).toBeGreaterThanOrEqual(0)
-                  expect(plan.mutation.range.to).toBeLessThanOrEqual(doc.content.size)
+                  const edits =
+                    plan.mutation.kind === 'sequence' ? plan.mutation.edits : [plan.mutation]
+                  for (const edit of edits) {
+                    expect(edit.range.from).toBeGreaterThanOrEqual(0)
+                    expect(edit.range.to).toBeLessThanOrEqual(doc.content.size)
+                  }
                 }
               }
             }

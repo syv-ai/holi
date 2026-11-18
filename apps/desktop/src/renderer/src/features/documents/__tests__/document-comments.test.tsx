@@ -352,6 +352,82 @@ describe('placeThreads', () => {
   })
 })
 
+describe('Vim changes in structured lists', () => {
+  it.each(['cc', 'Vc'] as const)(
+    'changes only the targeted paragraph with %s and preserves native comment mapping',
+    (operation) => {
+      const ed = open('- first\n\n  second\n\n  - nested\n- next\n- stay\n')
+      const markdown = ed.getMarkdown()
+      const ranges = placeThreads(
+        ed,
+        '',
+        ['first', 'second', 'nested', 'next', 'stay'].map((quote) =>
+          thread(quote, markdown, quote),
+        ),
+      )
+      setCommentRanges(ed, { ranges })
+      configureRichTextVim(ed.view, true, true, () => true)
+      ed.commands.setTextSelection(rangeOf(ed, 'second').from)
+      const press = (value: string) =>
+        ed.view.dom.dispatchEvent(
+          new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+        )
+      for (const key of operation) press(key)
+      for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+
+      const positions = (value: string) => rangeOf(ed, value)
+      expect(ed.state.doc.textContent).toContain('firstomega')
+      expect(ed.state.doc.textContent).toContain('nested')
+      expect(ed.state.doc.textContent).toContain('next')
+      expect(ed.state.doc.textContent).toContain('stay')
+      expect(threadsAt(ed.state, positions('first').from)).toEqual(['first'])
+      expect(threadsAt(ed.state, positions('nested').from)).toEqual(['nested'])
+      expect(threadsAt(ed.state, positions('omega').from)).toEqual(['second'])
+      expect(threadsAt(ed.state, positions('next').from)).toEqual(['next'])
+      expect(threadsAt(ed.state, positions('stay').from)).toEqual(['stay'])
+      expect(ed.commands.undo()).toBe(true)
+      expect(ed.state.doc.textContent).toContain('second')
+      expect(threadsAt(ed.state, rangeOf(ed, 'first').from)).toEqual(['first'])
+      expect(threadsAt(ed.state, rangeOf(ed, 'nested').from)).toEqual(['nested'])
+      expect(threadsAt(ed.state, rangeOf(ed, 'stay').from)).toEqual(['stay'])
+    },
+  )
+
+  it('removes the counted following list item without moving untouched thread anchors', () => {
+    const ed = open('- first\n\n  second\n\n  - nested\n- next\n- stay\n')
+    const markdown = ed.getMarkdown()
+    const ranges = placeThreads(
+      ed,
+      '',
+      ['first', 'second', 'nested', 'next', 'stay'].map((quote) => thread(quote, markdown, quote)),
+    )
+    setCommentRanges(ed, { ranges })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(rangeOf(ed, 'second').from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+    press('2')
+    press('c')
+    press('c')
+    for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+
+    expect(ed.state.doc.textContent).toContain('firstomega')
+    expect(ed.state.doc.textContent).toContain('nested')
+    expect(ed.state.doc.textContent).not.toContain('next')
+    expect(ed.state.doc.textContent).toContain('stay')
+    expect(threadsAt(ed.state, rangeOf(ed, 'first').from)).toEqual(['first'])
+    expect(threadsAt(ed.state, rangeOf(ed, 'nested').from)).toEqual(['nested'])
+    expect(threadsAt(ed.state, rangeOf(ed, 'omega').from)).toEqual(['second'])
+    expect(threadsAt(ed.state, rangeOf(ed, 'stay').from)).toEqual(['stay'])
+    expect(ed.commands.undo()).toBe(true)
+    expect(ed.state.doc.textContent).toContain('next')
+    expect(ed.commands.redo()).toBe(true)
+    expect(ed.state.doc.textContent).not.toContain('next')
+  })
+})
+
 describe('selectionLines', () => {
   it("numbers the file's lines, frontmatter included, as Read does", () => {
     const head = '---\ntitle: Plan\n---\n\n'
