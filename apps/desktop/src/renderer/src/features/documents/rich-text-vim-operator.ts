@@ -1,4 +1,4 @@
-import { Fragment, Slice } from '@tiptap/pm/model'
+import { Fragment, Slice, type Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { EditorState, TextSelection } from '@tiptap/pm/state'
 import {
   containerAt,
@@ -7,6 +7,7 @@ import {
   logicalLineChange,
   logicalLineDeletion,
   logicalLines,
+  normalCaret,
   safeRange,
   STRUCTURAL_CONTAINERS,
   textBlocks,
@@ -154,7 +155,8 @@ export function resolveVimMotion(
         withinBlock ??
         (target ? logicalLineAt(state, motion === 'j' ? target.from : target.to) : null)
       if (!targetLine) break
-      const bounds = graphemeBoundaries(state, targetLine.from, targetLine.to)
+      const boundaries = graphemeBoundaries(state, targetLine.from, targetLine.to)
+      const bounds = boundaries.length > 1 ? boundaries.slice(0, -1) : boundaries
       pos =
         bounds.find((at) => at >= targetLine.from + pos - line.from) ??
         bounds.at(-1) ??
@@ -224,6 +226,36 @@ function registerFor(
     linewiseContainer: container,
   }
 }
+function changedListItem(node: ProseMirrorNode, itemPosition: number, from: number, to: number) {
+  const children = node.content.content.slice()
+  let position = itemPosition + 1
+  let first = -1
+  let last = -1
+  let caret = itemPosition + 2
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index]!
+    if (child.isTextblock && position + 1 >= from && position + 1 <= to) {
+      if (first < 0) {
+        first = index
+        caret = position + 1
+      }
+      last = index
+    }
+    position += child.nodeSize
+  }
+  if (first < 0) return null
+  const selected = children[first]!
+  children.splice(
+    first,
+    last - first + 1,
+    selected.type.create(selected.attrs, null, selected.marks),
+  )
+  return {
+    replacement: new Slice(Fragment.from(node.copy(Fragment.fromArray(children))), 0, 0),
+    caret,
+  }
+}
+
 function allowedRange(
   state: EditorState,
   range: { from: number; to: number },
@@ -273,18 +305,13 @@ function result(
     else if (mutation?.kind === 'replace')
       tr.replaceWith(mutation.range.from, mutation.range.to, mutation.replacement.content)
     tr.doc.check()
-    const mapped = tr.mapping.map(caretPosition, 1)
+    // Changes name a position inside their replacement; deletes name surviving source content.
+    const mapped = operator === 'c' ? caretPosition : tr.mapping.map(caretPosition, 1)
     const bounded = Math.max(0, Math.min(mapped, tr.doc.content.size))
-    let position = TextSelection.near(tr.doc.resolve(bounded), 1).head
-    if (operator !== 'c') {
-      const projected = EditorState.create({ doc: tr.doc })
-      const line = logicalLineAt(projected, position)
-      if (line) {
-        const boundaries = graphemeBoundaries(projected, line.from, line.to)
-        position = boundaries.find((at) => at >= position) ?? line.to
-        if (position === line.to && boundaries.length > 1) position = boundaries.at(-2)!
-      }
-    }
+    const position =
+      operator === 'c'
+        ? TextSelection.near(tr.doc.resolve(bounded), 1).head
+        : normalCaret(EditorState.create({ doc: tr.doc }), bounded)
     return {
       kind: 'ready',
       sourceDoc: state.doc,
@@ -329,21 +356,17 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         item.type as 'listItem' | 'taskItem',
       )
       let mutation: Mutation | null = null
+      let caret = item.pos
       if (removal) {
         if (operator === 'c' && node) {
-          const children = node.content.content.slice()
-          const first = children.findIndex((child) => child.isTextblock)
-          if (first >= 0)
-            children[first] = children[first]!.type.create(
-              children[first]!.attrs,
-              null,
-              children[first]!.marks,
-            )
+          const changed = changedListItem(node, item.pos, block.from, block.from)
+          if (!changed) return rejected('line')
           mutation = {
             kind: 'replace',
             range: { from: item.pos, to: end },
-            replacement: new Slice(Fragment.from(node.copy(Fragment.fromArray(children))), 0, 0),
+            replacement: changed.replacement,
           }
+          caret = changed.caret
         } else mutation = { kind: 'delete', range: { from: item.pos, to: end } }
       }
       return result(
@@ -352,7 +375,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         { from: item.pos, to: end },
         register,
         mutation,
-        operator === 'y' ? target.origin : item.pos,
+        operator === 'y' ? target.origin : caret,
         {
           kind: 'list-items',
           container: { pos: item.pos, type: item.type as 'listItem' | 'taskItem' },
@@ -396,7 +419,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         { from: deletion.contentFrom, to: deletion.contentTo },
         register,
         mutation,
-        operator === 'y' ? target.origin : range.from,
+        operator === 'y' ? target.origin : operator === 'd' ? deletion.caret : range.from,
         { kind: 'logical-lines', textblock: type },
       )
     }
@@ -546,7 +569,13 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
       if (!safeRange(state, from, to)) return rejected()
       const fragment = state.doc.slice(from, to)
       const mutationRange = { from, to }
-      if (operator === 'c') {
+      const container = containerAt(state, low.from, STRUCTURAL_CONTAINERS)
+      const cell = container?.type === 'tableCell' || container?.type === 'tableHeader'
+      const cellNode = cell ? state.doc.nodeAt(container.pos) : null
+      const selectedBlocks = textBlocks(state).filter(
+        (block) => block.from >= low.from && block.to <= high.to,
+      ).length
+      if (operator === 'c' || (removal && cell && (cellNode?.childCount ?? 0) <= selectedBlocks)) {
         const replacement = new Slice(
           Fragment.from(low.node.type.create(low.node.attrs, null, low.node.marks)),
           0,
@@ -619,7 +648,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         { from: deletion.contentFrom, to: deletion.contentTo },
         content,
         mutation,
-        operator === 'y' ? origin : from,
+        operator === 'y' ? origin : operator === 'd' ? deletion.caret : from,
         { kind: 'logical-lines', textblock },
       )
     }
@@ -673,21 +702,20 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
     if (itemInfo) {
       const node = state.doc.nodeAt(itemInfo.pos)!
       if (operator === 'c') {
-        const children = node.content.content.slice()
-        const first = children.findIndex((child) => child.isTextblock)
-        if (first >= 0)
-          children[first] = children[first]!.type.create(
-            children[first]!.attrs,
-            null,
-            children[first]!.marks,
-          )
+        const first = logicalLineAt(state, Math.min(target.anchor, target.cursor))!
+        const last = logicalLineAt(state, Math.max(target.anchor, target.cursor))!
+        const changed = changedListItem(node, itemInfo.pos, first.block.from, last.block.from)
+        if (!changed) return rejected('selection')
         mutation = {
           kind: 'replace',
           range: registerRange,
-          replacement: new Slice(Fragment.from(node.copy(Fragment.fromArray(children))), 0, 0),
+          replacement: changed.replacement,
         }
-      } else mutation = { kind: 'delete', range: registerRange }
-      caret = itemInfo.pos
+        caret = changed.caret
+      } else {
+        mutation = { kind: 'delete', range: registerRange }
+        caret = itemInfo.pos
+      }
     } else if (range.linewiseTextblock && target.linewise) {
       const first = logicalLineAt(state, Math.min(target.anchor, target.cursor))!
       const last = logicalLineAt(state, Math.max(target.anchor, target.cursor))!
@@ -704,7 +732,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         operator === 'c'
           ? logicalLineChange(lines, Math.min(low, high), Math.max(low, high))!
           : deletion
-      caret = chosen.from
+      caret = operator === 'd' ? deletion.caret : chosen.from
       mutation =
         chosen.from === first.block.from && chosen.to === first.block.to
           ? {

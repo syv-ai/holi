@@ -1,4 +1,4 @@
-import type { EditorState } from '@tiptap/pm/state'
+import { TextSelection, type EditorState } from '@tiptap/pm/state'
 
 export const STRUCTURAL_CONTAINERS = ['tableCell', 'tableHeader', 'listItem', 'taskItem']
 
@@ -93,6 +93,7 @@ export function logicalLineDeletion(
     to: next && !previous && consumeFollowingSeparator ? next.from : last.to,
     contentFrom: first.from,
     contentTo: last.to,
+    caret: next?.from ?? previous?.from ?? first.from,
   }
 }
 
@@ -106,6 +107,16 @@ export function logicalLineChange(
   const last = lines[lastIndex]
   if (!first || !last) return null
   return { from: first.from, to: last.to }
+}
+
+export function normalCaret(state: EditorState, position: number) {
+  const bounded = Math.max(0, Math.min(position, state.doc.content.size))
+  const head = TextSelection.near(state.doc.resolve(bounded), 1).head
+  const line = logicalLineAt(state, head)
+  if (!line) return head
+  const boundaries = graphemeBoundaries(state, line.from, line.to)
+  const target = boundaries.find((at) => at >= head) ?? line.to
+  return target === line.to && boundaries.length > 1 ? boundaries.at(-2)! : target
 }
 
 export function containerAt(state: EditorState, pos: number, names = STRUCTURAL_CONTAINERS) {

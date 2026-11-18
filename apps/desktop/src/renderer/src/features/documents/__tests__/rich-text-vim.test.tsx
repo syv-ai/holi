@@ -2055,6 +2055,102 @@ describe('rich-text Vim extension', () => {
     expect(nested.state.doc.check()).toBeUndefined()
   })
 
+  it('places logical-line delete carets on surviving lines independently of separators', () => {
+    for (const visual of [false, true]) {
+      for (const code of [false, true]) {
+        const ed = open(
+          code ? '<pre><code>first\nmiddle\nlast</code></pre>' : '<p>first<br>middle<br>last</p>',
+        )
+        ed.commands.setTextSelection(7)
+        if (visual) key(ed, 'V')
+        else key(ed, 'd')
+        key(ed, 'd')
+        key(ed, 'x')
+        expect(code ? ed.state.doc.firstChild?.textContent : ed.getHTML()).toBe(
+          code ? 'first\nast' : '<p>first<br>ast</p>',
+        )
+        expect(ed.state.doc.check()).toBeUndefined()
+      }
+    }
+  })
+
+  it('cancels visual mode at its raw cursor and preserves anchors when switching type', () => {
+    const ed = open('<p>abc</p>')
+    for (const position of [1, 3]) {
+      ed.commands.setContent('<p>abc</p>')
+      ed.commands.setTextSelection(position)
+      key(ed, 'v')
+      key(ed, 'Escape')
+      key(ed, 'x')
+      expect(text(ed)).toBe(position === 1 ? 'bc' : 'ab')
+    }
+    ed.commands.setContent('<p>abc</p><p>def</p><p>ghi</p>')
+    ed.commands.setTextSelection(1)
+    for (const value of ['v', 'j', 'V', 'd']) key(ed, value)
+    expect(ed.getHTML()).toBe('<p>ghi</p>')
+
+    ed.commands.setContent('<p>abc</p><p>def</p><p>ghi</p>')
+    ed.commands.setTextSelection(1)
+    for (const value of ['V', 'j', 'V']) key(ed, value)
+    expect(ed.state.selection.empty).toBe(true)
+    key(ed, 'x')
+    expect(ed.getHTML()).toBe('<p>abc</p><p>ef</p><p>ghi</p>')
+  })
+
+  it('changes the targeted paragraph in multi-paragraph list items', () => {
+    for (const visual of [false, true]) {
+      const ed = open(
+        '<ul><li><p>first</p><p>second</p><ul><li><p>nested</p></li></ul></li><li><p>next</p></li></ul>',
+      )
+      let origin = -1
+      ed.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === 'second') origin = pos
+      })
+      expect(origin).toBeGreaterThan(0)
+      ed.commands.setTextSelection(origin)
+      key(ed, visual ? 'V' : 'c')
+      key(ed, 'c')
+      ed.view.dispatch(ed.state.tr.insertText('X'))
+      expect(ed.state.doc.firstChild?.firstChild?.child(0).textContent).toBe('first')
+      expect(ed.state.doc.firstChild?.firstChild?.child(1).textContent).toBe('X')
+      expect(ed.state.doc.firstChild?.firstChild?.child(2).textContent).toBe('nested')
+      expect(ed.state.doc.firstChild?.child(1).textContent).toBe('next')
+      key(ed, 'Escape')
+      key(ed, 'u')
+      expect(ed.state.doc.firstChild?.firstChild?.child(1).textContent).toBe('second')
+      expect(ed.state.doc.check()).toBeUndefined()
+    }
+  })
+
+  it('uses the same empty-cell replacement for doubled, visual and vertical deletes', () => {
+    for (const sequence of [
+      ['2', 'd', 'd'],
+      ['V', 'j', 'd'],
+      ['d', 'j'],
+    ]) {
+      const ed = openTable()
+      ed.commands.setContent(
+        '<table><tbody><tr><td><h2>first</h2><h2>second</h2></td><td><p>other</p></td></tr></tbody></table>',
+      )
+      let origin = -1
+      ed.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === 'first') origin = pos
+      })
+      ed.commands.setTextSelection(origin)
+      const original = ed.state.doc.toJSON()
+      for (const value of sequence) key(ed, value)
+      const row = ed.state.doc.firstChild?.firstChild
+      expect(row?.child(0).childCount).toBe(1)
+      expect(row?.child(0).firstChild?.type.name).toBe('heading')
+      expect(row?.child(0).firstChild?.attrs.level).toBe(2)
+      expect(row?.child(0).textContent).toBe('')
+      expect(row?.child(1).textContent).toBe('other')
+      expect(ed.state.doc.check()).toBeUndefined()
+      key(ed, 'u')
+      expect(ed.state.doc.toJSON()).toEqual(original)
+    }
+  })
+
   it('keeps composition and modified shortcuts out of Vim routing and requests hints for normal f', () => {
     const onHints = vi.fn()
     const ed = new Editor({

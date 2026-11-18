@@ -15,6 +15,7 @@ import {
   graphemeParts as segments,
   logicalLineAt as lineAt,
   logicalLines,
+  normalCaret,
   safeRange,
   STRUCTURAL_CONTAINERS,
   textBlocks as blocks,
@@ -62,7 +63,6 @@ const EMPTY: VimState = {
   insertHistoryTime: null,
   register: null,
 }
-const WORD = /^[\p{L}\p{N}_][\p{L}\p{N}\p{M}_]*$/u
 
 function resetTransient(state: VimState): VimState {
   return {
@@ -99,8 +99,13 @@ function closeHistoryBoundary(view: EditorView) {
 function clearTransient(view: EditorView) {
   const current = KEY.getState(view.state) ?? EMPTY
   const tr = view.state.tr.setMeta(KEY, resetTransient(current)).setMeta('addToHistory', false)
-  if (current.visualAnchor !== null && !view.state.selection.empty)
-    tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
+  if (current.visualAnchor !== null)
+    tr.setSelection(
+      TextSelection.near(
+        tr.doc.resolve(normalCaret(view.state, current.visualCursor ?? current.visualAnchor)),
+        1,
+      ),
+    )
   view.dispatch(tr)
 }
 
@@ -138,148 +143,8 @@ function select(view: EditorView, pos: number) {
   view.dispatch(tr.setMeta('vimSelection', true).setMeta('addToHistory', false).scrollIntoView())
 }
 
-function horizontal(view: EditorView, direction: -1 | 1) {
-  const { state } = view
-  const line = lineAt(state, state.selection.head)
-  if (!line) return
-  const boundaries = graphemeBoundaries(state, line.from, line.to)
-  const pos = state.selection.head
-  const next =
-    direction < 0
-      ? [...boundaries].reverse().find((at) => at < pos)
-      : boundaries.find((at) => at > pos && at < line.to)
-  if (next !== undefined) select(view, next)
-}
-
-function vertical(view: EditorView, direction: -1 | 1) {
-  const { state } = view
-  const current = lineAt(state, state.selection.head)
-  if (!current) return
-  const withinBlock =
-    direction < 0
-      ? current.from > current.block.from
-        ? lineAt(state, current.from - 1)
-        : null
-      : current.to < current.block.to
-        ? lineAt(state, current.to + 1)
-        : null
-  let targetLine = withinBlock
-  if (!targetLine) {
-    const all = blocks(state)
-    const index = all.findIndex((block) => block.from === current.block.from)
-    const target = all[index + direction]
-    if (!target) return
-    targetLine = lineAt(state, direction < 0 ? target.to : target.from)
-  }
-  if (!targetLine) return
-  const relative = state.selection.head - current.from
-  const positions = graphemeBoundaries(state, targetLine.from, targetLine.to)
-  const normalPositions = positions.length > 1 ? positions.slice(0, -1) : positions
-  select(
-    view,
-    normalPositions.find((at) => at >= targetLine.from + relative) ??
-      normalPositions.at(-1) ??
-      targetLine.from,
-  )
-}
-
-function wordPositions(state: EditorState) {
-  const chars: { value: string; from: number; to: number }[] = []
-  for (const block of blocks(state)) {
-    const boundaries = graphemeBoundaries(state, block.from, block.to)
-    for (let index = 0; index < boundaries.length - 1; index++) {
-      const from = boundaries[index]!
-      const to = boundaries[index + 1]!
-      const value = state.doc.textBetween(from, to, '\u0000', '\u0000') || '\u0000'
-      chars.push({ value, from, to })
-    }
-    chars.push({ value: ' ', from: block.to, to: block.to })
-  }
-  return chars
-}
-
-function wordMotion(view: EditorView, motion: 'w' | 'b' | 'e') {
-  const chars = wordPositions(view.state)
-  const pos = view.state.selection.head
-  const word = (item: (typeof chars)[number]) => WORD.test(item.value)
-  const current = chars.findIndex((item) => item.from <= pos && pos < item.to)
-  const firstAtOrAfter = chars.findIndex((item) => item.from >= pos)
-  let target: number | undefined
-  if (motion === 'w') {
-    const start = current >= 0 ? current + 1 : firstAtOrAfter < 0 ? chars.length : firstAtOrAfter
-    for (let i = start; i < chars.length; i++) {
-      if (word(chars[i]!) && (i === 0 || !word(chars[i - 1]!))) {
-        target = chars[i]!.from
-        break
-      }
-    }
-  } else if (motion === 'b') {
-    for (let i = chars.length - 1; i >= 0; i--) {
-      if (chars[i]!.from >= pos) continue
-      if (word(chars[i]!) && (i === 0 || !word(chars[i - 1]!))) {
-        target = chars[i]!.from
-        break
-      }
-    }
-    if (target === undefined) target = chars.find((item) => item.from < pos)?.from
-  } else {
-    const atWordEnd =
-      current >= 0 &&
-      word(chars[current]!) &&
-      (current + 1 === chars.length || !word(chars[current + 1]!))
-    const start =
-      current >= 0
-        ? current + (atWordEnd ? 1 : 0)
-        : firstAtOrAfter < 0
-          ? chars.length
-          : firstAtOrAfter
-    for (let i = start; i < chars.length; i++) {
-      if (!word(chars[i]!)) continue
-      if (i + 1 === chars.length || !word(chars[i + 1]!)) {
-        target = chars[i]!.from
-        break
-      }
-    }
-  }
-  if (target !== undefined) select(view, target)
-}
-
-function lineMotion(view: EditorView, key: '0' | '^' | '$', count = 1) {
-  const line = lineAt(view.state, view.state.selection.head)
-  if (!line) return
-  let targetLine = line
-  if (key === '$' && count > 1) {
-    const all = blocks(view.state).flatMap((block) => logicalLines(block))
-    const container = containerAt(view.state, line.block.from, STRUCTURAL_CONTAINERS)
-    const candidates = all.filter((candidate) => {
-      const candidateContainer = containerAt(
-        view.state,
-        candidate.block.from,
-        STRUCTURAL_CONTAINERS,
-      )
-      return container
-        ? candidateContainer?.pos === container.pos && candidateContainer.type === container.type
-        : !candidateContainer
-    })
-    const index = candidates.findIndex(
-      (candidate) => candidate.block.from === line.block.from && candidate.from === line.from,
-    )
-    targetLine = candidates[Math.min(candidates.length - 1, index + count - 1)] ?? line
-  }
-  const positions = graphemeBoundaries(view.state, targetLine.from, targetLine.to)
-  const target =
-    key === '0'
-      ? targetLine.from
-      : key === '$'
-        ? positions.length > 1
-          ? positions.at(-2)!
-          : positions.at(-1)!
-        : (positions.find(
-            (at) =>
-              view.state.doc.textBetween(at, positions.find((next) => next > at) ?? at).trim() !==
-              '',
-          ) ?? targetLine.to)
-  select(view, target)
+function move(view: EditorView, motion: Motion, count = 1) {
+  select(view, resolveVimMotion(view.state, view.state.selection.head, motion, count))
 }
 
 function deleteChar(view: EditorView) {
@@ -374,8 +239,7 @@ function leaveInsert(view: EditorView) {
   const { state } = view
   if (!state.selection.empty) select(view, state.selection.from)
   const line = lineAt(view.state, view.state.selection.head)
-  if (line && view.state.selection.empty && view.state.selection.head > line.from)
-    horizontal(view, -1)
+  if (line && view.state.selection.empty && view.state.selection.head > line.from) move(view, 'h')
   setMode(view, 'normal')
 }
 
@@ -388,13 +252,7 @@ function executeVimOperator(
   request: VimOperatorRequest,
 ) {
   const plan = planVimOperator(view.state, request)
-  const clearPlan = () => {
-    const latest = KEY.getState(view.state) ?? current
-    const tr = view.state.tr.setMeta(KEY, resetTransient(latest)).setMeta('addToHistory', false)
-    if (latest.visualAnchor !== null && !view.state.selection.empty)
-      tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
-    view.dispatch(tr)
-  }
+  const clearPlan = () => clearTransient(view)
   if (plan.kind === 'noop') {
     clearPlan()
     return
@@ -467,11 +325,7 @@ function handleNormal(
   const plain = !event.metaKey && !event.ctrlKey && !event.altKey
   if (key === 'Escape' && plain) {
     if (current.prefix || current.operator || current.count || current.visualAnchor !== null) {
-      const tr = view.state.tr
-      if (current.visualAnchor !== null)
-        tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
-      tr.setMeta(KEY, resetTransient(current)).setMeta('addToHistory', false)
-      view.dispatch(tr)
+      clearTransient(view)
       event.preventDefault()
       return true
     }
@@ -575,9 +429,15 @@ function handleNormal(
     return true
   }
   if (key === 'v' || key === 'V') {
-    const anchor = view.state.selection.head
-    let visualHead = anchor
-    if (key === 'V' && current.count > 1) {
+    const switching = current.visualAnchor !== null
+    if (switching && current.visualLinewise === (key === 'V')) {
+      clearTransient(view)
+      event.preventDefault()
+      return true
+    }
+    const anchor = current.visualAnchor ?? view.state.selection.head
+    let visualHead = switching ? (current.visualCursor ?? anchor) : anchor
+    if (!switching && key === 'V' && current.count > 1) {
       const all = blocks(view.state).flatMap((block) => logicalLines(block))
       const line = lineAt(view.state, anchor)
       const index = all.findIndex((candidate) => candidate.from === line?.from)
@@ -590,6 +450,13 @@ function handleNormal(
         event.preventDefault()
         return true
       }
+    }
+    const range = resolveVimVisualRange(view.state, anchor, visualHead, key === 'V')
+    if (!range || !safeRange(view.state, range.from, range.to)) {
+      clearTransient(view)
+      settings.onFeedback?.('Vim selection crosses a list or table; no text was changed')
+      event.preventDefault()
+      return true
     }
     update({
       visualAnchor: anchor,
@@ -703,23 +570,13 @@ function handleNormal(
     key === '^' ||
     key === '$'
   ) {
-    let previous = view.state.selection.head
-    if (key === '$') lineMotion(view, key, cappedCount(current.count))
-    for (let index = 0; key !== '$' && index < cappedCount(current.count); index++) {
-      if (key === 'h' || key === 'l') horizontal(view, key === 'h' ? -1 : 1)
-      else if (key === 'j' || key === 'k') vertical(view, key === 'j' ? 1 : -1)
-      else if (key === 'w' || key === 'b' || key === 'e') wordMotion(view, key)
-      else lineMotion(view, key)
-      const destination = view.state.selection.head
-      if (destination === previous) break
-      previous = destination
-    }
+    move(view, key, cappedCount(current.count))
     if (current.count) update({ count: 0 })
     event.preventDefault()
     return true
   }
   if (key === '0') {
-    lineMotion(view, key)
+    move(view, key)
     if (current.count) update({ count: 0 })
     event.preventDefault()
     return true
@@ -961,7 +818,12 @@ export function configureRichTextVim(
       register: current.register,
     })
     .setMeta('addToHistory', false)
-  if (current.visualAnchor !== null && !view.state.selection.empty)
-    tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
+  if (current.visualAnchor !== null)
+    tr.setSelection(
+      TextSelection.near(
+        tr.doc.resolve(normalCaret(view.state, current.visualCursor ?? current.visualAnchor)),
+        1,
+      ),
+    )
   view.dispatch(tr)
 }
