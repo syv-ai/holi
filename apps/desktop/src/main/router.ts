@@ -43,6 +43,7 @@ import { noCoreServices, type UiReport } from './capabilities/services'
 import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
 import { createSubscriptions } from './vault/subscriptions'
+import { subscriptionChanges } from './vault/subscription-changes'
 import { fileCards, type FileCard } from './vault/file-cards'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
@@ -2398,6 +2399,50 @@ export function createRouter(deps: RouterDeps) {
           if (!Array.isArray(paths) || paths.some((path) => typeof path !== 'string'))
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid subscription paths.' })
           return subscriptions.list(remote, root, paths)
+        }),
+      changes: t.procedure
+        .input(fields({ remote: 'string', path: 'string' }))
+        .query(async ({ input }) => {
+          if (subscriptions === null)
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Subscriptions are unavailable.',
+            })
+          const active = activeOrThrow()
+          if (active.remote !== input.remote)
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'The vault changed; retry in the active vault.',
+            })
+          const { remote, root, repo } = active
+          const scope = await subscriptions.scope(remote, input.path)
+          if (scope === null)
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: 'This path is not explicitly subscribed.',
+            })
+          const accountId = deps.session.viewer?.accountId ?? null
+          const accountGeneration = deps.session.generation
+          return subscriptionChanges({
+            repo,
+            root,
+            remote,
+            baseline: scope.baseline,
+            path: scope.path,
+            provenanceFile: join(deps.userData ?? '', 'managed-commit-provenance.json'),
+            accountId,
+            current: () => {
+              const current = deps.host.active()
+              return (
+                current === active &&
+                current.remote === remote &&
+                current.root === root &&
+                (deps.session.viewer?.accountId ?? null) === accountId &&
+                deps.session.generation === accountGeneration
+              )
+            },
+            currentScope: () => subscriptions.scope(remote, scope.path),
+          })
         }),
       set: t.procedure
         .input(fields({ remote: 'string', path: 'string', enabled: 'boolean' }))

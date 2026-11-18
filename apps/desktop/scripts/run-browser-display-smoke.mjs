@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, rm, writeFile, readFile, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { cp, mkdir, mkdtemp, rm, writeFile, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { readFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { externalizeDepsPlugin } from 'electron-vite'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -16,84 +18,97 @@ const evidence = resolve(
   process.argv[2] ?? join(tmpdir(), `holi-553-evidence-${Date.now()}-${process.pid}`),
 )
 const fixture = join(desktop, 'scripts/browser-display-fixture')
-const toolbarAcceptance = process.env.HOLI_553_UI === '1'
+const appHintsOnly = process.env.HOLI_509_APP_HINTS_ONLY === '1'
+const appHintVideo = appHintsOnly && process.env.HOLI_509_RECORD_VIDEO === '1'
+const toolbarAcceptance = !appHintsOnly && process.env.HOLI_553_UI === '1'
 const recordingPath = join(evidence, 'interaction.mp4')
 const root = await mkdtemp(join(tmpdir(), 'holi-523-smoke-'))
-await mkdir(evidence, { recursive: true })
-const fixtureRoot = join(root, 'app-frame-renderer')
-await mkdir(fixtureRoot, { recursive: true })
-const reactPlugin = react()
-await build({
-  configFile: false,
-  root: desktop,
-  base: './',
-  resolve: {
-    alias: [
-      {
-        find: '@/plugin-api',
-        replacement: join(desktop, 'scripts/app-frame-renderer-fixture-api.ts'),
-      },
-      { find: '@', replacement: join(desktop, 'src/renderer/src') },
-      { find: 'react-dom', replacement: join(desktop, 'node_modules/react-dom') },
-      { find: 'react', replacement: join(desktop, 'node_modules/react') },
-    ],
-    dedupe: ['react', 'react-dom', 'jotai'],
-  },
-  plugins: [reactPlugin],
-  define: { process: JSON.stringify({ env: { NODE_ENV: 'development' } }) },
-  build: {
-    outDir: join(fixtureRoot, 'dist'),
-    emptyOutDir: true,
-    lib: {
-      entry: join(desktop, 'scripts/app-frame-renderer-fixture.tsx'),
-      name: 'HoliAppFrameFixture',
-      formats: ['iife'],
-      fileName: () => 'fixture.js',
-    },
-  },
-})
-await writeFile(
-  join(fixtureRoot, 'index.html'),
-  '<!doctype html><html><head><meta charset="UTF-8"></head><body><div id="root"></div><script src="dist/fixture.js"></script></body></html>',
-)
-await build({
-  configFile: false,
-  root: desktop,
-  build: {
-    ssr: true,
-    target: 'node24',
-    outDir: root,
-    emptyOutDir: false,
-    rollupOptions: {
-      input: join(desktop, 'src/preload/index.ts'),
-      external: ['electron'],
-      output: { format: 'cjs', entryFileNames: 'production-preload.cjs' },
-    },
-  },
-})
-await rm(join(evidence, 'frames'), { recursive: true, force: true })
-for (const name of [
-  'result.json',
-  'electron-smoke.log',
-  'browser-before.png',
-  'shell-before.png',
-  'browser-after.png',
-  'vault-app-a.png',
-  'vault-app-b.png',
-  'app-frame-read-a.png',
-  'app-frame-read-b.png',
-  'browser-dark.png',
-  'recording.json',
-  'rich-affinity.json',
-  'ui-light.png',
-  'ui-dark.png',
-  'interaction.mp4',
-])
-  await rm(join(evidence, name), { force: true })
+const ownedAppName = `HoliSmoke-app-hints-${process.pid}-${randomUUID()}.app`
+const ownedApp = join(root, ownedAppName)
 let child
 let closed
 let log = ''
 try {
+  await mkdir(evidence, { recursive: true })
+  if (appHintVideo) {
+    for (const executable of ['ffmpeg', 'ffprobe'])
+      execFileSync(executable, ['-version'], { timeout: 10_000, stdio: 'pipe' })
+  }
+  const fixtureRoot = join(root, 'app-frame-renderer')
+  await mkdir(fixtureRoot, { recursive: true })
+  const reactPlugin = react()
+  await build({
+    configFile: false,
+    root: desktop,
+    base: './',
+    resolve: {
+      alias: [
+        {
+          find: '@/plugin-api',
+          replacement: join(desktop, 'scripts/app-frame-renderer-fixture-api.ts'),
+        },
+        { find: '@', replacement: join(desktop, 'src/renderer/src') },
+        { find: 'react-dom', replacement: join(desktop, 'node_modules/react-dom') },
+        { find: 'react', replacement: join(desktop, 'node_modules/react') },
+      ],
+      dedupe: ['react', 'react-dom', 'jotai'],
+    },
+    plugins: [reactPlugin, tailwindcss()],
+    define: { process: JSON.stringify({ env: { NODE_ENV: 'development' } }) },
+    build: {
+      outDir: join(fixtureRoot, 'dist'),
+      emptyOutDir: true,
+      lib: {
+        entry: join(desktop, 'scripts/app-frame-renderer-fixture.tsx'),
+        name: 'HoliAppFrameFixture',
+        formats: ['iife'],
+        fileName: () => 'fixture.js',
+        cssFileName: 'fixture',
+      },
+    },
+  })
+  await writeFile(
+    join(fixtureRoot, 'index.html'),
+    '<!doctype html><html><head><meta charset="UTF-8"><link rel="stylesheet" href="dist/fixture.css"></head><body><div id="root"></div><script src="dist/fixture.js"></script></body></html>',
+  )
+  await build({
+    configFile: false,
+    root: desktop,
+    build: {
+      ssr: true,
+      target: 'node24',
+      outDir: root,
+      emptyOutDir: false,
+      rollupOptions: {
+        input: join(desktop, 'src/preload/index.ts'),
+        external: ['electron'],
+        output: { format: 'cjs', entryFileNames: 'production-preload.cjs' },
+      },
+    },
+  })
+  await rm(join(evidence, 'frames'), { recursive: true, force: true })
+  for (const name of [
+    'result.json',
+    'electron-smoke.log',
+    'browser-before.png',
+    'shell-before.png',
+    'browser-after.png',
+    'vault-app-a.png',
+    'vault-app-b.png',
+    'app-frame-read-a.png',
+    'app-frame-read-b.png',
+    'app-hints-light.png',
+    'app-hints-dark.png',
+    'browser-dark.png',
+    'recording.json',
+    'rich-affinity.json',
+    'ui-light.png',
+    'ui-dark.png',
+    'interaction.mp4',
+    'app-hints-interaction.mp4',
+    'app-hints-recording.json',
+  ])
+    await rm(join(evidence, name), { force: true })
   await build({
     configFile: false,
     base: './',
@@ -164,6 +179,36 @@ try {
     JSON.stringify({ name: 'holi-browser-display-qa-523', main: 'main.cjs' }),
   )
   const electron = createRequire(import.meta.url)('electron')
+  let launchBinary = electron
+  if (process.platform === 'darwin') {
+    const electronBundle = resolve(dirname(electron), '..', '..')
+    await cp(electronBundle, ownedApp, {
+      recursive: true,
+      verbatimSymlinks: true,
+      mode: constants.COPYFILE_FICLONE,
+    }).catch(async (cloneError) => {
+      await rm(ownedApp, { recursive: true, force: true })
+      try {
+        await cp(electronBundle, ownedApp, { recursive: true, verbatimSymlinks: true })
+      } catch (copyError) {
+        throw new AggregateError(
+          [cloneError, copyError],
+          'Could not create the owned Electron app copy',
+        )
+      }
+    })
+    const infoPlist = join(ownedApp, 'Contents', 'Info.plist')
+    const bundleIdentifier = `com.holi.smoke.app-hints.${process.pid}.${randomUUID()}`
+    execFileSync(
+      '/usr/libexec/PlistBuddy',
+      ['-c', `Set :CFBundleIdentifier ${bundleIdentifier}`, infoPlist],
+      { timeout: 10_000 },
+    )
+    execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', ownedApp], {
+      timeout: 30_000,
+    })
+    launchBinary = join(ownedApp, 'Contents', 'MacOS', 'Electron')
+  }
   const env = {
     ...process.env,
     NODE_PATH: [join(desktop, 'node_modules'), process.env.NODE_PATH]
@@ -177,11 +222,35 @@ try {
     HOLI_472_EVIDENCE: evidence,
     HOLI_553_RENDERER: join(root, 'renderer'),
     HOLI_553_PRELOAD: join(fixture, 'preload.cjs'),
-    HOLI_553_SHA: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    HOLI_553_SHA: execFileSync('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    }).trim(),
     HOLI_553_WORKTREE: execFileSync('git', ['rev-parse', '--show-toplevel'], {
       encoding: 'utf8',
+      timeout: 10_000,
     }).trim(),
-    HOLI_553_STATUS: execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(),
+    HOLI_553_STATUS: execFileSync('git', ['status', '--porcelain'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    }).trim(),
+    HOLI_509_SOURCE_HASH: createHash('sha256')
+      .update(
+        [
+          'scripts/app-hint-interactions.ts',
+          'scripts/app-hint-recorder.ts',
+          'scripts/app-frame-smoke.ts',
+          'scripts/run-browser-display-smoke.mjs',
+          'scripts/app-frame-renderer-fixture.tsx',
+          'scripts/app-frame-renderer-fixture.css',
+          'scripts/app-frame-renderer-fixture-api.ts',
+          'src/plugins/apps/renderer/app-frame.tsx',
+          'src/renderer/src/features/shell/host-hint-layer.tsx',
+        ]
+          .map((path) => `${path}\0${readFileSync(join(desktop, path))}`)
+          .join('\0'),
+      )
+      .digest('hex'),
     HOLI_553_SOURCE_HASH: createHash('sha256')
       .update(
         [
@@ -196,7 +265,7 @@ try {
       .digest('hex'),
   }
   delete env.ELECTRON_RUN_AS_NODE
-  const launch = spawn(electron, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  const launch = spawn(launchBinary, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] })
   child = launch
   child.stdout.on('data', (chunk) => {
     log += chunk
@@ -229,18 +298,11 @@ try {
   const result = JSON.parse(await readFile(join(evidence, 'result.json'), 'utf8'))
   assert.equal(result.ok, true)
   for (const check of [
-    'production-host-and-browser-activations',
-    'electron43-webrequest-native-window-and-frame-provenance',
-    'queued-native-action-expires-on-tab-hide',
-    'queued-action-expires-across-return',
-    'hidden-native-input-and-placement-are-inert',
-    'hidden-popup-keeps-data-without-presentation',
-    'stopping-a-preserves-b-native-view-and-capabilities',
-    'departure-detaches-synchronously',
-    'displayed-page-attached-with-loaded-content',
-    ...(toolbarAcceptance
-      ? [
+    ...(appHintsOnly
+      ? []
+      : [
           'production-host-and-browser-activations',
+          'electron43-webrequest-native-window-and-frame-provenance',
           'queued-native-action-expires-on-tab-hide',
           'queued-action-expires-across-return',
           'hidden-native-input-and-placement-are-inert',
@@ -248,69 +310,88 @@ try {
           'stopping-a-preserves-b-native-view-and-capabilities',
           'departure-detaches-synchronously',
           'displayed-page-attached-with-loaded-content',
-          'native-browser-vim-mode-navigation-insertion-undo-redo',
-          'production-browser-surface-I-A-native-insertion-and-actual-mode',
-          'native-same-vault-two-pane-tabs-own-input-and-mode-independently',
-          'production-preference-disables-and-reenables-native-page',
-          'production-overlay-restores-vim-with-fresh-attachment',
-          'plaintext-host-rearms-after-overlay',
-          'production-visible-hide-return-rearms-field',
-          'plaintext-host-rearms-after-hide-return',
-          'native-shell-zoom-keeps-mode-and-field-input',
-          'native-reload-rejects-old-document-arm-and-reconfigures',
-          'plaintext-host-rearms-after-reload',
-          'native-navigation-reinitializes-current-document',
-          'plaintext-host-rearms-after-navigation',
-          'native-A-B-A-identical-tab-ids-retain-own-vim-context',
-          'native-same-id-replacement-gets-fresh-vim-owner',
-          'native-composition-preserves-unmodified-insert-path',
-          'production-toolbar-native-interaction-light-dark-and-trusted-recording',
-          'native-rich-contenteditable-recorded',
-          'native-baseline-and-vim-rich-link-start-affinity-undo-redo',
-          'plaintext-host-replacement-releases-old-owner',
-        ]
-      : []),
-    'native-h-l-w-b-e-0-caret-dollar-and-i-a',
-    'native-shift-selection-preserved-in-vim-normal-mode',
-    'native-same-document-navigation-rearms-insert-mode',
-    'native-aborted-navigation-recovers-surviving-document-configuration',
-    'native-grapheme-safe-horizontal-motion',
-    'native-j-k-vertical-column',
-    'unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough',
-    'native-plaintext-only-motion-insert-and-native-undo-redo',
-    'native-plaintext-selection-i-keeps-insert-before-selection-behavior',
-    'native-rich-inline-motion-insert-undo-redo-preserves-formatting-and-link',
-    'rich-css-loss-and-restoration-retains-native-key-ownership',
-    'rich-href-loss-and-restoration-retains-native-key-ownership',
-    'rich-inert-transition-releases-native-key-ownership',
-    'native-rich-inline-ime-composition-retains-formatting-and-link',
-    'native-plaintext-ime-composition-remains-native',
-    'plaintext-live-preference-off-passes-native-typing',
-    'plaintext-shape-loss-and-restoration-invalidates-normal-ownership',
-    'plaintext-outside-selection-escape-passthrough-and-reset',
-    'native-empty-host-and-contenteditable-disable-passthrough',
-    'native-ime-composition-in-insert-mode',
-    'preference-disable-reenable-controls-native-vim',
-    'native-normal-escape-preserves-search-value',
-    'native-leading-newline-line-start',
-    'stale-vim-disable-request-rejected',
-    'vim-rearms-after-native-reattachment',
-    'hidden-authorized-page-read-type-and-press-work',
-    'duplicate-page-ids-have-distinct-native-views',
-    'return-requires-fresh-owner-placement',
-    'same-id-reincarnation-rejects-stale-placement',
-    'departure-to-null-removes-replacement',
-    'pending-reconcile-stop-detaches-to-b',
-    'pending-reconcile-stop-detaches-to-null',
-    'pending-reconcile-stop-all-detaches-to-b',
-    'pending-reconcile-stop-all-detaches-to-null',
+          ...(toolbarAcceptance
+            ? [
+                'production-host-and-browser-activations',
+                'queued-native-action-expires-on-tab-hide',
+                'queued-action-expires-across-return',
+                'hidden-native-input-and-placement-are-inert',
+                'hidden-popup-keeps-data-without-presentation',
+                'stopping-a-preserves-b-native-view-and-capabilities',
+                'departure-detaches-synchronously',
+                'displayed-page-attached-with-loaded-content',
+                'native-browser-vim-mode-navigation-insertion-undo-redo',
+                'production-browser-surface-I-A-native-insertion-and-actual-mode',
+                'native-same-vault-two-pane-tabs-own-input-and-mode-independently',
+                'production-preference-disables-and-reenables-native-page',
+                'production-overlay-restores-vim-with-fresh-attachment',
+                'plaintext-host-rearms-after-overlay',
+                'production-visible-hide-return-rearms-field',
+                'plaintext-host-rearms-after-hide-return',
+                'native-shell-zoom-keeps-mode-and-field-input',
+                'native-reload-rejects-old-document-arm-and-reconfigures',
+                'plaintext-host-rearms-after-reload',
+                'native-navigation-reinitializes-current-document',
+                'plaintext-host-rearms-after-navigation',
+                'native-A-B-A-identical-tab-ids-retain-own-vim-context',
+                'native-same-id-replacement-gets-fresh-vim-owner',
+                'native-composition-preserves-unmodified-insert-path',
+                'production-toolbar-native-interaction-light-dark-and-trusted-recording',
+                'native-rich-contenteditable-recorded',
+                'native-baseline-and-vim-rich-link-start-affinity-undo-redo',
+                'plaintext-host-replacement-releases-old-owner',
+              ]
+            : []),
+          'native-h-l-w-b-e-0-caret-dollar-and-i-a',
+          'native-shift-selection-preserved-in-vim-normal-mode',
+          'native-same-document-navigation-rearms-insert-mode',
+          'native-aborted-navigation-recovers-surviving-document-configuration',
+          'native-grapheme-safe-horizontal-motion',
+          'native-j-k-vertical-column',
+          'unsupported-password-number-readonly-contenteditable-shadow-frame-passthrough',
+          'native-plaintext-only-motion-insert-and-native-undo-redo',
+          'native-plaintext-selection-i-keeps-insert-before-selection-behavior',
+          'native-rich-inline-motion-insert-undo-redo-preserves-formatting-and-link',
+          'rich-css-loss-and-restoration-retains-native-key-ownership',
+          'rich-href-loss-and-restoration-retains-native-key-ownership',
+          'rich-inert-transition-releases-native-key-ownership',
+          'native-rich-inline-ime-composition-retains-formatting-and-link',
+          'native-plaintext-ime-composition-remains-native',
+          'plaintext-live-preference-off-passes-native-typing',
+          'plaintext-shape-loss-and-restoration-invalidates-normal-ownership',
+          'plaintext-outside-selection-escape-passthrough-and-reset',
+          'native-empty-host-and-contenteditable-disable-passthrough',
+          'native-ime-composition-in-insert-mode',
+          'preference-disable-reenable-controls-native-vim',
+          'native-normal-escape-preserves-search-value',
+          'native-leading-newline-line-start',
+          'stale-vim-disable-request-rejected',
+          'vim-rearms-after-native-reattachment',
+          'hidden-authorized-page-read-type-and-press-work',
+          'duplicate-page-ids-have-distinct-native-views',
+          'return-requires-fresh-owner-placement',
+          'same-id-reincarnation-rejects-stale-placement',
+          'departure-to-null-removes-replacement',
+          'pending-reconcile-stop-detaches-to-b',
+          'pending-reconcile-stop-detaches-to-null',
+          'pending-reconcile-stop-all-detaches-to-b',
+          'pending-reconcile-stop-all-detaches-to-null',
+        ]),
     'leased-real-app-frame-owner-a-resources',
+    'production-injected-app-hints-filter-and-activate-a',
+    'production-injected-app-hints-filter-and-activate-b',
+    'production-command-runner-waits-for-command-script-a',
+    'production-command-runner-waits-for-command-script-b',
     'actual-vault-app-screenshot-a',
     'native-svg-replacement-revokes-before-subsequent-capability-use-a',
     'revoked-app-lease-denied-a',
     'leased-real-app-frame-owner-b-resources',
     'actual-vault-app-screenshot-b',
     'production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-a',
+    'production-app-frame-native-f-hint-label-keys-activate-once-through-host-layer',
+    'production-app-frame-vim-off-preserves-native-guest-input-typing',
+    'production-app-frame-mutation-overlay-hidden-show-reload-focus-cycle-discards-stale-hints',
+    'production-app-frame-vim-disable-removes-native-hint-labels',
     'production-app-frame-wrong-source-message-has-no-capability-side-effect',
     'production-app-frame-old-nonce-after-replacement-has-no-side-effect-or-reply',
     'production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-b',
@@ -335,6 +416,7 @@ try {
     result.checks.length >= (toolbarAcceptance ? 47 : 30),
     'native smoke produced too few assertions',
   )
+  if (appHintsOnly) assert.equal(result.checks.length, 33, 'app hint smoke must pass all 33 checks')
   let recording
   if (toolbarAcceptance) {
     recording = JSON.parse(await readFile(join(evidence, 'recording.json'), 'utf8'))
@@ -376,19 +458,104 @@ try {
   assert.deepEqual(
     result.screenshots,
     [
-      'browser-before.png',
-      'browser-dark.png',
-      'shell-before.png',
-      'browser-after.png',
+      ...(appHintsOnly
+        ? []
+        : ['browser-before.png', 'browser-dark.png', 'shell-before.png', 'browser-after.png']),
       'vault-app-a.png',
       'vault-app-b.png',
       'app-frame-read-a.png',
       'app-frame-read-b.png',
+      'app-hints-light.png',
+      'app-hints-dark.png',
     ],
     'native smoke screenshot list is incomplete',
   )
   for (const name of result.screenshots) {
     assert((await stat(join(evidence, name))).size > 0, `missing screenshot: ${name}`)
+  }
+  if (appHintVideo) {
+    const metadataPath = join(evidence, 'app-hints-recording.json')
+    const recording = JSON.parse(await readFile(metadataPath, 'utf8'))
+    assert.equal(recording.interactionCompleted, true)
+    assert.deepEqual(recording.finalOutcomes, {
+      actionCount: '1',
+      inputValue: 'native',
+      vimEnabled: false,
+      hintsVisible: false,
+    })
+    assert.equal(recording.source, env.HOLI_553_SHA)
+    assert.equal(recording.sourceHash, env.HOLI_509_SOURCE_HASH)
+    assert.equal(recording.worktree, env.HOLI_553_WORKTREE)
+    assert.equal(recording.worktreeStatus, env.HOLI_553_STATUS)
+    assert(recording.frames >= 80 && recording.frames <= 900, 'implausible owned frame count')
+    assert(recording.elapsedMs >= 10_000 && recording.elapsedMs <= 90_000)
+    const videoPath = join(evidence, 'app-hints-interaction.mp4')
+    const video = spawnSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-f',
+        'concat',
+        '-safe',
+        '1',
+        '-i',
+        join(root, 'app-hint-frames/frames.ffconcat'),
+        '-fps_mode',
+        'vfr',
+        '-c:v',
+        'libx264',
+        '-crf',
+        '25',
+        '-pix_fmt',
+        'yuv420p',
+        '-movflags',
+        '+faststart',
+        videoPath,
+      ],
+      { encoding: 'utf8', timeout: 60_000 },
+    )
+    assert.equal(video.status, 0, `owned video encoding failed: ${video.error ?? video.stderr}`)
+    const size = (await stat(videoPath)).size
+    assert(size > 0 && size <= 10 * 1024 * 1024, 'owned video must fit the 10 MB attachment limit')
+    const probe = JSON.parse(
+      execFileSync(
+        'ffprobe',
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-count_frames',
+          '-show_entries',
+          'stream=width,height,nb_read_frames,duration:format=duration',
+          '-of',
+          'json',
+          videoPath,
+        ],
+        { encoding: 'utf8', timeout: 10_000 },
+      ),
+    )
+    const stream = probe.streams[0]
+    assert(stream && Number(stream.nb_read_frames) >= recording.frames)
+    assert(Number(stream.nb_read_frames) <= recording.frames + 1)
+    assert(Math.abs(Number(probe.format.duration) * 1000 - recording.elapsedMs) < 250)
+    assert.equal(stream.width, recording.dimensions.width)
+    assert.equal(stream.height, recording.dimensions.height)
+    await writeFile(
+      metadataPath,
+      JSON.stringify(
+        {
+          ...recording,
+          checks: result.checks,
+          screenshots: result.screenshots,
+          electron: result.electron,
+          video: { filename: 'app-hints-interaction.mp4', bytes: size, ...probe },
+        },
+        null,
+        2,
+      ),
+    )
+    console.log(`PASS owned app hint video: ${recording.frames} frames, ${size} bytes`)
   }
   if (toolbarAcceptance) {
     for (const name of ['ui-light.png', 'ui-dark.png'])
@@ -416,7 +583,7 @@ try {
         '+faststart',
         recordingPath,
       ],
-      { encoding: 'utf8' },
+      { encoding: 'utf8', timeout: 60_000 },
     )
     assert.equal(video.status, 0, `video encoding failed: ${video.stderr}`)
     assert((await stat(recordingPath)).size > 0, 'video artifact is empty')
@@ -442,7 +609,17 @@ try {
     await rm(root, { recursive: true, force: true })
     await writeFile(
       join(evidence, 'cleanup.json'),
-      JSON.stringify({ runtimeRemoved: true, root, launcherPid: child?.pid ?? null }, null, 2),
+      JSON.stringify(
+        {
+          runtimeRemoved: true,
+          ownedAppRemoved: true,
+          root,
+          ownedApp,
+          launcherPid: child?.pid ?? null,
+        },
+        null,
+        2,
+      ),
     )
   }
 }

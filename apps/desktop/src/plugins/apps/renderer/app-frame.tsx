@@ -56,6 +56,7 @@ import { appCodeGenerationsAtom, appOpensAtom, appPathsAtom } from './apps'
 import { commandsChangedAtom } from './commands'
 import { appsCap } from './apps-cap'
 import { hostBridgeMessage } from './bridge-host'
+import { useAppHints } from './use-app-hints'
 
 /** What each affordance reads, for the approval dialog. */
 const AFFORDANCE_TEXT: Record<AppAffordance, string> = {
@@ -351,27 +352,23 @@ function AppLoad({
     remoteGeneration.current += 1
   }, [activeRemote])
   const name = appName(path)
+  const [loaded, setLoaded] = useState<string | null>(null)
   // Every message from the frame we mounted is answered as any frame of
   // this app's code is (`bridge-host.ts`), with the bundle it was mounted
   // with and the vault open now.
   useLayoutEffect(() => {
     const activation = remoteGeneration.current
+    const frame = frameRef.current
+    if (!live.current || frame === null || mainLease === null) return
+    const target = frame.contentWindow
+    const current = () =>
+      live.current &&
+      remoteGeneration.current === activation &&
+      store.get(activeRemoteAtom) === remote &&
+      frameRef.current === frame &&
+      frame.contentWindow === target
     const onMessage = (event: MessageEvent): void => {
-      const frame = frameRef.current
-      if (
-        !live.current ||
-        frame === null ||
-        event.source !== frame.contentWindow ||
-        mainLease === null
-      )
-        return
-      const target = frame.contentWindow
-      const current = () =>
-        live.current &&
-        remoteGeneration.current === activation &&
-        store.get(activeRemoteAtom) === remote &&
-        frameRef.current === frame &&
-        frame.contentWindow === target
+      if (event.source !== target || !current()) return
       hostBridgeMessage(event.data, {
         store,
         remote,
@@ -394,6 +391,31 @@ function AppLoad({
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [store, remote, path, mainLease])
+
+  const authorizeHints = useCallback(async () => {
+    if (!mainLease) return false
+    try {
+      return await appsCap.frameLeaseValid(remote, {
+        bundle: path,
+        token: mainLease.token,
+        nonce: mainLease.nonce,
+      })
+    } catch {
+      return false
+    }
+  }, [remote, path, mainLease])
+  useAppHints({
+    frame: frameRef.current,
+    lease: mainLease,
+    remote,
+    bundle: path,
+    visible,
+    gateOpen,
+    loaded,
+    activeRemote,
+    store,
+    authorize: authorizeHints,
+  })
 
   // Push: post a topic whenever its signature changes, never on mount (the
   // app reads what it needs when it starts). Sent to whatever document the
@@ -487,7 +509,6 @@ function AppLoad({
     }
   }, [expiresAt, recheck])
 
-  const [loaded, setLoaded] = useState<string | null>(null)
   usePreviewCapture(frameRef, path, gateOpen ? loaded : null, visible, mainLease)
 
   const decide = (allow: boolean): void => {

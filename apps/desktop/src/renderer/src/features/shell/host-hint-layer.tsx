@@ -18,6 +18,7 @@ import { hostHintKeyAtom } from '@/state/shortcuts'
 import { useShortcutHandlers } from '@/hooks/use-shortcuts'
 
 interface HintSession {
+  id: number
   targets: HostHintTarget[]
   prefix: string
   adapter?: HostHintAdapter
@@ -32,33 +33,45 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
   const [session, setSession] = useState<HintSession | null>(null)
   const current = useRef<HintSession | null>(null)
   const unsubscribe = useRef<(() => void) | null>(null)
+  const preparation = useRef(0)
+  const nextSession = useRef(0)
+  const activating = useRef<number | null>(null)
+  const pendingPreparation = useRef<HostHintAdapter[]>([])
   const change = useCallback(
     (next: HintSession | null) => {
-      if (next !== current.current) {
+      const previous = current.current
+      const sameRequest = next !== null && previous !== null && next.id === previous.id
+      if (!sameRequest) {
+        preparation.current += 1
+        for (const adapter of pendingPreparation.current) adapter.cancelPrepare?.()
+        pendingPreparation.current = []
+        activating.current = null
         unsubscribe.current?.()
         unsubscribe.current = null
       }
       current.current = next
-      const sources = new Set([
-        ...(next?.adapters ?? []),
-        ...(next?.adapter ? [next.adapter] : []),
-        ...(next?.targets.flatMap((target) => (target.adapter ? [target.adapter] : [])) ?? []),
-      ])
-      const disposers = [...sources]
-        .filter((source) => source.subscribe)
-        .map((source) =>
-          source.subscribe!(
-            () => change(null),
-            (event) => {
-              const route = store.get(hostHintKeyAtom)
-              if (!route?.(event)) return false
-              event.preventDefault()
-              event.stopImmediatePropagation()
-              return true
-            },
-          ),
-        )
-      if (disposers.length) unsubscribe.current = () => disposers.forEach((dispose) => dispose())
+      if (!sameRequest) {
+        const sources = new Set([
+          ...(next?.adapters ?? []),
+          ...(next?.adapter ? [next.adapter] : []),
+          ...(next?.targets.flatMap((target) => (target.adapter ? [target.adapter] : [])) ?? []),
+        ])
+        const disposers = [...sources]
+          .filter((source) => source.subscribe)
+          .map((source) =>
+            source.subscribe!(
+              () => change(null),
+              (event) => {
+                const route = store.get(hostHintKeyAtom)
+                if (!route?.(event)) return false
+                event.preventDefault()
+                event.stopImmediatePropagation()
+                return true
+              },
+            ),
+          )
+        if (disposers.length) unsubscribe.current = () => disposers.forEach((dispose) => dispose())
+      }
       setSession(next)
     },
     [store],
@@ -78,9 +91,33 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         ) ??
         document.body
       const adapters = adapter === undefined ? captureHostHintAdapters(root) : [adapter]
-      const targets = discoverHostHintTargets(root, adapter)
-      change(
-        targets.length || adapters.length ? { targets, prefix: '', adapter, root, adapters } : null,
+      const pending = adapters.filter((candidate) => candidate.prepare)
+      if (pending.length === 0) {
+        const targets = discoverHostHintTargets(root, adapter)
+        change(
+          targets.length || adapters.length
+            ? { id: ++nextSession.current, targets, prefix: '', adapter, root, adapters }
+            : null,
+        )
+        return
+      }
+      change(null)
+      const request = ++preparation.current
+      pendingPreparation.current = pending
+      void Promise.all(pending.map((candidate) => candidate.prepare!())).then(
+        () => {
+          if (preparation.current !== request || !root.isConnected) return
+          pendingPreparation.current = []
+          const targets = discoverHostHintTargets(root, adapter)
+          change(
+            targets.length || adapters.length
+              ? { id: ++nextSession.current, targets, prefix: '', adapter, root, adapters }
+              : null,
+          )
+        },
+        () => {
+          if (preparation.current === request) change(null)
+        },
       )
     },
     [change],
@@ -160,7 +197,20 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
     }
     const onKey = (event: KeyboardEvent): boolean => {
       const active = current.current
-      if (!active) return false
+      if (!active) {
+        if (
+          event.key === 'Escape' ||
+          event.isComposing ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.altKey
+        ) {
+          preparation.current += 1
+          for (const adapter of pendingPreparation.current) adapter.cancelPrepare?.()
+          pendingPreparation.current = []
+        }
+        return false
+      }
       if (!hostHintsUnchanged(active.targets, active.adapter, active.root)) {
         cancel()
         return (
@@ -187,6 +237,10 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         return true
       }
       if (event.repeat) return true
+      if (activating.current === active.id) {
+        cancel()
+        return true
+      }
       if (event.key === 'Backspace') {
         change({ ...active, prefix: active.prefix.slice(0, -1) })
         return true
@@ -199,8 +253,12 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       const matches = active.targets.filter((target) => target.key.startsWith(prefix))
       const found = matches.find((target) => target.key === prefix)
       if (found) {
-        cancel()
-        activateHostHint(found)
+        if (activating.current === active.id) return true
+        activating.current = active.id
+        void Promise.resolve(activateHostHint(found)).finally(() => {
+          if (current.current?.id === active.id) change(null)
+          if (activating.current === active.id) activating.current = null
+        })
       } else if (matches.length) change({ ...active, prefix })
       else cancel()
       return true
@@ -230,7 +288,8 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         })
       )
         return
-      if (!hostHintsUnchanged(current.current.targets)) cancel()
+      const active = current.current
+      if (!hostHintsUnchanged(active.targets, active.adapter, active.root)) cancel()
     })
     observer.observe(document.body, {
       childList: true,
@@ -239,6 +298,9 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       characterData: true,
     })
     return () => {
+      preparation.current += 1
+      for (const adapter of pendingPreparation.current) adapter.cancelPrepare?.()
+      pendingPreparation.current = []
       unsubscribe.current?.()
       unsubscribe.current = null
       current.current = null

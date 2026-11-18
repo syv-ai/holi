@@ -13,6 +13,8 @@ import { PDF_NAMESPACES, pdfCapabilities } from '../main/capabilities'
 import { createSignatureStore } from '../main/signatures'
 import { resolveTypstBin } from '../main/typst-bin'
 import plainTemplateTyp from '../main/vault/once/.holi/document-templates/plain/template.typ?raw'
+import reportTemplateJson from '../main/vault/once/.holi/document-templates/report/template.json?raw'
+import reportTemplateTyp from '../main/vault/once/.holi/document-templates/report/template.typ?raw'
 
 const TEMPLATE_FILES = {
   '.holi/document-templates/plain/template.json': JSON.stringify({
@@ -83,20 +85,71 @@ async function fakeTypst(): Promise<string> {
 }
 
 describe('pdf capabilities', () => {
-  it('templates returns each template with its declared fields', async () => {
+  it('templates returns each template with its declared fields through both doors', async () => {
     const { run } = await rig(TEMPLATE_FILES)
-    expect(await run('pdf.templates')).toEqual([
+    for (const door of ['ui', 'cli'] as const) {
+      expect(await run('pdf.templates', undefined, door)).toEqual([
+        {
+          name: 'Plain',
+          slug: 'plain',
+          description: 'Clean.',
+          fields: [
+            { key: 'date', label: 'Date', type: 'text', required: false },
+            { key: 'recipient', label: 'Recipient', type: 'text', required: true },
+          ],
+          warnings: [],
+        },
+      ])
+    }
+  })
+
+  it('filters reintroduced obsolete templates from UI and CLI and refuses rendering them', async () => {
+    const files = {
+      ...TEMPLATE_FILES,
+      '.holi/document-templates/legacy/template.json': JSON.stringify({
+        name: 'Syv.ai report',
+        fields: [],
+      }),
+      '.holi/document-templates/case/template.json': JSON.stringify({
+        name: 'syv.ai report',
+        fields: [],
+      }),
+      'note.md': '# Note',
+    }
+    const { run } = await rig(files, true)
+    for (const door of ['ui', 'cli'] as const) {
+      const listed = (await run('pdf.templates', undefined, door)) as { name: string }[]
+      expect(listed.map(({ name }) => name)).toContain('syv.ai report')
+      expect(listed.map(({ name }) => name)).not.toContain('Syv.ai report')
+      await expect(
+        run('pdf.render', { path: 'note.md', template: 'legacy' }, door),
+      ).rejects.toThrow(/template legacy/)
+      const output = join(base, `${door}.pdf`)
+      await run(
+        'pdf.render',
+        { path: 'note.md', template: 'plain', out: output, meta: { recipient: 'ACME' } },
+        door,
+      )
+      expect((await readFile(output)).toString()).toContain('%PDF-1.7')
+    }
+  })
+
+  it('renders the restored Report through the capability with the local Typst fixture', async () => {
+    const { root, run } = await rig(
       {
-        name: 'Plain',
-        slug: 'plain',
-        description: 'Clean.',
-        fields: [
-          { key: 'date', label: 'Date', type: 'text', required: false },
-          { key: 'recipient', label: 'Recipient', type: 'text', required: true },
-        ],
-        warnings: [],
+        '.holi/document-templates/report/template.json': reportTemplateJson,
+        '.holi/document-templates/report/template.typ': reportTemplateTyp,
+        'note.md': '# Restored report\n',
       },
-    ])
+      true,
+    )
+    const out = join(base, 'report.pdf')
+    const result = await run('pdf.render', { path: 'note.md', template: 'report', out })
+    expect(result).toMatchObject({ pdfPath: out, vaultPath: null, bytes: expect.any(Number) })
+    expect((await readFile(out)).toString()).toContain('%PDF-1.7')
+    expect(await readFile(join(root, '.holi/document-templates/report/template.typ'), 'utf8')).toBe(
+      reportTemplateTyp,
+    )
   })
 
   it('keeps the signatures made in the viewer, outside the vault', async () => {

@@ -2,3 +2,7 @@ module HoliNativeFiles {
   header "HoliNativeFiles.h"
   export *
 }
+module HoliNativeGit {
+  header "HoliNativeGit.h"
+  export *
+}

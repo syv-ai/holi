@@ -248,6 +248,10 @@ export interface GitRepo {
   /** The current commit, or **null** on an unborn branch (no commits yet): a
    *  real state of a real vault, not an error. */
   head(): Promise<string | null>
+  /** Local-only, bounded HEAD capture for historical queries. Unborn is distinct from unavailable. */
+  historicalHead(): Promise<
+    { kind: 'commit'; sha: string } | { kind: 'unborn' } | { kind: 'unavailable' }
+  >
   /** The paths changed across `from..to`, with line counts. Missing or invalid
    *  history is empty; an exhausted execution budget throws GitResourceError. */
   rangeFiles(
@@ -259,6 +263,16 @@ export interface GitRepo {
    * `path` follows a file through renames; a `folder` is every commit under it,
    * which `--follow` (one file only) cannot walk. */
   log(opts?: { path?: string; folder?: boolean; limit?: number }): Promise<Commit[]>
+  /** Bounded reachable commit/path changes between exact endpoints. */
+  revisionChanges(
+    from: string,
+    to: string,
+    path: string,
+  ): Promise<{
+    complete: boolean
+    reason: 'ok' | 'history-unavailable' | 'limit'
+    changes: { sha: string; path: string }[]
+  }>
   /** A file's content at a past commit, for the history preview/restore
    * (`features/history.md`). Rejects when `path` is absent at `sha` —
    * e.g. a commit from before the file was renamed (`show` reads the given name,
@@ -1090,6 +1104,114 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return (birth === -1 ? commits : commits.slice(0, birth + 1)).map((c) => c.commit)
   }
 
+  async function revisionChanges(from: string, to: string, path: string) {
+    const incomplete = (reason: 'history-unavailable' | 'limit') => ({
+      complete: false,
+      reason,
+      changes: [] as { sha: string; path: string }[],
+    })
+    if (
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(from) ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(to)
+    )
+      return incomplete('history-unavailable')
+    const started = Date.now()
+    const deadline = started + 5000
+    const outputLimit = 8 * 1024 * 1024
+    let outputBytes = 0
+    const git = async (args: string[], maxOutput = outputLimit): Promise<GitOutcome> => {
+      const timeout = deadline - Date.now()
+      const remainingOutput = outputLimit - outputBytes
+      if (timeout <= 0) throw new GitResourceError('time')
+      if (remainingOutput <= 0) throw new GitResourceError('output')
+      const result = await runGitOnce(
+        root,
+        ['--no-replace-objects', '--literal-pathspecs', ...args],
+        {
+          ...opts,
+          env: {
+            ...opts.env,
+            GIT_NO_REPLACE_OBJECTS: '1',
+            GIT_NO_LAZY_FETCH: '1',
+            GIT_TERMINAL_PROMPT: '0',
+          },
+          executionBudget: {
+            maxBuffer: Math.min(remainingOutput, maxOutput),
+            timeout,
+          },
+        },
+      )
+      outputBytes += Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)
+      return result
+    }
+    try {
+      const base = await git(['cat-file', '-e', `${from}^{commit}`])
+      const tip = await git(['cat-file', '-e', `${to}^{commit}`])
+      const shallow = await git(['rev-parse', '--is-shallow-repository'])
+      if (!base.ok || !tip.ok || !shallow.ok || shallow.stdout.trim() !== 'false')
+        return incomplete('history-unavailable')
+      const ancestry = await git(['merge-base', '--is-ancestor', from, to])
+      if (!ancestry.ok) return incomplete('history-unavailable')
+      // 201 distinguishes exactly-at-limit from over-limit without walking an
+      // unbounded history. The output limit is cumulative across every command.
+      const list = await git(['rev-list', '--topo-order', '--max-count=201', to, `^${from}`])
+      if (!list.ok) return incomplete('history-unavailable')
+      const commits = list.stdout.split(/\r?\n/).filter(Boolean)
+      if (commits.length > 200) return incomplete('limit')
+      const changes: { sha: string; path: string }[] = []
+      const baseArgs = [
+        'diff-tree',
+        '--no-commit-id',
+        '--raw',
+        '-z',
+        '--no-renames',
+        '--no-ext-diff',
+        '-m',
+        '-r',
+        '--root',
+      ]
+      for (const sha of commits) {
+        const args = [...baseArgs, sha]
+        // An empty scope means the entire tree. Do not pass an empty pathspec,
+        // which Git interprets as a literal empty filename.
+        if (path !== '') args.push('--', path)
+        const result = await git(args)
+        if (!result.ok) return incomplete('history-unavailable')
+        // Raw records retain both modes without reading blobs. Exclude a path if
+        // either historical side is a symlink or gitlink, even when absent now.
+        const records = result.stdout.split('\0')
+        const changedPaths = new Set<string>()
+        for (let i = 0; i < records.length;) {
+          const header = records[i++]
+          if (!header) continue
+          const fields = header.trimStart().split(/\s+/)
+          const oldMode = fields[0]?.slice(1)
+          const newMode = fields[1]
+          const changed = records[i++]
+          if (!changed) break
+          if (
+            oldMode === '120000' ||
+            newMode === '120000' ||
+            oldMode === '160000' ||
+            newMode === '160000'
+          )
+            continue
+          changedPaths.add(changed)
+        }
+        for (const changed of changedPaths) {
+          changes.push({ sha, path: changed })
+          if (changes.length > 2000) return incomplete('limit')
+        }
+      }
+      return { complete: true, reason: 'ok' as const, changes }
+    } catch (error) {
+      if (error instanceof GitResourceError) return incomplete('limit')
+      // Git may disappear, fail to spawn, or encounter a corrupt/missing object
+      // between validation and traversal. None of these is an empty history.
+      return incomplete('history-unavailable')
+    }
+  }
+
   /** A file's content at a commit. Unlike `runGit`, this must **not** trim:
    * restore writes the result back verbatim, and a stripped trailing newline is
    * a real edit. A budgeted read throws typed historical-object, missing-path
@@ -1204,37 +1326,90 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       })
   }
 
-  async function head(): Promise<string | null> {
-    const res = await tryGit(root, ['rev-parse', '--verify', 'HEAD'], opts)
-    if (res.ok) {
-      const sha = res.stdout.trim()
-      if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
-        const object = await tryGit(root, ['cat-file', '-e', `${sha}^{commit}`], opts)
-        if (object.ok) return sha
+  async function probeHead(readOpts: RunOpts): Promise<{
+    kind: 'commit' | 'unborn' | 'unavailable'
+    sha?: string
+    ref: GitOutcome
+  }> {
+    const budget = readOpts.executionBudget
+    const deadline = budget === undefined ? undefined : Date.now() + budget.timeout
+    let outputRemaining = budget?.maxBuffer
+    const run = async (args: string[]): Promise<GitOutcome> => {
+      let commandOpts = readOpts
+      if (budget !== undefined) {
+        const timeout = (deadline ?? 0) - Date.now()
+        if (timeout <= 0) throw new GitResourceError('time')
+        commandOpts = {
+          ...readOpts,
+          executionBudget: {
+            timeout,
+            maxBuffer: Math.max(1, outputRemaining ?? budget.maxBuffer),
+          },
+        }
       }
+      const result = await tryGit(root, args, commandOpts)
+      if (outputRemaining !== undefined) {
+        outputRemaining -= Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)
+        if (outputRemaining < 0) throw new GitResourceError('output')
+      }
+      return result
+    }
+
+    const ref = await run(['rev-parse', '--verify', 'HEAD'])
+    if (ref.ok) {
+      const sha = ref.stdout.trim()
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) return { kind: 'unavailable', ref }
+      const object = await run(['cat-file', '-e', `${sha}^{commit}`])
+      return object.ok ? { kind: 'commit', sha, ref } : { kind: 'unavailable', ref }
+    }
+
+    // A missing HEAD is a pending baseline only for a valid symbolic branch
+    // whose ref does not exist yet. All other rev-parse failures are unavailable.
+    const symbolic = await run(['symbolic-ref', '--quiet', 'HEAD'])
+    const workTree = await run(['rev-parse', '--is-inside-work-tree'])
+    if (!symbolic.ok || !workTree.ok || workTree.stdout.trim() !== 'true')
+      return { kind: 'unavailable', ref }
+    const branch = symbolic.stdout.trim()
+    if (!/^refs\/heads\/[^\s]+$/.test(branch)) return { kind: 'unavailable', ref }
+    const valid = await run(['check-ref-format', branch])
+    const refExists = await run(['show-ref', '--verify', '--quiet', branch])
+    return valid.ok && !refExists.ok && refExists.code === 1
+      ? { kind: 'unborn', ref }
+      : { kind: 'unavailable', ref }
+  }
+
+  async function historicalHead(): Promise<
+    { kind: 'commit'; sha: string } | { kind: 'unborn' } | { kind: 'unavailable' }
+  > {
+    try {
+      const result = await probeHead({
+        ...opts,
+        env: {
+          ...opts.env,
+          GIT_NO_REPLACE_OBJECTS: '1',
+          GIT_NO_LAZY_FETCH: '1',
+          GIT_TERMINAL_PROMPT: '0',
+        },
+        executionBudget: { maxBuffer: 65536, timeout: 1000 },
+      })
+      return result.kind === 'commit' ? { kind: 'commit', sha: result.sha! } : { kind: result.kind }
+    } catch {
+      return { kind: 'unavailable' }
+    }
+  }
+
+  async function head(): Promise<string | null> {
+    const result = await probeHead(opts)
+    if (result.kind === 'commit') return result.sha!
+    if (result.kind === 'unborn') return null
+    if (result.ref.ok) {
       throw new GitError(
         'Could not read repository HEAD.',
         1,
         'HEAD does not name an available commit.',
       )
     }
-
-    // A missing HEAD is a pending baseline only for a valid symbolic branch
-    // whose ref does not exist yet. All other rev-parse failures are errors.
-    const symbolic = await tryGit(root, ['symbolic-ref', '--quiet', 'HEAD'], opts)
-    const workTree = await tryGit(root, ['rev-parse', '--is-inside-work-tree'], opts)
-    if (
-      symbolic.ok &&
-      workTree.ok &&
-      workTree.stdout.trim() === 'true' &&
-      /^refs\/heads\/[^\s]+$/.test(symbolic.stdout.trim())
-    ) {
-      const branch = symbolic.stdout.trim()
-      const valid = await tryGit(root, ['check-ref-format', branch], opts)
-      const ref = await tryGit(root, ['show-ref', '--verify', '--quiet', branch], opts)
-      if (valid.ok && !ref.ok && ref.code === 1) return null
-    }
-    throw new GitError('Could not read repository HEAD.', res.code, res.stderr)
+    throw new GitError('Could not read repository HEAD.', result.ref.code, result.ref.stderr)
   }
 
   async function gitObjectType(id: string, readOpts: RunOpts): Promise<'commit' | 'tree' | null> {
@@ -1788,7 +1963,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     commit,
     commitFiles,
     head,
+    historicalHead,
     rangeFiles,
+    revisionChanges,
     commitAll,
     commitFileNoVerify,
     excludeLocally,
