@@ -48,7 +48,8 @@ let expectingDiskRefusal = false
 let expectedDiskRefusalErrors = 0
 const rendererErrors: string[] = []
 const rendererExits: string[] = []
-const expectedDiskRefusalMessage = '[flush] buffer failed: Error: fixture disk refusal'
+const expectedDiskRefusalMessage =
+  "[flush] buffer failed: Error: Error invoking remote method 'rich-text-vim:write': Error: fixture disk refusal"
 app.setName('Holi rich text Vim acceptance 516')
 app.setPath('userData', join(root, 'userData'))
 app.setPath('sessionData', join(root, 'sessionData'))
@@ -178,8 +179,15 @@ async function run() {
       return
     }
     if (method !== 'Runtime.consoleAPICalled' || params.type !== 'error') return
-    const args = params.args as { value?: unknown; description?: string }[] | undefined
-    const text = (args ?? []).map((arg) => arg.description ?? String(arg.value ?? '')).join(' ')
+    const args = params.args as
+      { value?: unknown; description?: string; subtype?: string }[] | undefined
+    const text = (args ?? [])
+      .map((arg) =>
+        arg.subtype === 'error'
+          ? (arg.description?.split('\n', 1)[0] ?? '')
+          : (arg.description ?? String(arg.value ?? '')),
+      )
+      .join(' ')
     if (expectingDiskRefusal && text === expectedDiskRefusalMessage) {
       expectedDiskRefusalErrors++
       return
