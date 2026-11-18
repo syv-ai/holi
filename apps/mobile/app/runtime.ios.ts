@@ -7,6 +7,7 @@ import { createVaultStorage } from './vault-storage'
 import { stagingDirectory } from './storage-staging'
 import { runRestartPhase } from './storage-restart.ios'
 import { runMoveRestart } from './move-restart.ios'
+import { runGitCompatibilityCheck } from './compatibility-check.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -47,6 +48,7 @@ export async function checkCompatibility(): Promise<string> {
   let evidence: Record<string, unknown>
   let rawNames: unknown
   let prefixNamespace: Record<string, unknown>
+  let git: Awaited<ReturnType<typeof runGitCompatibilityCheck>> | undefined
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
       throw new Error('Invalid compatibility run identity')
@@ -75,6 +77,9 @@ export async function checkCompatibility(): Promise<string> {
       persist({ corpus, recovery })
       return 'Interrupted save recovery passed'
     }
+    phase = 'native-git-transport'
+    operation = 'runGitCompatibilityCheck'
+    git = await runGitCompatibilityCheck(runId)
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
@@ -247,6 +252,7 @@ export async function checkCompatibility(): Promise<string> {
     evidence = {
       corpus,
       storage,
+      git,
       prefixNamespace,
       nativeFilenameSpellings: true,
       nativeFilenameRoots: rawNames,
@@ -259,6 +265,7 @@ export async function checkCompatibility(): Promise<string> {
       failure: { phase, operation },
       ...(storageRoot ? { storageRoot } : {}),
       ...(secondRoot ? { secondRoot } : {}),
+      ...(git ? { git } : {}),
     }
   }
   persist({ rawNames, ...evidence })
