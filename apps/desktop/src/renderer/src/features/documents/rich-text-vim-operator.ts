@@ -14,8 +14,8 @@ import {
 } from './rich-text-vim-range'
 import type { VimRegister } from './rich-text-vim-register'
 
-export type VimOperator = 'd' | 'c' | 'y'
-export type VimOperatorTarget =
+type VimOperator = 'd' | 'c' | 'y'
+type VimOperatorTarget =
   | {
       kind: 'motion'
       origin: number

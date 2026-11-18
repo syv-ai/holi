@@ -213,7 +213,7 @@ try {
   )
   const guardExecutable = join(root, 'clipboard-guard')
   const compiledGuard = spawnSync(
-    'swiftc',
+    '/usr/bin/swiftc',
     [join(desktop, 'scripts/rich-text-vim-clipboard-guard.swift'), '-o', guardExecutable],
     { encoding: 'utf8' },
   )
