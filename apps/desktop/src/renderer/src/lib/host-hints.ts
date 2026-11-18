@@ -1,3 +1,4 @@
+import type { HintPresentation } from '@holi/shared'
 import { flushSync } from 'react-dom'
 
 const PRESSABLE = [
@@ -44,9 +45,13 @@ export function registerHostHintSurface(root: ShadowRoot, owner: HTMLElement): (
 
 /** A request-scoped target source. It exists only for the active hint session. */
 export interface HostHintAdapter {
-  /** This source is a guest surface; its request must never enumerate host chrome. */
-  guestOnly?: boolean
+  /** An exclusive adapter owns the entire request; no host chrome is included. */
+  exclusive?: boolean
   discover(): readonly HostHintAdapterTarget[]
+  /** Optional request-scoped asynchronous discovery; late work is discarded by the caller. */
+  prepare?(): Promise<void>
+  /** Abort any unresolved request-scoped preparation. */
+  cancelPrepare?(): void
   /** Validate the request lifetime as well as target geometry; called even with no links. */
   unchanged(targets: readonly HostHintTarget[]): boolean
   /** Capture the current terminal revision for this hint request. */
@@ -55,7 +60,7 @@ export interface HostHintAdapter {
   subscribe?(invalidate: () => void, routeKey?: (event: KeyboardEvent) => boolean): () => void
   /** Signal a synchronous ownership transition before a source is removed. */
   invalidate?(): void
-  activate(target: HostHintTarget): boolean
+  activate(target: HostHintTarget): boolean | Promise<boolean>
 }
 
 export interface HostHintAdapterTarget {
@@ -66,33 +71,55 @@ export interface HostHintAdapterTarget {
   token: unknown
 }
 
-const registeredAdapters = new Map<HTMLElement, HostHintAdapter>()
-const adapterGenerations = new WeakMap<HTMLElement, { current: number; captured: number }>()
-
-function adapterGeneration(root: HTMLElement) {
-  let generation = adapterGenerations.get(root)
-  if (!generation) {
-    generation = { current: 0, captured: 0 }
-    adapterGenerations.set(root, generation)
-  }
-  return generation
+export interface AsyncHostHintTarget {
+  id: string
+  label: string
+  x: number
+  y: number
 }
 
-function changeAdapterGeneration(owner: HTMLElement) {
-  const root = owner.closest<HTMLElement>('[data-pane]')
-  if (root) adapterGeneration(root).current += 1
+export interface AsyncHostHintAdapter {
+  discover(request: number, signal: AbortSignal): Promise<readonly AsyncHostHintTarget[] | null>
+  present(
+    request: number,
+    revision: number,
+    labels: readonly { id: string; key: string }[],
+    presentation?: HintPresentation,
+  ): Promise<boolean>
+  clear(request: number): void
+  activate(request: number, id: string): Promise<boolean>
+  subscribe(
+    request: number,
+    invalidate: () => void,
+    routeKey: (event: KeyboardEvent) => boolean,
+  ): () => void
+}
+
+const registeredAdapters = new Map<HTMLElement, HostHintAdapter>()
+const registeredAsyncAdapters = new Map<HTMLElement, AsyncHostHintAdapter>()
+
+export function registerAsyncHostHintAdapter(
+  owner: HTMLElement,
+  adapter: AsyncHostHintAdapter,
+): () => void {
+  registeredAsyncAdapters.set(owner, adapter)
+  return () => {
+    if (registeredAsyncAdapters.get(owner) === adapter) registeredAsyncAdapters.delete(owner)
+  }
+}
+
+export function captureAsyncHostHintAdapters(root: HTMLElement): AsyncHostHintAdapter[] {
+  return [...registeredAsyncAdapters]
+    .filter(([owner]) => adapterParticipates(owner, root))
+    .map(([, adapter]) => adapter)
 }
 
 /** Register an explicitly owned target source for the pane containing `owner`. */
 export function registerHostHintAdapter(owner: HTMLElement, adapter: HostHintAdapter): () => void {
   registeredAdapters.set(owner, adapter)
-  changeAdapterGeneration(owner)
   return () => {
     adapter.invalidate?.()
-    if (registeredAdapters.get(owner) === adapter) {
-      registeredAdapters.delete(owner)
-      changeAdapterGeneration(owner)
-    }
+    if (registeredAdapters.get(owner) === adapter) registeredAdapters.delete(owner)
   }
 }
 
@@ -120,9 +147,7 @@ function adaptersFor(root: HTMLElement): HostHintAdapter[] {
 
 export function captureHostHintAdapters(root: HTMLElement): HostHintAdapter[] {
   const adapters = adaptersFor(root)
-  const capturedGeneration = adapterGeneration(root).current
   for (const adapter of adapters) adapter.capture?.()
-  adapterGeneration(root).captured = capturedGeneration
   return adapters
 }
 
@@ -132,16 +157,10 @@ export function requestHostHints(source: HTMLElement): void {
 }
 
 /** Explicitly request hints for a shell surface, independent of document focus. */
-export function requestAdaptedHostHints(
-  source: HTMLElement,
-  adapter: HostHintAdapter,
-  options: { guestOnly?: boolean } = {},
-): void {
+export function requestAdaptedHostHints(source: HTMLElement, adapter: HostHintAdapter): void {
   adapter.capture?.()
   window.dispatchEvent(
-    new CustomEvent(HOST_HINT_REQUEST, {
-      detail: { source, adapter, scoped: true, guestOnly: options.guestOnly === true },
-    }),
+    new CustomEvent(HOST_HINT_REQUEST, { detail: { source, adapter, scoped: true } }),
   )
 }
 
@@ -159,21 +178,19 @@ export interface HostHintTarget {
   scopeAdapter?: HostHintAdapter
   token?: unknown
   surface: ShadowRoot | null
-  /** Registry version seen by discovery, used to invalidate a newly-owned source. */
-  adapterGeneration?: number
 }
 
 /** Shell chrome and the focused pane, or only the foremost interactive overlay. */
 export function discoverHostHintTargets(
   root: HTMLElement,
   adapter?: HostHintAdapter,
-  guestOnly = false,
 ): HostHintTarget[] {
+  const exclusive = adapter?.exclusive === true
   const hostOverlay = topOverlay()
-  const ownedOverlay = hostOverlay ? null : topOwnedOverlay(root)
+  if (exclusive && hostOverlay) return []
+  const ownedOverlay = hostOverlay || exclusive ? null : topOwnedOverlay(root)
   const overlay = hostOverlay ?? ownedOverlay?.element ?? null
   const targets: HostHintTarget[] = []
-  if (guestOnly && overlay) return targets
   const collect = (candidate: ParentNode, surface: ShadowRoot | null) => {
     for (const element of candidate.querySelectorAll<Element>(PRESSABLE)) {
       const owner = surface ? [...ownedSurfaces].find((item) => item.root === surface)?.owner : null
@@ -194,24 +211,21 @@ export function discoverHostHintTargets(
         overlay,
         surface,
         scopeAdapter: adapter,
-        adapterGeneration: adapterGeneration(root).current,
       })
     }
   }
   if (hostOverlay) collect(hostOverlay, null)
   else if (ownedOverlay) collect(ownedOverlay.element, ownedOverlay.surface)
   else {
-    if (!guestOnly) {
+    if (!exclusive) {
       collect(document.body, null)
       for (const surface of ownedSurfaces) {
         if (surface.owner.closest('[data-pane]') !== root) continue
         collect(surface.root, surface.root)
       }
     }
-    const sources = guestOnly
-      ? adapter
-        ? [adapter]
-        : []
+    const sources = exclusive
+      ? [adapter]
       : [...new Set([...adaptersFor(root), ...(adapter ? [adapter] : [])])]
     for (const source of sources) {
       for (const target of source.discover()) {
@@ -225,7 +239,6 @@ export function discoverHostHintTargets(
           token: target.token,
           key: '',
           surface: null,
-          adapterGeneration: adapterGeneration(root).current,
         })
       }
     }
@@ -253,22 +266,20 @@ export function hostHintsUnchanged(
   root = targets[0]?.root,
 ): boolean {
   if (!root?.isConnected) return false
-  const generation = adapterGeneration(root)
-  if (
-    generation.current > generation.captured &&
-    targets.some((target) => (target.adapterGeneration ?? 0) < generation.current)
-  )
-    return false
-  const adapters = new Set(targets.flatMap((target) => (target.adapter ? [target.adapter] : [])))
+  // Only validate adapters that contributed to this request, plus an explicit
+  // request adapter whose lifetime must remain valid even with no targets.
+  const adapters = new Set([
+    ...targets.flatMap((target) => (target.adapter ? [target.adapter] : [])),
+    ...(requestAdapter ? [requestAdapter] : []),
+  ])
   for (const source of adapters) {
     const adapted = targets.filter((target) => target.adapter === source)
     if (!source.unchanged(adapted)) return false
   }
   const ordinary = targets.filter((target) => !target.adapter)
-  const next = discoverHostHintTargets(root, requestAdapter, requestAdapter?.guestOnly === true)
+  const next = discoverHostHintTargets(root, requestAdapter)
   const ordinaryNext = next.filter((target) => !target.adapter)
   if (
-    next.length !== targets.length ||
     ordinaryNext.length !== ordinary.length ||
     !ordinaryNext.every((target, i) => sameTarget(target, ordinary[i]!))
   )
@@ -298,7 +309,7 @@ function sameTarget(target: HostHintTarget, previous: HostHintTarget): boolean {
 }
 
 /** Send a mouse press through the control's own handlers and native default action. */
-export function activateHostHint(target: HostHintTarget): boolean {
+export function activateHostHint(target: HostHintTarget): boolean | Promise<boolean> {
   if (target.scopeAdapter && !target.scopeAdapter.unchanged([])) return false
   if (target.adapter) {
     const live = discoverHostHintTargets(target.root, target.adapter).find(

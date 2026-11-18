@@ -293,13 +293,21 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
-          if gh release view "${{ needs.version.outputs.tag }}" > /dev/null 2>&1; then
-            echo "${{ needs.version.outputs.tag }} is already published."
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "$TAG is already published."
             exit 0
           fi
-          gh release create "${{ needs.version.outputs.tag }}" \
+          NOTES_START_TAG="$(node .github/workflows/stable-release-notes.mjs "$TAG")"
+          if [ -z "$NOTES_START_TAG" ]; then
+            echo "No previous stable release found; create the first stable release manually with reviewed notes, then rerun this workflow."
+            exit 1
+          fi
+          NOTES_ARGS=(--notes-start-tag "$NOTES_START_TAG")
+          gh release create "$TAG" \
             --target "$GITHUB_SHA" \
-            --title "Holi ${{ needs.version.outputs.tag }}" \
+            --title "Holi $TAG" \
             --generate-notes \
+            "${NOTES_ARGS[@]}" \
             artifacts/*

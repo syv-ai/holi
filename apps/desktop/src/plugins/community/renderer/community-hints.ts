@@ -115,7 +115,7 @@ export function createCommunityHintAdapter(
     if (data.type === 'holi-hints:start') {
       if (snapshot === null || data.revision !== revision || !frameFocused()) return
       session = true
-      request(frame, thisAdapter, { guestOnly: true })
+      request(frame, thisAdapter)
       if (
         !live ||
         snapshot === null ||
@@ -160,7 +160,7 @@ export function createCommunityHintAdapter(
     }
   }
   const thisAdapter: HostHintAdapter = {
-    guestOnly: true,
+    exclusive: true,
     discover(): readonly HostHintAdapterTarget[] {
       if (!frameFocused() || snapshot === null) return []
       const rect = frame.getBoundingClientRect()
@@ -232,10 +232,14 @@ export function createCommunityHintAdapter(
         const relevant = records.some((record) => {
           const target =
             record.target instanceof Element ? record.target : record.target.parentElement
-          if (target?.closest('[data-host-hints]')) return false
+          if (target?.closest('[data-host-hints],[data-host-hint-presentation]')) return false
           if (record.type !== 'childList') return true
           return [...record.addedNodes, ...record.removedNodes].some(
-            (node) => !(node instanceof Element && node.closest('[data-host-hints]')),
+            (node) =>
+              !(
+                node instanceof Element &&
+                node.closest('[data-host-hints],[data-host-hint-presentation]')
+              ),
           )
         })
         if (relevant) cancelForChange()

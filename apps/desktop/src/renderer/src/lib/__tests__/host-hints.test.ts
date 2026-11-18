@@ -5,6 +5,8 @@ import {
   activateHostHint,
   hostHintsUnchanged,
   registerHostHintAdapter,
+  registerAsyncHostHintAdapter,
+  captureAsyncHostHintAdapters,
   captureHostHintAdapters,
   registerHostHintSurface,
 } from '../host-hints'
@@ -30,57 +32,77 @@ function button(name: string, parent = root) {
   return element
 }
 
-it('invalidates an active session when a new owned adapter is registered', () => {
+it('invalidates an active session when a newly registered adapter adds targets', () => {
   const target = button('Existing target')
-  const targets = discoverHostHintTargets(root)
-  const owner = document.createElement('iframe')
-  root.append(owner)
-  let captured = false
-  const adapter = {
-    capture: () => {
-      captured = true
-    },
-    discover: () => [],
-    unchanged: () => captured,
-    activate: () => false,
-  }
-  const unregister = registerHostHintAdapter(owner, adapter)
-  expect(hostHintsUnchanged(targets)).toBe(false)
-  captureHostHintAdapters(root)
-  expect(hostHintsUnchanged(targets)).toBe(true)
-  unregister()
-  expect(target.isConnected).toBe(true)
-})
-
-it('keeps newly contributed adapter targets out of an older hint session', () => {
-  button('Host target')
   const targets = discoverHostHintTargets(root)
   const owner = document.createElement('iframe')
   root.append(owner)
   const link = document.createElement('a')
   owner.append(link)
-  const adapter = {
-    discover: () => [{ element: link, label: 'Guest target', x: 10, y: 10, token: 'guest' }],
+  registerHostHintAdapter(owner, {
+    discover: () => [{ element: link, label: 'Guest target', x: 10, y: 10, token: null }],
+    unchanged: () => true,
+    activate: () => false,
+  })
+  captureHostHintAdapters(root)
+  expect(hostHintsUnchanged(targets)).toBe(false)
+  expect(target.isConnected).toBe(true)
+})
+
+it('keeps exclusive requests isolated from host chrome and unrelated adapters', () => {
+  const chrome = button('Host chrome')
+  const frame = document.createElement('iframe')
+  root.append(frame)
+  const unrelated = {
+    discover: () => [{ element: chrome, label: 'chrome', x: 1, y: 1, token: null }],
     unchanged: () => true,
     activate: () => false,
   }
-  registerHostHintAdapter(owner, adapter)
-  captureHostHintAdapters(root)
-  expect(hostHintsUnchanged(targets)).toBe(false)
+  registerHostHintAdapter(frame, unrelated)
+  const guest = {
+    exclusive: true,
+    discover: () => [{ element: frame, label: 'Guest', x: 10, y: 10, token: 'guest' }],
+    unchanged: () => true,
+    activate: () => false,
+  }
+  expect(discoverHostHintTargets(root, guest).map((target) => target.label)).toEqual(['Guest'])
 })
 
-it('does not let an empty adapter invalidate unrelated host-only targets', () => {
+it('validates an explicit empty adapter but ignores an unused invalid registration', () => {
   button('Host target')
-  const adapter = {
+  const owner = document.createElement('iframe')
+  root.append(owner)
+  registerHostHintAdapter(owner, {
+    discover: () => [],
+    unchanged: () => false,
+    activate: () => false,
+  })
+  const targets = discoverHostHintTargets(root)
+  expect(hostHintsUnchanged(targets)).toBe(true)
+  const explicit = {
     discover: () => [],
     unchanged: () => false,
     activate: () => false,
   }
+  expect(hostHintsUnchanged(targets, explicit, root)).toBe(false)
+})
+
+it('captures only visible async adapters owned by the pane', () => {
+  const adapter = {
+    discover: vi.fn(),
+    present: vi.fn(),
+    clear: vi.fn(),
+    activate: vi.fn(),
+    subscribe: vi.fn(),
+  }
   const owner = document.createElement('iframe')
   root.append(owner)
-  registerHostHintAdapter(owner, adapter)
-  const targets = discoverHostHintTargets(root)
-  expect(hostHintsUnchanged(targets)).toBe(true)
+  const unregister = registerAsyncHostHintAdapter(owner, adapter)
+  expect(captureAsyncHostHintAdapters(root)).toEqual([adapter])
+  owner.hidden = true
+  expect(captureAsyncHostHintAdapters(root)).toEqual([])
+  unregister()
+  expect(captureAsyncHostHintAdapters(root)).toEqual([])
 })
 
 it('assigns unique prefix-free labels for thousands of targets', () => {

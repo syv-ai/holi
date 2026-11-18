@@ -37,6 +37,55 @@ export interface PageRead {
   truncated: boolean
 }
 
+/** A renderer-issued, presentation-scoped hint operation. */
+export interface PageHintScope {
+  tab: string
+  nonce: string
+  attachment: string
+  request: number
+}
+
+/** A discovered visible target in page CSS coordinates. */
+export interface PageHintTarget {
+  id: string
+  label: string
+  x: number
+  y: number
+}
+
+export interface PageHintSnapshot {
+  owner: PageHintOwner
+  targets: PageHintTarget[]
+}
+
+/** Main-owned identity for one hint snapshot and its lifetime. `origin` is an opaque
+ * request token, never the page URL/origin; `snapshot` and `geometry` bind all
+ * page-side effects to the exact discovery and layout that produced them. */
+export interface PageHintOwner extends PageHintScope {
+  origin: string
+  snapshot: number
+  geometry: number
+}
+
+export interface PageHintLabel {
+  id: string
+  key: string
+}
+
+export type PageHintEvent =
+  | (PageHintScope & { origin: string } & ({ type: 'request' } | { type: 'cancel' }))
+  | (PageHintOwner & {
+      type: 'key' | 'revoke'
+      key?: string
+      code?: string
+      repeat?: boolean
+      isComposing?: boolean
+      metaKey?: boolean
+      ctrlKey?: boolean
+      altKey?: boolean
+      shiftKey?: boolean
+    })
+
 /** Where to scroll (`holi browser scroll`). */
 export type ScrollTo = 'down' | 'up' | 'top' | 'bottom'
 export const SCROLL_TO: readonly ScrollTo[] = ['down', 'up', 'top', 'bottom']

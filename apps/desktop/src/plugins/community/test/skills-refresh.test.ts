@@ -16,7 +16,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { refreshSkills } from '../main/skills'
+import { refreshSkills, writeSkills } from '../main/skills'
 import { skillTransactionFs, transactSkillRefresh } from '../main/skill-transaction'
 
 const execFile = promisify(execFileCallback)
@@ -129,6 +129,41 @@ describe('refreshSkills', () => {
     )
     expect(await readFile(join(target, 'SKILL.md'), 'utf8')).toBe('release v1')
     expect(await readFile(join(f.vault, '.claude/skills/unrelated/file.md'), 'utf8')).toBe('keep')
+  })
+
+  it('backs up manually edited folders before publishing replacement guides', async () => {
+    const f = await fixture()
+    const target = join(f.vault, '.claude/skills/demo')
+    await mkdir(target, { recursive: true })
+    await writeFile(join(target, 'SKILL.md'), 'my edited guide')
+    const written = await writeSkills(f.manifest, f.source, f.vault)
+    const backup = written.find((path) => path.includes('guide backups'))
+    expect(backup).toBeDefined()
+    expect(await readFile(join(target, 'SKILL.md'), 'utf8')).toBe('release v1')
+    expect(
+      await readFile(join(f.vault, backup!.split(' (')[0]!, 'demo.original/SKILL.md'), 'utf8'),
+    ).toBe('my edited guide')
+  })
+
+  it('keeps existing guide bytes and pin eligibility when backup creation fails', async () => {
+    const f = await fixture()
+    const target = join(f.vault, '.claude/skills/demo')
+    await mkdir(target, { recursive: true })
+    await writeFile(join(target, 'SKILL.md'), 'my edited guide')
+    const originalRename = skillTransactionFs.rename
+    skillTransactionFs.rename = async (from, to) => {
+      if (String(from).endsWith('/.claude/skills/demo') && String(to).endsWith('demo.original'))
+        throw new Error('simulated backup failure')
+      return originalRename(from, to)
+    }
+    try {
+      await expect(writeSkills(f.manifest, f.source, f.vault)).rejects.toThrow(
+        'simulated backup failure',
+      )
+      expect(await readFile(join(target, 'SKILL.md'), 'utf8')).toBe('my edited guide')
+    } finally {
+      skillTransactionFs.rename = originalRename
+    }
   })
 
   it('treats byte-and-mode matches as unchanged and mode changes as conflicts', async () => {

@@ -194,10 +194,17 @@ export function placeThreads(
 
 // -------------------------------------------------------------- decorations
 
+interface PendingChangeRange {
+  id: string
+  from: number
+  to: number
+}
+
 interface CommentsState {
   ranges: readonly PlacedRange[]
   active: string | null
   decorations: DecorationSet
+  pendingChangeRanges: readonly PendingChangeRange[]
 }
 
 type CommentsMeta = { ranges?: readonly PlacedRange[]; active?: string | null }
@@ -263,6 +270,7 @@ export const DocumentComments = Extension.create<{
             ranges: [],
             active: null,
             decorations: DecorationSet.empty,
+            pendingChangeRanges: [],
           }),
           apply(tr, value, _old, state) {
             const meta = tr.getMeta(documentCommentsKey) as CommentsMeta | undefined
@@ -273,24 +281,70 @@ export const DocumentComments = Extension.create<{
                 ranges,
                 active,
                 decorations: decorate(state.doc, ranges, active),
+                pendingChangeRanges: [],
               }
             }
-            if (!tr.docChanged) return value
+            if (!tr.docChanged) {
+              const pendingChangeRanges = tr.selectionSet
+                ? value.pendingChangeRanges.filter((pending) => {
+                    const to = tr.mapping.map(pending.to, 1)
+                    return tr.selection.empty && tr.selection.head === to
+                  })
+                : value.pendingChangeRanges
+              return pendingChangeRanges === value.pendingChangeRanges
+                ? value
+                : { ...value, pendingChangeRanges }
+            }
+
             const decorations = value.decorations.map(tr.mapping, tr.doc)
+            const ranges = decorations.find().map((d) => ({
+              id: (d.spec as { id: string }).id,
+              from: d.from,
+              to: d.to,
+            }))
+            const pendingChangeRanges: PendingChangeRange[] = []
+            for (const pending of value.pendingChangeRanges) {
+              const from = tr.mapping.map(pending.from, -1)
+              const beforeEnd = tr.mapping.map(pending.to, -1)
+              const to = tr.mapping.map(pending.to, 1)
+              const appended = to > beforeEnd
+              if (appended && tr.selection.empty && tr.selection.head === to) {
+                for (let index = ranges.length - 1; index >= 0; index -= 1) {
+                  if (ranges[index]!.id === pending.id) ranges.splice(index, 1)
+                }
+                ranges.push({ id: pending.id, from, to })
+                pendingChangeRanges.push({ id: pending.id, from, to })
+              }
+            }
+            if (tr.getMeta('vimChangeInsert')) {
+              const pos = tr.selection.head
+              for (const range of value.ranges) {
+                if (ranges.some((mapped) => mapped.id === range.id)) continue
+                const from = tr.mapping.map(range.from, -1)
+                const to = tr.mapping.map(range.to, 1)
+                // Re-anchor only a comment whose passage was replaced at this
+                // insertion point; other deleted content is not this change.
+                if (from > pos || to < pos) continue
+                pendingChangeRanges.push({ id: range.id, from: pos, to: pos })
+              }
+            }
             return {
               active: value.active,
-              decorations,
-              ranges: decorations.find().map((d) => ({
-                id: (d.spec as { id: string }).id,
-                from: d.from,
-                to: d.to,
-              })),
+              ranges,
+              decorations: decorate(state.doc, ranges, value.active),
+              pendingChangeRanges,
             }
           },
         },
         props: {
           decorations(state) {
             return documentCommentsKey.getState(state)?.decorations
+          },
+          handleDOMEvents: {
+            blur(view) {
+              view.dispatch(view.state.tr.setMeta(documentCommentsKey, {}))
+              return false
+            },
           },
           handleClick(view, pos) {
             const ids = threadsAt(view.state, pos)

@@ -182,6 +182,35 @@ describe('the installed script', () => {
   it('is executable', async () => {
     expect((await stat(bin)).mode & 0o777).toBe(0o755)
   })
+
+  it('parses tasks list value options through the real capability spec', () => {
+    const registry = createCapabilityRegistry()
+    registry.register(['tasks'], taskCapabilities({ today: () => '2026-09-30' }))
+    const commands = registry.commands('owner/repo')
+    expect(resolveArgv(['tasks', 'list', '--due', 'today'], commands, null)).toMatchObject({
+      kind: 'run',
+      name: 'tasks.list',
+      params: { due: 'today' },
+    })
+    expect(
+      resolveArgv(['tasks', 'list', '--assignee', 'Ada', '--open'], commands, null),
+    ).toMatchObject({
+      kind: 'run',
+      name: 'tasks.list',
+      params: { assignee: 'Ada', open: 'true' },
+    })
+    expect(
+      resolveArgv(
+        ['tasks', 'list', '--due', 'today', '--assignee', 'Ada', '--open'],
+        commands,
+        null,
+      ),
+    ).toMatchObject({
+      kind: 'run',
+      name: 'tasks.list',
+      params: { due: 'today', assignee: 'Ada', open: 'true' },
+    })
+  })
 })
 
 describe('when Holi is not running', () => {

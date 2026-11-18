@@ -220,14 +220,26 @@ export function PluginsSettings({
                 <>
                   {row.description !== '' && <>{row.description} </>}
                   {row.check?.ok === false ? (
-                    <span className="text-amber-400">{row.check.hint}</span>
+                    <span className="text-destructive">{row.check.hint}</span>
                   ) : (
                     STATUS[row.status]
                   )}
                   {row.install?.kind === 'dev' && <> · from {row.install.folder}</>}
                   {row.commandsNote !== null && (
-                    <span className="text-amber-400"> {row.commandsNote}</span>
+                    <span className="text-destructive"> {row.commandsNote}</span>
                   )}
+                  {row.syncError !== undefined && (
+                    <span role="alert" className="text-destructive">
+                      {' '}
+                      {row.syncError}
+                    </span>
+                  )}
+                  {row.syncBackups?.map((backup) => (
+                    <span key={backup} className="text-muted-foreground">
+                      {' '}
+                      Prior guides kept at {backup}.
+                    </span>
+                  ))}
                 </>
               }
               control={
@@ -262,6 +274,28 @@ export function PluginsSettings({
                       <BusyLabel busy={acting === `${row.id}:check`}>Check again</BusyLabel>
                     </Button>
                   )}
+                  {row.status === 'pin-differs' &&
+                    row.install?.kind === 'dev' &&
+                    row.pin &&
+                    row.folderAdoptionToken && (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() =>
+                          void act(`${row.id}:adopt-folder`, async () => {
+                            await communityCap.adoptFolder(remote, {
+                              id: row.id,
+                              token: row.folderAdoptionToken!,
+                            })
+                          })
+                        }
+                      >
+                        <BusyLabel busy={acting === `${row.id}:adopt-folder`}>
+                          Use this folder in this vault…
+                        </BusyLabel>
+                      </Button>
+                    )}
                   {nextStep(row)}
                   <Switch
                     aria-label={`Use ${row.name} in this vault`}
