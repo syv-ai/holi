@@ -26,12 +26,34 @@ export function getPreviousStableTag({ repository, currentTag, runGhApi = execFi
 
   const output = runGhApi(
     'gh',
-    ['api', '--paginate', '--slurp', `repos/${repository}/releases?per_page=100`],
+    [
+      'api',
+      '--paginate',
+      '--slurp',
+      '--jq',
+      '[.[] | {tag_name, draft, prerelease, published_at}]',
+      `repos/${repository}/releases?per_page=100`,
+    ],
     { encoding: 'utf8' },
   )
   const pages = JSON.parse(output)
-  if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page))) {
-    throw new Error('GitHub releases response was not a paginated release list')
+  if (
+    !Array.isArray(pages) ||
+    pages.some(
+      (page) =>
+        !Array.isArray(page) ||
+        page.some(
+          (release) =>
+            !release ||
+            typeof release !== 'object' ||
+            typeof release.tag_name !== 'string' ||
+            typeof release.draft !== 'boolean' ||
+            typeof release.prerelease !== 'boolean' ||
+            !(release.published_at === null || typeof release.published_at === 'string'),
+        ),
+    )
+  ) {
+    throw new Error('GitHub releases response was not a projected paginated release list')
   }
 
   return previousStableRelease(pages.flat(), currentTag)
