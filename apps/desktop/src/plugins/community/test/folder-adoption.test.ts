@@ -216,6 +216,7 @@ describe('folder adoption snapshot authorization', () => {
       id: 'demo',
       token: row.folderAdoptionToken,
     })
+    const rejected = expect(pending).rejects.toThrow(/attachment is closed/)
     for (let attempt = 0; attempt < 100; attempt++) {
       if ((await readFile(f.pinPath, 'utf8').catch(() => null)) === null) break
       await new Promise((resolve) => setTimeout(resolve, 5))
@@ -224,7 +225,7 @@ describe('folder adoption snapshot authorization', () => {
     f.setLive(false)
     release()
     await concurrent
-    await expect(pending).rejects.toThrow(/attachment is closed/)
+    await rejected
     expect(await readFile(f.pinPath, 'utf8')).toContain('owner/demo')
     const settings = await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')
     expect(settings).toContain('demo: false')
@@ -256,6 +257,7 @@ describe('folder adoption snapshot authorization', () => {
       id: 'demo',
       token: row.folderAdoptionToken,
     })
+    const rejected = expect(pending).rejects.toThrow(/changed/)
     for (let attempt = 0; attempt < 100; attempt++) {
       if ((await readFile(f.pinPath, 'utf8').catch(() => null)) === null) break
       await new Promise((resolve) => setTimeout(resolve, 5))
@@ -265,7 +267,7 @@ describe('folder adoption snapshot authorization', () => {
     await writeFile(f.pinPath, replacement)
     release()
     await concurrent
-    await expect(pending).rejects.toThrow(/changed/)
+    await rejected
     expect(await readFile(f.pinPath, 'utf8')).toBe(replacement)
     expect(await readFile(join(f.vault, '.holi/settings/plugins.yaml'), 'utf8')).toContain(
       'other: true',
