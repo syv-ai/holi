@@ -13,10 +13,10 @@
  */
 import { execFile } from 'node:child_process'
 import { commitChanges } from './commit-changes'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import {
   cleanupFixtures,
   commitFile,
@@ -1160,6 +1160,252 @@ describe('changedFiles', () => {
     const commits = await repo.log({})
     const root = commits[commits.length - 1]!
     expect((await repo.changedFiles(root.sha)).length).toBeGreaterThan(0)
+  })
+
+  it('returns every reachable per-revision path change between exact endpoints', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await commitChanges(dir, 'scope/a.md', 1)
+    const first = await repo.head()
+    await commitChanges(dir, 'scope/a.md', 2)
+    const tip = await repo.head()
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toEqual({
+      complete: true,
+      reason: 'ok',
+      changes: [
+        { sha: tip, path: 'scope/a.md' },
+        { sha: first, path: 'scope/a.md' },
+      ],
+    })
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope/a.md')).toMatchObject({
+      complete: true,
+    })
+  })
+
+  it('omits symlinks from history after they are deleted', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await mkdir(join(dir, 'scope'), { recursive: true })
+    await symlink('../outside.md', join(dir, 'scope', 'unsafe.md'))
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'add symlink'])
+    await rm(join(dir, 'scope', 'unsafe.md'))
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'delete symlink'])
+    const deleted = await repo.head()
+
+    expect(await repo.revisionChanges(baseline!, deleted!, 'scope')).toEqual({
+      complete: true,
+      reason: 'ok',
+      changes: [],
+    })
+  })
+
+  it('omits a symlink-to-file replacement record from history', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await mkdir(join(dir, 'scope'), { recursive: true })
+    await symlink('../outside.md', join(dir, 'scope', 'unsafe.md'))
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'add symlink'])
+    await rm(join(dir, 'scope', 'unsafe.md'))
+    await writeFile(join(dir, 'scope', 'unsafe.md'), 'regular file\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'replace symlink'])
+    const replaced = await repo.head()
+
+    expect(await repo.revisionChanges(baseline!, replaced!, 'scope')).toEqual({
+      complete: true,
+      reason: 'ok',
+      changes: [],
+    })
+  })
+
+  it('treats an empty scope as the whole root tree', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await commitFile(dir, 'at-root.md', 'root\n')
+    const tip = await repo.head()
+
+    expect(await repo.revisionChanges(baseline!, tip!, '')).toMatchObject({
+      complete: true,
+      changes: [{ sha: tip, path: 'at-root.md' }],
+    })
+  })
+
+  it('keeps reverted changes, merge-parent changes, and both sides of renames', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await commitFile(dir, 'scope/reverted.md', 'one\n')
+    const added = await repo.head()
+    await commitFile(dir, 'scope/reverted.md', 'two\n')
+    const changed = await repo.head()
+    await commitFile(dir, 'scope/reverted.md', 'one\n')
+    const reverted = await repo.head()
+    await plainGit(dir, ['checkout', '-b', 'history-side'])
+    await commitFile(dir, 'scope/side.md', 'side\n')
+    await plainGit(dir, ['checkout', 'main'])
+    await plainGit(dir, ['mv', 'scope/reverted.md', 'scope/renamed.md'])
+    await plainGit(dir, ['commit', '-m', 'rename'])
+    const renamed = await repo.head()
+    await plainGit(dir, ['merge', '--no-ff', '--no-edit', 'history-side'])
+    const merged = await repo.head()
+
+    const result = await repo.revisionChanges(baseline!, merged!, 'scope')
+    expect(result.complete).toBe(true)
+    expect(result.changes).toEqual(
+      expect.arrayContaining([
+        { sha: added, path: 'scope/reverted.md' },
+        { sha: changed, path: 'scope/reverted.md' },
+        { sha: reverted, path: 'scope/reverted.md' },
+        { sha: renamed, path: 'scope/reverted.md' },
+        { sha: renamed, path: 'scope/renamed.md' },
+        { sha: merged, path: 'scope/side.md' },
+      ]),
+    )
+  })
+
+  it('does not report unavailable endpoints as an empty complete history', async () => {
+    const repo = openRepo(await makeClone(await makeRemote()))
+    expect(await repo.revisionChanges('0'.repeat(40), 'f'.repeat(40), 'note.md')).toEqual({
+      complete: false,
+      reason: 'history-unavailable',
+      changes: [],
+    })
+  })
+
+  it('treats metacharacters in a file scope literally', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await mkdir(join(dir, 'scope'), { recursive: true })
+    await writeFile(join(dir, 'scope', 'star*.md'), 'literal\n', 'utf8')
+    await writeFile(join(dir, 'scope', 'starX.md'), 'glob match\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'literal path'])
+    const tip = await repo.head()
+
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope/star*.md')).toMatchObject({
+      complete: true,
+      changes: [{ sha: tip, path: 'scope/star*.md' }],
+    })
+  })
+
+  it('returns an explicit limit when a revision exceeds the path-pair budget', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await mkdir(join(dir, 'scope'), { recursive: true })
+    for (let i = 0; i < 2001; i++) {
+      await writeFile(join(dir, 'scope', `file-${i}.md`), 'content\n', 'utf8')
+    }
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'many paths'])
+    const tip = await repo.head()
+
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toEqual({
+      complete: false,
+      reason: 'limit',
+      changes: [],
+    })
+  })
+
+  it('returns an explicit limit when a git traversal exceeds its output budget', async () => {
+    const dir = await makeClone(await makeRemote())
+    const baseline = await openRepo(dir).head()
+    await commitFile(dir, 'scope/one.md', 'one\n')
+    const tip = await openRepo(dir).head()
+    const actualGit = (await exec('which', ['git'])).stdout.trim()
+    const wrapper = join(await tmp('holi-git-output-cap-'), 'git-wrapper')
+    await writeFile(
+      wrapper,
+      [
+        '#!/bin/sh',
+        'for arg do',
+        '  if [ "$arg" = diff-tree ]; then',
+        '    head -c 9000000 /dev/zero',
+        '    exit 0',
+        '  fi',
+        'done',
+        `exec ${actualGit} "$@"`,
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await chmod(wrapper, 0o755)
+    const repo = openRepo(dir, { gitPath: wrapper })
+
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toEqual({
+      complete: false,
+      reason: 'limit',
+      changes: [],
+    })
+  })
+
+  it('returns an explicit limit when the traversal time budget is exhausted', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await commitFile(dir, 'scope/one.md', 'one\n')
+    const tip = await repo.head()
+    // The first read starts the 5-second budget; the next command sees its
+    // deadline already elapsed. This exercises the real git adapter without
+    // relying on machine speed or sleeping.
+    const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValue(6000)
+    try {
+      expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toEqual({
+        complete: false,
+        reason: 'limit',
+        changes: [],
+      })
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('refuses history with a shallow boundary or a missing intermediate commit', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await commitFile(dir, 'scope/one.md', 'one\n')
+    const middle = await repo.head()
+    await commitFile(dir, 'scope/two.md', 'two\n')
+    const tip = await repo.head()
+
+    await writeFile(join(dir, '.git', 'shallow'), `${tip}\n`, 'utf8')
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toMatchObject({
+      complete: false,
+      reason: 'history-unavailable',
+    })
+    await rm(join(dir, '.git', 'shallow'))
+
+    const objectPath = join(dir, '.git', 'objects', middle!.slice(0, 2), middle!.slice(2))
+    await rm(objectPath)
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toMatchObject({
+      complete: false,
+      reason: 'history-unavailable',
+    })
+  })
+
+  it('ignores replacement refs when reading historical revisions', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const baseline = await repo.head()
+    await commitFile(dir, 'scope/original.md', 'original\n')
+    const tip = await repo.head()
+    await commitFile(dir, 'scope/replacement.md', 'replacement\n')
+    const replacement = await repo.head()
+    await plainGit(dir, ['replace', tip!, replacement!])
+
+    expect(await repo.revisionChanges(baseline!, tip!, 'scope')).toMatchObject({
+      complete: true,
+      changes: [{ sha: tip, path: 'scope/original.md' }],
+    })
   })
 
   it('looks up exact commit metadata outside the recent history window', async () => {

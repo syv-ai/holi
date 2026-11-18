@@ -54,6 +54,7 @@ function thread(id: string, overrides: Partial<MailThreadSummary> = {}): MailThr
     lastReplyAt: null,
     addressedAs: null,
     automated: false,
+    needsReply: false,
     ...overrides,
   }
 }

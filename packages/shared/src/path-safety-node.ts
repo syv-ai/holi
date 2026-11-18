@@ -4,6 +4,7 @@
  * touches node:fs). Guards the file bridge and any agent-supplied path.
  */
 import { lstat, realpath } from 'node:fs/promises'
+import { lstatSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, sep } from 'node:path'
 import { PathSafetyError, vaultRelPath } from './path-safety'
 
@@ -86,5 +87,37 @@ export async function exactPath(root: string, rel: string): Promise<string | nul
     const parent = dirname(anchor)
     if (parent === anchor) return null
     anchor = parent
+  }
+}
+
+/** Synchronous exactPath check for publication points that must not yield. */
+export function exactPathSync(root: string, rel: string): string | null {
+  let validated
+  try {
+    validated = vaultRelPath(rel)
+  } catch {
+    return null
+  }
+  let canonicalRoot: string
+  try {
+    canonicalRoot = realpathSync(root)
+  } catch {
+    return null
+  }
+  const abs = join(canonicalRoot, validated)
+  for (let anchor = abs; ;) {
+    try {
+      const canonical = realpathSync(anchor)
+      return canonical === anchor ? abs : null
+    } catch {
+      try {
+        lstatSync(anchor)
+        return null
+      } catch {
+        const parent = dirname(anchor)
+        if (parent === anchor) return null
+        anchor = parent
+      }
+    }
   }
 }
