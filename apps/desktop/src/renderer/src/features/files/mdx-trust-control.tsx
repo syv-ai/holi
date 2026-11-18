@@ -23,10 +23,16 @@ type Load =
   | { owner: object; kind: 'ready'; result: TrustStatus }
   | { owner: object; kind: 'error'; message: string }
 
-type Props = { remote: string; path: string; visible: boolean; focused: boolean }
+type Props = {
+  remote: string
+  path: string
+  visible: boolean
+  focused: boolean
+  onTrustContextChange?: (context: string | null, trusted: boolean) => void
+}
 
 /** Explicit account/vault consent; source editing never depends on approval. */
-export function MdxTrustControl({ remote, path, visible, focused }: Props) {
+export function MdxTrustControl({ remote, path, visible, focused, onTrustContextChange }: Props) {
   const store = useStore()
   const activeRemote = useAtomValue(activeRemoteAtom)
   const openedRemote = useAtomValue(openedRemoteAtom)
@@ -63,6 +69,7 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
   )
 
   useEffect(() => {
+    onTrustContextChange?.(null, false)
     if (!current()) return
     let live = true
     setLoad(null)
@@ -78,6 +85,7 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
       (result) => {
         if (live && current()) {
           setLoad({ owner, kind: 'ready', result })
+          onTrustContextChange?.(result.context, result.trusted)
           setConfirmation((previous) =>
             previous?.owner === owner && previous.context !== result.context ? null : previous,
           )
@@ -86,6 +94,7 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
       (error: unknown) => {
         if (live && current()) {
           setLoad({ owner, kind: 'error', message: errorMessage(error) })
+          onTrustContextChange?.(null, false)
           setConfirmation(null)
         }
       },
@@ -93,7 +102,7 @@ export function MdxTrustControl({ remote, path, visible, focused }: Props) {
     return () => {
       live = false
     }
-  }, [owner, current, viewer, remote, trustRevision])
+  }, [owner, current, viewer, remote, trustRevision, onTrustContextChange])
 
   const state = load?.owner === owner ? load : null
   const ready = state?.kind === 'ready' ? state.result : null

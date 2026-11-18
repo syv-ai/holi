@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, realpathSync, statSync } from 'node:fs'
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  realpathSync,
+  readSync,
+  statSync,
+} from 'node:fs'
 import { open, readFile, realpath, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
@@ -33,6 +42,25 @@ export interface CommitIdentity {
 }
 
 const empty = (): ProvenanceFile => ({ version: 1, records: [] })
+const MAX_PROVENANCE_BYTES = 8 * 1024 * 1024
+const MAX_MARKER_BYTES = 256
+
+function readBoundedRegularFile(file: string, maxBytes: number): string {
+  const before = lstatSync(file)
+  if (!before.isFile() || before.isSymbolicLink() || before.size > maxBytes)
+    throw new Error('Unsafe or oversized file')
+  const fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+  try {
+    const info = fstatSync(fd)
+    if (!info.isFile() || info.size > maxBytes) throw new Error('Unsafe or oversized file')
+    const buffer = Buffer.alloc(maxBytes + 1)
+    const length = readSync(fd, buffer, 0, maxBytes + 1, 0)
+    if (length > maxBytes) throw new Error('Oversized file')
+    return buffer.subarray(0, length).toString('utf8')
+  } finally {
+    closeSync(fd)
+  }
+}
 
 function provenanceKey(key: ProvenanceKey): string {
   return JSON.stringify([
@@ -63,6 +91,41 @@ function parse(raw: unknown, text: string | null): ProvenanceFile {
   if (new Set(keys).size !== keys.length)
     throw new Error('Duplicate managed commit provenance; it was not changed.')
   return { version: 1, records }
+}
+
+export function ownedCommitOids(args: {
+  file: string
+  remote: string
+  identity: Pick<ProvenanceRecord, 'root' | 'gitDir' | 'device' | 'inode'> & {
+    lifetime: string | null
+  }
+  accountId: number
+  oids: readonly string[]
+}): ReadonlySet<string> {
+  if (args.identity.lifetime === null) return new Set()
+  try {
+    const text = readBoundedRegularFile(args.file, MAX_PROVENANCE_BYTES)
+    const state = parse(JSON.parse(text), text)
+    const wanted = new Set(args.oids)
+    return new Set(
+      state.records
+        .filter(
+          (record) =>
+            wanted.has(record.oid) &&
+            !record.conflicted &&
+            record.accountId === args.accountId &&
+            record.remote === args.remote &&
+            record.root === args.identity.root &&
+            record.gitDir === args.identity.gitDir &&
+            record.device === args.identity.device &&
+            record.inode === args.identity.inode &&
+            record.lifetime === args.identity.lifetime,
+        )
+        .map((record) => record.oid),
+    )
+  } catch {
+    return new Set()
+  }
 }
 
 function isRecord(value: unknown): value is ProvenanceRecord {
@@ -96,9 +159,63 @@ function isRecord(value: unknown): value is ProvenanceRecord {
   )
 }
 
+export type RepositoryPublicationSnapshot = Pick<
+  ProvenanceRecord,
+  'root' | 'gitDir' | 'device' | 'inode'
+> & { lifetime: string | null; marker: string; remote: string }
+
+/** Bounded synchronous observation used as the final publication guard. */
+export function repositoryPublicationSnapshot(root: string): RepositoryPublicationSnapshot | null {
+  try {
+    const git = (command: string[]) =>
+      execFileSync('git', ['--no-replace-objects', ...command], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 250,
+        maxBuffer: 65536,
+        env: {
+          ...process.env,
+          LC_ALL: 'C',
+          GIT_NO_REPLACE_OBJECTS: '1',
+          GIT_NO_LAZY_FETCH: '1',
+          GIT_TERMINAL_PROMPT: '0',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim()
+    const canonicalRoot = realpathSync(root)
+    const gitDir = realpathSync(git(['rev-parse', '--absolute-git-dir']))
+    const info = statSync(gitDir)
+    const markerFile = `${gitDir}/holi-managed-provenance-id`
+    let marker: string
+    try {
+      marker = `present:${readBoundedRegularFile(markerFile, MAX_MARKER_BYTES)}`
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      marker = 'absent'
+    }
+    const rawLifetime = marker.startsWith('present:') ? marker.slice('present:'.length).trim() : ''
+    const lifetime = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(rawLifetime)
+      ? rawLifetime
+      : null
+    return {
+      root: canonicalRoot,
+      gitDir,
+      device: Number(info.dev),
+      inode: Number(info.ino),
+      lifetime,
+      marker,
+      remote: canonicalGitHubRemote(git(['remote', 'get-url', 'origin'])),
+    }
+  } catch {
+    return null
+  }
+}
+
 async function repositoryIdentity(
   root: string,
-): Promise<Pick<ProvenanceRecord, 'root' | 'gitDir' | 'device' | 'inode' | 'lifetime'>> {
+): Promise<
+  Pick<ProvenanceRecord, 'root' | 'gitDir' | 'device' | 'inode'> & { lifetime: string | null }
+> {
   const canonicalRoot = await realpath(root)
   const gitDirRaw = await (
     await import('./git')
@@ -113,23 +230,34 @@ async function repositoryIdentity(
     lifetime = (await readFile(lifetimeFile, 'utf8')).trim()
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    const candidate = randomUUID()
-    try {
-      const handle = await open(lifetimeFile, 'wx', 0o600)
+    {
+      const candidate = randomUUID()
       try {
-        await handle.writeFile(`${candidate}\n`, 'utf8')
-        await handle.sync()
-      } finally {
-        await handle.close()
+        const handle = await open(lifetimeFile, 'wx', 0o600)
+        try {
+          await handle.writeFile(`${candidate}\n`, 'utf8')
+          await handle.sync()
+        } finally {
+          await handle.close()
+        }
+        lifetime = candidate
+      } catch (createError) {
+        if ((createError as NodeJS.ErrnoException).code !== 'EEXIST') throw createError
+        lifetime = (await readFile(lifetimeFile, 'utf8')).trim()
       }
-      lifetime = candidate
-    } catch (createError) {
-      if ((createError as NodeJS.ErrnoException).code !== 'EEXIST') throw createError
-      lifetime = (await readFile(lifetimeFile, 'utf8')).trim()
     }
   }
-  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(lifetime))
+  if (lifetime === '')
+    return {
+      root: canonicalRoot,
+      gitDir,
+      device: Number(gitStat.dev),
+      inode: Number(gitStat.ino),
+      lifetime: null,
+    }
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(lifetime)) {
     throw new Error('Invalid repository lifetime marker')
+  }
   return {
     root: canonicalRoot,
     gitDir,
@@ -165,6 +293,7 @@ export function createManagedCommitProvenance(args: {
         return null
       try {
         const repo = await repositoryIdentity(root)
+        if (repo.lifetime === null) return null
         const origin = await (
           await import('./git')
         ).runGit(root, ['--no-replace-objects', 'remote', 'get-url', 'origin'], {
@@ -240,8 +369,10 @@ export function createManagedCommitProvenance(args: {
       } catch {
         return
       }
+      if (now.lifetime === null) return
+      const repository = { ...now, lifetime: now.lifetime }
       if (
-        JSON.stringify(now) !==
+        JSON.stringify(repository) !==
         JSON.stringify({
           root: started.root,
           gitDir: started.gitDir,
@@ -253,7 +384,7 @@ export function createManagedCommitProvenance(args: {
         return
       await store.update(
         (state) => {
-          const key = provenanceKey({ remote, ...now, oid })
+          const key = provenanceKey({ remote, ...repository, oid })
           const existing = state.records.find((record) => provenanceKey(record) === key)
           if (existing) {
             if (existing.conflicted) return state
@@ -265,7 +396,7 @@ export function createManagedCommitProvenance(args: {
             return {
               version: 1,
               records: state.records.map((record) =>
-                record === existing ? { remote, ...now, oid, conflicted: true } : record,
+                record === existing ? { remote, ...repository, oid, conflicted: true } : record,
               ),
             }
           }
@@ -277,7 +408,7 @@ export function createManagedCommitProvenance(args: {
               ...state.records,
               {
                 remote,
-                ...now,
+                ...repository,
                 oid,
                 accountId: started.accountId,
                 generation: started.generation,
@@ -298,30 +429,15 @@ export function createManagedCommitProvenance(args: {
               current.generation !== started.generation
             )
               return false
-            const git = (command: string[]) =>
-              execFileSync('git', ['--no-replace-objects', ...command], {
-                cwd: root,
-                encoding: 'utf8',
-                timeout: 250,
-                maxBuffer: 65536,
-                env: {
-                  ...process.env,
-                  LC_ALL: 'C',
-                  GIT_NO_REPLACE_OBJECTS: '1',
-                  GIT_TERMINAL_PROMPT: '0',
-                },
-                stdio: ['ignore', 'pipe', 'pipe'],
-              }).trim()
-            if (canonicalGitHubRemote(git(['remote', 'get-url', 'origin'])) !== remote) return false
-            const gitDir = realpathSync(git(['rev-parse', '--absolute-git-dir']))
-            const info = statSync(gitDir)
+            const snapshot = repositoryPublicationSnapshot(root)
             return (
-              realpathSync(root) === started.root &&
-              gitDir === started.gitDir &&
-              Number(info.dev) === started.device &&
-              Number(info.ino) === started.inode &&
-              readFileSync(`${gitDir}/holi-managed-provenance-id`, 'utf8').trim() ===
-                started.lifetime &&
+              snapshot !== null &&
+              snapshot.remote === remote &&
+              snapshot.root === started.root &&
+              snapshot.gitDir === started.gitDir &&
+              snapshot.device === started.device &&
+              snapshot.inode === started.inode &&
+              snapshot.lifetime === started.lifetime &&
               args.subscribedNow()
             )
           } catch {

@@ -152,6 +152,7 @@ describe('app frame activation lifetime', () => {
       root,
       pause: () => {},
       resume: () => {},
+      drainSync: async () => {},
       commitNow: async () => null,
       repo: { head: async () => 'head' },
     })

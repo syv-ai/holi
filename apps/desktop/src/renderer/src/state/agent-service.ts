@@ -21,6 +21,7 @@ export function useAgentService(): AgentService | null {
             targets: source.targets,
             ask: (args) => store.set(source.ask, args),
             start: (args) => store.set(source.start, args),
+            show: (args) => store.set(source.show, args),
           },
     [source, store],
   )
