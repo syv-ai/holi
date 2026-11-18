@@ -552,8 +552,10 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         })
       )
         return
-      if (current.current && !hostHintsUnchanged(current.current.discoveryTargets)) cancel()
-      else if (!current.current) cancel()
+      const active = current.current
+      if (active && !hostHintsUnchanged(active.discoveryTargets, active.adapter, active.root))
+        cancel()
+      else if (!active) cancel()
     })
     observer.observe(document.body, {
       childList: true,
