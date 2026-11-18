@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src",
+    "scripts/rich-text-vim-native-smoke.tsx",
+    "scripts/rich-text-vim-native-smoke-main.ts"
+  ]
+}

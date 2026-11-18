@@ -21,6 +21,8 @@
     "smoke:pdf-vim:typecheck": "tsc --noEmit --project tsconfig.pdf-vim-native-smoke.json",
     "smoke:mail-vim:native": "node scripts/run-mail-vim-native-smoke.mjs",
     "smoke:mail-vim:typecheck": "tsc --noEmit --project tsconfig.mail-vim-native-smoke.json",
+    "smoke:rich-text-vim:native": "node scripts/run-rich-text-vim-native-smoke.mjs",
+    "smoke:rich-text-vim:typecheck": "tsc --noEmit --project tsconfig.rich-text-vim-native-smoke.json",
     "smoke:files-subscriptions:native": "node scripts/run-files-subscriptions-smoke.mjs",
     "smoke:files-subscriptions:typecheck": "tsc --noEmit --project tsconfig.files-subscriptions-native-smoke.json",
     "smoke:mdx-diagnostics:native": "node scripts/run-mdx-diagnostics-native-smoke.mjs",
