@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,7 +15,7 @@ const evidence = resolve(
 )
 await mkdir(evidence, { recursive: true })
 assert.deepEqual(await readdir(evidence), [], 'refusing to overwrite native evidence')
-const root = await mkdtemp('/tmp/holi-510-runtime-')
+const root = await realpath(await mkdtemp('/tmp/holi-510-runtime-'))
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const assertions = []
 let child
