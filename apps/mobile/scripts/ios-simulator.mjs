@@ -26,6 +26,7 @@ import {
 } from './host-checks.mjs'
 import { captureStorageEvidence, readBoundedJson } from './storage-evidence.mjs'
 import { bootSimulator, cleanupSimulator } from './simulator-boot.mjs'
+import { createGitFixture } from './git-fixture.mjs'
 import {
   interruptionBefore,
   interruptionPending,
@@ -52,6 +53,7 @@ const command = (exe, args, options = {}) =>
 const simctl = (...args) => command('xcrun', ['simctl', ...args])
 let simulator
 let canonicalContainer
+let gitFixture
 const appPids = []
 const cleanupFailures = []
 try {
@@ -120,6 +122,7 @@ try {
   await writeFile(join(artifacts, 'binary-build.txt'), binaryInfo)
   await cp(app, join(artifacts, 'mobile.app'), { recursive: true, force: true })
 
+  gitFixture = await createGitFixture(artifacts, runId)
   simulator = await simctl('create', `holi-265-${runId}`, deviceType, runtime.identifier)
   assert.match(simulator, /^[A-F0-9-]{36}$/)
   await writeFile(join(artifacts, 'simulator-id.txt'), simulator)
@@ -131,6 +134,7 @@ try {
     signal: controller.signal,
     metadata: { xcode, runtime: runtime.identifier, deviceType },
   })
+  await simctl('keychain', simulator, 'add-root-cert', gitFixture.cert)
   await simctl('status_bar', simulator, 'override', '--time', '9:41')
   await simctl('install', simulator, app)
   const container = await simctl('get_app_container', simulator, bundleId, 'data')
@@ -181,6 +185,15 @@ try {
         ...process.env,
         SIMCTL_CHILD_HOLI_COMPAT_RUN_ID: runId,
         SIMCTL_CHILD_HOLI_STORAGE_PHASE: phase,
+        ...(phase === 'normal'
+          ? {
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_ROOT: `${canonicalContainer}/Documents/holi-git-${runId}`,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_URL: gitFixture.url,
+              SIMCTL_CHILD_HOLI_GIT_INVALID_TLS_URL: gitFixture.invalidUrl,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_USER: gitFixture.username,
+              SIMCTL_CHILD_HOLI_GIT_FIXTURE_PASSWORD: gitFixture.password,
+            }
+          : {}),
         ...(moveCase ? { SIMCTL_CHILD_HOLI_MOVE_CASE: String(moveCase.ordinal) } : {}),
       },
     })
@@ -218,6 +231,41 @@ try {
     library,
   }
   validateReport(report, { ...context, ...normalProcess, phase: 'normal' })
+  assert.ok(gitFixture.remoteAdvanced, 'Fixture host did not advance remote after native clone')
+  assert.ok(gitFixture.authChallengeCount > 0, 'Fixture did not challenge native credentials')
+  assert.equal(gitFixture.backendFailures, 0, 'Fixture backend request failed')
+  const remoteRefs = await command('git', [
+    '--git-dir',
+    join(gitFixture.root, 'repos/fixture.git'),
+    'show-ref',
+    '--heads',
+  ])
+  const refs = Object.fromEntries(
+    remoteRefs
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [oid, ref] = line.split(' ')
+        return [ref, oid]
+      }),
+  )
+  assert.equal(refs['refs/heads/fixture-start'], report.git.fetchedRef)
+  assert.equal(refs['refs/heads/holi-compat'], report.git.pushedHead)
+  await writeFile(
+    join(artifacts, 'git-transport-proof.json'),
+    JSON.stringify(
+      {
+        runId,
+        authChallenges: gitFixture.authChallengeCount,
+        remoteAdvancedAfterClone: gitFixture.remoteAdvanced,
+        pushedRef: 'refs/heads/holi-compat',
+        refs: Object.keys(refs),
+      },
+      null,
+      2,
+    ),
+  )
   const prefixProof = report.prefixNamespace
   assert.equal(await realpath(prefixProof.rootA), prefixProof.rootA)
   assert.equal(await realpath(prefixProof.rootB), prefixProof.rootB)
@@ -534,6 +582,7 @@ try {
         normal: true,
         stagedKill: true,
         recovery: true,
+        gitTransport: true,
         moveCrashCases: moveEvidence.length,
         faultOperations: 10,
         rawSpellings: 2,
@@ -543,7 +592,7 @@ try {
     ),
   )
   console.log(
-    `iOS ${runtime.version}: ${report.corpus.passed}/${report.corpus.total} format cases, 10 storage faults, ${moveEvidence.length} move crash cases, raw NFC/NFD and staged-kill recovery passed. Evidence: ${artifacts}`,
+    `iOS ${runtime.version}: ${report.corpus.passed}/${report.corpus.total} format cases, native Git transport, 10 storage faults, ${moveEvidence.length} move crash cases, raw NFC/NFD and staged-kill recovery passed. Evidence: ${artifacts}`,
   )
 } catch (error) {
   await writeFile(
@@ -610,6 +659,13 @@ try {
   throw error
 } finally {
   // Never enumerate/delete other devices. Even an interrupted run cleans its own device.
+  if (gitFixture) {
+    try {
+      await gitFixture.close()
+    } catch (error) {
+      cleanupFailures.push(`Git fixture cleanup: ${String(error)}`)
+    }
+  }
   if (simulator) {
     cleanupFailures.push(...(await cleanupSimulator({ simulator, artifacts })))
     if (cleanupFailures.length)
