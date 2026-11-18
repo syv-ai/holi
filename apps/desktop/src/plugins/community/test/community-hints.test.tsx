@@ -168,7 +168,8 @@ describe('community host hint adapter', () => {
       exclusive: true,
     }
     unregisterAdapter = registerHostHintAdapter(frame, guestAdapter)
-    expect(hostHintsUnchanged([], guestAdapter, root)).toBe(true)
+    expect(hostHintsUnchanged([], undefined, root)).toBe(true)
+    expect(hostHintsUnchanged([], guestAdapter, root)).toBe(false)
   })
 
   it('runs through core discovery, session routing, and activation for a verified snapshot', () => {

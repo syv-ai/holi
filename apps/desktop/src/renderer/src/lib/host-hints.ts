@@ -268,23 +268,29 @@ export function hostHintsUnchanged(
   if (!root?.isConnected) return false
   // Only validate adapters that contributed to this request, plus an explicit
   // request adapter whose lifetime must remain valid even with no targets.
-  const adapters = new Set([
-    ...targets.flatMap((target) => (target.adapter ? [target.adapter] : [])),
+  const previousAdapters = new Set(
+    targets.flatMap((target) => (target.adapter ? [target.adapter] : [])),
+  )
+  for (const source of new Set([
+    ...previousAdapters,
     ...(requestAdapter ? [requestAdapter] : []),
-  ])
-  for (const source of adapters) {
+  ])) {
     const adapted = targets.filter((target) => target.adapter === source)
     if (!source.unchanged(adapted)) return false
   }
   const ordinary = targets.filter((target) => !target.adapter)
   const next = discoverHostHintTargets(root, requestAdapter)
   const ordinaryNext = next.filter((target) => !target.adapter)
+  const comparedAdapters = new Set([
+    ...previousAdapters,
+    ...next.flatMap((target) => (target.adapter ? [target.adapter] : [])),
+  ])
   if (
     ordinaryNext.length !== ordinary.length ||
     !ordinaryNext.every((target, i) => sameTarget(target, ordinary[i]!))
   )
     return false
-  for (const source of adapters) {
+  for (const source of comparedAdapters) {
     const previous = targets.filter((target) => target.adapter === source)
     const current = next.filter((target) => target.adapter === source)
     if (
