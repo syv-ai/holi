@@ -1150,6 +1150,66 @@ describe('rich-text Vim extension', () => {
     expect(ed.state.doc.check()).toBeUndefined()
   })
 
+  it('keeps mixed code and rich blocks lossless across p/P and undo', () => {
+    for (const put of ['p', 'P'] as const) {
+      const feedback = vi.fn()
+      const ed = own(
+        new Editor({
+          extensions: [
+            StarterKit,
+            WikiLink.configure({ onOpen: () => undefined }),
+            RichTextVim.configure({ enabled: false, editable: () => true, onFeedback: feedback }),
+          ],
+          content: {
+            type: 'doc',
+            content: [
+              { type: 'codeBlock', content: [{ type: 'text', text: 'code' }] },
+              {
+                type: 'paragraph',
+                content: [
+                  { type: 'text', marks: [{ type: 'bold' }], text: 'rich ' },
+                  { type: 'wikiLink', attrs: { target: 'folder/note', label: 'Note' } },
+                ],
+              },
+              { type: 'paragraph', content: [{ type: 'text', text: 'tail' }] },
+            ],
+          },
+        }),
+      )
+      configureRichTextVim(ed.view, true, true, () => true)
+      const original = ed.state.doc.toJSON()
+      ed.commands.setTextSelection(1)
+      key(ed, '2')
+      key(ed, 'y')
+      key(ed, 'y')
+
+      // A mixed register cannot be textBetween-flattened into a code block.
+      ed.commands.setTextSelection(1)
+      key(ed, 'p')
+      expect(ed.state.doc.toJSON()).toEqual(original)
+      expect(feedback).toHaveBeenCalled()
+
+      let tail = 0
+      ed.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === 'tail') tail = pos
+      })
+      ed.commands.setTextSelection(tail)
+      key(ed, put)
+      let links = 0
+      let boldText = 0
+      ed.state.doc.descendants((node) => {
+        if (node.type.name === 'wikiLink') links++
+        if (node.isText && node.marks.some((mark) => mark.type.name === 'bold')) boldText++
+      })
+      expect(ed.state.doc.childCount).toBe(5)
+      expect(links).toBe(2)
+      expect(boldText).toBe(2)
+      expect(ed.state.doc.check()).toBeUndefined()
+      key(ed, 'u')
+      expect(ed.state.doc.toJSON()).toEqual(original)
+    }
+  })
+
   it('pastes listwise registers as sibling list items', () => {
     const ed = open('<ul><li><p>first</p></li><li><p>second</p></li></ul>')
     let firstText = 0

@@ -90,6 +90,13 @@ export function pasteVimRegister(
       }
     } else if (
       line &&
+      pasteRegister.linewise &&
+      pasteRegister.linewiseTextblock !== 'codeBlock' &&
+      line.block.node.type.name === 'codeBlock'
+    ) {
+      onFeedback?.('Vim register does not fit in a code block; no text was changed')
+    } else if (
+      line &&
       pasteRegister.linewiseTextblock === 'codeBlock' &&
       line.block.node.type.name === 'codeBlock'
     ) {
