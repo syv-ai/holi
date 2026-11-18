@@ -7,6 +7,7 @@ const expected = [
   'path-safety.ts',
   'vault-format.ts',
   'vault-format.v1.json',
+  'wiki-links.ts',
 ]
 const builtins = new Set(builtinModules.map((name) => name.replace(/^node:/, '')))
 

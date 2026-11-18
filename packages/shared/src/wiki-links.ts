@@ -95,10 +95,43 @@ export function wikiLinksToText(text: string): string {
 }
 
 /**
- * Rewrite every link targeting `fromPath` to `toPath`, preserving labels
- * (the rename primitive, applied to each affected doc's text). Links to
- * other targets are untouched. Matching uses the same trimming as the parser,
- * and rewritten tokens come out normalized.
+ * Rewrite only the target span of links matching `fromPath`, preserving every
+ * other character in the text and token. Matching uses the parser's trimmed
+ * target; the replacement itself is exact and does not normalize the token.
+ */
+export function rewriteWikiLinksLosslessly(
+  text: string,
+  fromPath: string,
+  toPath: string,
+): { text: string; count: number } {
+  const links = parseWikiLinks(text)
+  const replacements = links
+    .filter((link) => link.target === fromPath)
+    .map((link) => {
+      const body = link.raw.slice(2, -2)
+      const pipe = body.indexOf('|')
+      const rawTarget = pipe < 0 ? body : body.slice(0, pipe)
+      const leadingWhitespace = rawTarget.length - rawTarget.trimStart().length
+      const trailingWhitespace = rawTarget.length - rawTarget.trimEnd().length
+      const start = link.start + 2 + leadingWhitespace
+      const end = link.start + 2 + rawTarget.length - trailingWhitespace
+      return { start, end }
+    })
+
+  if (replacements.length === 0) return { text, count: 0 }
+
+  let result = ''
+  let cursor = 0
+  for (const replacement of replacements) {
+    result += text.slice(cursor, replacement.start) + toPath
+    cursor = replacement.end
+  }
+  return { text: result + text.slice(cursor), count: replacements.length }
+}
+
+/**
+ * Rewrite matching links as normalized wiki-link tokens, preserving labels.
+ * Matching uses the same trimming as the parser.
  */
 export function rewriteWikiLinks(
   text: string,
