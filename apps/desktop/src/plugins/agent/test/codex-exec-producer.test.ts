@@ -15,6 +15,7 @@ const bin = process.env.HOLI_CODEX_BIN
 const roots: string[] = []
 const servers: Server[] = []
 const jobsList: ReturnType<typeof createJobs>[] = []
+const bracketGateReleases: Array<() => void> = []
 const nativePids: number[] = []
 function persistProof() {
   const output = process.env.HOLI_CODEX_PROOF_OUTPUT
@@ -107,7 +108,7 @@ const proof = {
   scenarios: [] as ScenarioEvidence[],
   cleanup: { nativeGroupsDrained: false, rootsRemoved: false },
 }
-async function fixture(mode: 'success' | 'failure' | 'stall' = 'success') {
+async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayBracketEnd = false) {
   if (!bin) throw new Error('HOLI_CODEX_BIN is required for native producer verification')
   const root = await mkdtemp(join(tmpdir(), 'holi-native-codex-'))
   roots.push(root)
@@ -135,6 +136,27 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success') {
     tokens?: number
   }> = []
   const brackets: Array<{ id: string; edge: string }> = []
+  const bracketEndEntries: Array<{ promise: Promise<void>; resolve: () => void }> = []
+  const bracketEndGates: Array<{ promise: Promise<void>; resolve: () => void }> = []
+  for (let i = 0; i < 2; i++) {
+    let entered!: () => void
+    let release!: () => void
+    bracketEndEntries.push({
+      promise: new Promise<void>((resolve) => (entered = resolve)),
+      resolve: entered,
+    })
+    bracketEndGates.push({
+      promise: new Promise<void>((resolve) => (release = resolve)),
+      resolve: release,
+    })
+  }
+  let bracketEndCount = 0
+  const releaseBracketEnd = (turn = 1) => bracketEndGates[turn - 1]?.resolve()
+  if (delayBracketEnd) {
+    bracketGateReleases.push(() => {
+      for (const gate of bracketEndGates) gate.resolve()
+    })
+  }
   let requestSeen: (() => void) | undefined
   const requestReceived = new Promise<void>((resolve) => {
     requestSeen = resolve
@@ -284,7 +306,14 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success') {
           tokens: row.usage?.total,
         })
     },
-    bracket: (id, edge) => brackets.push({ id, edge }),
+    bracket: async (id, edge) => {
+      if (delayBracketEnd && edge === 'end') {
+        const turn = ++bracketEndCount
+        bracketEndEntries[turn - 1]?.resolve()
+        await bracketEndGates[turn - 1]?.promise
+      }
+      brackets.push({ id, edge })
+    },
     spawn: (command, args, opts) => {
       const child = spawnOwnedProgram(command, args, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] })
       if (child.pid) {
@@ -374,6 +403,8 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success') {
     host,
     brackets,
     requestReceived,
+    bracketEndEntered: (turn = 1) => bracketEndEntries[turn - 1]!.promise,
+    releaseBracketEnd,
     stopServer: () => releaseStall?.(),
   }
 }
@@ -483,17 +514,28 @@ async function nativeVersion(
   return { code, stdout, timedOut, limited, groupDrained }
 }
 
-async function ended(jobs: ReturnType<typeof createJobs>, id: string) {
+async function ended(
+  jobs: ReturnType<typeof createJobs>,
+  id: string,
+  brackets: Array<{ id: string; edge: string }>,
+  expectedEnds = 1,
+) {
   const deadline = Date.now() + 25_000
   while (Date.now() < deadline) {
     const row = jobs.sessions().find((session) => session.id === id)
-    if (row?.outcome) return row
+    const completedEnds = brackets.filter(
+      (bracket) => bracket.id === id && bracket.edge === 'end',
+    ).length
+    if (row?.outcome && completedEnds >= expectedEnds) return row
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
   throw new Error('native job did not settle')
 }
 
 afterEach(async () => {
+  // Unblock bracket persistence before draining jobs, even when an assertion or
+  // native call failed while a turn was held at the test gate.
+  for (const release of bracketGateReleases.splice(0)) release()
   // Vitest runs afterEach before onTestFailed. Clean up first; the callback
   // replaces incomplete-capture fallback evidence with the actual failure.
   for (const jobs of jobsList.splice(0)) await jobs.leave()
@@ -558,7 +600,7 @@ if (bin) {
       })
       expect(result.ok).toBe(true)
       if (!result.ok) return
-      const row = await ended(f.jobs, result.sessionId)
+      const row = await ended(f.jobs, result.sessionId, f.brackets)
       expect(row.outcome).toBe('completed')
       expect(row.usage?.total).toBe(13)
       expect(f.requests).toHaveLength(1)
@@ -601,7 +643,7 @@ if (bin) {
     it('resumes the native thread and reports the cumulative usage total', async () => {
       const scenario = beginScenario('follow-up')
       onTestFailed(({ task }) => captureScenarioFailure(task.name, task.result?.errors?.[0]))
-      const f = await fixture()
+      const f = await fixture('success', true)
       scenario.processes = f.processes
       scenario.rawProcesses = f.rawProcesses
       scenario.jsonl = f.jsonl
@@ -619,47 +661,103 @@ if (bin) {
       expect(result.ok).toBe(true)
       if (!result.ok) return
       progress(scenario, 'host-lifecycle')
-      const first = await ended(f.jobs, result.sessionId)
-      expect(first.outcome).toBe('completed')
-      const firstThread = f.jsonl
-        .map(({ event }) => event as { kind?: string; id?: string })
-        .find((event) => event.kind === 'thread')?.id
-      expect(firstThread).toBeTruthy()
-      f.jobs.message(result.sessionId, 'Follow up')
-      const row = await ended(f.jobs, result.sessionId)
-      expect(row.outcome).toBe('completed')
-      expect(row.usage?.total).toBe(26)
-      expect(f.requests).toHaveLength(2)
-      expect(f.requests[1]?.body).toContain('Follow up')
-      expect(f.processes[1]?.args.join(' ')).toContain(firstThread!)
-      expect(
-        f.jsonl
-          .filter(({ event }) => (event as { kind?: string }).kind === 'thread')
-          .every(({ event }) => (event as { id?: string }).id === firstThread),
-      ).toBe(true)
-      expect(
-        f.host.some(
-          (event) =>
-            event.id === result.sessionId && event.outcome === 'completed' && event.tokens === 26,
-        ),
-      ).toBe(true)
-      expect(f.brackets.map((entry) => entry.edge)).toEqual(['begin', 'end', 'begin', 'end'])
-      Object.assign(scenario, {
-        sessionId: result.sessionId,
-        thread: firstThread,
-        outcome: row.outcome,
-        tokens: row.usage?.total,
-        requests: f.requests.map(({ url, model, body }) => ({
-          url,
-          model,
-          promptSeen: body.includes('Follow up'),
-        })),
-        processes: f.processes,
-        jsonl: f.jsonl,
-        host: f.host,
-        brackets: f.brackets,
-      })
-      finishScenario(scenario, 'pass')
+      let pendingCompletion: Promise<Awaited<ReturnType<typeof ended>>> | undefined
+      try {
+        let firstEntryTimeout: ReturnType<typeof setTimeout> | undefined
+        try {
+          await Promise.race([
+            f.bracketEndEntered(1),
+            new Promise<never>((_, reject) => {
+              firstEntryTimeout = setTimeout(
+                () => reject(new Error('first bracket end was not entered')),
+                15_000,
+              )
+            }),
+          ])
+        } finally {
+          if (firstEntryTimeout) clearTimeout(firstEntryTimeout)
+        }
+        pendingCompletion = ended(f.jobs, result.sessionId, f.brackets, 1)
+        let firstCompleted = false
+        void pendingCompletion.then(
+          () => (firstCompleted = true),
+          () => {},
+        )
+        expect(f.jobs.sessions().find((session) => session.id === result.sessionId)?.outcome).toBe(
+          'completed',
+        )
+        await Promise.resolve()
+        expect(firstCompleted).toBe(false)
+        f.releaseBracketEnd(1)
+        const first = await pendingCompletion
+        expect(first.outcome).toBe('completed')
+        const firstThread = f.jsonl
+          .map(({ event }) => event as { kind?: string; id?: string })
+          .find((event) => event.kind === 'thread')?.id
+        expect(firstThread).toBeTruthy()
+        f.jobs.message(result.sessionId, 'Follow up')
+        let secondEntryTimeout: ReturnType<typeof setTimeout> | undefined
+        try {
+          await Promise.race([
+            f.bracketEndEntered(2),
+            new Promise<never>((_, reject) => {
+              secondEntryTimeout = setTimeout(
+                () => reject(new Error('second bracket end was not entered')),
+                15_000,
+              )
+            }),
+          ])
+        } finally {
+          if (secondEntryTimeout) clearTimeout(secondEntryTimeout)
+        }
+        pendingCompletion = ended(f.jobs, result.sessionId, f.brackets, 2)
+        let secondCompleted = false
+        void pendingCompletion.then(
+          () => (secondCompleted = true),
+          () => {},
+        )
+        await Promise.resolve()
+        expect(secondCompleted).toBe(false)
+        f.releaseBracketEnd(2)
+        const row = await pendingCompletion
+        expect(row.outcome).toBe('completed')
+        expect(row.usage?.total).toBe(26)
+        expect(f.requests).toHaveLength(2)
+        expect(f.requests[1]?.body).toContain('Follow up')
+        expect(f.processes[1]?.args.join(' ')).toContain(firstThread!)
+        expect(
+          f.jsonl
+            .filter(({ event }) => (event as { kind?: string }).kind === 'thread')
+            .every(({ event }) => (event as { id?: string }).id === firstThread),
+        ).toBe(true)
+        expect(
+          f.host.some(
+            (event) =>
+              event.id === result.sessionId && event.outcome === 'completed' && event.tokens === 26,
+          ),
+        ).toBe(true)
+        expect(f.brackets.map((entry) => entry.edge)).toEqual(['begin', 'end', 'begin', 'end'])
+        Object.assign(scenario, {
+          sessionId: result.sessionId,
+          thread: firstThread,
+          outcome: row.outcome,
+          tokens: row.usage?.total,
+          requests: f.requests.map(({ url, model, body }) => ({
+            url,
+            model,
+            promptSeen: body.includes('Follow up'),
+          })),
+          processes: f.processes,
+          jsonl: f.jsonl,
+          host: f.host,
+          brackets: f.brackets,
+        })
+        finishScenario(scenario, 'pass')
+      } finally {
+        f.releaseBracketEnd(1)
+        f.releaseBracketEnd(2)
+        await pendingCompletion?.catch(() => {})
+      }
     }, 55_000)
 
     it('marks a genuine model error failed, never completed', async () => {
@@ -683,7 +781,7 @@ if (bin) {
       expect(result.ok).toBe(true)
       if (!result.ok) return
       progress(scenario, 'host-lifecycle')
-      const row = await ended(f.jobs, result.sessionId)
+      const row = await ended(f.jobs, result.sessionId, f.brackets)
       expect(row.outcome).toBe('failed')
       expect(row.outcome).not.toBe('completed')
       expect(row.error).toContain('fixture rejected request')
@@ -732,7 +830,7 @@ if (bin) {
         ),
       ])
       expect(await f.jobs.stop(result.sessionId)).toEqual({ ok: true })
-      const stopped = await ended(f.jobs, result.sessionId)
+      const stopped = await ended(f.jobs, result.sessionId, f.brackets)
       expect(stopped.outcome).toBe('failed')
       expect(stopped.error).toContain('Stopped')
       expect(

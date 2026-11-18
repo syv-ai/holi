@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 export const providers = [
@@ -164,10 +165,16 @@ function parseIssue(issue) {
 }
 
 function reportKey(report) {
-  return `${report.version}:${report.checks
-    .map(({ name, outcome, detail = '' }) => `${name}=${outcome}:${detail}`)
-    .sort()
-    .join(',')}`
+  const checks = report.checks
+    .map(({ name, outcome, detail = '' }) => [name, outcome, detail])
+    .sort(([nameA, outcomeA, detailA], [nameB, outcomeB, detailB]) => {
+      const left = JSON.stringify([nameA, outcomeA, detailA])
+      const right = JSON.stringify([nameB, outcomeB, detailB])
+      return left < right ? -1 : left > right ? 1 : 0
+    })
+  return `v2-${createHash('sha256')
+    .update(JSON.stringify([report.version, checks]))
+    .digest('hex')}`
 }
 
 function renderBody(report) {
