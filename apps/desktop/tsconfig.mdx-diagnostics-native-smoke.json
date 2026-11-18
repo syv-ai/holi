@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src",
+    "scripts/mdx-diagnostics-native-smoke.tsx",
+    "scripts/mdx-diagnostics-native-smoke-main.ts",
+    "scripts/mdx-diagnostics-smoke-trpc.ts"
+  ]
+}

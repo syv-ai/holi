@@ -251,7 +251,7 @@ export const agentSettings = (
           statusLine.command === LEGACY_STATUS_LINE
         ) {
           statusLine.command = WINDOWS_STATUS_LINE
-          migrated = JSON.stringify(parsed)
+          migrated = JSON.stringify(parsed, null, 2) + '\n'
         }
       }
     } catch {

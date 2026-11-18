@@ -351,11 +351,18 @@ test('opens a thread: marks it read, renders HTML in the sandboxed frame', async
   expect(frame.contentDocument?.querySelector('script')).toBeNull()
   expect(document.body.textContent).not.toContain('alert(1)')
 
-  // The earlier message is collapsed to its first line.
-  expect(screen.getByRole('button', { name: /Expand message 1 of 2/ })).toBeInTheDocument()
+  // The earlier message is collapsed to its first line and owns no attachments.
+  const collapsedMessage = screen.getByRole('button', { name: /Expand message 1 of 2/ })
+  expect(collapsedMessage).toBeInTheDocument()
+  expect(
+    within(collapsedMessage.closest('article')!).queryByRole('button', { name: /^q2\.xlsx/ }),
+  ).toBeNull()
 
-  // An attachment opens the thread in Gmail.
-  await user.click(screen.getByRole('button', { name: /^q2\.xlsx/ }))
+  // This message's attachment comes before its HTML body and opens the thread in Gmail.
+  const expandedMessage = frame.closest('article')!
+  const attachment = within(expandedMessage).getByRole('button', { name: /^q2\.xlsx/ })
+  expect(attachment.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  await user.click(attachment)
   expect(openExternal).toHaveBeenCalledWith('https://mail.google.com/x')
 })
 

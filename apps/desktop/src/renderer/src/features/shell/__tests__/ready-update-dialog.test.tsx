@@ -62,6 +62,12 @@ describe('ReadyUpdateDialog', () => {
     expect(
       await screen.findByRole('alertdialog', { name: 'Holi 1.1.0 is ready' }),
     ).toBeInTheDocument()
+    // The portal is queryable before Radix enables its interactive layer.
+    await waitFor(() =>
+      expect(
+        getComputedStyle(screen.getByRole('button', { name: 'Later' })).pointerEvents,
+      ).not.toBe('none'),
+    )
     await userEvent.click(screen.getByRole('button', { name: 'Later' }))
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(window.localStorage.getItem('holi:ready-update-dismissed:stable:1.1.0')).toBe('true')
