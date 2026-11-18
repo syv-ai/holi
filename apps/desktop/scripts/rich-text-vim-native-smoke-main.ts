@@ -146,6 +146,8 @@ async function run() {
     show: true,
     webPreferences: {
       preload: join(root, 'preload.cjs'),
+      // Native input waits for frames even while this disposable window is occluded.
+      backgroundThrottling: false,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
