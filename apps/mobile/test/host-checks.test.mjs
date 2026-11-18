@@ -34,6 +34,35 @@ const report = {
   startedAt: 110,
   finishedAt: 120,
   corpus,
+  git: {
+    schemaVersion: 1,
+    runId,
+    libgit2Version: '1.9.7',
+    fetchedRef: 'a'.repeat(40),
+    pushedHead: 'b'.repeat(40),
+    clone: true,
+    fetch: true,
+    push: true,
+    credentialChallenge: true,
+    invalidTlsRejected: true,
+    invalidTlsErrorCode: -17,
+    invalidTlsErrorClass: 16,
+    authenticationRejected: true,
+    authenticationErrorCode: -16,
+    authenticationErrorClass: 8,
+    transportRejected: true,
+    transportErrorCode: -1,
+    transportErrorClass: 12,
+    branchPreserved: true,
+    modePreserved: true,
+    binaryPreserved: true,
+    nonNotePreserved: true,
+    hooksDisabled: true,
+    filtersDisabled: true,
+    helpersDisabled: true,
+    remoteConstrained: true,
+    unsafeConfigRejected: true,
+  },
   storage: {
     schemaVersion: 3,
     faultPhases: [...storageFaultPhases],
@@ -65,6 +94,67 @@ for (const [name, mutate] of [
     'wrong phase',
     (value) => {
       value.phase = 'recovery'
+    },
+  ],
+  [
+    'missing native Git proof',
+    (value) => {
+      delete value.git
+    },
+  ],
+  [
+    'stale native Git proof',
+    (value) => {
+      value.git.runId = 'old'
+    },
+  ],
+  [
+    'unverified credential challenge',
+    (value) => {
+      value.git.credentialChallenge = false
+    },
+  ],
+  [
+    'accepted invalid TLS',
+    (value) => {
+      value.git.invalidTlsRejected = false
+    },
+  ],
+  [
+    'invalid TLS reported as transport failure',
+    (value) => {
+      value.git.invalidTlsErrorClass = 12
+    },
+  ],
+  [
+    'wrong certificate error code',
+    (value) => {
+      value.git.invalidTlsErrorCode = -1
+    },
+  ],
+  [
+    'credential failure reported as transport failure',
+    (value) => {
+      value.git.authenticationErrorCode = -1
+    },
+  ],
+  [
+    'missing transport classification',
+    (value) => {
+      value.git.transportErrorClass = 'network'
+    },
+  ],
+  [
+    'transport accepted as authentication failure',
+    (value) => {
+      value.git.transportErrorCode = value.git.authenticationErrorCode
+      value.git.transportErrorClass = value.git.authenticationErrorClass
+    },
+  ],
+  [
+    'malformed linked libgit2 version',
+    (value) => {
+      value.git.libgit2Version = '1.9.7; fake'
     },
   ],
   [

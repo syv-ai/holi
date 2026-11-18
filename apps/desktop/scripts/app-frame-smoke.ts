@@ -202,6 +202,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     root: roots[remote],
     pause: () => {},
     resume: () => {},
+    drainSync: async () => {},
     commitNow: async () => null,
     repo: { head: async () => 'head' },
   })

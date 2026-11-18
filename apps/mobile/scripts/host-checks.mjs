@@ -24,6 +24,43 @@ export function validateReport(report, context) {
   assert.ok(Number.isSafeInteger(report.finishedAt) && report.finishedAt >= report.startedAt)
   assert.ok(report.finishedAt <= now && now - report.finishedAt < 120_000)
   assert.equal(report.error, undefined, `Native corpus error: ${report.error}`)
+  if (phase === 'normal') {
+    const git = report.git
+    assert.ok(git && typeof git === 'object', 'Native Git transport proof is missing')
+    assert.equal(git.schemaVersion, 1)
+    assert.equal(git.runId, runId, 'Stale native Git evidence')
+    assert.match(git.libgit2Version, /^\d+\.\d+\.\d+$/)
+    assert.match(git.fetchedRef, /^[a-f0-9]{40}$/)
+    assert.match(git.pushedHead, /^[a-f0-9]{40}$/)
+    for (const field of [
+      'clone',
+      'fetch',
+      'push',
+      'credentialChallenge',
+      'invalidTlsRejected',
+      'authenticationRejected',
+      'transportRejected',
+      'branchPreserved',
+      'modePreserved',
+      'binaryPreserved',
+      'nonNotePreserved',
+      'hooksDisabled',
+      'filtersDisabled',
+      'helpersDisabled',
+      'remoteConstrained',
+      'unsafeConfigRejected',
+    ])
+      assert.equal(git[field], true, `Native Git proof failed: ${field}`)
+    assert.equal(git.invalidTlsErrorCode, -17, 'Invalid TLS must be a certificate error')
+    assert.equal(git.invalidTlsErrorClass, 16, 'Invalid TLS must be a TLS-class error')
+    assert.equal(git.authenticationErrorCode, -16, 'Credential rejection must be an auth error')
+    assert.ok(Number.isInteger(git.authenticationErrorClass))
+    assert.ok(Number.isInteger(git.transportErrorCode))
+    assert.ok(Number.isInteger(git.transportErrorClass))
+    assert.notEqual(git.transportErrorCode, git.invalidTlsErrorCode)
+    assert.notEqual(git.transportErrorCode, git.authenticationErrorCode)
+    assert.notEqual(git.transportErrorClass, git.invalidTlsErrorClass)
+  }
   const reference = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
   assert.ok(reference.total > 0)
   assert.equal(reference.failed, 0)

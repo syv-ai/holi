@@ -4,7 +4,7 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import { isRemote, isSecretPath, vaultRelPath } from '@holi/shared'
 import { jsonFileStore } from '../json-file-store'
 
-interface SubscriptionScope {
+export interface SubscriptionScope {
   path: string
   baseline: string | null
 }
@@ -93,6 +93,15 @@ export function createSubscriptions(file: string) {
       } catch {
         return false
       }
+    },
+    async scope(remote: string, path: string): Promise<SubscriptionScope | null> {
+      if (!isRemote(remote)) throw new Error('Invalid vault remote.')
+      const normalized = path === '' ? '' : vaultRelPath(path)
+      if (normalized !== path || isSecretPath(normalized))
+        throw new Error('This path cannot be subscribed.')
+      return (
+        (await store.read()).remotes[remote]?.find((scope) => scope.path === normalized) ?? null
+      )
     },
     async hasExplicit(remote: string): Promise<boolean> {
       if (!isRemote(remote)) return false

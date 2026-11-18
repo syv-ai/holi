@@ -15,9 +15,9 @@ concurrency:
 jobs:
   simulator:
     name: Unsigned NativeScript simulator
-    # The macos-26 image inventory lists Xcode 26.2 and its iOS 26.2 runtime.
-    # This intentionally does not depend on the Xcode 27 public preview.
-    runs-on: macos-26
+    # Keep the pinned iOS 26.2 toolchain on the macOS 15 arm64 image: Tahoe hosts
+    # stall in CoreSimulator runtime discovery and boot before the app can run.
+    runs-on: macos-15
     timeout-minutes: 20
     env:
       LANG: en_US.UTF-8
@@ -39,8 +39,14 @@ jobs:
           cache: pnpm
       - name: Install only mobile and shared dependencies
         run: pnpm --filter @holi/mobile... install --frozen-lockfile
-      - name: NativeScript Ruby project adapter
-        run: gem install --user-install xcodeproj -v 1.28.1 --no-document
+      - name: NativeScript Ruby project adapter and native build tools
+        run: |
+          gem install --user-install xcodeproj -v 1.28.1 --no-document
+          cmake --version
+          git --version
+          openssl version
+          tar --version
+          xcrun --sdk iphonesimulator --show-sdk-path
       - name: Check portable modules and host verifier
         run: |
           pnpm --filter @holi/shared typecheck
