@@ -125,6 +125,20 @@ describe('planVimOperator', () => {
     },
   )
 
+  it('tags a single-line code block register for linewise paste', () => {
+    withEditor('<pre><code>only</code></pre>', (editor) => {
+      const plan = planVimOperator(editor.state, {
+        operator: 'y',
+        target: { kind: 'doubled', origin: 1, count: 1 },
+      })
+      expect(plan.kind).toBe('ready')
+      if (plan.kind !== 'ready') return
+      expect(plan.register.linewise).toBe(true)
+      expect(plan.register.linewiseTextblock).toBe('codeBlock')
+      expect(plan.register.content.content.firstChild?.type.name).toBe('codeBlock')
+    })
+  })
+
   it('counts doubled operators across global logical lines and rejects partial blocks', () => {
     for (const content of [
       '<p>before</p><pre><code>first\nsecond</code></pre><p>after</p>',
