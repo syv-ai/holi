@@ -6,7 +6,7 @@ import { THEME_TOKENS } from '@holi/shared'
 import { APP_METHODS } from '../shared/bridge'
 import { appHost } from '../shared/bundle'
 import { appBaseTokens, missingBaseTokens } from '../main/tokens'
-import { BRIDGE_JS, COMMAND_JS } from '../main/bridge-script'
+import { APP_HINTS_JS, BRIDGE_JS, COMMAND_JS } from '../main/bridge-script'
 import {
   appFileAbsPath,
   appHeadHtml,
@@ -184,6 +184,7 @@ describe('appHeadHtml', () => {
 
   it('carries the bridge shim in a script tag', () => {
     expect(appHeadHtml({}, 'dark')).toContain(`<script>${BRIDGE_JS}</script>`)
+    expect(appHeadHtml({}, 'dark')).toContain(`<script>${APP_HINTS_JS}</script>`)
   })
 
   it('cannot be escaped by a hostile token value', () => {
@@ -193,8 +194,8 @@ describe('appHeadHtml', () => {
     expect(out).not.toContain('alert(1)</script>')
     expect(out.match(/<style>/g)).toHaveLength(1)
     expect(out.match(/<\/style>/g)).toHaveLength(1)
-    expect(out.match(/<script>/g)).toHaveLength(1)
-    expect(out.match(/<\/script>/g)).toHaveLength(1)
+    expect(out.match(/<script>/g)).toHaveLength(2)
+    expect(out.match(/<\/script>/g)).toHaveLength(2)
   })
 })
 
