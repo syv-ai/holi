@@ -29,34 +29,32 @@ export function getPreviousStableTag({ repository, currentTag, runGhApi = execFi
     [
       'api',
       '--paginate',
-      '--slurp',
       '--jq',
-      '[.[] | {tag_name, draft, prerelease, published_at}]',
+      '.[] | {tag_name, draft, prerelease, published_at} | @json',
       `repos/${repository}/releases?per_page=100`,
     ],
     { encoding: 'utf8' },
   )
-  const pages = JSON.parse(output)
+  const releases = output
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
   if (
-    !Array.isArray(pages) ||
-    pages.some(
-      (page) =>
-        !Array.isArray(page) ||
-        page.some(
-          (release) =>
-            !release ||
-            typeof release !== 'object' ||
-            typeof release.tag_name !== 'string' ||
-            typeof release.draft !== 'boolean' ||
-            typeof release.prerelease !== 'boolean' ||
-            !(release.published_at === null || typeof release.published_at === 'string'),
-        ),
+    releases.some(
+      (release) =>
+        !release ||
+        typeof release !== 'object' ||
+        Array.isArray(release) ||
+        typeof release.tag_name !== 'string' ||
+        typeof release.draft !== 'boolean' ||
+        typeof release.prerelease !== 'boolean' ||
+        !(release.published_at === null || typeof release.published_at === 'string'),
     )
   ) {
     throw new Error('GitHub releases response was not a projected paginated release list')
   }
 
-  return previousStableRelease(pages.flat(), currentTag)
+  return previousStableRelease(releases, currentTag)
 }
 
 if (import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
