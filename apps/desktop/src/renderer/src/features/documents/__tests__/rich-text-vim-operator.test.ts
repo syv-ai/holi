@@ -103,6 +103,28 @@ describe('planVimOperator', () => {
     }
   })
 
+  it.each(['y', 'd', 'c'] as const)(
+    'keeps mixed code and rich blocks out of code-text registers for %s',
+    (operator) => {
+      withEditor(
+        '<pre><code>code</code></pre><p><strong>rich</strong></p><p>tail</p>',
+        (editor) => {
+          const plan = planVimOperator(editor.state, {
+            operator,
+            target: { kind: 'doubled', origin: 1, count: 2 },
+          })
+          expect(plan.kind).toBe('ready')
+          if (plan.kind !== 'ready') return
+          expect(plan.register.content.content.childCount).toBe(2)
+          expect(plan.register.content.content.lastChild?.textContent).toBe('rich')
+          expect(plan.register.content.content.firstChild?.type.name).toBe('codeBlock')
+          expect(plan.register.content.content.lastChild?.type.name).toBe('paragraph')
+          expect(plan.register.linewiseTextblock).toBeUndefined()
+        },
+      )
+    },
+  )
+
   it('counts doubled operators across global logical lines and rejects partial blocks', () => {
     for (const content of [
       '<p>before</p><pre><code>first\nsecond</code></pre><p>after</p>',
