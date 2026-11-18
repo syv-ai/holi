@@ -44,6 +44,11 @@ let failWrites = 0
 let heldRead: { resolve: (text: string) => void; text: string } | undefined
 let heldReadWaiters: (() => void)[] = []
 let delayNextRead = false
+let expectingDiskRefusal = false
+let expectedDiskRefusalErrors = 0
+const rendererErrors: string[] = []
+const rendererExits: string[] = []
+const expectedDiskRefusalMessage = '[flush] buffer failed: Error: fixture disk refusal'
 app.setName('Holi rich text Vim acceptance 516')
 app.setPath('userData', join(root, 'userData'))
 app.setPath('sessionData', join(root, 'sessionData'))
@@ -152,7 +157,11 @@ async function run() {
   })
   windowRef.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     if (message === 'HOLI_516_FOCUS') windowRef?.focus()
-    else console.log(`Renderer console level=${level} line=${line} source=${sourceId}: ${message}`)
+    else {
+      if (level >= 3 && !(expectingDiskRefusal && message === expectedDiskRefusalMessage))
+        rendererErrors.push(`console error line=${line} source=${sourceId}: ${message}`)
+      console.log(`Renderer console level=${level} line=${line} source=${sourceId}: ${message}`)
+    }
   })
   windowRef.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
     console.error(
@@ -160,8 +169,25 @@ async function run() {
     )
   })
   windowRef.webContents.on('render-process-gone', (_event, details) => {
+    rendererExits.push(JSON.stringify(details))
     console.error(`Renderer process exited: ${JSON.stringify(details)}`)
   })
+  windowRef.webContents.debugger.on('message', (_event, method, params) => {
+    if (method === 'Runtime.exceptionThrown') {
+      rendererErrors.push(`uncaught exception: ${JSON.stringify(params)}`)
+      return
+    }
+    if (method !== 'Runtime.consoleAPICalled' || params.type !== 'error') return
+    const args = params.args as { value?: unknown; description?: string }[] | undefined
+    const text = (args ?? []).map((arg) => arg.description ?? String(arg.value ?? '')).join(' ')
+    if (expectingDiskRefusal && text === expectedDiskRefusalMessage) {
+      expectedDiskRefusalErrors++
+      return
+    }
+    rendererErrors.push(`console.error: ${text}`)
+  })
+  windowRef.webContents.debugger.attach('1.3')
+  await windowRef.webContents.debugger.sendCommand('Runtime.enable')
   await windowRef.loadFile(join(root, 'renderer/index.html'))
   const win = windowRef
   const evaluate = <T>(source: string) => win.webContents.executeJavaScript(source) as Promise<T>
@@ -1072,6 +1098,7 @@ async function run() {
   const switchButton = await evaluate<{ x: number; y: number }>(
     `(()=>{const r=document.querySelector('[data-fixture-action="leave"]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`,
   )
+  expectingDiskRefusal = true
   click(switchButton)
   await wait(`window.richTextVimFixture.leaveResult()!==null`, 'failed switch flush result')
   const failedLeave = await evaluate<{ left: boolean; error?: string }>(
@@ -1079,6 +1106,8 @@ async function run() {
   )
   assert.equal(failedLeave.left, false)
   assert.match(failedLeave.error ?? '', /fixture disk refusal/)
+  expectingDiskRefusal = false
+  assert.equal(expectedDiskRefusalErrors, 1, 'only the injected flush refusal was expected')
   assert.equal((await state()).markdown, 'dirty before departure unsaved')
   const diskAfterRefusal = await readFile(note, 'utf8')
   assert(diskAfterRefusal.includes('Latest external snapshot'))
@@ -1122,6 +1151,12 @@ async function run() {
     `document.documentElement.dataset.theme='dark';document.documentElement.classList.add('dark')`,
   )
   await capture('dark.png')
+  assert.deepEqual(
+    rendererErrors,
+    [],
+    'renderer emitted no unexpected console errors or exceptions',
+  )
+  assert.deepEqual(rendererExits, [], 'renderer process remained alive throughout the smoke')
   const result = {
     ok: true,
     issue: 516,
