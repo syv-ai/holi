@@ -1,0 +1,159 @@
+import { Editor } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import { TableKit } from '@tiptap/extension-table'
+import { describe, expect, it } from 'vitest'
+import { planVimOperator, type VimOperatorRequest } from '../rich-text-vim-operator'
+import { TaskList } from '@tiptap/extension-list'
+import { RichTextTaskItem } from '../rich-text/rich-text-task-item'
+
+function withEditor(content: string, run: (editor: Editor) => void, structured = false) {
+  const editor = new Editor({
+    extensions: [
+      StarterKit,
+      ...(structured ? [TableKit, TaskList, RichTextTaskItem.configure({ nested: true })] : []),
+    ],
+    content,
+  })
+  try {
+    run(editor)
+  } finally {
+    editor.destroy()
+  }
+}
+
+describe('planVimOperator', () => {
+  it('plans without mutating editor state and exposes the exact source document', () => {
+    withEditor('<p><strong>alpha</strong> beta</p><p>next</p>', (editor) => {
+      const state = editor.state
+      const doc = state.doc
+      const selection = state.selection
+      const request: VimOperatorRequest = {
+        operator: 'd',
+        target: { kind: 'motion', origin: 1, motion: 'w', count: 1 },
+      }
+      const plan = planVimOperator(state, request)
+      expect(state.doc).toBe(doc)
+      expect(state.selection).toBe(selection)
+      expect(plan.kind).toBe('ready')
+      if (plan.kind !== 'ready') return
+      expect(plan.sourceDoc).toBe(doc)
+      expect(plan.register.content.content.toJSON()).toEqual([
+        { type: 'text', marks: [{ type: 'bold' }], text: 'alpha' },
+        { type: 'text', text: ' ' },
+      ])
+      expect(plan.mutation).toEqual({ kind: 'delete', range: { from: 1, to: 7 } })
+      const tr = state.tr.delete(plan.mutation.range.from, plan.mutation.range.to)
+      expect(tr.doc.check()).toBeUndefined()
+      expect(tr.doc.textContent).toBe('betanext')
+      expect(plan.caret.position).toBeGreaterThanOrEqual(0)
+      expect(plan.caret.position).toBeLessThanOrEqual(tr.doc.content.size)
+    })
+  })
+
+  it('returns no-op and rejected plans without changing source state', () => {
+    withEditor(
+      '<p>word</p><table><tbody><tr><td><p>cell</p></td><td><p>other</p></td></tr></tbody></table>',
+      (editor) => {
+        const doc = editor.state.doc
+        const noop = planVimOperator(editor.state, {
+          operator: 'd',
+          target: { kind: 'motion', origin: -1, motion: 'w', count: 1 },
+        })
+        expect(noop.kind).toBe('noop')
+        let cell = 0
+        editor.state.doc.descendants((node, pos) => {
+          if (node.isText && node.text === 'cell') cell = pos
+        })
+        const rejected = planVimOperator(editor.state, {
+          operator: 'c',
+          target: { kind: 'motion', origin: cell, motion: 'w', count: 2 },
+        })
+        expect(rejected.kind).toBe('rejected')
+        expect(editor.state.doc).toBe(doc)
+      },
+      true,
+    )
+  })
+
+  it('keeps every ready mutation inside its native structural container', () => {
+    for (const content of [
+      '<pre><code>first\nsecond\nthird</code></pre>',
+      '<p>first<br>second<br>third</p>',
+      '<ul><li><p>first</p><p>second</p></li><li><p>third</p></li></ul>',
+      '<table><tbody><tr><td><p>first</p><p>second</p></td><td><p>other</p></td></tr></tbody></table>',
+    ]) {
+      withEditor(
+        content,
+        (editor) => {
+          let origin = 0
+          editor.state.doc.descendants((node, pos) => {
+            if (node.isText && node.text && origin === 0) origin = pos
+          })
+          const requests: VimOperatorRequest[] = [
+            { operator: 'd', target: { kind: 'doubled', origin, count: 1 } },
+            { operator: 'c', target: { kind: 'motion', origin, motion: 'w', count: 1 } },
+            {
+              operator: 'y',
+              target: { kind: 'visual', anchor: origin, cursor: origin + 2, linewise: false },
+            },
+          ]
+          for (const request of requests) {
+            const plan = planVimOperator(editor.state, request)
+            if (plan.kind !== 'ready' || !plan.mutation) continue
+            expect(plan.mutation.range.from).toBeGreaterThanOrEqual(0)
+            expect(plan.mutation.range.to).toBeLessThanOrEqual(editor.state.doc.content.size)
+            const tr =
+              plan.mutation.kind === 'delete'
+                ? editor.state.tr.delete(plan.mutation.range.from, plan.mutation.range.to)
+                : editor.state.tr.replaceWith(
+                    plan.mutation.range.from,
+                    plan.mutation.range.to,
+                    plan.mutation.replacement.content,
+                  )
+            expect(tr.doc.check()).toBeUndefined()
+          }
+        },
+        true,
+      )
+    }
+  })
+
+  it('clips extreme counts and handles bounded operator-target-shape combinations', () => {
+    const contents = [
+      '<p>one two</p>',
+      '<pre><code>one\ntwo</code></pre>',
+      '<p>one<br>two</p>',
+      '<p></p>',
+    ]
+    for (const content of contents) {
+      withEditor(content, (editor) => {
+        let origin = 0
+        editor.state.doc.descendants((node, pos) => {
+          if (node.isText && node.text && origin === 0) origin = pos
+        })
+        for (const operator of ['d', 'c', 'y'] as const) {
+          for (const count of [1, 2, 999, 1000]) {
+            for (const target of [
+              { kind: 'doubled' as const, origin, count },
+              { kind: 'motion' as const, origin, motion: 'w' as const, count },
+              { kind: 'visual' as const, anchor: origin, cursor: origin + count, linewise: true },
+            ]) {
+              const doc = editor.state.doc
+              const plan = planVimOperator(editor.state, { operator, target })
+              expect(editor.state.doc).toBe(doc)
+              if (plan.kind === 'ready') {
+                expect(plan.sourceDoc).toBe(doc)
+                expect(plan.contentRange.from).toBeGreaterThanOrEqual(0)
+                expect(plan.contentRange.to).toBeLessThanOrEqual(doc.content.size)
+                if (plan.mutation) {
+                  expect(plan.mutation.range.from).toBeGreaterThanOrEqual(0)
+                  expect(plan.mutation.range.to).toBeLessThanOrEqual(doc.content.size)
+                }
+              }
+            }
+          }
+        }
+      })
+    }
+  })
+})
