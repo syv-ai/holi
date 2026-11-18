@@ -300,10 +300,11 @@ jobs:
             exit 0
           fi
           NOTES_START_TAG="$(node .github/workflows/stable-release-notes.mjs "$TAG")"
-          NOTES_ARGS=()
-          if [ -n "$NOTES_START_TAG" ]; then
-            NOTES_ARGS=(--notes-start-tag "$NOTES_START_TAG")
+          if [ -z "$NOTES_START_TAG" ]; then
+            echo "No previous stable release found; create the first stable release manually with reviewed notes, then rerun this workflow."
+            exit 1
           fi
+          NOTES_ARGS=(--notes-start-tag "$NOTES_START_TAG")
           gh release create "$TAG" \
             --target "$GITHUB_SHA" \
             --title "Holi $TAG" \
