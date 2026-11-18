@@ -107,12 +107,16 @@ test('async adapter preparation is request-scoped and cannot replace a newer hin
 
 test('prepared app and asynchronous browser hints share unique labels and keyboard activation', async () => {
   let finish!: () => void
-  const view = setup(<div data-pane-focused data-pane="pane" />)
-  const root = document.querySelector<HTMLElement>('[data-pane-focused]')!
-  const nativeTarget = document.createElement('button')
-  nativeTarget.textContent = 'Native action'
-  const appOwner = document.createElement('div')
-  const appTarget = document.createElement('div')
+  const view = setup(
+    <section data-pane-focused data-pane="pane">
+      <button>Native action</button>
+      <div data-testid="prepared-app-target" />
+      <div data-testid="prepared-app-owner" />
+      <iframe data-testid="async-browser-owner" />
+    </section>,
+  )
+  const appOwner = screen.getByTestId('prepared-app-owner')
+  const appTarget = screen.getByTestId('prepared-app-target')
   const appAdapter: HostHintAdapter = {
     prepare: () => new Promise<void>((resolve) => (finish = resolve)),
     discover: () => [
@@ -121,17 +125,25 @@ test('prepared app and asynchronous browser hints share unique labels and keyboa
     unchanged: () => true,
     activate: () => true,
   }
-  const browserOwner = document.createElement('iframe')
   const browserTarget = { id: 'browser-action', label: 'Browser action', x: 200, y: 100 }
   const activateBrowser = vi.fn(async () => true)
+  const presentBrowser = vi.fn(
+    async (
+      _request: number,
+      _revision: number,
+      _labels: readonly { id: string; key: string }[],
+      _presentation?: Parameters<AsyncHostHintAdapter['present']>[3],
+    ) => true,
+  )
+  const clearBrowser = vi.fn((_request: number) => {})
   const browserAdapter: AsyncHostHintAdapter = {
     discover: vi.fn(async () => [browserTarget]),
-    present: vi.fn(async () => true),
-    clear: vi.fn(),
+    present: presentBrowser,
+    clear: clearBrowser,
     activate: activateBrowser,
     subscribe: vi.fn(() => () => {}),
   }
-  root.append(nativeTarget, appTarget, appOwner, browserOwner)
+  const browserOwner = screen.getByTestId('async-browser-owner')
   registerHostHintAdapter(appOwner, appAdapter)
   registerAsyncHostHintAdapter(browserOwner, browserAdapter)
   act(() => requestAdaptedHostHints(appOwner, appAdapter))
@@ -143,7 +155,7 @@ test('prepared app and asynchronous browser hints share unique labels and keyboa
     'Native action',
     'Prepared app action',
   ])
-  const browserLabels = browserAdapter.present.mock.calls[0]![2]
+  const browserLabels = presentBrowser.mock.calls[0]![2]
   expect(browserLabels).toHaveLength(1)
   expect(browserLabels[0]!.id).toBe('browser-action')
   expect(
@@ -163,8 +175,10 @@ test('prepared app and asynchronous browser hints share unique labels and keyboa
     window.dispatchEvent(event)
   })
   expect(event.defaultPrevented).toBe(true)
-  expect(activateBrowser).toHaveBeenCalledOnceWith(1, 'browser-action')
-  expect(browserAdapter.clear).toHaveBeenCalledOnceWith(1)
+  expect(activateBrowser).toHaveBeenCalledTimes(1)
+  expect(activateBrowser).toHaveBeenCalledWith(1, 'browser-action')
+  expect(clearBrowser).toHaveBeenCalledTimes(1)
+  expect(clearBrowser).toHaveBeenCalledWith(1)
   view.unmount()
 })
 
