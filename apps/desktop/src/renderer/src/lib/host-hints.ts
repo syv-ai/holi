@@ -1,3 +1,4 @@
+import type { HintPresentation } from '@holi/shared'
 import { flushSync } from 'react-dom'
 
 const PRESSABLE = [
@@ -70,7 +71,48 @@ export interface HostHintAdapterTarget {
   token: unknown
 }
 
+export interface AsyncHostHintTarget {
+  id: string
+  label: string
+  x: number
+  y: number
+}
+
+export interface AsyncHostHintAdapter {
+  discover(request: number, signal: AbortSignal): Promise<readonly AsyncHostHintTarget[] | null>
+  present(
+    request: number,
+    revision: number,
+    labels: readonly { id: string; key: string }[],
+    presentation?: HintPresentation,
+  ): Promise<boolean>
+  clear(request: number): void
+  activate(request: number, id: string): Promise<boolean>
+  subscribe(
+    request: number,
+    invalidate: () => void,
+    routeKey: (event: KeyboardEvent) => boolean,
+  ): () => void
+}
+
 const registeredAdapters = new Map<HTMLElement, HostHintAdapter>()
+const registeredAsyncAdapters = new Map<HTMLElement, AsyncHostHintAdapter>()
+
+export function registerAsyncHostHintAdapter(
+  owner: HTMLElement,
+  adapter: AsyncHostHintAdapter,
+): () => void {
+  registeredAsyncAdapters.set(owner, adapter)
+  return () => {
+    if (registeredAsyncAdapters.get(owner) === adapter) registeredAsyncAdapters.delete(owner)
+  }
+}
+
+export function captureAsyncHostHintAdapters(root: HTMLElement): AsyncHostHintAdapter[] {
+  return [...registeredAsyncAdapters]
+    .filter(([owner]) => adapterParticipates(owner, root))
+    .map(([, adapter]) => adapter)
+}
 
 /** Register an explicitly owned target source for the pane containing `owner`. */
 export function registerHostHintAdapter(owner: HTMLElement, adapter: HostHintAdapter): () => void {

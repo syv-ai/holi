@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { constants } from 'node:fs'
+import { constants, rmSync } from 'node:fs'
 import { cp, mkdir, mkdtemp, rm, writeFile, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
@@ -13,16 +13,32 @@ import { readFileSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { externalizeDepsPlugin } from 'electron-vite'
 
+function killElectronTree(child, signal = 'SIGTERM') {
+  if (!child?.pid) return
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+    } else {
+      process.kill(-child.pid, signal)
+    }
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error
+  }
+}
+
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const evidence = resolve(
-  process.argv[2] ?? join(tmpdir(), `holi-553-evidence-${Date.now()}-${process.pid}`),
+  process.argv.slice(2).find((argument) => argument !== '--') ??
+    join(tmpdir(), `holi-553-evidence-${Date.now()}-${process.pid}`),
 )
 const fixture = join(desktop, 'scripts/browser-display-fixture')
 const appHintsOnly = process.env.HOLI_509_APP_HINTS_ONLY === '1'
 const appHintVideo = appHintsOnly && process.env.HOLI_509_RECORD_VIDEO === '1'
-const toolbarAcceptance = !appHintsOnly && process.env.HOLI_553_UI === '1'
+const hintsAcceptance = process.env.HOLI_524_HINTS === '1'
+const toolbarAcceptance = !appHintsOnly && (process.env.HOLI_553_UI === '1' || hintsAcceptance)
 const recordingPath = join(evidence, 'interaction.mp4')
 const root = await mkdtemp(join(tmpdir(), 'holi-523-smoke-'))
+process.once('exit', () => rmSync(root, { recursive: true, force: true }))
 const ownedAppName = `HoliSmoke-app-hints-${process.pid}-${randomUUID()}.app`
 const ownedApp = join(root, ownedAppName)
 let child
@@ -87,6 +103,7 @@ try {
     },
   })
   await rm(join(evidence, 'frames'), { recursive: true, force: true })
+  await rm(join(evidence, 'hints-frames'), { recursive: true, force: true })
   for (const name of [
     'result.json',
     'electron-smoke.log',
@@ -107,6 +124,12 @@ try {
     'interaction.mp4',
     'app-hints-interaction.mp4',
     'app-hints-recording.json',
+    'hints-result.json',
+    'hints-page-light.png',
+    'hints-page-dark.png',
+    'hints-shell-light.png',
+    'hints-shell-dark.png',
+    'hints-interaction.mp4',
   ])
     await rm(join(evidence, name), { force: true })
   await build({
@@ -128,7 +151,16 @@ try {
     build: { outDir: join(root, 'renderer'), emptyOutDir: true, minify: false },
   })
   const source = join(desktop, 'scripts/browser-display-smoke.ts')
-  const sequence = readFileSync(join(fixture, 'toolbar-sequence.ts'), 'utf8')
+  const toolbarSequence = readFileSync(join(fixture, 'toolbar-sequence.ts'), 'utf8')
+  const hintsSequence = readFileSync(join(fixture, 'hints-sequence.ts'), 'utf8')
+  const sequence = hintsAcceptance
+    ? toolbarSequence.replace(
+        "  await pref(true)\n  await badge('insert')\n",
+        `  await pref(true)\n  await badge('insert')\n${hintsSequence}\n`,
+      )
+    : toolbarSequence
+  if (hintsAcceptance)
+    assert.notEqual(sequence, toolbarSequence, 'hints must run before toolbar actions')
   await build({
     configFile: false,
     root: desktop,
@@ -153,7 +185,7 @@ try {
           )
           return forwarding.replace(
             '  assert.equal(listeners.size, 0)',
-            `${toolbarAcceptance ? sequence : ''}\n  assert.equal(listeners.size, 0)`,
+            `${toolbarAcceptance || hintsAcceptance ? sequence : ''}\n  assert.equal(listeners.size, 0)`,
           )
         },
       },
@@ -246,6 +278,7 @@ try {
           'scripts/app-frame-renderer-fixture-api.ts',
           'src/plugins/apps/renderer/app-frame.tsx',
           'src/renderer/src/features/shell/host-hint-layer.tsx',
+          'src/renderer/src/lib/host-hints.ts',
         ]
           .map((path) => `${path}\0${readFileSync(join(desktop, path))}`)
           .join('\0'),
@@ -255,8 +288,16 @@ try {
       .update(
         [
           'apps/desktop/src/plugins/browser/main/page-script.js',
+          'apps/desktop/src/plugins/browser/main/pages.ts',
+          'apps/desktop/src/plugins/browser/main/capabilities.ts',
+          'apps/desktop/src/plugins/browser/renderer/browser-hints.ts',
+          'apps/desktop/src/renderer/src/features/shell/host-hint-layer.tsx',
+          'apps/desktop/src/renderer/src/lib/host-hints.ts',
+          'packages/shared/src/hint-presentation.ts',
+          'apps/desktop/scripts/browser-display-fixture/entry.tsx',
           'apps/desktop/scripts/browser-display-smoke.ts',
           'apps/desktop/scripts/browser-display-fixture/toolbar-sequence.ts',
+          'apps/desktop/scripts/browser-display-fixture/hints-sequence.ts',
           'apps/desktop/scripts/run-browser-display-smoke.mjs',
         ]
           .map((path) => `${path}\0${readFileSync(join(desktop, '..', '..', path))}`)
@@ -265,7 +306,11 @@ try {
       .digest('hex'),
   }
   delete env.ELECTRON_RUN_AS_NODE
-  const launch = spawn(launchBinary, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  const launch = spawn(launchBinary, [root], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
+  })
   child = launch
   child.stdout.on('data', (chunk) => {
     log += chunk
@@ -286,7 +331,7 @@ try {
       closed,
       new Promise((_, reject) => {
         timeout = setTimeout(() => {
-          child.kill()
+          killElectronTree(child)
           reject(new Error('Electron smoke timed out'))
         }, 150_000)
       }),
@@ -417,6 +462,61 @@ try {
     'native smoke produced too few assertions',
   )
   if (appHintsOnly) assert.equal(result.checks.length, 33, 'app hint smoke must pass all 33 checks')
+  if (hintsAcceptance) {
+    const browserHintChecks = [
+      'native-page-f-discovers-production-page-and-host-labels',
+      'native-checkbox-and-aria-switch-discovery-with-trusted-activation',
+      'body-button-link-focus-request-hints-with-trusted-activation',
+      'waapi-target-movement-revokes-page-and-host-labels',
+      'native-escape-retires-delayed-action-and-routes-exact-host-cancellation',
+      'native-host-escape-cancels-selected-delayed-browser-action',
+      'transparent-targets-and-ancestors-excluded-and-opacity-mutation-revokes',
+      'native-prediscovery-escape-cancels-request-without-host-fallback',
+      'installed-kbd-light-dark-and-custom-theme-presentation-matches-page',
+      'native-prediscovery-overflow-releases-escape-input-and-fresh-capture',
+      'page-label-activation-produces-trusted-native-button-click',
+      'supported-field-handoff-enters-insert-and-receives-native-typing',
+      'native-prefix-backspace-and-escape-clear-request-scoped-labels',
+      'overlay-change-invalidates-page-and-host-labels',
+      'hide-return-invalidates-old-page-and-host-labels',
+      'page-dom-mutation-invalidates-visible-labels-and-actions',
+      'native-page-scroll-invalidates-page-and-host-labels',
+      'shell-zoom-invalidates-page-and-host-labels',
+      'preference-off-insert-and-modified-keys-pass-through',
+      'page-label-activation-produces-trusted-native-link-click',
+      'native-page-light-dark-and-shell-evidence-captured',
+      'hint-owned-navigation-replacement-rearms-current-document',
+    ]
+    for (const check of browserHintChecks)
+      assert(result.checks.includes(check), `missing browser hint check: ${check}`)
+    const hints = JSON.parse(await readFile(join(evidence, 'hints-result.json'), 'utf8'))
+    assert.equal(hints.ok, true)
+    assert.equal(hints.source, env.HOLI_553_SHA)
+    assert.equal(hints.sourceHash, env.HOLI_553_SOURCE_HASH)
+    assert.deepEqual(hints.runtimeErrors, [])
+    const hintVideo = spawnSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-framerate',
+        '8',
+        '-i',
+        join(evidence, 'hints-frames/%05d.png'),
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-movflags',
+        '+faststart',
+        join(evidence, 'hints-interaction.mp4'),
+      ],
+      { encoding: 'utf8', timeout: 60_000 },
+    )
+    assert.equal(hintVideo.status, 0, `hints video encoding failed: ${hintVideo.stderr}`)
+    assert((await stat(join(evidence, 'hints-interaction.mp4'))).size > 0)
+    for (const name of hints.evidence)
+      assert((await stat(join(evidence, name))).size > 0, `missing hints evidence: ${name}`)
+  }
   let recording
   if (toolbarAcceptance) {
     recording = JSON.parse(await readFile(join(evidence, 'recording.json'), 'utf8'))
@@ -590,7 +690,7 @@ try {
   }
 } finally {
   if (child && child.exitCode === null) {
-    child.kill('SIGTERM')
+    killElectronTree(child, 'SIGTERM')
     const exited = await Promise.race([
       closed.then(
         () => true,
@@ -599,7 +699,7 @@ try {
       new Promise((resolve) => setTimeout(() => resolve(false), 5_000)),
     ])
     if (!exited) {
-      child.kill('SIGKILL')
+      killElectronTree(child, 'SIGKILL')
       await closed.catch(() => {})
     }
   }

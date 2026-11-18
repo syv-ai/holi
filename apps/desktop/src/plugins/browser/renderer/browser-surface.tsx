@@ -9,6 +9,7 @@
  * back once the overlay has gone.
  */
 import { useAtomValue } from 'jotai'
+import { registerAsyncHostHintAdapter } from '@/plugin-api'
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -18,7 +19,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -43,6 +44,7 @@ import { IconButton } from '@/composites/icon-button'
 import { activeRemoteAtom, openExternal, vimCodeEditingAtom } from '@/plugin-api'
 import { addressFor, type PageInfo } from '../shared/page'
 import { browserCap } from './browser-cap'
+import { createBrowserHintAdapter } from './browser-hints'
 import { addressAskAtom, BROWSER, pagesAtom, vimModesAtom } from './state'
 
 /** What of Holi's can be drawn over a page: Radix's floating content and
@@ -191,11 +193,115 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
   const host = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLInputElement>(null)
   const [typed, setTyped] = useState<string | null>(null)
+  const [overlayRevision, setOverlayRevision] = useState(0)
   const configuredVim = useRef('')
-
   const showsPage = page !== undefined && page.url !== '' && page.error === null
   const vimPageReady = showsPage && page?.loading === false
   const still = usePlacement(remote, id, visible && showsPage, host)
+  const ownershipRef = useRef({ remote, id, visible, vimEnabled, vimPageReady, vimMode, page })
+  ownershipRef.current = { remote, id, visible, vimEnabled, vimPageReady, vimMode, page }
+  const pane = host.current?.closest<HTMLElement>('[data-pane]') ?? null
+  const paneRef = useRef(pane)
+  paneRef.current = pane
+  const overlayEpoch = useRef(0)
+  const vimNonce = vimMode?.nonce
+  const vimAttachment = vimMode?.attachment
+  const pageUrl = page?.url
+  const pageError = page?.error
+  const ownsHints =
+    remote !== null &&
+    id !== undefined &&
+    visible &&
+    vimEnabled &&
+    vimPageReady &&
+    vimNonce !== undefined &&
+    vimAttachment !== undefined
+  const ownershipKey = [
+    remote,
+    id,
+    vimNonce,
+    vimAttachment,
+    String(visible),
+    String(vimEnabled),
+    String(vimPageReady),
+    pageUrl,
+    pageError ? `${pageError.url}:${pageError.description}` : '',
+  ].join('\\u0000')
+
+  useLayoutEffect(() => {
+    const owner = host.current
+    const pane = owner?.closest<HTMLElement>('[data-pane]') ?? null
+    if (!ownsHints || remote === null || id === undefined || owner === null || pane === null) return
+    paneRef.current = pane
+    let active = true
+    const bounds = owner.getBoundingClientRect()
+    let overlayPresent =
+      bounds.width > 0 &&
+      bounds.height > 0 &&
+      overlaid({ x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height })
+    const adapterOverlayEpoch = overlayEpoch.current
+    const overlayObserver = new MutationObserver(() => {
+      const rect = owner.getBoundingClientRect()
+      const present =
+        rect.width > 0 &&
+        rect.height > 0 &&
+        overlaid({ x: rect.left, y: rect.top, width: rect.width, height: rect.height })
+      if (present !== overlayPresent) {
+        if (present) overlayEpoch.current++
+        overlayPresent = present
+        setOverlayRevision((revision) => revision + 1)
+      }
+    })
+    overlayObserver.observe(document.body, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      attributeFilter: ['class', 'style', 'role', 'data-slot'],
+    })
+    const adapterNonce = vimNonce!
+    const adapterAttachment = vimAttachment!
+    const adapter = createBrowserHintAdapter({
+      remote,
+      tab: id,
+      nonce: adapterNonce,
+      attachment: adapterAttachment,
+      ownerElement: owner,
+      current: () => {
+        const live = ownershipRef.current
+        const livePane = owner.closest<HTMLElement>('[data-pane]')
+        const bounds = owner.getBoundingClientRect()
+        const focusedPane = document.querySelector<HTMLElement>('[data-pane-focused]')
+        return (
+          active &&
+          overlayEpoch.current === adapterOverlayEpoch &&
+          live.remote === remote &&
+          live.id === id &&
+          live.visible &&
+          live.vimEnabled &&
+          live.vimPageReady &&
+          live.vimMode?.nonce === adapterNonce &&
+          live.vimMode?.attachment === adapterAttachment &&
+          live.page?.id === id &&
+          live.page.url !== '' &&
+          live.page.error === null &&
+          owner.isConnected &&
+          livePane === paneRef.current &&
+          livePane === pane &&
+          (focusedPane === null || focusedPane === pane) &&
+          bounds.width > 0 &&
+          bounds.height > 0 &&
+          !overlaid({ x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height })
+        )
+      },
+    })
+    const unregister = registerAsyncHostHintAdapter(owner, adapter)
+    return () => {
+      active = false
+      overlayObserver.disconnect()
+      unregister()
+      adapter.dispose()
+    }
+  }, [ownershipKey, ownsHints, remote, id, vimNonce, vimAttachment, overlayRevision])
 
   useEffect(() => {
     if (remote === null || id === undefined || vimMode === undefined) return
