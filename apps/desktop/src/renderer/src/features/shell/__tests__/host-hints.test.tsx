@@ -3,7 +3,7 @@ import { Provider, createStore } from 'jotai'
 import { createPortal } from 'react-dom'
 import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
-import { act, fireEvent, render, screen } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { installHintLayout } from '@/test/host-hint-layout'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -482,6 +482,58 @@ test('stock Select trigger and option use their existing mouse path', async () =
   await userEvent.keyboard('f')
   await choose('Two')
   expect(select).toHaveBeenCalledExactlyOnceWith('two')
+})
+
+test('exclusive adapted requests ignore async sources while prepared guest labels activate', async () => {
+  let finish!: () => void
+  const activate = vi.fn(() => true)
+  let guestElement!: Element
+  const guestAdapter: HostHintAdapter = {
+    exclusive: true,
+    prepare: vi.fn(() => new Promise<void>((resolve) => (finish = resolve))),
+    discover: vi.fn(() => [
+      { element: guestElement, label: 'Guest action', x: 80, y: 90, token: 'guest:1' },
+    ]),
+    unchanged: () => true,
+    activate,
+  }
+  const asyncTarget = { id: 'unrelated', label: 'Unrelated app action', x: 20, y: 20 }
+  const asyncAdapter: AsyncHostHintAdapter = {
+    discover: vi.fn(async () => [asyncTarget]),
+    present: vi.fn(async () => true),
+    clear: vi.fn(),
+    activate: vi.fn(async () => true),
+    subscribe: vi.fn(() => () => {}),
+  }
+  const view = setup(
+    <section data-pane="one" data-pane-focused>
+      <Button>Host control</Button>
+      <div data-testid="guest-owner" />
+      <iframe data-testid="unrelated-app-owner" />
+    </section>,
+  )
+  const owner = screen.getByTestId('guest-owner')
+  guestElement = owner
+  registerHostHintAdapter(owner, guestAdapter)
+  registerAsyncHostHintAdapter(screen.getByTestId('unrelated-app-owner'), asyncAdapter)
+
+  act(() => requestAdaptedHostHints(owner, guestAdapter))
+  expect(hints()).toHaveLength(0)
+  await act(async () => finish())
+  await waitFor(() => expect(guestAdapter.prepare).toHaveBeenCalledOnce())
+  await waitFor(() => expect(guestAdapter.discover).toHaveBeenCalledOnce())
+
+  await userEvent.keyboard('a')
+  expect(activate).toHaveBeenCalledOnce()
+  expect(activate).toHaveBeenCalledWith(
+    expect.objectContaining({ label: 'Guest action', token: 'guest:1' }),
+  )
+  expect(hints()).toHaveLength(0)
+  expect(asyncAdapter.discover).not.toHaveBeenCalled()
+  expect(asyncAdapter.present).not.toHaveBeenCalled()
+  expect(asyncAdapter.activate).not.toHaveBeenCalled()
+  expect(asyncAdapter.subscribe).not.toHaveBeenCalled()
+  view.unmount()
 })
 
 test('request-scoped adapters share the host label namespace and revalidate before activation', async () => {

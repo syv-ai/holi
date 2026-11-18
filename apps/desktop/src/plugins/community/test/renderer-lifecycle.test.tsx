@@ -676,7 +676,7 @@ test('a verified community snapshot shares live host labels and activates its ex
   const route = store.get(hostHintKeyAtom)
   expect(route).not.toBeNull()
   guestMessage(frame, { type: 'holi-hints:key', nonce, key: 'a' })
-  expect(document.querySelector('[data-host-hints]')).toBeNull()
+  await waitFor(() => expect(document.querySelector('[data-host-hints]')).toBeNull())
   expect(messages.at(-1)).toMatchObject({
     type: 'holi-hints:activate',
     nonce,
@@ -789,7 +789,9 @@ test('zoom, visual viewport resize, and scroll cancel live labels and rearm agai
   layout.place(guest.frame, 160, 120, 400, 300)
   guestMessage(guest.frame, guestSnapshot(guest.nonce, 2, 'Moved Save'))
   guestMessage(guest.frame, { type: 'holi-hints:start', nonce: guest.nonce, revision: 2 })
-  expect(await screen.findByText('a')).toBeInTheDocument()
+  await waitFor(() =>
+    expect(document.querySelector('[data-host-hints] [data-hint-key="a"]')).toBeInTheDocument(),
+  )
   expect(document.querySelector('[data-hint-target="Moved Save"]')).toHaveStyle({
     '--hint-x': '200px',
     '--hint-y': '140px',
@@ -799,7 +801,9 @@ test('zoom, visual viewport resize, and scroll cancel live labels and rearm agai
   expect(document.querySelector('[data-host-hints]')).toBeNull()
   guestMessage(guest.frame, guestSnapshot(guest.nonce, 3, 'Zoomed Save'))
   guestMessage(guest.frame, { type: 'holi-hints:start', nonce: guest.nonce, revision: 3 })
-  expect(await screen.findByText('a')).toBeInTheDocument()
+  await waitFor(() =>
+    expect(document.querySelector('[data-host-hints] [data-hint-key="a"]')).toBeInTheDocument(),
+  )
   expect(document.querySelector('[data-hint-target="Zoomed Save"]')).toBeInTheDocument()
 
   await act(async () => viewport.dispatchEvent(new Event('scroll')))
