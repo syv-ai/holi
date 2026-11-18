@@ -195,8 +195,9 @@ async function run() {
     rendererErrors.push(`console.error: ${text}`)
   })
   windowRef.webContents.debugger.attach('1.3')
-  await windowRef.webContents.debugger.sendCommand('Runtime.enable')
+  const runtimeEnabled = windowRef.webContents.debugger.sendCommand('Runtime.enable')
   await windowRef.loadFile(join(root, 'renderer/index.html'))
+  await runtimeEnabled
   const win = windowRef
   const evaluate = <T>(source: string) => win.webContents.executeJavaScript(source) as Promise<T>
   const wait = async (test: string, label: string) => {
