@@ -64,6 +64,10 @@
         "scripts/mail-vim-native-smoke.tsx",
         "scripts/folder-subscriptions-native-smoke-main.ts",
         "scripts/folder-subscriptions-native-smoke.tsx",
+        // Issue #507 native packaged MDX diagnostics fixture entries.
+        "scripts/mdx-diagnostics-native-smoke-main.ts",
+        "scripts/mdx-diagnostics-native-smoke.tsx",
+        "scripts/mdx-diagnostics-smoke-trpc.ts",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",
