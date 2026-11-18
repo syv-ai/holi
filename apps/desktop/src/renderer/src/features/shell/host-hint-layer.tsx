@@ -98,6 +98,9 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
   const unsubscribe = useRef<(() => void) | null>(null)
   const asyncLifetime = useRef<{ request: number; controller: AbortController } | null>(null)
   const activations = useRef(new Set<() => void>())
+  const preparation = useRef(0)
+  const pendingPreparation = useRef<HostHintAdapter[]>([])
+  const activating = useRef<number | null>(null)
   const requestNumber = useRef(0)
   const revisionNumber = useRef(0)
   const change = useCallback(
@@ -105,6 +108,9 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       const previous = current.current
       if (!next) for (const retire of [...activations.current]) retire()
       if (next?.request !== previous?.request) {
+        preparation.current += 1
+        for (const source of pendingPreparation.current) source.cancelPrepare?.()
+        pendingPreparation.current = []
         unsubscribe.current?.()
         unsubscribe.current = null
         const lifetime = asyncLifetime.current
@@ -164,7 +170,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       adapter?: HostHintAdapter,
       scoped = false,
     ) => {
-      if (activations.current.size > 0) return
+      if (activations.current.size > 0 || activating.current !== null) return
       const root =
         (scoped ? source?.closest<HTMLElement>('[data-panel-terminal]') : null) ??
         source?.closest<HTMLElement>('[data-pane]') ??
@@ -175,8 +181,9 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         document.body
       const adapters = adapter === undefined ? captureHostHintAdapters(root) : [adapter]
       const asyncAdapters = captureAsyncHostHintAdapters(root)
-      const targets = discoverHostHintTargets(root, adapter)
+      const pending = adapters.filter((candidate) => candidate.prepare)
       const request = ++requestNumber.current
+      const targets = pending.length ? [] : discoverHostHintTargets(root, adapter)
       if (!targets.length && !adapters.length && !asyncAdapters.length) {
         change(null)
         return
@@ -192,13 +199,16 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         asyncAdapters,
         asyncTargets: new Map(),
         request,
-        pending: asyncAdapters.length > 0,
+        pending: asyncAdapters.length > 0 || pending.length > 0,
         buffered: '',
         asyncLabels: new Map(),
       }
       change(next)
       asyncLifetime.current = { request, controller }
-      if (asyncAdapters.length) {
+      const preparationRequest = ++preparation.current
+      pendingPreparation.current = pending
+      const preparationPromise = Promise.all(pending.map((candidate) => candidate.prepare!()))
+      if (asyncAdapters.length || pending.length) {
         const discoveries = Promise.all(
           asyncAdapters.map(
             async (source) =>
@@ -211,77 +221,92 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
               ] as const,
           ),
         )
-        void discoveries.then(async (results) => {
-          if (controller.signal.aborted || current.current?.request !== request) return
-          const asyncTargets = new Map(
-            results.filter(
-              (entry): entry is readonly [AsyncHostHintAdapter, readonly AsyncHostHintTarget[]] =>
-                Boolean(entry[1]),
-            ),
-          )
-          const native = targets
-          const entries = [
-            ...native.map((target) => ({ x: target.x, y: target.y, target })),
-            ...[...asyncTargets].flatMap(([source, items]) =>
-              items.map((target) => ({ x: target.x, y: target.y, source, target })),
-            ),
-          ].sort((a, b) => a.y - b.y || a.x - b.x)
-          const count = entries.length
-          const labelsBySource = new Map<AsyncHostHintAdapter, { id: string; key: string }[]>()
-          const revisedTargets = native.map((target) => ({ ...target, key: '' }))
-          for (const entry of entries) {
-            const key = hintLabel(entries.indexOf(entry), count)
-            if ('source' in entry) {
-              const labels = labelsBySource.get(entry.source) ?? []
-              labels.push({ id: (entry.target as AsyncHostHintTarget).id, key })
-              labelsBySource.set(entry.source, labels)
-            } else {
-              const target = entry.target as HostHintTarget
-              const index = native.indexOf(target)
-              if (index >= 0) revisedTargets[index] = { ...target, key }
+        void Promise.all([discoveries, preparationPromise])
+          .then(async ([results]) => {
+            if (
+              controller.signal.aborted ||
+              current.current?.request !== request ||
+              preparation.current !== preparationRequest ||
+              !root.isConnected
+            )
+              return
+            pendingPreparation.current = []
+            const native = discoverHostHintTargets(root, adapter)
+            const asyncTargets = new Map(
+              results.filter(
+                (entry): entry is readonly [AsyncHostHintAdapter, readonly AsyncHostHintTarget[]] =>
+                  Boolean(entry[1]),
+              ),
+            )
+            const entries = [
+              ...native.map((target) => ({ x: target.x, y: target.y, target })),
+              ...[...asyncTargets].flatMap(([source, items]) =>
+                items.map((target) => ({ x: target.x, y: target.y, source, target })),
+              ),
+            ].sort((a, b) => a.y - b.y || a.x - b.x)
+            const count = entries.length
+            const labelsBySource = new Map<AsyncHostHintAdapter, { id: string; key: string }[]>()
+            const revisedTargets = native.map((target) => ({ ...target, key: '' }))
+            for (const entry of entries) {
+              const key = hintLabel(entries.indexOf(entry), count)
+              if ('source' in entry) {
+                const labels = labelsBySource.get(entry.source) ?? []
+                labels.push({ id: (entry.target as AsyncHostHintTarget).id, key })
+                labelsBySource.set(entry.source, labels)
+              } else {
+                const target = entry.target as HostHintTarget
+                const index = native.indexOf(target)
+                if (index >= 0) revisedTargets[index] = { ...target, key }
+              }
             }
-          }
-          const initialRevision = ++revisionNumber.current
-          const presented = await Promise.all(
-            [...asyncTargets.keys()].map(
-              async (source) =>
-                [
-                  source,
-                  await presentWithinDeadline(
+            const initialRevision = ++revisionNumber.current
+            const presented = await Promise.all(
+              [...asyncTargets.keys()].map(
+                async (source) =>
+                  [
                     source,
-                    request,
-                    initialRevision,
-                    labelsBySource.get(source) ?? [],
-                  ),
-                ] as const,
-            ),
-          )
-          if (controller.signal.aborted || current.current?.request !== request) return
-          const available = new Set(presented.filter(([, ok]) => ok).map(([source]) => source))
-          const usableTargets = new Map(
-            [...asyncTargets].filter(([source]) => available.has(source)),
-          )
-          for (const source of asyncAdapters) {
-            if (!available.has(source)) {
-              source.clear(request)
-              labelsBySource.delete(source)
+                    await presentWithinDeadline(
+                      source,
+                      request,
+                      initialRevision,
+                      labelsBySource.get(source) ?? [],
+                    ),
+                  ] as const,
+              ),
+            )
+            if (controller.signal.aborted || current.current?.request !== request) return
+            const available = new Set(presented.filter(([, ok]) => ok).map(([source]) => source))
+            const usableTargets = new Map(
+              [...asyncTargets].filter(([source]) => available.has(source)),
+            )
+            for (const source of asyncAdapters) {
+              if (!available.has(source)) {
+                source.clear(request)
+                labelsBySource.delete(source)
+              }
             }
-          }
-          const buffered = current.current.buffered
-          const populated: HintSession = {
-            ...current.current,
-            targets: revisedTargets,
-            discoveryTargets: native,
-            asyncAdapters: asyncAdapters.filter((source) => available.has(source)),
-            asyncTargets: usableTargets,
-            asyncLabels: labelsBySource,
-            pending: false,
-            buffered: '',
-          }
-          change(populated)
-          for (const key of buffered) {
-            window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
-          }
+            const buffered = current.current.buffered
+            const populated: HintSession = {
+              ...current.current,
+              targets: revisedTargets,
+              discoveryTargets: native,
+              asyncAdapters: asyncAdapters.filter((source) => available.has(source)),
+              asyncTargets: usableTargets,
+              asyncLabels: labelsBySource,
+              pending: false,
+              buffered: '',
+            }
+            change(populated)
+            for (const key of buffered) {
+              window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+            }
+          })
+          .catch(() => {
+            if (current.current?.request === request) change(null)
+          })
+      } else {
+        void preparationPromise.catch(() => {
+          if (current.current?.request === request) change(null)
         })
       }
     },
@@ -401,6 +426,10 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         return true
       }
       if (event.repeat) return true
+      if (activating.current === active.request) {
+        cancel()
+        return true
+      }
       if (active.pending) {
         if (event.key === 'Escape') {
           cancel()
@@ -441,8 +470,17 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
       const found = matches.find((target) => target.key === prefix)
       const asyncFound = asyncMatches.find((entry) => entry.key === prefix)
       if (found) {
-        cancel()
-        activateHostHint(found)
+        activating.current = active.request
+        void Promise.resolve(activateHostHint(found)).then(
+          () => {
+            if (current.current?.request === active.request) change(null)
+            if (activating.current === active.request) activating.current = null
+          },
+          () => {
+            if (current.current?.request === active.request) change(null)
+            if (activating.current === active.request) activating.current = null
+          },
+        )
       } else if (asyncFound) {
         const selected = asyncFound.source
         unsubscribe.current?.()
