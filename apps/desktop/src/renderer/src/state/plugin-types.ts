@@ -278,7 +278,14 @@ export type PluginEventHandler = (
 ) => void
 
 /** What an ask or a start answers: done, or why not, in words to show. */
-export type AskResult = { ok: true } | { ok: false; message: string }
+export type AskResult =
+  | { ok: true }
+  | {
+      ok: false
+      message: string
+      cleanupUnconfirmed?: true
+      sessionId?: string
+    }
 
 /** One of the vault's live agent sessions, as an ask offers it. */
 export interface AgentSessionRow {
@@ -354,6 +361,8 @@ export interface AgentService {
   ask(args: { text: string; target: string }): Promise<AskResult>
   /** A new session whose first turn is `prompt`, brought forward. */
   start(args: { name?: string; prompt: string }): Promise<AskResult>
+  /** Show a possibly surviving session for recovery instead of launching another. */
+  show(args: { session: string; live: boolean }): Promise<AskResult>
 }
 
 /** What a plugin provides for `AgentService`: the same, as atoms, which

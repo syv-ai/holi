@@ -31,7 +31,8 @@ import { newSessionProviderAtom } from './providers'
 import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
 
 /** What an action answers: done, or why not, in words the caller can print. */
-export type AgentResult = { ok: true } | { ok: false; message: string }
+export type AgentResult =
+  { ok: true } | { ok: false; message: string; cleanupUnconfirmed?: true; sessionId?: string }
 
 /** Show a terminal's tab and give it the keyboard. A miss on the focus is
  *  fine: a terminal not built yet focuses itself when it is. */
@@ -161,10 +162,38 @@ export const openSessionAtom = atom(null, async (get, set, id: string): Promise<
 export const startSessionAtom = atom(
   null,
   async (get, set, opts: { name?: string; prompt?: string } = {}): Promise<AgentResult> => {
-    const res = await inVault(get, (remote) =>
-      agentCap.start(remote, { ...opts, ...geometry(get) }),
+    const remote = get(activeRemoteAtom)
+    const revision = get(activeRemoteRevisionValueAtom)
+    const res = await inVault(get, (origin) =>
+      agentCap.start(origin, { ...opts, ...geometry(get) }),
     )
     if (!res.ok) return res
+    if (
+      remote === null ||
+      get(activeRemoteAtom) !== remote ||
+      get(activeRemoteRevisionValueAtom) !== revision
+    ) {
+      try {
+        const stopped = await agentCap.stop(remote!, { id: res.sessionId })
+        if (!stopped.ok) {
+          return {
+            ok: false,
+            message: `Cleanup unconfirmed: the vault changed and session ${res.sessionId} may still be running. ${stopped.message}`,
+            cleanupUnconfirmed: true,
+            sessionId: res.sessionId,
+          }
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? ` ${error.message}` : ''
+        return {
+          ok: false,
+          message: `Cleanup unconfirmed: the vault changed and session ${res.sessionId} may still be running.${detail}`,
+          cleanupUnconfirmed: true,
+          sessionId: res.sessionId,
+        }
+      }
+      return { ok: false, message: 'The vault changed before the session opened.' }
+    }
     landSession(get, set, res.sessionId, res.terminalId)
     return { ok: true }
   },

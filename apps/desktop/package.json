@@ -7,9 +7,9 @@
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "dev:debug": "electron-vite dev -- --remote-debugging-port=9333",
-    "build": "electron-vite build",
+    "dev": "vite build --config vite.mdx-compiler.config.ts && electron-vite dev",
+    "dev:debug": "vite build --config vite.mdx-compiler.config.ts && electron-vite dev -- --remote-debugging-port=9333",
+    "build": "vite build --config vite.mdx-compiler.config.ts && electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "rebuild:natives": "electron-rebuild -f -w node-pty",
@@ -23,7 +23,9 @@
     "smoke:mail-vim:typecheck": "tsc --noEmit --project tsconfig.mail-vim-native-smoke.json",
     "smoke:files-subscriptions:native": "node scripts/run-files-subscriptions-smoke.mjs",
     "smoke:files-subscriptions:typecheck": "tsc --noEmit --project tsconfig.files-subscriptions-native-smoke.json",
-    "package:mac": "electron-vite build && electron-builder --mac --publish never",
+    "smoke:mdx-diagnostics:native": "node scripts/run-mdx-diagnostics-native-smoke.mjs",
+    "smoke:mdx-diagnostics:typecheck": "tsc --noEmit --project tsconfig.mdx-diagnostics-native-smoke.json",
+    "package:mac": "pnpm build && electron-builder --mac --publish never",
     "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\""
   },
   "dependencies": {
@@ -64,6 +66,7 @@
     "@lezer/common": "^1.5.2",
     "@lezer/highlight": "^1.2.3",
     "@lezer/markdown": "^1.7.1",
+    "@mdx-js/mdx": "3.1.1",
     "@replit/codemirror-css-color-picker": "^6.3.0",
     "@replit/codemirror-vim": "6.4.0",
     "@tanstack/react-table": "^9.3.1",
@@ -131,6 +134,7 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^3.7.0",
     "@shadcn/lint": "0.2.3",
     "@tailwindcss/vite": "^4.3.2",

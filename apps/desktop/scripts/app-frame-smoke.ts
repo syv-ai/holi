@@ -16,6 +16,8 @@ import { appsMain } from '../src/plugins/apps/main'
 import { appScheme } from '../src/plugins/apps/main/protocol'
 import { appHost, appLeaseFromHost, leasedAppHost } from '../src/plugins/apps/shared/bundle'
 import type { RendererFixtureMarker } from './app-frame-renderer-fixture'
+import { runAppHintInteractions } from './app-hint-interactions'
+import { recordAppHintWindow } from './app-hint-recorder'
 
 const bundle = 'Same/Tool.app'
 const rootForRemote = (remote: string): string | null =>
@@ -38,12 +40,12 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     const color = owner === 'A' ? '#b42318' : '#175cd3'
     writeFileSync(
       join(vaultRoot, bundle, 'index.html'),
-      `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><h1 id="owner">owner-${owner}</h1><img id="image" src="./nested/pixel.svg"><pre id="bridge-read-result">waiting</pre><script src="/owner.js"></script><script src="/bridge.js"></script></body></html>`,
+      `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><h1 id="owner">owner-${owner}</h1><button id="hint-button" onclick="window.actionCount=(window.actionCount||0)+1;parent.postMessage({kind:'guest-action-count',count:window.actionCount,nonce:document.querySelector('meta[name=holi-app-document-nonce]').content},'*')">Activate smoke action</button><a id="hint-link" href="#link">Smoke link</a><input id="hint-input" aria-label="Smoke input" oninput="parent.postMessage({kind:'guest-input-value',value:this.value},'*')"><button id="hint-disabled" disabled>Disabled action</button><button id="hint-hidden" hidden>Hidden action</button><button id="hint-occluded" style="position:absolute;left:400px;top:0">Occluded action</button><div id="hint-occluder" style="position:absolute;left:400px;top:0;width:130px;height:45px;z-index:10;background:transparent"></div><img id="image" src="./nested/pixel.svg"><pre id="bridge-read-result">waiting</pre><script src="/owner.js"></script><script src="/bridge.js"></script></body></html>`,
     )
     writeFileSync(join(vaultRoot, 'note.md'), `# Vault ${owner} note\nowned-${owner.toLowerCase()}`)
     writeFileSync(
       join(vaultRoot, bundle, 'bridge.js'),
-      `addEventListener('message',event=>{if(event.data?.kind==='fixture-stale')parent.postMessage({id:'stale-native',method:'docs.read',params:{path:'note.md'},nonce:event.data.nonce},'*');if(event.data?.id==='stale-native')parent.postMessage({kind:'stale-result',value:event.data.value},'*')});window.holi.docs.read('note.md').then(text=>{document.querySelector('#bridge-read-result').textContent=text;parent.postMessage({kind:'bridge-read-result',text,owner:'${owner}',nonce:document.querySelector('meta[name=holi-app-document-nonce]').content},'*')},error=>{document.querySelector('#bridge-read-result').textContent='ERROR '+error})`,
+      `addEventListener('message',event=>{if(event.data?.kind==='fixture-focus-input'){document.querySelector('#hint-input').focus();parent.postMessage({kind:'fixture-input-focused',value:document.activeElement===document.querySelector('#hint-input'),nonce:document.querySelector('meta[name=holi-app-document-nonce]').content},'*')}if(event.data?.kind==='fixture-focus-button')document.querySelector('#hint-button').focus();if(event.data?.kind==='fixture-mutate'){const added=document.createElement('button');added.textContent='Late mutation';document.body.append(added)}if(event.data?.kind==='fixture-stale')parent.postMessage({id:'stale-native',method:'docs.read',params:{path:'note.md'},nonce:event.data.nonce},'*');if(event.data?.id==='stale-native')parent.postMessage({kind:'stale-result',value:event.data.value},'*')});window.holi.docs.read('note.md').then(text=>{document.querySelector('#bridge-read-result').textContent=text;parent.postMessage({kind:'bridge-read-result',text,owner:'${owner}',nonce:document.querySelector('meta[name=holi-app-document-nonce]').content},'*')},error=>{document.querySelector('#bridge-read-result').textContent='ERROR '+error})`,
     )
     writeFileSync(
       join(vaultRoot, bundle, 'app.yaml'),
@@ -200,6 +202,7 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     root: roots[remote],
     pause: () => {},
     resume: () => {},
+    drainSync: async () => {},
     commitNow: async () => null,
     repo: { head: async () => 'head' },
   })
@@ -260,6 +263,20 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
         bridge: 'function',
       })
       mark(`leased-real-app-frame-owner-${remote.toLowerCase()}-resources`)
+      const hintResult = (await win.webContents.executeJavaScript(
+        `new Promise((resolve,reject)=>{const frame=document.querySelector('#app');const nonce=${JSON.stringify(lease.nonce)};const onMessage=e=>{if(e.source!==frame.contentWindow||e.data?.nonce!==nonce||e.data?.type!=='targets')return;removeEventListener('message',onMessage);resolve(e.data.targets)};addEventListener('message',onMessage);frame.contentWindow.postMessage({nonce,type:'holi:vim-app-config',enabled:true},'*');frame.contentWindow.postMessage({nonce,type:'holi:vim-app-hints',requestId:'native-smoke'},'*');setTimeout(()=>reject(new Error('production app hint response timed out')),3000)})`,
+      )) as Array<{ id: string; label: string }>
+      assert(hintResult.some((target) => target.label.includes('Activate smoke action')))
+      assert(hintResult.some((target) => target.label.includes('Smoke link')))
+      assert(!hintResult.some((target) => target.label === 'Smoke input'))
+      assert(!hintResult.some((target) => /Disabled action|Hidden action/.test(target.label)))
+      assert(!hintResult.some((target) => target.label.includes('Occluded action')))
+      const action = hintResult.find((target) => target.label.includes('Activate smoke action'))!
+      const activated = await win.webContents.executeJavaScript(
+        `new Promise((resolve,reject)=>{const frame=document.querySelector('#app');const nonce=${JSON.stringify(lease.nonce)};const onMessage=e=>{if(e.source===frame.contentWindow&&e.data?.kind==='guest-action-count'&&e.data.nonce===nonce&&e.data.count===1){removeEventListener('message',onMessage);resolve(e.data.count)}};addEventListener('message',onMessage);frame.contentWindow.postMessage({nonce,type:'activate',requestId:'native-smoke',targetId:${JSON.stringify(action.id)}},'*');setTimeout(()=>reject(new Error('production app hint activation timed out')),3000)})`,
+      )
+      assert.equal(activated, 1)
+      mark(`production-injected-app-hints-filter-and-activate-${remote.toLowerCase()}`)
       const shot = `vault-app-${remote.toLowerCase()}.png`
       win.webContents.debugger.attach('1.3')
       let capture: { data: string }
@@ -355,6 +372,9 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     active = vault('A')
     host.setDisplayed(active.remote)
     await host.reconcile(active, 'open')
+    // The initial window served the lease checks above; keep only the interaction
+    // fixture visible so native activation and keyboard input have one owner.
+    win.hide()
     frameWindow = new BrowserWindow({
       width: 900,
       height: 700,
@@ -448,8 +468,6 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
         },
       }
     }
-    const hiddenResultStart = captureResults.length
-    const hiddenCapture = holdNextCapture()
     await frameWindow.loadFile(process.env.HOLI_473_RENDERER!)
     const readA = await frameWindow.webContents.executeJavaScript(
       `new Promise((resolve,reject)=>{const end=Date.now()+15000;const poll=()=>{const value=document.querySelector('#bridge-read-result')?.textContent??'';if(value.includes('owned-a'))resolve(value);else if(Date.now()>end)reject(new Error('production AppFrame bridge timed out: '+value+' '+document.body.innerHTML));else setTimeout(poll,50)};poll()})`,
@@ -465,32 +483,71 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
     assert.equal(appCallCount, callsAfterARead)
     mark('production-app-frame-wrong-source-message-has-no-capability-side-effect')
     const captureFixture = async (filename: string) => {
-      frameWindow!.webContents.debugger.attach('1.3')
-      try {
-        await frameWindow!.webContents.debugger.sendCommand('Page.enable')
-        const image = (await frameWindow!.webContents.debugger.sendCommand(
-          'Page.captureScreenshot',
-          {
-            captureBeyondViewport: true,
-            fromSurface: true,
-          },
-        )) as { data: string }
-        writeFileSync(join(evidence, filename), Buffer.from(image.data, 'base64'))
-      } finally {
-        frameWindow!.webContents.debugger.detach()
-      }
+      const image = await capturePage()
+      assert(!image.isEmpty(), 'native app-frame capture was empty')
+      writeFileSync(join(evidence, filename), image.toPNG())
     }
     await captureFixture('app-frame-read-a.png')
+    const recorder =
+      process.env.HOLI_509_APP_HINTS_ONLY === '1' && process.env.HOLI_509_RECORD_VIDEO === '1'
+        ? recordAppHintWindow(frameWindow.webContents, root)
+        : undefined
+    let interactionCompleted = false
+    let finalOutcomes: unknown
+    try {
+      await runAppHintInteractions(frameWindow.webContents, captureFixture, mark)
+      finalOutcomes = await frameWindow.webContents.executeJavaScript(
+        `({actionCount:document.querySelector('#guest-action-count')?.textContent,inputValue:document.querySelector('#guest-input-value')?.textContent,vimEnabled:window.fixtureVimEnabled,hintsVisible:!!document.querySelector('[data-host-hints]')})`,
+      )
+      interactionCompleted = true
+    } finally {
+      if (recorder) {
+        const recording = await recorder.stop()
+        writeFileSync(
+          join(evidence, 'app-hints-recording.json'),
+          JSON.stringify(
+            {
+              ...recording,
+              interactionCompleted,
+              finalOutcomes,
+              source: process.env.HOLI_553_SHA,
+              sourceHash: process.env.HOLI_509_SOURCE_HASH,
+              worktree: process.env.HOLI_553_WORKTREE,
+              worktreeStatus: process.env.HOLI_553_STATUS,
+            },
+            null,
+            2,
+          ),
+        )
+      }
+    }
+    const hiddenResultStart = captureResults.length
+    const hiddenCapture = holdNextCapture()
+    const beforeHiddenNonce =
+      await frameWindow.webContents.executeJavaScript(`window.fixtureNonces?.a`)
+    await frameWindow.webContents.executeJavaScript(
+      `window.postMessage({kind:'fixture-reload'},'*')`,
+    )
+    await frameWindow.webContents.executeJavaScript(
+      `new Promise((resolve,reject)=>{const end=Date.now()+12000;const poll=()=>{const frame=document.querySelector('iframe');const nonce=window.fixtureNonces?.a;if(typeof nonce==='string'&&nonce!==${JSON.stringify(beforeHiddenNonce)}&&frame?.isConnected&&frame.getAttribute('aria-hidden')!=='true'&&(document.querySelector('#bridge-read-result')?.textContent??'').includes('owned-a'))resolve(true);else if(Date.now()>end)reject(new Error('fresh AppFrame before hidden capture did not establish a leased document'));else setTimeout(poll,25)};poll()})`,
+    )
     await hiddenCapture.waiting
+    const heldNonce = await frameWindow.webContents.executeJavaScript(`window.fixtureNonces?.a`)
+    assert.notEqual(heldNonce, beforeHiddenNonce)
     await frameWindow.webContents.executeJavaScript(
       `window.postMessage({kind:'fixture-visible',visible:false},'*')`,
     )
-    await frameWindow.webContents.executeJavaScript(
+    const hidden = await frameWindow.webContents.executeJavaScript(
       `new Promise(resolve=>{const end=Date.now()+3000;const poll=()=>{const frame=document.querySelector('iframe');if(frame?.getAttribute('aria-hidden')==='true')resolve(true);else if(Date.now()>end)resolve(false);else setTimeout(poll,20)};poll()})`,
+    )
+    assert.equal(hidden, true)
+    assert.equal(
+      await frameWindow.webContents.executeJavaScript(`window.fixtureNonces?.a`),
+      heldNonce,
     )
     hiddenCapture.release()
     await waitForCaptureResult(hiddenResultStart, false)
-    assert.equal(captureResults.at(-1), false)
+    assert.equal(captureResults.slice(hiddenResultStart).at(-1), false)
     mark('production-app-frame-hidden-after-real-capture-rejects-stale-preview')
     await frameWindow.webContents.executeJavaScript(
       `window.postMessage({kind:'fixture-visible',visible:true},'*');window.postMessage({kind:'fixture-reload'},'*')`,
@@ -638,6 +695,9 @@ export async function runAppFrameSmoke(root: string, evidence: string): Promise<
       `(()=>{const frame=document.querySelector('iframe');frame.remove();return true})()`,
     )
     assert.equal(detachedResponse, true)
+    const detachedUntil = Date.now() + 2_000
+    while (detachedNativeLease.valid(frameWindow) && Date.now() < detachedUntil)
+      await new Promise((resolve) => setTimeout(resolve, 10))
     assert.equal(detachedNativeLease.valid(frameWindow), false)
     assert.equal(appFrames.resolveToken(detachedLease.token), null)
     releaseRead()

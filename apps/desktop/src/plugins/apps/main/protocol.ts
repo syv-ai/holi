@@ -25,7 +25,7 @@ import { appLeaseFromHost, bundleFromAppHost } from '../shared/bundle'
 import { mimeFor, readVaultTheme, type PluginScheme } from '../../../main/plugin-api'
 import { COMMAND_PARAM } from '../shared/commands'
 import { COMMAND_NAME } from '../shared/manifest'
-import { BRIDGE_JS, COMMAND_JS } from './bridge-script'
+import { APP_HINTS_JS, BRIDGE_JS, COMMAND_JS } from './bridge-script'
 import { manifestOf } from './grants'
 import { appBaseTokens, paletteFor } from './tokens'
 
@@ -167,7 +167,7 @@ export function appHeadHtml(block: ThemeBlock, mode: ThemeMode, nonce = ''): str
   const vars = Object.entries(themeBlockToVars({ ...paletteFor(tokens), ...tokens }))
     .map(([name, value]) => `${cssSafe(name)}:${cssSafe(value)}`)
     .join(';')
-  return `<meta name="holi-app-document-nonce" content="${nonce}"><style>:root{${vars}}</style><script>${BRIDGE_JS}</script>`
+  return `<meta name="holi-app-document-nonce" content="${nonce}"><style>:root{${vars}}</style><script>${BRIDGE_JS}</script><script>${APP_HINTS_JS}</script>`
 }
 
 /**

@@ -52,7 +52,7 @@ export {
   /** @public */ withSavedBuffers,
 } from '@/lib/buffer-registry'
 export { capClient, /** @public */ type CapClient, type UiCapability } from '@/lib/cap-client'
-export { useHasCapability } from '@/state/capabilities'
+export { useHasCapability, useCapabilityAvailability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
 export { prefersReducedMotion } from '@/lib/motion'
 export { /** @public */ openExternal } from '@/lib/open-external'

@@ -42,8 +42,11 @@ const LEAVE_CAP_MS = 5_000
 export type ActionResult = { ok: true } | { ok: false; message: string }
 export type OpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
 export type StartResult =
-  { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
-type LaunchResult = { ok: true; sessionId: string } | { ok: false; message: string }
+  | { ok: true; sessionId: string; terminalId: string }
+  | { ok: false; message: string; cleanupUnconfirmed?: true; sessionId?: string }
+type LaunchResult =
+  | { ok: true; sessionId: string }
+  | { ok: false; message: string; cleanupUnconfirmed?: true; sessionId?: string }
 
 export interface Geometry {
   cols?: number
@@ -539,8 +542,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
+      const origin = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (c === null || origin === null || attached !== origin || current !== c)
+        return { ok: false, message: 'The vault changed before the session started.' }
       const res = await bg.cli.startBg(targetOf(c), {
         ...(name === undefined ? {} : { name }),
         ...(prompt === undefined ? {} : { prompt }),
@@ -549,14 +554,56 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
       if (!res.ok) return res
-      if (deps.activationSignal?.aborted || current !== c) {
-        await bg.cli.stop(targetOf(c), res.id)
-        return { ok: false, message: 'The vault closed as the session started.' }
+      const cleanup = async () => {
+        try {
+          const stopped = await bg.cli.stop(targetOf(c), res.id)
+          return stopped.ok
+        } catch {
+          return false
+        }
+      }
+      const cleanupFailure = () => ({
+        ok: false as const,
+        message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+        cleanupUnconfirmed: true,
+        sessionId: res.id,
+      })
+      if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
+        return (await cleanup())
+          ? { ok: false, message: 'The vault closed as the session started.' }
+          : cleanupFailure()
       }
       if (prompt === undefined) unprompted.add(res.id)
-      await refresh()
-      const opened = await openOn(c, { attach: res.id, cols, rows: r })
-      return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
+      let opened: Awaited<ReturnType<typeof openOn>>
+      try {
+        await refresh()
+        if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
+          return (await cleanup())
+            ? { ok: false, message: 'The vault closed as the session started.' }
+            : cleanupFailure()
+        }
+        opened = await openOn(c, { attach: res.id, cols, rows: r })
+      } catch (error) {
+        if (!(await cleanup())) return cleanupFailure()
+        await refresh().catch(() => {})
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : 'Could not open session.',
+        }
+      }
+      if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
+        return (await cleanup())
+          ? { ok: false, message: 'The vault closed as the session started.' }
+          : cleanupFailure()
+      }
+      if (!opened.ok) {
+        // A failed terminal open must not leave a hidden background run that a
+        // caller will retry as a second conversation.
+        if (!(await cleanup())) return cleanupFailure()
+        await refresh()
+        return opened
+      }
+      return { ok: true, sessionId: res.id, terminalId: opened.terminalId }
     },
 
     async launch({ name, prompt, model, allow, deny, appendSystemPrompt, mcpConfig }) {
