@@ -394,7 +394,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         : operator === 'c'
           ? {
               kind: 'replace',
-              range: { from: block.from - 1, to: block.to + 1 },
+              range: { from: block.from - 1, to: last.to + 1 },
               replacement: new Slice(
                 Fragment.from(block.node.type.create(block.node.attrs, null, block.node.marks)),
                 0,
@@ -583,6 +583,18 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
     return result(state, operator, { from, to }, register, mutation, from, { kind: 'inline' })
   }
   if (target.kind !== 'visual') return { kind: 'noop' }
+  if (target.linewise && target.anchor === target.cursor) {
+    const line = logicalLineAt(state, target.cursor)
+    if (line) {
+      const lines = logicalLines(line.block)
+      const index = lines.findIndex((candidate) => candidate.from === line.from)
+      const item = containerAt(state, line.block.from, ['listItem', 'taskItem'])
+      const itemNode = item ? state.doc.nodeAt(item.pos) : null
+      const itemHasOtherBlocks =
+        itemNode?.content.content.filter((child) => child.isTextblock).length !== 1
+      if ((lines.length > 1 && index > 0) || itemHasOtherBlocks) return rejected('selection')
+    }
+  }
   const range = resolveVimVisualRange(state, target.anchor, target.cursor, target.linewise)
   if (!range || !safeRange(state, range.from, range.to)) return rejected('selection')
   let registerRange = { from: range.from, to: range.to }
@@ -675,6 +687,16 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
       const last = logicalLineAt(state, Math.max(target.anchor, target.cursor))!
       const low = first.block.from <= last.block.from ? first.block : last.block
       const high = first.block.from <= last.block.from ? last.block : first.block
+      const firstPosition = Math.min(target.anchor, target.cursor)
+      const lastPosition = Math.max(target.anchor, target.cursor)
+      const firstLine = logicalLineAt(state, firstPosition)
+      const lastLine = logicalLineAt(state, lastPosition)
+      if (
+        low.from !== high.from &&
+        ((firstLine?.block.from === low.from && firstPosition > low.from + 1) ||
+          (lastLine?.block.from === high.from && lastPosition < high.to))
+      )
+        return rejected('selection')
       const container = containerAt(state, low.from, STRUCTURAL_CONTAINERS)
       const isCell = container?.type === 'tableCell' || container?.type === 'tableHeader'
       const cellNode = isCell ? state.doc.nodeAt(container.pos) : null
