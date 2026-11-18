@@ -80,11 +80,13 @@ test('async adapter preparation is request-scoped and cannot replace a newer hin
   element.textContent = 'Prepared'
   const owner = document.createElement('div')
   const activate = vi.fn(() => true)
+  const cancelPrepare = vi.fn()
   const adapter: HostHintAdapter = {
     prepare: () =>
       new Promise<void>((resolve) => {
         finish = resolve
       }),
+    cancelPrepare,
     discover: () => [{ element, label: 'Prepared', x: 100, y: 100, token: 'one' }],
     unchanged: () => true,
     activate,
@@ -96,9 +98,50 @@ test('async adapter preparation is request-scoped and cannot replace a newer hin
   act(() => requestAdaptedHostHints(owner, adapter))
   expect(hints()).toHaveLength(0)
   act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+  expect(cancelPrepare).toHaveBeenCalledOnce()
   await act(async () => finish())
   expect(hints()).toHaveLength(0)
   expect(activate).not.toHaveBeenCalled()
+  view.unmount()
+})
+
+test('prepared app hints share one request with asynchronous browser hints', async () => {
+  let finish!: () => void
+  const view = setup(<div data-pane-focused data-pane="pane" />)
+  const root = document.querySelector<HTMLElement>('[data-pane-focused]')!
+  const appOwner = document.createElement('div')
+  const appTarget = document.createElement('button')
+  appTarget.textContent = 'Prepared app action'
+  const appAdapter: HostHintAdapter = {
+    prepare: () => new Promise<void>((resolve) => (finish = resolve)),
+    discover: () => [
+      { element: appTarget, label: 'Prepared app action', x: 100, y: 100, token: 'app' },
+    ],
+    unchanged: () => true,
+    activate: () => true,
+  }
+  const browserOwner = document.createElement('iframe')
+  const browserTarget = { id: 'browser-action', label: 'Browser action', x: 200, y: 100 }
+  const activateBrowser = vi.fn(async () => true)
+  const browserAdapter: AsyncHostHintAdapter = {
+    discover: vi.fn(async () => [browserTarget]),
+    present: vi.fn(async () => true),
+    clear: vi.fn(),
+    activate: activateBrowser,
+    subscribe: vi.fn(() => () => {}),
+  }
+  root.append(appTarget, appOwner, browserOwner)
+  registerHostHintAdapter(appOwner, appAdapter)
+  registerAsyncHostHintAdapter(browserOwner, browserAdapter)
+  act(() => requestAdaptedHostHints(appOwner, appAdapter))
+  expect(hints()).toHaveLength(0)
+  await act(async () => finish())
+  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual([
+    'Prepared app action',
+    'Browser action',
+  ])
+  await choose('Browser action')
+  expect(activateBrowser).toHaveBeenCalledOnce()
   view.unmount()
 })
 
