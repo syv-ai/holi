@@ -56,7 +56,7 @@ fs.appendFileSync(process.env.GH_CALL_LOG, JSON.stringify(args) + '\\n')
 if (args[0] === 'release' && args[1] === 'view') process.exit(1)
 if (args[0] === 'api') {
   if (args.includes('--slurp') && args.includes('--jq')) {
-    process.stderr.write('the --slurp option is not supported with --jq or --template\n')
+    process.stderr.write('the --slurp option is not supported with --jq or --template')
     process.exit(2)
   }
   if (process.env.GH_API_FAIL === '1') process.exit(42)
