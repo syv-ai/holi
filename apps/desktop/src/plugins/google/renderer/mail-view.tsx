@@ -2028,8 +2028,8 @@ function MessageBlock({
       {shown && (
         <div>
           <MessageAddresses message={message} />
-          <MessageBody message={message} threadUrl={threadUrl} hintOwner={hintOwner} />
           <Attachments attachments={message.attachments} webUrl={threadUrl} />
+          <MessageBody message={message} threadUrl={threadUrl} hintOwner={hintOwner} />
         </div>
       )}
     </article>
