@@ -226,6 +226,61 @@ export const BRIDGE_JS = `(() => {
   if (!customElements.get('holi-note')) customElements.define('holi-note', HoliNote)
 })()`
 
+export const APP_HINTS_JS = `(() => {
+  const nonce = document.querySelector('meta[name="holi-app-document-nonce"]')?.content
+  if (!nonce || parent === window) return
+  const selector = 'button,a[href],[role="link"],summary,input[type="button"],input[type="submit"],input[type="reset"],input[type="checkbox"],input[type="radio"],[role="button"],[role="tab"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="treeitem"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"]:not(input),[role="option"],[cmdk-item]'
+  const overlays = '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[data-slot="popover-content"],[data-slot="hover-card-content"]'
+  let targets = new Map(), activeRequest = '', enabled = false, sequence = 0, raf = 0, composing = false, activating = false
+  const send = (message) => parent.postMessage({ ...message, nonce }, '*')
+  const editable = (el) => el instanceof Element && !!el.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')
+  const invalidate = () => {
+    if (!activeRequest) return
+    const requestId = activeRequest
+    activeRequest = ''; targets.clear()
+    if (raf) cancelAnimationFrame(raf)
+    raf = 0; send({ type: 'invalidate', requestId })
+  }
+  const visible = (el) => {
+    if (!el.isConnected || el.matches(':disabled,[disabled],[hidden],[inert],[aria-disabled="true"]')) return false
+    for (let n=el; n instanceof Element; n=n.parentElement) {
+      if (n.matches('[hidden],[inert],[aria-hidden="true"],[aria-disabled="true"]')) return false
+      const s=getComputedStyle(n)
+      if (s.display==='none'||s.visibility==='hidden'||s.visibility==='collapse'||Number(s.opacity||1)===0) return false
+    }
+    const r=el.getBoundingClientRect(); return r.width>0&&r.height>0
+  }
+  const pointFor = (el, overlay, pressable = true) => {
+    const r=el.getBoundingClientRect(); let l=Math.max(0,r.left),t=Math.max(0,r.top),right=Math.min(innerWidth,r.right),bottom=Math.min(innerHeight,r.bottom)
+    for (let n=el.parentElement;n;n=n.parentElement) { const s=getComputedStyle(n),b=n.getBoundingClientRect(); if (/(hidden|clip|auto|scroll)/.test(s.overflowX)){l=Math.max(l,b.left);right=Math.min(right,b.right)} if (/(hidden|clip|auto|scroll)/.test(s.overflowY)){t=Math.max(t,b.top);bottom=Math.min(bottom,b.bottom)} }
+    if(right<=l||bottom<=t)return null
+    const x=(l+right)/2,y=(t+bottom)/2,hit=document.elementFromPoint(x,y)
+    return hit&&(hit===el||el.contains(hit))&&(!pressable||hit.closest(selector)===el)&&(!overlay||overlay.contains(hit))?{x,y}:null
+  }
+  const foremost = () => [...document.querySelectorAll(overlays)].filter((el)=>visible(el)&&pointFor(el,null,false)).map((el,index)=>({el,index,focused:el.contains(document.activeElement),depth:(()=>{let n=0;for(let p=el.parentElement;p;p=p.parentElement)n++;return n})(),z:Number.parseInt(getComputedStyle(el).zIndex,10)||0})).sort((a,b)=>Number(b.focused)-Number(a.focused)||b.z-a.z||b.depth-a.depth||b.index-a.index)[0]?.el||null
+  const label=(el)=>String(el.getAttribute('aria-label')||el.innerText||el.textContent||el.value||el.getAttribute('title')||el.tagName).trim().slice(0,160)
+  const discover=(requestId)=>{ targets.clear();const found=[],overlay=foremost();for(const el of document.querySelectorAll(selector)){if(found.length>=80||!visible(el)||(overlay&&!overlay.contains(el)))continue;const point=pointFor(el,overlay);if(!point)continue;const id=String(++sequence);targets.set(id,{el,...point,overlay});found.push({id,label:label(el),...point})}send({type:'targets',requestId,targets:found}) }
+  const watch=()=>{raf=0;if(!activeRequest)return;const overlay=foremost();for(const t of targets.values()){const p=visible(t.el)&&(!overlay||overlay.contains(t.el))?pointFor(t.el,overlay):null;if(!p||p.x!==t.x||p.y!==t.y||overlay!==t.overlay){invalidate();return}}raf=requestAnimationFrame(watch)}
+  addEventListener('message',(event)=>{
+    if(event.source!==parent||!event.data||event.data.nonce!==nonce)return
+    const m=event.data
+    if(m.type==='holi:vim-app-config'&&typeof m.enabled==='boolean'){enabled=m.enabled;if(!enabled)invalidate();return}
+    if(m.type==='holi:vim-app-hints'&&typeof m.requestId==='string'&&m.requestId.length>0&&m.requestId.length<=100){invalidate();if(!enabled)return;activeRequest=m.requestId;discover(activeRequest);raf=requestAnimationFrame(watch);return}
+    if(m.type==='cancel'&&m.requestId===activeRequest){invalidate();return}
+    if(m.type!=='activate'||m.requestId!==activeRequest||typeof m.targetId!=='string')return
+    const t=targets.get(m.targetId),overlay=foremost();if(!t||!visible(t.el)||overlay!==t.overlay||(overlay&&!overlay.contains(t.el))){invalidate();return}
+    const p=pointFor(t.el,overlay);if(!p||p.x!==t.x||p.y!==t.y){invalidate();return}
+    const el=t.el,hit=document.elementFromPoint(p.x,p.y);activeRequest='';targets.clear();if(raf)cancelAnimationFrame(raf);raf=0
+    const init={bubbles:true,cancelable:true,clientX:p.x,clientY:p.y,button:0,buttons:1},ptr={...init,pointerId:1,pointerType:'mouse',isPrimary:true};activating=true
+    try{const down=hit.dispatchEvent(new PointerEvent('pointerdown',ptr));if(!el.isConnected)return;let mouseDown=true;if(down){mouseDown=hit.dispatchEvent(new MouseEvent('mousedown',init));if(!el.isConnected)return;if(mouseDown&&(el instanceof HTMLElement||el instanceof SVGElement))el.focus({preventScroll:true});if(!el.isConnected)return}hit.dispatchEvent(new PointerEvent('pointerup',{...init,buttons:0,pointerId:1,pointerType:'mouse',isPrimary:true}));if(!el.isConnected)return;hit.dispatchEvent(new MouseEvent('mouseup',{...init,buttons:0}));if(el.isConnected)hit.dispatchEvent(new MouseEvent('click',{...init,buttons:0}))}finally{activating=false}
+  })
+  addEventListener('keydown',(e)=>{const modified=e.ctrlKey||e.altKey||e.metaKey;if(!activeRequest){if(enabled&&e.key.toLowerCase()==='f'&&!modified&&!e.shiftKey&&!e.repeat&&!e.isComposing&&!composing&&!editable(e.target)){e.preventDefault();e.stopImmediatePropagation();send({type:'request'})}return}const requestId=activeRequest;if(modified||e.shiftKey||e.isComposing||composing||editable(e.target)){invalidate();return}if(!/^[asdfghjklqwertyuiopzxcvbnm]$/.test(e.key)&&e.key!=='Backspace'&&e.key!=='Escape'){invalidate();return}e.preventDefault();e.stopImmediatePropagation();send({type:'key',requestId,key:e.key,shift:e.shiftKey,repeat:e.repeat,composing:e.isComposing||composing,modified})},true)
+  addEventListener('keyup',(e)=>{if(activeRequest&&(e.shiftKey||e.ctrlKey||e.altKey||e.metaKey))invalidate()},true)
+  addEventListener('compositionstart',()=>{composing=true;invalidate()},true);addEventListener('compositionend',()=>{composing=false},true)
+  addEventListener('pointerdown',()=>{if(!activating)invalidate()},true);addEventListener('scroll',invalidate,true);addEventListener('resize',invalidate);addEventListener('blur',invalidate);addEventListener('focusin',()=>{if(!activating)invalidate()},true);addEventListener('pagehide',invalidate)
+  new MutationObserver(()=>{if(!activating)invalidate()}).observe(document,{subtree:true,childList:true,attributes:true,characterData:true})
+})()`
+
 /**
  * The runner document's own script, after the bridge: `holi.command(fn)`
  * registers the command, and the renderer's one `{ run: input }` runs it. The

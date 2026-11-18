@@ -134,20 +134,20 @@ export async function writeAtomic(
   root: string,
   rel: VaultRelPath,
   data: string | Uint8Array,
-  assertCurrent?: () => void,
+  assertCurrent?: () => void | Promise<void>,
 ): Promise<void> {
   const abs = absPathFor(root, rel)
   const tmp = tmpPathIn(dirname(abs))
-  assertCurrent?.()
+  await assertCurrent?.()
   await mkdir(dirname(abs), { recursive: true })
   let tempMayExist = false
   try {
-    assertCurrent?.()
+    await assertCurrent?.()
     // A string still defaults to utf8; a Uint8Array/Buffer writes bytes verbatim —
     // the branded templates seed binary fonts + logo through this same writer.
     tempMayExist = true
     await writeFile(tmp, data)
-    assertCurrent?.()
+    await assertCurrent?.()
     await rename(tmp, abs)
   } finally {
     // Cancellation may happen after the temporary file was created. This file

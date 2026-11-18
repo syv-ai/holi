@@ -238,6 +238,17 @@ describe('GitHubSession', () => {
     expect(seen).toEqual(['nthomsencph', null, null])
   })
 
+  it('announces generation invalidation synchronously before sign-out storage work', async () => {
+    const t = await session(SIGN_IN_ROUTES, stored())
+    let invalidated = false
+    t.s.onGenerationChange(() => {
+      invalidated = true
+    })
+    const signingOut = t.s.signOut()
+    expect(invalidated).toBe(true)
+    await signingOut
+  })
+
   it('stops firing onChange after unsubscribe', async () => {
     const t = await session(SIGN_IN_ROUTES, stored())
     const cb = vi.fn()

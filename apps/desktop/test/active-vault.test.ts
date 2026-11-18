@@ -1726,6 +1726,45 @@ describe('ActiveVault — sync', () => {
     expect(active.syncState()).toEqual({ kind: 'conflict', paths: ['README.md'] })
   })
 
+  it('drains admitted abandon work and refuses another abandon during a migration hold', async () => {
+    const { active, dir, teammate } = await withTeammate({
+      pullIntervalMs: 60_000,
+      healIntervalMs: 60_000,
+      commitQuietMs: 60_000,
+    })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await active.commitNow()
+    await active.pushNow()
+    await active.reconcile()
+    let entered!: () => void
+    let finish!: () => void
+    const admitted = new Promise<void>((resolve) => (entered = resolve))
+    const gate = new Promise<void>((resolve) => (finish = resolve))
+    const abort = active.repo.abortMerge.bind(active.repo)
+    let calls = 0
+    active.repo.abortMerge = async () => {
+      calls++
+      entered()
+      await gate
+      return abort()
+    }
+    const abandoning = active.abandon()
+    await admitted
+    active.pause('PDF migration')
+    let drained = false
+    const draining = active.drainSync().then(() => (drained = true))
+    await sleep(20)
+    expect(drained).toBe(false)
+    await active.abandon()
+    expect(calls).toBe(1)
+    finish()
+    await abandoning
+    await draining
+    expect(drained).toBe(true)
+    expect((await active.repo.status()).merging).toBe(false)
+  })
+
   it('survives the agent turn ending — a turn is not the reconcile', async () => {
     // Git coexistence pauses the vault for the assistant's turn and `resume()`
     // lifts it, clearing the sticky conflict pause on the way out (the conflict
@@ -1744,6 +1783,42 @@ describe('ActiveVault — sync', () => {
     await sleep(SETTLE)
 
     expect(active.syncState()).toEqual({ kind: 'reconciling', paths: ['README.md'] })
+  })
+
+  it('holds sync drain until an admitted reconcile settles and blocks new reconciliation', async () => {
+    const { active, dir, teammate } = await withTeammate({
+      pullIntervalMs: 60_000,
+      healIntervalMs: 60_000,
+      commitQuietMs: 60_000,
+    })
+    await theyPublish(teammate, 'README.md', '# Theirs\\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\\n', 'utf8')
+    await active.commitNow()
+    await active.pushNow()
+    expect(active.syncState().kind).toBe('conflict')
+
+    let finishHead: () => void = () => {}
+    let headEntered: () => void = () => {}
+    const headGate = new Promise<void>((resolve) => (finishHead = resolve))
+    const entered = new Promise<void>((resolve) => (headEntered = resolve))
+    const realHead = active.repo.head.bind(active.repo)
+    active.repo.head = async () => {
+      headEntered()
+      await headGate
+      return realHead()
+    }
+    const reconciling = active.reconcile()
+    await entered
+    active.pause('PDF migration')
+    let drained = false
+    const drain = active.drainSync().then(() => (drained = true))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(drained).toBe(false)
+    expect(await active.reconcile()).toEqual({ paths: [] })
+    finishHead()
+    await reconciling
+    await drain
+    expect(drained).toBe(true)
   })
 
   it('reconcile() clears the banner when the merge now applies cleanly', async () => {

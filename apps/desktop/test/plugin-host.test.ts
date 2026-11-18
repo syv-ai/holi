@@ -37,12 +37,18 @@ async function tempDir(prefix = 'holi-plugin-host-'): Promise<string> {
 }
 
 /** An open vault the test drives: what `host.open` would have made active. */
-function openVault(remote: string, root: string, log: string[] = []): OpenVault {
+function openVault(
+  remote: string,
+  root: string,
+  log: string[] = [],
+  drainSync: () => Promise<void> = async () => {},
+): OpenVault {
   return {
     remote,
     root,
     pause: (reason) => void log.push(`pause ${reason}`),
     resume: () => void log.push('resume'),
+    drainSync,
     commitNow: async () => null,
     repo: { head: async () => 'sha' },
   }
@@ -204,6 +210,57 @@ const turn = (root: string, on: boolean) =>
   writeVaultSettings(root, { committed: { plugins: { fake: on } } })
 
 describe('app frame activation leases', () => {
+  it('reports startup failure after a plugin invalidates its own activation', async () => {
+    const root = await tempDir()
+    let attempts = 0
+    const plugin: MainPlugin = {
+      info: { id: 'self-invalidating', label: 'Self invalidating', default: true },
+      activate(ctx) {
+        attempts++
+        ctx.invalidateActivation()
+        throw new Error('native activation failed')
+      },
+    }
+    const h = rig({ plugins: [plugin] })
+    await h.enter(openVault('o/r', root))
+    expect(h.host.failures('o/r')).toEqual({ 'self-invalidating': 'native activation failed' })
+    await h.reconcile('snapshot')
+    expect(attempts).toBe(1)
+    expect(h.host.failures('o/r')).toEqual({ 'self-invalidating': 'native activation failed' })
+    await h.host.stop('o/r')
+  })
+
+  it('keeps wanted startup alive across unchanged snapshots while it awaits external work', async () => {
+    const root = await tempDir()
+    let release: () => void = () => {}
+    let entered: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const starting = new Promise<void>((resolve) => (entered = resolve))
+    let registrations = 0
+    const joining: MainPlugin = {
+      info: { id: 'joining', label: 'Joining', default: true },
+      async activate(ctx) {
+        entered()
+        await gate
+        ctx.register(['joining'], {
+          'joining.ping': cap({ doors: ['ui'], params: noParams, run: async () => 'pong' }),
+        })
+        registrations++
+        return () => {}
+      },
+    }
+    const h = rig({ plugins: [joining] })
+    const opening = h.enter(openVault('o/r', root))
+    await starting
+    const scan1 = h.reconcile('snapshot')
+    const scan2 = h.reconcile('snapshot')
+    release()
+    await Promise.all([opening, scan1, scan2])
+    expect(registrations).toBe(1)
+    expect(h.registry.has('joining.ping', 'o/r')).toBe(true)
+    await h.host.stop('o/r')
+  })
+
   it('binds issued frame authority to its activation and presentation window', async () => {
     const root = await tempDir()
     const win = { isDestroyed: () => false } as unknown as import('electron').BrowserWindow
@@ -1544,6 +1601,69 @@ describe('the lifecycle', () => {
     ctx!.pauseSync('held')
     await host.stop('o/r')
     expect(log.slice(-3)).toEqual(['pause held', 'stop base', 'resume'])
+  })
+
+  it('drains running Git work before returning a sync hold, and releases on drain failure', async () => {
+    const root = await tempDir()
+    const log: string[] = []
+    let ctx: PluginCtx | null = null
+    const plugins = [logged(log, 'base', {}, (c) => ((ctx = c), () => {}))]
+    let finish!: () => void
+    const draining = new Promise<void>((resolve) => (finish = resolve))
+    const { host, enter } = rig({ plugins })
+    await enter(openVault('o/r', root, log, () => draining))
+
+    let settled = false
+    const holding = ctx!.pauseSyncAndDrain('PDF migration').then((release) => {
+      settled = true
+      return release
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(log).toContain('pause PDF migration')
+    finish()
+    const release = await holding
+    release()
+    expect(log.slice(-2)).toEqual(['pause PDF migration', 'resume'])
+
+    await host.stop('o/r')
+  })
+
+  it('releases a pending drain when the plugin stops', async () => {
+    const root = await tempDir()
+    const log: string[] = []
+    let ctx: PluginCtx | null = null
+    const plugins = [logged(log, 'base', {}, (c) => ((ctx = c), () => {}))]
+    let finish!: () => void
+    const draining = new Promise<void>((resolve) => (finish = resolve))
+    const { host, enter } = rig({ plugins })
+    await enter(openVault('o/r', root, log, () => draining))
+    const holding = ctx!.pauseSyncAndDrain('pending')
+    await Promise.resolve()
+    await host.stop('o/r')
+    finish()
+    await expect(holding).rejects.toThrow(/cancelled/)
+    expect(log.slice(-2)).toEqual(['pause pending', 'resume'])
+  })
+
+  it('releases a failed drain and does not hold another vault', async () => {
+    const roots = { 'o/a': await tempDir(), 'o/b': await tempDir() }
+    const log: string[] = []
+    const contexts = new Map<string, PluginCtx>()
+    const plugins = [logged(log, 'base', {}, (ctx) => (contexts.set(ctx.remote, ctx), () => {}))]
+    const { host } = rig({ plugins, roots })
+    await host.reconcile(
+      openVault('o/a', roots['o/a']!, log, async () => {
+        throw new Error('drain failed')
+      }),
+      'open',
+    )
+    await host.reconcile(openVault('o/b', roots['o/b']!, log), 'open')
+    await expect(contexts.get('o/a')!.pauseSyncAndDrain('failed')).rejects.toThrow('drain failed')
+    expect(log).toContain('pause failed')
+    expect(log.slice(-1)).toEqual(['resume'])
+    await host.stop('o/a')
+    await host.stop('o/b')
   })
 
   it("tells a started plugin of its vault's snapshots, until it stops", async () => {
