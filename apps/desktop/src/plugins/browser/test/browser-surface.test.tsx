@@ -12,6 +12,24 @@ import { BrowserSurface } from '../renderer/browser-surface'
 import { browserEvents, pagesAtom, vimModesAtom } from '../renderer/state'
 
 const run = vi.hoisted(() => vi.fn())
+const registration = vi.hoisted(() => ({
+  adapter: null as null | { discover(request: number, signal: AbortSignal): Promise<unknown> },
+}))
+vi.mock('@/plugin-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/plugin-api')>()
+  return {
+    ...actual,
+    registerAsyncHostHintAdapter: (
+      _owner: HTMLElement,
+      adapter: (typeof registration)['adapter'],
+    ) => {
+      registration.adapter = adapter
+      return () => {
+        if (registration.adapter === adapter) registration.adapter = null
+      }
+    },
+  }
+})
 vi.mock('@/lib/trpc', () => ({
   trpc: { cap: { run: { mutate: (input: unknown) => run(input) } } },
 }))
@@ -32,6 +50,7 @@ const page = (over: Partial<PageInfo> = {}): PageInfo => ({
 })
 
 beforeEach(() => {
+  registration.adapter = null
   run.mockReset()
   run.mockResolvedValue(page())
   send.mockReset()
@@ -46,7 +65,9 @@ function show(pages: PageInfo[], visible = true) {
   store.set(pagesAtom, pages)
   const view = render(
     <Provider store={store}>
-      <BrowserSurface id="t1" visible={visible} />
+      <div data-pane data-pane-focused>
+        <BrowserSurface id="t1" visible={visible} />
+      </div>
     </Provider>,
   )
   return { store, ...view }
@@ -207,4 +228,48 @@ test('a hidden tab never places its page', async () => {
   expect(
     send.mock.calls.filter(([, e]) => (e as { payload: { rect: unknown } }).payload.rect !== null),
   ).toEqual([])
+})
+
+test('a visibility transition expires an outstanding discovery across an A-B-A return', async () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: 300,
+    bottom: 200,
+    width: 300,
+    height: 200,
+    toJSON: () => ({}),
+  } as DOMRect)
+  let resolve!: (value: unknown) => void
+  run.mockImplementationOnce(() => new Promise((done) => (resolve = done)))
+  const { store, rerender } = show([page()])
+  act(() => {
+    store.set(vimCodeEditingAtom, true)
+    store.set(vimModesAtom, {
+      t1: { nonce: 'doc-1', attachment: 'attach-1', revision: 1, mode: 'normal' },
+    })
+  })
+  await waitFor(() => expect(registration.adapter).not.toBeNull())
+  const adapter = registration.adapter!
+  const discovery = adapter.discover(55, new AbortController().signal)
+  rerender(
+    <Provider store={store}>
+      <div data-pane data-pane-focused>
+        <BrowserSurface id="t1" visible={false} />
+      </div>
+    </Provider>,
+  )
+  rerender(
+    <Provider store={store}>
+      <div data-pane data-pane-focused>
+        <BrowserSurface id="t1" visible />
+      </div>
+    </Provider>,
+  )
+  resolve({ owner: {}, targets: [{ id: 'late', label: 'Late', x: 1, y: 1 }] })
+  expect(await discovery).toBeNull()
+  expect(registration.adapter).not.toBeNull()
+  vi.restoreAllMocks()
 })

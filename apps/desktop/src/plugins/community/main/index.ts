@@ -15,6 +15,7 @@ import {
   communityCapabilities,
   linkRunningCommands,
   listPlugins,
+  refreshInstalledPins,
   runChecks,
   seedRunningApps,
   unlinkWhenOff,
@@ -92,7 +93,19 @@ export const communityMain: MainPlugin = {
     // opens, and one just turned on.
     const refresh = async (signal: AbortSignal) => {
       if (signal.aborted) return
-      await seedRunningApps(ctx.root, { store, consent })
+      await refreshInstalledPins(ctx.root, {
+        store,
+        consent,
+        git: { url: remoteUrl, token: ctx.githubToken },
+        signal: attachment.signal,
+      })
+      if (signal.aborted) return
+      await seedRunningApps(ctx.root, {
+        store,
+        consent,
+        signal: attachment.signal,
+        live: attachment.isLive,
+      })
       if (signal.aborted) return
       await linkRunningCommands(ctx.root, { store, consent })
       if (signal.aborted) return

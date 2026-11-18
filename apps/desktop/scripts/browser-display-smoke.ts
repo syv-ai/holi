@@ -27,6 +27,39 @@ async function run(): Promise<void> {
   app.setPath('sessionData', join(root, 'session'))
   assert.equal(app.getPath('userData'), join(root, 'profile'))
   await app.whenReady()
+  if (process.env.HOLI_509_APP_HINTS_ONLY === '1') {
+    const checks = await runAppFrameSmoke(root, evidence)
+    writeFileSync(
+      join(evidence, 'result.json'),
+      JSON.stringify(
+        {
+          ok: true,
+          electron: process.versions.electron,
+          checks,
+          roots: {
+            profile: join(root, 'profile'),
+            vaultA: join(root, 'vault-a'),
+            vaultB: join(root, 'vault-b'),
+          },
+          source: process.env.HOLI_553_SHA,
+          worktree: process.env.HOLI_553_WORKTREE,
+          worktreeStatus: process.env.HOLI_553_STATUS,
+          screenshots: [
+            'vault-app-a.png',
+            'vault-app-b.png',
+            'app-frame-read-a.png',
+            'app-frame-read-b.png',
+            'app-hints-light.png',
+            'app-hints-dark.png',
+          ],
+        },
+        null,
+        2,
+      ),
+    )
+    app.exit(0)
+    return
+  }
   const isolatedBrowserSession = session.fromPartition('persist:holi-browser')
   isolatedBrowserSession.webRequest.onBeforeRequest((details, callback) => {
     let allowed = false
@@ -52,10 +85,20 @@ async function run(): Promise<void> {
       stallRequested()
       return
     }
-    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy':
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'",
+    })
     response.end(`<!doctype html><meta name="color-scheme" content="light dark"><style>body { color: CanvasText; background: Canvas; font: 16px sans-serif; }</style><title>Vault ${request.url === '/b' ? 'B' : 'A'} browser page</title>
       <main><h1>Browser page owned by vault ${request.url === '/b' ? 'B' : 'A'}</h1>
-      <label>Search <input aria-label="Search" id="search"></label><button>Submit</button>
+      <label>Search <input aria-label="Search" id="search"></label><label><input id="trusted-check" type="checkbox" aria-label="Accept terms">Accept terms</label><button role="switch" aria-label="Alerts">Alerts</button><button id="trusted-button">Submit</button><a id="trusted-link" href="#clicked">Trusted link</a>
+      <button style="opacity:0">Transparent exclusion</button><div style="opacity:0"><button>Ancestor transparent exclusion</button></div>
+      <div inert><button>Inert exclusion</button></div><div aria-hidden="true"><button>Aria hidden exclusion</button></div>
+      <button id="disabled-hint" disabled>Disabled exclusion</button><button id="hidden-hint" hidden>Hidden exclusion</button>
+      <div style="position:relative"><button>Occluded exclusion</button><span style="position:absolute;inset:0;z-index:1"></span></div>
+      <div style="width:1px;height:1px;overflow:hidden"><button style="margin-left:50px">Clipped exclusion</button></div>
+      <div id="hint-targets">${Array.from({ length: 30 }, (_, index) => `<button type="button">Target ${index + 1}</button>`).join('')}</div>
       <label>Text <input aria-label="Text" id="text" value="one two three"></label>
       <label>Lines <textarea aria-label="Lines" id="lines">first line\nsecond line</textarea></label>
       <label>Password <input aria-label="Password" type="password" id="password"></label>
@@ -73,7 +116,7 @@ async function run(): Promise<void> {
       <label>Graphemes <textarea aria-label="Graphemes" id="graphemes">a café🙂 z</textarea></label>
       <label>Rows <textarea aria-label="Rows" id="rows">  alpha beta\n  gamma delta\n  omega</textarea></label>
       <div id="shadow-host"></div><iframe title="frame" srcdoc="<input id='frame-input' value='frame'>"></iframe>
-      <p>Local fixture, no accounts</p></main><script>
+      <p>Local fixture, no accounts</p><div aria-hidden="true" style="height:1200px"></div></main><script>
       const shadow = document.querySelector('#shadow-host').attachShadow({mode:'open'});
       shadow.innerHTML = '<input id="shadow-input" value="shadow">';
       </script>`)
@@ -251,10 +294,49 @@ async function run(): Promise<void> {
     const shift = shiftOverride ?? (key.length === 1 && key !== key.toLowerCase())
     const keyCode = code ?? (shift ? key.toLowerCase() : key)
     const modifiers = shift ? ['shift'] : []
-    view.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
-    if (key.length === 1) view.webContents.sendInputEvent({ type: 'char', keyCode: key, modifiers })
-    view.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    const caretTarget = await inPage<boolean>(
+      view,
+      `document.activeElement?.matches('#text, #graphemes') ?? false`,
+    )
+    const expectedKey =
+      (
+        { Right: 'ArrowRight', Left: 'ArrowLeft', Up: 'ArrowUp', Down: 'ArrowDown' } as Record<
+          string,
+          string
+        >
+      )[key] ?? key
+    const pageKey = JSON.stringify(expectedKey)
+    const eventStart = await inPage<number>(view, `window.__holiSmokeNativeEvents?.length ?? 0`)
+    const nativeInput = [
+      { type: 'keyDown', keyCode, modifiers },
+      ...(key.length === 1 ? [{ type: 'char', keyCode: key, modifiers }] : []),
+      { type: 'keyUp', keyCode, modifiers },
+    ] as const
+    for (const input of nativeInput) view.webContents.sendInputEvent(input)
+    if (!caretTarget) {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      return
+    }
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const acknowledged = await inPage<boolean>(
+        view,
+        `window.__holiSmokeNativeEvents?.slice(${eventStart}).some(event => event.type === 'keyup' && event.key === ${pageKey} && event.trusted) ?? false`,
+      )
+      if (acknowledged) {
+        const target = await inPage<string | null>(
+          view,
+          `document.activeElement?.matches('#text, #graphemes') ? document.activeElement.id : null`,
+        )
+        if (target) return
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    const diagnostic = await inPage<unknown>(
+      view,
+      `({key:${pageKey},active:document.activeElement?.id,events:window.__holiSmokeNativeEvents?.slice(${eventStart}) ?? []})`,
+    )
+    throw new Error(`native keyup was not observed: ${JSON.stringify(diagnostic)}`)
   }
   const inPage = <T>(view: WebContentsView, expression: string) =>
     view.webContents.executeJavaScript(expression) as Promise<T>
@@ -313,6 +395,10 @@ async function run(): Promise<void> {
   }
   const selection = async (selector: string, start: number, end = start) =>
     inPage(a, `document.querySelector('${selector}').setSelectionRange(${start}, ${end})`)
+  await inPage(
+    a,
+    `(() => { window.__holiSmokeNativeEvents=[]; for (const type of ['keydown','beforeinput','input','keyup']) document.addEventListener(type,event => { const target=event.target; window.__holiSmokeNativeEvents.push({type,key:event.key,inputType:event.inputType ?? null,data:event.data ?? null,trusted:event.isTrusted,target:target?.id ?? null,value:target?.value ?? null,selection:target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? [target.selectionStart,target.selectionEnd] : null}) },true) })()`,
+  )
   const vimSnapshot = await waitFor(
     () =>
       sent.find((event) => event.remote === 'A' && event.name === 'vim-mode')?.payload as
@@ -1194,6 +1280,8 @@ async function run(): Promise<void> {
           'vault-app-b.png',
           'app-frame-read-a.png',
           'app-frame-read-b.png',
+          'app-hints-light.png',
+          'app-hints-dark.png',
         ],
       },
       null,

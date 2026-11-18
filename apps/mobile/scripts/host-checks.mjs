@@ -13,7 +13,7 @@ import {
 } from '../app/storage-staging.ts'
 
 export function validateReport(report, context) {
-  const { runId, launchedAt, now, osVersion, storageRoot, phase = 'normal' } = context
+  const { runId, launchedAt, now, osVersion, storageRoot, library, phase = 'normal' } = context
   assert.match(runId, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i)
   assert.equal(report.schemaVersion, 2)
   assert.equal(report.phase, phase)
@@ -24,6 +24,43 @@ export function validateReport(report, context) {
   assert.ok(Number.isSafeInteger(report.finishedAt) && report.finishedAt >= report.startedAt)
   assert.ok(report.finishedAt <= now && now - report.finishedAt < 120_000)
   assert.equal(report.error, undefined, `Native corpus error: ${report.error}`)
+  if (phase === 'normal') {
+    const git = report.git
+    assert.ok(git && typeof git === 'object', 'Native Git transport proof is missing')
+    assert.equal(git.schemaVersion, 1)
+    assert.equal(git.runId, runId, 'Stale native Git evidence')
+    assert.match(git.libgit2Version, /^\d+\.\d+\.\d+$/)
+    assert.match(git.fetchedRef, /^[a-f0-9]{40}$/)
+    assert.match(git.pushedHead, /^[a-f0-9]{40}$/)
+    for (const field of [
+      'clone',
+      'fetch',
+      'push',
+      'credentialChallenge',
+      'invalidTlsRejected',
+      'authenticationRejected',
+      'transportRejected',
+      'branchPreserved',
+      'modePreserved',
+      'binaryPreserved',
+      'nonNotePreserved',
+      'hooksDisabled',
+      'filtersDisabled',
+      'helpersDisabled',
+      'remoteConstrained',
+      'unsafeConfigRejected',
+    ])
+      assert.equal(git[field], true, `Native Git proof failed: ${field}`)
+    assert.equal(git.invalidTlsErrorCode, -17, 'Invalid TLS must be a certificate error')
+    assert.equal(git.invalidTlsErrorClass, 16, 'Invalid TLS must be a TLS-class error')
+    assert.equal(git.authenticationErrorCode, -16, 'Credential rejection must be an auth error')
+    assert.ok(Number.isInteger(git.authenticationErrorClass))
+    assert.ok(Number.isInteger(git.transportErrorCode))
+    assert.ok(Number.isInteger(git.transportErrorClass))
+    assert.notEqual(git.transportErrorCode, git.invalidTlsErrorCode)
+    assert.notEqual(git.transportErrorCode, git.authenticationErrorCode)
+    assert.notEqual(git.transportErrorClass, git.invalidTlsErrorClass)
+  }
   const reference = runVaultFormatCorpus((text) => new TextEncoder().encode(text))
   assert.ok(reference.total > 0)
   assert.equal(reference.failed, 0)
@@ -74,6 +111,26 @@ export function validateReport(report, context) {
     saved: 'updated raw native fixture',
   }))
   assert.equal(report.nativeFilenameSpellings, true)
+  const prefix = join(storageRoot, `holi-prefix-${runId}-`)
+  const padding = 'a'.repeat((32 - (Buffer.byteLength(prefix) % 32)) % 32)
+  const rootA = `${prefix}${padding}`
+  const rootB = `${rootA}x`
+  assert.deepEqual(report.prefixNamespace, {
+    rootA,
+    rootB,
+    privateA: stagingDirectory(library, rootA),
+    privateB: stagingDirectory(library, rootB),
+    bytesA: 'root A saved',
+    bytesB: 'root B bytes',
+    malformedReadRejected: true,
+    malformedListRejected: true,
+    poisonName: 'move-00000000-0000-4000-8000-000000000589.json',
+    poisonBytes: '{malformed B journal',
+    poisonRetained: true,
+  })
+  assert.equal(Buffer.byteLength(rootA) % 32, 0)
+  assert.ok(!report.prefixNamespace.privateB.startsWith(`${report.prefixNamespace.privateA}/`))
+  assert.ok(!report.prefixNamespace.privateA.startsWith(`${report.prefixNamespace.privateB}/`))
   assert.deepEqual(report.rawNames, names)
   assert.deepEqual(report.nativeFilenameRoots, names)
 }
@@ -99,12 +156,138 @@ export function validateCheckpoint(marker, { runId, pid, launchedAt, now, docume
   assert.match(basename(marker.stage), stageNamePattern)
 }
 
+export function moveCrashCases() {
+  return [
+    { ordinal: 0, phase: 'journal-before', direction: 'before', path: null },
+    { ordinal: 1, phase: 'journal-after', direction: 'after', path: null },
+    ...['from.md', 'to.md', 'back-a.md', 'back-b.md'].flatMap((path, index) => [
+      { ordinal: 2 + index * 2, phase: 'file-before', direction: 'before', path },
+      { ordinal: 3 + index * 2, phase: 'file-after', direction: 'after', path },
+    ]),
+    { ordinal: 10, phase: 'cleanup-before', direction: 'before', path: 'journal' },
+    { ordinal: 11, phase: 'cleanup-after', direction: 'after', path: 'journal' },
+    { ordinal: 12, phase: 'recovery-file-before', direction: 'before', path: 'to.md' },
+  ]
+}
+
+export function moveCheckpointState(caseInfo, operationId, images, root) {
+  const before = {
+    'from.md': images.source,
+    'to.md': null,
+    'back-a.md': images.backA,
+    'back-b.md': images.backB,
+  }
+  const after = {
+    'from.md': null,
+    'to.md': images.moved,
+    'back-a.md': images.movedA,
+    'back-b.md': images.movedB,
+  }
+  let files
+  let journal
+  if (caseInfo.phase === 'journal-before') {
+    files = before
+    journal = false
+  } else if (caseInfo.phase === 'journal-after') {
+    files = before
+    journal = true
+  } else if (caseInfo.phase === 'file-before' || caseInfo.phase === 'file-after') {
+    const order = ['from.md', 'to.md', 'back-a.md', 'back-b.md']
+    const current = order.indexOf(caseInfo.path)
+    assert.notEqual(current, -1, 'Unknown file checkpoint path')
+    const applied = current + (caseInfo.phase === 'file-after' ? 1 : 0)
+    files = Object.fromEntries(
+      order.map((path, index) => [path, index < applied ? after[path] : before[path]]),
+    )
+    journal = true
+  } else if (caseInfo.phase === 'cleanup-before') {
+    files = after
+    journal = true
+  } else if (caseInfo.phase === 'cleanup-after') {
+    files = after
+    journal = false
+  } else if (caseInfo.phase === 'recovery-file-before') {
+    files = { ...before, 'from.md': null }
+    journal = true
+  } else {
+    throw new Error(`Unknown move checkpoint phase: ${caseInfo.phase}`)
+  }
+  return { files, journal, operationId, images, root }
+}
+
+export function validateMoveCheckpointState(state, { caseInfo, operationId, files, journal }) {
+  assert.equal(operationId, state.operationId)
+  const bytes = Object.fromEntries(
+    Object.entries(files).map(([path, value]) => [
+      path,
+      value === null ? null : Buffer.from(value),
+    ]),
+  )
+  const expectedBytes = Object.fromEntries(
+    Object.entries(state.files).map(([path, value]) => [
+      path,
+      value === null ? null : Buffer.from(value),
+    ]),
+  )
+  assert.deepEqual(
+    bytes,
+    expectedBytes,
+    `Wrong native bytes at ${caseInfo.phase}:${caseInfo.path ?? ''}`,
+  )
+  assert.equal(journal !== null, state.journal, `Wrong journal presence at ${caseInfo.phase}`)
+  if (!state.journal) return
+  const expectedChanges = [
+    ['from.md', 'source', null],
+    ['to.md', null, 'moved'],
+    ['back-a.md', 'backA', 'movedA'],
+    ['back-b.md', 'backB', 'movedB'],
+  ].map(([path, before, after]) => ({
+    path,
+    before: before === null ? null : [...new TextEncoder().encode(state.images[before])],
+    after: after === null ? null : [...new TextEncoder().encode(state.images[after])],
+  }))
+  assert.deepEqual(journal, {
+    schema: 2,
+    root: state.root,
+    operationId,
+    from: 'from.md',
+    to: 'to.md',
+    changes: expectedChanges,
+  })
+}
+
+export function validateMoveCheckpoint(marker, context) {
+  const { runId, caseInfo, pid, launchedAt, now, root, privatePath } = context
+  assert.equal(marker.schemaVersion, 1)
+  assert.equal(marker.runId, runId)
+  assert.equal(marker.ordinal, caseInfo.ordinal)
+  assert.equal(marker.phase, caseInfo.phase)
+  assert.equal(marker.direction, caseInfo.direction)
+  assert.equal(marker.path, caseInfo.path === 'journal' ? marker.path : caseInfo.path)
+  assert.equal(marker.root, root)
+  assert.equal(marker.privatePath, privatePath)
+  assert.equal(marker.pid, pid)
+  assert.ok(Number.isSafeInteger(pid) && pid > 0)
+  assert.ok(Number.isSafeInteger(marker.startedAt) && marker.startedAt >= launchedAt)
+  assert.ok(Number.isSafeInteger(marker.readyAt) && marker.readyAt >= marker.startedAt)
+  assert.ok(marker.readyAt <= now && now - marker.readyAt < 60_000)
+  assert.match(
+    marker.operationId,
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i,
+  )
+  if (caseInfo.path === null) assert.equal(marker.path, null)
+  else if (caseInfo.path === 'journal') assert.equal(marker.path, `move-${marker.operationId}.json`)
+  else assert.equal(marker.path, caseInfo.path)
+  return marker
+}
+
 export function validateSharedGraph(graph) {
   const resources = [
     'mobile-path-safety.ts',
     'path-safety.ts',
     'vault-format.ts',
     'vault-format.v1.json',
+    'wiki-links.ts',
   ]
   assert.equal(graph.schemaVersion, 1)
   assert.deepEqual(graph.resources, resources)

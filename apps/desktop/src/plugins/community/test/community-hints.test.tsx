@@ -165,7 +165,7 @@ describe('community host hint adapter', () => {
       discover: () => [],
       unchanged: () => false,
       activate: () => false,
-      guestOnly: true,
+      exclusive: true,
     }
     unregisterAdapter = registerHostHintAdapter(frame, guestAdapter)
     expect(hostHintsUnchanged([], guestAdapter, root)).toBe(true)
@@ -190,7 +190,8 @@ describe('community host hint adapter', () => {
     const cancel = vi.fn()
     const route = vi.fn((event: KeyboardEvent) => {
       if (event.key !== 'a') return false
-      return activateHostHint(coreTargets[0]!)
+      void activateHostHint(coreTargets[0]!)
+      return true
     })
     const unsubscribe = adapter.subscribe!(cancel, route)
     guest({ type: 'holi-hints:key', nonce, key: 'a' })

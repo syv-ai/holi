@@ -19,6 +19,7 @@ import {
   threadsAt,
 } from '../document-comments'
 import { createDocumentExtensions } from '../document-extensions'
+import { configureRichTextVim, RichTextVim } from '../rich-text-vim'
 
 let editor: Editor | null = null
 afterEach(() => editor?.destroy())
@@ -32,6 +33,7 @@ function open(body: string): Editor {
         onOpenLink: () => undefined,
       }),
       RichTextTable,
+      RichTextVim.configure({ enabled: false, editable: () => editor?.isEditable ?? false }),
       DocumentComments,
     ],
     content: body,
@@ -175,6 +177,254 @@ describe('placeThreads', () => {
     // An edit before the passage moves the tint with it.
     ed.commands.insertContentAt(1, 'zero ')
     expect(threadsAt(ed.state, from + 5)).toEqual(['a'])
+  })
+
+  it.each([
+    { label: 'paragraph', body: 'alpha beta\n', expectedBlock: 'paragraph' },
+    { label: 'heading', body: '## alpha beta\n', expectedBlock: 'heading' },
+    { label: 'checked task', body: '- [x] alpha beta\n', expectedBlock: 'task' },
+  ])('tracks a Vim line change from its insertion point in a $label', ({ body, expectedBlock }) => {
+    const ed = open(body)
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('c')
+
+    if (expectedBlock === 'heading') expect(ed.state.doc.firstChild?.type.name).toBe('heading')
+    if (expectedBlock === 'heading') expect(ed.state.doc.firstChild?.attrs.level).toBe(2)
+    if (expectedBlock === 'task') {
+      expect(ed.state.doc.firstChild?.firstChild?.type.name).toBe('taskItem')
+      expect(ed.state.doc.firstChild?.firstChild?.attrs.checked).toBe(true)
+    }
+    for (const character of 'omega') {
+      ed.view.dispatch(ed.state.tr.insertText(character))
+      const { head } = ed.state.selection
+      expect(ed.state.doc.textBetween(head - 1, head)).toBe(character)
+      expect(threadsAt(ed.state, head - 1)).toEqual(['a'])
+    }
+    expect(ed.state.doc.textContent).toContain('omega')
+  })
+
+  it.each(['move', 'blur'] as const)(
+    'cancels Vim line-change comment tracking after %s',
+    (cancel) => {
+      const ed = open('alpha beta\n')
+      const markdown = ed.getMarkdown()
+      const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+      setCommentRanges(ed, { ranges: [range!] })
+      configureRichTextVim(ed.view, true, true, () => true)
+      ed.commands.setTextSelection(range!.from)
+      const press = (value: string) =>
+        ed.view.dom.dispatchEvent(
+          new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+        )
+
+      press('c')
+      press('c')
+      ed.view.dispatch(ed.state.tr.insertText('a'))
+      const { head } = ed.state.selection
+      if (cancel === 'move') ed.commands.setTextSelection(head - 1)
+      else ed.view.dom.dispatchEvent(new FocusEvent('blur'))
+      ed.view.dispatch(ed.state.tr.insertText('!'))
+
+      const inserted = rangeOf(ed, '!')
+      expect(threadsAt(ed.state, inserted.from)).toEqual([])
+    },
+  )
+
+  it('keeps a Vim change comment over character-by-character insertions', () => {
+    const ed = open('alpha beta\n')
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('w')
+    for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+
+    const { from, to } = rangeOf(ed, 'omega')
+    expect(ed.state.doc.textBetween(from, to)).toBe('omega')
+    expect(threadsAt(ed.state, from)).toEqual(['a'])
+    expect(threadsAt(ed.state, to - 1)).toEqual(['a'])
+  })
+
+  it.each([
+    { operation: ['d', 'w'], body: 'alpha beta\n' },
+    { operation: ['d', 'd'], body: 'alpha\nbeta\n' },
+  ])('does not reanchor a comment after destructive Vim $operation', ({ operation, body }) => {
+    const ed = open(body)
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    for (const key of operation) press(key)
+    press('i')
+    ed.view.dispatch(ed.state.tr.insertText('!'))
+
+    const inserted = rangeOf(ed, '!')
+    expect(threadsAt(ed.state, inserted.from)).toEqual([])
+  })
+
+  it('does not extend a replacement comment after deleting at its end', () => {
+    const ed = open('alpha beta\n')
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('w')
+    for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+    const { from, to } = rangeOf(ed, 'omega')
+    ed.view.dispatch(ed.state.tr.delete(to - 1, to))
+    ed.view.dispatch(ed.state.tr.insertText('!', to - 1))
+
+    expect(threadsAt(ed.state, from)).toEqual(['a'])
+    expect(threadsAt(ed.state, to - 1)).toEqual([])
+  })
+
+  it('stops extending a replacement comment after Vim leaves insert mode', () => {
+    const ed = open('alpha beta\n')
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('w')
+    for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+    press('Escape')
+    const end = rangeOf(ed, 'omega').to
+    ed.view.dispatch(ed.state.tr.insertText('!', end))
+
+    expect(threadsAt(ed.state, rangeOf(ed, 'omega').from)).toEqual(['a'])
+    expect(threadsAt(ed.state, end)).toEqual([])
+  })
+
+  it('moves a comment range onto text inserted by a Vim change operator', () => {
+    const ed = open('alpha beta\n')
+    const markdown = ed.getMarkdown()
+    const [range] = placeThreads(ed, '', [thread('a', markdown, 'alpha')])
+    setCommentRanges(ed, { ranges: [range!] })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(range!.from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+
+    press('c')
+    press('w')
+    ed.view.dispatch(ed.state.tr.insertText('omega'))
+
+    const { from } = rangeOf(ed, 'omega')
+    expect(threadsAt(ed.state, from), ed.view.dom.innerHTML).toEqual(['a'])
+  })
+})
+
+describe('Vim changes in structured lists', () => {
+  it.each(['cc', 'Vc'] as const)(
+    'changes only the targeted paragraph with %s and preserves native comment mapping',
+    (operation) => {
+      const ed = open('- first\n\n  second\n\n  - nested\n- next\n- stay\n')
+      const markdown = ed.getMarkdown()
+      const ranges = placeThreads(
+        ed,
+        '',
+        ['first', 'second', 'nested', 'next', 'stay'].map((quote) =>
+          thread(quote, markdown, quote),
+        ),
+      )
+      setCommentRanges(ed, { ranges })
+      configureRichTextVim(ed.view, true, true, () => true)
+      ed.commands.setTextSelection(rangeOf(ed, 'second').from)
+      const press = (value: string) =>
+        ed.view.dom.dispatchEvent(
+          new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+        )
+      for (const key of operation) press(key)
+      for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+
+      const positions = (value: string) => rangeOf(ed, value)
+      expect(ed.state.doc.textContent).toContain('firstomega')
+      expect(ed.state.doc.textContent).toContain('nested')
+      expect(ed.state.doc.textContent).toContain('next')
+      expect(ed.state.doc.textContent).toContain('stay')
+      expect(threadsAt(ed.state, positions('first').from)).toEqual(['first'])
+      expect(threadsAt(ed.state, positions('nested').from)).toEqual(['nested'])
+      expect(threadsAt(ed.state, positions('omega').from)).toEqual(['second'])
+      expect(threadsAt(ed.state, positions('next').from)).toEqual(['next'])
+      expect(threadsAt(ed.state, positions('stay').from)).toEqual(['stay'])
+      expect(ed.commands.undo()).toBe(true)
+      expect(ed.state.doc.textContent).toContain('second')
+      expect(threadsAt(ed.state, rangeOf(ed, 'first').from)).toEqual(['first'])
+      expect(threadsAt(ed.state, rangeOf(ed, 'nested').from)).toEqual(['nested'])
+      expect(threadsAt(ed.state, rangeOf(ed, 'stay').from)).toEqual(['stay'])
+    },
+  )
+
+  it('removes the counted following list item without moving untouched thread anchors', () => {
+    const ed = open('- first\n\n  second\n\n  - nested\n- next\n- stay\n')
+    const markdown = ed.getMarkdown()
+    const ranges = placeThreads(
+      ed,
+      '',
+      ['first', 'second', 'nested', 'next', 'stay'].map((quote) => thread(quote, markdown, quote)),
+    )
+    setCommentRanges(ed, { ranges })
+    configureRichTextVim(ed.view, true, true, () => true)
+    ed.commands.setTextSelection(rangeOf(ed, 'second').from)
+    const press = (value: string) =>
+      ed.view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+      )
+    press('2')
+    press('c')
+    press('c')
+    for (const character of 'omega') ed.view.dispatch(ed.state.tr.insertText(character))
+
+    expect(ed.state.doc.textContent).toContain('firstomega')
+    expect(ed.state.doc.textContent).toContain('nested')
+    expect(ed.state.doc.textContent).not.toContain('next')
+    expect(ed.state.doc.textContent).toContain('stay')
+    expect(threadsAt(ed.state, rangeOf(ed, 'first').from)).toEqual(['first'])
+    expect(threadsAt(ed.state, rangeOf(ed, 'nested').from)).toEqual(['nested'])
+    expect(threadsAt(ed.state, rangeOf(ed, 'omega').from)).toEqual(['second'])
+    expect(threadsAt(ed.state, rangeOf(ed, 'stay').from)).toEqual(['stay'])
+    expect(ed.commands.undo()).toBe(true)
+    expect(ed.state.doc.textContent).toContain('next')
+    expect(ed.commands.redo()).toBe(true)
+    expect(ed.state.doc.textContent).not.toContain('next')
   })
 })
 

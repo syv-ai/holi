@@ -77,4 +77,12 @@ export const nativeIO = {
     if (!checked((error) => bridge().removeFileError(nativePath(path), error)))
       throw new Error('Native file cleanup failed')
   },
+  syncFile(path: string): void {
+    if (!checked((error) => bridge().syncFileError(nativePath(path), error)))
+      throw new Error('Native file sync failed')
+  },
+  syncDirectory(path: string): void {
+    if (!checked((error) => bridge().syncDirectoryError(nativePath(path), error)))
+      throw new Error('Native directory sync failed')
+  },
 }

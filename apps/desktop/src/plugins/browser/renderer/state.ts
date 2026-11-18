@@ -22,6 +22,7 @@ import {
 } from '@/plugin-api'
 import { browserCap } from './browser-cap'
 import { pageLabel, type PageInfo } from '../shared/page'
+import { dispatchBrowserHintEvent } from './browser-hints'
 
 export const BROWSER = 'browser'
 export const BROWSER_SURFACE = 'browser'
@@ -163,6 +164,9 @@ export const browserEvents: Readonly<Record<string, PluginEventHandler>> = {
   },
   key: ({ remote, payload }, store) => {
     if (remote === store.get(activeRemoteAtom)) replayKey(payload)
+  },
+  hints: ({ remote, payload }, store) => {
+    if (remote === store.get(activeRemoteAtom)) dispatchBrowserHintEvent(remote, payload)
   },
   'vim-mode': ({ remote, payload }, store) => {
     if (remote !== store.get(activeRemoteAtom) || typeof payload !== 'object' || payload === null)

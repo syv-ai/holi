@@ -41,6 +41,7 @@
         "scripts/browser-display-fixture/entry.tsx",
         "scripts/browser-display-fixture/preload.cjs",
         "scripts/browser-display-fixture/toolbar-sequence.ts",
+        "scripts/browser-display-fixture/hints-sequence.ts",
         "scripts/mail-markers-smoke-main.ts",
         "scripts/mail-markers-smoke-renderer.tsx",
         // Native file-subscription smoke entries are built by the disposable MJS runner.
@@ -64,6 +65,8 @@
         "scripts/mail-vim-native-smoke.tsx",
         "scripts/folder-subscriptions-native-smoke-main.ts",
         "scripts/folder-subscriptions-native-smoke.tsx",
+        "scripts/rich-text-vim-native-smoke-main.ts",
+        "scripts/rich-text-vim-native-smoke.tsx",
         // Issue #507 native packaged MDX diagnostics fixture entries.
         "scripts/mdx-diagnostics-native-smoke-main.ts",
         "scripts/mdx-diagnostics-native-smoke.tsx",
@@ -101,6 +104,8 @@
         "webpack.config.js!",
         // The Simulator driver is run by the package's test:ios script.
         "scripts/ios-simulator.mjs!",
+        // build:ios invokes this standalone native-dependency build entry.
+        "scripts/build-libgit2-ios.mjs!",
         "test/*.test.mjs",
       ],
       "project": ["app/**/*.ts!", "scripts/*.{mjs,cjs}!", "test/*.test.mjs"],

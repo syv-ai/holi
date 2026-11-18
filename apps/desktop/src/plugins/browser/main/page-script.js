@@ -651,6 +651,8 @@
     return adjacentStart + (stops[Math.min(column, stops.length - 1)] ?? 0)
   }
   const onVimKey = (event) => {
+    if (!event.isTrusted) return
+    if (onHintKey(event)) return
     const target = event.target
     flushHostMutations()
     if (
@@ -811,6 +813,18 @@
       vimField = null
       vimObservedHost = false
       verticalColumn = null
+      hintOwner = null
+      hintClosed = true
+      hintSnapshot.clear()
+      hintRoot?.remove()
+      hintRoot = null
+      hintShadow = null
+      visibleHintLabels = []
+      hintGeometry = 0
+      hintSnapshotGeometry = -1
+      hintCaptureSequence = 0
+      hintPendingCapture = null
+      hintEvents.length = 0
       return vimNonce
     },
     configure(enabled, revision, nonce) {
@@ -836,5 +850,521 @@
       return { revision: vimRevision, mode: eligibleNow() ? vimMode : 'insert' }
     },
   }
-  globalThis.__holiPage = { refs: [null], read, point, click, focus, valueOf, fill, scroll, vim }
+  // Browser hints own a separate target snapshot; CLI refs above are never reused.
+  let hintOwner = null
+  let hintClosed = true
+  let hintRevision = 0
+  let hintSnapshot = new Map()
+  let hintRoot = null
+  const hintOwnedRoots = new WeakSet()
+  let hintShadow = null
+  let visibleHintLabels = []
+  const hintEvents = []
+  let hintGeometry = 0
+  let hintSnapshotGeometry = -1
+  let hintCaptureSequence = 0
+  let hintPendingCapture = null
+  const queueHintEvent = (event) => {
+    if (hintEvents.length >= 32) {
+      const owner = hintOwner && !hintClosed && { ...hintOwner }
+      const capture = hintPendingCapture
+      hintPendingCapture = null
+      hintEvents.length = 0
+      hintSnapshot.clear()
+      hintRoot?.remove()
+      hintRoot = null
+      hintClosed = true
+      if (capture !== null) hintEvents.push({ type: 'revoke', capture })
+      if (owner) hintEvents.push({ type: 'revoke', owner })
+      return false
+    }
+    hintEvents.push(event)
+    return true
+  }
+  const hintSelector =
+    'a[href],button,input[type="button"],input[type="submit"],input[type="reset"],input[type="checkbox"],input[type="radio"],select,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="switch"],summary'
+  function hintVisible(element) {
+    if (!element.isConnected || element.matches(':disabled')) return false
+    for (let node = element; node; node = node.parentElement) {
+      if (node.matches('[hidden],[inert],[aria-hidden="true"],[aria-disabled="true"]')) return false
+      const style = getComputedStyle(node)
+      if (
+        style.display === 'none' ||
+        /^(hidden|collapse)$/.test(style.visibility) ||
+        (style.opacity !== '' && Number(style.opacity) === 0)
+      )
+        return false
+    }
+    return !hidden(element)
+  }
+  function hintTargets() {
+    const result = []
+    const selector = `${hintSelector},input:not([type]),input[type="text"],input[type="email"],input[type="url"],input[type="tel"],input[type="search"],textarea,[contenteditable="true"]`
+    for (const element of document.querySelectorAll(selector)) {
+      if (!hintVisible(element)) continue
+      const rect = element.getBoundingClientRect()
+      const style = getComputedStyle(element)
+      if (rect.width < 2 || rect.height < 2 || style.pointerEvents === 'none') continue
+      let left = Math.max(0, rect.left),
+        top = Math.max(0, rect.top)
+      let right = Math.min(innerWidth, rect.right),
+        bottom = Math.min(innerHeight, rect.bottom)
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        const s = getComputedStyle(parent)
+        if (/(hidden|clip|scroll|auto)/.test(`${s.overflow} ${s.overflowX} ${s.overflowY}`)) {
+          const clip = parent.getBoundingClientRect()
+          left = Math.max(left, clip.left)
+          top = Math.max(top, clip.top)
+          right = Math.min(right, clip.right)
+          bottom = Math.min(bottom, clip.bottom)
+        }
+      }
+      if (right - left < 2 || bottom - top < 2) continue
+      const x = Math.round((left + right) / 2),
+        y = Math.round((top + bottom) / 2)
+      const hit = document.elementFromPoint(x, y)
+      if (!hit || !(hit === element || element.contains(hit))) continue
+      const label = (
+        element.getAttribute('aria-label') ||
+        element.innerText ||
+        element.getAttribute('title') ||
+        element.getAttribute('alt') ||
+        element.tagName
+      )
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, 120)
+      result.push({
+        id: String(result.length),
+        label,
+        x,
+        y,
+        element,
+        rect: [rect.x, rect.y, rect.width, rect.height],
+      })
+    }
+    return result
+  }
+  let hintMonitorFrame = null
+  function stopHintMonitor() {
+    if (hintMonitorFrame !== null) cancelAnimationFrame(hintMonitorFrame)
+    hintMonitorFrame = null
+  }
+  function monitorHintSnapshot(owner) {
+    if (!sameHintOwner(owner, hintOwner) || hintClosed) return
+    hintMonitorFrame = requestAnimationFrame(() => {
+      hintMonitorFrame = null
+      if (!sameHintOwner(owner, hintOwner) || hintClosed) return
+      for (const target of hintSnapshot.values()) {
+        const element = target.element
+        if (!hintVisible(element) || getComputedStyle(element).pointerEvents === 'none') {
+          invalidateHints()
+          return
+        }
+        const rect = element.getBoundingClientRect()
+        if (
+          Math.abs(rect.x - target.rect[0]) > 1 ||
+          Math.abs(rect.y - target.rect[1]) > 1 ||
+          Math.abs(rect.width - target.rect[2]) > 1 ||
+          Math.abs(rect.height - target.rect[3]) > 1
+        ) {
+          invalidateHints()
+          return
+        }
+        const hit = document.elementFromPoint(target.x, target.y)
+        if (!hit || !(hit === element || element.contains(hit))) {
+          invalidateHints()
+          return
+        }
+      }
+      monitorHintSnapshot(owner)
+    })
+  }
+  function clearHints(owner) {
+    if (!sameHintOwner(owner, hintOwner)) return false
+    stopHintMonitor()
+    hintClosed = true
+    hintSnapshot.clear()
+    hintRoot?.remove()
+    hintRoot = null
+    return true
+  }
+  const invalidateHints = () => {
+    stopHintMonitor()
+    hintGeometry++
+    hintSnapshotGeometry = -1
+    if (hintPendingCapture !== null) {
+      queueHintEvent({ type: 'revoke', capture: hintPendingCapture })
+      hintPendingCapture = null
+    }
+    if (hintOwner && !hintClosed) queueHintEvent({ type: 'revoke', owner: { ...hintOwner } })
+    hintClosed = true
+    if (hintRoot) {
+      hintRoot.remove()
+      hintRoot = null
+    }
+    hintSnapshot.clear()
+  }
+  for (const eventName of [
+    'scroll',
+    'resize',
+    'focusin',
+    'pointerdown',
+    'compositionstart',
+    'compositionend',
+  ])
+    addEventListener(eventName, invalidateHints, true)
+  new MutationObserver((records) => {
+    const ownOnly = records.every((record) =>
+      [...record.addedNodes, ...record.removedNodes].some((node) => hintOwnedRoots.has(node)),
+    )
+    // Ignore our append and an explicit clear, but not a page removing the
+    // overlay root: the closed shadow tree cannot protect a detached overlay.
+    if (ownOnly && (!hintRoot || hintRoot.isConnected || hintClosed)) return
+    if (hintRoot && !hintRoot.isConnected && hintOwner && !hintClosed) {
+      hintClosed = true
+      hintSnapshot.clear()
+      hintRoot = null
+      hintShadow = null
+      queueHintEvent({ type: 'revoke', owner: { ...hintOwner } })
+      return
+    }
+    invalidateHints()
+  }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true })
+  // Page-level hint ownership is independent of native-field normal mode.
+  // Editable/custom hosts stay native unless the field Vim module owns normal mode.
+  function canStartHints() {
+    if (!vimEnabled || document.designMode === 'on') return false
+    const active = document.activeElement
+    if (!(active instanceof HTMLElement) || active.getRootNode() !== document) return false
+    if (
+      active.closest('input,textarea,select,[contenteditable],' + editorSelector) ||
+      active.shadowRoot
+    )
+      return eligibleNow() && vimMode === 'normal'
+    return true
+  }
+  function onHintKey(event) {
+    if (!event.isTrusted || !vimEnabled) return false
+    const captureActive = hintPendingCapture !== null || (!!hintOwner && !hintClosed)
+    if (
+      event.isComposing ||
+      event.key === 'Process' ||
+      event.keyCode === 229 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey
+    ) {
+      if (captureActive) invalidateHints()
+      return false
+    }
+    if (!captureActive) {
+      if (event.repeat || event.shiftKey || event.key !== 'f' || !canStartHints()) return false
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      hintPendingCapture = ++hintCaptureSequence
+      queueHintEvent({ type: 'request', capture: hintPendingCapture })
+      return true
+    }
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    queueHintEvent({
+      type: 'key',
+      ...(hintPendingCapture !== null
+        ? { capture: hintPendingCapture }
+        : { owner: { ...hintOwner } }),
+      key: event.key,
+      code: event.code,
+      repeat: event.repeat,
+      isComposing: event.isComposing,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+    })
+    if (event.key === 'Escape') {
+      // Retire in this key task, before a delayed main activation can obtain a
+      // point. Keep the exact queued key so the selected host route also cancels.
+      const capture = hintPendingCapture
+      hintPendingCapture = null
+      if (capture !== null) queueHintEvent({ type: 'revoke', capture })
+      if (hintOwner) {
+        const owner = { ...hintOwner }
+        clearHints(owner)
+        queueHintEvent({ type: 'revoke', owner })
+      }
+    }
+    return true
+  }
+  const hintField = (element) =>
+    element.matches(
+      'textarea,[contenteditable="true"],input:not([type]),input[type="text"],input[type="email"],input[type="url"],input[type="tel"],input[type="search"]',
+    )
+  const sameHintOwner = (a, b) =>
+    !!a &&
+    !!b &&
+    a.tab === b.tab &&
+    a.nonce === b.nonce &&
+    a.attachment === b.attachment &&
+    a.request === b.request &&
+    a.origin === b.origin &&
+    a.snapshot === b.snapshot &&
+    a.geometry === b.geometry
+  const hints = {
+    reset() {
+      stopHintMonitor()
+      hintOwner = null
+      hintClosed = true
+      hintRevision = 0
+      hintSnapshot.clear()
+      hintRoot?.remove()
+      hintRoot = null
+      hintShadow = null
+      visibleHintLabels = []
+      hintGeometry = 0
+      hintSnapshotGeometry = -1
+      hintCaptureSequence = 0
+      hintPendingCapture = null
+      hintEvents.length = 0
+    },
+    poll() {
+      return hintEvents.splice(0)
+    },
+    discover(owner) {
+      if (
+        !owner ||
+        !Number.isSafeInteger(owner.request) ||
+        owner.request < 1 ||
+        !Number.isSafeInteger(owner.snapshot) ||
+        !Number.isSafeInteger(owner.geometry)
+      )
+        return null
+      if (
+        hintOwner &&
+        (owner.nonce !== hintOwner.nonce || owner.attachment !== hintOwner.attachment)
+      ) {
+        hintOwner = null
+        hintClosed = true
+        hintRevision = 0
+        hintSnapshot.clear()
+        hintRoot?.remove()
+        hintRoot = null
+        hintEvents.length = 0
+      }
+      if (hintOwner && owner.request < hintOwner.request) return null
+      if (
+        hintOwner &&
+        owner.request === hintOwner.request &&
+        (hintClosed || owner.snapshot <= hintOwner.snapshot)
+      )
+        return null
+      if (owner.capture != null && owner.capture !== hintPendingCapture) return null
+      // `owner.geometry` belongs to main-process placement. Page geometry is a
+      // separate local revision: its event count cannot be compared with main's.
+      hintSnapshot.clear()
+      hintRoot?.remove()
+      hintRoot = null
+      hintOwner = { ...owner }
+      hintClosed = false
+      hintRevision = 0
+      if (owner.capture === hintPendingCapture) hintPendingCapture = null
+      const geometry = hintGeometry
+      hintSnapshotGeometry = geometry
+      const targets = hintTargets()
+      // A synchronous focus/scroll change while collecting targets invalidates
+      // the snapshot before it can become actionable.
+      if (geometry !== hintGeometry) return null
+      const snapshot = targets.slice(0, 200).map(({ id, label, x, y, element, rect }) => {
+        hintSnapshot.set(id, { element, rect, x, y, owner: { ...owner } })
+        return { id, label, x, y }
+      })
+      monitorHintSnapshot({ ...owner })
+      return snapshot
+    },
+    present(owner, revision, labels, theme = 'light', presentation) {
+      if (
+        !sameHintOwner(owner, hintOwner) ||
+        hintClosed ||
+        hintSnapshotGeometry !== hintGeometry ||
+        (hintRoot !== null && !hintRoot.isConnected) ||
+        !Number.isSafeInteger(revision) ||
+        revision <= hintRevision ||
+        !Array.isArray(labels) ||
+        labels.length > 200
+      )
+        return false
+      if (theme !== 'light' && theme !== 'dark') return false
+      if (!presentation || typeof presentation !== 'object') return false
+      const ids = new Set()
+      for (const item of labels) {
+        if (
+          !item ||
+          typeof item.id !== 'string' ||
+          item.id.length > 64 ||
+          ids.has(item.id) ||
+          typeof item.key !== 'string' ||
+          !/^[a-z]{1,4}$/.test(item.key)
+        )
+          return false
+        const target = hintSnapshot.get(item.id)
+        if (!target || !sameHintOwner(target.owner, owner)) return false
+        ids.add(item.id)
+      }
+      hintRevision = revision
+      if (!hintRoot || !hintShadow) {
+        const root = document.createElement('div')
+        root.setAttribute('aria-hidden', 'true')
+        hintOwnedRoots.add(root)
+        root.style.cssText =
+          'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;'
+        hintShadow = root.attachShadow({ mode: 'closed' })
+        document.documentElement.append(root)
+        hintRoot = root
+      } else {
+        hintShadow.replaceChildren()
+      }
+      const shadow = hintShadow
+      for (const item of labels) {
+        const target = hintSnapshot.get(item.id)
+        if (
+          !target ||
+          !sameHintOwner(target.owner, owner) ||
+          typeof item.key !== 'string' ||
+          !/^[a-z]{1,4}$/.test(item.key)
+        )
+          return false
+        const badge = document.createElement('span')
+        badge.textContent = item.key
+        // Only main-validated, resolved Kbd properties cross this seam. Assign
+        // individual properties; there is no guest CSS/HTML interpolation.
+        const style = badge.style
+        style.all = 'initial'
+        style.position = 'fixed'
+        style.left = `${Math.round(target.x)}px`
+        style.top = `${Math.round(target.y)}px`
+        style.transform = 'translate(-50%,-50%)'
+        style.boxSizing = 'border-box'
+        style.display = 'inline-flex'
+        style.alignItems = 'center'
+        style.justifyContent = 'center'
+        style.backgroundColor = presentation.backgroundColor
+        style.color = presentation.color
+        style.fontFamily = presentation.fontFamily
+        style.fontWeight = String(presentation.fontWeight)
+        for (const name of [
+          'fontSize',
+          'lineHeight',
+          'height',
+          'minWidth',
+          'paddingInline',
+          'paddingBlock',
+          'borderRadius',
+          'letterSpacing',
+        ])
+          style[name] = `${presentation[name]}px`
+        style.pointerEvents = 'none'
+        style.userSelect = 'none'
+        shadow.append(badge)
+      }
+      visibleHintLabels = labels.map((item) => ({
+        key: item.key,
+        label:
+          hintSnapshot.get(item.id)?.element?.getAttribute('aria-label') ||
+          hintSnapshot.get(item.id)?.element?.innerText ||
+          '',
+      }))
+      return true
+    },
+    clear(owner) {
+      if (!sameHintOwner(owner, hintOwner)) return false
+      return clearHints(owner)
+    },
+    // Read-only isolated-world evidence for the native acceptance fixture. The
+    // closed shadow root remains inaccessible to page scripts and web content.
+    inspect() {
+      if (!hintRoot || !hintShadow) return []
+      return visibleHintLabels.map((item, index) => ({
+        ...item,
+        presentation: (() => {
+          const style = getComputedStyle(hintShadow.children[index])
+          return Object.fromEntries(
+            [
+              'backgroundColor',
+              'color',
+              'fontFamily',
+              'fontSize',
+              'fontWeight',
+              'lineHeight',
+              'height',
+              'minWidth',
+              'paddingInline',
+              'paddingBlock',
+              'borderRadius',
+              'letterSpacing',
+              'pointerEvents',
+            ].map((name) => [name, style[name]]),
+          )
+        })(),
+      }))
+    },
+    enterInsert(owner, id) {
+      if (
+        !sameHintOwner(owner, hintOwner) ||
+        hintClosed ||
+        hintSnapshotGeometry !== hintGeometry ||
+        !hintRoot?.isConnected
+      )
+        return false
+      const target = hintSnapshot.get(id)
+      if (!target || !target.element.isConnected || !hintField(target.element)) return false
+      vimField = target.element
+      vimMode = 'insert'
+      verticalColumn = null
+      return true
+    },
+    activate(owner, id) {
+      if (
+        !sameHintOwner(owner, hintOwner) ||
+        hintClosed ||
+        hintSnapshotGeometry !== hintGeometry ||
+        !hintRoot?.isConnected
+      )
+        return null
+      const target = hintSnapshot.get(id)
+      if (
+        !target ||
+        !sameHintOwner(target.owner, owner) ||
+        !hintVisible(target.element) ||
+        getComputedStyle(target.element).pointerEvents === 'none'
+      )
+        return null
+      const rect = target.element.getBoundingClientRect()
+      if (
+        Math.abs(rect.x - target.rect[0]) > 1 ||
+        Math.abs(rect.y - target.rect[1]) > 1 ||
+        Math.abs(rect.width - target.rect[2]) > 1 ||
+        Math.abs(rect.height - target.rect[3]) > 1
+      )
+        return null
+      const hit = document.elementFromPoint(target.x, target.y)
+      if (!hit || !(hit === target.element || target.element.contains(hit))) return null
+      return {
+        x: target.x,
+        y: target.y,
+        field: hintField(target.element),
+      }
+    },
+  }
+  globalThis.__holiPage = {
+    refs: [null],
+    read,
+    point,
+    click,
+    focus,
+    valueOf,
+    fill,
+    scroll,
+    vim,
+    hints,
+  }
 })()

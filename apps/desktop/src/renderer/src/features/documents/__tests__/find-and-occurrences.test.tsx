@@ -14,6 +14,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { vimCodeEditingAtom } from '@/state/preferences'
 
 import { DocumentView } from '../document-view'
 import { extraSelections } from '../multi-cursor'
@@ -67,6 +68,7 @@ let store: ReturnType<typeof createStore>
 beforeEach(() => {
   files.clear()
   store = createStore()
+  store.set(vimCodeEditingAtom, false)
   store.set(activeRemoteAtom, 'syv/vault')
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
@@ -205,6 +207,27 @@ test('Enter and Shift+Enter step through matches; Escape gives the match back', 
   expect(selected(editor)).toBe('cat')
   expect(box.querySelectorAll('.ProseMirror-search-match')).toHaveLength(0)
   await waitFor(() => expect(editor.view.hasFocus()).toBe(true))
+})
+
+test('Vim Escape closes find from the editor without changing the match or document', async () => {
+  store.set(vimCodeEditingAtom, true)
+  const { box, editor } = await open('alpha beta alpha\\n')
+  box.focus()
+  press(box, 'f', { ctrlKey: true })
+  const field = await screen.findByRole('textbox', { name: 'Find' })
+  await userEvent.setup().type(field, 'beta')
+  expect(await screen.findByText('1 of 1')).toBeInTheDocument()
+
+  box.focus()
+  const text = editor.getText()
+  const selection = { from: editor.state.selection.from, to: editor.state.selection.to }
+  press(box, 'Escape')
+
+  expect(screen.queryByRole('textbox', { name: 'Find' })).toBeNull()
+  expect(editor.getText()).toBe(text)
+  expect(editor.state.selection.from).toBe(selection.from)
+  expect(editor.state.selection.to).toBe(selection.to)
+  expect(box).toHaveAttribute('data-vim-mode', 'normal')
 })
 
 test('match case, whole word and regex change the matches', async () => {
