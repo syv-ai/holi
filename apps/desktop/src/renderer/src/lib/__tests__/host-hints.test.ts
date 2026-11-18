@@ -49,6 +49,24 @@ it('invalidates an active session when a newly registered adapter adds targets',
   expect(target.isConnected).toBe(true)
 })
 
+it('invalidates when a previously empty adapter starts contributing targets', () => {
+  button('Existing target')
+  const owner = document.createElement('iframe')
+  root.append(owner)
+  const link = document.createElement('a')
+  owner.append(link)
+  let contributes = false
+  registerHostHintAdapter(owner, {
+    discover: () =>
+      contributes ? [{ element: link, label: 'New target', x: 10, y: 10, token: null }] : [],
+    unchanged: () => true,
+    activate: () => false,
+  })
+  const targets = discoverHostHintTargets(root)
+  contributes = true
+  expect(hostHintsUnchanged(targets)).toBe(false)
+})
+
 it('keeps exclusive requests isolated from host chrome and unrelated adapters', () => {
   const chrome = button('Host chrome')
   const frame = document.createElement('iframe')
