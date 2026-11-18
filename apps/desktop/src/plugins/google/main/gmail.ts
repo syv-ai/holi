@@ -54,8 +54,8 @@ export interface MailThreadSummary {
   snippet: string
   unread: boolean
   /**
-   * The last message in the thread is one the user sent, so they have replied
-   * and are waiting on the other side.
+   * The last non-draft message in the thread is one the user sent. A trailing
+   * unsent draft does not change who last wrote a real message.
    *
    * Deliberately not "a sent message exists somewhere in this thread": in a long
    * back-and-forth that is true forever, which makes it useless for the question
@@ -97,6 +97,10 @@ export interface MailThreadSummary {
   addressedAs: 'to' | 'cc' | 'neither' | 'unknown' | null
   /** Recognized automation evidence on the latest incoming message only; false means no recognized signal, not that a reply is needed. */
   automated: boolean
+  /** MIME evidence could not be fully checked; this is not proof of a human sender. */
+  automationUnknown?: boolean
+  /** Whether a real incoming message is later than the latest real sent reply. */
+  needsReply: boolean
 }
 
 interface MailAttachment {
@@ -482,6 +486,12 @@ export interface ListThreadsOptions {
    * movement means a thread has left this list.
    */
   mailbox?: MailboxName
+  /** Filter each fetched page to incoming threads without a later real reply. */
+  needsReply?: boolean
+  /** Include messages addressed to the account only through Cc. */
+  includeCc?: boolean
+  /** Include messages with positive automation evidence. */
+  includeAutomated?: boolean
 }
 
 /** The mailboxes the list can be of. Not every Gmail label: only the two that
@@ -680,29 +690,124 @@ export async function fetchThreadSummaries(
     .map((thread) => summarize(thread, names, knownAddresses))
     .filter((t): t is Omit<MailThreadSummary, 'hasInvite'> => t !== null)
 
+  // Metadata omits MIME children. Inspect only multipart MIME structure and
+  // headers for an ambiguous latest incoming; never request body bytes.
+  const { invitationIds, unknownIds } = await fetchLatestIncomingInvitations(api, threads)
   const invites = await fetchInviteIds(api, summaries)
-  return summaries.map((summary) => ({ ...summary, hasInvite: invites.has(summary.id) }))
+  return summaries.map((summary) => ({
+    ...summary,
+    automated: summary.automated || invitationIds.has(summary.id),
+    automationUnknown: unknownIds.has(summary.id),
+    hasInvite: invites.has(summary.id),
+  }))
 }
 
 /**
- * Which of these threads carry a calendar invite.
- *
- * **The question is asked backwards, deliberately.** A thread's attachments are
- * not knowable from the summary fetch: it asks for `format: 'metadata'`, which
- * returns headers and no `payload.parts`. `format: 'full'` would download every
- * body in the page to draw one icon. So Gmail is asked once which threads hold
- * an `.ics`, and the answer is intersected with the page in hand.
- *
- * **The date window is what makes the intersection sound.** `threads.list` is
- * newest-first across the whole mailbox, so unbounded this answers "the most
- * recent threads with an .ics", which would match nothing on an older page. The
- * window is taken
- * from the dates of the threads being intersected, with a day of slack either
- * side because Gmail reads `after:`/`before:` in the account's own timezone.
- *
- * No mailbox term: the ids may have come from the inbox, from Sent or from a
- * search, and a superset costs nothing when the result is intersected anyway.
- * Gmail excludes spam and trash from an unqualified search on its own.
+ * Invitation evidence is a headers-only projection, never a full message: the
+ * partial response selects MIME type, headers and parts only. Eight nested
+ * levels are examined. Children beyond that bound set automationUnknown; a
+ * 404 omits invitation evidence for that message, while other Google failures
+ * still fail the page rather than being mistaken for negative evidence.
+ */
+const MIME_EVIDENCE_DEPTH = 8
+
+function mimeEvidenceFields(depth: number): string {
+  const headers = 'mimeType,headers(name,value)'
+  return depth === 0
+    ? `${headers},parts(mimeType)`
+    : `${headers},parts(${mimeEvidenceFields(depth - 1)})`
+}
+
+function hasUnexaminedMimeDepth(part: RawPart | undefined, depth: number): boolean {
+  if (part === undefined) return false
+  if (depth === 0) return (part.parts?.length ?? 0) > 0
+  return (part.parts ?? []).some((child) => hasUnexaminedMimeDepth(child, depth - 1))
+}
+
+async function fetchLatestIncomingInvitations(
+  api: GoogleApi,
+  threads: RawThread[],
+): Promise<{ invitationIds: Set<string>; unknownIds: Set<string> }> {
+  const unknownIds = new Set<string>()
+  const ids = threads.flatMap((thread) => {
+    if (thread.id === undefined) return []
+    const messages = thread.messages ?? []
+    const latestIncoming = latestIncomingOf(messages)
+    const payload = latestIncoming?.payload
+    if (latestIncoming?.id === undefined || payload === undefined) {
+      unknownIds.add(thread.id)
+      return []
+    }
+
+    const hasOtherEvidence = hasAutomationHeaderEvidence(payload)
+    if (hasInvitationMethod(payload)) return []
+    const contentType = headerOf(payload, 'Content-Type')
+    const mainType = parseHeaderParameters(contentType ?? '')?.main.toLowerCase()
+    const multipart =
+      payload.mimeType?.toLowerCase().startsWith('multipart/') === true ||
+      mainType?.startsWith('multipart/') === true
+    return !hasOtherEvidence && multipart
+      ? [{ threadId: thread.id, messageId: latestIncoming.id }]
+      : []
+  })
+
+  const results = await mapPooled(ids, 5, async ({ threadId, messageId }) => {
+    try {
+      const message = await api.get<RawMessage>(
+        `${BASE}/messages/${encodeURIComponent(messageId)}`,
+        {
+          format: 'full',
+          fields: `id,threadId,payload(${mimeEvidenceFields(MIME_EVIDENCE_DEPTH)})`,
+        },
+      )
+      if (message.threadId !== threadId) return { threadId, invitation: false, unknown: true }
+      return {
+        threadId,
+        invitation: hasInvitationMethod(message.payload),
+        unknown:
+          message.payload === undefined ||
+          hasUnexaminedMimeDepth(message.payload, MIME_EVIDENCE_DEPTH),
+      }
+    } catch (error) {
+      // A message can disappear after its thread metadata was fetched. Omit that
+      // thread's invitation evidence; do not turn a lookup failure into proof.
+      if (error instanceof GoogleApiError && error.status === 404) {
+        return { threadId, invitation: false, unknown: true }
+      }
+      throw error
+    }
+  })
+  const found = results.filter((result): result is NonNullable<typeof result> => result !== null)
+  return {
+    invitationIds: new Set(
+      found.filter((result) => result.invitation).map((result) => result.threadId),
+    ),
+    unknownIds: new Set([
+      ...unknownIds,
+      ...found.filter((result) => result.unknown).map((result) => result.threadId),
+    ]),
+  }
+}
+
+/** Only a valid invitation method on a calendar MIME part is positive evidence. */
+function hasInvitationMethod(part: RawPart | undefined): boolean {
+  if (part === undefined) return false
+  if (part.mimeType?.toLowerCase() === 'text/calendar') {
+    const contentType = headerOf(part, 'Content-Type')
+    const method = parseHeaderParameters(contentType ?? '')?.parameters.get('method')
+    if (method !== undefined && ['request', 'reply', 'cancel'].includes(method.toLowerCase())) {
+      return true
+    }
+  }
+  return (part.parts ?? []).some(hasInvitationMethod)
+}
+
+/**
+ * Which of these threads carry a calendar invite. Gmail's attachment search
+ * avoids fetching full message bodies merely to draw one icon. Its result is
+ * intersected with the page, using a date window with a day of slack either
+ * side because Gmail interprets `after:`/`before:` in the account's timezone.
+ * No mailbox term is needed: the ids may come from inbox, Sent or a search.
  */
 async function fetchInviteIds(
   api: GoogleApi,
@@ -872,6 +977,28 @@ function validListId(value: string | null): boolean {
   return match !== null
 }
 
+function hasAutomationHeaderEvidence(payload: RawPart | undefined): boolean {
+  const autoSubmitted = headerOf(payload, 'Auto-Submitted')
+  const listUnsubscribe = headerOf(payload, 'List-Unsubscribe')
+  return (
+    (autoSubmitted !== null &&
+      ['auto-generated', 'auto-replied'].includes(
+        parseHeaderParameters(autoSubmitted)?.main.toLowerCase() ?? '',
+      )) ||
+    validListId(headerOf(payload, 'List-Id')) ||
+    (listUnsubscribe !== null &&
+      [...listUnsubscribe.matchAll(/<([^<>]*)>/g)].some(
+        (match) => validUnsubscribeUri(match[1]!) !== null,
+      ))
+  )
+}
+
+function latestIncomingOf(messages: RawMessage[]): RawMessage | undefined {
+  return [...messages]
+    .reverse()
+    .find((message) => !message.labelIds?.includes('SENT') && !message.labelIds?.includes('DRAFT'))
+}
+
 /** Everything derivable from the metadata fetch: everything except
  *  `hasInvite`. */
 function summarize(
@@ -887,9 +1014,7 @@ function summarize(
   // A label anywhere in the thread applies to the thread, as in Gmail's own list.
   const allLabels = messages.flatMap((m) => m.labelIds ?? [])
   const category = last.labelIds?.map((id) => CATEGORY_BY_LABEL[id]).find((c) => c !== undefined)
-  const incoming = messages.filter(
-    (message) => !message.labelIds?.includes('SENT') && !message.labelIds?.includes('DRAFT'),
-  )
+  const latestIncoming = latestIncomingOf(messages)
   let seenIncoming = false
   const replies = messages.filter((message) => {
     if (!message.labelIds?.includes('SENT') && !message.labelIds?.includes('DRAFT')) {
@@ -898,7 +1023,6 @@ function summarize(
     }
     return message.labelIds?.includes('SENT') === true && seenIncoming
   })
-  const latestIncoming = incoming[incoming.length - 1]
   const incomingTo =
     latestIncoming === undefined ? [] : parseAddresses(headerOf(latestIncoming.payload, 'To'))
   const incomingCc =
@@ -909,17 +1033,8 @@ function summarize(
       : new Set(knownAddresses.map((address) => address.trim().toLowerCase()))
   const matches = (addresses: MailAddress[]) =>
     own !== null && addresses.some((address) => own.has(address.email))
-  const autoSubmitted =
-    latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'Auto-Submitted')
-  const listUnsubscribe =
-    latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'List-Unsubscribe')
-  const listId = latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'List-Id')
   const listEvidence =
-    (listUnsubscribe !== null &&
-      [...listUnsubscribe.matchAll(/<([^<>]*)>/g)].some(
-        (match) => validUnsubscribeUri(match[1]!) !== null,
-      )) ||
-    validListId(listId)
+    latestIncoming !== undefined && hasAutomationHeaderEvidence(latestIncoming.payload)
   const contentType =
     latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'Content-Type')
   const mimeType = contentType?.split(';', 1)[0]?.trim().toLowerCase()
@@ -948,7 +1063,11 @@ function summarize(
     // `SENT` is Gmail's own label for "this account sent this", so it needs no
     // comparison against the connected address, which would be wrong anyway
     // for aliases and send-as addresses.
-    answered: last.labelIds?.includes('SENT') === true,
+    answered:
+      [...messages]
+        .reverse()
+        .find((message) => !message.labelIds?.includes('DRAFT'))
+        ?.labelIds?.includes('SENT') === true,
     messageCount: messages.length,
     webUrl: messageUrl(headerOf(first.payload, 'Message-ID'), thread.id),
     starred: allLabels.includes('STARRED'),
@@ -976,16 +1095,16 @@ function summarize(
             : matches(incomingCc)
               ? 'cc'
               : 'neither',
-    // Conservative evidence only: valid Auto-Submitted automation tokens, valid
-    // list headers, or a recognized calendar invitation on the latest incoming.
-    automated:
+    // Conservative evidence only; unknown MIME depth is reported separately.
+    automated: latestIncoming !== undefined && (listEvidence || invitation),
+    needsReply:
       latestIncoming !== undefined &&
-      ((autoSubmitted !== null &&
-        ['auto-generated', 'auto-replied'].includes(
-          parseHeaderParameters(autoSubmitted)?.main.toLowerCase() ?? '',
-        )) ||
-        listEvidence ||
-        invitation),
+      messages.indexOf(latestIncoming) >
+        messages.reduce(
+          (lastSent, message, index) =>
+            message.labelIds?.includes('SENT') === true ? index : lastSent,
+          -1,
+        ),
   }
 }
 
@@ -1118,7 +1237,8 @@ export function applyLabelDelta(
   change: { added: ReadonlySet<string>; removed: ReadonlySet<string> },
 ): MailThreadSummary {
   const patched = { ...thread }
-  for (const [label, flag] of Object.entries(LABEL_FLAGS) as [string, MailFlag][]) {
+  for (const label of Object.keys(LABEL_FLAGS) as (keyof typeof LABEL_FLAGS)[]) {
+    const flag = LABEL_FLAGS[label]
     if (change.added.has(label)) patched[flag] = true
     else if (change.removed.has(label)) patched[flag] = false
   }
