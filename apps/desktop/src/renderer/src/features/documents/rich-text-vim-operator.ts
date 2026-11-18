@@ -451,7 +451,11 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
       from,
       to,
       true,
-      block === lastBlock && block.node.type.name === 'codeBlock' ? 'codeBlock' : undefined,
+      block.from === lastBlock.from &&
+        block.node.type.name === 'codeBlock' &&
+        lastBlock.node.type.name === 'codeBlock'
+        ? 'codeBlock'
+        : undefined,
     )
     const mutation: Mutation | null = !removal
       ? null

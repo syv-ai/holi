@@ -1031,6 +1031,26 @@ describe('rich-text Vim extension', () => {
     expect(ed.view.dom.dataset.vimMode).toBe('insert')
   })
 
+  it.each(['p', 'P'] as const)(
+    'pastes a single-line code block with %s and supports undo without feedback',
+    (put) => {
+      const feedback = vi.fn()
+      const ed = open('<pre><code>only</code></pre>', true, feedback)
+      ed.commands.setTextSelection(1)
+      key(ed, 'y')
+      key(ed, 'y')
+      key(ed, put)
+      expect(ed.state.doc.firstChild?.type.name).toBe('codeBlock')
+      expect(ed.state.doc.firstChild?.textContent).toBe('only\nonly')
+      expect(ed.state.doc.check()).toBeUndefined()
+      expect(feedback).not.toHaveBeenCalled()
+      key(ed, 'u')
+      expect(ed.state.doc.firstChild?.type.name).toBe('codeBlock')
+      expect(ed.state.doc.firstChild?.textContent).toBe('only')
+      expect(feedback).not.toHaveBeenCalled()
+    },
+  )
+
   it('yanks, changes and deletes logical lines inside code blocks without flattening the block', () => {
     const ed = open('<pre><code>first\nmiddle\nlast</code></pre>')
     ed.commands.setContent({
