@@ -40,7 +40,13 @@ async function executePublish({ pages, apiError, createStatus = 0 }) {
   const apiResponse = join(directory, 'api.json')
   const fakeGh = join(bin, 'gh')
   await mkdir(bin)
-  await writeFile(apiResponse, JSON.stringify(pages ?? []))
+  const jsonLines = (pages ?? [])
+    .flat()
+    .map(({ tag_name, draft, prerelease, published_at }) =>
+      JSON.stringify({ tag_name, draft, prerelease, published_at }),
+    )
+    .join('\n')
+  await writeFile(apiResponse, jsonLines ? `${jsonLines}\n` : '')
   await writeFile(
     fakeGh,
     `#!/usr/bin/env node
@@ -49,6 +55,10 @@ const args = process.argv.slice(2)
 fs.appendFileSync(process.env.GH_CALL_LOG, JSON.stringify(args) + '\\n')
 if (args[0] === 'release' && args[1] === 'view') process.exit(1)
 if (args[0] === 'api') {
+  if (args.includes('--slurp') && args.includes('--jq')) {
+    process.stderr.write('the --slurp option is not supported with --jq or --template\n')
+    process.exit(2)
+  }
   if (process.env.GH_API_FAIL === '1') process.exit(42)
   process.stdout.write(fs.readFileSync(process.env.GH_API_RESPONSE))
   process.exit(0)
@@ -97,13 +107,11 @@ test('paginates unordered releases and buffers only the projected release fields
     currentTag: 'v1.0.0',
     runGhApi(...args) {
       calls.push(args)
-      return JSON.stringify([
-        [
-          { ...releases[1], body: 'large body', assets: [{ name: 'installer' }] },
-          { ...releases[0], body: 'another body', assets: [{ name: 'archive' }] },
-        ],
-        [{ ...releases[2], body: 'current stable body' }],
-      ])
+      return [releases[1], releases[0], releases[2]]
+        .map(({ tag_name, draft, prerelease, published_at }) =>
+          JSON.stringify({ tag_name, draft, prerelease, published_at }),
+        )
+        .join('\n')
     },
   })
 
@@ -114,9 +122,8 @@ test('paginates unordered releases and buffers only the projected release fields
       [
         'api',
         '--paginate',
-        '--slurp',
         '--jq',
-        '[.[] | {tag_name, draft, prerelease, published_at}]',
+        '.[] | {tag_name, draft, prerelease, published_at} | @json',
         'repos/holi/app/releases?per_page=100',
       ],
       { encoding: 'utf8' },
@@ -130,7 +137,7 @@ test('rejects an invalid projected release response', () => {
       getPreviousStableTag({
         repository: 'holi/app',
         currentTag: 'v1.0.0',
-        runGhApi: () => JSON.stringify([[{ tag_name: 'v0.9.0' }]]),
+        runGhApi: () => JSON.stringify({ tag_name: 'v0.9.0' }),
       }),
     /projected paginated release list/,
   )
@@ -158,9 +165,8 @@ test('publishes with the prior stable tag through the actual workflow run block'
     [
       'api',
       '--paginate',
-      '--slurp',
       '--jq',
-      '[.[] | {tag_name, draft, prerelease, published_at}]',
+      '.[] | {tag_name, draft, prerelease, published_at} | @json',
       'repos/holi/app/releases?per_page=100',
     ],
     [
@@ -179,8 +185,8 @@ test('publishes with the prior stable tag through the actual workflow run block'
   ])
 })
 
-test('does not publish generated notes without a previous stable release', async () => {
-  const result = await executePublish({ pages: [[{ ...releases[1], tag_name: 'v1.0.0-dev.1' }]] })
+test('does not publish generated notes when the first release has no baseline', async () => {
+  const result = await executePublish({ pages: [] })
   assert.notEqual(result.status, 0)
   assert.match(result.stdout, /No previous stable release found/)
   assert.deepEqual(result.calls, [
@@ -188,9 +194,8 @@ test('does not publish generated notes without a previous stable release', async
     [
       'api',
       '--paginate',
-      '--slurp',
       '--jq',
-      '[.[] | {tag_name, draft, prerelease, published_at}]',
+      '.[] | {tag_name, draft, prerelease, published_at} | @json',
       'repos/holi/app/releases?per_page=100',
     ],
   ])
@@ -204,9 +209,8 @@ test('propagates GitHub API failure and never publishes', async () => {
     [
       'api',
       '--paginate',
-      '--slurp',
       '--jq',
-      '[.[] | {tag_name, draft, prerelease, published_at}]',
+      '.[] | {tag_name, draft, prerelease, published_at} | @json',
       'repos/holi/app/releases?per_page=100',
     ],
   ])
