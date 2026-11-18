@@ -8,7 +8,8 @@ import {
   vaultRelPath,
   type VaultRelPath,
 } from '@holi/shared/mobile-path-safety'
-import type { NativeFiles } from './native-files'
+import type { NativeFiles, StorageCheckpointCallback } from './native-files'
+import { moveNote, recoverMoves } from './storage-move'
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((byte, index) => byte === right[index])
@@ -51,12 +52,21 @@ function revision(bytes: Uint8Array): Revision {
 }
 
 /** Byte-preserving vault note storage. Revisions are checked under a per-root lock. */
-export function createVaultStorage(adapter: NativeFiles, vault: { remote: string; root: string }) {
+export function createVaultStorage(
+  adapter: NativeFiles,
+  vault: { remote: string; root: string },
+  options: { checkpoint?: StorageCheckpointCallback } = {},
+) {
   if (!isRemote(vault.remote)) throw new Error('Invalid vault identity')
   let canonical: Promise<string> | undefined
   const rootPath = () => (canonical ??= adapter.canonicalRoot(vault.root))
   const serialize = <T>(work: (root: string) => Promise<T>) =>
-    rootPath().then((resolved) => locked(resolved, () => work(resolved)))
+    rootPath().then((resolved) =>
+      locked(resolved, async () => {
+        await recoverMoves(adapter, resolved, validatePath, options.checkpoint)
+        return work(resolved)
+      }),
+    )
 
   return {
     async list(): Promise<VaultRelPath[]> {
@@ -92,6 +102,29 @@ export function createVaultStorage(adapter: NativeFiles, vault: { remote: string
         await adapter.create(resolved, path, bytes)
         const saved = await adapter.read(resolved, path)
         return { path, bytes: saved, revision: revision(saved) }
+      })
+    },
+    async move(
+      rawFrom: string,
+      rawTo: string,
+      expectedRevision: Revision,
+    ): Promise<StoredDocument> {
+      const from = validatePath(rawFrom)
+      const to = validatePath(rawTo)
+      if (isLocalOnlyPath(from) || isLocalOnlyPath(to))
+        throw new Error('Move note path is not public')
+      return serialize(async (resolved) => {
+        const moved = await moveNote(
+          adapter,
+          resolved,
+          from,
+          to,
+          expectedRevision,
+          validatePath,
+          revision,
+          options.checkpoint,
+        )
+        return { ...moved, path: to }
       })
     },
     async save(

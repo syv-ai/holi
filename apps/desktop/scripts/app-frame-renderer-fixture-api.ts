@@ -1,5 +1,14 @@
 import { atom } from 'jotai'
 import { capClient as productionCapClient } from '../src/renderer/src/lib/cap-client'
+import { vimCodeEditingAtom } from '../src/renderer/src/state/preferences'
+import { registerHostHintAdapter } from '../src/renderer/src/lib/host-hints'
+
+export { vimCodeEditingAtom, registerHostHintAdapter }
+export type {
+  HostHintAdapter,
+  HostHintAdapterTarget,
+  HostHintTarget,
+} from '../src/renderer/src/lib/host-hints'
 
 export const activeRemoteAtom = atom<string | null>('ada/a')
 export const activeModeAtom = atom('dark')

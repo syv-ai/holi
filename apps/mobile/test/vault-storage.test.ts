@@ -88,6 +88,22 @@ describe('vault storage with real directories', () => {
     expect(await readFile(join(outside, 'escape.md'), 'utf8')).toBe('outside')
   })
 
+  it('keeps local documents readable and writable while hiding them from listing', async () => {
+    const base = await root()
+    const store = createVaultStorage(nodeFiles, { remote: 'holi/local', root: base })
+    const created = await store.create('private.local.md', new TextEncoder().encode('local'))
+    expect(await store.list()).not.toContain('private.local.md')
+    expect((await store.read('private.local.md')).revision).toBe(created.revision)
+    const saved = await store.save(
+      'private.local.md',
+      new TextEncoder().encode('updated local'),
+      created.revision,
+    )
+    expect(new TextDecoder().decode(saved.bytes)).toBe('updated local')
+    await expect(store.move('private.local.md', 'public.md', saved.revision)).rejects.toThrow()
+    await expect(store.move('public.md', 'private.local.md', saved.revision)).rejects.toThrow()
+  })
+
   it('does not publish local, secret, ignored or internal artifacts', async () => {
     const base = await root()
     const store = createVaultStorage(nodeFiles, { remote: 'holi/filtered', root: base })

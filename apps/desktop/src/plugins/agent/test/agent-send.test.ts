@@ -389,6 +389,76 @@ test('starting a session opens its window', async () => {
   expect(shown(store)).toBeNull()
 })
 
+test('a start completing after an A-B-A vault switch is stopped and never lands', async () => {
+  const started = deferred<{
+    ok: true
+    sessionId: string
+    terminalId: string
+  }>()
+  start.mockReturnValueOnce(started.promise)
+  const store = storeWith()
+  const opening = store.set(startSessionAtom, { name: 'Catch-up' })
+
+  store.set(activeRemoteAtom, 'o/other')
+  store.set(activeRemoteAtom, 'o/vault')
+  started.resolve({ ok: true, sessionId: 'p0123456789ab', terminalId: 'stale-terminal' })
+
+  await expect(opening).resolves.toEqual({
+    ok: false,
+    message: 'The vault changed before the session opened.',
+  })
+  expect(stop).toHaveBeenCalledWith('p0123456789ab')
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'home' })
+})
+
+test('a failed stale-session cleanup is reported without landing its terminal', async () => {
+  const started = deferred<{
+    ok: true
+    sessionId: string
+    terminalId: string
+  }>()
+  start.mockReturnValueOnce(started.promise)
+  stop.mockRejectedValueOnce(new Error('cleanup refused'))
+  const store = storeWith()
+  const opening = store.set(startSessionAtom, { name: 'Catch-up' })
+
+  store.set(activeRemoteAtom, 'o/other')
+  started.resolve({ ok: true, sessionId: 'p0123456789ab', terminalId: 'stale-terminal' })
+
+  await expect(opening).resolves.toEqual({
+    ok: false,
+    message:
+      'Cleanup unconfirmed: the vault changed and session p0123456789ab may still be running. cleanup refused',
+    cleanupUnconfirmed: true,
+    sessionId: 'p0123456789ab',
+  })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'home' })
+})
+
+test('a resolved stale-session stop refusal remains unconfirmed', async () => {
+  const started = deferred<{
+    ok: true
+    sessionId: string
+    terminalId: string
+  }>()
+  start.mockReturnValueOnce(started.promise)
+  const store = storeWith()
+  const opening = store.set(startSessionAtom, { name: 'Catch-up' })
+
+  store.set(activeRemoteAtom, 'o/other')
+  stop.mockResolvedValueOnce({ ok: false, message: 'cleanup refused' })
+  started.resolve({ ok: true, sessionId: 'p0123456789ab', terminalId: 'stale-terminal' })
+
+  await expect(opening).resolves.toMatchObject({
+    ok: false,
+    cleanupUnconfirmed: true,
+    sessionId: 'p0123456789ab',
+  })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+})
+
 test('stop goes to main and answers what it said', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
   expect(await store.set(stopSessionAtom, 'aaaaaaaa')).toEqual({ ok: true })

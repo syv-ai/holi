@@ -1035,6 +1035,65 @@ describe('tasks.list', () => {
     }
   })
 
+  it('filters open tasks by canonical login and preserves privacy and custom closed statuses', async () => {
+    await put(
+      '.holi/statuses.yaml',
+      'statuses:\n  - id: todo\n    name: To do\n    category: unstarted\n  - id: shipped\n    name: Shipped\n    category: completed\n',
+    )
+    const items = [
+      { path: 'task.mine.md', title: 'mine', status: 'todo', tags: [], assignees: ['Alice'] },
+      {
+        path: 'task.joint.md',
+        title: 'joint',
+        status: 'todo',
+        tags: [],
+        assignees: ['bob', 'alice'],
+      },
+      {
+        path: 'task.private.local.md',
+        title: 'private',
+        status: 'todo',
+        tags: [],
+        assignees: ['ALICE'],
+      },
+      { path: 'task.unassigned.md', title: 'unassigned', status: 'todo', tags: [], assignees: [] },
+      { path: 'task.other.md', title: 'other', status: 'todo', tags: [], assignees: ['bob'] },
+      {
+        path: 'task.closed.md',
+        title: 'closed',
+        status: 'shipped',
+        tags: [],
+        assignees: ['alice'],
+      },
+    ]
+    const context: CapabilityContext = {
+      ...ctx(),
+      snapshot: async () => ({
+        ...emptyVaultSnapshot(),
+        claimed: { tasks: { items, broken: [] } },
+      }),
+    }
+    const filtered = await runCapability('tasks.list', 'cli', context, {
+      assignee: 'aLiCe',
+      open: true,
+    })
+    expect((filtered.value as { path: string }[]).map((task) => task.path)).toEqual([
+      'task.mine.md',
+      'task.joint.md',
+      'task.private.local.md',
+    ])
+    const defaults = await runCapability('tasks.list', 'cli', context, {})
+    expect(defaults.value as { path: string }[]).toHaveLength(items.length)
+  })
+
+  it('parses CLI task-list flags into boolean capability parameters', () => {
+    const parsed = taskCapabilities({ today: () => '2026-09-30' })['tasks.list'].params({
+      assignee: 'Ada',
+      open: 'true',
+    })
+    expect(parsed).toEqual({ due: undefined, overdue: false, assignee: 'Ada', open: true })
+  })
+
   it('tells an app only the tasks it may read, and the agent every one', async () => {
     const task = (path: string) => ({ path, title: path, status: 'todo', tags: [], assignees: [] })
     const items = ['ops/task.a.md', '.holi/memory/task.b.md', 'Budget.app/data/task.c.md'].map(task)

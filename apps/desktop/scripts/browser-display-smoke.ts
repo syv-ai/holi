@@ -27,6 +27,39 @@ async function run(): Promise<void> {
   app.setPath('sessionData', join(root, 'session'))
   assert.equal(app.getPath('userData'), join(root, 'profile'))
   await app.whenReady()
+  if (process.env.HOLI_509_APP_HINTS_ONLY === '1') {
+    const checks = await runAppFrameSmoke(root, evidence)
+    writeFileSync(
+      join(evidence, 'result.json'),
+      JSON.stringify(
+        {
+          ok: true,
+          electron: process.versions.electron,
+          checks,
+          roots: {
+            profile: join(root, 'profile'),
+            vaultA: join(root, 'vault-a'),
+            vaultB: join(root, 'vault-b'),
+          },
+          source: process.env.HOLI_553_SHA,
+          worktree: process.env.HOLI_553_WORKTREE,
+          worktreeStatus: process.env.HOLI_553_STATUS,
+          screenshots: [
+            'vault-app-a.png',
+            'vault-app-b.png',
+            'app-frame-read-a.png',
+            'app-frame-read-b.png',
+            'app-hints-light.png',
+            'app-hints-dark.png',
+          ],
+        },
+        null,
+        2,
+      ),
+    )
+    app.exit(0)
+    return
+  }
   const isolatedBrowserSession = session.fromPartition('persist:holi-browser')
   isolatedBrowserSession.webRequest.onBeforeRequest((details, callback) => {
     let allowed = false
@@ -181,6 +214,7 @@ async function run(): Promise<void> {
     root: roots[remote],
     pause: () => {},
     resume: () => {},
+    drainSync: async () => {},
     commitNow: async () => null,
     repo: { head: async () => null },
   })
@@ -1193,6 +1227,8 @@ async function run(): Promise<void> {
           'vault-app-b.png',
           'app-frame-read-a.png',
           'app-frame-read-b.png',
+          'app-hints-light.png',
+          'app-hints-dark.png',
         ],
       },
       null,
