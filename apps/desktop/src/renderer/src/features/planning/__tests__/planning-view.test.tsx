@@ -10,6 +10,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@/test/render'
 import type { KanbanCommitMeta } from '@/components/ui/kanban'
 import { nowAtom } from '@/state/clock'
+import { shortDate } from '@/lib/planning'
 import { planningTabAtom, projectFileAtom, statusesFileAtom } from '@/state/planning'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import { PlanningView } from '../planning-view'
@@ -181,13 +182,15 @@ test('due chips distinguish today, exact-minute urgency, invalid dates and compl
   expect(screen.getByLabelText(/11:59, overdue/)).toBeInTheDocument()
   expect(screen.getByLabelText('Due not-a-date')).toBeInTheDocument()
   expect(screen.getByLabelText(/Was due/)).toBeInTheDocument()
-  const todayChip = screen.getByLabelText(/^Due today, Oct 23$/)
+  const todayDate = shortDate('2026-10-23', '2026-10-23')
+  const tomorrowDate = shortDate('2026-10-24', '2026-10-23')
+  const todayChip = screen.getByLabelText(`Due today, ${todayDate}`)
   expect(within(todayChip).getByText('Due today')).toBeVisible()
   expect(todayChip.closest('[data-task]')).toHaveClass('border-warning/40')
   expect(within(screen.getByLabelText(/11:59, overdue/)).getByText('Overdue')).toBeVisible()
   expect(within(screen.getByLabelText('Due not-a-date')).queryByText('Overdue')).toBeNull()
   expect(document.querySelector('[data-task="task.ship.md"] [aria-label^="Due"]')).toBeNull()
-  expect(screen.getByLabelText(/Due Oct 24, soon/)).not.toHaveTextContent('Due today')
+  expect(screen.getByLabelText(`Due ${tomorrowDate}, soon`)).not.toHaveTextContent('Due today')
 
   store.set(nowAtom, '2026-10-23T12:01')
   await waitFor(() =>
@@ -211,7 +214,10 @@ test('due chips distinguish today, exact-minute urgency, invalid dates and compl
   await waitFor(() =>
     expect(document.querySelector('[data-task="task.today.md"]')).toHaveTextContent('Overdue'),
   )
-  expect(within(screen.getByLabelText(/^Due today, Oct 24$/)).getByText('Due today')).toBeVisible()
+  const nextDayDate = shortDate('2026-10-24', '2026-10-24')
+  expect(
+    within(screen.getByLabelText(`Due today, ${nextDayDate}`)).getByText('Due today'),
+  ).toBeVisible()
   const completedCard = document.querySelector('[data-task="task.done-due.md"]')
   expect(completedCard).toHaveTextContent('Completed due')
   expect(within(completedCard as HTMLElement).getByLabelText(/Was due/)).toBeInTheDocument()

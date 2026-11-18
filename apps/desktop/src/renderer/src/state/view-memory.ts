@@ -1,9 +1,8 @@
 /**
- * Where each open file was left: its caret and how far it was scrolled, so a
- * tab switched away from and back to opens where it was rather than at the
- * top. Only the active entry's views are mounted (`split-view.tsx`), so a
- * view writes here as the caret and scroll move and reads it back when it
- * mounts again.
+ * Lightweight caret and scroll memory for a file's next mount. A view writes
+ * here as its position moves and reads it back after disposal and remount.
+ * Visited open editors retain their mounted instances across tab switches;
+ * that retention is separate from this position memory.
  *
  * Per vault and path, for the app's lifetime, and nothing is written to
  * disk: a relaunch opens files at the top, as a fresh open does. The memory
