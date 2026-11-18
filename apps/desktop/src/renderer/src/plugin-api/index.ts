@@ -52,7 +52,7 @@ export {
   /** @public */ withSavedBuffers,
 } from '@/lib/buffer-registry'
 export { capClient, /** @public */ type CapClient, type UiCapability } from '@/lib/cap-client'
-export { useHasCapability } from '@/state/capabilities'
+export { useHasCapability, useCapabilityAvailability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
 export { prefersReducedMotion } from '@/lib/motion'
 export { /** @public */ openExternal } from '@/lib/open-external'
@@ -140,6 +140,9 @@ export { useVimField } from '@/hooks/use-vim-field'
 /** @public Mode presentation for native fields attached through the plugin seam. */
 export { VimFieldMode } from '@/composites/vim-field-mode'
 export { matchHotkey } from '@/lib/hotkey'
+export { requestHostHints } from '@/lib/host-hints'
+export type { AsyncHostHintAdapter } from '@/lib/host-hints'
+export { registerAsyncHostHintAdapter } from '@/lib/host-hints'
 export {
   hostHintElementEligible,
   registerHostHintAdapter,

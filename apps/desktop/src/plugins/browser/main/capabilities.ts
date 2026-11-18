@@ -10,7 +10,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { fenceUntrusted } from '@holi/shared'
+import { fenceUntrusted, isHintPresentation, type HintPresentation } from '@holi/shared'
 import {
   cap,
   CapabilityError,
@@ -20,7 +20,16 @@ import {
   stringParam,
   writeScreenshot,
 } from '../../../main/plugin-api'
-import { isPageUrl, SCROLL_TO, type PageInfo, type PageRead, type ScrollTo } from '../shared/page'
+import {
+  isPageUrl,
+  SCROLL_TO,
+  type PageHintLabel,
+  type PageHintOwner,
+  type PageHintScope,
+  type PageInfo,
+  type PageRead,
+  type ScrollTo,
+} from '../shared/page'
 
 export const BROWSER_NAMESPACES = ['browser'] as const
 
@@ -57,6 +66,22 @@ export interface Pages {
   /** The page as a `data:` image, for the tab to show while something of
    *  Holi's is drawn over it; null when it has not drawn. */
   still(id: string): Promise<string | null>
+}
+
+export interface BrowserHintPages extends Pages {
+  discoverHints(scope: PageHintScope): Promise<{
+    owner: PageHintOwner
+    targets: { id: string; label: string; x: number; y: number }[]
+  } | null>
+  presentHints(
+    owner: PageHintOwner,
+    revision: number,
+    labels: PageHintLabel[],
+    theme: 'light' | 'dark',
+    presentation: HintPresentation,
+  ): Promise<boolean>
+  clearHints(scope: PageHintScope): Promise<void>
+  activateHint(owner: PageHintOwner, id: string): Promise<boolean>
 }
 
 const NO_TAB = 'open one first: holi browser open <url>, or holi browser tabs to see what is open'
@@ -116,6 +141,117 @@ const fencePage = <P extends { title: string; url: string }>(page: P, from = hos
   ...page,
   title: fenceUntrusted(page.title, 'web', from === '' ? {} : { from }),
 })
+
+export function browserHintCapabilities(pages: BrowserHintPages) {
+  const scope = (raw: unknown): PageHintScope => {
+    const p = paramsObject(raw)
+    const tab = stringParam(p, 'tab')
+    const nonce = stringParam(p, 'nonce')
+    const attachment = stringParam(p, 'attachment')
+    const request = p['request']
+    if (!Number.isSafeInteger(request) || (request as number) < 1)
+      throw new CapabilityError('BAD_REQUEST', 'request must be a positive safe integer')
+    if (
+      !tab ||
+      tab.length > 128 ||
+      !nonce ||
+      nonce.length > 128 ||
+      !attachment ||
+      attachment.length > 128
+    )
+      throw new CapabilityError('BAD_REQUEST', 'hint owner fields are too long')
+    return { tab, nonce, attachment, request: request as number }
+  }
+  // Capability transport keeps operation arguments under `p`; scope calls are
+  // direct, while snapshot operations carry `{ owner, p }`.
+  const ownerParams = (raw: unknown) => {
+    const envelope = paramsObject(raw)
+    const p = paramsObject(envelope['p'])
+    const owner = envelope['owner'] as PageHintOwner
+    if (
+      !owner ||
+      typeof owner !== 'object' ||
+      typeof owner.tab !== 'string' ||
+      owner.tab.length < 1 ||
+      owner.tab.length > 128 ||
+      typeof owner.nonce !== 'string' ||
+      owner.nonce.length < 1 ||
+      owner.nonce.length > 128 ||
+      typeof owner.attachment !== 'string' ||
+      owner.attachment.length < 1 ||
+      owner.attachment.length > 128 ||
+      typeof owner.origin !== 'string' ||
+      owner.origin.length < 1 ||
+      owner.origin.length > 128 ||
+      !Number.isSafeInteger(owner.request) ||
+      !Number.isSafeInteger(owner.snapshot) ||
+      !Number.isSafeInteger(owner.geometry) ||
+      owner.request < 1 ||
+      owner.snapshot < 1 ||
+      owner.geometry < 0
+    )
+      throw new CapabilityError('BAD_REQUEST', 'invalid hint owner')
+    return { owner, p }
+  }
+  return {
+    'browser.hints-discover': cap({
+      doors: ['ui'],
+      params: scope,
+      run: async (_ctx, p) => pages.discoverHints(p),
+    }),
+    'browser.hints-present': cap({
+      doors: ['ui'],
+      params: ownerParams,
+      run: async (_ctx, { owner, p }) => {
+        const revision = p['revision'],
+          labels = p['labels'],
+          theme = p['theme']
+        if (
+          !Number.isSafeInteger(revision) ||
+          (revision as number) < 1 ||
+          !Array.isArray(labels) ||
+          labels.length > 200 ||
+          labels.some(
+            (v) =>
+              !v ||
+              typeof v.id !== 'string' ||
+              v.id.length < 1 ||
+              v.id.length > 64 ||
+              typeof v.key !== 'string' ||
+              !/^[a-z]{1,4}$/.test(v.key),
+          ) ||
+          (theme !== 'light' && theme !== 'dark') ||
+          !isHintPresentation(p['presentation'])
+        )
+          throw new CapabilityError('BAD_REQUEST', 'invalid hint labels, theme or revision')
+        return pages.presentHints(
+          owner,
+          revision as number,
+          labels as PageHintLabel[],
+          theme as 'light' | 'dark',
+          p['presentation'],
+        )
+      },
+    }),
+    'browser.hints-clear': cap({
+      doors: ['ui'],
+      params: scope,
+      run: async (_ctx, p) => {
+        await pages.clearHints(p)
+        return { cleared: true }
+      },
+    }),
+    'browser.hints-activate': cap({
+      doors: ['ui'],
+      params: ownerParams,
+      run: async (_ctx, { owner, p }) => {
+        if (typeof p['id'] !== 'string' || p['id'].length > 64)
+          throw new CapabilityError('BAD_REQUEST', 'invalid target id')
+        return pages.activateHint(owner, p['id'])
+      },
+    }),
+  }
+}
 
 export function browserCapabilities(pages: Pages) {
   const at = (id: string | undefined): string => tab(pages, id)

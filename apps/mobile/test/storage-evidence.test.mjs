@@ -8,6 +8,7 @@ import {
   interruptionArtifacts,
   interruptionBefore,
   interruptionAfter,
+  legacyStagingDirectory,
   stagingDirectory,
 } from '../app/storage-staging'
 import { runVaultFormatCorpus } from '@holi/shared/vault-format'
@@ -22,6 +23,30 @@ const context = {
   documents: '/sandbox/Documents',
   library: '/sandbox/Library',
 }
+test('private artifact namespaces are prefix-free for aligned and Unicode roots', () => {
+  const prefix = '/sandbox/Documents/'
+  const aligned = `${prefix}${'a'.repeat(32 - new TextEncoder().encode(prefix).length)}`
+  assert.equal(new TextEncoder().encode(aligned).length % 32, 0)
+  const roots = [
+    aligned,
+    `${aligned}x`,
+    `${prefix}é${'😀'.repeat(12)}`,
+    `${prefix}${'long'.repeat(48)}`,
+  ]
+  for (const root of roots) {
+    const artifactPath = stagingDirectory(context.library, root)
+    assert.equal(artifactPath.split('/').at(-1), 'artifacts')
+    assert.notEqual(artifactPath, legacyStagingDirectory(context.library, root))
+  }
+  const first = stagingDirectory(context.library, aligned)
+  const sibling = stagingDirectory(context.library, `${aligned}x`)
+  assert.ok(!sibling.startsWith(`${first}/`))
+  assert.ok(!first.startsWith(`${sibling}/`))
+  const oldFirst = legacyStagingDirectory(context.library, aligned)
+  const oldSibling = legacyStagingDirectory(context.library, `${aligned}x`)
+  assert.ok(oldSibling.startsWith(`${oldFirst}/`), 'fixture must reproduce the old nesting')
+})
+
 const marker = {
   schemaVersion: 1,
   phase: 'staged',

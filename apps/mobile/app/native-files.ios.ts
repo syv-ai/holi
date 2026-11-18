@@ -1,7 +1,7 @@
 import { knownFolders } from '@nativescript/core'
 import { isInIgnoredDir, isLocalOnlyPath, isSecretPath } from '@holi/shared/mobile-path-safety'
 import { nativeIO } from './native-posix.ios'
-import { stagingDirectory, stageNamePattern } from './storage-staging'
+import { legacyStagingDirectory, stagingDirectory, stageNamePattern } from './storage-staging'
 import type { Entry, NativeFiles } from './native-files'
 
 type Fault = 'stage-open' | 'stage-write' | 'stage-sync' | 'stage-close' | 'publish'
@@ -16,7 +16,12 @@ function directory(path: string): void {
   else if (kind !== 'directory') throw new Error('Directory collision or symlink')
 }
 
-function checkedPath(root: string, relative: string, createParents = false): string {
+function checkedPath(
+  root: string,
+  relative: string,
+  createParents = false,
+  strictSpelling = false,
+): string {
   const pieces = relative.split('/')
   if (
     pieces.some(
@@ -31,13 +36,13 @@ function checkedPath(root: string, relative: string, createParents = false): str
     const names = nativeIO.names(current)
     const collisionKey = (value: string) =>
       String(NSString.stringWithString(value).precomposedStringWithCanonicalMapping).toLowerCase()
+    const next = `${current}/${name}`
+    const kind = nativeIO.kind(next)
     if (
-      createParents &&
+      (strictSpelling || createParents || kind === null) &&
       names.some((entry) => entry !== name && collisionKey(entry) === collisionKey(name))
     )
       throw new Error('Filesystem spelling collision')
-    const next = `${current}/${name}`
-    const kind = nativeIO.kind(next)
     if (kind !== null && !names.includes(name))
       throw new Error('Filesystem spelling alias rejected')
     if (kind === 'symlink' || kind === 'other') throw new Error('Unsupported filesystem entry')
@@ -69,13 +74,47 @@ function privateStages(root: string): string {
   let stageRoot = `${library}/HoliVaultStorage`
   if (stageRoot === root || stageRoot.startsWith(`${root}/`) || root.startsWith(`${stageRoot}/`))
     throw new Error('Vault overlaps private storage')
+  const rootParent = stageRoot.slice(0, stageRoot.lastIndexOf('/'))
   directory(stageRoot)
+  nativeIO.syncDirectory(rootParent)
+  nativeIO.syncDirectory(stageRoot)
   const target = stagingDirectory(library, root)
   for (const segment of target.slice(stageRoot.length + 1).split('/')) {
+    const parent = stageRoot
     stageRoot += `/${segment}`
     directory(stageRoot)
+    // Confirm even pre-existing directories: a prior mkdir may have outlived a
+    // failed parent fsync, so existence alone is not a durability guarantee.
+    nativeIO.syncDirectory(parent)
+    nativeIO.syncDirectory(stageRoot)
   }
+  migrateLegacyArtifacts(legacyStagingDirectory(library, root), stageRoot)
   return stageRoot
+}
+
+/** Move only direct, recognized legacy artifacts; unknown entries (including sibling-root
+ * hex directories) remain untouched. A conflicting destination refuses recovery. */
+function migrateLegacyArtifacts(legacy: string, target: string): void {
+  if (legacy === target || nativeIO.kind(legacy) !== 'directory') return
+  for (const name of nativeIO.names(legacy)) {
+    if (!stageNamePattern.test(name) && !/^move-[0-9a-f-]+\.json$/i.test(name)) continue
+    const source = `${legacy}/${name}`
+    if (nativeIO.kind(source) !== 'regular') throw new Error('Invalid legacy private artifact')
+    const destination = `${target}/${name}`
+    const targetKind = nativeIO.kind(destination)
+    const bytes = nativeIO.read(source)
+    if (targetKind === null) {
+      const temporary = `${target}/stage-${NSUUID.UUID().UUIDString}.tmp`
+      nativeIO.writeExclusive(temporary, bytes)
+      nativeIO.publish(temporary, destination, true)
+    } else if (targetKind !== 'regular' || !equal(nativeIO.read(destination), bytes)) {
+      throw new Error('Conflicting legacy private artifact')
+    }
+    nativeIO.syncFile(destination)
+    nativeIO.syncDirectory(target)
+    nativeIO.removeFile(source)
+    nativeIO.syncDirectory(legacy)
+  }
 }
 
 /** The store serializes operations per canonical root, including first-use recovery. */
@@ -116,6 +155,7 @@ export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
     }
   }
   return {
+    operationId: () => NSUUID.UUID().UUIDString.toLowerCase(),
     async canonicalRoot(root) {
       return nativeIO.canonical(root)
     },
@@ -141,11 +181,85 @@ export function createNativeFiles(options: NativeOptions = {}): NativeFiles {
       stages(root)
       return nativeIO.read(checkedPath(root, relative))
     },
+    async readOptional(root, relative) {
+      stages(root)
+      const path = checkedPath(root, relative)
+      return nativeIO.kind(path) === null ? null : nativeIO.read(path)
+    },
+    async checkMovePath(root, relative) {
+      checkedPath(root, relative, false, true)
+    },
+    async confirm(root, relative, expected) {
+      stages(root)
+      const path = checkedPath(root, relative)
+      const kind = nativeIO.kind(path)
+      if (expected === null) {
+        if (kind !== null) throw new Error('Unexpected move postimage')
+      } else {
+        if (kind !== 'regular' || !equal(nativeIO.read(path), expected))
+          throw new Error('Unexpected move postimage')
+        nativeIO.syncFile(path)
+      }
+      nativeIO.syncDirectory(path.slice(0, path.lastIndexOf('/')))
+    },
     async create(root, relative, bytes) {
       await publish(root, relative, bytes, null)
     },
     async publish(root, relative, bytes, expected) {
       await publish(root, relative, bytes, expected)
+    },
+    async privateList(root) {
+      const path = stages(root)
+      // Reconfirm deletion durability even when this adapter already cached the namespace.
+      // A prior unlink may have succeeded while this sync failed; absence is not yet durable.
+      nativeIO.syncDirectory(path)
+      return nativeIO.names(path).filter((name) => !stageNamePattern.test(name))
+    },
+    async privateRead(root, name) {
+      if (!/^move-[0-9a-f-]+\.json$/i.test(name)) throw new Error('Invalid private artifact name')
+      const path = `${stages(root)}/${name}`
+      if (nativeIO.kind(path) !== 'regular') throw new Error('Invalid private journal file')
+      return nativeIO.read(path)
+    },
+    async privatePublish(root, name, bytes, expected) {
+      if (!/^move-[0-9a-f-]+\.json$/i.test(name)) throw new Error('Invalid private artifact name')
+      const directoryPath = stages(root)
+      const target = `${directoryPath}/${name}`
+      const kind = nativeIO.kind(target)
+      if (
+        expected === null
+          ? kind !== null
+          : kind !== 'regular' || !equal(nativeIO.read(target), expected)
+      )
+        throw new Error('Stale private journal')
+      const stage = `${directoryPath}/stage-${NSUUID.UUID().UUIDString}.tmp`
+      nativeIO.writeExclusive(stage, bytes, options.fault)
+      try {
+        nativeIO.publish(stage, target, expected === null, options.fault)
+      } catch (error) {
+        if (nativeIO.kind(stage) === 'regular') nativeIO.removeFile(stage)
+        throw error
+      }
+    },
+    async privateConfirm(root, name, expected) {
+      const target = `${stages(root)}/${name}`
+      if (nativeIO.kind(target) !== 'regular' || !equal(nativeIO.read(target), expected))
+        throw new Error('Stale private journal confirmation')
+      nativeIO.syncFile(target)
+      nativeIO.syncDirectory(target.slice(0, target.lastIndexOf('/')))
+    },
+    async privateRemove(root, name, expected) {
+      const target = `${stages(root)}/${name}`
+      if (nativeIO.kind(target) !== 'regular' || !equal(nativeIO.read(target), expected))
+        throw new Error('Stale private journal removal')
+      nativeIO.removeFile(target)
+      nativeIO.syncDirectory(`${target.slice(0, target.lastIndexOf('/'))}`)
+    },
+    async remove(root, relative, expected) {
+      const target = checkedPath(root, relative)
+      if (!equal(nativeIO.read(target), expected)) throw new Error('Stale bytes')
+      nativeIO.removeFile(target)
+      nativeIO.syncDirectory(target.slice(0, target.lastIndexOf('/')))
     },
   }
 }

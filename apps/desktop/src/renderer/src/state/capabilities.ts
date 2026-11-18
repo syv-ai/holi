@@ -31,6 +31,13 @@ const loadedNamesAtom = loadable(capabilityNamesAtom)
 /** Whether the open vault offers `name` at the UI door. False until known,
  *  and when the question fails. */
 export function useHasCapability(name: string): boolean {
+  return useCapabilityAvailability(name) === 'available'
+}
+
+/** Preserve the distinction between a confirmed refusal and a capability
+ *  lookup that has not completed (or failed), for flows that can degrade. */
+export function useCapabilityAvailability(name: string): 'available' | 'unavailable' | 'unknown' {
   const names = useAtomValue(loadedNamesAtom)
-  return names.state === 'hasData' && names.data.has(name)
+  if (names.state !== 'hasData') return 'unknown'
+  return names.data.has(name) ? 'available' : 'unavailable'
 }

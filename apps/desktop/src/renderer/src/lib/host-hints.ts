@@ -1,3 +1,4 @@
+import type { HintPresentation } from '@holi/shared'
 import { flushSync } from 'react-dom'
 
 const PRESSABLE = [
@@ -44,7 +45,13 @@ export function registerHostHintSurface(root: ShadowRoot, owner: HTMLElement): (
 
 /** A request-scoped target source. It exists only for the active hint session. */
 export interface HostHintAdapter {
+  /** An exclusive adapter owns the entire request; no host chrome is included. */
+  exclusive?: boolean
   discover(): readonly HostHintAdapterTarget[]
+  /** Optional request-scoped asynchronous discovery; late work is discarded by the caller. */
+  prepare?(): Promise<void>
+  /** Abort any unresolved request-scoped preparation. */
+  cancelPrepare?(): void
   /** Validate the request lifetime as well as target geometry; called even with no links. */
   unchanged(targets: readonly HostHintTarget[]): boolean
   /** Capture the current terminal revision for this hint request. */
@@ -53,7 +60,7 @@ export interface HostHintAdapter {
   subscribe?(invalidate: () => void, routeKey?: (event: KeyboardEvent) => boolean): () => void
   /** Signal a synchronous ownership transition before a source is removed. */
   invalidate?(): void
-  activate(target: HostHintTarget): boolean
+  activate(target: HostHintTarget): boolean | Promise<boolean>
 }
 
 export interface HostHintAdapterTarget {
@@ -64,7 +71,48 @@ export interface HostHintAdapterTarget {
   token: unknown
 }
 
+export interface AsyncHostHintTarget {
+  id: string
+  label: string
+  x: number
+  y: number
+}
+
+export interface AsyncHostHintAdapter {
+  discover(request: number, signal: AbortSignal): Promise<readonly AsyncHostHintTarget[] | null>
+  present(
+    request: number,
+    revision: number,
+    labels: readonly { id: string; key: string }[],
+    presentation?: HintPresentation,
+  ): Promise<boolean>
+  clear(request: number): void
+  activate(request: number, id: string): Promise<boolean>
+  subscribe(
+    request: number,
+    invalidate: () => void,
+    routeKey: (event: KeyboardEvent) => boolean,
+  ): () => void
+}
+
 const registeredAdapters = new Map<HTMLElement, HostHintAdapter>()
+const registeredAsyncAdapters = new Map<HTMLElement, AsyncHostHintAdapter>()
+
+export function registerAsyncHostHintAdapter(
+  owner: HTMLElement,
+  adapter: AsyncHostHintAdapter,
+): () => void {
+  registeredAsyncAdapters.set(owner, adapter)
+  return () => {
+    if (registeredAsyncAdapters.get(owner) === adapter) registeredAsyncAdapters.delete(owner)
+  }
+}
+
+export function captureAsyncHostHintAdapters(root: HTMLElement): AsyncHostHintAdapter[] {
+  return [...registeredAsyncAdapters]
+    .filter(([owner]) => adapterParticipates(owner, root))
+    .map(([, adapter]) => adapter)
+}
 
 /** Register an explicitly owned target source for the pane containing `owner`. */
 export function registerHostHintAdapter(owner: HTMLElement, adapter: HostHintAdapter): () => void {
@@ -137,8 +185,10 @@ export function discoverHostHintTargets(
   root: HTMLElement,
   adapter?: HostHintAdapter,
 ): HostHintTarget[] {
+  const exclusive = adapter?.exclusive === true
   const hostOverlay = topOverlay()
-  const ownedOverlay = hostOverlay ? null : topOwnedOverlay(root)
+  if (exclusive && hostOverlay) return []
+  const ownedOverlay = hostOverlay || exclusive ? null : topOwnedOverlay(root)
   const overlay = hostOverlay ?? ownedOverlay?.element ?? null
   const targets: HostHintTarget[] = []
   const collect = (candidate: ParentNode, surface: ShadowRoot | null) => {
@@ -167,12 +217,16 @@ export function discoverHostHintTargets(
   if (hostOverlay) collect(hostOverlay, null)
   else if (ownedOverlay) collect(ownedOverlay.element, ownedOverlay.surface)
   else {
-    collect(document.body, null)
-    for (const surface of ownedSurfaces) {
-      if (surface.owner.closest('[data-pane]') !== root) continue
-      collect(surface.root, surface.root)
+    if (!exclusive) {
+      collect(document.body, null)
+      for (const surface of ownedSurfaces) {
+        if (surface.owner.closest('[data-pane]') !== root) continue
+        collect(surface.root, surface.root)
+      }
     }
-    const sources = [...new Set([...adaptersFor(root), ...(adapter ? [adapter] : [])])]
+    const sources = exclusive
+      ? [adapter]
+      : [...new Set([...adaptersFor(root), ...(adapter ? [adapter] : [])])]
     for (const source of sources) {
       for (const target of source.discover()) {
         if (!target.element.isConnected || target.element.closest('[hidden],[inert]')) continue
@@ -254,7 +308,7 @@ function sameTarget(target: HostHintTarget, previous: HostHintTarget): boolean {
 }
 
 /** Send a mouse press through the control's own handlers and native default action. */
-export function activateHostHint(target: HostHintTarget): boolean {
+export function activateHostHint(target: HostHintTarget): boolean | Promise<boolean> {
   if (target.scopeAdapter && !target.scopeAdapter.unchanged([])) return false
   if (target.adapter) {
     const live = discoverHostHintTargets(target.root, target.adapter).find(

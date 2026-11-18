@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -166,6 +175,53 @@ async function fixture() {
   }
 }
 
+async function advanceRelease(
+  f: Awaited<ReturnType<typeof fixture>>,
+  version: string,
+  guide: string,
+  ignore: string[] = [],
+) {
+  const install = (await f.owner.store.get('demo'))!
+  if (install.source.kind !== 'release') throw new Error('fixture must be a release')
+  const oldDir = f.owner.store.releaseDir('demo', install.source.commit)
+  const codeDir = f.owner.store.codeDir(install)
+  await writeFile(join(codeDir, 'skills/demo/SKILL.md'), guide)
+  await writeFile(
+    join(codeDir, 'holi-plugin.json'),
+    JSON.stringify({ ...manifest, version, ignore }),
+  )
+  const { execFileSync } = await import('node:child_process')
+  execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=Ada',
+      '-c',
+      'user.email=ada@example.test',
+      'commit',
+      '-am',
+      `release ${version}`,
+    ],
+    { cwd: codeDir, stdio: 'ignore' },
+  )
+  const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: codeDir,
+    encoding: 'utf8',
+  }).trim()
+  const newDir = f.owner.store.releaseDir('demo', commit)
+  await mkdir(join(newDir, '..'), { recursive: true })
+  await rename(oldDir, newDir)
+  const next: Install = {
+    id: 'demo',
+    source: { ...install.source, tag: `v${version}`, commit },
+    manifest: { ...manifest, version, ignore },
+    setup: 'ok',
+  }
+  await f.owner.store.put(next)
+  await f.owner.consent.grant('demo', commit)
+  return next
+}
+
 describe('community refresh through real owner attachments', () => {
   it('drains a closed vault at pre-publication, rolls back, and refreshes the other vault', async () => {
     const f = await fixture()
@@ -292,6 +348,214 @@ describe('community refresh through real owner attachments', () => {
       skillTransactionFs.rename = originalRename
       await Promise.all(f.activations.map(({ dispose }) => dispose()))
     }
+  })
+
+  it('activation adopts only a newer, consented release from the pinned source', async () => {
+    const f = await fixture()
+    await waitFor(() => f.commandEvents() >= 2, 'both initial owner refreshes did not finish')
+    const install = (await f.owner.store.get('demo'))!
+    if (install.source.kind !== 'release') throw new Error('fixture must be a release')
+    const oldDir = f.owner.store.releaseDir('demo', install.source.commit)
+    const codeDir = f.owner.store.codeDir(install)
+    for (const vault of f.vaults) {
+      const destination = join(vault.root, '.claude/skills/demo')
+      await mkdir(destination, { recursive: true })
+      await writeFile(join(destination, 'SKILL.md'), 'old guide\n')
+    }
+    await writeFile(join(codeDir, 'skills/demo/SKILL.md'), 'new guide\n')
+    await writeFile(
+      join(codeDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, version: '1.1.0' }),
+    )
+    const { execFileSync } = await import('node:child_process')
+    execFileSync(
+      'git',
+      ['-c', 'user.name=Ada', '-c', 'user.email=ada@example.test', 'commit', '-am', 'release 1.1'],
+      { cwd: codeDir, stdio: 'ignore' },
+    )
+    const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: codeDir,
+      encoding: 'utf8',
+    }).trim()
+    const newDir = f.owner.store.releaseDir('demo', commit)
+    await mkdir(join(newDir, '..'), { recursive: true })
+    await rename(oldDir, newDir)
+    const newer: Install = {
+      id: 'demo',
+      source: { ...install.source, tag: 'v1.1.0', commit },
+      manifest: { ...manifest, version: '1.1.0' },
+      setup: 'ok',
+    }
+    await f.owner.store.put(newer)
+    await f.owner.consent.grant('demo', commit)
+    const originalRename = skillTransactionFs.rename
+    skillTransactionFs.rename = async (from, to) => {
+      if (String(from).endsWith('/vault-b/.claude/skills/demo'))
+        throw new Error('simulated guide backup failure')
+      return originalRename(from, to)
+    }
+    try {
+      await f.owner.mutate(async () => undefined)
+    } finally {
+      skillTransactionFs.rename = originalRename
+    }
+    const [a, b] = f.vaults
+    const pinA = JSON.parse(await readFile(join(a!.root, pluginPinPath('demo')), 'utf8'))
+    const pinB = JSON.parse(await readFile(join(b!.root, pluginPinPath('demo')), 'utf8'))
+    expect(pinA).toMatchObject({ version: '1.1.0', commit })
+    expect(pinB).toMatchObject({ version: '1.0.0' })
+    expect(await readFile(join(a!.root, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
+      'new guide\n',
+    )
+    expect(await readFile(join(b!.root, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
+      'old guide\n',
+    )
+    const failedRow = (
+      (await f.activations[1]!.table['community.list']!.run(
+        { root: b!.root, remote: b!.remote } as CapabilityContext,
+        {},
+      )) as { id: string; syncError?: string }[]
+    ).find((item) => item.id === 'demo')
+    expect(failedRow?.syncError).toMatch(/simulated guide backup failure/)
+
+    await f.owner.mutate(async () => undefined)
+    for (const vault of f.vaults) {
+      const pin = JSON.parse(await readFile(join(vault.root, pluginPinPath('demo')), 'utf8'))
+      expect(pin).toMatchObject({ version: '1.1.0', commit })
+      expect(await readFile(join(vault.root, '.claude/skills/demo/SKILL.md'), 'utf8')).toBe(
+        'new guide\n',
+      )
+    }
+    await f.owner.store.put({ ...newer, manifest: { ...manifest, version: '0.9.0' } })
+    await f.owner.mutate(async () => undefined)
+    const [first] = f.vaults
+    const afterOlderInstall = JSON.parse(
+      await readFile(join(first!.root, pluginPinPath('demo')), 'utf8'),
+    )
+    expect(afterOlderInstall).toMatchObject({ version: '1.1.0', commit })
+
+    await f.owner.store.put({
+      ...newer,
+      source: {
+        kind: 'release',
+        repo: 'other/demo',
+        path: '',
+        tag: 'v9.0.0',
+        commit,
+      },
+      manifest: { ...manifest, version: '9.0.0' },
+    })
+    await f.owner.mutate(async () => undefined)
+    const afterSourceSwitch = JSON.parse(
+      await readFile(join(first!.root, pluginPinPath('demo')), 'utf8'),
+    )
+    expect(afterSourceSwitch).toMatchObject({ repo: 'owner/demo', version: '1.1.0', commit })
+    const row = (
+      (await f.activations[0]!.table['community.list']!.run(
+        { root: first!.root, remote: first!.remote } as CapabilityContext,
+        {},
+      )) as { id: string; status: string }[]
+    ).find((item) => item.id === 'demo')
+    expect(row?.status).toBe('pin-differs')
+  })
+
+  it('keeps a concurrent vault pin edit and rolls back guides', async () => {
+    const f = await fixture()
+    await waitFor(() => f.commandEvents() >= 2, 'both initial owner refreshes did not finish')
+    const [a] = f.vaults
+    const guide = join(a!.root, '.claude/skills/demo')
+    await mkdir(guide, { recursive: true })
+    await writeFile(join(guide, 'SKILL.md'), 'local guide\n')
+    await advanceRelease(f, '1.1.0', 'new guide\n')
+    let entered!: () => void
+    let release!: () => void
+    const atBackup = new Promise<void>((resolve) => (entered = resolve))
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const originalRename = skillTransactionFs.rename
+    let held = false
+    skillTransactionFs.rename = async (from, to) => {
+      if (!held && String(from) === guide && String(to).endsWith('.original')) {
+        held = true
+        entered()
+        await blocked
+      }
+      return originalRename(from, to)
+    }
+    try {
+      const refresh = f.owner.mutate(async () => undefined)
+      await atBackup
+      const pinPath = join(a!.root, pluginPinPath('demo'))
+      const handEdited = JSON.stringify({
+        ...JSON.parse(await readFile(pinPath, 'utf8')),
+        version: '9.9.9',
+      })
+      await writeFile(pinPath, handEdited)
+      release()
+      await refresh
+      expect(await readFile(pinPath, 'utf8')).toBe(handEdited)
+      expect(await readFile(join(guide, 'SKILL.md'), 'utf8')).toBe('local guide\n')
+    } finally {
+      release()
+      skillTransactionFs.rename = originalRename
+      await Promise.all(f.activations.map(({ dispose }) => dispose()))
+    }
+  })
+
+  it('cancels automatic update at a closing owner activation', async () => {
+    const f = await fixture()
+    await waitFor(() => f.commandEvents() >= 2, 'both initial owner refreshes did not finish')
+    const [a] = f.vaults
+    const guide = join(a!.root, '.claude/skills/demo')
+    await mkdir(guide, { recursive: true })
+    await writeFile(join(guide, 'SKILL.md'), 'local guide\n')
+    await advanceRelease(f, '1.1.0', 'new guide\n')
+    let entered!: () => void
+    let release!: () => void
+    const atBackup = new Promise<void>((resolve) => (entered = resolve))
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const originalRename = skillTransactionFs.rename
+    let held = false
+    skillTransactionFs.rename = async (from, to) => {
+      if (!held && String(from) === guide && String(to).endsWith('.original')) {
+        held = true
+        entered()
+        await blocked
+      }
+      return originalRename(from, to)
+    }
+    try {
+      const refresh = f.owner.mutate(async () => undefined)
+      await atBackup
+      const close = f.activations[0]!.dispose()
+      expect(f.attachmentSignals[0]!.aborted).toBe(true)
+      release()
+      await Promise.all([refresh, close])
+      expect(
+        JSON.parse(await readFile(join(a!.root, pluginPinPath('demo')), 'utf8')),
+      ).toMatchObject({
+        version: '1.0.0',
+      })
+      expect(await readFile(join(guide, 'SKILL.md'), 'utf8')).toBe('local guide\n')
+    } finally {
+      release()
+      skillTransactionFs.rename = originalRename
+      await Promise.all(f.activations.map(({ dispose }) => dispose()))
+    }
+  })
+
+  it('does not follow a vault ignore-file symlink during automatic adoption', async () => {
+    const f = await fixture()
+    await waitFor(() => f.commandEvents() >= 2, 'both initial owner refreshes did not finish')
+    const [a] = f.vaults
+    const external = join(f.root, 'external-ignore')
+    await writeFile(external, 'outside contents\n')
+    await symlink(external, join(a!.root, '.gitignore'))
+    await advanceRelease(f, '1.1.0', 'new guide\n', ['private-output'])
+    await f.owner.mutate(async () => undefined)
+    expect(await readFile(external, 'utf8')).toBe('outside contents\n')
+    expect(JSON.parse(await readFile(join(a!.root, pluginPinPath('demo')), 'utf8'))).toMatchObject({
+      version: '1.0.0',
+    })
   })
 
   it('uses owner admission without triggering mutation observers', async () => {

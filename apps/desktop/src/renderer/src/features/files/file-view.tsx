@@ -16,11 +16,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { fileKind } from '@holi/shared'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
+import { lintGutter } from '@codemirror/lint'
 import { findNext, findPrevious } from '@codemirror/search'
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { FileTextIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -44,6 +46,7 @@ import { codeFind, codeFindCount } from './code-find'
 import { CodeFindBar } from './code-find-bar'
 import { codeLook } from './code-look'
 import { MdxTrustControl } from './mdx-trust-control'
+import { useMdxDiagnostics } from './use-mdx-diagnostics'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
 import { basename } from '@/lib/tree-paths'
 
@@ -144,6 +147,9 @@ function TextEditor({
   onVimModeChange,
   visible,
   focused,
+  mdxTrustContext,
+  mdxTrusted,
+  sourceRevision,
 }: {
   path: string
   text: string
@@ -153,6 +159,9 @@ function TextEditor({
   onVimModeChange: (mode: string) => void
   visible: boolean
   focused: boolean
+  mdxTrustContext: string | null
+  mdxTrusted: boolean
+  sourceRevision: number
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -173,6 +182,16 @@ function TextEditor({
   reportSelection.current = setEditorSelection
   const memory = useViewMemory()
   const vim = useVimEditor(view, vimEnabled, visible && focused, onVimModeChange, handleFindKeyDown)
+  const mdx = useMdxDiagnostics({
+    view,
+    remote,
+    path,
+    context: mdxTrustContext,
+    trusted: mdxTrusted,
+    visible,
+    sourceRevision,
+  })
+  const mdxSourceChanged = mdx.sourceChanged
   const visibility = useRef(visible)
   const focusState = useRef(focused)
   focusState.current = focused
@@ -248,6 +267,7 @@ function TextEditor({
           // The code block's look: no soft wrap, as in the block.
           ...plainTextExtensions(path).filter((extension) => extension !== EditorView.lineWrapping),
           lineNumbers(),
+          ...(path.toLowerCase().endsWith('.mdx') ? [lintGutter()] : []),
           highlightActiveLineGutter(),
           ...codeLook(path),
           codeFind(),
@@ -269,11 +289,9 @@ function TextEditor({
               // A caret clears this file's report, never another's.
               if (focusState.current) publishCurrentSelection(update.view)
             }
-            if (
-              !update.docChanged ||
-              update.transactions.some((tr) => tr.annotation(externalReload))
-            )
-              return
+            if (!update.docChanged) return
+            mdxSourceChanged(update.view, update.state.doc.toString())
+            if (update.transactions.some((tr) => tr.annotation(externalReload))) return
             dirty.current = true
             window.clearTimeout(saveTimer.current)
             saveTimer.current = window.setTimeout(
@@ -323,7 +341,7 @@ function TextEditor({
       setView(null)
       setFind(null)
     }
-  }, [remote, path, memory, vim.extension, publishCurrentSelection])
+  }, [remote, path, memory, vim.extension, mdxSourceChanged, publishCurrentSelection])
 
   useEffect(() => {
     const wasVisible = visibility.current
@@ -388,6 +406,27 @@ function TextEditor({
       onKeyDownCapture={vim.onKeyDownCapture}
       onKeyDown={vim.onKeyDown}
     >
+      {/\.mdx$/i.test(path) ? (
+        <div
+          className="flex min-h-8 shrink-0 items-center gap-2 px-4 py-1 text-sm"
+          aria-live="polite"
+        >
+          <span>
+            {mdx.state.kind === 'checking'
+              ? 'Checking MDX…'
+              : mdx.state.kind === 'clean'
+                ? 'MDX syntax is valid'
+                : mdx.state.kind === 'syntax-error'
+                  ? `${mdx.state.diagnostics.length} MDX diagnostic${mdx.state.diagnostics.length === 1 ? '' : 's'}`
+                  : `MDX diagnostics unavailable: ${mdx.state.kind === 'unavailable' ? mdx.state.message : ''}`}
+          </span>
+          {mdx.state.kind === 'unavailable' && mdxTrusted && visible ? (
+            <Button type="button" size="sm" variant="outline" onClick={mdx.retry}>
+              Retry
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {view && find ? (
         <div className="absolute top-2 right-4 z-40">
           <CodeFindBar view={view} request={find} count={count} onClose={() => setFind(null)} />
@@ -415,10 +454,19 @@ function TextFileView({
   const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const mtime = useAtomValue(snapshotAtom).files.find((file) => file.path === path)?.updatedAt
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
+  const [sourceRevision, setSourceRevision] = useState(0)
   const [attempt, setAttempt] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [vimMode, setVimMode] = useState('')
+  const [mdxTrust, setMdxTrust] = useState<{ context: string | null; trusted: boolean }>({
+    context: null,
+    trusted: false,
+  })
+  const setMdxTrustSnapshot = useCallback((context: string | null, trusted: boolean) => {
+    setMdxTrust({ context, trusted })
+  }, [])
   const writeGeneration = useRef(0)
+  const observedFile = useRef({ remote, path, mtime })
 
   useEffect(() => {
     if (remote === null) return
@@ -426,7 +474,11 @@ function TextFileView({
     setLoad({ kind: 'loading' })
     trpc.notes.read
       .query({ remote, path })
-      .then((text) => live && setLoad({ kind: 'ready', text }))
+      .then((text) => {
+        if (!live) return
+        setLoad({ kind: 'ready', text })
+        setSourceRevision((revision) => revision + 1)
+      })
       .catch(
         (err: unknown) =>
           live &&
@@ -444,7 +496,15 @@ function TextFileView({
   // whether its pending edits keep it out.
   const ready = load.kind === 'ready'
   useEffect(() => {
-    if (!ready || remote === null || mtime === undefined) return
+    const previous = observedFile.current
+    observedFile.current = { remote, path, mtime }
+    if (
+      !ready ||
+      remote === null ||
+      mtime === undefined ||
+      (previous.remote === remote && previous.path === path && previous.mtime === mtime)
+    )
+      return
     let live = true
     const generation = writeGeneration.current
     trpc.notes.read
@@ -453,9 +513,12 @@ function TextFileView({
         (text) =>
           live &&
           generation === writeGeneration.current &&
-          setLoad((current) =>
-            current.kind === 'ready' && current.text === text ? current : { kind: 'ready', text },
-          ),
+          (() => {
+            setLoad((current) =>
+              current.kind === 'ready' && current.text === text ? current : { kind: 'ready', text },
+            )
+            setSourceRevision((revision) => revision + 1)
+          })(),
       )
       .catch(() => undefined)
     return () => {
@@ -475,7 +538,13 @@ function TextFileView({
       />
       {/\.mdx$/i.test(path) && remote !== null ? (
         <div data-testid="mdx-trust-region" className="min-w-0 shrink-0 border-b px-4 py-2">
-          <MdxTrustControl remote={remote} path={path} visible={visible} focused={focused} />
+          <MdxTrustControl
+            remote={remote}
+            path={path}
+            visible={visible}
+            focused={focused}
+            onTrustContextChange={setMdxTrustSnapshot}
+          />
         </div>
       ) : null}
       {load.kind === 'error' ? (
@@ -494,12 +563,16 @@ function TextFileView({
             // A read begun before this write cannot replace its durable result.
             writeGeneration.current++
             setLoad({ kind: 'ready', text })
+            setSourceRevision((revision) => revision + 1)
           }}
           onSaveState={setSaveState}
           vimEnabled={vimEnabled}
           onVimModeChange={setVimMode}
           visible={visible}
           focused={focused}
+          mdxTrustContext={mdxTrust.context}
+          mdxTrusted={mdxTrust.trusted}
+          sourceRevision={sourceRevision}
         />
       )}
     </div>

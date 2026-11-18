@@ -17,13 +17,13 @@ const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024
 const MAX_PATH_DEPTH = 32
 const MAX_GIT_OUTPUT_BYTES = 32 * 1024 * 1024
 
-type GitReader = {
+export type GitReader = {
   read(args: string[], maxBuffer?: number): Promise<Buffer>
 }
 
 const GIT_TIMEOUT_MS = 5_000
 
-function createGitReader(root: string, signal?: AbortSignal): GitReader {
+export function createGitReader(root: string, signal?: AbortSignal): GitReader {
   return {
     read(args, maxBuffer = MAX_GIT_OUTPUT_BYTES) {
       return new Promise<Buffer>((resolveOutput, reject) => {
@@ -118,7 +118,13 @@ interface TreeEntry {
   path: string
 }
 
-async function tree(git: GitReader, commit: string): Promise<Map<string, TreeEntry>> {
+export async function authenticatedTree(
+  root: string,
+  commit: string,
+  signal?: AbortSignal,
+): Promise<Map<string, TreeEntry>> {
+  const git = createGitReader(root, signal)
+
   const commitBytes = await git.read(['cat-file', 'commit', commit], MAX_BLOB_BYTES)
   if (objectId('commit', commitBytes) !== commit) throw new Error('invalid pinned Git commit')
   const headerEnd = commitBytes.indexOf(Buffer.from('\n\n'))
@@ -203,17 +209,21 @@ function cleanPath(path: string): boolean {
   )
 }
 
-function makeBlobReader(git: GitReader): (entry: TreeEntry) => Promise<Buffer> {
+export function makeAuthenticatedBlobReader(
+  git: GitReader,
+  limits: { fileBytes?: number; totalBytes?: number } = {},
+): (entry: TreeEntry) => Promise<Buffer> {
   const cache = new Map<string, Buffer>()
   let totalBytes = 0
   return async (entry) => {
     const existing = cache.get(entry.oid)
     if (existing) return existing
-    const bytes = await git.read(['cat-file', 'blob', entry.oid], MAX_BLOB_BYTES + 1)
-    if (bytes.length > MAX_BLOB_BYTES) throw new Error('pinned release blob exceeds file limit')
+    const fileBytes = limits.fileBytes ?? MAX_BLOB_BYTES
+    const totalLimit = limits.totalBytes ?? MAX_TOTAL_BLOB_BYTES
+    const bytes = await git.read(['cat-file', 'blob', entry.oid], fileBytes + 1)
+    if (bytes.length > fileBytes) throw new Error('pinned release blob exceeds file limit')
     totalBytes += bytes.length
-    if (totalBytes > MAX_TOTAL_BLOB_BYTES)
-      throw new Error('pinned release objects exceed total byte limit')
+    if (totalBytes > totalLimit) throw new Error('pinned release objects exceed total byte limit')
     if (objectId('blob', bytes) !== entry.oid) throw new Error('invalid Git blob object')
     cache.set(entry.oid, bytes)
     return bytes
@@ -251,8 +261,8 @@ export async function validateSkillSnapshot(
       throw new Error('invalid skill snapshot path')
   }
   const git = createGitReader(root, signal)
-  const entries = await tree(git, commit)
-  const readBlob = makeBlobReader(git)
+  const entries = await authenticatedTree(root, commit, signal)
+  const readBlob = makeAuthenticatedBlobReader(git)
   const childrenByDir = new Map<string, Set<string>>()
   for (const path of entries.keys()) {
     const parent = posix.dirname(path)
@@ -410,33 +420,25 @@ export async function validateSkillSnapshot(
   return authenticated
 }
 
-export async function readPinnedSkillSnapshots(
-  root: string,
-  commit: string,
-  sourcePath: string,
-  skills: readonly string[],
-  signal?: AbortSignal,
-): Promise<SkillSnapshot[]> {
-  return validateSkillSnapshot(root, commit, sourcePath, skills, undefined, signal)
-}
-
 /** Read pins strictly: a malformed or symlink pin cannot hide a competing claim. */
 export async function assertNoCompetingSkillClaims(
   vaultRoot: string,
   id: string,
   skills: readonly string[],
+  options: { allowIncompleteOwnPin?: boolean } = {},
 ): Promise<void> {
-  const pinsDir = join(vaultRoot, PLUGIN_PINS_DIR)
+  const root = await realpath(vaultRoot)
+  const pinsDir = join(root, PLUGIN_PINS_DIR)
   const dirInfo = await lstat(pinsDir).catch(() => null)
   if (!dirInfo) return
   if (!dirInfo.isDirectory() || dirInfo.isSymbolicLink())
     throw new Error('unsafe plugin pins directory')
-  const root = await realpath(vaultRoot)
   for (const entry of await readdir(pinsDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.isSymbolicLink())
       throw new Error('malformed plugin pin entry')
     const file = join(pinsDir, entry.name, 'manifest.json')
     const info = await lstat(file).catch(() => null)
+    if (!info && entry.name === id && options.allowIncompleteOwnPin) continue
     if (
       !info?.isFile() ||
       info.isSymbolicLink() ||
@@ -496,11 +498,11 @@ export async function assertManifestPinned(
   if (!/^[0-9a-f]{40}$/.test(commit) || (sourcePath && !cleanPath(sourcePath)))
     throw new Error('invalid pinned release identity')
   const git = createGitReader(root, signal)
-  const entries = await tree(git, commit)
+  const entries = await authenticatedTree(root, commit, signal)
   const path = [sourcePath, 'holi-plugin.json'].filter(Boolean).join('/')
   const entry = entries.get(path)
   if (!entry || entry.mode !== '100644') throw new Error('manifest absent from pinned Git object')
-  const bytes = await makeBlobReader(git)(entry)
+  const bytes = await makeAuthenticatedBlobReader(git)(entry)
   let raw: unknown
   try {
     const text = bytes.toString('utf8')
@@ -513,4 +515,32 @@ export async function assertManifestPinned(
   const supplied = parsePluginManifest(manifest, sourcePath)
   if (!pinned.ok || !supplied.ok || canonicalJson(pinned.value) !== canonicalJson(supplied.value))
     throw new Error('manifest differs from pinned Git object')
+}
+
+/** Authenticate the release checkout and return exact Git-backed guide snapshots. */
+export async function prepareAuthenticatedRelease(input: {
+  root: string
+  commit: string
+  sourcePath: string
+  originUrl: string
+  manifest: unknown
+  skills: readonly string[]
+  signal?: AbortSignal
+}): Promise<SkillSnapshot[]> {
+  await assertCheckoutIdentity(input.root, input.commit, input.originUrl, input.signal)
+  await assertManifestPinned(
+    input.root,
+    input.commit,
+    input.sourcePath,
+    input.manifest,
+    input.signal,
+  )
+  return validateSkillSnapshot(
+    input.root,
+    input.commit,
+    input.sourcePath,
+    input.skills,
+    undefined,
+    input.signal,
+  )
 }

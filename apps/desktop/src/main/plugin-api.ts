@@ -211,6 +211,8 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * does nothing.
    */
   pauseSync(reason: string): () => void
+  /** Pause sync admission and wait until already-running Git mutations drain. */
+  pauseSyncAndDrain(reason: string): Promise<() => void>
   /** Commit whatever is dirty now. The new commit's sha, or null for none;
    *  `'busy'` when a pull in flight refused it, so asking again shortly may
    *  commit. */
@@ -438,7 +440,7 @@ export { moveNotes } from './vault/move'
 export { completionStatuses, readVaultStatuses } from './vault/statuses'
 export { renameNote } from './vault/rename'
 export { holiTheme, readVaultTheme } from './vault/theme'
-export { readVaultSettings, writePluginSettings } from './vault/settings'
+export { readVaultSettings, writePluginSettings, writeVaultSettings } from './vault/settings'
 export { readVaultEnv } from './vault/dotenv'
 export type { SafeStorageLike } from './github/token-store'
 export { installedInfos } from './plugin-host/installed'

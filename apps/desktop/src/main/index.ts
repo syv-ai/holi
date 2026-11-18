@@ -34,6 +34,7 @@ import { isApplicationSender, unauthorizedApplicationSender } from './applicatio
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createMdxTrustStore } from './mdx-trust'
+import { createMdxCompiler } from './mdx-compiler'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
 import { installNodeFallback } from './bridge/node-fallback'
@@ -110,6 +111,8 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
 let mainWindow: BrowserWindow | null = null
+let invalidateMdxDiagnostics = (): void => {}
+let closeMdxDiagnostics = (): void => {}
 let appFrameLeases: ReturnType<typeof createAppFrameLeases> | null = null
 let mainEntryDocument: string | null = null
 
@@ -247,6 +250,12 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
+  win.once('closed', () => invalidateMdxDiagnostics())
+  win.webContents.on('did-start-navigation', (event) => {
+    if (event.isMainFrame && !event.isSameDocument) invalidateMdxDiagnostics()
+  })
+  win.webContents.on('render-process-gone', () => invalidateMdxDiagnostics())
+  win.webContents.once('destroyed', () => invalidateMdxDiagnostics())
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   // Pin authorization to the intended application document, never to a URL
   // supplied by an IPC sender.
@@ -343,6 +352,12 @@ async function main(): Promise<void> {
   const session = await createSession()
   // One app-owned handle; never construct a separate trust store per renderer request.
   const mdxTrust = createMdxTrustStore(join(app.getPath('userData'), 'mdx-trust.json'))
+  const mdxCompiler = createMdxCompiler(join(app.getAppPath(), 'out/mdx-compiler'))
+  session.onGenerationChange(() => mdxCompiler.invalidate())
+  app.on('will-quit', () => {
+    closeMdxDiagnostics()
+    mdxCompiler.close()
+  })
   const userDataDir = app.getPath('userData')
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
@@ -1000,6 +1015,13 @@ async function main(): Promise<void> {
     registry,
     session,
     mdxTrust,
+    mdxCompiler,
+    onMdxDiagnosticsInvalidate: (invalidate) => {
+      invalidateMdxDiagnostics = invalidate
+    },
+    onMdxDiagnosticsClose: (close) => {
+      closeMdxDiagnostics = close
+    },
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {

@@ -3,6 +3,7 @@ import {
   formatWikiLink,
   parseWikiLinks,
   rewriteWikiLinks,
+  rewriteWikiLinksLosslessly,
   rewriteWikiLinksMulti,
   type WikiLinkMatch,
   wikiLinkChipText,
@@ -77,6 +78,39 @@ describe('rewriteWikiLinks (the rename primitive)', () => {
     const { text: out, count } = rewriteWikiLinks('[[ old/a.md | L ]]', 'old/a.md', 'new/b.md')
     expect(out).toBe('[[new/b.md|L]]')
     expect(count).toBe(1)
+  })
+})
+
+describe('rewriteWikiLinksLosslessly', () => {
+  it('replaces only exact target spans and preserves token and document bytes', () => {
+    const text =
+      '\uFEFFbefore 😀\r\n[[  old/é.md  |  ]] then [[old/é.md| Label ]] and [[other.md]]\r\nafter'
+    expect(rewriteWikiLinksLosslessly(text, 'old/é.md', 'new/路径.md')).toEqual({
+      text: '\uFEFFbefore 😀\r\n[[  new/路径.md  |  ]] then [[new/路径.md| Label ]] and [[other.md]]\r\nafter',
+      count: 2,
+    })
+  })
+
+  it('preserves spacing and empty labels, including duplicate targets', () => {
+    expect(
+      rewriteWikiLinksLosslessly(
+        '[[ old/a.md ]] [[old/a.md|]] [[old/a.md|  ]]',
+        'old/a.md',
+        'new.md',
+      ),
+    ).toEqual({
+      text: '[[ new.md ]] [[new.md|]] [[new.md|  ]]',
+      count: 3,
+    })
+  })
+
+  it('matches only the parser target exactly and returns the original text on no match', () => {
+    const text = '[[folder/old.md]] [[old.md]] [[folder/old.md|label]]'
+    expect(rewriteWikiLinksLosslessly(text, 'absent.md', 'new.md')).toEqual({ text, count: 0 })
+    expect(rewriteWikiLinksLosslessly(text, 'folder/old.md', 'new.md')).toEqual({
+      text: '[[new.md]] [[old.md]] [[new.md|label]]',
+      count: 2,
+    })
   })
 })
 

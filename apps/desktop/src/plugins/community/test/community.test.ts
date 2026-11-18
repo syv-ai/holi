@@ -7,6 +7,7 @@ import { execFile, execFileSync, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -45,6 +46,8 @@ import { runCheck } from '../main/setup'
 import { describeRepo } from '../main/search'
 import { createInstallStore } from '../main/store'
 import { createSupervisor, type ServerState } from '../main/supervisor'
+import { seedApps } from '../main/skills'
+import { skillTransactionFs } from '../main/skill-transaction'
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -139,6 +142,12 @@ function setup(firstPort = 3940) {
   return { call, deps, events, states, origins, supervisor }
 }
 
+async function pinReady(call: any, commit: string, id = 'prezzi') {
+  await turnOn()
+  await call('community.consent', { id, commit })
+  await call('community.setup', { id })
+}
+
 async function turnOn() {
   await mkdir(join(vault, '.holi/settings'), { recursive: true })
   await writeFile(
@@ -148,7 +157,7 @@ async function turnOn() {
 }
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'holi-community-'))
+  dir = await realpath(await mkdtemp(join(tmpdir(), 'holi-community-')))
   vault = join(dir, 'vault')
   userData = join(dir, 'userData')
   await mkdir(join(vault, 'decks/q4'), { recursive: true })
@@ -203,6 +212,61 @@ describe('installing', () => {
     expect((await call('community.list'))[0]!.status).toBe('ready')
   })
 
+  test('updating a pinned release advances the current vault pin and bundled skills', async () => {
+    await makeRepo()
+    await mkdir(join(repoDir, 'skills/prezzi'), { recursive: true })
+    await writeFile(join(repoDir, 'skills/prezzi/SKILL.md'), 'old guide\n')
+    const initial = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...initial, skills: ['skills/prezzi'] }),
+    )
+    commitAll('initial guide')
+    git(repoDir, 'tag', '-f', 'v0.1.0')
+    const { call } = setup()
+    const initialInstall = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await call('community.consent', {
+      id: 'prezzi',
+      commit: (initialInstall.install as { commit: string }).commit,
+    })
+    await call('community.setup', { id: 'prezzi' })
+    await call('community.pin', { id: 'prezzi' })
+    const oldPin = JSON.parse(
+      await readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8'),
+    )
+
+    await writeFile(join(repoDir, 'skills/prezzi/SKILL.md'), 'updated guide\n')
+    const updated = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...updated, version: '0.2.0' }),
+    )
+    commitAll('updated guide')
+    git(repoDir, 'tag', 'v0.2.0')
+    const updatedInstall = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.2.0',
+    })
+    await call('community.consent', {
+      id: 'prezzi',
+      commit: (updatedInstall.install as { commit: string }).commit,
+    })
+    await call('community.setup', { id: 'prezzi' })
+    await call('community.pin', { id: 'prezzi' })
+
+    expect(
+      JSON.parse(await readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8')).commit,
+    ).not.toBe(oldPin.commit)
+    expect(await readFile(join(vault, '.claude/skills/prezzi/SKILL.md'), 'utf8')).toBe(
+      'updated guide\n',
+    )
+  })
+
   test('offers a newer release of what is installed, and nothing once it is', async () => {
     await makeRepo()
     const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
@@ -243,10 +307,34 @@ describe('installing', () => {
     ).rejects.toThrow(/built into Holi/)
   })
 
+  test('pin refuses symlinked .holi ancestry even without skills or apps', async () => {
+    await makeRepo()
+    const external = join(dir, 'external-holi')
+    await mkdir(external)
+    const { call } = setup()
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
+    await rm(join(vault, '.holi'), { recursive: true, force: true })
+    await symlink(external, join(vault, '.holi'))
+    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
+      /unsafe vault path ancestor/,
+    )
+    await expect(lstat(join(external, 'plugins'))).rejects.toThrow()
+  })
+
   test('a pin offers the same commit to a machine without it', async () => {
     const commit = await makeRepo()
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
     await call('community.pin', { id: 'prezzi' })
     const pin = JSON.parse(
       await readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8'),
@@ -261,6 +349,101 @@ describe('installing', () => {
 })
 
 describe('skills', () => {
+  test('pinning rejects exact pin bytes changed during guide publication', async () => {
+    await makeRepo()
+    await mkdir(join(repoDir, 'skills/prezzi'), { recursive: true })
+    await writeFile(join(repoDir, 'skills/prezzi/SKILL.md'), 'authenticated guide\\n')
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, skills: ['skills/prezzi'] }),
+    )
+    commitAll('guide')
+    git(repoDir, 'tag', '-f', 'v0.1.0')
+    const { call } = setup()
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
+    await call('community.pin', { id: 'prezzi' })
+    const pinPath = join(vault, '.holi/plugins/prezzi/manifest.json')
+    await writeFile(join(vault, '.claude/skills/prezzi/SKILL.md'), 'local edit\\n')
+    const originalRename = skillTransactionFs.rename
+    let raced = false
+    skillTransactionFs.rename = async (from, to) => {
+      if (!raced && String(to).endsWith('.original')) {
+        raced = true
+        await writeFile(pinPath, `${await readFile(pinPath, 'utf8')} `)
+      }
+      return originalRename(from, to)
+    }
+    try {
+      await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(/pin changed/)
+    } finally {
+      skillTransactionFs.rename = originalRename
+    }
+    expect(raced).toBe(true)
+    expect(await readFile(join(vault, '.claude/skills/prezzi/SKILL.md'), 'utf8')).toBe(
+      'local edit\\n',
+    )
+    expect((await readFile(pinPath, 'utf8')).endsWith(' ')).toBe(true)
+  })
+
+  test('pinning rejects guide bytes changed after the release was fetched', async () => {
+    await makeRepo()
+    await mkdir(join(repoDir, 'skills/prezzi'), { recursive: true })
+    await writeFile(join(repoDir, 'skills/prezzi/SKILL.md'), 'authenticated guide\n')
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, skills: ['skills/prezzi'] }),
+    )
+    commitAll('guide')
+    git(repoDir, 'tag', '-f', 'v0.1.0')
+    const { call, deps } = setup()
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
+    const install = (await deps.store.get('prezzi'))!
+    await pinReady(call, (install.source as { commit: string }).commit)
+    await writeFile(
+      join(deps.store.codeDir(install), 'skills/prezzi/SKILL.md'),
+      'modified checkout\n',
+    )
+    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
+      /pinned|snapshot|source|authenticated/i,
+    )
+    await expect(readFile(join(vault, '.claude/skills/prezzi/SKILL.md'), 'utf8')).rejects.toThrow()
+  })
+
+  test('pinning never follows a vault .gitignore symlink', async () => {
+    await makeRepo()
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, ignore: ['private-output'] }),
+    )
+    commitAll('ignore')
+    git(repoDir, 'tag', '-f', 'v0.1.0')
+    const external = join(dir, 'external-ignore')
+    await writeFile(external, 'external data\n')
+    await symlink(external, join(vault, '.gitignore'))
+    const { call } = setup()
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
+    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
+      /regular file|ELOOP|symbolic/i,
+    )
+    expect(await readFile(external, 'utf8')).toBe('external data\n')
+    await expect(
+      readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8'),
+    ).rejects.toThrow()
+  })
+
   test('pinning writes the plugin’s skills, following links inside it, refusing links out', async () => {
     const commit = await makeRepo()
     await mkdir(join(repoDir, 'docs/blocks'), { recursive: true })
@@ -287,7 +470,12 @@ describe('skills', () => {
     git(repoDir, 'tag', 'v0.2.0')
     void commit
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.2.0' })
+    const installed = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.2.0',
+    })
+    await pinReady(call, (installed.install as { commit: string }).commit)
     await call('community.pin', { id: 'prezzi' })
     expect(await readFile(join(vault, '.claude/skills/prezzi/references/cover.md'), 'utf8')).toBe(
       '# cover\n',
@@ -302,8 +490,15 @@ describe('skills', () => {
     git(repoDir, 'add', '-A')
     git(repoDir, '-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', 'commit', '-qm', 'out')
     git(repoDir, 'tag', 'v0.3.0')
-    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.3.0' })
-    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(/outside the plugin/)
+    const escapedInstall = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.3.0',
+    })
+    await pinReady(call, (escapedInstall.install as { commit: string }).commit)
+    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(
+      /(unsafe skill symlink|outside the plugin|escapes plugin)/,
+    )
   })
 })
 
@@ -397,8 +592,11 @@ describe('several plugins in one repository', () => {
     commitAll('notes skill')
     git(repoDir, 'tag', 'notes-v0.3.0')
     const { call } = setup()
-    await call('community.install', { repo, path: 'notes', version: '0.3.0' })
-    await expect(call('community.pin', { id: 'notes' })).rejects.toThrow(/outside the plugin/)
+    const installed = await call('community.install', { repo, path: 'notes', version: '0.3.0' })
+    await pinReady(call, (installed.install as { commit: string }).commit, 'notes')
+    await expect(call('community.pin', { id: 'notes' })).rejects.toThrow(
+      /(outside the plugin|escapes plugin)/,
+    )
   })
 
   test('a folder whose manifest names another plugin is refused', async () => {
@@ -454,6 +652,32 @@ describe('several plugins in one repository', () => {
 })
 
 describe('apps', () => {
+  test('rejects case-folded destination collisions before publishing either app', async () => {
+    const appRoot = join(dir, 'app-collision')
+    await mkdir(join(appRoot, 'apps/Notes.app'), { recursive: true })
+    await mkdir(join(appRoot, 'other/notes.app'), { recursive: true })
+    await writeFile(join(appRoot, 'apps/Notes.app/index.html'), '<p>one</p>')
+    await writeFile(join(appRoot, 'other/notes.app/index.html'), '<p>two</p>')
+    await expect(
+      seedApps({ apps: ['apps/Notes.app', 'other/notes.app'] }, appRoot, vault),
+    ).rejects.toThrow(/colliding destination names/)
+    expect(existsSync(join(vault, 'Notes.app'))).toBe(false)
+  })
+
+  test('stages every new app before publishing any, so failed copy retries cleanly', async () => {
+    const appRoot = join(dir, 'app-plugin')
+    await mkdir(join(appRoot, 'apps/First.app'), { recursive: true })
+    await writeFile(join(appRoot, 'apps/First.app/index.html'), '<p>first</p>')
+    await mkdir(join(appRoot, 'apps/Second.app'), { recursive: true })
+    await expect(
+      seedApps({ apps: ['apps/First.app', 'apps/Second.app'] }, appRoot, vault),
+    ).rejects.toThrow(/no index.html/)
+    expect(existsSync(join(vault, 'First.app'))).toBe(false)
+    await writeFile(join(appRoot, 'apps/Second.app/index.html'), '<p>second</p>')
+    await expect(
+      seedApps({ apps: ['apps/First.app', 'apps/Second.app'] }, appRoot, vault),
+    ).resolves.toEqual(['First.app', 'Second.app'])
+  })
   test('a plugin that only ships an app needs no server, and its app is copied in once', async () => {
     await makeRepo()
     await mkdir(join(repoDir, 'apps/Notes.app'), { recursive: true })

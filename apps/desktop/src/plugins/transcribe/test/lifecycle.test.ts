@@ -71,6 +71,7 @@ it.each(['stop', 'stopAll', 'settings', 'snapshot', 'joined-stop', 'joined-setti
       root,
       pause: () => {},
       resume: () => {},
+      drainSync: async () => {},
       commitNow: async () => null,
       repo: { head: async () => 'head' },
     }

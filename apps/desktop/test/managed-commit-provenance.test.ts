@@ -2,7 +2,11 @@ import { cp, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { createManagedCommitProvenance } from '../src/main/managed-commit-provenance'
+import {
+  createManagedCommitProvenance,
+  ownedCommitOids,
+  repositoryPublicationSnapshot,
+} from '../src/main/managed-commit-provenance'
 import { openRepo } from '../src/main/git'
 import { cleanupFixtures, makeClone, makeRemote, plainGit } from './helpers/git-fixtures'
 
@@ -47,6 +51,53 @@ async function stateFile(): Promise<string> {
 }
 
 describe('managed commit provenance', () => {
+  it('looks up only durable exact-account records without creating repository identity', async () => {
+    const root = await makeClone(await makeRemote())
+    await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])
+    const file = await stateFile()
+    const recorder = createManagedCommitProvenance({
+      file,
+      remote: 'owner/repo',
+      identity: () => ({ accountId: 31, generation: 4 }),
+      subscribed: async () => true,
+      subscribedNow: () => true,
+    })
+    await writeFile(join(root, 'note.md'), 'evidence\n')
+    const oid = await openRepo(root, {
+      commitProvenance: {
+        begin: (path) => recorder.begin(path),
+        record: (capture, path, sha) => recorder.record(capture, path, sha),
+      },
+    }).commitAll('managed', ['note.md'])
+    const identity = repositoryPublicationSnapshot(root)!
+    expect(identity).not.toBeNull()
+    expect(
+      ownedCommitOids({ file, remote: 'owner/repo', identity, accountId: 31, oids: [oid!] }),
+    ).toEqual(new Set([oid]))
+    expect(
+      ownedCommitOids({ file, remote: 'owner/repo', identity, accountId: 32, oids: [oid!] }),
+    ).toEqual(new Set())
+
+    const fresh = await makeClone(await makeRemote())
+    await plainGit(fresh, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])
+    const absentMarkerIdentity = repositoryPublicationSnapshot(fresh)!
+    expect(absentMarkerIdentity).not.toBeNull()
+    expect(absentMarkerIdentity.lifetime).toBeNull()
+    expect(
+      await readFile(join(absentMarkerIdentity.gitDir, 'holi-managed-provenance-id')).catch(
+        () => null,
+      ),
+    ).toBeNull()
+    expect(
+      ownedCommitOids({
+        file,
+        remote: 'owner/repo',
+        identity: absentMarkerIdentity,
+        accountId: 31,
+        oids: [oid!],
+      }),
+    ).toEqual(new Set())
+  })
   it('persists exact real managed commits and rejects a changed session generation', async () => {
     const root = await makeClone(await makeRemote())
     await plainGit(root, ['remote', 'set-url', 'origin', 'https://github.com/owner/repo.git'])

@@ -162,6 +162,7 @@ async function rig() {
     root: roots[remote]!,
     pause: () => {},
     resume: () => {},
+    drainSync: async () => {},
     commitNow: async () => null,
     repo: { head: async () => 'fixture' },
   })

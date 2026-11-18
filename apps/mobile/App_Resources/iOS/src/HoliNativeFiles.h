@@ -25,6 +25,10 @@ NS_ASSUME_NONNULL_BEGIN
               error:(NSError *_Nullable __autoreleasing *)error;
 - (BOOL)removeFile:(NSData *)pathBytes
              error:(NSError *_Nullable __autoreleasing *)error;
+- (BOOL)syncFile:(NSData *)pathBytes
+            error:(NSError *_Nullable __autoreleasing *)error;
+- (BOOL)syncDirectory:(NSData *)pathBytes
+                error:(NSError *_Nullable __autoreleasing *)error;
 @end
 
 NS_ASSUME_NONNULL_END

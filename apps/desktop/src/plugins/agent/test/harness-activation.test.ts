@@ -238,6 +238,7 @@ async function rig(
             root: roots[activeRemote],
             pause: () => {},
             resume: () => {},
+            drainSync: async () => {},
             repo: {
               head: async () =>
                 execFileSync('git', ['-C', roots[activeRemote!], 'rev-parse', 'HEAD'], {
@@ -299,6 +300,7 @@ async function rig(
         root: roots[remote],
         pause: () => {},
         resume: () => {},
+        drainSync: async () => {},
         commitNow: async () =>
           execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
             encoding: 'utf8',

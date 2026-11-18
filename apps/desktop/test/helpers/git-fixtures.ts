@@ -41,6 +41,8 @@ const WHO = [
   'user.email=test@holi.invalid',
   '-c',
   'commit.gpgsign=false',
+  '-c',
+  'tag.gpgSign=false',
 ]
 
 export async function plainGit(cwd: string, args: string[]): Promise<string> {
@@ -109,6 +111,7 @@ export async function makeClone(remote: string, name = 'clone'): Promise<string>
 
 /** Write a file and commit it, as a teammate on another machine would. */
 export async function commitFile(repo: string, rel: string, text: string): Promise<void> {
+  await mkdir(join(repo, rel, '..'), { recursive: true })
   await writeFile(join(repo, rel), text, 'utf8')
   await plainGit(repo, ['add', '-A'])
   await plainGit(repo, ['commit', '-m', `write ${rel}`])
