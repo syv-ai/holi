@@ -219,6 +219,7 @@ async function run() {
         root: vault.path,
         pause() {},
         resume() {},
+        drainSync: async () => {},
         commitNow: async () => null,
         repo: { head: async () => 'fixture' },
       }
