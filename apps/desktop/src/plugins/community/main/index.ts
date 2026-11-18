@@ -4,10 +4,12 @@
  * capabilities the settings tab and the plugin tab call, and the servers they
  * start. No plugin's code loads here: each runs as its own process.
  */
+/// <reference types="electron-vite/node" />
 import { join } from 'node:path'
 import { communityPluginsSignature } from '@holi/shared'
 import { installedInfos, remoteUrl, type MainPlugin } from '../../../main/plugin-api'
 import { COMMUNITY_INFO } from '../info'
+import hintBridge from '../shared/hint-bridge.js?asset&asarUnpack'
 import {
   COMMUNITY_NAMESPACES,
   communityCapabilities,
@@ -57,7 +59,7 @@ export const communityMain: MainPlugin = {
         git: { url: remoteUrl, token: ctx.githubToken },
         token: ctx.githubToken,
         firstPartyIds: () => installedInfos().map((p) => p.id),
-        bridgeScript: () => null,
+        bridgeScript: () => hintBridge,
         scratch: join(pluginsDir(ctx.userData), '.staging'),
         checks,
         mutate: (work) =>

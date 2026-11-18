@@ -32,26 +32,77 @@ function button(name: string, parent = root) {
   return element
 }
 
-it('invalidates an active session when a new owned adapter is registered', () => {
+it('invalidates an active session when a newly registered adapter adds targets', () => {
   const target = button('Existing target')
   const targets = discoverHostHintTargets(root)
   const owner = document.createElement('iframe')
   root.append(owner)
-  let captured = false
-  const adapter = {
-    capture: () => {
-      captured = true
-    },
-    discover: () => [],
-    unchanged: () => captured,
+  const link = document.createElement('a')
+  owner.append(link)
+  registerHostHintAdapter(owner, {
+    discover: () => [{ element: link, label: 'Guest target', x: 10, y: 10, token: null }],
+    unchanged: () => true,
+    activate: () => false,
+  })
+  captureHostHintAdapters(root)
+  expect(hostHintsUnchanged(targets)).toBe(false)
+  expect(target.isConnected).toBe(true)
+})
+
+it('invalidates when a previously empty adapter starts contributing targets', () => {
+  button('Existing target')
+  const owner = document.createElement('iframe')
+  root.append(owner)
+  const link = document.createElement('a')
+  owner.append(link)
+  let contributes = false
+  registerHostHintAdapter(owner, {
+    discover: () =>
+      contributes ? [{ element: link, label: 'New target', x: 10, y: 10, token: null }] : [],
+    unchanged: () => true,
+    activate: () => false,
+  })
+  const targets = discoverHostHintTargets(root)
+  contributes = true
+  expect(hostHintsUnchanged(targets)).toBe(false)
+})
+
+it('keeps exclusive requests isolated from host chrome and unrelated adapters', () => {
+  const chrome = button('Host chrome')
+  const frame = document.createElement('iframe')
+  root.append(frame)
+  const unrelated = {
+    discover: () => [{ element: chrome, label: 'chrome', x: 1, y: 1, token: null }],
+    unchanged: () => true,
     activate: () => false,
   }
-  const unregister = registerHostHintAdapter(owner, adapter)
-  expect(hostHintsUnchanged(targets)).toBe(false)
-  captureHostHintAdapters(root)
+  registerHostHintAdapter(frame, unrelated)
+  const guest = {
+    exclusive: true,
+    discover: () => [{ element: frame, label: 'Guest', x: 10, y: 10, token: 'guest' }],
+    unchanged: () => true,
+    activate: () => false,
+  }
+  expect(discoverHostHintTargets(root, guest).map((target) => target.label)).toEqual(['Guest'])
+})
+
+it('validates an explicit empty adapter but ignores an unused invalid registration', () => {
+  button('Host target')
+  const owner = document.createElement('iframe')
+  root.append(owner)
+  registerHostHintAdapter(owner, {
+    discover: () => [],
+    unchanged: () => false,
+    activate: () => false,
+  })
+  const targets = discoverHostHintTargets(root)
   expect(hostHintsUnchanged(targets)).toBe(true)
-  unregister()
-  expect(target.isConnected).toBe(true)
+  const explicit = {
+    discover: () => [],
+    unchanged: () => false,
+    activate: () => false,
+  }
+  expect(hostHintsUnchanged(targets, explicit, root)).toBe(false)
 })
 
 it('captures only visible async adapters owned by the pane', () => {

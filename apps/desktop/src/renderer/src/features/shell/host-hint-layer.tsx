@@ -180,7 +180,7 @@ export function HostHintLayer({ scopeKey }: { scopeKey: string }) {
         ) ??
         document.body
       const adapters = adapter === undefined ? captureHostHintAdapters(root) : [adapter]
-      const asyncAdapters = captureAsyncHostHintAdapters(root)
+      const asyncAdapters = adapter?.exclusive ? [] : captureAsyncHostHintAdapters(root)
       const pending = adapters.filter((candidate) => candidate.prepare)
       const request = ++requestNumber.current
       const targets = pending.length ? [] : discoverHostHintTargets(root, adapter)

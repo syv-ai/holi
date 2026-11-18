@@ -28,7 +28,9 @@
     "smoke:mdx-diagnostics:native": "node scripts/run-mdx-diagnostics-native-smoke.mjs",
     "smoke:mdx-diagnostics:typecheck": "tsc --noEmit --project tsconfig.mdx-diagnostics-native-smoke.json",
     "package:mac": "pnpm build && electron-builder --mac --publish never",
-    "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\""
+    "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\"",
+    "smoke:community-hints:native": "node scripts/run-community-hints-native-smoke.mjs",
+    "smoke:community-hints:typecheck": "tsc --noEmit --project tsconfig.native-smoke.json"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
