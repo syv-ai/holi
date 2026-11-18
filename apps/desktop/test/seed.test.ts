@@ -1984,12 +1984,15 @@ describe('mergedSettings — background sessions', () => {
     ].join('; ')
     const complete = JSON.parse(SETTINGS_SEED)
     complete.statusLine = { type: 'command', command: prior }
+    complete.hooks.PostToolUse = [{ hooks: [{ type: 'command', command: 'user-command' }] }]
     complete.extraUserKey = { retained: true }
     const before = JSON.stringify(complete)
     const migrated = agentSettings(before, SETTINGS_FRAGMENTS, () => true, undefined, 'win32')
     expect(migrated).not.toBeNull()
     expect(JSON.parse(migrated!).statusLine.command).toContain('node -e')
     expect(JSON.parse(migrated!).extraUserKey).toEqual({ retained: true })
+    expect(JSON.parse(migrated!).hooks.PostToolUse[0].hooks[0].command).toBe('user-command')
+    expect(migrated).toBe(JSON.stringify(JSON.parse(migrated!), null, 2) + '\n')
     expect(agentSettings(migrated, SETTINGS_FRAGMENTS, () => true, undefined, 'win32')).toBeNull()
     const custom = { statusLine: { type: 'command', command: `${prior} ` } }
     const kept = agentSettings(

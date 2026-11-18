@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -36,6 +36,7 @@ async function fixture(
 ) {
   const dir = await mkdtemp(join(tmpdir(), 'holi-mdx-router-'))
   const root = join(dir, 'vault')
+  await mkdir(root, { recursive: true })
   const registry = new VaultRegistry(join(dir, 'vaults.json'))
   await registry.add({ remote: REMOTE, path: root, name: 'notes', lastOpenedAt: '2026-01-01' })
   const tokenStore = new TokenStore(join(dir, 'github-auth.enc'), storage)
@@ -49,11 +50,14 @@ async function fixture(
       }) as typeof fetch),
   })
   const mdxTrust = createMdxTrustStore(join(dir, 'mdx-trust.json'))
+  const compile = vi.fn(async () => [{ message: 'unexpected token', line: 2, column: 4 }])
   let selected: ActiveVault | null = null
   const makeActive = (remote: string): ActiveVault =>
     ({
       remote,
+      root,
       snapshot: async () => ({}) as never,
+      refresh: async () => {},
     }) as ActiveVault
   const host = {
     active: () => selected,
@@ -80,6 +84,7 @@ async function fixture(
     registry,
     session,
     mdxTrust: options.trust?.(mdxTrust) ?? mdxTrust,
+    mdxCompiler: { compile, invalidate: vi.fn(), close: vi.fn() },
     host,
     vaultRoot: join(dir, 'clones'),
     seed: async () => ({ written: [], merged: [], unchanged: [] }),
@@ -90,7 +95,7 @@ async function fixture(
     showItemInFolder: () => {},
   }).createCaller({})
   await caller.vaults.open({ remote: REMOTE })
-  return { dir, registry, session, mdxTrust, caller, host, selected: () => selected }
+  return { dir, registry, session, mdxTrust, caller, host, selected: () => selected, compile }
 }
 
 const dirs: string[] = []
@@ -104,6 +109,22 @@ async function rig(options: Parameters<typeof fixture>[0] = {}) {
 }
 
 describe('MDX trust through the router', () => {
+  it('resolves mixed-case registered remotes to the active managed root', async () => {
+    const { caller, registry } = await rig({ signedIn: auth(42, 'alice') })
+    const root = (await registry.list())[0]!.path
+    await registry.remove(REMOTE)
+    await registry.add({
+      remote: 'SYV-AI/NOTES',
+      path: root,
+      name: 'notes',
+      lastOpenedAt: '2026-01-01',
+    })
+    await expect(caller.mdxTrust.status({ remote: REMOTE })).resolves.toMatchObject({
+      trusted: false,
+      identityAvailable: true,
+    })
+  })
+
   it('reports signed-out and missing-token identity without exposing a trust context', async () => {
     const { caller } = await rig()
     await expect(caller.mdxTrust.status({ remote: REMOTE })).resolves.toEqual({
@@ -127,6 +148,101 @@ describe('MDX trust through the router', () => {
     const trusted = await caller.mdxTrust.status({ remote: REMOTE })
     await caller.mdxTrust.revoke({ remote: REMOTE, context: trusted.context! })
     expect(await caller.mdxTrust.status({ remote: REMOTE })).toMatchObject({ trusted: false })
+  })
+
+  it('compiles approved MDX through a view-scoped lease', async () => {
+    const { caller, compile, registry } = await rig({ signedIn: auth(42, 'alice') })
+    const status = await caller.mdxTrust.status({ remote: REMOTE })
+    await expect(
+      caller.mdxTrust.acquireDiagnosticsLease({
+        remote: REMOTE,
+        path: 'page.mdx',
+        context: status.context!,
+      }),
+    ).rejects.toThrow()
+    expect(compile).not.toHaveBeenCalled()
+    await caller.mdxTrust.approve({ remote: REMOTE, context: status.context! })
+    const trusted = await caller.mdxTrust.status({ remote: REMOTE })
+    const root = (await registry.list()).find((entry) => entry.remote === REMOTE)!.path
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'page.mdx'), '# source')
+    const first = await caller.mdxTrust.acquireDiagnosticsLease({
+      remote: REMOTE,
+      path: 'page.mdx',
+      context: trusted.context!,
+    })
+    const second = await caller.mdxTrust.acquireDiagnosticsLease({
+      remote: REMOTE,
+      path: 'page.mdx',
+      context: trusted.context!,
+    })
+    expect(first.lease).not.toBe(second.lease)
+    await expect(
+      caller.mdxTrust.acquireDiagnosticsLease({
+        remote: REMOTE,
+        path: 'USER.local.mdx',
+        context: trusted.context!,
+      }),
+    ).rejects.toThrow()
+    const third = await caller.mdxTrust.acquireDiagnosticsLease({
+      remote: REMOTE,
+      path: 'page.mdx',
+      context: trusted.context!,
+    })
+    const fourth = await caller.mdxTrust.acquireDiagnosticsLease({
+      remote: REMOTE,
+      path: 'page.mdx',
+      context: trusted.context!,
+    })
+    await expect(
+      caller.mdxTrust.acquireDiagnosticsLease({
+        remote: REMOTE,
+        path: 'page.mdx',
+        context: trusted.context!,
+      }),
+    ).rejects.toThrow()
+    await expect(
+      caller.mdxTrust.compile({
+        lease: first.lease,
+        generation: 1,
+        source: 'x'.repeat(256 * 1024 + 1),
+      }),
+    ).rejects.toThrow()
+    await expect(
+      caller.mdxTrust.compile({ lease: first.lease, generation: 1, source: '# Source' }),
+    ).resolves.toEqual([{ message: 'unexpected token', line: 2, column: 4 }])
+    expect(compile).toHaveBeenCalledWith('# Source', expect.any(AbortSignal))
+    await expect(
+      caller.mdxTrust.cancelCompile({ lease: first.lease, generation: 2 }),
+    ).resolves.toEqual({ ok: true })
+    await expect(
+      caller.mdxTrust.compile({ lease: first.lease, generation: 2, source: '# retry' }),
+    ).resolves.toEqual([{ message: 'unexpected token', line: 2, column: 4 }])
+    await expect(
+      caller.mdxTrust.compile({ lease: first.lease, generation: 1, source: '# old' }),
+    ).rejects.toThrow()
+    await caller.mdxTrust.releaseDiagnosticsLease({ lease: first.lease })
+    await expect(
+      caller.mdxTrust.compile({ lease: first.lease, generation: 3, source: '# released' }),
+    ).rejects.toThrow()
+    await caller.mdxTrust.releaseDiagnosticsLease({ lease: second.lease })
+    await caller.mdxTrust.releaseDiagnosticsLease({ lease: third.lease })
+    await caller.mdxTrust.releaseDiagnosticsLease({ lease: fourth.lease })
+    const replaced = await caller.mdxTrust.acquireDiagnosticsLease({
+      remote: REMOTE,
+      path: 'page.mdx',
+      context: trusted.context!,
+    })
+    const callsBeforeReplacement = compile.mock.calls.length
+    await writeFile(join(root, 'page.mdx'), '# replaced source with changed fingerprint')
+    await expect(
+      caller.mdxTrust.compile({
+        lease: replaced.lease,
+        generation: 1,
+        source: '# must not compile',
+      }),
+    ).rejects.toThrow()
+    expect(compile).toHaveBeenCalledTimes(callsBeforeReplacement)
   })
 
   it('rejects unregistered remotes', async () => {
@@ -289,6 +405,101 @@ describe('MDX trust through the router', () => {
         remote: REMOTE,
       }),
     ).toBe(false)
+  })
+
+  it('invalidates a note lease before replacing its source', async () => {
+    const { caller, registry } = await rig({ signedIn: auth(42, 'alice') })
+    const root = (await registry.list())[0]!.path
+    await writeFile(join(root, 'page.mdx'), '# before')
+    const pending = await caller.mdxTrust.status({ remote: REMOTE })
+    await caller.mdxTrust.approve({ remote: REMOTE, context: pending.context! })
+    const trusted = await caller.mdxTrust.status({ remote: REMOTE })
+    const lease = await caller.mdxTrust.acquireDiagnosticsLease({
+      remote: REMOTE,
+      path: 'page.mdx',
+      context: trusted.context!,
+    })
+    await caller.notes.write({ remote: REMOTE, path: 'page.mdx', text: '# after' })
+    await expect(
+      caller.mdxTrust.compile({ lease: lease.lease, generation: 1, source: '# stale' }),
+    ).rejects.toThrow()
+    await expect(caller.mdxTrust.status({ remote: REMOTE })).resolves.toMatchObject({
+      trusted: true,
+      identityAvailable: true,
+    })
+  })
+
+  it('retires compile authority before a revoke waits for registry lookup', async () => {
+    const { caller, registry } = await rig({ signedIn: auth(42, 'alice') })
+    const untrusted = await caller.mdxTrust.status({ remote: REMOTE })
+    await caller.mdxTrust.approve({ remote: REMOTE, context: untrusted.context! })
+    const trusted = await caller.mdxTrust.status({ remote: REMOTE })
+    const root = (await registry.list())[0]!.path
+    await writeFile(join(root, 'page.mdx'), '# source')
+    const lease = await caller.mdxTrust.acquireDiagnosticsLease({
+      remote: REMOTE,
+      path: 'page.mdx',
+      context: trusted.context!,
+    })
+    const read = gate<void>()
+    const entered = gate<void>()
+    const list = registry.list.bind(registry)
+    vi.spyOn(registry, 'list').mockImplementation(async () => {
+      entered.resolve()
+      await read.promise
+      return list()
+    })
+    const revoking = caller.mdxTrust.revoke({ remote: REMOTE, context: trusted.context! })
+    await entered.promise
+    await expect(
+      caller.mdxTrust.compile({ lease: lease.lease, generation: 1, source: '# old source' }),
+    ).rejects.toThrow()
+    read.resolve()
+    await revoking
+    await expect(
+      caller.mdxTrust.compile({ lease: lease.lease, generation: 2, source: '# old source again' }),
+    ).rejects.toThrow()
+    await expect(caller.mdxTrust.status({ remote: REMOTE })).resolves.toMatchObject({
+      trusted: false,
+      identityAvailable: true,
+    })
+  })
+
+  it('blocks status and acquisition throughout a pending revoke, then recovers via fresh status', async () => {
+    const entered = gate<void>()
+    const release = gate<void>()
+    const { caller, mdxTrust } = await rig({
+      signedIn: auth(42, 'alice'),
+      trust: (store) => ({
+        status: (owner) => store.status(owner),
+        approve: (owner, stillOwned) => store.approve(owner, stillOwned),
+        revoke: async (owner, stillOwned) => {
+          entered.resolve()
+          await release.promise
+          await store.revoke(owner, stillOwned)
+        },
+      }),
+    })
+    const initial = await caller.mdxTrust.status({ remote: REMOTE })
+    await caller.mdxTrust.approve({ remote: REMOTE, context: initial.context! })
+    const trusted = await caller.mdxTrust.status({ remote: REMOTE })
+    const revoking = caller.mdxTrust.revoke({ remote: REMOTE, context: trusted.context! })
+    await entered.promise
+    await expect(caller.mdxTrust.status({ remote: REMOTE })).rejects.toThrow(/context changed/i)
+    await expect(
+      caller.mdxTrust.acquireDiagnosticsLease({
+        remote: REMOTE,
+        path: 'page.mdx',
+        context: trusted.context!,
+      }),
+    ).rejects.toThrow()
+    release.resolve()
+    await revoking
+    await expect(caller.mdxTrust.status({ remote: REMOTE })).resolves.toMatchObject({
+      trusted: false,
+      identityAvailable: true,
+    })
+    expect(await mdxTrust.status({ accountId: '42', remote: REMOTE })).toBe(false)
   })
 
   it('does not invalidate an earlier context when another status request completes', async () => {
