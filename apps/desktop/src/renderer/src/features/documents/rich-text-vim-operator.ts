@@ -31,9 +31,10 @@ type SchemaIntent =
   | { kind: 'logical-lines'; textblock: 'codeBlock' | 'hardBreak' }
   | { kind: 'textblocks'; container: { pos: number; type: string } | null }
   | { kind: 'list-items'; container: { pos: number; type: 'listItem' | 'taskItem' } }
-type Mutation =
+type PrimitiveMutation =
   | { kind: 'delete'; range: { from: number; to: number }; replacement?: never }
   | { kind: 'replace'; range: { from: number; to: number }; replacement: Slice }
+type Mutation = PrimitiveMutation | { kind: 'sequence'; edits: readonly PrimitiveMutation[] }
 
 export type VimOperatorPlan =
   | { kind: 'noop' }
@@ -226,34 +227,37 @@ function registerFor(
     linewiseContainer: container,
   }
 }
+function mutationEdits(mutation: Mutation): readonly PrimitiveMutation[] {
+  return mutation.kind === 'sequence' ? mutation.edits : [mutation]
+}
+
+function mutationSequence(edits: readonly PrimitiveMutation[]): Mutation {
+  const ordered = [...edits].sort((left, right) => right.range.from - left.range.from)
+  return ordered.length === 1 ? ordered[0]! : { kind: 'sequence', edits: ordered }
+}
+
 function changedListItem(node: ProseMirrorNode, itemPosition: number, from: number, to: number) {
-  const children = node.content.content.slice()
+  const edits: PrimitiveMutation[] = []
   let position = itemPosition + 1
-  let first = -1
-  let last = -1
   let caret = itemPosition + 2
-  for (let index = 0; index < children.length; index++) {
-    const child = children[index]!
-    if (child.isTextblock && position + 1 >= from && position + 1 <= to) {
-      if (first < 0) {
-        first = index
-        caret = position + 1
-      }
-      last = index
+  node.forEach((child) => {
+    const childPosition = position
+    if (child.isTextblock && childPosition + 1 >= from && childPosition + 1 <= to) {
+      if (edits.length === 0) caret = childPosition + 1
+      edits.push({
+        kind: 'replace',
+        range: { from: childPosition, to: childPosition + child.nodeSize },
+        replacement: new Slice(
+          Fragment.from(child.type.create(child.attrs, null, child.marks)),
+          0,
+          0,
+        ),
+      })
     }
     position += child.nodeSize
-  }
-  if (first < 0) return null
-  const selected = children[first]!
-  children.splice(
-    first,
-    last - first + 1,
-    selected.type.create(selected.attrs, null, selected.marks),
-  )
-  return {
-    replacement: new Slice(Fragment.from(node.copy(Fragment.fromArray(children))), 0, 0),
-    caret,
-  }
+  })
+  if (edits.length === 0) return null
+  return { edits, caret }
 }
 
 function allowedRange(
@@ -262,6 +266,7 @@ function allowedRange(
   intent: SchemaIntent,
 ) {
   if (intent.kind !== 'list-items') return safeRange(state, range.from, range.to)
+  if (safeRange(state, range.from, range.to)) return true
   try {
     const $from = state.doc.resolve(range.from)
     const $to = state.doc.resolve(range.to)
@@ -296,14 +301,16 @@ function result(
     return { kind: 'noop' }
   if (
     !allowedRange(state, contentRange, nativeSchema) ||
-    (mutation && !allowedRange(state, mutation.range, nativeSchema))
+    (mutation &&
+      mutationEdits(mutation).some((edit) => !allowedRange(state, edit.range, nativeSchema)))
   )
     return rejected()
   try {
     const tr = state.tr
-    if (mutation?.kind === 'delete') tr.delete(mutation.range.from, mutation.range.to)
-    else if (mutation?.kind === 'replace')
-      tr.replaceWith(mutation.range.from, mutation.range.to, mutation.replacement.content)
+    for (const edit of mutation ? mutationEdits(mutation) : []) {
+      if (edit.kind === 'delete') tr.delete(edit.range.from, edit.range.to)
+      else tr.replaceWith(edit.range.from, edit.range.to, edit.replacement.content)
+    }
     tr.doc.check()
     // Changes name a position inside their replacement; deletes name surviving source content.
     const mapped = operator === 'c' ? caretPosition : tr.mapping.map(caretPosition, 1)
@@ -361,11 +368,10 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         if (operator === 'c' && node) {
           const changed = changedListItem(node, item.pos, block.from, block.from)
           if (!changed) return rejected('line')
-          mutation = {
-            kind: 'replace',
-            range: { from: item.pos, to: end },
-            replacement: changed.replacement,
-          }
+          const edits = [...changed.edits]
+          if (nodes.length > 1)
+            edits.push({ kind: 'delete', range: { from: item.pos + node.nodeSize, to: end } })
+          mutation = mutationSequence(edits)
           caret = changed.caret
         } else mutation = { kind: 'delete', range: { from: item.pos, to: end } }
       }
@@ -423,11 +429,19 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         { kind: 'logical-lines', textblock: type },
       )
     }
-    const all = textBlocks(state)
-    const index = all.findIndex((candidate) => candidate.from === block.from)
-    const last = all[Math.min(all.length - 1, index + countOf(target.count) - 1)] ?? block
+    const globalLines = textBlocks(state).flatMap((candidate) => logicalLines(candidate))
+    const index = globalLines.findIndex((candidate) => candidate.from === line.from)
+    if (index < 0) return rejected()
+    const lastLine =
+      globalLines[Math.min(globalLines.length - 1, index + countOf(target.count) - 1)]!
+    const lastBlock = lastLine.block
+    const lastBlockLines = logicalLines(lastBlock)
+    const lastLineIndex = lastBlockLines.findIndex((candidate) => candidate.from === lastLine.from)
+    // A doubled operator may consume complete logical lines, but may not leave a
+    // partially selected multiline textblock at the far end of its range.
+    if (lastBlockLines.length > 1 && lastLineIndex !== lastBlockLines.length - 1) return rejected()
     const from = block.from - 1
-    const to = last.to + 1
+    const to = lastBlock.to + 1
     const container = containerAt(state, block.from, STRUCTURAL_CONTAINERS)
     if (!safeRange(state, from, to)) return rejected()
     const cell = container?.type === 'tableCell' || container?.type === 'tableHeader'
@@ -444,7 +458,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
       : cell && (operator === 'c' || (cellNode?.childCount ?? 0) <= countOf(target.count))
         ? {
             kind: 'replace',
-            range: { from: block.from - 1, to: last.to + 1 },
+            range: { from: block.from - 1, to: lastBlock.to + 1 },
             replacement: new Slice(
               Fragment.from(block.node.type.create(block.node.attrs, null, block.node.marks)),
               0,
@@ -454,7 +468,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         : operator === 'c'
           ? {
               kind: 'replace',
-              range: { from: block.from - 1, to: last.to + 1 },
+              range: { from: block.from - 1, to: lastBlock.to + 1 },
               replacement: new Slice(
                 Fragment.from(block.node.type.create(block.node.attrs, null, block.node.marks)),
                 0,
@@ -706,11 +720,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         const last = logicalLineAt(state, Math.max(target.anchor, target.cursor))!
         const changed = changedListItem(node, itemInfo.pos, first.block.from, last.block.from)
         if (!changed) return rejected('selection')
-        mutation = {
-          kind: 'replace',
-          range: registerRange,
-          replacement: changed.replacement,
-        }
+        mutation = mutationSequence(changed.edits)
         caret = changed.caret
       } else {
         mutation = { kind: 'delete', range: registerRange }

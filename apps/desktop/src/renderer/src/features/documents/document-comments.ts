@@ -317,9 +317,14 @@ export const DocumentComments = Extension.create<{
               }
             }
             if (tr.getMeta('vimChangeInsert')) {
+              const pos = tr.selection.head
               for (const range of value.ranges) {
                 if (ranges.some((mapped) => mapped.id === range.id)) continue
-                const pos = tr.selection.head
+                const from = tr.mapping.map(range.from, -1)
+                const to = tr.mapping.map(range.to, 1)
+                // Re-anchor only a comment whose passage was replaced at this
+                // insertion point; other deleted content is not this change.
+                if (from > pos || to < pos) continue
                 pendingChangeRanges.push({ id: range.id, from: pos, to: pos })
               }
             }

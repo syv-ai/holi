@@ -286,9 +286,11 @@ function executeVimOperator(
     return
   }
   let tr = view.state.tr
-  const { range } = plan.mutation
-  if (plan.mutation.kind === 'delete') tr.delete(range.from, range.to)
-  else tr.replaceWith(range.from, range.to, plan.mutation.replacement.content)
+  const edits = plan.mutation.kind === 'sequence' ? plan.mutation.edits : [plan.mutation]
+  for (const edit of edits) {
+    if (edit.kind === 'delete') tr.delete(edit.range.from, edit.range.to)
+    else tr.replaceWith(edit.range.from, edit.range.to, edit.replacement.content)
+  }
   try {
     tr.doc.check()
     tr.setSelection(TextSelection.near(tr.doc.resolve(plan.caret.position), plan.caret.bias))
