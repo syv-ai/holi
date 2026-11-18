@@ -5,6 +5,7 @@ import { runVaultStorageCheck } from './vault-storage-check'
 import { nativeIO } from './native-posix.ios'
 import { createVaultStorage } from './vault-storage'
 import { runRestartPhase } from './storage-restart.ios'
+import { runGitCompatibilityCheck } from './compatibility-check.ios'
 
 // Foundation must encode the original spelling, not normalize NFC/NFD for us.
 function nativeUtf8(text: string): Uint8Array {
@@ -43,6 +44,7 @@ export async function checkCompatibility(): Promise<string> {
   let storageRoot: string | undefined
   let secondRoot: string | undefined
   let evidence: Record<string, unknown>
+  let git: Awaited<ReturnType<typeof runGitCompatibilityCheck>> | undefined
   let rawNames: unknown
   try {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(runId))
@@ -57,6 +59,9 @@ export async function checkCompatibility(): Promise<string> {
       persist({ corpus, recovery })
       return 'Interrupted save recovery passed'
     }
+    phase = 'native-git-transport'
+    operation = 'runGitCompatibilityCheck'
+    git = await runGitCompatibilityCheck(runId)
     const documents = knownFolders.documents().path
     phase = 'raw-native-bindings'
     operation = 'nativeNames/nativeRead'
@@ -148,6 +153,7 @@ export async function checkCompatibility(): Promise<string> {
     evidence = {
       corpus,
       storage,
+      git,
       nativeFilenameSpellings: true,
       nativeFilenameRoots: rawNames,
       storageRoot,

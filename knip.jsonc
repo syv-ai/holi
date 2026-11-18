@@ -97,6 +97,8 @@
         "webpack.config.js!",
         // The Simulator driver is run by the package's test:ios script.
         "scripts/ios-simulator.mjs!",
+        // build:ios invokes this standalone native-dependency build entry.
+        "scripts/build-libgit2-ios.mjs!",
         "test/*.test.mjs",
       ],
       "project": ["app/**/*.ts!", "scripts/*.{mjs,cjs}!", "test/*.test.mjs"],
