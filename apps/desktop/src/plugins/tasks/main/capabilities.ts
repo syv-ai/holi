@@ -7,7 +7,6 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { readFile } from 'node:fs/promises'
-import { isAbsolute, relative } from 'node:path'
 import { completeTask, isClosedStatus, isOverdue } from '@holi/shared'
 import {
   isPrivateTask,
@@ -39,6 +38,7 @@ import {
   renameNote,
   stringParam,
   lockPath,
+  typedVaultPath,
   withFileLock,
   withFileLocks,
   writableFile,
@@ -344,10 +344,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
       params: pathParams,
       run: async (ctx, { path }) => {
         // The agent may name the task by its absolute path, as its tools do.
-        const rel = await knownPath(
-          ctx,
-          isAbsolute(path) ? relative(ctx.root, path) : path.replace(/^\.\//, ''),
-        )
+        const rel = await knownPath(ctx, typedVaultPath(ctx.root, path))
         // An app writes only where it may write a note; the agent writes anywhere.
         const abs =
           ctx.bundle !== null
