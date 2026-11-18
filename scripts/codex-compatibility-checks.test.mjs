@@ -38,13 +38,17 @@ test('matches only the exact CLI version', () => {
 })
 
 test('classifies missing options, timeouts and nonzero probes', () => {
-  assert.match(
+  assert.equal(
     checkProbe({ status: 0 }, ['--json'], 'Usage: codex exec'),
-    /missing consumed options/,
+    'missing consumed options --json',
   )
   assert.equal(checkProbe({ status: null, error: { code: 'ETIMEDOUT' } }, [], ''), 'timed out')
   assert.equal(checkProbe({ status: 2 }, [], ''), 'exit 2')
   assert.equal(checkProbe({ status: 0 }, ['--json'], ' --json'), null)
+  assert.equal(
+    checkProbe({ status: 0 }, ['--json'], 'options=--json'),
+    'missing consumed options --json',
+  )
 })
 
 test('runs isolated install and CLI probes without leaking install output into JSON', async () => {

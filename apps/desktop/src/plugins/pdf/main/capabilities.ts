@@ -246,7 +246,8 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
 
     // The vault's templates, for the Convert picker and its metadata inputs.
     'pdf.templates': cap({
-      doors: ['ui'],
+      doors: ['ui', 'cli'],
+      cli: { args: [], summary: 'list the PDF templates in this vault' },
       params: noParams,
       run: async (ctx) =>
         (await listTemplates(ctx.root)).map(({ name, slug, description, fields, warnings }) => ({

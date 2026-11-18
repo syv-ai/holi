@@ -32,6 +32,7 @@ const thread = (id: string): MailThreadSummary => ({
   lastReplyAt: null,
   addressedAs: null,
   automated: false,
+  needsReply: false,
 })
 
 function rig() {

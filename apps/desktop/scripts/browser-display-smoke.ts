@@ -181,6 +181,7 @@ async function run(): Promise<void> {
     root: roots[remote],
     pause: () => {},
     resume: () => {},
+    drainSync: async () => {},
     commitNow: async () => null,
     repo: { head: async () => null },
   })

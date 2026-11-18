@@ -319,6 +319,11 @@ test('lazy editors retain selection, scroll, undo and Vim through tab and split 
 test('only the focused editor publishes selection and return republishes without a caret move', async () => {
   const store = fixture()
   const one = await cmFor()
+  act(() => one.dispatch({ selection: { anchor: 0, head: 11 } }))
+  expect(store.get(editorSelectionAtom)).toEqual({
+    path: 'src/one.ts',
+    lines: { startLine: 1, endLine: 1 },
+  })
   act(() => one.dispatch({ selection: { anchor: 0, head: 12 } }))
   expect(store.get(editorSelectionAtom)?.path).toBe('src/one.ts')
   focusTab(store, 'src/two.ts')
