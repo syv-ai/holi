@@ -44,6 +44,7 @@ export class GitHubSession {
   #deps: SessionDeps
   #auth: StoredAuth | null
   #listeners = new Set<(viewer: Viewer | null) => void>()
+  #generationListeners = new Set<() => void>()
   #generation = 0
   readonly api: GitHubApi
 
@@ -121,6 +122,12 @@ export class GitHubSession {
     return () => this.#listeners.delete(cb)
   }
 
+  /** Synchronous invalidation before an account generation starts changing. */
+  onGenerationChange(cb: () => void): () => void {
+    this.#generationListeners.add(cb)
+    return () => this.#generationListeners.delete(cb)
+  }
+
   /**
    * `accountId` is the identity key, and it only comes from the viewer call. So
    * the fetch happens before anything is persisted, and a failure leaves the
@@ -128,6 +135,7 @@ export class GitHubSession {
    * identity would be indistinguishable from a corrupt keychain later.
    */
   async #adopt(token: string, scopes: string[]): Promise<void> {
+    for (const cb of this.#generationListeners) cb()
     this.#generation++
     const previous = this.#auth
     // Set in memory first so `api.viewer()` can read it through the getter.
@@ -147,6 +155,7 @@ export class GitHubSession {
   }
 
   async #forget(): Promise<void> {
+    for (const cb of this.#generationListeners) cb()
     this.#generation++
     this.#auth = null
     await this.#deps.store.clear()
