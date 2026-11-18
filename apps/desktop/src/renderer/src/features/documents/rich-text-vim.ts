@@ -395,7 +395,10 @@ function executeVimOperator(
       tr.setSelection(TextSelection.near(tr.doc.resolve(view.state.selection.head), 1))
     view.dispatch(tr)
   }
-  if (plan.kind === 'noop') return
+  if (plan.kind === 'noop') {
+    clearPlan()
+    return
+  }
   if (plan.kind === 'rejected') {
     clearPlan()
     settings.onFeedback?.(plan.feedback)
@@ -409,8 +412,11 @@ function executeVimOperator(
   const latest = KEY.getState(view.state) ?? current
   if (operator === 'y' || !plan.mutation) {
     if (operator === 'c') closeHistoryBoundary(view)
+    const tr = view.state.tr.setSelection(
+      TextSelection.near(view.state.doc.resolve(plan.caret.position), plan.caret.bias),
+    )
     view.dispatch(
-      view.state.tr
+      tr
         .setMeta(KEY, {
           ...resetTransient(latest),
           register: plan.register,
@@ -427,19 +433,7 @@ function executeVimOperator(
   else tr.replaceWith(range.from, range.to, plan.mutation.replacement.content)
   try {
     tr.doc.check()
-    const mapped = tr.mapping.map(plan.caret.position, plan.caret.bias)
-    const safe = Math.max(0, Math.min(mapped, tr.doc.content.size))
-    let caret = safe
-    if (operator !== 'c') {
-      const resultState = view.state.apply(tr)
-      const line = lineAt(resultState, safe)
-      if (line) {
-        const positions = graphemeBoundaries(resultState, line.from, line.to)
-        caret = positions.find((position) => position >= safe) ?? positions.at(-1) ?? safe
-        if (caret >= line.to && positions.length > 1) caret = positions.at(-2)!
-      }
-    }
-    tr.setSelection(TextSelection.near(tr.doc.resolve(caret), plan.caret.bias))
+    tr.setSelection(TextSelection.near(tr.doc.resolve(plan.caret.position), plan.caret.bias))
     if (operator === 'c') {
       closeHistoryBoundary(view)
       tr.setMeta('vimChangeInsert', true)
@@ -638,7 +632,7 @@ function handleNormal(
       target: {
         kind: 'visual',
         anchor: current.visualAnchor,
-        cursor: view.state.selection.head,
+        cursor: current.visualCursor ?? current.visualAnchor,
         linewise: current.visualLinewise,
       },
     })

@@ -22,6 +22,29 @@ function withEditor(content: string, run: (editor: Editor) => void, structured =
 }
 
 describe('planVimOperator', () => {
+  it('returns result-document carets for deletion and insertion without mutating state', () => {
+    withEditor('<p>one</p>', (editor) => {
+      const sourceDoc = editor.state.doc
+      for (const operator of ['d', 'c'] as const) {
+        const plan = planVimOperator(editor.state, {
+          operator,
+          target: { kind: 'motion', origin: 2, motion: '$', count: 1 },
+        })
+        expect(plan.kind).toBe('ready')
+        if (plan.kind !== 'ready' || !plan.mutation) throw new Error('expected a mutation plan')
+        const tr = editor.state.tr.delete(plan.mutation.range.from, plan.mutation.range.to)
+        expect(tr.doc.textContent).toBe('o')
+        expect(plan.caret).toEqual({
+          position: operator === 'd' ? 1 : 2,
+          bias: 1,
+          mode: operator === 'd' ? 'normal' : 'insert',
+        })
+        expect(tr.doc.resolve(plan.caret.position).parent.isTextblock).toBe(true)
+        expect(editor.state.doc).toBe(sourceDoc)
+      }
+    })
+  })
+
   it('plans without mutating editor state and exposes the exact source document', () => {
     withEditor('<p><strong>alpha</strong> beta</p><p>next</p>', (editor) => {
       const state = editor.state
@@ -42,12 +65,37 @@ describe('planVimOperator', () => {
         { type: 'text', text: ' ' },
       ])
       expect(plan.mutation).toEqual({ kind: 'delete', range: { from: 1, to: 7 } })
+      if (plan.mutation?.kind !== 'delete') throw new Error('expected a deletion plan')
       const tr = state.tr.delete(plan.mutation.range.from, plan.mutation.range.to)
       expect(tr.doc.check()).toBeUndefined()
       expect(tr.doc.textContent).toBe('betanext')
       expect(plan.caret.position).toBeGreaterThanOrEqual(0)
       expect(plan.caret.position).toBeLessThanOrEqual(tr.doc.content.size)
     })
+  })
+
+  it('rejects doubled and vertical ranges that would include unselected logical lines', () => {
+    for (const content of [
+      '<p>keep<br>delete</p><p>next</p>',
+      '<pre><code>keep\ndelete</code></pre><p>next</p>',
+    ]) {
+      withEditor(content, (editor) => {
+        let origin = -1
+        editor.state.doc.descendants((node, pos) => {
+          const offset = node.isText ? (node.text?.indexOf('delete') ?? -1) : -1
+          if (offset >= 0) origin = pos + offset
+        })
+        expect(origin).toBeGreaterThan(0)
+        for (const operator of ['d', 'c', 'y'] as const) {
+          for (const target of [
+            { kind: 'doubled' as const, origin, count: 2 },
+            { kind: 'motion' as const, origin, motion: 'j' as const, count: 1 },
+          ]) {
+            expect(planVimOperator(editor.state, { operator, target }).kind).toBe('rejected')
+          }
+        }
+      })
+    }
   })
 
   it('returns no-op and rejected plans without changing source state', () => {

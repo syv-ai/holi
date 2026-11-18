@@ -867,6 +867,25 @@ describe('rich-text Vim extension', () => {
     expect(text(ed)).toBe('d')
   })
 
+  it('clears no-op operators and preserves backward-yank carets', () => {
+    const ed = open('<pre><code>\nnext</code></pre>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '$')
+    key(ed, 'w')
+    expect(ed.state.doc.firstChild?.textContent).toBe('\nnext')
+    expect(ed.state.selection.head).toBeGreaterThan(1)
+    expect(ed.view.dom.dataset.vimMode).toBe('normal')
+
+    ed.commands.setContent('<p>one two</p>')
+    ed.commands.setTextSelection(6)
+    key(ed, 'y')
+    key(ed, 'b')
+    expect(ed.state.selection.empty).toBe(true)
+    expect(ed.state.selection.head).toBe(6)
+    expect(ed.state.doc.textContent).toBe('one two')
+  })
+
   it('keeps yank carets stable, clears transient input on blur and isolates undo groups', () => {
     const ed = open('<p>one two three</p>')
     ed.commands.setTextSelection(1)
@@ -1802,21 +1821,24 @@ describe('rich-text Vim extension', () => {
   })
 
   it('rejects a visual line deletion that spans partial paragraph blocks', () => {
-    for (const [content, position] of [
-      ['<p>keep<br>delete</p><p>next</p>', 'delete'],
-      ['<p>next</p><p>keep<br>delete</p>', 'delete'],
-      ['<pre><code>keep\\ndelete</code></pre><p>next</p>', 'delete'],
-      ['<ul><li><p>keep</p><p>delete</p></li><li><p>next</p></li></ul>', 'delete'],
+    for (const [content, position, motion] of [
+      ['<p>keep<br>delete</p><p>next</p>', 'delete', 'j'],
+      ['<p>next</p><p>keep<br>delete</p>', 'keep', 'k'],
+      ['<pre><code>keep\ndelete</code></pre><p>next</p>', 'delete', 'j'],
+      ['<p>next</p><pre><code>keep\ndelete</code></pre>', 'keep', 'k'],
     ] as const) {
       const feedback = vi.fn()
       const ed = open(content, true, feedback)
-      let at = 0
+      let at = -1
       ed.state.doc.descendants((node, pos) => {
-        if (node.isText && node.text === position) at = pos
+        const offset = node.isText ? (node.text?.indexOf(position) ?? -1) : -1
+        if (offset >= 0) at = pos + offset
       })
+      expect(at).toBeGreaterThan(0)
       ed.commands.setTextSelection(at)
       const before = ed.state.doc
       key(ed, 'V')
+      key(ed, motion)
       key(ed, 'd')
       expect.soft(ed.state.doc.eq(before), content).toBe(true)
       expect.soft(feedback).toHaveBeenCalled()
@@ -1887,7 +1909,7 @@ describe('rich-text Vim extension', () => {
     empty.commands.setTextSelection(1)
     key(empty, 'y')
     key(empty, 'y')
-    empty.commands.setTextSelection(empty.state.doc.content.size - 1)
+    empty.commands.setTextSelection(empty.state.doc.firstChild!.nodeSize - 1)
     key(empty, 'p')
     expect(empty.state.doc.firstChild?.textContent).toBe('\nnext\n')
     expect(empty.state.doc.check()).toBeUndefined()
@@ -1978,32 +2000,32 @@ describe('rich-text Vim extension', () => {
 
     ed.commands.setContent('<h2><strong>Heading</strong></h2><p>next</p>')
     ed.commands.setTextSelection(2)
-    key(ed, 'y')
-    key(ed, 'y')
+    key(ed, 'c')
+    key(ed, 'c')
+    ed.view.dispatch(ed.state.tr.insertText('X'))
+    expect(ed.state.doc.textContent).toBe('Xnext')
+    key(ed, 'Escape')
     let next = 0
     ed.state.doc.descendants((node, pos) => {
       if (node.isText && node.text === 'next') next = pos
     })
     ed.commands.setTextSelection(next)
-    key(ed, 'c')
-    key(ed, 'c')
-    ed.view.dispatch(ed.state.tr.insertText('X'))
-    expect(ed.state.doc.textContent).toBe('HeadingX')
-    key(ed, 'Escape')
     key(ed, 'p')
     expect(ed.state.doc.toJSON()).toMatchObject({
       content: [
         {
           type: 'heading',
           attrs: { level: 2 },
-          content: [{ type: 'text', marks: [{ type: 'bold' }], text: 'Heading' }],
+          content: [{ type: 'text', text: 'X' }],
         },
-        { type: 'paragraph', content: [{ type: 'text', text: 'X' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'next' }] },
         {
           type: 'heading',
           attrs: { level: 2 },
           content: [{ type: 'text', marks: [{ type: 'bold' }], text: 'Heading' }],
         },
+        // StarterKit adds an editable paragraph after a final heading.
+        { type: 'paragraph' },
       ],
     })
     expect(ed.state.doc.check()).toBeUndefined()

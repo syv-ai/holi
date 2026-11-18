@@ -1,5 +1,5 @@
 import { Fragment, Slice } from '@tiptap/pm/model'
-import type { EditorState } from '@tiptap/pm/state'
+import { EditorState, TextSelection } from '@tiptap/pm/state'
 import {
   containerAt,
   graphemeBoundaries,
@@ -267,15 +267,36 @@ function result(
     (mutation && !allowedRange(state, mutation.range, nativeSchema))
   )
     return rejected()
-  return {
-    kind: 'ready',
-    sourceDoc: state.doc,
-    operator,
-    contentRange,
-    register,
-    mutation,
-    caret: { position: caretPosition, bias: 1, mode: operator === 'c' ? 'insert' : 'normal' },
-    nativeSchema,
+  try {
+    const tr = state.tr
+    if (mutation?.kind === 'delete') tr.delete(mutation.range.from, mutation.range.to)
+    else if (mutation?.kind === 'replace')
+      tr.replaceWith(mutation.range.from, mutation.range.to, mutation.replacement.content)
+    tr.doc.check()
+    const mapped = tr.mapping.map(caretPosition, 1)
+    const bounded = Math.max(0, Math.min(mapped, tr.doc.content.size))
+    let position = TextSelection.near(tr.doc.resolve(bounded), 1).head
+    if (operator !== 'c') {
+      const projected = EditorState.create({ doc: tr.doc })
+      const line = logicalLineAt(projected, position)
+      if (line) {
+        const boundaries = graphemeBoundaries(projected, line.from, line.to)
+        position = boundaries.find((at) => at >= position) ?? line.to
+        if (position === line.to && boundaries.length > 1) position = boundaries.at(-2)!
+      }
+    }
+    return {
+      kind: 'ready',
+      sourceDoc: state.doc,
+      operator,
+      contentRange,
+      register,
+      mutation,
+      caret: { position, bias: 1, mode: operator === 'c' ? 'insert' : 'normal' },
+      nativeSchema,
+    }
+  } catch {
+    return rejected()
   }
 }
 
@@ -325,14 +346,30 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
           }
         } else mutation = { kind: 'delete', range: { from: item.pos, to: end } }
       }
-      return result(state, operator, { from: item.pos, to: end }, register, mutation, item.pos, {
-        kind: 'list-items',
-        container: { pos: item.pos, type: item.type as 'listItem' | 'taskItem' },
-      })
+      return result(
+        state,
+        operator,
+        { from: item.pos, to: end },
+        register,
+        mutation,
+        operator === 'y' ? target.origin : item.pos,
+        {
+          kind: 'list-items',
+          container: { pos: item.pos, type: item.type as 'listItem' | 'taskItem' },
+        },
+      )
     }
     const logical = logicalLines(block)
     const idx = logical.findIndex((candidate) => candidate.from === line.from)
     if (logical.length > 1 && idx >= 0) {
+      const following = textBlocks(state).find((candidate) => candidate.from > block.to)
+      const trailingParagraph =
+        following?.node.type.name === 'paragraph' &&
+        following.node.content.size === 0 &&
+        following.to + 1 === state.doc.content.size &&
+        state.doc.resolve(following.from).depth === 1
+      if (idx + countOf(target.count) > logical.length && following && !trailingParagraph)
+        return rejected()
       const last = Math.min(logical.length - 1, idx + countOf(target.count) - 1)
       const deletion = logicalLineDeletion(logical, idx, last, operator === 'd')!
       const change = logicalLineChange(logical, idx, last)!
@@ -359,7 +396,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         { from: deletion.contentFrom, to: deletion.contentTo },
         register,
         mutation,
-        range.from,
+        operator === 'y' ? target.origin : range.from,
         { kind: 'logical-lines', textblock: type },
       )
     }
@@ -402,10 +439,18 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
               ),
             }
           : { kind: 'delete', range: { from, to } }
-    return result(state, operator, { from, to }, register, mutation, from, {
-      kind: 'textblocks',
-      container,
-    })
+    return result(
+      state,
+      operator,
+      { from, to },
+      register,
+      mutation,
+      operator === 'y' ? target.origin : from,
+      {
+        kind: 'textblocks',
+        container,
+      },
+    )
   }
   if (target.kind === 'motion') {
     const origin = target.origin
@@ -489,8 +534,8 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         (candidate) => candidate.from === destinationLine.from,
       )
       if (
-        (sourceLines.length > 1 && sourceIndex !== (movingDown ? sourceLines.length - 1 : 0)) ||
-        (targetLines.length > 1 && destinationIndex !== (movingDown ? 0 : targetLines.length - 1))
+        (sourceLines.length > 1 && sourceIndex !== (movingDown ? 0 : sourceLines.length - 1)) ||
+        (targetLines.length > 1 && destinationIndex !== (movingDown ? targetLines.length - 1 : 0))
       )
         return rejected()
       linewise = true
@@ -515,7 +560,7 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         { from, to },
         { content: fragment, linewise, linewiseTextblock: undefined },
         mutation,
-        from,
+        operator === 'y' ? origin : from,
         { kind: 'textblocks', container: containerAt(state, low.from) },
       )
     }
@@ -574,27 +619,23 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
         { from: deletion.contentFrom, to: deletion.contentTo },
         content,
         mutation,
-        from,
+        operator === 'y' ? origin : from,
         { kind: 'logical-lines', textblock },
       )
     }
     const register = registerFor(state, from, to, false)
     if (removal && to > from) mutation = { kind: 'delete', range: { from, to } }
-    return result(state, operator, { from, to }, register, mutation, from, { kind: 'inline' })
+    return result(
+      state,
+      operator,
+      { from, to },
+      register,
+      mutation,
+      operator === 'y' ? origin : from,
+      { kind: 'inline' },
+    )
   }
   if (target.kind !== 'visual') return { kind: 'noop' }
-  if (target.linewise && target.anchor === target.cursor) {
-    const line = logicalLineAt(state, target.cursor)
-    if (line) {
-      const lines = logicalLines(line.block)
-      const index = lines.findIndex((candidate) => candidate.from === line.from)
-      const item = containerAt(state, line.block.from, ['listItem', 'taskItem'])
-      const itemNode = item ? state.doc.nodeAt(item.pos) : null
-      const itemHasOtherBlocks =
-        itemNode?.content.content.filter((child) => child.isTextblock).length !== 1
-      if ((lines.length > 1 && index > 0) || itemHasOtherBlocks) return rejected('selection')
-    }
-  }
   const range = resolveVimVisualRange(state, target.anchor, target.cursor, target.linewise)
   if (!range || !safeRange(state, range.from, range.to)) return rejected('selection')
   let registerRange = { from: range.from, to: range.to }
@@ -687,16 +728,6 @@ export function planVimOperator(state: EditorState, request: VimOperatorRequest)
       const last = logicalLineAt(state, Math.max(target.anchor, target.cursor))!
       const low = first.block.from <= last.block.from ? first.block : last.block
       const high = first.block.from <= last.block.from ? last.block : first.block
-      const firstPosition = Math.min(target.anchor, target.cursor)
-      const lastPosition = Math.max(target.anchor, target.cursor)
-      const firstLine = logicalLineAt(state, firstPosition)
-      const lastLine = logicalLineAt(state, lastPosition)
-      if (
-        low.from !== high.from &&
-        ((firstLine?.block.from === low.from && firstPosition > low.from + 1) ||
-          (lastLine?.block.from === high.from && lastPosition < high.to))
-      )
-        return rejected('selection')
       const container = containerAt(state, low.from, STRUCTURAL_CONTAINERS)
       const isCell = container?.type === 'tableCell' || container?.type === 'tableHeader'
       const cellNode = isCell ? state.doc.nodeAt(container.pos) : null
