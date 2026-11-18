@@ -1801,6 +1801,238 @@ describe('rich-text Vim extension', () => {
     }
   })
 
+  it('rejects a visual line deletion that spans partial paragraph blocks', () => {
+    for (const [content, position] of [
+      ['<p>keep<br>delete</p><p>next</p>', 'delete'],
+      ['<p>next</p><p>keep<br>delete</p>', 'delete'],
+      ['<pre><code>keep\\ndelete</code></pre><p>next</p>', 'delete'],
+      ['<ul><li><p>keep</p><p>delete</p></li><li><p>next</p></li></ul>', 'delete'],
+    ] as const) {
+      const feedback = vi.fn()
+      const ed = open(content, true, feedback)
+      let at = 0
+      ed.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === position) at = pos
+      })
+      ed.commands.setTextSelection(at)
+      const before = ed.state.doc
+      key(ed, 'V')
+      key(ed, 'd')
+      expect.soft(ed.state.doc.eq(before), content).toBe(true)
+      expect.soft(feedback).toHaveBeenCalled()
+      expect(ed.view.dom.dataset.vimMode).toBe('normal')
+    }
+  })
+
+  it('rejects c2w across table cells without changing the previous register or history', () => {
+    const feedback = vi.fn()
+    const ed = openTable(feedback)
+    ed.commands.setContent(
+      '<table><tbody><tr><td><p>alpha</p></td><td><p></p></td></tr></tbody></table>',
+    )
+    let alpha = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'alpha') alpha = pos
+    })
+    ed.commands.setTextSelection(alpha)
+    key(ed, 'y')
+    key(ed, 'w')
+    key(ed, 'c')
+    key(ed, '2')
+    const before = ed.state.doc
+    key(ed, 'w')
+    expect(ed.state.doc.eq(before)).toBe(true)
+    expect(ed.view.dom.dataset.vimMode).toBe('normal')
+    expect(feedback).toHaveBeenCalled()
+    key(ed, 'p')
+    expect(ed.state.doc.textContent).toBe('aalphalpha')
+    expect(ed.state.doc.check()).toBeUndefined()
+    key(ed, 'u')
+    expect(ed.state.doc.textContent).toBe('alpha')
+
+    const noHistory = new Editor({
+      extensions: [
+        StarterKit,
+        TableKit,
+        RichTextVim.configure({ enabled: false, editable: () => true }),
+      ],
+      content: '<table><tbody><tr><td><p>alpha</p></td><td><p></p></td></tr></tbody></table>',
+    })
+    own(noHistory)
+    configureRichTextVim(noHistory.view, true, true, () => true)
+    let noHistoryAlpha = 0
+    noHistory.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'alpha') noHistoryAlpha = pos
+    })
+    noHistory.commands.setTextSelection(noHistoryAlpha)
+    const beforeRejectedUndo = noHistory.state.doc
+    key(noHistory, 'c')
+    key(noHistory, '2')
+    key(noHistory, 'w')
+    key(noHistory, 'u')
+    expect(noHistory.state.doc.eq(beforeRejectedUndo)).toBe(true)
+  })
+
+  it('deletes empty first logical lines without retaining a leading separator', () => {
+    for (const markup of ['<pre><code>\nnext</code></pre>', '<p><br>next</p>']) {
+      const ed = open(markup)
+      ed.commands.setTextSelection(1)
+      key(ed, 'V')
+      key(ed, 'd')
+      expect.soft(ed.state.doc.firstChild?.textContent, markup).toBe('next')
+      expect(ed.state.doc.check()).toBeUndefined()
+    }
+
+    const empty = open('<pre><code>\nnext</code></pre>')
+    empty.commands.setTextSelection(1)
+    key(empty, 'y')
+    key(empty, 'y')
+    empty.commands.setTextSelection(empty.state.doc.content.size - 1)
+    key(empty, 'p')
+    expect(empty.state.doc.firstChild?.textContent).toBe('\nnext\n')
+    expect(empty.state.doc.check()).toBeUndefined()
+
+    const changed = open('<pre><code>\nnext</code></pre>')
+    changed.commands.setTextSelection(1)
+    key(changed, 'V')
+    key(changed, 'c')
+    changed.view.dispatch(changed.state.tr.insertText('X'))
+    expect(changed.state.doc.firstChild?.textContent).toBe('X\nnext')
+    expect(changed.state.doc.check()).toBeUndefined()
+  })
+
+  it('normalizes destructive operator carets to the remaining grapheme', () => {
+    const ed = open('<p>one</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'd')
+    key(ed, '$')
+    expect(ed.getHTML()).toBe('<p></p>')
+    expect(ed.state.selection.head).toBe(1)
+    key(ed, 'x')
+    expect(ed.getHTML()).toBe('<p></p>')
+
+    ed.commands.setContent('<p>one</p>')
+    ed.commands.setTextSelection(1)
+    key(ed, 'V')
+    key(ed, 'd')
+    expect(ed.getHTML()).toBe('<p></p>')
+    expect(ed.state.doc.check()).toBeUndefined()
+
+    ed.commands.setContent('<h2><strong>Heading</strong></h2><p>next</p>')
+    ed.commands.setTextSelection(3)
+    key(ed, 'y')
+    key(ed, 'y')
+    key(ed, 'p')
+    expect(ed.state.doc.firstChild?.type.name).toBe('heading')
+    expect(ed.state.doc.firstChild?.attrs.level).toBe(2)
+    expect(ed.state.doc.firstChild?.firstChild?.marks.map((mark) => mark.type.name)).toEqual([
+      'bold',
+    ])
+  })
+
+  it('deletes a long-first-paragraph list item from its later paragraph and can undo it', () => {
+    for (const task of [false, true]) {
+      const content = task
+        ? '<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>LONG FIRST PARAGRAPH CONTENT</p><p>second</p></li><li data-type="taskItem" data-checked="false"><p>next</p></li></ul>'
+        : '<ul><li><p>LONG FIRST PARAGRAPH CONTENT</p><p>second</p></li><li><p>next</p></li></ul>'
+      const ed = new Editor({
+        extensions: [
+          StarterKit,
+          ...(task ? [TaskList, RichTextTaskItem.configure({ nested: true })] : []),
+          RichTextVim.configure({ enabled: false, editable: () => true }),
+        ],
+        content,
+      })
+      own(ed)
+      configureRichTextVim(ed.view, true, true, () => true)
+      let second = 0
+      ed.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === 'second') second = pos
+      })
+      ed.commands.setTextSelection(second)
+      key(ed, 'V')
+      key(ed, 'd')
+      expect(ed.state.doc.check()).toBeUndefined()
+      expect(ed.state.doc.textContent).toBe('next')
+      key(ed, 'u')
+      expect(ed.state.doc.textContent).toContain('LONG FIRST PARAGRAPH CONTENTsecond')
+      expect(ed.state.doc.firstChild?.childCount).toBe(2)
+    }
+  })
+
+  it('preserves heading structure on linewise yank/paste and keeps nested table actions local', () => {
+    const ed = open('<h2><strong>Heading</strong></h2><p>next</p>')
+    ed.commands.setTextSelection(2)
+    key(ed, 'y')
+    key(ed, 'y')
+    ed.commands.setTextSelection(ed.state.doc.content.size - 1)
+    key(ed, 'p')
+    expect(ed.state.doc.child(0).type.name).toBe('heading')
+    expect(ed.state.doc.child(0).attrs.level).toBe(2)
+    expect(ed.state.doc.child(0).firstChild?.marks.map((mark) => mark.type.name)).toEqual(['bold'])
+    expect(ed.state.doc.child(1).type.name).toBe('paragraph')
+    expect(ed.state.doc.child(2).type.name).toBe('heading')
+    expect(ed.state.doc.child(2).attrs.level).toBe(2)
+    expect(ed.state.doc.child(2).firstChild?.marks.map((mark) => mark.type.name)).toEqual(['bold'])
+    expect(ed.state.doc.check()).toBeUndefined()
+
+    ed.commands.setContent('<h2><strong>Heading</strong></h2><p>next</p>')
+    ed.commands.setTextSelection(2)
+    key(ed, 'y')
+    key(ed, 'y')
+    let next = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'next') next = pos
+    })
+    ed.commands.setTextSelection(next)
+    key(ed, 'c')
+    key(ed, 'c')
+    ed.view.dispatch(ed.state.tr.insertText('X'))
+    expect(ed.state.doc.textContent).toBe('HeadingX')
+    key(ed, 'Escape')
+    key(ed, 'p')
+    expect(ed.state.doc.toJSON()).toMatchObject({
+      content: [
+        {
+          type: 'heading',
+          attrs: { level: 2 },
+          content: [{ type: 'text', marks: [{ type: 'bold' }], text: 'Heading' }],
+        },
+        { type: 'paragraph', content: [{ type: 'text', text: 'X' }] },
+        {
+          type: 'heading',
+          attrs: { level: 2 },
+          content: [{ type: 'text', marks: [{ type: 'bold' }], text: 'Heading' }],
+        },
+      ],
+    })
+    expect(ed.state.doc.check()).toBeUndefined()
+
+    const nested = new Editor({
+      extensions: [
+        StarterKit,
+        TableKit,
+        RichTextVim.configure({ enabled: false, editable: () => true }),
+      ],
+      content:
+        '<ul><li><p>outer</p><table><tbody><tr><th><p>head</p></th><td><p>other</p></td></tr></tbody></table><p>tail</p></li><li><p>sibling</p></li></ul>',
+    })
+    own(nested)
+    configureRichTextVim(nested.view, true, true, () => true)
+    let head = 0
+    nested.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'head') head = pos
+    })
+    nested.commands.setTextSelection(head)
+    key(nested, 'd')
+    key(nested, 'd')
+    expect(nested.state.doc.textContent).toContain('outer')
+    expect(nested.state.doc.textContent).toContain('sibling')
+    expect(nested.state.doc.textContent).toContain('other')
+    expect(nested.state.doc.textContent).toContain('tail')
+    expect(nested.state.doc.check()).toBeUndefined()
+  })
+
   it('keeps composition and modified shortcuts out of Vim routing and requests hints for normal f', () => {
     const onHints = vi.fn()
     const ed = new Editor({
