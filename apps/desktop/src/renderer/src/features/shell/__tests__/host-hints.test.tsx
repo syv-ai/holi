@@ -105,13 +105,14 @@ test('async adapter preparation is request-scoped and cannot replace a newer hin
   view.unmount()
 })
 
-test('prepared app hints share one request with asynchronous browser hints', async () => {
+test('prepared app and asynchronous browser hints share unique labels and keyboard activation', async () => {
   let finish!: () => void
   const view = setup(<div data-pane-focused data-pane="pane" />)
   const root = document.querySelector<HTMLElement>('[data-pane-focused]')!
+  const nativeTarget = document.createElement('button')
+  nativeTarget.textContent = 'Native action'
   const appOwner = document.createElement('div')
-  const appTarget = document.createElement('button')
-  appTarget.textContent = 'Prepared app action'
+  const appTarget = document.createElement('div')
   const appAdapter: HostHintAdapter = {
     prepare: () => new Promise<void>((resolve) => (finish = resolve)),
     discover: () => [
@@ -130,18 +131,40 @@ test('prepared app hints share one request with asynchronous browser hints', asy
     activate: activateBrowser,
     subscribe: vi.fn(() => () => {}),
   }
-  root.append(appTarget, appOwner, browserOwner)
+  root.append(nativeTarget, appTarget, appOwner, browserOwner)
   registerHostHintAdapter(appOwner, appAdapter)
   registerAsyncHostHintAdapter(browserOwner, browserAdapter)
   act(() => requestAdaptedHostHints(appOwner, appAdapter))
   expect(hints()).toHaveLength(0)
   await act(async () => finish())
-  expect(hints().map((hint) => hint.dataset.hintTarget)).toEqual([
+
+  const syncHints = hints()
+  expect(syncHints.map((hint) => hint.dataset.hintTarget)).toEqual([
+    'Native action',
     'Prepared app action',
-    'Browser action',
   ])
-  await choose('Browser action')
-  expect(activateBrowser).toHaveBeenCalledOnce()
+  const browserLabels = browserAdapter.present.mock.calls[0]![2]
+  expect(browserLabels).toHaveLength(1)
+  expect(browserLabels[0]!.id).toBe('browser-action')
+  expect(
+    new Set([
+      ...syncHints.map((hint) => hint.dataset.hintKey!),
+      ...browserLabels.map(({ key }) => key),
+    ]).size,
+  ).toBe(3)
+  expect(syncHints.some((hint) => hint.dataset.hintTarget === 'Browser action')).toBe(false)
+
+  const event = new KeyboardEvent('keydown', {
+    key: browserLabels[0]!.key,
+    bubbles: true,
+    cancelable: true,
+  })
+  await act(async () => {
+    window.dispatchEvent(event)
+  })
+  expect(event.defaultPrevented).toBe(true)
+  expect(activateBrowser).toHaveBeenCalledOnceWith(1, 'browser-action')
+  expect(browserAdapter.clear).toHaveBeenCalledOnceWith(1)
   view.unmount()
 })
 
