@@ -573,8 +573,9 @@ async function run() {
   )
   mark('native-hardbreak-logical-line-delete-and-undo')
 
+  const mermaidSource = 'graph TD; A-->B'
   await evaluate(
-    `window.richTextVimFixture.setup('<p>before</p><pre><code class="language-mermaid">A --&gt; B</code></pre><p>after</p>',1);window.richTextVimFixture.atText('A --> B')`,
+    `window.richTextVimFixture.setup('<p>before</p><pre><code class="language-mermaid">graph TD; A--&gt;B</code></pre><p>after</p>',1);window.richTextVimFixture.atText('graph TD; A-->B')`,
   )
   const mermaidBefore = await state()
   const sourceBefore = mermaidBefore.json.content[1]
@@ -586,27 +587,43 @@ async function run() {
   await key('p')
   const mermaidPasted = await state()
   const pastedNodes = mermaidPasted.json.content.filter((node) => node.type === 'codeBlock')
-  assert.equal(pastedNodes.length, 2)
-  assert(pastedNodes.every((node) => node.attrs?.language === 'mermaid'))
+  assert.equal(pastedNodes.length, 1, 'linewise paste stays inside the existing code block')
+  assert.equal(pastedNodes[0]?.attrs?.language, 'mermaid')
+  assert.equal(
+    pastedNodes[0]?.content?.map((node) => node.text ?? '').join(''),
+    `${mermaidSource}\n${mermaidSource}`,
+  )
   assert.equal(mermaidPasted.json.content[0]?.type, 'paragraph')
   assert.equal(mermaidPasted.json.content.at(-1)?.type, 'paragraph')
   await key('d')
   await key('d')
   const mermaidDeleted = await state()
-  assert.equal(mermaidDeleted.json.content.filter((node) => node.type === 'codeBlock').length, 1)
+  const deletedNodes = mermaidDeleted.json.content.filter((node) => node.type === 'codeBlock')
+  assert.equal(deletedNodes.length, 1)
+  assert.equal(deletedNodes[0]?.attrs?.language, 'mermaid')
+  assert.equal(deletedNodes[0]?.content?.map((node) => node.text ?? '').join(''), mermaidSource)
   assert.equal(mermaidDeleted.markdown.includes('before'), true)
   assert.equal(mermaidDeleted.markdown.includes('after'), true)
   await key('u')
   const mermaidUndone = await state()
-  assert.equal(mermaidUndone.json.content.filter((node) => node.type === 'codeBlock').length, 2)
-  assert(
-    mermaidUndone.json.content
-      .filter((node) => node.type === 'codeBlock')
-      .every((node) => node.attrs?.language === 'mermaid'),
+  const undoneNodes = mermaidUndone.json.content.filter((node) => node.type === 'codeBlock')
+  assert.equal(undoneNodes.length, 1)
+  assert.equal(undoneNodes[0]?.attrs?.language, 'mermaid')
+  assert.equal(
+    undoneNodes[0]?.content?.map((node) => node.text ?? '').join(''),
+    `${mermaidSource}\n${mermaidSource}`,
   )
   assert.equal(mermaidUndone.markdown.includes('before'), true)
   assert.equal(mermaidUndone.markdown.includes('after'), true)
-  mark('native-mermaid-line-yank-put-delete-undo-preserves-source-and-attrs')
+  await key('u')
+  const mermaidOriginal = await state()
+  const originalNodes = mermaidOriginal.json.content.filter((node) => node.type === 'codeBlock')
+  assert.equal(originalNodes.length, 1)
+  assert.equal(originalNodes[0]?.attrs?.language, 'mermaid')
+  assert.equal(originalNodes[0]?.content?.map((node) => node.text ?? '').join(''), mermaidSource)
+  assert.equal(mermaidOriginal.markdown.includes('before'), true)
+  assert.equal(mermaidOriginal.markdown.includes('after'), true)
+  mark('native-mermaid-logical-line-yank-put-delete-undo-preserves-source-and-attrs')
 
   await evaluate(
     `window.richTextVimFixture.setup('<table><tbody><tr><td><p>one</p></td></tr><tr><td><p>last</p></td></tr></tbody></table>',3)`,
