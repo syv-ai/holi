@@ -13,7 +13,7 @@ function cappedCount(count: number) {
   return Math.min(999, Math.max(1, count))
 }
 
-type VimRegister = {
+export type VimRegister = {
   content: Slice
   linewise: boolean
   linewiseTextblock?: 'codeBlock' | 'hardBreak'
