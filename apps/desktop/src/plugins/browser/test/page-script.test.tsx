@@ -4,6 +4,8 @@
  * left out, and the numbers finding their elements again.
  */
 import { beforeAll, beforeEach, expect, test, vi } from 'vitest'
+import { presentation } from './hint-presentation'
+import type { HintPresentation } from '@holi/shared'
 import SCRIPT from '../main/page-script.js?raw'
 
 interface HoliPage {
@@ -13,6 +15,22 @@ interface HoliPage {
   focus(ref: number): boolean
   valueOf(ref: number): string | null
   fill(ref: number, text: string): boolean
+  hints: {
+    reset(): void
+    discover(owner: HintOwner): { id: string; label: string; x: number; y: number }[] | null
+    present(
+      owner: HintOwner,
+      revision: number,
+      labels: { id: string; key: string }[],
+      theme?: 'light' | 'dark',
+      presentation?: HintPresentation,
+    ): boolean
+    clear(owner: HintOwner): boolean
+    inspect(): { key: string; label: string }[]
+    poll(): { type: string; capture?: number }[]
+    activate(owner: HintOwner, id: string): { x: number; y: number; field: boolean } | null
+    enterInsert(owner: HintOwner, id: string): boolean
+  }
   vim: {
     documentNonce(): string
     rearm(): string
@@ -21,15 +39,66 @@ interface HoliPage {
   }
 }
 
+interface HintOwner {
+  tab: string
+  nonce: string
+  attachment: string
+  request: number
+  origin: string
+  snapshot: number
+  geometry: number
+}
+const keydownListeners: EventListener[] = []
 const holi = (): HoliPage => (globalThis as unknown as { __holiPage: HoliPage }).__holiPage
+const presentHints = (
+  owner: HintOwner,
+  revision: number,
+  labels: { id: string; key: string }[],
+  theme: 'light' | 'dark' = 'light',
+) => holi().hints.present(owner, revision, labels, theme, presentation)
+const hintOwner = (request: number): HintOwner => ({
+  tab: 'tab',
+  nonce: 'doc',
+  attachment: 'attach',
+  request,
+  origin: 'opaque-token',
+  snapshot: 1,
+  geometry: 1,
+})
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn()
   document.elementFromPoint = vi.fn(() => null)
+  const nativeAddEventListener = document.addEventListener.bind(document)
+  vi.spyOn(document, 'addEventListener').mockImplementation((type, listener, options) => {
+    if (type === 'keydown' && typeof listener === 'function') {
+      const captured = listener as EventListener
+      keydownListeners.push(captured)
+      // jsdom cannot synthesize a trusted event. Only dispatched fixtures go
+      // through this test adapter; direct calls still exercise the untrusted
+      // production guard with their original event object.
+      nativeAddEventListener(
+        type,
+        (event) =>
+          captured(
+            new Proxy(event, {
+              get(target, property) {
+                if (property === 'isTrusted') return true
+                const value = Reflect.get(target, property, target)
+                return typeof value === 'function' ? value.bind(target) : value
+              },
+            }),
+          ),
+        options,
+      )
+      return
+    }
+    nativeAddEventListener(type, listener, options)
+  })
   new Function(SCRIPT)()
 })
 
-beforeEach(() => {
+beforeEach(async () => {
   document.title = 'Sign in — Example'
   document.body.innerHTML = `
     <header><nav><a href="/pricing">Pricing</a> <a href="https://other.example/x">Elsewhere</a></nav></header>
@@ -49,6 +118,9 @@ beforeEach(() => {
       <p hidden>Secret text</p>
       <script>var x = 1</script>
     </main>`
+  holi().hints.reset()
+  await Promise.resolve()
+  await Promise.resolve()
 })
 
 test('reads the page in order, its controls numbered', () => {
@@ -89,6 +161,189 @@ test('a number finds its control until it leaves the page', () => {
   button.remove()
   expect(holi().click(7)).toBe(false)
   expect(holi().point(7)).toBeNull()
+})
+
+test('untrusted synthetic page key events cannot create hint requests', () => {
+  const event = { isTrusted: false } as KeyboardEvent
+  for (const listener of keydownListeners) listener(event)
+  expect(holi().hints.poll()).toEqual([])
+})
+
+test('hint requests reject stale operations and themes are bounded', () => {
+  const owner = hintOwner(300)
+  expect(holi().hints.discover(owner)).not.toBeNull()
+  expect(holi().hints.discover(hintOwner(299))).toBeNull()
+  expect(presentHints(owner, 1, [], 'system' as 'light')).toBe(false)
+  expect(holi().hints.clear(hintOwner(299))).toBe(false)
+})
+
+test('page-local geometry changes do not strand main-process discovery', () => {
+  const button = document.querySelector('button[type=submit]')!
+  button.getBoundingClientRect = () =>
+    ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+  document.elementFromPoint = vi.fn(() => button)
+  for (let index = 0; index < 8; index++) window.dispatchEvent(new Event('scroll'))
+  const owner = hintOwner(301)
+  expect(holi().hints.discover(owner)).not.toBeNull()
+  expect(holi().hints.clear(owner)).toBe(true)
+  for (let index = 0; index < 3; index++) window.dispatchEvent(new Event('scroll'))
+  expect(holi().hints.discover(hintOwner(302))).not.toBeNull()
+})
+
+test('external removal of the owned overlay revokes the captured owner', async () => {
+  await Promise.resolve()
+  const button = document.querySelector('button[type=submit]')!
+  button.getBoundingClientRect = () =>
+    ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+  document.elementFromPoint = vi.fn(() => button)
+  const owner = hintOwner(303)
+  const targets = holi().hints.discover(owner)!
+  expect(presentHints(owner, 1, [{ id: targets[0]!.id, key: 'a' }])).toBe(true)
+  document.querySelector('[aria-hidden=true]')!.remove()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(holi().hints.poll()).toContainEqual({ type: 'revoke', owner })
+  expect(holi().hints.activate(owner, targets[0]!.id)).toBeNull()
+})
+
+test('hint discovery includes enabled native and ARIA controls but not disabled controls', () => {
+  const form = document.createElement('form')
+  form.innerHTML = `
+    <input type="checkbox" aria-label="Accept">
+    <input type="radio" aria-label="Choice">
+    <select aria-label="Region"><option>North</option></select>
+    <button disabled>Disabled button</button>
+    <input type="checkbox" aria-label="Disabled check" disabled>
+    <button role="switch" aria-label="Notifications">Toggle</button>`
+  document.body.append(form)
+  const controls = [...form.querySelectorAll<HTMLElement>('input,select,button')]
+  controls.forEach((element, index) => {
+    const x = 10 + index * 50
+    element.getBoundingClientRect = () =>
+      ({ x, y: 20, width: 40, height: 20, left: x, top: 20, right: x + 40, bottom: 40 }) as DOMRect
+  })
+  document.elementFromPoint = vi.fn((x) => controls[Math.floor((x - 30) / 50)] ?? null)
+  const targets = holi().hints.discover(hintOwner(406))!
+  expect(targets.map(({ label }) => label)).toEqual(['Accept', 'Choice', 'Region', 'Notifications'])
+  for (const { id } of targets.slice(0, 3))
+    expect(holi().hints.enterInsert(hintOwner(406), id)).toBe(false)
+})
+
+test('visible hint targets are separate from CLI refs and activation rechecks geometry', () => {
+  const button = document.querySelector('button[type=submit]')!
+  button.setAttribute('aria-label', 'Sign in')
+  button.getBoundingClientRect = () =>
+    ({
+      x: 10,
+      y: 20,
+      width: 40,
+      height: 20,
+      left: 10,
+      top: 20,
+      right: 50,
+      bottom: 40,
+      toJSON: () => ({}),
+    }) as DOMRect
+  document.elementFromPoint = vi.fn(() => button)
+  holi().read(12_000)
+  const owner = hintOwner(4)
+  const targets = holi().hints.discover(owner)!
+  expect(targets).toHaveLength(1)
+  expect(targets[0]?.label).toBe('Sign in')
+  expect(presentHints(owner, 1, [{ id: targets[0]!.id, key: 'a' }])).toBe(true)
+  expect(holi().hints.activate(owner, targets[0]!.id)).toEqual({ x: 30, y: 30, field: false })
+  expect(holi().hints.clear(owner)).toBe(true)
+  expect(holi().hints.discover(owner)).toBeNull()
+  expect(holi().hints.activate(owner, targets[0]!.id)).toBeNull()
+})
+
+test('animation-frame geometry monitoring revokes moved targets and stops after clear', () => {
+  const button = document.querySelector<HTMLElement>('button[type=submit]')!
+  let x = 10
+  button.getBoundingClientRect = () =>
+    ({ x, y: 20, width: 40, height: 20, left: x, top: 20, right: x + 40, bottom: 40 }) as DOMRect
+  document.elementFromPoint = vi.fn(() => button)
+  const callbacks = new Map<number, FrameRequestCallback>()
+  let nextFrame = 0
+  const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    const id = ++nextFrame
+    callbacks.set(id, callback)
+    return id
+  })
+  const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+    callbacks.delete(id)
+  })
+  const runFrame = () => {
+    const [id, callback] = callbacks.entries().next().value!
+    callbacks.delete(id)
+    callback(16)
+  }
+  try {
+    const owner = hintOwner(407)
+    const target = holi().hints.discover(owner)![0]!
+    expect(presentHints(owner, 1, [{ id: target.id, key: 'a' }])).toBe(true)
+    x = 80
+    runFrame()
+    expect(holi().hints.poll()).toContainEqual({ type: 'revoke', owner })
+    expect(holi().hints.inspect()).toEqual([])
+    const fresh = hintOwner(408)
+    const freshTarget = holi().hints.discover(fresh)![0]!
+    expect(presentHints(fresh, 1, [{ id: freshTarget.id, key: 'b' }])).toBe(true)
+    expect(holi().hints.clear(fresh)).toBe(true)
+    expect(callbacks.size).toBe(0)
+    expect(raf).toHaveBeenCalled()
+    expect(cancel).toHaveBeenCalled()
+  } finally {
+    raf.mockRestore()
+    cancel.mockRestore()
+  }
+})
+
+test('hint badges do not intercept native target activation', () => {
+  const button = document.querySelector('button[type=submit]')!
+  button.setAttribute('aria-label', 'Submit')
+  button.getBoundingClientRect = () =>
+    ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+  const attachShadow = Element.prototype.attachShadow
+  let hintShadow: ShadowRoot | null = null
+  const attachSpy = vi.spyOn(Element.prototype, 'attachShadow').mockImplementation(function (
+    this: Element,
+    init,
+  ) {
+    hintShadow = attachShadow.call(this, init)
+    return hintShadow
+  })
+  document.elementFromPoint = vi.fn(() => {
+    const badge = hintShadow?.querySelector('span')
+    return badge && badge.style.pointerEvents !== 'none' ? badge : button
+  })
+  try {
+    const owner = hintOwner(304)
+    const target = holi().hints.discover(owner)![0]!
+    expect(presentHints(owner, 1, [{ id: target.id, key: 'a' }])).toBe(true)
+    expect((hintShadow as ShadowRoot | null)?.querySelector('span')?.style.pointerEvents).toBe(
+      'none',
+    )
+    expect(holi().hints.activate(owner, target.id)).toEqual({ x: 30, y: 30, field: false })
+  } finally {
+    attachSpy.mockRestore()
+  }
+})
+
+test('hint labels use host key case and update in place', () => {
+  const button = document.querySelector('button[type=submit]')!
+  button.setAttribute('aria-label', 'Sign in')
+  button.getBoundingClientRect = () =>
+    ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+  document.elementFromPoint = vi.fn(() => button)
+  const owner = hintOwner(5)
+  const targets = holi().hints.discover(owner)!
+  expect(presentHints(owner, 1, [{ id: targets[0]!.id, key: 'a' }])).toBe(true)
+  const overlay = document.querySelector('[aria-hidden=true]')
+  expect(holi().hints.inspect()).toMatchObject([{ key: 'a', label: 'Sign in' }])
+  expect(presentHints(owner, 2, [{ id: targets[0]!.id, key: 'b' }])).toBe(true)
+  expect(document.querySelector('[aria-hidden=true]')).toBe(overlay)
+  expect(holi().hints.inspect()).toMatchObject([{ key: 'b', label: 'Sign in' }])
 })
 
 test('vim mode uses native selections and blocks unsupported edits synchronously', () => {
@@ -776,4 +1031,237 @@ test('fills a field and picks an option, as typing would', () => {
   expect(holi().fill(6, 'Sweden')).toBe(true)
   expect(holi().valueOf(6)).toBe('Sweden')
   expect(holi().fill(6, 'Norway')).toBe(false)
+})
+
+test('active hint capture precedes field Vim handling and queues raw control keys', () => {
+  const input = document.createElement('input')
+  document.body.append(input)
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 70, nonce)).toBe(true)
+  input.focus()
+  const owner = hintOwner(70)
+  expect(holi().hints.discover(owner)).not.toBeNull()
+  const event = (key: string) =>
+    ({
+      isTrusted: true,
+      key,
+      code: key === 'Backspace' ? 'Backspace' : `Key${key.toUpperCase()}`,
+      repeat: false,
+      isComposing: false,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+    }) as unknown as KeyboardEvent
+  const f = event('f')
+  keydownListeners[0]!(f)
+  const backspace = event('Backspace')
+  keydownListeners[0]!(backspace)
+  const escape = event('Escape')
+  keydownListeners[0]!(escape)
+  expect(
+    holi()
+      .hints.poll()
+      .map(({ type }) => type),
+  ).toEqual(['key', 'key', 'key', 'revoke'])
+  expect(f.preventDefault).toHaveBeenCalled()
+  expect(holi().vim.mode().mode).toBe('insert')
+})
+
+test('a key immediately after f stays with its pending hint capture', () => {
+  const input = document.createElement('input')
+  document.body.append(input)
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 72, nonce)).toBe(true)
+  input.focus()
+  const event = (key: string) =>
+    new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+  const escape = event('Escape')
+  input.dispatchEvent(escape)
+  const f = event('f')
+  input.dispatchEvent(f)
+  const next = event('a')
+  input.dispatchEvent(next)
+  const [request, key] = holi().hints.poll() as { type: string; capture?: number }[]
+  expect(request?.type).toBe('request')
+  expect(key?.type).toBe('key')
+  expect(key?.capture).toBe(request?.capture)
+  expect(next.defaultPrevented).toBe(true)
+})
+
+test('hint queue overflow retires the session instead of dropping arbitrary keys', () => {
+  const input = document.createElement('input')
+  document.body.append(input)
+  const nonce = holi().vim.documentNonce()
+  expect(holi().vim.configure(true, 73, nonce)).toBe(true)
+  input.focus()
+  const owner = hintOwner(71)
+  expect(holi().hints.discover(owner)).not.toBeNull()
+  const listener = keydownListeners[0]!
+  for (let index = 0; index < 33; index++)
+    listener({
+      isTrusted: true,
+      key: 'a',
+      code: 'KeyA',
+      repeat: false,
+      isComposing: false,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    } as unknown as KeyboardEvent)
+  expect(holi().hints.poll()).toEqual([{ type: 'revoke', owner }])
+  expect(holi().hints.activate(owner, '0')).toBeNull()
+})
+
+function nativeKey(
+  key: string,
+  target: Element = document.activeElement!,
+  extra: KeyboardEventInit = {},
+) {
+  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })
+  target.dispatchEvent(event)
+  return event
+}
+
+let hintTestRevision = 1000
+function armHints() {
+  const nonce = holi().vim.rearm()
+  expect(holi().vim.configure(true, ++hintTestRevision, nonce)).toBe(true)
+}
+
+test.each(['body', 'button', 'a'])(
+  'ordinary focused %s requests hints without field normal mode',
+  (selector) => {
+    armHints()
+    const target = document.querySelector<HTMLElement>(selector)!
+    target.tabIndex = 0
+    target.focus()
+    expect(nativeKey('x').defaultPrevented).toBe(false)
+    expect(nativeKey('f').defaultPrevented).toBe(true)
+    expect(holi().hints.poll()).toMatchObject([{ type: 'request', capture: 1 }])
+    expect(nativeKey('Escape').defaultPrevented).toBe(true)
+    expect(nativeKey('x').defaultPrevented).toBe(false)
+  },
+)
+
+test('off, insert, unsupported editor, composition and modified f stay native', () => {
+  armHints()
+  const input = document.querySelector<HTMLInputElement>('#email')!
+  input.focus()
+  expect(nativeKey('f').defaultPrevented).toBe(false)
+  const editor = document.createElement('div')
+  editor.className = 'ProseMirror'
+  editor.tabIndex = 0
+  editor.contentEditable = 'true'
+  document.body.append(editor)
+  editor.focus()
+  expect(nativeKey('f').defaultPrevented).toBe(false)
+  document.body.tabIndex = 0
+  document.body.focus()
+  for (const extra of [
+    { ctrlKey: true },
+    { metaKey: true },
+    { altKey: true },
+    { isComposing: true },
+  ])
+    expect(nativeKey('f', document.body, extra).defaultPrevented).toBe(false)
+  expect(nativeKey('Process').defaultPrevented).toBe(false)
+  expect(holi().vim.configure(false, ++hintTestRevision, holi().vim.documentNonce())).toBe(true)
+  expect(nativeKey('f').defaultPrevented).toBe(false)
+  expect(
+    holi()
+      .hints.poll()
+      .filter((event) => event.type === 'request'),
+  ).toEqual([])
+})
+
+test('overflow before any owner retires the exact capture and releases native input', () => {
+  armHints()
+  document.body.tabIndex = 0
+  document.body.focus()
+  nativeKey('f')
+  const [request] = holi().hints.poll() as { capture: number }[]
+  for (let index = 0; index < 33; index++) nativeKey('a')
+  expect(nativeKey('Escape').defaultPrevented).toBe(false)
+  expect(nativeKey('x').defaultPrevented).toBe(false)
+  expect(holi().hints.poll()).toEqual([{ type: 'revoke', capture: request!.capture }])
+  expect(
+    holi().hints.discover({ ...hintOwner(100), capture: request!.capture } as HintOwner),
+  ).toBeNull()
+  nativeKey('f')
+  const events = holi().hints.poll() as { capture: number; type: string }[]
+  expect(events).toEqual([{ type: 'request', capture: request!.capture + 1 }])
+  expect(
+    holi().hints.discover({ ...hintOwner(101), capture: request!.capture } as HintOwner),
+  ).toBeNull()
+  expect(
+    holi().hints.discover({ ...hintOwner(102), capture: events[0]!.capture } as HintOwner),
+  ).not.toBeNull()
+})
+
+test.each(['opacity:0', 'visibility:collapse', 'display:none'])(
+  'hint discovery excludes %s on targets and ancestors',
+  (style) => {
+    const button = document.querySelector<HTMLElement>('button[type=submit]')!
+    button.getBoundingClientRect = () =>
+      ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+    document.elementFromPoint = vi.fn(() => button)
+    button.setAttribute('style', style)
+    expect(holi().hints.discover(hintOwner(401))).toEqual([])
+    button.removeAttribute('style')
+    button.parentElement!.setAttribute('style', style)
+    expect(holi().hints.discover(hintOwner(402))).toEqual([])
+  },
+)
+
+test.each(['inert', 'hidden', 'aria-hidden', 'aria-disabled'])(
+  'hint discovery respects ancestor %s',
+  (attribute) => {
+    const button = document.querySelector<HTMLElement>('button[type=submit]')!
+    button.getBoundingClientRect = () =>
+      ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+    document.elementFromPoint = vi.fn(() => button)
+    button.parentElement!.setAttribute(attribute, 'true')
+    expect(holi().hints.discover(hintOwner(403))).toEqual([])
+  },
+)
+
+test.each([false, true])(
+  'activation synchronously rejects newly transparent target (ancestor %s)',
+  (ancestor) => {
+    const button = document.querySelector<HTMLElement>('button[type=submit]')!
+    button.getBoundingClientRect = () =>
+      ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+    document.elementFromPoint = vi.fn(() => button)
+    const owner = hintOwner(404)
+    const target = holi().hints.discover(owner)![0]!
+    expect(presentHints(owner, 1, [{ id: target.id, key: 'a' }])).toBe(true)
+    ;(ancestor ? button.parentElement! : button).style.opacity = '0'
+    expect(holi().hints.activate(owner, target.id)).toBeNull()
+  },
+)
+
+test('Escape retires the page snapshot synchronously while preserving its exact owner key for host cancellation', () => {
+  armHints()
+  const button = document.querySelector<HTMLElement>('button[type=submit]')!
+  button.focus()
+  button.getBoundingClientRect = () =>
+    ({ x: 10, y: 20, width: 40, height: 20, left: 10, top: 20, right: 50, bottom: 40 }) as DOMRect
+  document.elementFromPoint = vi.fn(() => button)
+  const owner = hintOwner(405)
+  const target = holi().hints.discover(owner)![0]!
+  expect(presentHints(owner, 1, [{ id: target.id, key: 'a' }])).toBe(true)
+  expect(holi().hints.activate(owner, target.id)).not.toBeNull()
+  expect(nativeKey('Escape').defaultPrevented).toBe(true)
+  expect(holi().hints.activate(owner, target.id)).toBeNull()
+  expect(holi().hints.inspect()).toEqual([])
+  expect(holi().hints.poll()).toMatchObject([
+    { type: 'key', key: 'Escape', owner },
+    { type: 'revoke', owner },
+  ])
 })
