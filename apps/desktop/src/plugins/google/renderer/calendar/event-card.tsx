@@ -601,6 +601,8 @@ function EventForm({
   onClose: () => void
 }) {
   const [draft, setDraft] = useState(initial)
+  const initialRef = useRef(initial)
+  initialRef.current = initial
   const [guests, setGuests] = useState(meetingDraft.guests)
   const [meet, setMeet] = useState(meetingDraft.meet)
   const [validation, setValidation] = useState<string | null>(null)
@@ -612,7 +614,8 @@ function EventForm({
     const end = new Date(restored.end)
     const time = (date: Date) =>
       `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-    setDraft((old) => ({
+    const old = initialRef.current
+    const restoredDraft = {
       ...old,
       title: restored.title,
       location: restored.location,
@@ -623,12 +626,14 @@ function EventForm({
         : localDate(end),
       start: restored.allDay ? old.start : time(start),
       end: restored.allDay ? old.end : time(end),
-    }))
+    }
+    setDraft(restoredDraft)
+    onDraftChange(restoredDraft)
     const restoredGuests = restored.guests.join(', ')
     setGuests(restoredGuests)
     setMeet(restored.meet)
     onMeetingDraftChange({ guests: restoredGuests, meet: restored.meet })
-  }, [restored, onMeetingDraftChange])
+  }, [restored, onDraftChange, onMeetingDraftChange])
   const locked = meeting.busy || meeting.submitted !== null
   const disabled = saving || meeting.loading || meeting.busy
   const shownError = validation ?? meeting.error ?? error
@@ -955,7 +960,7 @@ function EventForm({
           onClick={onClose}
           disabled={saving}
         >
-          Cancel
+          {meeting.submitted ? 'Close' : 'Cancel'}
         </Button>
         {meeting.operation?.accepted ? (
           <Button type="button" disabled={disabled} onClick={() => void meeting.finish(onClose)}>
@@ -968,7 +973,7 @@ function EventForm({
             disabled={
               disabled ||
               (mode === 'create' && identity === null) ||
-              (identity !== null && meeting.error !== null && !meeting.submitted)
+              (mode === 'create' && !meeting.resolved && !meeting.submitted)
             }
           >
             {saving || meeting.busy

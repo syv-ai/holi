@@ -15,9 +15,9 @@ concurrency:
 jobs:
   simulator:
     name: Unsigned NativeScript simulator
-    # The macos-26 image inventory lists Xcode 26.2 and its iOS 26.2 runtime.
-    # This intentionally does not depend on the Xcode 27 public preview.
-    runs-on: macos-26
+    # Keep the pinned iOS 26.2 toolchain on the macOS 15 arm64 image: Tahoe hosts
+    # stall in CoreSimulator runtime discovery and boot before the app can run.
+    runs-on: macos-15
     timeout-minutes: 20
     env:
       LANG: en_US.UTF-8

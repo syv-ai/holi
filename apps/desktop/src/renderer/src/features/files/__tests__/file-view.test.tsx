@@ -33,6 +33,10 @@ const fileDiff = vi.fn()
 const mdxStatus = vi.fn()
 const mdxApprove = vi.fn()
 const mdxRevoke = vi.fn()
+const mdxCompile = vi.fn()
+const mdxAcquire = vi.fn()
+const mdxCancel = vi.fn()
+const mdxRelease = vi.fn()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -51,6 +55,10 @@ vi.mock('@/lib/trpc', () => ({
       status: { query: (input: unknown) => mdxStatus(input) },
       approve: { mutate: (input: unknown) => mdxApprove(input) },
       revoke: { mutate: (input: unknown) => mdxRevoke(input) },
+      compile: { mutate: (input: unknown) => mdxCompile(input) },
+      acquireDiagnosticsLease: { mutate: (input: unknown) => mdxAcquire(input) },
+      cancelCompile: { mutate: (input: unknown) => mdxCancel(input) },
+      releaseDiagnosticsLease: { mutate: (input: unknown) => mdxRelease(input) },
     },
   },
 }))
@@ -63,6 +71,10 @@ afterEach(() => {
   mdxStatus.mockReset()
   mdxApprove.mockReset()
   mdxRevoke.mockReset()
+  mdxCompile.mockReset()
+  mdxAcquire.mockReset().mockResolvedValue({ lease: 'test-lease' })
+  mdxCancel.mockReset().mockResolvedValue({ ok: true })
+  mdxRelease.mockReset().mockResolvedValue({ ok: true })
 })
 
 function HintKeys() {
@@ -863,6 +875,178 @@ test('MDX trust requires explicit confirmation and can be cancelled or approved'
   await waitFor(() =>
     expect(mdxApprove).toHaveBeenCalledWith({ remote: 'syv-ai/site', context: 'consent-1' }),
   )
+})
+
+test('MDX teardown preserves another linter’s diagnostics in a mounted non-MDX editor', async () => {
+  read.mockResolvedValue('{ invalid json')
+  historyList.mockResolvedValue([])
+  const store = createStore()
+  lastStore = store
+  store.set(activeRemoteAtom, 'syv-ai/site')
+  store.set(openedRemoteAtom, 'syv-ai/site')
+  store.set(sessionAtom, { login: 'fixture-user' })
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    files: [{ path: 'config.json', updatedAt: '2026-10-23T10:00:00Z' }],
+  })
+  const rendered = render(
+    <Provider store={store}>
+      <FileView path="config.json" visible />
+    </Provider>,
+  )
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    expect(node).not.toBeNull()
+    return node!
+  })
+  const { EditorView } = await import('@codemirror/view')
+  const { diagnosticCount, setDiagnostics } = await import('@codemirror/lint')
+  const { jsonParseLinter } = await import('@codemirror/lang-json')
+  const editor = EditorView.findFromDOM(content)!
+  // The JSON editor gates saves, but installs no background linter. Populate
+  // CodeMirror's shared diagnostic field with a real independent parser result.
+  const diagnostics = await jsonParseLinter()(editor)
+  expect(diagnostics.length).toBeGreaterThan(0)
+  act(() => editor.dispatch(setDiagnostics(editor.state, diagnostics)))
+  expect(diagnosticCount(editor.state)).toBe(diagnostics.length)
+  rendered.rerender(
+    <Provider store={store}>
+      <FileView path="config.json" visible={false} />
+    </Provider>,
+  )
+  expect(diagnosticCount(editor.state)).toBe(diagnostics.length)
+  rendered.rerender(
+    <Provider store={store}>
+      <FileView path="config.json" visible />
+    </Provider>,
+  )
+  expect(diagnosticCount(editor.state)).toBe(diagnostics.length)
+  act(() =>
+    store.set(snapshotAtom, {
+      ...emptyVaultSnapshot(),
+      files: [{ path: 'config.json', updatedAt: '2026-10-24T10:00:00Z' }],
+    }),
+  )
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+  expect(EditorView.findFromDOM(content)).toBe(editor)
+  expect(diagnosticCount(editor.state)).toBe(diagnostics.length)
+})
+
+test('trusted MDX diagnostics consume the current source without changing save behavior', async () => {
+  const hostile = '# source\\n{globalThis.__mdxShouldNotRun = true}'
+  read.mockResolvedValue(hostile)
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
+  mdxCompile.mockResolvedValue([{ message: 'unexpected token', line: 2, column: 1 }])
+  setup('content/page.mdx')
+  await waitFor(() => expect(mdxCompile).toHaveBeenCalled())
+  expect(mdxAcquire).toHaveBeenCalledWith({
+    remote: 'syv-ai/site',
+    path: 'content/page.mdx',
+    context: 'consent-1',
+  })
+  expect(mdxCompile).toHaveBeenCalledWith({
+    lease: 'test-lease',
+    generation: expect.any(Number),
+    source: hostile,
+  })
+  expect(mdxCancel).toHaveBeenCalledWith({ lease: 'test-lease', generation: expect.any(Number) })
+  expect(await screen.findByText('1 MDX diagnostic')).toBeInTheDocument()
+  expect((globalThis as Record<string, unknown>).__mdxShouldNotRun).toBeUndefined()
+
+  await typeInto('# fixed source')
+  await waitFor(() => expect(write).toHaveBeenCalled())
+})
+
+test('an atomic MDX autosave renews diagnostics ownership without retrying', async () => {
+  read.mockResolvedValue('# original')
+  historyList.mockResolvedValue([])
+  write.mockResolvedValue(undefined)
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
+  mdxAcquire
+    .mockResolvedValueOnce({ lease: 'lease-before-save' })
+    .mockResolvedValueOnce({ lease: 'lease-after-save' })
+    .mockResolvedValue({ lease: 'lease-after-refresh' })
+  let resolveOldCompile!: (diagnostics: { message: string; line: number; column: number }[]) => void
+  mdxCompile
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOldCompile = resolve
+        }),
+    )
+    .mockRejectedValueOnce(new Error('MDX context changed'))
+    .mockResolvedValue([])
+
+  setup('content/page.mdx')
+  await waitFor(() =>
+    expect(mdxCompile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lease: 'lease-before-save',
+        source: '# original',
+      }),
+    ),
+  )
+  await typeInto('# saved')
+  await typeInto('# interim')
+  await typeInto('# saved')
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith({
+      remote: 'syv-ai/site',
+      path: 'content/page.mdx',
+      text: '# saved',
+    }),
+  )
+  await waitFor(() => expect(mdxAcquire).toHaveBeenCalledTimes(3))
+  await waitFor(() =>
+    expect(mdxCompile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lease: 'lease-after-refresh',
+        source: '# saved',
+      }),
+    ),
+  )
+
+  await act(async () => resolveOldCompile([{ message: 'stale result', line: 1, column: 1 }]))
+  expect(screen.queryByText('1 MDX diagnostic')).not.toBeInTheDocument()
+  expect(await screen.findByText('MDX syntax is valid')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+})
+
+test('an external MDX reload renews ownership even when the source text is unchanged', async () => {
+  read.mockResolvedValue('# unchanged')
+  historyList.mockResolvedValue([])
+  mdxStatus.mockResolvedValue({ trusted: true, identityAvailable: true, context: 'consent-1' })
+  mdxAcquire
+    .mockResolvedValueOnce({ lease: 'lease-before-reload' })
+    .mockResolvedValue({ lease: 'lease-after-reload' })
+  mdxCompile.mockResolvedValue([])
+  setup('content/page.mdx')
+  await waitFor(() =>
+    expect(mdxCompile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lease: 'lease-before-reload',
+        source: '# unchanged',
+      }),
+    ),
+  )
+
+  act(() =>
+    lastStore.set(snapshotAtom, {
+      ...emptyVaultSnapshot(),
+      files: [{ path: 'content/page.mdx', updatedAt: '2026-10-24T10:00:00Z' }],
+    }),
+  )
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+  await waitFor(() =>
+    expect(mdxCompile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lease: 'lease-after-reload',
+        source: '# unchanged',
+      }),
+    ),
+  )
+  expect(screen.getByText('MDX syntax is valid')).toBeInTheDocument()
 })
 
 test('MDX trust can be revoked from a source view', async () => {
