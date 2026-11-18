@@ -27,11 +27,12 @@ test('accepts exact Claude Code versions only', () => {
 })
 
 test('names missing commands, options, timeouts and nonzero probes', () => {
-  assert.match(
+  assert.equal(
     checkProbe({ status: 0 }, ['agents', '--all'], 'Usage: claude agents'),
-    /missing consumed/,
+    'missing consumed commands/options --all',
   )
   assert.equal(checkProbe({ status: null, error: { code: 'ETIMEDOUT' } }, [], ''), 'timed out')
   assert.equal(checkProbe({ status: 2 }, [], ''), 'exit 2')
   assert.equal(checkProbe({ status: 0 }, ['--all'], 'agents --json --all'), null)
+  assert.equal(checkProbe({ status: 0 }, ['--all'], 'options=--all'), null)
 })
