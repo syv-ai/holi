@@ -22,7 +22,7 @@ export type VimRegister = {
   linewiseContainer?: 'listItem' | 'taskItem'
 }
 
-export function repeatVimRegister(register: VimRegister, count: number) {
+function repeatVimRegister(register: VimRegister, count: number) {
   const repetitions = cappedCount(count)
   if (repetitions === 1) return register.content
 
