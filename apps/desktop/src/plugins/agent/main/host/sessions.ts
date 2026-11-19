@@ -373,6 +373,28 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     binDir: deps.binDir(),
   })
 
+  /** Revalidate ownership after every await before admitting native work. */
+  const admittedFor = (c: Current | null, owner: AgentVault | null): c is Current =>
+    c !== null &&
+    !admissionClosed &&
+    !deps.activationSignal?.aborted &&
+    leaving === null &&
+    attached === owner &&
+    owner !== null &&
+    current === c
+
+  /** An unidentifiable provider creation remains an unresolved drain. */
+  function retainUncertainReceipt(result: {
+    ok: false
+    message: string
+    cleanupUnconfirmed?: true
+  }): void {
+    if (result.cleanupUnconfirmed)
+      lateCleanup.recordFailure(
+        new Error(`Provider session creation is unresolved: ${result.message}`),
+      )
+  }
+
   async function activate(vault: AgentVault): Promise<Current | null> {
     const config = await provider
       .configure({ remote: vault.remote, root: vault.root })
@@ -573,15 +595,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     refresh,
 
     async open(args) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       return openOn(c, args)
     },
 
     async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
       const origin = attached
       const c = await ensureCurrent()
-      if (c === null || origin === null || attached !== origin || current !== c)
+      if (!admittedFor(c, origin))
         return { ok: false, message: 'The vault changed before the session started.' }
       const target = targetOf(c)
       const res = await bg.cli.startBg(target, {
@@ -591,7 +614,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(allow === undefined ? {} : { allow }),
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
-      if (!res.ok) return res
+      if (!res.ok) {
+        retainUncertainReceipt(res)
+        return res
+      }
       const cleanup = async () => {
         try {
           await trackStop(target, res.id)
@@ -660,8 +686,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async launch({ name, prompt, model, allow, deny, appendSystemPrompt, mcpConfig }) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       const target = targetOf(c)
       const res = await bg.cli.startBg(target, {
         name,
@@ -672,8 +699,11 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
         ...(mcpConfig === undefined ? {} : { mcpConfig }),
       })
-      if (!res.ok) return res
-      if (admissionClosed || deps.activationSignal?.aborted || current !== c) {
+      if (!res.ok) {
+        retainUncertainReceipt(res)
+        return res
+      }
+      if (!admittedFor(c, owner)) {
         // The leave read the sessions to stop before this one was listed, so
         // it would go on running in the vault left while its caller is told
         // it failed: stop it here, and keep the cleanup failure in the drain.
@@ -718,8 +748,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async send({ text, target, cols, rows: r }) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       let terminalId: string
       if (target === 'new') {
         // The CLI makes a name of the text's first line.
@@ -738,15 +769,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           terminalId = opened.terminalId
         }
       }
-      if (admissionClosed || current !== c)
+      if (!admittedFor(c, owner))
         return { ok: false, message: 'The vault was left before the message was sent.' }
       deps.terminals.paste(terminalId, text)
       return { ok: true, terminalId }
     },
 
     async stop(id) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       const res = await bg.cli.stop(targetOf(c), id)
       if (admissionClosed || current !== c)
         return { ok: false, message: 'The vault was left before stop completed.' }
@@ -757,8 +789,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async respawn(id) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       const target = targetOf(c)
       const res = await bg.cli.respawn(target, id)
       const cleanupLateRespawn = async () => {
@@ -782,8 +815,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async duplicate(id, geometry = {}) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       const row = rows.find((r) => r.id === id)
       if (row?.sessionId === undefined) {
         return { ok: false, message: 'Claude Code has not said which conversation this is yet.' }
@@ -792,7 +826,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       const name = label === 'New session' ? undefined : `${label} (copy)`
       const target = targetOf(c)
       const res = await bg.cli.forkBg(target, row.sessionId, name)
-      if (!res.ok) return res
+      if (!res.ok) {
+        retainUncertainReceipt(res)
+        return res
+      }
       const cleanup = async () => {
         try {
           await trackStop(target, res.id)
@@ -902,8 +939,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async message(id, text) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) throw new CapabilityError('UNAVAILABLE', noVault.message)
+      if (!admittedFor(c, owner)) throw new CapabilityError('UNAVAILABLE', noVault.message)
       if (!live().some((row) => row.id === id)) {
         throw new CapabilityError('NOT_FOUND', `no running session ${id}`)
       }
