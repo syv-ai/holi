@@ -29,7 +29,12 @@ const row = (id: string, over: Row = {}): Row => ({
   ...over,
 })
 
-function setup(initial: Row[] = [], nativeCli?: ClaudeCli, root = ROOT) {
+function setup(
+  initial: Row[] = [],
+  nativeCli?: ClaudeCli,
+  root = ROOT,
+  activationSignal?: AbortSignal,
+) {
   let listing: Row[] = initial
   const cli = {
     list: vi.fn(async () => JSON.stringify(listing)),
@@ -42,7 +47,7 @@ function setup(initial: Row[] = [], nativeCli?: ClaudeCli, root = ROOT) {
       listing = listing.filter((r) => r.id !== id)
       return { ok: true as const }
     }),
-    startBg: vi.fn(async (_t, opts: { prompt?: string }) => {
+    startBg: vi.fn<ClaudeCli['startBg']>(async (_t, opts) => {
       // With a first turn it is working at once; without, it waits for one.
       const id = opts.prompt === undefined ? 'newnew00' : 'launch00'
       listing = [
@@ -101,6 +106,7 @@ function setup(initial: Row[] = [], nativeCli?: ClaudeCli, root = ROOT) {
     },
   }
   const sessions = createAgentSessions({
+    ...(activationSignal === undefined ? {} : { activationSignal }),
     emit: (_remote: string, name: string, payload: unknown) => sent.push([name, payload]),
     provider: {
       id: 'claude',
@@ -166,7 +172,7 @@ describe('agent sessions', () => {
       const beat = await command.heartbeat()
       await vi.waitFor(async () => expect(await command.heartbeat()).toBeGreaterThan(beat))
     } finally {
-      await t.sessions.leave()
+      await t.sessions.leave().catch(() => {})
       await command.close()
     }
   })
@@ -245,6 +251,52 @@ describe('agent sessions', () => {
     expect(t.cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
     expect(t.sessions.sessions()).toEqual([])
   })
+  it('rechecks revocation after attached ensure before native operation admission', async () => {
+    const activation = new AbortController()
+    const t = setup([row('aaaaaaaa')], undefined, ROOT, activation.signal)
+    await t.attach()
+
+    const operations = [
+      () => t.sessions.open({ attach: 'aaaaaaaa' }),
+      () => t.sessions.start({}),
+      () => t.sessions.launch({ name: 'late', prompt: 'late' }),
+      () => t.sessions.send({ text: 'late', target: 'new' }),
+      () => t.sessions.stop('aaaaaaaa'),
+      () => t.sessions.respawn('aaaaaaaa'),
+      () => t.sessions.duplicate('aaaaaaaa'),
+      () => t.sessions.message('aaaaaaaa', 'late'),
+    ]
+    const before = [
+      t.cli.list,
+      t.cli.startBg,
+      t.cli.stop,
+      t.cli.respawn,
+      t.cli.forkBg,
+      t.message,
+    ].map((mock) => mock.mock.calls.length)
+    const pending = operations.map((operation) => operation())
+    activation.abort()
+    const outcomes = await Promise.allSettled(pending)
+
+    expect(outcomes.map((outcome) => outcome.status)).toEqual([
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+      'rejected',
+    ])
+    expect(
+      [t.cli.list, t.cli.startBg, t.cli.stop, t.cli.respawn, t.cli.forkBg, t.message].map(
+        (mock) => mock.mock.calls.length,
+      ),
+    ).toEqual(before)
+    expect(t.opened).toEqual([])
+    expect(t.pastes).toEqual([])
+  })
+
   it('lists only live sessions', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb', { pid: undefined, status: undefined })])
     await t.attach()
@@ -591,6 +643,45 @@ describe('launched sessions', () => {
     expect(cli.startBg).toHaveBeenCalledWith(expect.anything(), args)
     expect(opened).toEqual([])
     expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'launch00' })])
+  })
+
+  it('latches an unidentifiable late creation receipt as a sticky drain failure', async () => {
+    const activation = new AbortController()
+    const t = setup([], undefined, ROOT, activation.signal)
+    await t.attach()
+    let resolveReceipt!: (receipt: { ok: false; message: string; cleanupUnconfirmed: true }) => void
+    t.cli.startBg.mockImplementationOnce(
+      (async () =>
+        new Promise<{ ok: false; message: string; cleanupUnconfirmed: true }>((resolve) => {
+          resolveReceipt = resolve
+        })) as ClaudeCli['startBg'],
+    )
+
+    const launching = t.sessions.launch({ name: 'Unparsed', prompt: 'run' })
+    await vi.waitFor(() => expect(t.cli.startBg).toHaveBeenCalled())
+    activation.abort()
+    resolveReceipt({
+      ok: false,
+      message: 'Could not parse late CLI receipt.',
+      cleanupUnconfirmed: true,
+    })
+
+    expect(await launching).toEqual({
+      ok: false,
+      message: 'Could not parse late CLI receipt.',
+      cleanupUnconfirmed: true,
+    })
+    await expect(t.sessions.leave()).rejects.toThrow(/teardown failed/)
+    let repeatedFailure: unknown
+    try {
+      await t.sessions.leave()
+    } catch (error) {
+      repeatedFailure = error
+    }
+    expect(repeatedFailure).toBeDefined()
+    await expect(t.sessions.launch({ name: 'replacement', prompt: 'replace' })).rejects.toThrow()
+    expect(t.cli.stop).not.toHaveBeenCalled()
+    expect(t.cli.startBg).toHaveBeenCalledTimes(1)
   })
 
   it('retains late-launch cleanup failures through repeated leave', async () => {
