@@ -1,13 +1,24 @@
+import { verifyPiProvenance } from './pi-native-tui-provenance.mjs'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
   createLocalModelServer,
   isolatedEnvironment,
+  publishFixtureArtifacts,
   runPiNativeTuiFixture,
-  verifyPiProvenance,
 } from './pi-native-tui-fixture.mjs'
 
 async function packageFixture() {
@@ -110,6 +121,36 @@ test('artifact paths cannot enter the checkout through an external symlink ances
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test(
+  'artifact publishing replaces both output symlinks without touching their checkout targets',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-660-artifact-links-test-'))
+    const receiptTarget = new URL('../package.json', import.meta.url)
+    const outputTarget = new URL('./pi-native-tui-fixture.mjs', import.meta.url)
+    const originals = [await readFile(receiptTarget), await readFile(outputTarget)]
+    try {
+      await symlink(receiptTarget, join(root, 'receipt.json'))
+      await symlink(outputTarget, join(root, 'terminal-output.bin'))
+      const result = { outcome: 'unverified', detail: 'unit-test bytes, not native evidence' }
+      publishFixtureArtifacts({
+        artifactDirectory: root,
+        result,
+        terminalOutput: Buffer.from('synthetic artifact'),
+      })
+      assert.deepEqual(await readFile(receiptTarget), originals[0])
+      assert.deepEqual(await readFile(outputTarget), originals[1])
+      assert.equal((await lstat(join(root, 'receipt.json'))).isSymbolicLink(), false)
+      assert.equal((await lstat(join(root, 'terminal-output.bin'))).isSymbolicLink(), false)
+      assert.deepEqual(JSON.parse(await readFile(join(root, 'receipt.json'), 'utf8')), result)
+      assert.equal(await readFile(join(root, 'terminal-output.bin'), 'utf8'), 'synthetic artifact')
+      assert.deepEqual((await readdir(root)).sort(), ['receipt.json', 'terminal-output.bin'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
 
 test('native environment does not inherit credentials, proxies, loaders or personal Pi settings', () => {
   const env = isolatedEnvironment({
