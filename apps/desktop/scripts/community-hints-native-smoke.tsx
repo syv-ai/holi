@@ -13,6 +13,7 @@ import {
 import { useRetainedSurfaces } from '../src/renderer/src/features/shell/retained-surfaces'
 import { tabKey } from '../src/renderer/src/state/tab-descriptor'
 import { coreContributionAtom } from '../src/renderer/src/state/plugins'
+import { colorSchemeAtom } from '../src/renderer/src/state/color-scheme'
 import { activeRemoteAtom } from '../src/renderer/src/state/vaults'
 import { openTabAtom, shellWorkspaceAtom } from '../src/renderer/src/state/shell-tabs'
 import { closeTab } from '../src/renderer/src/state/shell-workspace'
@@ -48,33 +49,40 @@ async function refresh() {
 store.set(activeRemoteAtom, remote)
 store.set(vimCodeEditingAtom, true)
 const meetings = transcribeRenderer.surfaces!.find((surface) => surface.kind === MEETINGS_SURFACE)!
-store.set(coreContributionAtom, { surfaces: [meetings], rail: [], claims: [] })
-for (const tab of [
-  { kind: 'doc' as const, path: documentPath },
-  { kind: 'surface' as const, surface: MEETINGS_SURFACE },
-  { kind: 'surface' as const, surface: MEETINGS_SURFACE, id: meetingFolder },
-])
-  store.set(openTabAtom, tab)
-// Offline data at the plugin's ordinary store seam; no recording is started.
-store.set(meetingsAtom, [])
-store.set(profilesAtom, [
-  {
-    id: 'fixture',
-    name: 'Planning',
-    platform: 'Holi',
-    focus: '',
-    ignore: '',
-    glossary: [],
-    instructions: '',
-    language: 'en',
-    shareMinutes: false,
-    keepAudio: false,
-  },
-])
+if (api.retention) {
+  store.set(coreContributionAtom, { surfaces: [meetings], rail: [], claims: [] })
+  for (const tab of [
+    { kind: 'doc' as const, path: documentPath },
+    { kind: 'surface' as const, surface: MEETINGS_SURFACE },
+    { kind: 'surface' as const, surface: MEETINGS_SURFACE, id: meetingFolder },
+  ])
+    store.set(openTabAtom, tab)
+  // Offline data at the plugin's ordinary store seam; no recording is started.
+  store.set(meetingsAtom, [])
+  store.set(profilesAtom, [
+    {
+      id: 'fixture',
+      name: 'Planning',
+      platform: 'Holi',
+      focus: '',
+      ignore: '',
+      glossary: [],
+      instructions: '',
+      language: 'en',
+      shareMinutes: false,
+      keepAudio: false,
+    },
+  ])
+}
 let navigate: (keys: string[]) => void = () => undefined
 Object.assign(window, {
   communitySmoke: {
     vim: (enabled: boolean) => store.set(vimCodeEditingAtom, enabled),
+    theme: (scheme: 'light' | 'dark') => {
+      store.set(colorSchemeAtom, scheme)
+      document.documentElement.dataset.theme = scheme
+      document.documentElement.style.colorScheme = scheme
+    },
     visible: (visible: boolean) => navigate(visible ? [documentPath] : [meetingsKey]),
     refresh,
     close: () => {

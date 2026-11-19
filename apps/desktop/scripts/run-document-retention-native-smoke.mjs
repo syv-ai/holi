@@ -286,9 +286,7 @@ try {
     true,
   )
   await button('Meeting folder')
-  await evaluate(
-    'document.documentElement.dataset.theme="dark"; document.documentElement.style.colorScheme="dark"',
-  )
+  await evaluate('window.communitySmoke.theme("dark")')
   await shot('dark.png')
   await evaluate('window.communitySmoke.closeMeeting()')
   await wait('!window.retainedTitle.isConnected', 'closed meeting disposes local view')
