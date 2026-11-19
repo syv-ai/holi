@@ -1228,25 +1228,26 @@ async function run() {
     evaluate<{
       visible: boolean
       scrollTop: number
+      mode: string | null
       head: number
       expectedHead: number
       expectedFirst: number
       expectedLastCursor: number
     }>(
-      `(()=>{const editor=document.querySelector('[role="textbox"]').editor;const view=editor.view;const selection=view.state.selection;let expectedHead=-1;let expectedFirst=-1;let expectedLastCursor=-1;view.state.doc.descendants((node,pos)=>{if(node.isText&&node.text==='long line 0'){expectedFirst=pos;${position === 'first' ? 'expectedHead=pos;' : ''}}if(node.isText&&node.text==='long line 119'){expectedLastCursor=pos+1;${position === 'last' ? 'expectedHead=pos+node.text.length;' : ''}}});const head=view.coordsAtPos(selection.head);let scroller=view.dom.parentElement;while(scroller){const style=getComputedStyle(scroller);if((style.overflowY==='auto'||style.overflowY==='scroll')&&scroller.scrollHeight>scroller.clientHeight)break;scroller=scroller.parentElement}if(!scroller)throw Error('Editor has no scrollable viewport');const bounds=scroller.getBoundingClientRect();const top=bounds.top+scroller.clientTop;const bottom=top+scroller.clientHeight;return{visible:head.top>=top&&head.bottom<=bottom,scrollTop:scroller.scrollTop,head:selection.head,expectedHead,expectedFirst,expectedLastCursor}})()`,
+      `(()=>{const editor=document.querySelector('[data-fixture-editor="primary"] [role="textbox"]').editor;const view=editor.view;const selection=view.state.selection;let expectedHead=-1;let expectedFirst=-1;let expectedLastCursor=-1;view.state.doc.descendants((node,pos)=>{if(node.isText&&node.text==='long line 0'){expectedFirst=pos;${position === 'first' ? 'expectedHead=pos;' : ''}}if(node.isText&&node.text==='long line 119'){expectedLastCursor=pos+1;${position === 'last' ? 'expectedHead=pos+node.text.length;' : ''}}});const head=view.coordsAtPos(selection.head);let scroller=view.dom.parentElement;while(scroller){const style=getComputedStyle(scroller);if((style.overflowY==='auto'||style.overflowY==='scroll')&&scroller.scrollHeight>scroller.clientHeight)break;scroller=scroller.parentElement}if(!scroller)throw Error('Editor has no scrollable viewport');const bounds=scroller.getBoundingClientRect();const top=bounds.top+scroller.clientTop;const bottom=top+scroller.clientHeight;return{visible:head.top>=top&&head.bottom<=bottom,scrollTop:scroller.scrollTop,mode:view.dom.getAttribute('data-vim-mode'),head:selection.head,expectedHead,expectedFirst,expectedLastCursor}})()`,
     )
   await evaluate(`window.richTextVimFixture.setup(${JSON.stringify(longNote)},1)`)
   await key('Escape')
   await key('v')
   await key('G', ['shift'])
   const visualLastLine = await state()
-  assert(visualLastLine.mode.includes('Vim Visual'), 'vG remains in characterwise visual mode')
+  const visualLastGeometry = await longNoteGeometry('last')
+  assert.equal(visualLastGeometry.mode, 'visual', 'vG remains in characterwise visual mode')
   assert.equal(
     visualLastLine.selectedText,
     Array.from({ length: 120 }, (_, index) => `long line ${index}`).join(''),
     'vG selects exactly from the first through final line',
   )
-  const visualLastGeometry = await longNoteGeometry('last')
   assert.equal(
     visualLastLine.selection.anchor,
     visualLastGeometry.expectedFirst,
@@ -1265,16 +1266,22 @@ async function run() {
   await evaluate(`window.richTextVimFixture.setup(${JSON.stringify(longNote)},0)`)
   await key('Escape')
   await key('V', ['shift'])
-  assert((await state()).mode.includes('Vim Visual Line'), 'V enters linewise visual mode')
+  assert.equal(
+    await evaluate<string | null>(
+      `document.querySelector('[data-fixture-editor="primary"] [role="textbox"]').getAttribute('data-vim-mode')`,
+    ),
+    'visual-line',
+    'V enters linewise visual mode',
+  )
   await key('G', ['shift'])
   const linewiseLastLine = await state()
-  assert(linewiseLastLine.mode.includes('Vim Visual Line'), 'VG remains in linewise visual mode')
+  const linewiseLastGeometry = await longNoteGeometry('last')
+  assert.equal(linewiseLastGeometry.mode, 'visual-line', 'VG remains in linewise visual mode')
   assert.equal(
     linewiseLastLine.selectedText,
     Array.from({ length: 120 }, (_, index) => `long line ${index}`).join(''),
     'VG selects exactly through the final line',
   )
-  const linewiseLastGeometry = await longNoteGeometry('last')
   assert.equal(
     linewiseLastLine.selection.anchor,
     linewiseLastGeometry.expectedFirst,
@@ -1297,12 +1304,12 @@ async function run() {
   await key('g')
   await key('g')
   const visualFirstLine = await state()
-  assert(visualFirstLine.mode.includes('Vim Visual'), 'vgg remains in characterwise visual mode')
+  const visualFirstGeometry = await longNoteGeometry('first')
+  assert.equal(visualFirstGeometry.mode, 'visual', 'vgg remains in characterwise visual mode')
   assert(
     visualFirstLine.selectedText.includes('long line 0'),
     'vgg selects back through the first line',
   )
-  const visualFirstGeometry = await longNoteGeometry('first')
   assert.equal(
     visualFirstLine.selection.anchor,
     visualFirstGeometry.expectedLastCursor,
@@ -1320,19 +1327,19 @@ async function run() {
   nativeResults.push({
     scenario: 'long-note native visual traversal',
     vG: {
-      mode: visualLastLine.mode,
+      mode: visualLastGeometry.mode,
       selection: visualLastLine.selection,
       selectedText: visualLastLine.selectedText,
       geometry: visualLastGeometry,
     },
     VG: {
-      mode: linewiseLastLine.mode,
+      mode: linewiseLastGeometry.mode,
       selection: linewiseLastLine.selection,
       selectedText: linewiseLastLine.selectedText,
       geometry: linewiseLastGeometry,
     },
     vgg: {
-      mode: visualFirstLine.mode,
+      mode: visualFirstGeometry.mode,
       selection: visualFirstLine.selection,
       selectedText: visualFirstLine.selectedText,
       geometry: visualFirstGeometry,
