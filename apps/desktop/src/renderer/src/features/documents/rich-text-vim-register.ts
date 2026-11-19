@@ -28,21 +28,14 @@ export function repeatVimRegister(register: VimRegister, count: number) {
 
   if (register.linewiseTextblock === 'codeBlock') {
     const first = register.content.content.firstChild
-    if (first?.type.name === 'codeBlock') {
-      const content = Array.from({ length: repetitions }, () => register.content.content).reduce(
-        (combined, fragment) => combined.append(fragment),
-        Fragment.empty,
-      )
+    if (first?.type.name !== 'codeBlock') {
+      const value = register.content.content.textBetween(0, register.content.content.size, '\n')
+      const repeated = Array.from({ length: repetitions }, () => value).join('\n')
+      const content = repeated
+        ? Fragment.from(register.schema.text(repeated, first?.marks))
+        : Fragment.from(register.schema.text('\n'.repeat(repetitions - 1)))
       return new Slice(content, register.content.openStart, register.content.openEnd)
     }
-    const value = register.content.content.textBetween(0, register.content.content.size, '\n')
-    const repeated = Array.from({ length: repetitions }, () => value).join('\n')
-    const content = repeated
-      ? Fragment.from(register.schema.text(repeated, first?.marks))
-      : repetitions > 1
-        ? Fragment.from(register.schema.text('\n'.repeat(repetitions - 1)))
-        : Fragment.empty
-    return new Slice(content, register.content.openStart, register.content.openEnd)
   }
 
   if (register.linewiseTextblock === 'hardBreak') {
@@ -62,6 +55,28 @@ export function repeatVimRegister(register: VimRegister, count: number) {
     Fragment.empty,
   )
   return new Slice(content, register.content.openStart, register.content.openEnd)
+}
+
+export function replaceVimRegisterSelection(
+  view: EditorView,
+  from: number,
+  to: number,
+  register: VimRegister,
+  count: number,
+  closeHistoryBoundary: () => void,
+) {
+  const content = repeatVimRegister(register, count)
+  const tr = closeHistory(view.state.tr.replaceRange(from, to, content))
+  try {
+    tr.doc.check()
+    if (!tr.docChanged) return false
+    tr.setSelection(TextSelection.near(tr.doc.resolve(from), 1)).scrollIntoView()
+    view.dispatch(tr)
+    closeHistoryBoundary()
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function pasteVimRegister(
@@ -154,7 +169,7 @@ export function pasteVimRegister(
       const hardBreak = view.state.schema.nodes.hardBreak
       const separator = hardBreak?.create()
       if (separator) {
-        const repeated = repeatVimRegister(register, repetitions).content
+        const repeated = content.content
         const fragment =
           key === 'p'
             ? Fragment.from(separator).append(repeated)

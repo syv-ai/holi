@@ -5,7 +5,7 @@ import type { EditorView } from '@tiptap/pm/view'
 import { closeHistory, undo, redo } from '@tiptap/pm/history'
 import { requestHostHints } from '@/lib/host-hints'
 import { clearExtraSelections } from './multi-cursor'
-import { pasteVimRegister, repeatVimRegister } from './rich-text-vim-register'
+import { pasteVimRegister, replaceVimRegisterSelection } from './rich-text-vim-register'
 import type { VimRegister } from './rich-text-vim-register'
 import { planVimOperator, resolveVimMotion, resolveVimVisualRange } from './rich-text-vim-operator'
 import type { VimOperatorRequest } from './rich-text-vim-operator'
@@ -161,7 +161,8 @@ function moveVisualSelection(
       .setSelection(TextSelection.create(view.state.doc, range.anchor, range.head))
       .setMeta(KEY, { ...current, visualCursor: destination, prefix: false, count: 0 })
       .setMeta('vimSelection', true)
-      .setMeta('addToHistory', false),
+      .setMeta('addToHistory', false)
+      .scrollIntoView(),
   )
   return true
 }
@@ -572,13 +573,15 @@ function handleNormal(
       current.visualLinewise,
     )
     if (plan.kind === 'ready' && range && safeRange(view.state, range.from, range.to)) {
-      const content = repeatVimRegister(current.register, current.count)
-      const tr = closeHistory(view.state.tr.replaceRange(range.from, range.to, content))
-      try {
-        tr.doc.check()
-        if (!tr.docChanged) throw new Error('empty replacement')
-        tr.setSelection(TextSelection.near(tr.doc.resolve(range.from), 1))
-        view.dispatch(tr)
+      const replaced = replaceVimRegisterSelection(
+        view,
+        range.from,
+        range.to,
+        current.register,
+        current.count,
+        () => closeHistoryBoundary(view),
+      )
+      if (replaced) {
         const latest = KEY.getState(view.state) ?? current
         view.dispatch(
           view.state.tr
@@ -590,8 +593,7 @@ function handleNormal(
             })
             .setMeta('addToHistory', false),
         )
-        closeHistoryBoundary(view)
-      } catch {
+      } else {
         clearTransient(view)
         settings.onFeedback?.('Vim register does not fit at this position; no text was changed')
       }

@@ -269,10 +269,6 @@ async function run() {
     }
     throw new Error(`Timed out waiting for autosave: ${includes}`)
   }
-  const capture = async (name: string) => {
-    const image = await win.webContents.capturePage()
-    await writeFile(join(evidence, name), image.toPNG())
-  }
   await wait(`document.querySelector('[role="textbox"]')?.editor`, 'production DocumentView editor')
   await evaluate(`document.querySelector('[role="textbox"]').editor.commands.focus()`)
   win.focus()
@@ -1227,17 +1223,91 @@ async function run() {
   )
   mark('native-visual-put-replaces-selection-and-clears-mode')
 
+  const longNote = Array.from({ length: 120 }, (_, index) => `<p>long line ${index}</p>`).join('')
+  await evaluate(`window.richTextVimFixture.setup(${JSON.stringify(longNote)},1)`)
+  await key('Escape')
+  await key('v')
+  await key('G')
+  const visualLastLine = await evaluate<{ visible: boolean; scrollTop: number }>(
+    `(()=>{const focus=window.getSelection()?.focusNode;let node=focus instanceof Element?focus:focus?.parentElement;let scroller=null;for(let el=node;el;el=el.parentElement){if(el.scrollHeight>el.clientHeight){scroller=el;break}}if(!node||!scroller)return{visible:false,scrollTop:0};const range=document.createRange();range.selectNodeContents(node);range.collapse(false);const rect=range.getBoundingClientRect();const bounds=scroller.getBoundingClientRect();return{visible:rect.top>=bounds.top&&rect.bottom<=bounds.bottom,scrollTop:scroller.scrollTop}})()`,
+  )
+  assert(
+    visualLastLine.visible,
+    'vG scrolls the final visual-selection head into the editor viewport',
+  )
+  assert(visualLastLine.scrollTop > 0, 'vG scrolls the long note to its final line')
+  await evaluate(`window.richTextVimFixture.setup(${JSON.stringify(longNote)},${0})`)
+  await key('Escape')
+  await key('V')
+  await key('G')
+  const linewiseLastLine = await state()
+  assert(
+    linewiseLastLine.selectedText.includes('long line 119'),
+    'VG selects through the final line',
+  )
+  const linewiseVisible = await evaluate<boolean>(
+    `(()=>{const focus=window.getSelection()?.focusNode;const node=focus instanceof Element?focus:focus?.parentElement;if(!node)return false;const range=document.createRange();range.selectNodeContents(node);range.collapse(false);const rect=range.getBoundingClientRect();return rect.top>=0&&rect.bottom<=innerHeight})()`,
+  )
+  assert(linewiseVisible, 'VG scrolls the final selection head into view')
+  await evaluate(
+    `window.richTextVimFixture.setup(${JSON.stringify(longNote)},1);window.richTextVimFixture.atText('long line 119')`,
+  )
+  await key('Escape')
+  await key('v')
+  await key('g')
+  await key('g')
+  const visualFirstLine = await state()
+  assert(
+    visualFirstLine.selectedText.includes('long line 0'),
+    'vgg selects back through the first line',
+  )
+  const visualFirstVisible = await evaluate<boolean>(
+    `(()=>{const focus=window.getSelection()?.focusNode;const node=focus instanceof Element?focus:focus?.parentElement;if(!node)return false;const range=document.createRange();range.selectNodeContents(node);range.collapse(false);const rect=range.getBoundingClientRect();return rect.top>=0&&rect.bottom<=innerHeight})()`,
+  )
+  assert(visualFirstVisible, 'vgg scrolls the first selection head into view')
+  mark('native-long-note-visual-G-VG-and-vgg-scroll-and-select')
+
   await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
   await key('v')
   await key('l')
   const visualEvidence = await state()
   assert.equal(visualEvidence.markdown, 'alpha beta')
   assert(visualEvidence.selectedText.length > 0, 'screenshot shows a real native visual selection')
-  await capture('light.png')
+  await evaluate(
+    `document.documentElement.dataset.theme='light';document.documentElement.classList.remove('dark')`,
+  )
+  await evaluate<void>(
+    'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  )
+  const lightTheme = await evaluate<{ background: string; foreground: string }>(
+    `(()=>{const style=getComputedStyle(document.documentElement);return{background:style.getPropertyValue('--background').trim(),foreground:style.getPropertyValue('--foreground').trim()}})()`,
+  )
+  assert(lightTheme.background && lightTheme.foreground, 'light theme tokens are computed')
+  const lightImage = await win.webContents.capturePage()
+  await writeFile(join(evidence, 'light.png'), lightImage.toPNG())
   await evaluate(
     `document.documentElement.dataset.theme='dark';document.documentElement.classList.add('dark')`,
   )
-  await capture('dark.png')
+  await evaluate<void>(
+    'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  )
+  const darkTheme = await evaluate<{ background: string; foreground: string }>(
+    `(()=>{const style=getComputedStyle(document.documentElement);return{background:style.getPropertyValue('--background').trim(),foreground:style.getPropertyValue('--foreground').trim()}})()`,
+  )
+  assert(darkTheme.background && darkTheme.foreground, 'dark theme tokens are computed')
+  assert.notEqual(
+    darkTheme.background,
+    lightTheme.background,
+    'theme transition changes background',
+  )
+  assert.notEqual(
+    darkTheme.foreground,
+    lightTheme.foreground,
+    'theme transition changes foreground',
+  )
+  const darkImage = await win.webContents.capturePage()
+  await writeFile(join(evidence, 'dark.png'), darkImage.toPNG())
+  assert.notDeepEqual(darkImage.toPNG(), lightImage.toPNG(), 'light and dark screenshots differ')
   assert.deepEqual(
     rendererErrors,
     [],

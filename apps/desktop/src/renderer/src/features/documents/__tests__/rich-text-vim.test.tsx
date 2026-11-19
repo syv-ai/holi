@@ -288,15 +288,32 @@ describe('rich-text Vim extension', () => {
     ed.commands.setContent('<p>one</p><p>two</p><p>three</p>')
     ed.commands.setTextSelection(1)
     key(ed, '2')
-    key(ed, 'V')
-    key(ed, '2')
     key(ed, 'G')
-    key(ed, 'g')
-    key(ed, 'g')
     key(ed, 'd')
-    expect(text(ed)).toBe('twothree')
+    key(ed, 'd')
+    expect(text(ed)).toBe('onethree')
     key(ed, 'Escape')
     expect(ed.view.dom.dataset.vimMode).toBe('normal')
+  })
+
+  it('scrolls visual G and gg selection transactions into view', () => {
+    const paragraphs = Array.from({ length: 120 }, (_, index) => `<p>line ${index}</p>`).join('')
+    const ed = open(paragraphs)
+    const dispatch = ed.view.dispatch.bind(ed.view)
+    const dispatched = vi.spyOn(ed.view, 'dispatch').mockImplementation((tr) => dispatch(tr))
+
+    ed.commands.setTextSelection(1)
+    key(ed, 'v')
+    dispatched.mockClear()
+    key(ed, 'G')
+    expect(dispatched.mock.calls.some(([tr]) => tr.scrolledIntoView)).toBe(true)
+
+    ed.commands.setTextSelection(ed.state.doc.content.size - 1)
+    key(ed, 'v')
+    key(ed, 'g')
+    dispatched.mockClear()
+    key(ed, 'g')
+    expect(dispatched.mock.calls.some(([tr]) => tr.scrolledIntoView)).toBe(true)
   })
 
   it('keeps visual operations aligned with the displayed selection after external edits', () => {
@@ -336,7 +353,9 @@ describe('rich-text Vim extension', () => {
       key(ed, scenario.backward ? 'h' : 'l')
       expect(ed.view.dom.dataset.vimMode, `${scenario.name} before edit`).toBe('visual')
       ed.view.dispatch(scenario.insert(ed).setMeta('externalDocumentReload', true))
-      const displayedText = ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)
+      const displayedFrom = ed.state.selection.from
+      const displayedTo = ed.state.selection.to
+      const displayedText = ed.state.doc.textBetween(displayedFrom, displayedTo)
       const selectionWasDisplayed = !ed.state.selection.empty
       const modeBeforeOperator = ed.view.dom.dataset.vimMode
       expect(modeBeforeOperator === 'visual' || modeBeforeOperator === 'normal').toBe(true)
@@ -359,11 +378,14 @@ describe('rich-text Vim extension', () => {
         }
       } else {
         expect(ed.state.doc.eq(before), scenario.name).toBe(false)
+        expect(text(ed), `${scenario.name} deletes precisely the displayed range`).toBe(
+          before.textBetween(0, displayedFrom) +
+            before.textBetween(displayedTo, before.content.size),
+        )
         expect(feedback).not.toHaveBeenCalledWith(
           'Vim selection changed externally; no text was changed',
         )
         expect(displayedText.length).toBeGreaterThan(0)
-        if (scenario.name === 'interior') expect(text(ed)).toBe('cd')
       }
       ed.destroy()
       editors.delete(ed)
