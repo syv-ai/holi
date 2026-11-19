@@ -352,7 +352,7 @@ export async function runAppHintInteractions(
   )
   await requestHints()
   await assertVisibleLabels()
-  assert.equal(await evaluate(`document.querySelector('#guest-action-count')?.textContent`), '1')
+  assert.equal(await evaluate(`document.querySelector('#guest-action-count')?.textContent`), '2')
   mark('production-app-frame-mutation-overlay-hidden-show-reload-focus-cycle-discards-stale-hints')
   await holdView()
 

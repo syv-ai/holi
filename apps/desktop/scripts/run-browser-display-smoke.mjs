@@ -433,7 +433,8 @@ try {
     'leased-real-app-frame-owner-b-resources',
     'actual-vault-app-screenshot-b',
     'production-app-frame-hostbridge-trpc-preload-and-main-app-door-read-a',
-    'production-app-frame-native-f-hint-label-keys-activate-once-through-host-layer',
+    'production-app-frame-native-f-hint-label-keys-activate-repeatedly-through-host-layer',
+    'production-app-frame-open-closed-and-nested-shadow-editors-preserve-native-f',
     'production-app-frame-vim-off-preserves-native-guest-input-typing',
     'production-app-frame-mutation-overlay-hidden-show-reload-focus-cycle-discards-stale-hints',
     'production-app-frame-vim-disable-removes-native-hint-labels',
@@ -461,7 +462,7 @@ try {
     result.checks.length >= (toolbarAcceptance ? 47 : 30),
     'native smoke produced too few assertions',
   )
-  if (appHintsOnly) assert.equal(result.checks.length, 33, 'app hint smoke must pass all 33 checks')
+  if (appHintsOnly) assert.equal(result.checks.length, 34, 'app hint smoke must pass all 34 checks')
   if (hintsAcceptance) {
     const browserHintChecks = [
       'native-page-f-discovers-production-page-and-host-labels',
@@ -578,7 +579,7 @@ try {
     const recording = JSON.parse(await readFile(metadataPath, 'utf8'))
     assert.equal(recording.interactionCompleted, true)
     assert.deepEqual(recording.finalOutcomes, {
-      actionCount: '1',
+      actionCount: '2',
       inputValue: 'native',
       vimEnabled: false,
       hintsVisible: false,
