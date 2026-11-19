@@ -218,6 +218,30 @@ function nestedErrors(error: unknown): unknown[] {
   return error instanceof AggregateError ? error.errors.flatMap(nestedErrors) : [error]
 }
 
+async function waitForFile(path: string): Promise<string> {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    try {
+      return await readFile(path, 'utf8')
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+  throw new Error(`Timed out waiting for ${path}`)
+}
+
+async function waitForGone(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    try {
+      process.kill(pid, 0)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return
+      throw error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`Pi fixture process ${pid} is still alive`)
+}
+
 async function rig(
   userData?: string,
   holdAgentDisposer?: { entered: () => void; wait: Promise<void> },
@@ -2414,28 +2438,6 @@ rl.on('line', (line) => {
   let pidA: number | undefined
   let releaseRename: ReturnType<typeof deferred> | undefined
   const releasePath = join(roots[A], 'pi-fixture-release')
-  const waitForFile = async (path: string) => {
-    for (let attempt = 0; attempt < 200; attempt++) {
-      try {
-        return await readFile(path, 'utf8')
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 10))
-      }
-    }
-    throw new Error(`Timed out waiting for ${path}`)
-  }
-  const waitForGone = async (pid: number) => {
-    for (let attempt = 0; attempt < 200; attempt++) {
-      try {
-        process.kill(pid, 0)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return
-        throw error
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-    throw new Error(`Pi fixture process ${pid} is still alive`)
-  }
   const reply = async (remote: typeof A | typeof B, session: string) => {
     for (let attempt = 0; attempt < 200; attempt++) {
       const result = (await call(remote, 'agent.reply', { session })) as { output: string | null }
@@ -2586,28 +2588,6 @@ rl.on('line', (line) => {
     command: { bin: executable, args: [] },
   }
   let stopping: Promise<void> | undefined
-  const waitForFile = async (path: string) => {
-    for (let attempt = 0; attempt < 200; attempt++) {
-      try {
-        return await readFile(path, 'utf8')
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 10))
-      }
-    }
-    throw new Error(`Timed out waiting for ${path}`)
-  }
-  const waitForGone = async (pid: number) => {
-    for (let attempt = 0; attempt < 200; attempt++) {
-      try {
-        process.kill(pid, 0)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return
-        throw error
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-    throw new Error(`Pi fixture process ${pid} is still alive`)
-  }
   let pidA: number | undefined
   let pidB: number | undefined
   try {
