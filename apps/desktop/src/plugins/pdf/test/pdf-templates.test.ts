@@ -205,7 +205,10 @@ describe('migrateTemplates', () => {
     }
     await migrateTemplates(root, seed)
     expect(await readFile(join(old, 'template.typ'), 'utf8')).toBe('seed report')
-    expect(await readFile(join(old, 'template.json'), 'utf8')).toBe('{"name":"Report"}')
+    expect(JSON.parse(await readFile(join(old, 'template.json'), 'utf8'))).toEqual({
+      name: 'Report',
+      fields: [{ key: 'client', label: 'Client', type: 'text', required: false }],
+    })
     expect(await readFile(join(old, 'nested/asset.bin')).catch(() => null)).toBeNull()
     const reportBytes = await readFile(join(old, 'template.typ'))
     await migrateTemplates(root, seed)
@@ -254,6 +257,216 @@ describe('migrateTemplates', () => {
     ])
     await migrateTemplates(root, {})
   })
+
+  it('restores the Client-enabled stock Report after obsolete-name cleanup', async () => {
+    const root = await vault()
+    const dir = join(root, '.holi/document-templates/report')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'template.json'), '{"name":"Syv.ai report"}')
+    await writeFile(join(dir, 'template.typ'), 'obsolete content')
+    const seed = {
+      '.holi/document-templates/report/template.json': await readFile(
+        new URL(
+          '../main/vault/once/.holi/document-templates/report/template.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+      '.holi/document-templates/report/template.typ': await readFile(
+        new URL('../main/vault/once/.holi/document-templates/report/template.typ', import.meta.url),
+        'utf8',
+      ),
+    }
+
+    await migrateTemplates(root, seed)
+    const report = (await listTemplates(root)).find((template) => template.slug === 'report')
+    expect(report?.fields.map((field) => field.key)).toContain('client')
+    expect(await readFile(join(dir, 'template.typ'), 'utf8')).toContain(
+      'meta.at("client", default: none)',
+    )
+  })
+
+  it('upgrades only the pristine previous Report Typst and preserves custom manifest fields', async () => {
+    const root = await vault()
+    const dir = join(root, '.holi/document-templates/report')
+    await mkdir(dir, { recursive: true })
+    const manifest = {
+      name: 'Report',
+      fields: [{ key: 'title', type: 'text', default: 'Existing default' }],
+    }
+    await writeFile(join(dir, 'template.json'), JSON.stringify(manifest))
+    await writeFile(
+      join(dir, 'template.typ'),
+      await readFile(new URL('./fixtures/pre-client-report.typ', import.meta.url)),
+    )
+    const seed = {
+      '.holi/document-templates/report/template.json': await readFile(
+        new URL(
+          '../main/vault/once/.holi/document-templates/report/template.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+      '.holi/document-templates/report/template.typ': await readFile(
+        new URL('../main/vault/once/.holi/document-templates/report/template.typ', import.meta.url),
+        'utf8',
+      ),
+    }
+
+    await migrateTemplates(root, seed)
+    const upgradedTemplate = await readFile(join(dir, 'template.typ'), 'utf8')
+    expect(upgradedTemplate).toContain('let client = meta.at("client", default: none)')
+    expect(upgradedTemplate).toContain('#import "../_brand/brand.typ": *')
+    expect(upgradedTemplate).toContain('image("../_brand/logo.png"')
+    expect(JSON.parse(await readFile(join(dir, 'template.json'), 'utf8')).fields).toEqual([
+      { key: 'title', type: 'text', default: 'Existing default' },
+      { key: 'client', label: 'Client', type: 'text', required: false },
+    ])
+    const firstManifest = await readFile(join(dir, 'template.json'))
+    await migrateTemplates(root, seed)
+    expect(await readFile(join(dir, 'template.json'))).toEqual(firstManifest)
+  })
+
+  it('adds Client to every pristine historical Report while preserving its brand layout', async () => {
+    const fixtures = [
+      'pre-client-report.typ',
+      'pre-client-report-outline.typ',
+      'pre-client-report-danish-date.typ',
+      'pre-client-report-initial.typ',
+      'pre-client-report-numbered-outline.typ',
+    ]
+    const seed = {
+      '.holi/document-templates/report/template.json': await readFile(
+        new URL(
+          '../main/vault/once/.holi/document-templates/report/template.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+      '.holi/document-templates/report/template.typ': await readFile(
+        new URL('../main/vault/once/.holi/document-templates/report/template.typ', import.meta.url),
+        'utf8',
+      ),
+    }
+
+    for (const fixture of fixtures) {
+      const root = await vault()
+      const dir = join(root, '.holi/document-templates/report')
+      await mkdir(dir, { recursive: true })
+      const original = await readFile(new URL(`./fixtures/${fixture}`, import.meta.url), 'utf8')
+      await writeFile(join(dir, 'template.json'), JSON.stringify({ name: 'Report', fields: [] }))
+      await writeFile(join(dir, 'template.typ'), original)
+
+      await migrateTemplates(root, seed)
+
+      const updated = await readFile(join(dir, 'template.typ'), 'utf8')
+      expect(updated).toBe(
+        original
+          .replace(
+            '  let title = meta.at("title", default: none)\n',
+            '  let title = meta.at("title", default: none)\n  let client = meta.at("client", default: none)\n',
+          )
+          .replace(
+            '      #if title != none { text(size: 30pt, weight: 800, fill: ink)[#title] }\n',
+            '      #if title != none { text(size: 30pt, weight: 800, fill: ink)[#title] }\n      #if client != none { v(0.4cm); text(size: 12pt, fill: muted)[#client] }\n',
+          ),
+      )
+      expect(updated).toContain('#import "../_brand/brand.typ": *')
+      expect(updated).toContain('image("../_brand/logo.png"')
+      expect(updated).toContain('#render-body(notePath, figures: (:))')
+      expect(updated).toContain('meta.at("client", default: none)')
+    }
+  })
+
+  it('adds Client to an existing customized manifest without replacing its fields or template', async () => {
+    const root = await vault()
+    const dir = join(root, '.holi/document-templates/report')
+    const manifest = {
+      name: 'Report',
+      description: 'My report',
+      fields: [{ key: 'title', label: 'Heading', type: 'text', default: 'My default' }],
+    }
+    await seed(root, 'report', manifest)
+    const customTemplate = 'custom Typst stays byte-for-byte'
+    await writeFile(join(dir, 'template.typ'), customTemplate)
+
+    await migrateTemplates(root, {
+      '.holi/document-templates/report/template.json': JSON.stringify({
+        name: 'Report',
+        fields: [],
+      }),
+      '.holi/document-templates/report/template.typ': 'new stock template',
+    })
+    const updated = JSON.parse(await readFile(join(dir, 'template.json'), 'utf8'))
+    expect(updated).toMatchObject({ name: 'Report', description: 'My report' })
+    expect(updated.fields).toEqual([
+      { key: 'title', label: 'Heading', type: 'text', default: 'My default' },
+      { key: 'client', label: 'Client', type: 'text', required: false },
+    ])
+    expect(await readFile(join(dir, 'template.typ'), 'utf8')).toBe(customTemplate)
+    const manifestBytes = await readFile(join(dir, 'template.json'))
+    await migrateTemplates(root, {})
+    expect(await readFile(join(dir, 'template.json'))).toEqual(manifestBytes)
+  })
+
+  it.each([
+    ['previous', 'previous'],
+    ['previous', 'current'],
+    ['current', 'previous'],
+    ['current', 'current'],
+  ])(
+    'finishes an interrupted restore with %s manifest and %s template',
+    async (manifestVersion, templateVersion) => {
+      const root = await vault()
+      const dir = join(root, '.holi/document-templates/report')
+      await mkdir(dir, { recursive: true })
+      await mkdir(join(root, '.holi/state'), { recursive: true })
+      const oldManifest = await readFile(
+        new URL('./fixtures/pre-client-report.json', import.meta.url),
+      )
+      const newManifest = await readFile(
+        new URL(
+          '../main/vault/once/.holi/document-templates/report/template.json',
+          import.meta.url,
+        ),
+      )
+      const oldTemplate = await readFile(
+        new URL('./fixtures/pre-client-report.typ', import.meta.url),
+      )
+      const newTemplate = await readFile(
+        new URL('../main/vault/once/.holi/document-templates/report/template.typ', import.meta.url),
+      )
+      await writeFile(
+        join(dir, 'template.json'),
+        manifestVersion === 'previous' ? oldManifest : newManifest,
+      )
+      await writeFile(
+        join(dir, 'template.typ'),
+        templateVersion === 'previous' ? oldTemplate : newTemplate,
+      )
+      await writeFile(
+        join(root, '.holi/state/pdf-report-restore.local.json'),
+        '{"migration":"canonical-report-v1"}\n',
+      )
+      const seed = {
+        '.holi/document-templates/report/template.json': newManifest,
+        '.holi/document-templates/report/template.typ': newTemplate,
+      }
+
+      fault.before = (operation, path) => {
+        if (operation === 'unlink' && path.endsWith('/pdf-report-restore.local.json'))
+          throw new Error('injected Report restoration failure')
+      }
+      await expect(migrateTemplates(root, seed)).rejects.toThrow(
+        'injected Report restoration failure',
+      )
+      fault.before = undefined
+      await migrateTemplates(root, seed)
+      expect(await readFile(join(dir, 'template.json'))).toEqual(newManifest)
+      expect(await readFile(join(dir, 'template.typ'))).toEqual(newTemplate)
+      await expect(stat(join(root, '.holi/state/pdf-report-restore.local.json'))).rejects.toThrow()
+    },
+  )
 
   it('leaves a completed restoration unchanged on another activation', async () => {
     const root = await vault()
