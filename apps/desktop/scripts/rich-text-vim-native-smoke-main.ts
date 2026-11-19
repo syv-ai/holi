@@ -34,6 +34,7 @@ type NativeState = {
   json: { content: NativeNode[] }
   selection: { from: number; to: number }
   editable: boolean
+  mode: string
 }
 const checks: string[] = []
 const nativeResults: Record<string, unknown>[] = []
@@ -1152,6 +1153,81 @@ async function run() {
     `window.richTextVimFixture.setup('<p>alpha beta</p>',1);window.richTextVimFixture.focus('primary')`,
   )
   await key('Escape')
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha</p><p>beta</p><p>gamma</p>',1)`)
+  await key('v')
+  assert((await evaluate<string>('document.body.innerText')).includes('Vim Visual'))
+  await key('G', ['shift'])
+  assert((await state()).selectedText.includes('gamma'))
+  await key('d')
+  assert.equal((await state()).markdown, '', 'native vGd deletes the displayed selection')
+  mark('native-visual-mode-and-vGd-use-the-visible-selection')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha</p><p>beta</p><p>gamma</p>',1)`)
+  await key('V', ['shift'])
+  assert((await evaluate<string>('document.body.innerText')).includes('Vim Visual Line'))
+  await key('G', ['shift'])
+  assert((await state()).selectedText.includes('gamma'))
+  await key('d')
+  assert.equal((await state()).markdown, '', 'native VG deletes the displayed linewise selection')
+  mark('native-visual-line-mode-and-VG-use-the-visible-selection')
+
+  await evaluate(
+    `window.richTextVimFixture.setup('<p>outside</p><ul><li><p>inside</p></li></ul>',1)`,
+  )
+  const listBeforeX = (await state()).markdown
+  await evaluate(
+    `(()=>{const e=document.querySelector('[role="textbox"]').editor;const positions=[];e.state.doc.descendants((n,p)=>{if(n.isText&&n.text==='outside')positions.push(p);if(n.isText&&n.text==='inside')positions.push(p)});e.commands.setTextSelection({from:positions[0],to:positions[1]+2});e.commands.focus()})()`,
+  )
+  await key('x')
+  assert.equal((await state()).markdown, listBeforeX, 'x refuses a selection crossing into a list')
+  await wait(
+    `document.body.innerText.includes(${JSON.stringify('Vim selection crosses a list or table; no text was changed')})`,
+    'native guarded x feedback',
+  )
+  mark('native-x-rejects-unsupported-structural-selection')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>abcd</p>',1)`)
+  await evaluate(`window.richTextVimFixture.flush()`)
+  await key('Escape')
+  await key('v')
+  await key('l')
+  await evaluate(`window.richTextVimFixture.externalRead('aXbcd','visual-reload')`)
+  await wait(
+    `window.richTextVimFixture.state().markdown === 'aXbcd'`,
+    'external reload applies the changed document',
+  )
+  await wait(
+    `window.richTextVimFixture.state().selectedText === 'aXb'`,
+    'external reload preserves the mapped visual range',
+  )
+  await key('d')
+  assert.equal((await state()).markdown, 'cd', 'delete removes the displayed mapped visual range')
+  assert.equal((await state()).selectedText, '')
+  assert(!(await state()).mode.includes('Vim Visual'))
+  mark('native-external-reload-preserves-displayed-range-for-delete')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
+  await key('y')
+  await key('w')
+  await evaluate(`window.richTextVimFixture.atText('beta')`)
+  await key('v')
+  await key('l')
+  await key('P', ['shift'])
+  assert.equal(
+    (await state()).textContent,
+    'alpha alpha ta',
+    'visual put replaces the actual selection',
+  )
+  assert(!(await state()).mode.includes('Vim Visual'), 'visual put exits visual mode')
+  await key('x')
+  assert.equal(
+    (await state()).textContent,
+    'alpha lpha ta',
+    'the next operator starts at the post-put caret',
+  )
+  mark('native-visual-put-replaces-selection-and-clears-mode')
+
+  await evaluate(`window.richTextVimFixture.setup('<p>alpha beta</p>',1)`)
   await key('v')
   await key('l')
   const visualEvidence = await state()

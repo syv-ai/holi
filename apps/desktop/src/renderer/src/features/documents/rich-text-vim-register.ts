@@ -1,4 +1,5 @@
 import { Fragment, Slice } from '@tiptap/pm/model'
+import type { Schema } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { closeHistory } from '@tiptap/pm/history'
@@ -15,9 +16,52 @@ function cappedCount(count: number) {
 
 export type VimRegister = {
   content: Slice
+  schema: Schema
   linewise: boolean
   linewiseTextblock?: 'codeBlock' | 'hardBreak'
   linewiseContainer?: 'listItem' | 'taskItem'
+}
+
+export function repeatVimRegister(register: VimRegister, count: number) {
+  const repetitions = cappedCount(count)
+  if (repetitions === 1) return register.content
+
+  if (register.linewiseTextblock === 'codeBlock') {
+    const first = register.content.content.firstChild
+    if (first?.type.name === 'codeBlock') {
+      const content = Array.from({ length: repetitions }, () => register.content.content).reduce(
+        (combined, fragment) => combined.append(fragment),
+        Fragment.empty,
+      )
+      return new Slice(content, register.content.openStart, register.content.openEnd)
+    }
+    const value = register.content.content.textBetween(0, register.content.content.size, '\n')
+    const repeated = Array.from({ length: repetitions }, () => value).join('\n')
+    const content = repeated
+      ? Fragment.from(register.schema.text(repeated, first?.marks))
+      : repetitions > 1
+        ? Fragment.from(register.schema.text('\n'.repeat(repetitions - 1)))
+        : Fragment.empty
+    return new Slice(content, register.content.openStart, register.content.openEnd)
+  }
+
+  if (register.linewiseTextblock === 'hardBreak') {
+    const separator = register.schema.nodes.hardBreak?.create() ?? null
+    if (separator) {
+      const content = Array.from({ length: repetitions }, () => register.content.content).reduce(
+        (combined, fragment, index) =>
+          index === 0 ? fragment : combined.append(Fragment.from(separator!)).append(fragment),
+        Fragment.empty,
+      )
+      return new Slice(content, register.content.openStart, register.content.openEnd)
+    }
+  }
+
+  const content = Array.from({ length: repetitions }, () => register.content.content).reduce(
+    (combined, fragment) => combined.append(fragment),
+    Fragment.empty,
+  )
+  return new Slice(content, register.content.openStart, register.content.openEnd)
 }
 
 export function pasteVimRegister(
@@ -31,17 +75,7 @@ export function pasteVimRegister(
   closeHistoryBoundary: () => void,
 ) {
   const repetitions = cappedCount(count)
-  const content =
-    repetitions === 1
-      ? register.content
-      : new Slice(
-          Array.from({ length: repetitions }, () => register.content.content).reduce(
-            (combined, fragment) => combined.append(fragment),
-            Fragment.empty,
-          ),
-          register.content.openStart,
-          register.content.openEnd,
-        )
+  const content = repeatVimRegister(register, repetitions)
   const pasteRegister = { ...register, content }
   if (count) updateCount()
   if (editable()) {
@@ -100,8 +134,7 @@ export function pasteVimRegister(
       pasteRegister.linewiseTextblock === 'codeBlock' &&
       line.block.node.type.name === 'codeBlock'
     ) {
-      const value = register.content.content.textBetween(0, register.content.content.size, '\n')
-      const repeated = Array.from({ length: repetitions }, () => value).join('\n')
+      const repeated = content.content.textBetween(0, content.content.size, '\n')
       const insertion = key === 'p' ? `\n${repeated}` : `${repeated}\n`
       const atLine = key === 'p' ? line.to : line.from
       const tr = closeHistory(view.state.tr.insertText(insertion, atLine))
@@ -121,15 +154,11 @@ export function pasteVimRegister(
       const hardBreak = view.state.schema.nodes.hardBreak
       const separator = hardBreak?.create()
       if (separator) {
-        const content = Array.from({ length: repetitions }, () => register.content.content).reduce(
-          (combined, fragment, index) =>
-            index === 0 ? fragment : combined.append(Fragment.from(separator)).append(fragment),
-          Fragment.empty,
-        )
+        const repeated = repeatVimRegister(register, repetitions).content
         const fragment =
           key === 'p'
-            ? Fragment.from(separator).append(content)
-            : content.append(Fragment.from(separator))
+            ? Fragment.from(separator).append(repeated)
+            : repeated.append(Fragment.from(separator))
         const atLine = key === 'p' ? line.to : line.from
         const tr = closeHistory(view.state.tr.insert(atLine, fragment))
         try {
