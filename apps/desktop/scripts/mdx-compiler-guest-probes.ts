@@ -171,9 +171,17 @@ export async function createGuestProbes() {
             results.assetRepeat = await bounded(new Promise(resolve => { const script = document.createElement('script');
               script.onerror = () => resolve(true); script.onload = () => resolve(false);
               script.src = '${origin}/guest.js'; document.head.append(script); }));
-            try {
-              results.beacon = navigator.sendBeacon(${JSON.stringify(endpoint + '/beacon')}, 'x') === false;
-            } catch { results.beacon = true }
+            let beaconViolation;
+            results.beacon = await bounded(new Promise(resolve => {
+              beaconViolation = event => {
+                if (event.disposition !== 'enforce' || event.effectiveDirective !== 'connect-src') return;
+                try {
+                  if (new URL(event.blockedURI).origin === ${JSON.stringify(endpoint)}) resolve(true);
+                } catch {}
+              };
+              addEventListener('securitypolicyviolation', beaconViolation);
+              navigator.sendBeacon(${JSON.stringify(endpoint + '/beacon')}, 'x');
+            }), () => removeEventListener('securitypolicyviolation', beaconViolation));
             results.websocket = await bounded(new Promise(resolve => {
               try {
                 const socket = new WebSocket(${JSON.stringify(endpoint.replace('http:', 'ws:'))});
