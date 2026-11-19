@@ -37,10 +37,10 @@ test('fixture cleanup verifies the requested filename and refuses a foreign PID'
         run: (command) =>
           command === 'ps'
             ? `${process.execPath} serve.cjs slides.md --port 4321`
-            : `p${installedCode}`,
-        signal: (pid, value) => {
+            : `n${installedCode}`,
+        signal: (_pid, value) => {
           signals.push(value)
-          return process.kill(pid, value)
+          return true
         },
       }),
       /refusing to signal unverified fixture PID/,
