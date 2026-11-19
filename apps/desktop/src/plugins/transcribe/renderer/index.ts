@@ -43,6 +43,7 @@ export const transcribeRenderer: RendererPlugin = {
       label: (id) => (id === undefined || id === '' ? 'Meetings' : meetingName(id)),
       icon: AudioLines,
       render: MeetingsSurface,
+      keepMounted: true,
     },
   ],
   // In the sidebar's apps, after Mail and Calendar.

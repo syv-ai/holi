@@ -16,7 +16,15 @@ import { MailShell } from './mail/mail-shell'
 
 export const googleRenderer: RendererPlugin = {
   info: GOOGLE_INFO,
-  surfaces: [{ kind: 'mail', label: 'Mail', icon: Mail, render: MailView }],
+  surfaces: [
+    {
+      kind: 'mail',
+      label: 'Mail',
+      icon: Mail,
+      render: MailView,
+      openAs: { kind: 'app', id: 'mail' },
+    },
+  ],
   sidebarApps: [
     {
       id: 'mail',

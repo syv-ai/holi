@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 export function observeChild(child) {
   let exit = null
@@ -29,28 +30,37 @@ export function startupDiagnostic(label, childState, logs) {
   return `Timed out: ${label}; childExit=${JSON.stringify(childState.exit)}; spawnFailure=${childState.spawnFailure}; logs=${logs}`
 }
 
-export async function stopOwnedCommunityFixture({ installedCode, pluginPort, sleep }) {
+export async function stopOwnedCommunityFixture({
+  installedCode,
+  pluginPort,
+  filename = 'slides.md',
+  sleep,
+  run = execFileSync,
+  signal = process.kill,
+}) {
   if (!installedCode) return { pid: 0, stopped: true }
-  const marker = `${installedCode}/.hint-smoke-pid`
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(filename))
+    throw new Error(`refusing unsafe fixture filename ${filename}`)
+  const marker = join(installedCode, '.hint-smoke-pid')
   const pid = Number(await readFile(marker, 'utf8').catch(() => '0'))
   if (!(pid > 0)) return { pid: 0, stopped: true }
 
   try {
-    process.kill(pid, 0)
+    signal(pid, 0)
   } catch (error) {
     if (error.code === 'ESRCH') return { pid, stopped: true }
     throw error
   }
-  const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+  const command = run('ps', ['-p', String(pid), '-o', 'command='], {
     encoding: 'utf8',
   }).trim()
-  const cwd = execFileSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {
+  const cwd = run('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {
     encoding: 'utf8',
   })
     .split('\n')
     .find((line) => line.startsWith('n'))
     ?.slice(1)
-  const expectedCommand = `${process.execPath} serve.cjs slides.md --port ${pluginPort}`
+  const expectedCommand = `${process.execPath} serve.cjs ${filename} --port ${pluginPort}`
   if (
     !command.includes(expectedCommand) ||
     cwd !== installedCode ||
@@ -58,10 +68,10 @@ export async function stopOwnedCommunityFixture({ installedCode, pluginPort, sle
   )
     throw new Error(`refusing to signal unverified fixture PID ${pid}`)
 
-  process.kill(pid, 'SIGTERM')
+  signal(pid, 'SIGTERM')
   for (let attempt = 0; attempt < 40; attempt++) {
     try {
-      process.kill(pid, 0)
+      signal(pid, 0)
     } catch (error) {
       if (error.code === 'ESRCH') return { pid, stopped: true }
       throw error
@@ -69,14 +79,14 @@ export async function stopOwnedCommunityFixture({ installedCode, pluginPort, sle
     await sleep(100)
   }
   try {
-    process.kill(pid, 'SIGKILL')
+    signal(pid, 'SIGKILL')
   } catch (error) {
     if (error.code === 'ESRCH') return { pid, stopped: true }
     throw error
   }
   for (let attempt = 0; attempt < 40; attempt++) {
     try {
-      process.kill(pid, 0)
+      signal(pid, 0)
     } catch (error) {
       if (error.code === 'ESRCH') return { pid, stopped: true }
       throw error
@@ -84,7 +94,7 @@ export async function stopOwnedCommunityFixture({ installedCode, pluginPort, sle
     await sleep(100)
   }
   try {
-    process.kill(pid, 0)
+    signal(pid, 0)
     return { pid, stopped: false }
   } catch (error) {
     if (error.code === 'ESRCH') return { pid, stopped: true }

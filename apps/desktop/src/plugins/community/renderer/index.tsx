@@ -57,7 +57,13 @@ const claimsAtom = atom((get): readonly PathClaim[] => {
   const claims: PathClaim[] =
     files.length === 0
       ? []
-      : [{ match: (path) => files.some((r) => opensPath(r, path)), view: PluginFrame }]
+      : [
+          {
+            match: (path) => files.some((r) => opensPath(r, path)),
+            retainView: true,
+            view: PluginFrame,
+          },
+        ]
   for (const row of running) {
     const folder = row.folder
     if (folder === undefined) continue

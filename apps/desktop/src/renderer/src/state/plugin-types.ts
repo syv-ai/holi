@@ -10,6 +10,7 @@ import type { PluginInfo, VaultSnapshot } from '@holi/shared'
 export type { /** @public */ IconGlyph } from '@/lib/icon-glyph'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import type { PluginDialog } from '@/state/dialogs'
+import type { TabDescriptor } from '@/state/tab-descriptor'
 
 /** What a slash command is given: the text it was typed over, the
  *  caret's line, and the note's vault path; nothing more of the buffer.
@@ -144,6 +145,8 @@ export interface Surface {
   label: string | ((id?: string) => string)
   icon: IconGlyph
   render: ComponentType<{ id?: string; visible: boolean }>
+  /** Open this registered surface through its canonical shell tab instead. */
+  openAs?: TabDescriptor
   /** Every tab of it stays mounted in its pane, hidden while another tab is
    *  active, so it keeps state a remount would lose (a terminal's
    *  scrollback). */
