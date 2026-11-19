@@ -19,6 +19,7 @@ import { startCapture } from '../renderer/audio/capture'
 import { MEETING_CLAIM } from '../renderer/meeting-claim'
 import { MeetingsSurface } from '../renderer/meetings-surface'
 import { stopRecordingAtom } from '../renderer/recorder'
+import { transcribeRenderer } from '../renderer'
 import {
   meetingsAtom,
   meetingStatesAtom,
@@ -328,6 +329,42 @@ test('a meeting folder from the New menu opens as its setup, and Record starts i
     expect(calls('meeting.start')).toEqual([{ profileId: 'planning', title: 'Kickoff', path }]),
   )
   await act(() => store.set(stopRecordingAtom))
+}, 15_000)
+
+test('the registered Meetings surface keeps a folder draft while parked and resets when closed', async () => {
+  const surface = transcribeRenderer.surfaces!.find((candidate) => candidate.kind === 'meetings')!
+  expect(surface.keepMounted).toBe(true)
+  const path = 'Meetings/Unrecorded.meeting'
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(profilesAtom, [profile])
+  store.set(meetingsAtom, LIST)
+  const view = render(
+    <Provider store={store}>
+      <surface.render id={path} visible />
+    </Provider>,
+  )
+  const title = screen.getByLabelText('Meeting title')
+  expect(title).toHaveValue('Unrecorded')
+  await userEvent.clear(title)
+  await userEvent.type(title, 'Unsaved draft')
+  expect(title).toHaveValue('Unsaved draft')
+
+  view.rerender(
+    <Provider store={store}>
+      <surface.render id={path} visible={false} />
+    </Provider>,
+  )
+  expect(screen.getByLabelText('Meeting title')).toHaveValue('Unsaved draft')
+  expect(screen.getByLabelText('Meeting title').closest('[inert]')).not.toBeNull()
+
+  view.unmount()
+  render(
+    <Provider store={store}>
+      <surface.render id={path} visible />
+    </Provider>,
+  )
+  expect(screen.getByLabelText('Meeting title')).toHaveValue('Unrecorded')
 }, 15_000)
 
 test('a meeting folder opened from the tree shows that meeting', async () => {

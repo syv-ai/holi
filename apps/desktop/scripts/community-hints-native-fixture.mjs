@@ -10,7 +10,12 @@ import tailwindcss from '@tailwindcss/vite'
 import { build as electronBuild } from 'electron-vite'
 
 // Owns the disposable install/build inputs and returns their paths to the runner.
-export async function prepareCommunityHintsNativeFixture({ desktop, root, pluginPort }) {
+export async function prepareCommunityHintsNativeFixture({
+  desktop,
+  root,
+  pluginPort,
+  retention = false,
+}) {
   const mainBuildConfig = join(root, 'community-hints-native-smoke.electron.config.mjs')
   const plugin = join(root, 'plugin')
   await mkdir(plugin)
@@ -24,7 +29,7 @@ export async function prepareCommunityHintsNativeFixture({ desktop, root, plugin
       id: 'smoke-plugin',
       name: 'Community hint fixture',
       version: '0.1.0',
-      opens: ['slides.md'],
+      opens: ['slides.fixture'],
       setup: [
         process.execPath,
         '-e',
@@ -90,7 +95,7 @@ export async function prepareCommunityHintsNativeFixture({ desktop, root, plugin
   )
   await writeFile(
     join(root, 'preload.cjs'),
-    `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('holiSmoke',{call:(name,params)=>ipcRenderer.invoke('community:call',name,params),quit:()=>ipcRenderer.send('smoke:quit')});contextBridge.exposeInMainWorld('holi',{trpc:op=>ipcRenderer.invoke('community:trpc',op),logs:{onEntry:()=>()=>{}}});`,
+    `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('holiSmoke',{call:(name,params)=>ipcRenderer.invoke('community:call',name,params),quit:()=>ipcRenderer.send('smoke:quit'),retention:${retention},leaseEvents:()=>ipcRenderer.invoke('smoke:lease-events')});contextBridge.exposeInMainWorld('holi',{trpc:op=>ipcRenderer.invoke('community:trpc',op),logs:{onEntry:()=>()=>{}}});`,
   )
   const electron = createRequire(import.meta.url)('electron')
   const env = Object.fromEntries(

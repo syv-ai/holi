@@ -1,5 +1,6 @@
 /** Real text editors exercise the shell's connected retention and buffer ownership. */
 import { EditorSelection } from '@codemirror/state'
+import { useEffect, useState } from 'react'
 import { undo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
 import { getCM, Vim } from '@replit/codemirror-vim'
@@ -437,13 +438,34 @@ test('clean hidden editors reload and stay Updated until shown; pending local ed
   })
 })
 
-test('a retained plugin path stays mounted while hidden, then disposes on close or claim removal', async () => {
+test('a retained plugin path keeps its live state through switches and splits, then disposes with its owner', async () => {
+  let disposed = 0
+  function RetainedView({
+    path,
+    visible,
+    focused,
+  }: {
+    path: string
+    visible?: boolean
+    focused?: boolean
+  }) {
+    const [draft, setDraft] = useState('')
+    useEffect(() => () => void (disposed += 1), [])
+    return (
+      <div data-retained-pdf={path} data-visible={visible} data-focused={focused}>
+        <label>
+          Draft <input value={draft} onChange={(event) => setDraft(event.target.value)} />
+        </label>
+        <div data-testid="retained-scroll" style={{ overflowY: 'auto', height: 30 }}>
+          <div style={{ height: 300 }}>Scrollable content</div>
+        </div>
+      </div>
+    )
+  }
   const claim = {
     match: (path: string) => path === 'docs/case.pdf',
     retainView: true as const,
-    view: ({ path, visible, focused }: { path: string; visible?: boolean; focused?: boolean }) => (
-      <div data-retained-pdf={path} data-visible={visible} data-focused={focused} />
-    ),
+    view: RetainedView,
   }
   const launcher = 'holi:new:1'
   const store = fixture(['src/one.ts', 'docs/case.pdf', launcher])
@@ -460,19 +482,32 @@ test('a retained plugin path stays mounted while hidden, then disposes on close 
     ),
   )
 
+  const firstInput = screen.getByLabelText('Draft') as HTMLInputElement
+  fireEvent.change(firstInput, { target: { value: 'unsaved plugin state' } })
+  const scroll = screen.getByTestId('retained-scroll')
+  scroll.scrollTop = 17
   act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, launcher)))
   const hidden = document.querySelector('[data-retained-pdf="docs/case.pdf"]')
   expect(hidden).toHaveAttribute('data-visible', 'false')
   expect(hidden).toHaveAttribute('data-focused', 'false')
+  expect(screen.getByLabelText('Draft')).toHaveValue('unsaved plugin state')
+  expect(screen.getByTestId('retained-scroll')).toBe(scroll)
+  expect(scroll.scrollTop).toBe(17)
+  expect(disposed).toBe(0)
   expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull()
 
   act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'src/one.ts')))
   expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBe(hidden)
   expect(document.querySelector('[data-slot="empty-view-content"]')).not.toBeNull()
+  act(() => store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, 'docs/case.pdf')))
+  expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBe(hidden)
+  expect(disposed).toBe(0)
 
   act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, 'docs/case.pdf')))
   expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBeNull()
+  expect(disposed).toBe(1)
 
+  disposed = 0
   act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, 'docs/case.pdf')))
   await waitFor(() =>
     expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).not.toBeNull(),
@@ -482,6 +517,18 @@ test('a retained plugin path stays mounted while hidden, then disposes on close 
   await waitFor(() =>
     expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBeNull(),
   )
+  expect(disposed).toBe(1)
+
+  act(() => store.set(coreContributionAtom, { surfaces: [], rail: [], claims: [claim] }))
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, 'docs/case.pdf')))
+  await waitFor(() =>
+    expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).not.toBeNull(),
+  )
+  act(() => store.set(activeRemoteAtom, 'other/repo'))
+  await waitFor(() =>
+    expect(document.querySelector('[data-retained-pdf="docs/case.pdf"]')).toBeNull(),
+  )
+  expect(disposed).toBe(2)
 })
 
 test('close/reopen rereads and changes in plugin ownership dispose the core editor', async () => {

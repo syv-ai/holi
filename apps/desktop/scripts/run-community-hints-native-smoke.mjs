@@ -41,6 +41,7 @@ const port = async () => {
 }
 let debugPort
 let pluginPort
+const fixtureFilename = 'slides.fixture'
 try {
   debugPort = await port()
   pluginPort = await port()
@@ -671,7 +672,12 @@ try {
     const installedCode = install
       ? join(root, 'profile/plugins/smoke-plugin', install.source.commit, install.source.path)
       : null
-    const stopped = await stopOwnedCommunityFixture({ installedCode, pluginPort, sleep })
+    const stopped = await stopOwnedCommunityFixture({
+      installedCode,
+      pluginPort,
+      filename: fixtureFilename,
+      sleep,
+    })
     fixturePid = stopped.pid
     fixtureServerStopped = stopped.stopped
     assert(fixtureServerStopped, `fixture process ${fixturePid} still alive`)
@@ -681,11 +687,15 @@ try {
 
   cdpClient?.close()
   let runtimeRemoved = false
-  try {
-    await rm(root, { recursive: true, force: true })
-    runtimeRemoved = true
-  } catch (error) {
-    failure ??= error
+  const ownershipSafeToRemove =
+    fixtureServerStopped && (!child || child.exitCode !== null || child.signalCode !== null)
+  if (ownershipSafeToRemove) {
+    try {
+      await rm(root, { recursive: true, force: true })
+      runtimeRemoved = true
+    } catch (error) {
+      failure ??= error
+    }
   }
   try {
     await writeFile(join(evidence, 'electron.log'), log)
