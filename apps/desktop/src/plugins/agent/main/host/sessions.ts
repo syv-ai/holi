@@ -799,7 +799,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         try {
           await trackStop(target, id)
         } catch {
-          // Retained by trackCleanup for the drain result.
+          // The late-session cleanup owner retains this failure for teardown.
         }
       }
       if (admissionClosed || current !== c) {

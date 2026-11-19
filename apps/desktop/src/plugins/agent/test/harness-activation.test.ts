@@ -1780,9 +1780,7 @@ it.each([false, true] as const)(
       if (failWrite) {
         expectFailedDrain()
         const failure = await stopping!.catch((error: unknown) => error)
-        const causes = (error: unknown): unknown[] =>
-          error instanceof AggregateError ? error.errors.flatMap(causes) : [error]
-        expect(causes(failure)).toContainEqual(
+        expect(nestedErrors(failure)).toContainEqual(
           expect.objectContaining({ message: 'context rename failed' }),
         )
         await expect(enter(A)).rejects.toBe(failure)
