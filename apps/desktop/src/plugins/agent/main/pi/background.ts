@@ -197,6 +197,18 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     }
   }
 
+  async function ownTurn(job: PiJob, turn: PiTurn, prompt: string): Promise<void> {
+    try {
+      await runTurn(job, turn, prompt)
+    } catch (error) {
+      recordFailure(error)
+    } finally {
+      await finalize(job, turn, 'forget')
+      job.turns.delete(turn)
+      if (job.currentTurn === turn) job.currentTurn = undefined
+    }
+  }
+
   function begin(job: PiJob): PiTurn {
     const turn: PiTurn = {
       begin: Promise.resolve(),
@@ -272,7 +284,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     owned.add(job)
     const turn = begin(job)
     changed()
-    turn.promise = track(runTurn(job, turn, args.prompt))
+    turn.promise = track(ownTurn(job, turn, args.prompt))
     return { ok: true as const, sessionId: id }
   }
 
@@ -366,7 +378,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
           if (job.retentionTimer) clearTimeout(job.retentionTimer)
           job.retentionTimer = undefined
           const turn = begin(job)
-          turn.promise = track(runTurn(job, turn, text))
+          turn.promise = track(ownTurn(job, turn, text))
         }
       })()
       return track(operation)

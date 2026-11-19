@@ -25,7 +25,6 @@ export function createLateSessionCleanup(
     get pending() {
       return [...pending]
     },
-    track,
     recordFailure(error: unknown): void {
       failures.push(error)
     },
