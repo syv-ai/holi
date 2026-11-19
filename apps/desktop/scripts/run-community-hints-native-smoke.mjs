@@ -5,7 +5,7 @@ import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createCdpClient } from './native-smoke-cdp.mjs'
-import { stopOwnedCommunityFixture } from './native-smoke-process.mjs'
+import { observeChild, stopOwnedCommunityFixture } from './native-smoke-process.mjs'
 import { prepareCommunityHintsNativeFixture } from './community-hints-native-fixture.mjs'
 import { createNativeProofRecorder, finalizeScreencast } from './native-smoke-recording.mjs'
 
@@ -55,15 +55,15 @@ try {
       log += chunk
       process.stdout.write(chunk)
     })
-  closed = new Promise((resolve, reject) => {
-    child.once('error', reject)
-    child.once('close', (code, signal) => {
-      closeResult = { code, signal }
-      resolve(closeResult)
-    })
+  const childState = observeChild(child)
+  closed = childState.closed.then((result) => {
+    closeResult = result
+    return result
   })
   let target
   for (let n = 0; n < 120; n++) {
+    if (childState.spawnFailure)
+      throw new Error(`Electron launch failed: ${childState.spawnFailure}`)
     if (child.exitCode !== null || child.signalCode !== null)
       throw new Error(`fixture exited ${child.exitCode ?? child.signalCode}`)
     const targets = await fetch(`http://127.0.0.1:${debugPort}/json/list`)
