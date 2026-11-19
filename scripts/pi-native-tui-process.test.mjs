@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startOwnedPty } from './pi-native-tui-process.mjs'
@@ -27,7 +27,7 @@ async function fixture(context, command, args, options = {}) {
       throw error
     }
   })
-  return handle
+  return { handle, stateDirectory: root }
 }
 function assertGone(receipt) {
   for (const pid of [receipt.supervisorPid, receipt.anchorPid, receipt.nativePid].filter(Boolean))
@@ -38,7 +38,7 @@ test(
   'short-lived native child is reaped before releasing its anchored process group',
   posix,
   async (t) => {
-    const handle = await fixture(t, '/bin/sh', ['-c', 'printf "done\\n"'])
+    const { handle } = await fixture(t, '/bin/sh', ['-c', 'printf "done\\n"'])
     assert.equal((await handle.waitForExit()).code, 0)
     const receipt = await handle.close()
     assert.match(handle.output.toString(), /done/)
@@ -51,7 +51,7 @@ test(
   'forwards real raw PTY input through a separate acknowledged control channel',
   posix,
   async (t) => {
-    const handle = await fixture(t, '/bin/sh', [
+    const { handle } = await fixture(t, '/bin/sh', [
       '-c',
       'IFS= read -r line; printf "reply:%s\\n" "$line"',
     ])
@@ -67,7 +67,7 @@ test(
   'deadline is sticky and TERM-resistant native child and descendant are drained',
   posix,
   async (t) => {
-    const handle = await fixture(
+    const { handle } = await fixture(
       t,
       '/bin/sh',
       [
@@ -87,7 +87,7 @@ test(
 )
 
 test('output overflow remains failure after verified cleanup', posix, async (t) => {
-  const handle = await fixture(t, '/bin/sh', ['-c', 'while :; do printf 1234567890; done'], {
+  const { handle } = await fixture(t, '/bin/sh', ['-c', 'while :; do printf 1234567890; done'], {
     maxOutputBytes: 64,
   })
   await assert.rejects(handle.waitForExit(), /exceeded/)
@@ -96,7 +96,7 @@ test('output overflow remains failure after verified cleanup', posix, async (t) 
 })
 
 test('native exec failure still reaps the producer and session anchor', posix, async (t) => {
-  const handle = await fixture(t, '/definitely/not/here', [])
+  const { handle } = await fixture(t, '/definitely/not/here', [])
   assert.notEqual((await handle.waitForExit()).code, 0)
   assertGone(await handle.close())
 })
@@ -105,7 +105,7 @@ test(
   'late input after native exit or close fails without losing ownership cleanup',
   posix,
   async (t) => {
-    const handle = await fixture(t, '/bin/sh', ['-c', 'exit 0'])
+    const { handle } = await fixture(t, '/bin/sh', ['-c', 'exit 0'])
     await handle.waitForExit()
     await assert.rejects(handle.write('late-before-release'), /closed/)
     assertGone(await handle.close())
@@ -114,10 +114,35 @@ test(
 )
 
 test(
+  'supervisor interruption is sticky even during close with a zero-exiting native child',
+  posix,
+  async (t) => {
+    const { handle, stateDirectory } = await fixture(t, '/bin/sh', [
+      '-c',
+      'trap "exit 0" TERM; echo READY; while :; do sleep 1; done',
+    ])
+    const until = Date.now() + 2000
+    while (!handle.output.toString().includes('READY')) {
+      assert.ok(Date.now() < until)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const { supervisorPid } = JSON.parse(
+      await readFile(join(stateDirectory, 'owned-pty.json'), 'utf8'),
+    )
+    const closing = handle.close()
+    process.kill(supervisorPid, 'SIGTERM')
+    const receipt = await closing
+    assertGone(receipt)
+    assert.match(handle.failure?.message ?? '', /supervisor interrupted/)
+    await assert.rejects(handle.waitForExit(), /supervisor interrupted/)
+  },
+)
+
+test(
   'supervisor spawn failure is a positively absent lifecycle, not an unknown native group',
   posix,
   async (t) => {
-    const handle = await fixture(t, '/bin/sh', [], { env: { PATH: '/definitely/missing' } })
+    const { handle } = await fixture(t, '/bin/sh', [], { env: { PATH: '/definitely/missing' } })
     await assert.rejects(handle.waitForExit(), /spawn failed/)
     const receipt = await handle.close()
     assert.equal(receipt.started, false)

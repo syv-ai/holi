@@ -37,6 +37,11 @@ def main() -> None:
         """
         nonlocal stopping
         stopping = True
+        try:
+            _emit(fd=3, event={"type": "interrupted", "signal": _signal})
+        except OSError:
+            # Losing the observer must not interrupt owned session drainage.
+            pass
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, stop_supervisor)

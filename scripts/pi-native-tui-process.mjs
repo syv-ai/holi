@@ -113,6 +113,8 @@ export async function startOwnedPty({
         } else if (event.type === 'drained') {
           if (event.anchorPid !== anchorPid) throw new Error('Anchor identity changed')
           drain = event
+        } else if (event.type === 'interrupted') {
+          fail(new Error(`PTY supervisor interrupted by signal ${event.signal}`))
         } else if (event.type === 'input-ack') {
           acknowledgements.get(event.id)?.resolve()
           acknowledgements.delete(event.id)

@@ -20,8 +20,8 @@ async function packageFixture() {
   )
   const bin = join(folder, 'dist/bundle/cli.js')
   await writeFile(bin, 'throw new Error("Provenance inspection must not execute this file")')
-  const linked = join(root, 'pi')
-  await symlink(bin, linked)
+  const linked = process.platform === 'win32' ? bin : join(root, 'pi')
+  if (linked !== bin) await symlink(bin, linked)
   return { root, bin, linked }
 }
 
@@ -33,25 +33,29 @@ async function waitFor(predicate) {
   }
 }
 
-test('provenance resolves executable symlinks without executing producer code', async () => {
-  const fixture = await packageFixture()
-  try {
-    const result = await verifyPiProvenance({ bin: fixture.linked, expectedVersion: '1.5.2' })
-    assert.equal(result.executable, await realpath(fixture.bin))
-    assert.match(result.packageDigest, /^[a-f0-9]{64}$/)
-    assert.equal(result.sourceCommitAvailable, false)
-    await assert.rejects(
-      verifyPiProvenance({ bin: fixture.bin, expectedVersion: '9.9.9' }),
-      (error) => error.outcome === 'mismatch',
-    )
-    await assert.rejects(
-      verifyPiProvenance({ bin: '/missing/pi', expectedVersion: '1.5.2' }),
-      /unavailable/,
-    )
-  } finally {
-    await rm(fixture.root, { recursive: true, force: true })
-  }
-})
+test(
+  'provenance resolves executable symlinks without executing producer code',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const fixture = await packageFixture()
+    try {
+      const result = await verifyPiProvenance({ bin: fixture.linked, expectedVersion: '1.5.2' })
+      assert.equal(result.executable, await realpath(fixture.bin))
+      assert.match(result.packageDigest, /^[a-f0-9]{64}$/)
+      assert.equal(result.sourceCommitAvailable, false)
+      await assert.rejects(
+        verifyPiProvenance({ bin: fixture.bin, expectedVersion: '9.9.9' }),
+        (error) => error.outcome === 'mismatch',
+      )
+      await assert.rejects(
+        verifyPiProvenance({ bin: '/missing/pi', expectedVersion: '1.5.2' }),
+        /unavailable/,
+      )
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true })
+    }
+  },
+)
 
 test('unreviewed package bytes cannot execute as native upstream evidence', async () => {
   const fixture = await packageFixture()
@@ -86,6 +90,23 @@ test('unsupported platform fails before provenance or producer execution and lea
     assert.equal(JSON.parse(await readFile(join(root, 'receipt.json'))).outcome, 'unverified')
   } finally {
     Object.defineProperty(process, 'platform', descriptor)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('artifact paths cannot enter the checkout through an external symlink ancestor', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-660-artifact-path-test-'))
+  try {
+    await symlink(process.cwd(), join(root, 'checkout'), 'junction')
+    await assert.rejects(
+      runPiNativeTuiFixture({
+        bin: '/unused',
+        expectedVersion: '1.5.2',
+        artifactDirectory: join(root, 'checkout', 'must-not-create-artifacts'),
+      }),
+      /outside the repository/,
+    )
+  } finally {
     await rm(root, { recursive: true, force: true })
   }
 })

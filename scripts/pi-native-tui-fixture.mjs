@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -12,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startOwnedPty } from './pi-native-tui-process.mjs'
 
@@ -94,7 +95,12 @@ function sourceEvidence(directory) {
     [
       core,
       'function formatProjectTrustPrompt(',
-      'Project trust has a native selector; cancelling returns untrusted.',
+      'Project trust has a native selector with explicit trust and deny choices.',
+    ],
+    [
+      core,
+      'let selected=await selectProjectTrustOption(',
+      'Cancelling the native selector returns no choice; the resolver then returns false (untrusted).',
     ],
     [
       trust,
@@ -235,6 +241,22 @@ async function waitFor(handle, predicate, label, timeout = 10000) {
   if (handle?.failure) throw handle.failure
 }
 
+function canonicalArtifactPath(path) {
+  let ancestor = resolve(path)
+  const missing = []
+  while (!existsSync(ancestor)) {
+    try {
+      lstatSync(ancestor)
+      throw new Error('Unresolvable artifact symlink')
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+    missing.unshift(basename(ancestor))
+    ancestor = dirname(ancestor)
+  }
+  return resolve(realpathSync(ancestor), ...missing)
+}
+
 /** Credential-free native proof. Renderer hint discovery is a later consumer. */
 export async function runPiNativeTuiFixture({
   bin,
@@ -246,8 +268,9 @@ export async function runPiNativeTuiFixture({
     throw new Error(
       'Pi binary, exact expected version, outside-repository artifacts and positive timeout required',
     )
-  const artifacts = resolve(artifactDirectory)
-  if (artifacts === repositoryRoot || artifacts.startsWith(`${repositoryRoot}/`))
+  const artifacts = canonicalArtifactPath(artifactDirectory)
+  const checkout = realpathSync(repositoryRoot)
+  if (artifacts === checkout || artifacts.startsWith(`${checkout}/`))
     throw new Error('Native Pi TUI artifacts must be stored outside the repository')
   mkdirSync(artifacts, { recursive: true, mode: 0o700 })
   const processes = [],
