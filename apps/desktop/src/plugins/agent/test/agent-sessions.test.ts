@@ -83,8 +83,11 @@ function setup(initial: Row[] = [], nativeCli?: ClaudeCli, root = ROOT) {
     listTerminal: () => null,
   }
   const sent: Array<[string, unknown]> = []
-  const message = vi.fn(async (_channel: SessionChannel, _text: string) => {})
+  const message = vi.fn(
+    async (_channel: SessionChannel, _text: string, _signal?: AbortSignal) => {},
+  )
   const pauses: string[] = []
+  let watched!: () => void
   /** The processes still running, for the pid check. */
   const running = new Set<number>()
   const vault: AgentVault = {
@@ -111,7 +114,10 @@ function setup(initial: Row[] = [], nativeCli?: ClaudeCli, root = ROOT) {
           parseListing,
           isLive,
           summarise,
-          watch: () => () => {},
+          watch: (_dir, onChange) => {
+            watched = onChange
+            return () => {}
+          },
           message,
         },
         status: { contextPercent: readContextPercent, model: readModelName },
@@ -140,6 +146,7 @@ function setup(initial: Row[] = [], nativeCli?: ClaudeCli, root = ROOT) {
     pauses,
     /** The vault opened: what its activation does. */
     attach: () => sessions.ensure(vault),
+    notifyWatch: () => watched(),
   }
 }
 
@@ -176,8 +183,14 @@ describe('agent sessions', () => {
 
     const starting = t.sessions.start({ name: 'Catch-up', prompt: 'read mail' })
     await vi.waitFor(() => expect(t.cli.startBg).toHaveBeenCalled())
-    await t.sessions.leave()
+    let leaveSettled = false
+    const leaving = t.sessions.leave().finally(() => {
+      leaveSettled = true
+    })
+    await Promise.resolve()
+    expect(leaveSettled).toBe(false)
     release()
+    await leaving
 
     expect(await starting).toEqual({
       ok: false,
@@ -417,7 +430,7 @@ describe('agent sessions', () => {
     t.setListing([row('aaaaaaaa'), row('cccccccc')])
     await t.sessions.refresh()
     await t.sessions.message('cccccccc', 'change the date')
-    expect(t.message).toHaveBeenCalledWith(inbox, 'change the date')
+    expect(t.message).toHaveBeenCalledWith(inbox, 'change the date', expect.any(AbortSignal))
 
     // Stopped: no longer running, and its inbox is forgotten with it.
     await t.sessions.stop('cccccccc')
@@ -504,6 +517,28 @@ describe('agent sessions', () => {
     expect(res).toEqual({ ok: true, sessionId: 'copy0000', terminalId: 'term-1' })
   })
 
+  it('joins an established watcher read before leaving', async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    const list = t.cli.list.getMockImplementation()!
+    let release!: () => void
+    t.cli.list.mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => (release = resolve))
+      return list(...args)
+    })
+    t.notifyWatch()
+    await vi.waitFor(() => expect(t.cli.list).toHaveBeenCalledTimes(2))
+    let left = false
+    const leaving = t.sessions.leave({ stopSessions: false }).then(() => {
+      left = true
+    })
+    await Promise.resolve()
+    expect(left).toBe(false)
+    release()
+    await leaving
+    expect(left).toBe(true)
+  })
+
   it('leaves: stops live sessions, closes windows', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
     await t.attach()
@@ -511,6 +546,8 @@ describe('agent sessions', () => {
     expect(t.cli.stop).toHaveBeenCalledTimes(2)
     expect(t.terminals.closeAll).toHaveBeenCalled()
     expect(t.sessions.sessions()).toEqual([])
+    expect(t.sessions.past()).toEqual([])
+    expect(t.sessions.watched('aaaaaaaa')).toBe(false)
   })
 
   it('leaving removes only the sessions Holi started empty that never had a turn', async () => {
@@ -556,6 +593,98 @@ describe('launched sessions', () => {
     expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'launch00' })])
   })
 
+  it('retains late-launch cleanup failures through repeated leave', async () => {
+    const { sessions, cli, attach } = setup()
+    await attach()
+    const started = cli.startBg.getMockImplementation()!
+    let release!: () => void
+    cli.startBg.mockImplementationOnce(async (t, opts) => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return started(t, opts)
+    })
+    const launching = sessions.launch({ name: 'Go', prompt: 'go' })
+    await vi.waitFor(() => expect(cli.startBg).toHaveBeenCalled())
+    const leaving = sessions.leave()
+    cli.stop.mockResolvedValueOnce({ ok: false, message: 'stop refused' })
+    release()
+    expect(await launching).toEqual({
+      ok: false,
+      message: 'Cleanup unconfirmed: session launch00 may still be running.',
+      cleanupUnconfirmed: true,
+      sessionId: 'launch00',
+    })
+    await expect(leaving).rejects.toThrow(/teardown failed/)
+    await expect(sessions.leave()).rejects.toThrow(/teardown failed/)
+  })
+
+  it('rejects every async operation after leave without invoking adapters', async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    await t.sessions.leave()
+    const calls = [
+      t.cli.list,
+      t.cli.startBg,
+      t.cli.stop,
+      t.cli.respawn,
+      t.cli.forkBg,
+      t.message,
+    ].map((mock) => mock.mock.calls.length)
+    const outcomes = await Promise.allSettled([
+      t.sessions.ensure(),
+      t.sessions.refresh(),
+      t.sessions.open({}),
+      t.sessions.start({}),
+      t.sessions.launch({ name: 'late', prompt: 'late' }),
+      t.sessions.send({ text: 'late', target: 'new' }),
+      t.sessions.stop('aaaaaaaa'),
+      t.sessions.respawn('aaaaaaaa'),
+      t.sessions.duplicate('aaaaaaaa'),
+      t.sessions.noteTurn(REMOTE, 'aaaaaaaa', true),
+      t.sessions.message('aaaaaaaa', 'late'),
+    ])
+    expect(outcomes.every((outcome) => outcome.status === 'rejected')).toBe(true)
+    expect(
+      [t.cli.list, t.cli.startBg, t.cli.stop, t.cli.respawn, t.cli.forkBg, t.message].map(
+        (mock) => mock.mock.calls.length,
+      ),
+    ).toEqual(calls)
+    expect(t.sessions.sessions()).toEqual([])
+    expect(t.sessions.past()).toEqual([])
+    expect(t.sessions.watched('aaaaaaaa')).toBe(false)
+    expect(() => t.sessions.setFocus({ focusedPath: null, openPaths: [] })).not.toThrow()
+    expect(t.sessions.bracket('late', 'begin')).toBeUndefined()
+    expect(t.sessions.bracket('late', 'end')).toBeNull()
+  })
+
+  it('aborts an admitted message socket and drains it before leave resolves', async () => {
+    const inbox = { socket: '/tmp/cc-socks/1.sock', token: 'abc123' }
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    t.sessions.noteChannel(REMOTE, 'aaaaaaaa', inbox)
+    let observedSignal: AbortSignal | undefined
+    let complete!: () => void
+    t.message.mockImplementation((_channel, _text, signal) => {
+      observedSignal = signal
+      return new Promise<void>((resolve) => {
+        complete = resolve
+      })
+    })
+    const sending = t.sessions.message('aaaaaaaa', 'hello')
+    await vi.waitFor(() => expect(observedSignal).toBeDefined())
+    let leaveSettled = false
+    const leaving = t.sessions.leave().finally(() => {
+      leaveSettled = true
+    })
+    expect(observedSignal?.aborted).toBe(true)
+    await Promise.resolve()
+    expect(leaveSettled).toBe(false)
+    complete()
+    await expect(sending).rejects.toThrow(/vault was left/)
+    await leaving
+  })
+
   it('are stopped when the vault closes as they start', async () => {
     const { sessions, cli, attach } = setup()
     await attach()
@@ -567,8 +696,14 @@ describe('launched sessions', () => {
     })
     const launching = sessions.launch({ name: 'Go', prompt: 'go' })
     await vi.waitFor(() => expect(cli.startBg).toHaveBeenCalled())
-    await sessions.leave()
+    let leaveSettled = false
+    const leaving = sessions.leave().finally(() => {
+      leaveSettled = true
+    })
+    await Promise.resolve()
+    expect(leaveSettled).toBe(false)
     release()
+    await leaving
     expect(await launching).toEqual({
       ok: false,
       message: 'The vault closed as the session started.',

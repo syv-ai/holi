@@ -16,7 +16,7 @@ import { PRESETS } from '../main/harness/record'
 import type { AgentExit, StartArgs } from '../main/host/pty'
 import { agentMain } from '../main/index'
 import type { BridgeRoute, MainPlugin, PluginCtx } from '../../../main/plugin-api'
-import { openTurnLog } from '../main/host/turn-log'
+import { openTurnLog, TURNS_FILE } from '../main/host/turn-log'
 import { agentScratchRoots } from '../main/host/scratch-roots'
 
 const adapters = vi.hoisted(() => ({
@@ -25,13 +25,37 @@ const adapters = vi.hoisted(() => ({
   pty: [] as StartArgs[],
   backup: null as null | { source: string; entered: () => void; wait: Promise<void> },
   heldExit: null as null | { cwd: string; entered: () => void; wait: Promise<void> },
-  historyRename: null as null | { source: string; entered: () => void; wait: Promise<void> },
+  historyRename: null as null | {
+    source: string
+    entered: () => void
+    wait: Promise<void>
+    error?: Error
+  },
+  contextRename: null as null | {
+    destination: string
+    entered: () => void
+    wait: Promise<void>
+    error?: Error
+  },
   exitObserved: null as null | { cwd: string; entered: () => void },
   routes: new Map<string, Map<string, BridgeRoute>>(),
   watchers: new Set<import('node:fs').FSWatcher>(),
   watchStarts: 0,
   watchCloses: 0,
   watchCloseFailure: null as { error: Error; watch: number } | null,
+  headGate: null as null | { root: string; entered: () => void; wait: Promise<void> },
+  heldSocket: null as null | {
+    path: string
+    socket: {
+      listeners: Map<string, ((...args: unknown[]) => void)[]>
+      sent: string[]
+      destroyed: number
+      on(event: string, listener: (...args: unknown[]) => void): unknown
+      end(data: string): void
+      destroy(): void
+      emit(event: string, ...args: unknown[]): void
+    }
+  },
 }))
 
 vi.mock('node:fs/promises', async (original) => {
@@ -39,11 +63,19 @@ vi.mock('node:fs/promises', async (original) => {
   return {
     ...fs,
     rename: async (...args: Parameters<typeof fs.rename>) => {
+      const contextHold = adapters.contextRename
+      if (contextHold !== null && args[1] === contextHold.destination) {
+        adapters.contextRename = null
+        contextHold.entered()
+        await contextHold.wait
+        if (contextHold.error !== undefined) throw contextHold.error
+      }
       const hold = adapters.historyRename
       if (hold !== null && args[1] === hold.source) {
         adapters.historyRename = null
         hold.entered()
         await hold.wait
+        if (hold.error !== undefined) throw hold.error
       }
       return fs.rename(...args)
     },
@@ -54,6 +86,18 @@ vi.mock('node:fs/promises', async (original) => {
         await pause.wait
       }
       return fs.copyFile(...args)
+    },
+  }
+})
+
+vi.mock('node:net', async (original) => {
+  const net = await original<typeof import('node:net')>()
+  return {
+    ...net,
+    createConnection: (...args: Parameters<typeof net.createConnection>) => {
+      const held = adapters.heldSocket
+      if (held !== null && args[0] === held.path) return held.socket
+      return net.createConnection(...args)
     },
   }
 })
@@ -141,11 +185,14 @@ beforeEach(() => {
   adapters.backup = null
   adapters.heldExit = null
   adapters.historyRename = null
+  adapters.contextRename = null
   adapters.exitObserved = null
   adapters.routes.clear()
   adapters.watchStarts = 0
   adapters.watchCloses = 0
   adapters.watchCloseFailure = null
+  adapters.headGate = null
+  adapters.heldSocket = null
 })
 afterEach(async () => {
   try {
@@ -167,11 +214,20 @@ function deferred() {
   return { promise, resolve }
 }
 
+function nestedErrors(error: unknown): unknown[] {
+  return error instanceof AggregateError ? error.errors.flatMap(nestedErrors) : [error]
+}
+
 async function rig(
   userData?: string,
   holdAgentDisposer?: { entered: () => void; wait: Promise<void> },
   liveContext = false,
-  lifecycle?: { plugins?: MainPlugin[]; context?: (ctx: PluginCtx) => void },
+  lifecycle?: {
+    plugins?: MainPlugin[]
+    context?: (ctx: PluginCtx) => void
+    holdAutomationsDisposer?: { entered: () => void; wait: Promise<void>; turnEnded?: () => void }
+    agentDisposerStarted?: () => void
+  },
 ) {
   userData ??= await mkdtemp(join(tmpdir(), 'holi-573-repair3-agent-'))
   dirs.push(userData)
@@ -190,6 +246,9 @@ async function rig(
     execFileSync('git', ['-C', root, 'commit', '-qm', 'fixture'])
   }
   const sent: { remote: string; name: string }[] = []
+  const syncHolds = new Map<string, number>()
+  const pause = (remote: string) => syncHolds.set(remote, 1)
+  const resume = (remote: string) => syncHolds.set(remote, 0)
   const machineToken = 'holi-573-repair3-machine-token'
   const bridge = createBridgeServer({
     log: () => {},
@@ -218,39 +277,72 @@ async function rig(
       lifecycle?.context?.(ctx)
       const dispose = await activateAgent(ctx)
       if (dispose === undefined) throw new Error('Agent activation did not return a disposer.')
-      if (holdAgentDisposer === undefined) return dispose
+      if (holdAgentDisposer === undefined && lifecycle?.agentDisposerStarted === undefined)
+        return dispose
+      return async () => {
+        lifecycle?.agentDisposerStarted?.()
+        await dispose()
+        if (holdAgentDisposer !== undefined) {
+          holdAgentDisposer.entered()
+          await holdAgentDisposer.wait
+        }
+      }
+    },
+  }
+  const automationsPlugin = {
+    ...automationsMain,
+    async activate(ctx: PluginCtx) {
+      const dispose = await automationsMain.activate?.(ctx)
+      const turnEndObserver = lifecycle?.holdAutomationsDisposer?.turnEnded
+        ? ctx.hear('agent', 'turn-end', lifecycle.holdAutomationsDisposer.turnEnded)
+        : undefined
+      if (dispose === undefined) {
+        turnEndObserver?.()
+        throw new Error('Automations activation did not return a disposer.')
+      }
+      if (lifecycle?.holdAutomationsDisposer === undefined) return dispose
       return async () => {
         await dispose()
-        holdAgentDisposer.entered()
-        await holdAgentDisposer.wait
+        turnEndObserver?.()
+        lifecycle.holdAutomationsDisposer!.entered()
+        await lifecycle.holdAutomationsDisposer!.wait
       }
     },
   }
   const host = createPluginHost({
-    plugins: [agentPlugin, automationsMain, ...(lifecycle?.plugins ?? [])],
+    plugins: [agentPlugin, automationsPlugin, ...(lifecycle?.plugins ?? [])],
     registry,
     userData,
     coreSeeds: [],
-    active: () =>
-      liveContext && activeRemote !== null
-        ? {
-            remote: activeRemote,
-            root: roots[activeRemote],
-            pause: () => {},
-            resume: () => {},
-            drainSync: async () => {},
-            repo: {
-              head: async () =>
-                execFileSync('git', ['-C', roots[activeRemote!], 'rev-parse', 'HEAD'], {
-                  encoding: 'utf8',
-                }).trim(),
-            },
-            commitNow: async () =>
-              execFileSync('git', ['-C', roots[activeRemote!], 'rev-parse', 'HEAD'], {
-                encoding: 'utf8',
-              }).trim(),
-          }
-        : null,
+    active: () => {
+      if (!liveContext || activeRemote === null) return null
+      const remote = activeRemote
+      const root = roots[remote]
+      return {
+        remote,
+        root,
+        pause: () => pause(remote),
+        resume: () => resume(remote),
+        drainSync: async () => {},
+        repo: {
+          head: async () => {
+            const gate = adapters.headGate
+            if (gate !== null && gate.root === root) {
+              adapters.headGate = null
+              gate.entered()
+              await gate.wait
+            }
+            return execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], {
+              encoding: 'utf8',
+            }).trim()
+          },
+        },
+        commitNow: async () =>
+          execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], {
+            encoding: 'utf8',
+          }).trim(),
+      }
+    },
     rootFor: async (remote) => roots[remote as keyof typeof roots] ?? null,
     events: {
       send: (_channel, event) => sent.push({ remote: event.remote, name: event.name }),
@@ -298,18 +390,25 @@ async function rig(
       {
         remote,
         root: roots[remote],
-        pause: () => {},
-        resume: () => {},
+        pause: () => pause(remote),
+        resume: () => resume(remote),
         drainSync: async () => {},
         commitNow: async () =>
           execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
             encoding: 'utf8',
           }).trim(),
         repo: {
-          head: async () =>
-            execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
+          head: async () => {
+            const gate = adapters.headGate
+            if (gate !== null && gate.root === roots[remote]) {
+              adapters.headGate = null
+              gate.entered()
+              await gate.wait
+            }
+            return execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
               encoding: 'utf8',
-            }).trim(),
+            }).trim()
+          },
         },
       },
       'open',
@@ -363,6 +462,7 @@ async function rig(
     roots,
     userData,
     sent,
+    syncHolds,
     setActive,
     bridge,
     registry,
@@ -524,10 +624,8 @@ describe('real agent lifecycle repair regressions', () => {
       expect(contexts.get(A)!.activationSignal.aborted).toBe(true)
       release.resolve()
       const activationFailure = await opening
-      expect(activationFailure).toMatchObject({
-        message: 'agent activation failed',
-        errors: [expect.any(Error), cleanupFailure],
-      })
+      expect(activationFailure).toMatchObject({ message: 'agent activation failed' })
+      expect(nestedErrors(activationFailure)).toContain(cleanupFailure)
       const stoppingFailure = await first
       expect(stoppingFailure).toBeInstanceOf(AggregateError)
       expect(await again).toBe(activationFailure)
@@ -572,10 +670,10 @@ describe('real agent lifecycle repair regressions', () => {
       try {
         const failure = await enter(A).catch((err: unknown) => err)
         restoreTimer()
-        expect(failure).toMatchObject({
-          message: 'agent activation failed',
-          errors: [startupFailure, cleanupFailure],
-        })
+        expect(failure).toMatchObject({ message: 'agent activation failed' })
+        expect(nestedErrors(failure)).toEqual(
+          expect.arrayContaining([startupFailure, cleanupFailure]),
+        )
         await expect(host.stop(A)).rejects.toBe(failure)
         expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
         await expect(host.stopAll()).rejects.toMatchObject({ errors: [failure] })
@@ -725,6 +823,74 @@ it('serializes overlapping PTY history updates across activations and drains sto
   expect(await call(B, 'agent.history')).toEqual(
     expect.arrayContaining([prior, expect.objectContaining({ id: bStarted.sessionId })]),
   )
+})
+
+it('finalizes busy native sessions discovered during plugin startup', async () => {
+  const { host, enter, roots, bridge, syncHolds } = await rig(undefined, undefined, true)
+  const sessions = { [A]: 'a1234567', [B]: 'b1234567' }
+  const listings: string[] = []
+  adapters.run.mockImplementation(async (_bin, args, opts) => {
+    if (args.includes('--bg')) return 'backgrounded · abc12345 · Bound run'
+    if (args[0] === 'agents') {
+      listings.push(opts.cwd)
+      const remote = opts.cwd === roots[A] ? A : B
+      return JSON.stringify([
+        {
+          kind: 'background',
+          id: sessions[remote],
+          name: 'Startup session',
+          sessionId:
+            remote === A
+              ? '123e4567-e89b-42d3-a456-426614174001'
+              : '123e4567-e89b-42d3-a456-426614174002',
+          cwd: opts.cwd,
+          pid: process.pid,
+          status: 'busy',
+        },
+      ])
+    }
+    return '[]'
+  })
+  const post = (remote: typeof A | typeof B) =>
+    fetch(
+      `http://127.0.0.1:${bridge.port()}/turn/end?t=${encodeURIComponent(bridge.tokenForVault(remote))}&job=${sessions[remote]}&pid=${process.pid}`,
+      { method: 'POST' },
+    )
+  try {
+    const base = Object.fromEntries(
+      await Promise.all(
+        ([A, B] as const).map(async (remote) => [
+          remote,
+          execFileSync('git', ['-C', roots[remote], 'rev-parse', 'HEAD'], {
+            encoding: 'utf8',
+          }).trim(),
+        ]),
+      ),
+    ) as Record<typeof A | typeof B, string>
+    await enter(A)
+    await enter(B)
+    await vi.waitFor(() => {
+      expect(syncHolds.get(A)).toBe(1)
+      expect(syncHolds.get(B)).toBe(1)
+    })
+    expect(listings).toEqual(expect.arrayContaining([roots[A], roots[B]]))
+
+    for (const remote of [A, B] as const) expect((await post(remote)).status).toBe(200)
+    for (const remote of [A, B] as const) {
+      await vi.waitFor(async () => {
+        expect(await openTurnLog(roots[remote]).list()).toEqual([
+          expect.objectContaining({
+            base: base[remote],
+            end: base[remote],
+            sessionId: sessions[remote],
+          }),
+        ])
+      })
+      await vi.waitFor(() => expect(syncHolds.get(remote)).toBe(0))
+    }
+  } finally {
+    await host.stopAll()
+  }
 })
 
 it('binds real hook reports, inbox delivery, and native commands to activation vaults', async () => {
@@ -1054,6 +1220,193 @@ it('binds real hook reports, inbox delivery, and native commands to activation v
   }
 })
 
+it.each(['success', 'failure'] as const)(
+  'drains a real needs-you inbox write before stopping vault A (%s)',
+  async (outcome) => {
+    const { host, enter, call, roots, bridge, expectFailedDrain } = await rig(
+      undefined,
+      undefined,
+      true,
+    )
+    const sessions = { [A]: 'abc12345', [B]: 'abc12345' }
+    const listingStatus: Record<typeof A | typeof B, 'idle' | 'waiting'> = {
+      [A]: 'idle',
+      [B]: 'idle',
+    }
+    let extraWaitingSession = false
+    adapters.run.mockImplementation(async (_bin, args, opts) => {
+      if (args.includes('--bg')) return 'backgrounded · abc12345 · Bound run'
+      if (args[0] === 'agents') {
+        const remote = opts.cwd === roots[A] ? A : B
+        const rows = [
+          {
+            kind: 'background',
+            id: sessions[remote],
+            name: `Session ${remote}`,
+            sessionId: '123e4567-e89b-42d3-a456-426614174001',
+            cwd: opts.cwd,
+            pid: process.pid,
+            status: listingStatus[remote],
+            ...(listingStatus[remote] === 'waiting' ? { waitingFor: 'permission' } : {}),
+          },
+        ]
+        if (remote === A && extraWaitingSession)
+          rows.push({
+            kind: 'background',
+            id: 'deadbeef',
+            name: 'Queued session',
+            sessionId: '123e4567-e89b-42d3-a456-426614174003',
+            cwd: opts.cwd,
+            pid: process.pid,
+            status: 'waiting',
+            waitingFor: 'permission',
+          })
+        return JSON.stringify(rows)
+      }
+      return '[]'
+    })
+    const postStatusline = (remote: typeof A | typeof B) =>
+      fetch(
+        `http://127.0.0.1:${bridge.port()}/statusline?t=${encodeURIComponent(bridge.tokenForVault(remote))}&job=abc12345`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            context_window: { used_percentage: remote === A ? 17 : 83 },
+            model: { display_name: `Model ${remote}` },
+          }),
+        },
+      )
+    const aInboxPath = join(roots[A], '.holi/state/inbox.local.json')
+    const inboxFile = async (remote: typeof A | typeof B) =>
+      readFile(join(roots[remote], '.holi/state/inbox.local.json'), 'utf8').then(
+        (contents) => JSON.parse(contents) as { entries: { session?: string }[] },
+        (error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { entries: [] }
+          throw error
+        },
+      )
+    const writeEntered = deferred()
+    const releaseWrite = deferred()
+    try {
+      await enter(A)
+      await enter(B)
+      for (const remote of [A, B] as const) {
+        expect(await call(remote, 'agent.sessions')).toEqual([
+          expect.objectContaining({ id: 'abc12345', state: 'idle' }),
+        ])
+      }
+      listingStatus[A] = 'waiting'
+      listingStatus[B] = 'waiting'
+      for (const remote of [A, B] as const) expect((await postStatusline(remote)).status).toBe(204)
+      const configDirs = Object.fromEntries(
+        ([A, B] as const).map((remote) => {
+          const call = adapters.run.mock.calls.find(
+            ([, args, opts]) => args[0] === 'agents' && opts.cwd === roots[remote],
+          )
+          const configDir = call?.[2].env.CLAUDE_CONFIG_DIR
+          if (configDir === undefined) throw new Error(`No Claude config dir for ${remote}`)
+          return [remote, configDir]
+        }),
+      ) as Record<typeof A | typeof B, string>
+      adapters.historyRename = {
+        source: aInboxPath,
+        entered: writeEntered.resolve,
+        wait: releaseWrite.promise,
+        ...(outcome === 'failure' ? { error: new Error('held inbox rename failed') } : {}),
+      }
+      for (const remote of [A, B] as const) {
+        await mkdir(join(configDirs[remote], 'sessions'), { recursive: true })
+        await writeFile(join(configDirs[remote], 'sessions', 'needs-you-fixture.json'), '{}')
+      }
+      // The actual watcher has admitted A's native inbox-file rename.
+      await writeEntered.promise
+      listingStatus[A] = 'idle'
+      extraWaitingSession = true
+      expect((await postStatusline(A)).status).toBe(204)
+      await writeFile(join(configDirs[A], 'sessions', 'queued-needs-you.json'), '{}')
+      await vi.waitFor(async () => {
+        expect(await call(A, 'agent.sessions')).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: 'abc12345', state: 'idle' }),
+            expect.objectContaining({ id: 'deadbeef', state: 'needs-you' }),
+          ]),
+        )
+      })
+      let stoppedA = false
+      const stoppingA = host.stop(A).then(
+        () => {
+          stoppedA = true
+          return undefined
+        },
+        (error: unknown) => {
+          stoppedA = true
+          return error
+        },
+      )
+      await Promise.resolve()
+      expect(stoppedA).toBe(false)
+      host.setDisplayed(B)
+      await vi.waitFor(async () => {
+        expect(await call(B, 'agent.sessions')).toEqual([
+          expect.objectContaining({ id: 'abc12345', state: 'needs-you' }),
+        ])
+      })
+      await vi.waitFor(async () => {
+        expect(await inboxFile(B)).toMatchObject({
+          entries: [expect.objectContaining({ session: 'abc12345' })],
+        })
+      })
+      host.setDisplayed(A)
+      expect(await inboxFile(A)).toMatchObject({ entries: [] })
+
+      releaseWrite.resolve()
+      if (outcome === 'success') {
+        expect(await stoppingA).toBeUndefined()
+        host.setDisplayed(B)
+        expect(await inboxFile(B)).toMatchObject({
+          entries: [expect.objectContaining({ session: 'abc12345' })],
+        })
+        expect((await inboxFile(A)).entries).toEqual([
+          expect.objectContaining({ session: 'abc12345' }),
+        ])
+        await enter(A)
+        host.setDisplayed(A)
+        expect(await inboxFile(A)).toMatchObject({
+          entries: [expect.objectContaining({ session: 'abc12345' })],
+        })
+        listingStatus[A] = 'idle'
+        await call(A, 'agent.sessions')
+        listingStatus[A] = 'waiting'
+        expect((await postStatusline(A)).status).toBe(204)
+        await call(A, 'agent.sessions')
+        await vi.waitFor(async () => {
+          expect(await inboxFile(A)).toMatchObject({
+            entries: [expect.objectContaining({ session: 'abc12345' })],
+          })
+        })
+      } else {
+        const stopFailure = await stoppingA
+        expect(stopFailure).toBeInstanceOf(Error)
+        expect(nestedErrors(stopFailure)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ message: 'held inbox rename failed' }),
+          ]),
+        )
+        expectFailedDrain()
+        await expect(host.stop(A)).rejects.toThrow('failed to stop')
+        host.setDisplayed(B)
+        expect(await inboxFile(B)).toMatchObject({
+          entries: [expect.objectContaining({ session: 'abc12345' })],
+        })
+      }
+      await host.stop(B)
+    } finally {
+      releaseWrite.resolve()
+      if (adapters.historyRename?.source === aInboxPath) adapters.historyRename = null
+    }
+  },
+)
+
 it('persists concurrent provider turn reports through each activated vault route', async () => {
   const { host, enter, call, roots, setActive } = await rig(undefined, undefined, true)
   await enter(A)
@@ -1357,4 +1710,971 @@ it('drains an admitted real activation write while the other activation stays us
   expect(sent.filter((event) => event.remote === A && event.name === 'providers')).toHaveLength(
     before,
   )
+})
+
+it.each([false, true] as const)(
+  'drains the real focus report write before stopping its vault (failure: %s)',
+  async (failWrite) => {
+    const { host, enter, roots, expectFailedDrain } = await rig()
+    const enteredWrite = deferred()
+    const releaseWrite = deferred()
+    const fileA = join(roots[A], '.holi/state/context.local.json')
+    const fileB = join(roots[B], '.holi/state/context.local.json')
+    adapters.contextRename = {
+      destination: fileA,
+      entered: enteredWrite.resolve,
+      wait: releaseWrite.promise,
+      ...(failWrite ? { error: new Error('context rename failed') } : {}),
+    }
+    const report = (focusedPath: string) => ({
+      focusedPath,
+      selection: null,
+      openPaths: [focusedPath],
+      recents: [],
+    })
+    let stopping: Promise<void> | undefined
+    try {
+      await enter(A)
+      await enter(B)
+      host.report(A, report('notes/a.md'))
+      host.report(B, report('notes/b.md'))
+      await enteredWrite.promise
+      let stopped = false
+      stopping = host.stop(A).then(() => {
+        stopped = true
+      })
+      expect(stopped).toBe(false)
+      host.report(A, report('notes/late.md'))
+      host.report(B, report('notes/still-live.md'))
+      await vi.waitFor(async () => {
+        expect(JSON.parse(await readFile(fileB, 'utf8'))).toMatchObject({
+          focusedPath: 'notes/still-live.md',
+        })
+      })
+      expect(stopped).toBe(false)
+      releaseWrite.resolve()
+      if (failWrite) {
+        expectFailedDrain()
+        const failure = await stopping!.catch((error: unknown) => error)
+        const causes = (error: unknown): unknown[] =>
+          error instanceof AggregateError ? error.errors.flatMap(causes) : [error]
+        expect(causes(failure)).toContainEqual(
+          expect.objectContaining({ message: 'context rename failed' }),
+        )
+        await expect(enter(A)).rejects.toBe(failure)
+      } else {
+        await stopping
+        expect(JSON.parse(await readFile(fileA, 'utf8'))).toMatchObject({
+          focusedPath: 'notes/a.md',
+        })
+      }
+      expect(await readFile(fileB, 'utf8')).toContain('notes/still-live.md')
+    } finally {
+      releaseWrite.resolve()
+      await stopping?.catch(() => {})
+    }
+  },
+)
+
+it('drains a cancelled background launch before stopping and restarting its original vault', async () => {
+  const { host, enter, call, roots, userData } = await rig()
+  const entered = deferred()
+  const release = deferred()
+  const pi = { ...PRESETS[0]!, command: { bin: process.execPath, args: [] } }
+  try {
+    await enter(A)
+    await enter(B)
+    await call(A, 'agent.harnessSave', { harness: pi })
+    await call(B, 'agent.harnessSave', { harness: pi })
+    adapters.run.mockImplementation(async (_bin, args, opts) => {
+      if (args.includes('--bg') && opts.cwd === roots[A]) {
+        entered.resolve()
+        await release.promise
+        return 'backgrounded · abc12345 · Late A run'
+      }
+      if (args.includes('--bg') && opts.cwd === roots[B]) return 'backgrounded · abc12345 · B run'
+      return '[]'
+    })
+    const launch = call(A, 'agent.launch', { provider: 'claude', name: 'A', prompt: 'start' })
+    await entered.promise
+    await expect(
+      call(B, 'agent.launch', { provider: 'claude', name: 'B', prompt: 'works' }),
+    ).resolves.toMatchObject({ ok: true })
+    const stopping = host.stop(A)
+    const joining = host.stop(A)
+    let stopped = false
+    void stopping.then(() => {
+      stopped = true
+    })
+    expect(stopped).toBe(false)
+    release.resolve()
+    const result = (await launch) as { ok: boolean; error?: string }
+    await Promise.all([stopping, joining])
+    expect(result.ok).toBe(false)
+    expect(
+      adapters.run.mock.calls.filter(([, args]) => args[0] === 'stop').at(-1)?.[2],
+    ).toMatchObject({
+      cwd: roots[A],
+      env: { CLAUDE_CONFIG_DIR: expect.stringContaining(join(userData, 'agent-config')) },
+    })
+    expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+    await host.stop(A)
+    await enter(A)
+    expect(await call(A, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+  } finally {
+    release.resolve()
+  }
+})
+
+it.each(['unsuccessful stop', 'throwing stop'] as const)(
+  'keeps cancelled launch cleanup failure latched after %s',
+  async (failureKind) => {
+    const { host, enter, call, roots, expectFailedDrain } = await rig()
+    const entered = deferred()
+    const release = deferred()
+    const pi = { ...PRESETS[0]!, command: { bin: process.execPath, args: [] } }
+    try {
+      await enter(A)
+      await enter(B)
+      await call(A, 'agent.harnessSave', { harness: pi })
+      adapters.run.mockImplementation(async (_bin, args, opts) => {
+        if (args.includes('--bg') && opts.cwd === roots[A]) {
+          entered.resolve()
+          await release.promise
+          return 'backgrounded · abc12345 · Late A run'
+        }
+        if (args[0] === 'stop' && opts.cwd === roots[A]) {
+          if (failureKind === 'throwing stop') throw new Error('native stop threw')
+          throw new Error('native stop returned unsuccessful')
+        }
+        return '[]'
+      })
+      const launch = call(A, 'agent.launch', {
+        provider: 'claude',
+        name: 'A',
+        prompt: 'start',
+      }).catch((error: unknown) => error)
+      await entered.promise
+      expectFailedDrain()
+      const stop = host.stop(A).catch((error: unknown) => error)
+      const again = host.stop(A).catch((error: unknown) => error)
+      release.resolve()
+      await launch
+      const failed = await stop
+      expect(failed).toBeInstanceOf(Error)
+      expect(await again).toBe(failed)
+      await expect(host.stop(A)).rejects.toBe(failed)
+      await expect(enter(A)).rejects.toBe(failed)
+      expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+    } finally {
+      release.resolve()
+    }
+  },
+)
+
+it('aborts an admitted real HTTP session message only after its native inbox socket physically closes', async () => {
+  const { host, enter, call, bridge } = await rig(undefined, undefined, true)
+  const session = 'abc12345'
+  const sessionUuid = '123e4567-e89b-42d3-a456-426614174000'
+  const inboxServers: ReturnType<typeof createServer>[] = []
+  const inboxPaths: string[] = []
+  const receivedB: string[] = []
+  const inbox = async (owner: 'A' | 'B') => {
+    const socket = join(
+      tmpdir(),
+      `holi-agent-activation-${process.pid}-${owner}-${Date.now()}.sock`,
+    )
+    inboxPaths.push(socket)
+    const server = createServer((connection) => {
+      let content = ''
+      connection.on('data', (chunk) => (content += chunk.toString()))
+      connection.on('end', () => {
+        if (owner === 'B') receivedB.push(content)
+      })
+    })
+    inboxServers.push(server)
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(socket, resolve)
+    })
+    return { socket, token: `inbox-secret-${owner}` }
+  }
+  const post = (remote: typeof A | typeof B, path: string, body: unknown) =>
+    fetch(
+      `http://127.0.0.1:${bridge.port()}${path}?t=${encodeURIComponent(bridge.tokenForVault(remote))}&job=${session}`,
+      { method: 'POST', body: JSON.stringify(body) },
+    )
+  const heldPath = join(tmpdir(), `holi-agent-held-${process.pid}-${Date.now()}.sock`)
+  const heldSocket = {
+    listeners: new Map<string, ((...args: unknown[]) => void)[]>(),
+    sent: [] as string[],
+    destroyed: 0,
+    on(event: string, listener: (...args: unknown[]) => void) {
+      const listeners = this.listeners.get(event) ?? []
+      listeners.push(listener)
+      this.listeners.set(event, listeners)
+      return this
+    },
+    end(data: string) {
+      this.sent.push(data)
+    },
+    destroy() {
+      this.destroyed++
+    },
+    emit(event: string, ...args: unknown[]) {
+      for (const listener of this.listeners.get(event) ?? []) listener(...args)
+    },
+  }
+  let message: Promise<unknown> | undefined
+  let stopping: Promise<void> | undefined
+  try {
+    adapters.run.mockImplementation(async (_bin, args, opts) =>
+      args[0] === 'agents'
+        ? JSON.stringify([
+            {
+              kind: 'background',
+              id: session,
+              name: 'Same id',
+              sessionId: sessionUuid,
+              cwd: opts.cwd,
+              pid: process.pid,
+              status: 'idle',
+            },
+          ])
+        : '',
+    )
+    await enter(A)
+    await enter(B)
+    for (const remote of [A, B] as const) await call(remote, 'agent.sessions')
+    const channelA = { socket: heldPath, token: 'inbox-secret-A' }
+    const channelB = await inbox('B')
+    expect((await post(A, '/session', channelA)).status).toBe(204)
+    expect((await post(B, '/session', channelB)).status).toBe(204)
+
+    adapters.heldSocket = { path: heldPath, socket: heldSocket }
+    message = call(A, 'agent.message', { session, text: 'held A message' })
+    await vi.waitFor(() => expect(heldSocket.listeners.has('connect')).toBe(true))
+    heldSocket.emit('connect')
+    expect(heldSocket.sent.join('')).toContain('held A message')
+    expect(heldSocket.sent.join('')).toContain(channelA.token)
+
+    let messageSettled = false
+    void message.then(
+      () => {
+        messageSettled = true
+      },
+      () => {
+        messageSettled = true
+      },
+    )
+    stopping = host.stop(A)
+    let stopSettled = false
+    void stopping.then(() => {
+      stopSettled = true
+    })
+    await vi.waitFor(() => expect(heldSocket.destroyed).toBe(1))
+    expect(messageSettled).toBe(false)
+    expect(stopSettled).toBe(false)
+
+    await expect(call(B, 'agent.message', { session, text: 'B stays live' })).resolves.toEqual({
+      ok: true,
+    })
+    await vi.waitFor(() => expect(receivedB.join('')).toContain('B stays live'))
+    expect(receivedB.join('')).toContain(channelB.token)
+    expect(receivedB.join('')).not.toContain(channelA.token)
+
+    heldSocket.emit('close')
+    const cancelled = await message.catch((error: unknown) => error)
+    expect(cancelled).toBeInstanceOf(Error)
+    expect(String(cancelled)).not.toContain(channelA.token)
+    await stopping
+    expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+    await expect(post(A, '/session', channelA)).resolves.toMatchObject({ status: 404 })
+    await enter(A)
+    expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+  } finally {
+    heldSocket.emit('close')
+    await message?.catch(() => {})
+    await stopping?.catch(() => {})
+    adapters.heldSocket = null
+    await Promise.all(
+      inboxServers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    )
+    await Promise.all(inboxPaths.map((path) => rm(path, { force: true })))
+  }
+})
+
+it('keeps admitted HTTP turn finalization bound to its revoked activation', async () => {
+  const headEntered = deferred()
+  const releaseHead = deferred()
+  const disposerEntered = deferred()
+  const turnEnded = deferred()
+  const agentDisposerStarted = vi.fn()
+  const releaseDisposer = deferred()
+  const contexts = new Map<string, PluginCtx>()
+  const { host, enter, call, roots, bridge, sent, capabilities } = await rig(
+    undefined,
+    undefined,
+    true,
+    {
+      context: (ctx) => {
+        if (!contexts.has(ctx.remote)) contexts.set(ctx.remote, ctx)
+      },
+      holdAutomationsDisposer: {
+        entered: disposerEntered.resolve,
+        wait: releaseDisposer.promise,
+        turnEnded: turnEnded.resolve,
+      },
+      agentDisposerStarted,
+    },
+  )
+  const session = 'abc12345'
+  const post = (remote: string, path: string) =>
+    fetch(
+      `http://127.0.0.1:${bridge.port()}${path}?t=${encodeURIComponent(bridge.tokenForVault(remote))}&job=${session}&pid=${process.pid}`,
+      { method: 'POST' },
+    )
+  let stopping: Promise<void> | undefined
+  let ending: Promise<Response> | undefined
+  try {
+    await writeFile(
+      join(roots[A], '.holi/settings/plugins.yaml'),
+      'plugins:\n  automations: true\n',
+    )
+    await enter(A)
+    await enter(B)
+    host.setDisplayed(A)
+    for (const remote of [A, B] as const) await call(remote, 'agent.sessions')
+    const base = execFileSync('git', ['-C', roots[A], 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    const ctxAtAdmission = contexts.get(A)!
+    const presentation = ctxAtAdmission.presentationLease()
+    expect(presentation()).toBe(true)
+    const finalize = ctxAtAdmission.captureFinalization()
+    adapters.headGate = { root: roots[A], entered: headEntered.resolve, wait: releaseHead.promise }
+    expect((await post(A, '/turn/start')).status).toBe(204)
+    await headEntered.promise
+    expect((await post(B, '/turn/start')).status).toBe(204)
+    ending = post(A, '/turn/end')
+    // Ending the turn synchronously removes it from the coordinator before its
+    // response waits for the captured base read and settle finalization.
+    await turnEnded.promise
+    // The turn-end signal proves the actual HTTP route admitted and ended this
+    // turn before activation revoke; the dependent now holds its disposer.
+    stopping = host.stop(A)
+    await disposerEntered.promise
+    expect(contexts.get(A)!.activationSignal.aborted).toBe(true)
+    expect(agentDisposerStarted).not.toHaveBeenCalled()
+    await expect(
+      capabilities.dispatch({ door: 'ui', remote: A, name: 'agent.sessions', params: {} }),
+    ).rejects.toThrow('no such method')
+    await expect(call(B, 'agent.harnesses')).resolves.toMatchObject({ agents: expect.any(Array) })
+    expect((await post(A, '/turn/start')).status).toBe(204)
+    releaseHead.resolve()
+    await vi.waitFor(async () => {
+      expect(await openTurnLog(roots[A]).list()).toEqual([
+        expect.objectContaining({ base, sessionId: session }),
+      ])
+    })
+    expect(await readFile(join(roots[A], TURNS_FILE), 'utf8')).toContain(base)
+    expect(await openTurnLog(roots[B]).list()).toEqual([])
+
+    const before = sent.length
+    const ctx = contexts.get(A)!
+    await finalize(async () => {
+      ctx.emit(A, 'sessions', [{ id: 'unauthorized' }])
+      expect(presentation()).toBe(false)
+      await expect(ctx.call('agent.sessions', {})).rejects.toThrow('no longer active')
+    })
+    expect(sent).toHaveLength(before)
+    expect((await ending).status).toBe(204)
+    expect((await post(B, '/turn/end')).status).toBe(200)
+    expect(await openTurnLog(roots[B]).list()).toEqual([
+      expect.objectContaining({ sessionId: session }),
+    ])
+
+    const stopAgain = host.stop(A)
+    releaseDisposer.resolve()
+    await Promise.all([stopping, stopAgain])
+    expect(agentDisposerStarted).toHaveBeenCalledOnce()
+    await enter(A)
+    await expect(finalize(() => ctx.head())).rejects.toThrow('no longer active')
+    await expect(finalize(() => ctx.commitNow())).rejects.toThrow('no longer active')
+    await expect(finalize(() => ctx.call('agent.sessions', {}))).rejects.toThrow('no longer active')
+  } finally {
+    releaseHead.resolve()
+    releaseDisposer.resolve()
+    await ending?.catch(() => {})
+    await stopping?.catch(() => {})
+  }
+})
+
+it('drains actual turn-end record rename before stop without crossing same-id vault records', async () => {
+  const { host, enter, call, roots, bridge } = await rig(undefined, undefined, true)
+  const enteredRename = deferred()
+  const releaseRename = deferred()
+  const session = 'abc12345'
+  const post = (remote: string, path: string) =>
+    fetch(
+      `http://127.0.0.1:${bridge.port()}${path}?t=${encodeURIComponent(bridge.tokenForVault(remote))}&job=${session}&pid=${process.pid}`,
+      { method: 'POST' },
+    )
+  try {
+    await enter(A)
+    await enter(B)
+    for (const remote of [A, B] as const) await call(remote, 'agent.sessions')
+    expect((await post(A, '/turn/start')).status).toBe(204)
+    expect((await post(B, '/turn/start')).status).toBe(204)
+    const aRecord = join(roots[A], TURNS_FILE)
+    adapters.historyRename = {
+      source: aRecord,
+      entered: enteredRename.resolve,
+      wait: releaseRename.promise,
+    }
+    const endingA = post(A, '/turn/end')
+    await enteredRename.promise
+    const endingB = post(B, '/turn/end')
+    let stopped = false
+    const stopping = host.stop(A).then(() => {
+      stopped = true
+    })
+    expect(stopped).toBe(false)
+    releaseRename.resolve()
+    const endedA = await endingA
+    expect(endedA.status).toBe(204)
+    expect(await endedA.text()).toBe('')
+    expect((await endingB).status).toBe(200)
+    await stopping
+    expect(await openTurnLog(roots[A]).list()).toEqual([
+      expect.objectContaining({ sessionId: session }),
+    ])
+    expect(await openTurnLog(roots[B]).list()).toEqual([
+      expect.objectContaining({ sessionId: session }),
+    ])
+    await enter(A)
+    expect(await openTurnLog(roots[A]).list()).toHaveLength(1)
+    expect(await openTurnLog(roots[B]).list()).toHaveLength(1)
+  } finally {
+    releaseRename.resolve()
+  }
+})
+
+it('drains a late provider listing before removing the stopped activation routes', async () => {
+  const { host, enter, call, roots, bridge } = await rig()
+  const entered = deferred()
+  const release = deferred()
+  const post = (remote: string, path: string) =>
+    fetch(
+      `http://127.0.0.1:${bridge.port()}${path}?t=${encodeURIComponent(bridge.tokenForVault(remote))}&job=abc12345&pid=${process.pid}`,
+      { method: 'POST' },
+    )
+  try {
+    await enter(B)
+    adapters.run.mockImplementation(async (_bin, args, opts) => {
+      if (args[0] === 'agents' && opts.cwd === roots[A]) {
+        entered.resolve()
+        await release.promise
+        return JSON.stringify([
+          {
+            kind: 'background',
+            id: 'abc12345',
+            name: 'late',
+            cwd: roots[A],
+            pid: process.pid,
+            status: 'idle',
+          },
+        ])
+      }
+      if (args[0] === 'agents' && opts.cwd === roots[B]) return '[]'
+      return '[]'
+    })
+    const opening = enter(A)
+    await entered.promise
+    const stopping = host.stop(A)
+    const joining = host.stop(A)
+    expect((await post(B, '/statusline')).status).toBe(204)
+    expect(adapters.routes.has(A)).toBe(false)
+    release.resolve()
+    await Promise.all([opening, stopping, joining])
+    expect(adapters.routes.has(A)).toBe(false)
+    expect((await post(A, '/session')).status).toBe(404)
+    expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+    await enter(A)
+    expect(adapters.routes.has(A)).toBe(true)
+    expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+  } finally {
+    release.resolve()
+  }
+})
+
+it.each(['start', 'fork', 'respawn'] as const)(
+  'cancels a held real %s capability, drains its late native receipt, and isolates the restarted activation',
+  async (operation) => {
+    const { host, enter, call, roots, userData, sent } = await rig()
+    const entered = deferred()
+    const release = deferred()
+    const commandCalls: { args: string[]; cwd: string; config: string }[] = []
+    const sessionId = 'abc12345'
+    const forkId = 'def56789'
+    const session = '123e4567-e89b-42d3-a456-426614174000'
+    let holdUsed = false
+    adapters.run.mockImplementation(async (_bin, args, opts) => {
+      const config = opts.env.CLAUDE_CONFIG_DIR
+      if (config === undefined) throw new Error('Claude command has no owning configuration.')
+      commandCalls.push({ args, cwd: opts.cwd, config })
+      if (args[0] === 'agents') {
+        return JSON.stringify([
+          {
+            kind: 'background',
+            id: sessionId,
+            name: 'Existing session',
+            sessionId: session,
+            cwd: opts.cwd,
+            pid: process.pid,
+            status: 'idle',
+          },
+        ])
+      }
+      const isTarget =
+        (operation === 'start' && args.includes('--bg') && !args.includes('--resume')) ||
+        (operation === 'fork' && args.includes('--fork-session')) ||
+        (operation === 'respawn' && args[0] === 'respawn')
+      if (opts.cwd === roots[A] && isTarget && !holdUsed) {
+        holdUsed = true
+        entered.resolve()
+        await release.promise
+        if (operation === 'respawn') return ''
+        return `backgrounded · ${operation === 'fork' ? forkId : sessionId} · Late A`
+      }
+      if (opts.cwd === roots[B] && isTarget) {
+        if (operation === 'respawn') return ''
+        return `backgrounded · ${sessionId} · B`
+      }
+      return ''
+    })
+    const invoke = (remote: typeof A | typeof B) => {
+      if (operation === 'start') return call(remote, 'agent.start', { prompt: `${remote} start` })
+      if (operation === 'fork') return call(remote, 'agent.duplicate', { id: sessionId })
+      return call(remote, 'agent.respawn', { id: sessionId })
+    }
+    try {
+      await enter(A)
+      await enter(B)
+      const held = invoke(A)
+      await entered.promise
+      const onA = commandCalls.filter((item) => item.cwd === roots[A]).at(-1)!
+      expect(onA.config).toContain(join(userData, 'agent-config'))
+      const priorSessionPublications = sent.filter(
+        (event) => event.remote === A && event.name === 'sessions',
+      ).length
+      const resultB = await invoke(B)
+      expect(resultB).toMatchObject({ ok: true })
+      expect(adapters.pty.filter((args) => args.cwd === roots[A])).toHaveLength(0)
+
+      let stopped = false
+      const stopping = host.stop(A).then(() => {
+        stopped = true
+      })
+      expect(stopped).toBe(false)
+      await expect(call(A, 'agent.harnesses')).rejects.toThrow(/no such method/)
+      expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+      release.resolve()
+      const late = await held
+      expect(late).toMatchObject({ ok: false })
+      await stopping
+      expect(stopped).toBe(true)
+      const cleanup = commandCalls.filter(
+        (item) => item.cwd === roots[A] && item.args[0] === 'stop',
+      )
+      expect(cleanup).toContainEqual(
+        expect.objectContaining({
+          cwd: roots[A],
+          config: onA.config,
+          args: ['stop', operation === 'fork' ? forkId : sessionId],
+        }),
+      )
+      expect(adapters.pty.filter((args) => args.cwd === roots[A])).toHaveLength(0)
+      expect(sent.filter((event) => event.remote === A && event.name === 'sessions')).toHaveLength(
+        priorSessionPublications,
+      )
+      expect(
+        commandCalls
+          .filter((item) => item.cwd === roots[B])
+          .every((item) => item.config !== onA.config),
+      ).toBe(true)
+
+      await enter(A)
+      expect(await call(A, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+      expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+      expect(
+        commandCalls
+          .filter((item) => item.cwd === roots[B])
+          .every((item) => item.config !== onA.config),
+      ).toBe(true)
+    } finally {
+      release.resolve()
+    }
+  },
+)
+
+it('retains failed cleanup of a cancelled real respawn and refuses replacement', async () => {
+  const { host, enter, call, roots, expectFailedDrain } = await rig()
+  const entered = deferred()
+  const release = deferred()
+  let holdUsed = false
+  adapters.run.mockImplementation(async (_bin, args, opts) => {
+    if (args[0] === 'agents')
+      return JSON.stringify([
+        {
+          kind: 'background',
+          id: 'abc12345',
+          name: 'Existing session',
+          sessionId: '123e4567-e89b-42d3-a456-426614174000',
+          cwd: opts.cwd,
+          pid: process.pid,
+          status: 'idle',
+        },
+      ])
+    if (opts.cwd === roots[A] && args[0] === 'respawn' && !holdUsed) {
+      holdUsed = true
+      entered.resolve()
+      await release.promise
+      return ''
+    }
+    if (opts.cwd === roots[A] && args[0] === 'stop') throw new Error('respawn cleanup failed')
+    return ''
+  })
+  try {
+    await enter(A)
+    await enter(B)
+    const respawning = call(A, 'agent.respawn', { id: 'abc12345' })
+    await entered.promise
+    expect(await call(B, 'agent.respawn', { id: 'abc12345' })).toMatchObject({ ok: true })
+    expectFailedDrain()
+    const stopping = host.stop(A).catch((error: unknown) => error)
+    release.resolve()
+    expect(await respawning).toMatchObject({ ok: false })
+    const failure = await stopping
+    expect(failure).toBeInstanceOf(Error)
+    expect(
+      nestedErrors(failure).some((error) => String(error).includes('respawn cleanup failed')),
+    ).toBe(true)
+    await expect(host.stop(A)).rejects.toBe(failure)
+    await expect(enter(A)).rejects.toBe(failure)
+    expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+  } finally {
+    release.resolve()
+  }
+})
+
+it('joins retention-expiry Pi close and reports failed turn finalization after row removal', async () => {
+  const { host, enter, call, roots, userData, bridge, expectFailedDrain } = await rig()
+  const executable = join(userData, 'pi-retention-fixture')
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const readline = require('node:readline');
+const owner = process.cwd().endsWith('vault-a') ? 'A' : 'B';
+const marker = (name) => path.join(process.cwd(), name);
+fs.writeFileSync(marker('pi-fixture-pid'), String(process.pid));
+process.on('SIGTERM', () => {
+  if (owner === 'B') process.exit(0);
+  fs.writeFileSync(marker('pi-fixture-sigterm'), 'received');
+  const wait = setInterval(() => {
+    if (fs.existsSync(marker('pi-fixture-release'))) {
+      clearInterval(wait);
+      process.exit(0);
+    }
+  }, 10);
+});
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  const command = JSON.parse(line);
+  if (command.type === 'prompt') {
+    const emit = (record) => process.stdout.write(JSON.stringify(record) + '\\n');
+    emit({ type: 'agent_start' });
+    emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: owner + '-reply' } });
+    emit({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } });
+    emit({ type: 'agent_settled' });
+  } else if (command.type === 'get_session_stats') {
+    process.stdout.write(JSON.stringify({ type: 'response', id: command.id, success: true, data: {} }) + '\\n');
+  }
+});
+`,
+  )
+  await chmod(executable, 0o755)
+  const pi = {
+    ...PRESETS.find((preset) => preset.id === 'pi')!,
+    command: { bin: executable, args: [] },
+  }
+  let stopping: Promise<unknown> | undefined
+  let pidA: number | undefined
+  let releaseRename: ReturnType<typeof deferred> | undefined
+  const releasePath = join(roots[A], 'pi-fixture-release')
+  const waitForFile = async (path: string) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      try {
+        return await readFile(path, 'utf8')
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    }
+    throw new Error(`Timed out waiting for ${path}`)
+  }
+  const waitForGone = async (pid: number) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      try {
+        process.kill(pid, 0)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error(`Pi fixture process ${pid} is still alive`)
+  }
+  const reply = async (remote: typeof A | typeof B, session: string) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const result = (await call(remote, 'agent.reply', { session })) as { output: string | null }
+      if (result.output !== null) return result.output
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error(`Pi reply did not settle for ${remote}`)
+  }
+  const post = (remote: string, path: string, session: string) =>
+    fetch(
+      `http://127.0.0.1:${bridge.port()}${path}?t=${encodeURIComponent(bridge.tokenForVault(remote))}&job=${session}&pid=${process.pid}`,
+      { method: 'POST' },
+    )
+  const realSetTimeout = globalThis.setTimeout
+  const retentionClock = vi
+    .spyOn(globalThis, 'setTimeout')
+    .mockImplementation((callback, delay, ...args) =>
+      realSetTimeout(callback, delay === 30_000 ? 1_000 : delay, ...args),
+    )
+  try {
+    await enter(A)
+    await enter(B)
+    for (const remote of [A, B] as const) await call(remote, 'agent.harnessSave', { harness: pi })
+    const launch = async (remote: typeof A | typeof B, keep: boolean) =>
+      (await call(remote, 'agent.launch', {
+        provider: 'pi',
+        name: `${remote} retained fixture`,
+        prompt: 'answer',
+        tools: 'none',
+        keep,
+      })) as { ok: boolean; sessionId: string }
+    const [piA, piB] = await Promise.all([launch(A, false), launch(B, true)])
+    expect(piA.ok).toBe(true)
+    expect(piB.ok).toBe(true)
+    expect(await reply(A, piA.sessionId)).toBe('A-reply')
+    expect(await reply(B, piB.sessionId)).toBe('B-reply')
+    pidA = Number(await waitForFile(join(roots[A], 'pi-fixture-pid')))
+    const priorARecords = await openTurnLog(roots[A]).list()
+
+    const durableFailure = new Error('A turn record rename failed')
+    expectFailedDrain()
+    const enteredRename = deferred()
+    releaseRename = deferred()
+    adapters.historyRename = {
+      source: join(roots[A], TURNS_FILE),
+      entered: enteredRename.resolve,
+      wait: releaseRename.promise,
+      error: durableFailure,
+    }
+    expect((await post(A, '/turn/start', piA.sessionId)).status).toBe(204)
+    expect((await post(B, '/turn/start', piB.sessionId)).status).toBe(204)
+    const endingA = post(A, '/turn/end', piA.sessionId)
+    await enteredRename.promise
+    const endingB = post(B, '/turn/end', piB.sessionId)
+    releaseRename.resolve()
+    expect((await endingA).status).toBe(204)
+    expect((await endingB).status).toBe(200)
+    expect(await openTurnLog(roots[A]).list()).toEqual(priorARecords)
+    expect(await openTurnLog(roots[B]).list()).toEqual([
+      expect.objectContaining({ sessionId: piB.sessionId }),
+    ])
+    retentionClock.mockRestore()
+
+    await waitForFile(join(roots[A], 'pi-fixture-sigterm'))
+    expect(await reply(B, piB.sessionId)).toBe('B-reply')
+    await expect(
+      call(B, 'agent.message', { session: piB.sessionId, text: 'still live' }),
+    ).resolves.toEqual({ ok: true })
+
+    let stopSettled = false
+    stopping = host.stop(A).then(
+      () => {
+        stopSettled = true
+        throw new Error('vault stop unexpectedly succeeded')
+      },
+      (error: unknown) => {
+        stopSettled = true
+        return error
+      },
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(stopSettled).toBe(false)
+    await expect(call(A, 'agent.reply', { session: piA.sessionId })).rejects.toThrow(
+      /no such method/,
+    )
+    expect(await reply(B, piB.sessionId)).toBe('B-reply')
+
+    await writeFile(releasePath, 'release')
+    const failure = await stopping
+    await waitForGone(pidA)
+    expect(failure).toBeInstanceOf(Error)
+    expect(nestedErrors(failure).some((error) => error === durableFailure)).toBe(true)
+    await expect(host.stop(A)).rejects.toBe(failure)
+    await expect(enter(A)).rejects.toBe(failure)
+    await expect(call(A, 'agent.sessions')).rejects.toThrow(/no such method/)
+    expect(await reply(B, piB.sessionId)).toBe('B-reply')
+  } finally {
+    retentionClock.mockRestore()
+    releaseRename?.resolve()
+    await writeFile(releasePath, 'release').catch(() => {})
+    await stopping?.catch(() => {})
+    if (pidA !== undefined) await waitForGone(pidA).catch(() => {})
+    await host.stopAll().catch(() => {})
+  }
+})
+
+it('joins an actual Pi child close on vault stop while the other vault stays live', async () => {
+  const { host, enter, call, roots, userData } = await rig()
+  const executable = join(userData, 'pi-stop-fixture')
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const readline = require('node:readline');
+const owner = process.cwd().endsWith('vault-a') ? 'A' : 'B';
+const marker = (name) => path.join(process.cwd(), name);
+fs.writeFileSync(marker('pi-fixture-pid'), String(process.pid));
+fs.writeFileSync(marker('pi-fixture-args'), JSON.stringify(process.argv.slice(2)));
+process.on('SIGTERM', () => {
+  if (owner === 'B') process.exit(0);
+  fs.writeFileSync(marker('pi-fixture-sigterm'), 'received');
+  const wait = setInterval(() => {
+    if (fs.existsSync(marker('pi-fixture-release'))) {
+      clearInterval(wait);
+      process.exit(0);
+    }
+  }, 10);
+});
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  const command = JSON.parse(line);
+  if (command.type === 'prompt') {
+    const emit = (record) => process.stdout.write(JSON.stringify(record) + '\\n');
+    emit({ type: 'agent_start' });
+    emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: owner + '-reply' } });
+    emit({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } });
+    emit({ type: 'agent_settled' });
+  } else if (command.type === 'get_session_stats') {
+    process.stdout.write(JSON.stringify({ type: 'response', id: command.id, success: true, data: {} }) + '\\n');
+  }
+});
+`,
+  )
+  await chmod(executable, 0o755)
+  const pi = {
+    ...PRESETS.find((preset) => preset.id === 'pi')!,
+    command: { bin: executable, args: [] },
+  }
+  let stopping: Promise<void> | undefined
+  const waitForFile = async (path: string) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      try {
+        return await readFile(path, 'utf8')
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    }
+    throw new Error(`Timed out waiting for ${path}`)
+  }
+  const waitForGone = async (pid: number) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      try {
+        process.kill(pid, 0)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error(`Pi fixture process ${pid} is still alive`)
+  }
+  let pidA: number | undefined
+  let pidB: number | undefined
+  try {
+    await enter(A)
+    await enter(B)
+    for (const remote of [A, B] as const) await call(remote, 'agent.harnessSave', { harness: pi })
+    const launch = async (remote: typeof A | typeof B) =>
+      (await call(remote, 'agent.launch', {
+        provider: 'pi',
+        name: `${remote} physical child`,
+        prompt: 'answer',
+        tools: 'none',
+        keep: true,
+      })) as { ok: boolean; sessionId: string }
+    const [piA, piB] = await Promise.all([launch(A), launch(B)])
+    expect(piA.ok).toBe(true)
+    expect(piB.ok).toBe(true)
+    const reply = async (remote: typeof A | typeof B, session: string) => {
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const result = (await call(remote, 'agent.reply', { session })) as { output: string | null }
+        if (result.output !== null) return result.output
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      throw new Error(`Pi reply did not settle for ${remote}`)
+    }
+    expect(await reply(A, piA.sessionId)).toBe('A-reply')
+    expect(await reply(B, piB.sessionId)).toBe('B-reply')
+    pidA = Number(await waitForFile(join(roots[A], 'pi-fixture-pid')))
+    pidB = Number(await waitForFile(join(roots[B], 'pi-fixture-pid')))
+    expect(JSON.parse(await readFile(join(roots[A], 'pi-fixture-args'), 'utf8'))).not.toContain(
+      '--dangerously-skip-permissions',
+    )
+
+    stopping = host.stop(A)
+    await waitForFile(join(roots[A], 'pi-fixture-sigterm'))
+    let stopSettled = false
+    void stopping.then(() => {
+      stopSettled = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(stopSettled).toBe(false)
+    await expect(call(A, 'agent.reply', { session: piA.sessionId })).rejects.toThrow(
+      /no such method/,
+    )
+    expect(await reply(B, piB.sessionId)).toBe('B-reply')
+    await expect(
+      call(B, 'agent.message', { session: piB.sessionId, text: 'still live' }),
+    ).resolves.toEqual({
+      ok: true,
+    })
+
+    await writeFile(join(roots[A], 'pi-fixture-release'), 'release')
+    await stopping
+    await waitForGone(pidA)
+    await enter(A)
+    const sessionsA = (await call(A, 'agent.sessions')) as { id: string; provider: string }[]
+    expect(sessionsA).not.toContainEqual(
+      expect.objectContaining({ id: piA.sessionId, provider: 'pi' }),
+    )
+    await expect(call(A, 'agent.reply', { session: piA.sessionId })).rejects.toThrow(/Pi run/)
+    expect(await reply(B, piB.sessionId)).toBe('B-reply')
+    expect(() => process.kill(pidB!, 0)).not.toThrow()
+  } finally {
+    await writeFile(join(roots[A], 'pi-fixture-release'), 'release').catch(() => {})
+    await stopping?.catch(() => {})
+    if (pidA !== undefined) await waitForGone(pidA).catch(() => {})
+    await host.stopAll()
+    if (pidB !== undefined) await waitForGone(pidB)
+  }
 })
