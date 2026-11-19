@@ -520,7 +520,7 @@ it('refuses a missing or forged consent context without persisting a grant', asy
   expect(await mdxTrust.status({ accountId: '42', remote: REMOTE })).toBe(false)
 })
 
-it('never mints consent for the provisional identity during account verification', async () => {
+it('keeps the validated identity pending adoption and retires its context on publication', async () => {
   const entered = gate<void>()
   const finish = gate<void>()
   const fetch = vi.fn(async (input: RequestInfo | URL) => {
@@ -546,14 +546,16 @@ it('never mints consent for the provisional identity during account verification
   const flow = await session.signIn()
   const adopting = flow.wait()
   await entered.promise
-  try {
-    expect(await caller.mdxTrust.status({ remote: REMOTE })).toEqual({
-      trusted: false,
-      identityAvailable: false,
-      context: null,
-    })
-  } finally {
-    finish.resolve()
-    await adopting
-  }
+  const pending = await caller.mdxTrust.status({ remote: REMOTE })
+  expect(pending).toMatchObject({ trusted: false, identityAvailable: true })
+  expect(pending.context).toBeTruthy()
+  finish.resolve()
+  await adopting
+  await expect(
+    caller.mdxTrust.approve({ remote: REMOTE, context: pending.context! }),
+  ).rejects.toThrow(/context changed/)
+  expect(await caller.mdxTrust.status({ remote: REMOTE })).toMatchObject({
+    trusted: false,
+    identityAvailable: true,
+  })
 })

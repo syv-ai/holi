@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src", "scripts/github-storage-native-smoke-main.ts"]
+}
