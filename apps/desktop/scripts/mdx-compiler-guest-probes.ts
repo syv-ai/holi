@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { app, BrowserWindow, session, type WebContents } from 'electron'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { MdxCompiler } from '../src/main/mdx-compiler'
+import type { MdxResources } from '../src/main/mdx-resources'
 
 type Mode = 'policy' | 'crash' | 'hang' | 'hold'
 const origin = 'https://mdx-compiler.invalid'
@@ -104,18 +104,84 @@ export async function createGuestProbes() {
             const denied = async (url, options) => {
               try { await fetch(url, options); return false } catch { return true }
             };
-            const bounded = (promise) => Promise.race([
-              promise, new Promise(resolve => setTimeout(() => resolve('timeout'), 350))
-            ]);
+            const bounded = (promise, cleanup = () => {}) => new Promise(resolve => {
+              let settled = false;
+              const finish = value => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                cleanup();
+                resolve(value);
+              };
+              const timer = setTimeout(() => finish('timeout'), 350);
+              Promise.resolve(promise).then(finish, () => finish('denied'));
+            });
             const results = {};
             results.loopback = await denied(${JSON.stringify(endpoint + '/canary')});
             results.external = await denied('https://outside.invalid/canary');
+            results.dynamicImport = await bounded(import(${JSON.stringify(endpoint + '/module.js')})
+              .then(() => false, () => true));
+            results.xhr = await new Promise(resolve => {
+              try { const xhr = new XMLHttpRequest(); xhr.onerror = () => resolve(true); xhr.onload = () => resolve(false); xhr.open('GET', ${JSON.stringify(endpoint + '/xhr')}); xhr.send(); }
+              catch { resolve(true) }
+            });
+            let eventSource;
+            results.eventSource = await bounded(new Promise(resolve => {
+              try { eventSource = new EventSource(${JSON.stringify(endpoint + '/events')});
+                eventSource.onerror = () => resolve(true);
+                eventSource.onopen = () => resolve(false);
+              } catch { resolve(true) }
+            }), () => eventSource?.close());
+            let worker;
+            let workerUrl;
+            results.worker = await bounded(new Promise(resolve => {
+              try { workerUrl = URL.createObjectURL(new Blob(["importScripts('${endpoint}/worker-import.js');"]));
+                worker = new Worker(workerUrl);
+                worker.onerror = () => resolve(true);
+                worker.onmessage = () => resolve(false);
+              } catch { resolve(true) }
+            }), () => { worker?.terminate(); if (workerUrl) URL.revokeObjectURL(workerUrl); });
+            results.css = await bounded(new Promise(resolve => { const link = document.createElement('link'); link.rel = 'stylesheet';
+              link.href = ${JSON.stringify(endpoint + '/style.css')}; link.onerror = () => resolve(true);
+              link.onload = () => resolve(false); document.head.append(link); }));
+            results.image = await bounded(new Promise(resolve => { const image = new Image();
+              image.onerror = () => resolve(true); image.onload = () => resolve(false); image.src = ${JSON.stringify(endpoint + '/image.png')}; }));
+            results.font = await bounded((async () => {
+              const face = new FontFace('mdx-probe', 'url(${JSON.stringify(endpoint + '/font.woff2')})');
+              try { await face.load(); return false } catch { return true }
+            })());
+            results.audio = await bounded(new Promise(resolve => { const audio = document.createElement('audio');
+              audio.onerror = () => resolve(true); audio.oncanplaythrough = () => resolve(false);
+              audio.src = ${JSON.stringify(endpoint + '/audio.wav')}; audio.load(); }));
+            results.video = await bounded(new Promise(resolve => { const video = document.createElement('video');
+              video.onerror = () => resolve(true); video.oncanplaythrough = () => resolve(false);
+              video.src = ${JSON.stringify(endpoint + '/video.mp4')}; video.load(); }));
+            let frame;
+            results.frame = await bounded(new Promise(resolve => { frame = document.createElement('iframe');
+              frame.onload = () => { try { resolve(frame.contentWindow?.location.href === 'about:blank') } catch { resolve(true) } };
+              frame.onerror = () => resolve(true); frame.src = ${JSON.stringify(endpoint + '/frame')}; document.body.append(frame); }),
+              () => frame?.remove());
             results.file = await denied('file:///etc/passwd');
             results.holi = await denied('holi://vault/private');
             results.assetLookalike = await denied('${origin}/guest.js?extra=1');
             results.post = await denied('${origin}/guest.js', {method:'POST', body:'x'});
-            try { navigator.sendBeacon(${JSON.stringify(endpoint + '/beacon')}, 'x') } catch {}
-            results.beacon = true;
+            results.assetAsImage = await bounded(new Promise(resolve => { const image = new Image();
+              image.onerror = () => resolve(true); image.onload = () => resolve(false); image.src = '${origin}/guest.js'; }));
+            results.assetAsFetch = await denied('${origin}/guest.js');
+            results.assetRepeat = await bounded(new Promise(resolve => { const script = document.createElement('script');
+              script.onerror = () => resolve(true); script.onload = () => resolve(false);
+              script.src = '${origin}/guest.js'; document.head.append(script); }));
+            let beaconViolation;
+            results.beacon = await bounded(new Promise(resolve => {
+              beaconViolation = event => {
+                if (event.disposition !== 'enforce' || event.effectiveDirective !== 'connect-src') return;
+                try {
+                  if (new URL(event.blockedURI).origin === ${JSON.stringify(endpoint)}) resolve(true);
+                } catch {}
+              };
+              addEventListener('securitypolicyviolation', beaconViolation);
+              navigator.sendBeacon(${JSON.stringify(endpoint + '/beacon')}, 'x');
+            }), () => removeEventListener('securitypolicyviolation', beaconViolation));
             results.websocket = await bounded(new Promise(resolve => {
               try {
                 const socket = new WebSocket(${JSON.stringify(endpoint.replace('http:', 'ws:'))});
@@ -147,9 +213,11 @@ export async function createGuestProbes() {
   app.on('web-contents-created', observe)
 
   return {
-    async policy(compiler: MdxCompiler) {
+    async policy(compiler: MdxResources) {
       next = 'policy'
+      const owner = compiler.createOwner(async () => true)
       const output = await compiler.compile(
+        owner,
         `export const touch = (globalThis.__mdxSmokeExecuted = true)\n\n{fetch('${endpoint}/document-code')}\n`,
       )
       assert.deepEqual(output, [])
@@ -158,18 +226,19 @@ export async function createGuestProbes() {
       for (const [name, value] of Object.entries(policy)) assert.equal(value, true, name)
       assert.equal(traffic, 0, 'A denied guest request reached the loopback server')
       assert(executionChecks > 0, 'The actual compiler output was not observed')
-      await compiler.compile('# A fresh guest has empty storage\n')
+      await compiler.compile(owner, '# A fresh guest has empty storage\n')
       if (probeFailure) throw probeFailure
       assert(storage.length >= 2)
       return { policy, outboundRequests: traffic, executionChecks, freshGuests: storage.length }
     },
-    async crashAndHang(compiler: MdxCompiler) {
+    async crashAndHang(compiler: MdxResources) {
+      const owner = compiler.createOwner(async () => true)
       next = 'crash'
-      await assert.rejects(compiler.compile('# crash\n'), /crash|closed|destroyed|disposed/i)
-      assert.deepEqual(await compiler.compile('# recovery after crash\n'), [])
+      await assert.rejects(compiler.compile(owner, '# crash\n'), /crash|closed|destroyed|disposed/i)
+      assert.deepEqual(await compiler.compile(owner, '# recovery after crash\n'), [])
       next = 'hang'
-      await assert.rejects(compiler.compile('# hang\n'), /timed out/i)
-      assert.deepEqual(await compiler.compile('# recovery after timeout\n'), [])
+      await assert.rejects(compiler.compile(owner, '# hang\n'), /timed out/i)
+      assert.deepEqual(await compiler.compile(owner, '# recovery after timeout\n'), [])
       if (probeFailure) throw probeFailure
       return { crashRejected: true, timeoutRejected: true, recovered: true }
     },
