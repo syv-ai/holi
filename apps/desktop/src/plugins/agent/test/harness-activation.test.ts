@@ -1311,6 +1311,7 @@ it.each(['success', 'failure'] as const)(
       )
     const writeEntered = deferred()
     const releaseWrite = deferred()
+    let writeAdmitted = false
     try {
       await enter(A)
       await enter(B)
@@ -1319,9 +1320,6 @@ it.each(['success', 'failure'] as const)(
           expect.objectContaining({ id: 'abc12345', state: 'idle' }),
         ])
       }
-      listingStatus[A] = 'waiting'
-      listingStatus[B] = 'waiting'
-      for (const remote of [A, B] as const) expect((await postStatusline(remote)).status).toBe(204)
       const configDirs = Object.fromEntries(
         ([A, B] as const).map((remote) => {
           const call = adapters.run.mock.calls.find(
@@ -1334,15 +1332,38 @@ it.each(['success', 'failure'] as const)(
       ) as Record<typeof A | typeof B, string>
       adapters.historyRename = {
         source: aInboxPath,
-        entered: writeEntered.resolve,
+        entered: () => {
+          writeAdmitted = true
+          writeEntered.resolve()
+        },
         wait: releaseWrite.promise,
         ...(outcome === 'failure' ? { error: new Error('held inbox rename failed') } : {}),
       }
+      listingStatus[A] = 'waiting'
+      listingStatus[B] = 'waiting'
+      for (const remote of [A, B] as const) expect((await postStatusline(remote)).status).toBe(204)
+      // Force an actual capability read after the statusline, then keep
+      // delivering real watcher changes until its admitted inbox write begins.
+      await call(A, 'agent.sessions')
       for (const remote of [A, B] as const) {
         await mkdir(join(configDirs[remote], 'sessions'), { recursive: true })
-        await writeFile(join(configDirs[remote], 'sessions', 'needs-you-fixture.json'), '{}')
       }
-      // The actual watcher has admitted A's native inbox-file rename.
+      let refreshAttempt = 0
+      await vi.waitFor(
+        async () => {
+          if (!writeAdmitted) {
+            const attempt = ++refreshAttempt
+            for (const remote of [A, B] as const) {
+              await writeFile(
+                join(configDirs[remote], 'sessions', `needs-you-refresh-${attempt}.json`),
+                '{}',
+              )
+            }
+          }
+          expect(writeAdmitted).toBe(true)
+        },
+        { interval: 200 },
+      )
       await writeEntered.promise
       listingStatus[A] = 'idle'
       extraWaitingSession = true
@@ -1393,6 +1414,7 @@ it.each(['success', 'failure'] as const)(
         expect((await inboxFile(A)).entries).toEqual([
           expect.objectContaining({ session: 'abc12345' }),
         ])
+        extraWaitingSession = false
         await enter(A)
         host.setDisplayed(A)
         expect(await inboxFile(A)).toMatchObject({
