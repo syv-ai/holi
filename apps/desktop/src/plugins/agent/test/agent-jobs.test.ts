@@ -22,6 +22,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ownedProcessDrain } from '../../../main/plugin-api'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
+import { markPosixNonAdmission } from '../../../main/posix-ownership-journal'
 import { codexProvider, fenceArgs, jobArgs, readJobEvent } from '../main/codex'
 import { createFencedSessions } from '../main/host/fenced'
 import { activationOwnership } from '../main/host/ownership'
@@ -737,6 +738,146 @@ describe('agent.job', () => {
 })
 
 describe('job settlement without Stop', () => {
+  it.each(['free path', 'competing file'] as const)(
+    'rolls back a timed-out replacement with a %s',
+    async (mode) => {
+      const root = await temp('holi-job-vault-')
+      const userData = await temp('holi-job-data-')
+      const vault = { remote: 'fixture/vault', root }
+      const scratchRoot = join(userData, 'jobs')
+      const activation = new AbortController()
+      const ownership = activationOwnership(userData, vault, activation.signal)
+      const stdout = new PassThrough()
+      const child = Object.assign(new ChildProcess(), {
+        stdout,
+        [ownedProcessDrain]: { drain: async () => {} },
+      })
+      const target = join(root, 'note.md')
+      await writeFile(target, 'original')
+      let enter!: () => void
+      let publish!: () => void
+      const entered = new Promise<void>((resolve) => (enter = resolve))
+      const publishGate = new Promise<void>((resolve) => (publish = resolve))
+      const log = vi.fn()
+      const jobs = createJobs({
+        vault,
+        scratchRoot,
+        ...(ownership && { ownership }),
+        activationSignal: activation.signal,
+        spawn: () => child,
+        onChange: () => {},
+        beforePublish: () => {
+          enter()
+          return publishGate
+        },
+        log,
+      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const started = await jobs.start({
+          provider: scripted('/fixture/job'),
+          name: 'fixture',
+          prompt: 'go',
+          scope: { read: ['note.md'], write: ['note.md', 'zzz.md'] },
+        })
+        if (!started.ok) throw new Error(started.message)
+        const id = started.sessionId
+        await writeFile(join(scratchRoot, id, 'note.md'), 'agent output')
+        await writeFile(join(scratchRoot, id, 'zzz.md'), 'later output')
+        const closed = new Promise<void>((resolve) => stdout.once('close', resolve))
+        stdout.end('{"type":"turn.completed"}\n')
+        await closed
+        child.emit('close', 0, null)
+        await entered
+        await expect(readFile(target)).rejects.toMatchObject({ code: 'ENOENT' })
+        const backup = (await readdir(root)).find((name) => name.startsWith('.holi-copy-'))!
+        expect(await readFile(join(root, backup, 'previous'), 'utf8')).toBe('original')
+        await vi.advanceTimersByTimeAsync(5_000)
+        const timeout = await jobs.stop(id).catch((error: unknown) => error)
+        expect(timeout).toMatchObject({
+          message: expect.stringMatching(/Finalization of job.*timed out/),
+        })
+        if (mode === 'competing file') await writeFile(target, 'competing version')
+        publish()
+        if (mode === 'free path') {
+          await vi.waitFor(async () => expect(await readdir(root)).toEqual(['note.md']))
+          expect(await readFile(target, 'utf8')).toBe('original')
+        } else {
+          await vi.waitFor(() => expect(log).toHaveBeenCalledWith(expect.stringContaining(backup)))
+        }
+        activation.abort()
+        await expect(jobs.stop(id)).rejects.toBe(timeout)
+        await expect(jobs.leave()).rejects.toMatchObject({ errors: [timeout] })
+        if (ownership) {
+          const recovered = createJobs({
+            vault,
+            scratchRoot,
+            ownership: activationOwnership(userData, vault, new AbortController().signal)!,
+            spawn: () => {
+              throw new Error('recovery must not spawn')
+            },
+            onChange: () => {},
+            log: () => {},
+          })
+          await expect(recovered.leave()).rejects.toThrow(/Caller failure: .*timed out/)
+          expect(await readFile(join(scratchRoot, `${id}.turn`), 'utf8')).toContain('FINALIZING')
+        }
+        if (mode === 'competing file') {
+          expect(await readFile(target, 'utf8')).toBe('competing version')
+          expect(await readFile(join(root, backup, 'previous'), 'utf8')).toBe('original')
+        }
+        expect(await readFile(join(scratchRoot, id, 'note.md'), 'utf8')).toBe('agent output')
+        expect(await readFile(join(scratchRoot, id, 'zzz.md'), 'utf8')).toBe('later output')
+        await expect(readFile(join(root, 'zzz.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        publish()
+        stdout.destroy()
+        child.emit('close', 0, null)
+        const leaving = jobs.leave()
+        void leaving.catch(() => {})
+        await vi.advanceTimersByTimeAsync(20_000)
+        await leaving.catch(() => {})
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'does not turn a proven pre-GO pipe closure into a job failure',
+    async () => {
+      const root = await temp('holi-job-vault-')
+      const scratchRoot = await temp('holi-job-data-')
+      const stdout = new PassThrough()
+      const drain = vi.fn(async () => {})
+      const child = Object.assign(new ChildProcess(), { stdout, [ownedProcessDrain]: { drain } })
+      const jobs = createJobs({
+        vault: { remote: 'fixture/vault', root },
+        scratchRoot,
+        spawn: () => child,
+        onChange: () => {},
+        log: () => {},
+      })
+      const started = await jobs.start({
+        provider: scripted('/fixture/job'),
+        name: 'fixture',
+        prompt: 'go',
+        allow: [],
+      })
+      if (!started.ok) throw new Error(started.message)
+      const stop = jobs.stop(started.sessionId)
+      const closed = new Promise<void>((resolve) => stdout.once('close', resolve))
+      stdout.destroy(new Error('pipe closed before provider exec'))
+      await closed
+      const refusal = new Error('not admitted')
+      markPosixNonAdmission(refusal, Promise.resolve())
+      child.emit('error', refusal)
+      child.emit('close', null, null)
+      await expect(stop).resolves.toEqual({ ok: true })
+      expect(drain).toHaveBeenCalledOnce()
+      await jobs.leave()
+    },
+  )
+
   it.each([
     'missing close',
     'missing end',
@@ -744,6 +885,7 @@ describe('job settlement without Stop', () => {
     'bracket',
     'destroyed stdout',
     'stdout error',
+    'stdout error before rejected proof',
     'clean tail',
   ] as const)('requires independent physical, output and caller proof: %s', async (mode) => {
     const root = await temp('holi-job-vault-')
@@ -753,15 +895,22 @@ describe('job settlement without Stop', () => {
     const ownership = activationOwnership(userData, vault, new AbortController().signal)
     const stdout = new PassThrough()
     // Explicit proof only: this child has no PID or native launch authority.
-    const drain = vi.fn(async () => {})
+    const proofError = new Error('physical receipt rejected')
+    let rejectProof!: (error: Error) => void
+    const proof = new Promise<void>((_, reject) => (rejectProof = reject))
+    void proof.catch(() => {})
+    const drain = vi.fn(async () => {
+      if (mode === 'stdout error before rejected proof') await proof
+    })
     const child = Object.assign(new ChildProcess(), { stdout, [ownedProcessDrain]: { drain } })
     const provider = scripted('/fixture/job')
     const cause = new Error('original stdout error')
+    const log = vi.fn()
     let resume!: () => void
     const gate = new Promise<void>((resolve) => {
       resume = resolve
     })
-    const release = vi.fn(async () => {
+    const release = vi.fn(async (_state: string, _signal?: AbortSignal) => {
       if (mode === 'release') await gate
     })
     provider.release = release
@@ -776,7 +925,7 @@ describe('job settlement without Stop', () => {
       spawn: () => child,
       bracket,
       onChange: (rows) => lists.push(rows),
-      log: () => {},
+      log,
     })
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
@@ -792,9 +941,10 @@ describe('job settlement without Stop', () => {
       if (!inVault) await writeFile(join(scratchRoot, id, 'note.md'), 'scratch edit')
       const json = JSON.stringify({ type: 'turn.completed' })
       const readClosed = new Promise<void>((resolve) => stdout.once('close', resolve))
-      if (mode === 'destroyed stdout' || mode === 'stdout error') {
+      if (mode === 'destroyed stdout' || mode.startsWith('stdout error')) {
+        child.emit('spawn')
         stdout.write(`${json}\n`)
-        stdout.destroy(mode === 'stdout error' ? cause : undefined)
+        stdout.destroy(mode === 'destroyed stdout' ? undefined : cause)
       } else if (mode === 'missing end') stdout.write(`${json}\n`)
       else stdout.end(mode === 'clean tail' ? json : `${json}\n`)
       if (mode !== 'missing end') await readClosed
@@ -804,6 +954,12 @@ describe('job settlement without Stop', () => {
       if (mode !== 'missing close') child.emit('close', 0, null)
       await vi.advanceTimersByTimeAsync(0)
       expect(drain).toHaveBeenCalledOnce()
+      if (mode === 'stdout error before rejected proof') {
+        expect(jobs.sessions()[0]?.outcome).toBeUndefined()
+        expect(release).not.toHaveBeenCalled()
+        rejectProof(proofError)
+        await vi.advanceTimersByTimeAsync(0)
+      }
       if (mode === 'clean tail') {
         await vi.waitFor(() => expect(jobs.sessions()[0]?.outcome).toBe('completed'))
         expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('scratch edit')
@@ -821,7 +977,7 @@ describe('job settlement without Stop', () => {
       }
       expect(jobs.sessions()[0]?.outcome).toBe('failed')
       const failure = await jobs.stop(id).catch((error: unknown) => error)
-      if (mode === 'stdout error') expect(failure).toBe(cause)
+      if (mode.startsWith('stdout error')) expect(failure).toBe(cause)
       else
         expect(failure).toMatchObject({
           message: expect.stringMatching(
@@ -832,6 +988,10 @@ describe('job settlement without Stop', () => {
                 : /Finalization of job.*timed out/,
           ),
         })
+      if (mode === 'release') expect(release.mock.calls[0]?.[1]?.reason).toBe(failure)
+      if (mode === 'stdout error before rejected proof') {
+        expect(log).toHaveBeenCalledWith(expect.stringContaining(proofError.message))
+      }
       // A late callback or close cannot replace the outcome or retire the owner.
       resume()
       child.emit('close', 0, null)
@@ -840,7 +1000,9 @@ describe('job settlement without Stop', () => {
       await vi.advanceTimersByTimeAsync(0)
       expect(lists.flat().some((row) => row.outcome === 'completed')).toBe(false)
       await expect(jobs.stop(id)).rejects.toBe(failure)
-      await expect(jobs.leave()).rejects.toMatchObject({ errors: [failure] })
+      const expectedErrors =
+        mode === 'stdout error before rejected proof' ? [cause, proofError] : [failure]
+      await expect(jobs.leave()).rejects.toMatchObject({ errors: expectedErrors })
       expect(await readdir(scratchRoot)).toContain(`${id}.agent`)
       if (ownership)
         expect(await readFile(join(scratchRoot, `${id}.turn`), 'utf8')).toContain('FINALIZING')
@@ -849,6 +1011,7 @@ describe('job settlement without Stop', () => {
       expect(await exists(join(root, 'note.md'))).toBe(false)
       if (mode !== 'release' && mode !== 'bracket') expect(release).not.toHaveBeenCalled()
     } finally {
+      rejectProof(proofError)
       resume()
       stdout.destroy()
       child.emit('close', 0, null)
@@ -1032,10 +1195,15 @@ describe('a job in the vault', () => {
     await reachedEnd
     let stopped = false
     const stopping = jobs.stop(id).then(() => (stopped = true))
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(stopped).toBe(false)
-    expect(jobs.sessions().find((row) => row.id === id)).toMatchObject({ state: 'idle' })
-    finishEnd()
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(stopped).toBe(false)
+      const row = jobs.sessions().find((row) => row.id === id)
+      expect(row?.state).toBe('working')
+      expect(row?.outcome).toBeUndefined()
+    } finally {
+      finishEnd()
+    }
     await stopping
     await jobs.leave()
   })

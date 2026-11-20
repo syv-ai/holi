@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PiRpcRun, type PiChild } from '../main/pi/rpc'
 import { ownedProcessDrain, spawnOwnedProgram } from '../../../main/plugin-api'
 
+vi.mock('../../../main/plugin-api', { spy: true })
+
 function fake(autoClose = true) {
   const stdin = new PassThrough()
   const stdout = new PassThrough()
@@ -665,6 +667,69 @@ describe('PiRpcRun', () => {
     rpc.close()
     await expect(run.close()).rejects.toThrow(/ownership proof/)
     expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'ignores TERM',
+    'throws on TERM',
+    'exits before retry',
+    'already closed',
+    'output error',
+  ] as const)('uses the Windows helper stop baseline: %s', async (mode) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const rpc = fake(false)
+    const cause = new Error('original output error')
+    const onDrainFailure = vi.fn()
+    delete rpc.child[ownedProcessDrain]
+    const kill = vi.spyOn(rpc.child, 'kill').mockImplementation((signal) => {
+      if (signal === 'SIGTERM' && mode !== 'ignores TERM' && mode !== 'exits before retry')
+        throw new Error('stop-file write failed')
+      if (signal === 'SIGKILL') rpc.exit()
+      return true
+    })
+    const spawn = vi.mocked(spawnOwnedProgram)
+    spawn.mockReturnValueOnce(rpc.child as unknown as ReturnType<typeof spawnOwnedProgram>)
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    try {
+      const run = new PiRpcRun({ bin: 'never-spawned', cwd: '/v', onDrainFailure })
+      if (mode === 'already closed') {
+        rpc.exit()
+        await run.close()
+        await vi.advanceTimersByTimeAsync(5_000)
+        expect(kill).not.toHaveBeenCalled()
+        return
+      }
+      const turn = run.prompt('go')
+      if (mode === 'output error') rpc.stdout.destroy(cause)
+      const stopping = mode === 'output error' ? run.drained : run.cancel()
+      const settled = vi.fn()
+      void stopping.then(settled, settled)
+      if (mode === 'output error') await expect(turn).rejects.toBe(cause)
+      else await expect(turn).resolves.toMatchObject({ status: 'aborted' })
+      expect(kill.mock.calls).toEqual([['SIGTERM']])
+      await vi.advanceTimersByTimeAsync(1_499)
+      if (mode !== 'output error') expect(settled).not.toHaveBeenCalled()
+      expect(kill.mock.calls).toEqual([['SIGTERM']])
+      if (mode === 'exits before retry') rpc.exit()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(kill.mock.calls).toEqual(
+        mode === 'exits before retry' ? [['SIGTERM']] : [['SIGTERM'], ['SIGKILL']],
+      )
+      if (mode === 'output error') {
+        await expect(stopping).rejects.toBe(cause)
+        expect(onDrainFailure).toHaveBeenCalledExactlyOnceWith(cause)
+      } else {
+        await stopping
+        expect(onDrainFailure).not.toHaveBeenCalled()
+      }
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(kill).toHaveBeenCalledTimes(mode === 'exits before retry' ? 1 : 2)
+    } finally {
+      Object.defineProperty(process, 'platform', platform)
+      kill.mockRestore()
+      vi.clearAllTimers()
+    }
   })
 
   it('keeps close and cancel pending until the child close event', async () => {

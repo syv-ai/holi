@@ -89,6 +89,7 @@ export class PiRpcRun {
   private drainStarted = false
   private physicalComplete = false
   private outputTimer?: ReturnType<typeof setTimeout>
+  private windowsStopTimer?: ReturnType<typeof setTimeout>
   private outputError?: Error
   private rejectDrained!: (error: unknown) => void
   private exited = false
@@ -284,6 +285,8 @@ export class PiRpcRun {
 
   private rootExited(code: number | null, signal: NodeJS.Signals | null): void {
     this.exited = true
+    clearTimeout(this.windowsStopTimer)
+    this.windowsStopTimer = undefined
     this.exitError ??= `Pi RPC exited (${code ?? signal ?? 'unknown'})`
     this.startDrain()
     // EXIT starts physical drain, but buffered JSON records still belong to
@@ -327,11 +330,31 @@ export class PiRpcRun {
           this.settleOutputDrain()
         }, this.failDrain)
       } else {
-        if (!this.exited) this.child.kill('SIGTERM')
+        this.stopWindowsHelper()
         this.settleOutputDrain()
       }
     } catch (error) {
       this.failDrain(error)
+    }
+  }
+
+  private stopWindowsHelper(): void {
+    const signal = (name: NodeJS.Signals) => {
+      if (this.exited) return
+      try {
+        this.child.kill(name)
+      } catch {
+        // A stop-file write can fail while the helper is still live. Let the
+        // retry or the actual exit/output events determine settlement.
+      }
+    }
+    signal('SIGTERM')
+    if (!this.exited) {
+      this.windowsStopTimer = setTimeout(() => {
+        this.windowsStopTimer = undefined
+        signal('SIGKILL')
+      }, 1500)
+      this.windowsStopTimer.unref()
     }
   }
 
