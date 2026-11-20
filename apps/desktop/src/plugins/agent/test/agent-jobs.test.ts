@@ -5,6 +5,7 @@
  * a small node script that prints the JSONL `codex exec --json` does.
  */
 import {
+  access,
   chmod,
   mkdir,
   mkdtemp,
@@ -2006,11 +2007,17 @@ describe('a fenced session', () => {
     expect(await exists(join(root, 'notes/Plan.app/.env'))).toBe(false)
     expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Ship it\n')
 
-    // A later turn's change, then the session exits: copied, and the folder goes.
+    // Exit copies the last change; only the caller retires the scratch and state.
     await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Shipped</h1>')
-    fence.exited()
-    await vi.waitFor(() => expect(exists(join(fence.dir, 'notes/Plan.md'))).resolves.toBe(false))
+    await fence.exited()
     expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Shipped</h1>')
+    expect(await readFile(join(fence.dir, 'notes/Plan.app/index.html'), 'utf8')).toBe(
+      '<h1>Shipped</h1>',
+    )
+    await expect(readdir(fence.state)).resolves.toEqual([])
+    await fence.retire?.()
+    await expect(access(fence.dir)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(fence.state)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('never writes over an app that lands in the vault meanwhile', async () => {
@@ -2170,7 +2177,9 @@ describe('a fenced session', () => {
   })
 
   it('says why when its session does not start', async () => {
-    const { fenced, own, fence } = await fencedRig()
+    const { fenced, own, fence, userData } = await fencedRig()
+    const scratchRoot = join(userData, 'agent-fenced')
+    const originalEntries = (await readdir(scratchRoot)).sort()
     own.start.mockResolvedValueOnce({ ok: false, message: 'Codex is not installed.' } as never)
     const res = await fenced.start({
       provider: { id: 'codex' } as never,
@@ -2179,7 +2188,11 @@ describe('a fenced session', () => {
       scope: SCOPE,
     })
     expect(res).toEqual({ ok: false, message: 'Codex is not installed.' })
+    // The non-launch discarded only its own folders; the first caller still owns its fence.
     await fence.exited()
+    expect((await readdir(scratchRoot)).sort()).toEqual(originalEntries)
+    await fence.retire?.()
     await fenced.leave()
+    await expect(access(scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

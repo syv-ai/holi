@@ -1,11 +1,20 @@
 import { createHash } from 'node:crypto'
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { setImmediate as tick } from 'node:timers/promises'
 import { afterEach, expect, it, vi } from 'vitest'
 import { readJobEvent } from '../main/codex'
-import { createJobs, type Jobs, type JobsDeps } from '../main/host/jobs'
+import { CopyBackCancelled, createJobs, type Jobs, type JobsDeps } from '../main/host/jobs'
 import { createPtySessions } from '../main/host/pty-sessions'
 import { createFencedSessions } from '../main/host/fenced'
 import { bounded } from '../main/host/bounded'
@@ -24,7 +33,7 @@ const native = vi.hoisted(() => ({
     error?: Error
   }>,
   operations: new Set<Promise<unknown>>(),
-  previousFailure: null as { method: 'readFile' | 'close'; error: Error } | null,
+  previousFailure: null as { method: 'readFile' | 'close'; fail(): never } | null,
 }))
 
 vi.mock('node:fs/promises', async (original) => {
@@ -57,14 +66,12 @@ vi.mock('node:fs/promises', async (original) => {
         const failure = native.previousFailure
         native.previousFailure = null
         if (failure.method === 'readFile') {
-          handle.readFile = async () => {
-            throw failure.error
-          }
+          handle.readFile = async () => failure.fail()
         } else {
           const close = handle.close.bind(handle)
           handle.close = async () => {
             await close()
-            throw failure.error
+            failure.fail()
           }
         }
       }
@@ -133,7 +140,8 @@ const SCRIPT = [
 ].join(';')
 
 async function rig(options: Partial<JobsDeps> = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'holi-finalization-'))
+  // Copy-back uses canonical paths. Match those even when TMPDIR is a symlink.
+  const dir = await mkdtemp(join(await realpath(tmpdir()), 'holi-finalization-'))
   roots.push(dir)
   const root = join(dir, 'vault')
   const scratchRoot = join(dir, 'jobs')
@@ -634,8 +642,8 @@ it('does not acknowledge or retry a terminal close rejected before public exit',
   expect(t.closeCalls()).toBe(1)
 })
 
-async function fencedRig() {
-  const t = await rig()
+async function fencedRig(options: Pick<JobsDeps, 'beforePublish'> = {}) {
+  const t = await rig(options)
   // Use the real copy-back rules, without leaving a job process alive.
   await t.jobs.leave()
   const scratchRoot = join(t.dir, 'fenced')
@@ -774,37 +782,72 @@ it.each(['new', 'known'] as const)(
   },
 )
 
+const stagedCopy = ([path]: unknown[]) => basename(String(path)).startsWith('.holi-tmp-')
+
+function holdCopyBack(afterMove: boolean) {
+  const staged = afterMove ? undefined : hold('writeFile', stagedCopy)
+  const moved = deferred()
+  const beforePublish = vi.fn((_rel: string) => moved.promise)
+  return {
+    beforePublish,
+    async wait() {
+      // Fail at the missing seam instead of awaiting an unreachable gate indefinitely.
+      await vi.waitFor(
+        () => {
+          if (staged) expect(staged.calls()).toBe(1)
+          else expect(beforePublish).toHaveBeenCalledExactlyOnceWith('note.md')
+        },
+        { timeout: 5_000 },
+      )
+    },
+    release() {
+      staged?.release()
+      moved.resolve()
+    },
+  }
+}
+
+function failCopyBack(kind: 'rollback' | 'temporary cleanup', target: string) {
+  const fault =
+    kind === 'rollback'
+      ? hold('link', ([from, to]) => basename(String(from)) === 'previous' && to === target)
+      : hold('rm', stagedCopy)
+  fault.fail(new Error(`${kind} refused`))
+  return fault
+}
+
 it.each(['rollback', 'temporary cleanup'] as const)(
   'retains real fenced %s failure even when cancellation was requested',
   async (kind) => {
-    const t = await fencedRig()
+    const prep = holdCopyBack(kind === 'rollback')
+    const t = await fencedRig({ beforePublish: prep.beforePublish })
     const target = join(t.root, 'note.md')
     await writeFile(target, 'original')
     const run = await t.start(['note.md'], ['note.md'])
     await writeFile(join(run.entry.cwd, 'note.md'), 'agent version')
-    const prep = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
-    const failure =
-      kind === 'rollback'
-        ? hold(
-            'link',
-            (args) =>
-              basename(String(args[0])) === 'previous' && basename(String(args[1])) === 'note.md',
-          )
-        : hold('rm', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
-    t.sessions.noteTurn(run.sessionId, false)
-    await prep.entered
-    t.activation.abort()
-    prep.release()
-    await failure.entered
-    failure.fail(new Error(`${kind} refused`))
+    const fault = failCopyBack(kind, target)
+    try {
+      t.sessions.noteTurn(run.sessionId, false)
+      await prep.wait()
+      t.activation.abort()
+    } finally {
+      prep.release()
+    }
     const cause = await t.sessions.stop(run.sessionId).catch((error: unknown) => error)
+    expect(fault.calls()).toBe(1)
     expect(cause).toMatchObject({ message: expect.stringContaining(`${kind} refused`) })
     await expect(t.sessions.stop(run.sessionId)).rejects.toBe(cause)
     await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [cause] })
     for (let i = 0; i < 2; i++)
-      await expect(t.fenced.leave()).rejects.toThrow('cleanup did not complete')
+      await expect(t.fenced.leave()).rejects.toMatchObject({
+        message: expect.stringContaining('cleanup did not complete'),
+        errors: [cause],
+      })
+    expect(await readFile(join(run.entry.cwd, 'note.md'), 'utf8')).toBe('agent version')
+    await expect(access(run.state)).resolves.toBeUndefined()
     const leftovers = (await readdir(t.root)).filter((name) => name.startsWith('.holi-'))
     if (kind === 'rollback') {
+      expect(cause).toMatchObject({ cause: expect.any(CopyBackCancelled) })
       const preserved = leftovers.find((name) => name.startsWith('.holi-copy-'))!
       expect(await readFile(join(t.root, preserved, 'previous'), 'utf8')).toBe('original')
       await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -818,7 +861,8 @@ it.each(['rollback', 'temporary cleanup'] as const)(
 it.each(['safe cancellation', 'rollback', 'temporary cleanup'] as const)(
   'retains job copy-back ownership after %s without hiding restoration failures',
   async (kind) => {
-    const t = await rig()
+    const prep = holdCopyBack(kind === 'rollback')
+    const t = await rig({ beforePublish: prep.beforePublish })
     const target = join(t.root, 'note.md')
     await writeFile(target, 'original')
     t.provider.capabilities.jobs.command = () => ({
@@ -826,58 +870,51 @@ it.each(['safe cancellation', 'rollback', 'temporary cleanup'] as const)(
       args: ['-e', `require('node:fs').writeFileSync('note.md', 'agent version');${SCRIPT}`],
       env: {},
     })
-    const prep = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
-    const result = await t.jobs.start({
-      provider: t.provider,
-      name: 'fixture',
-      prompt: 'go',
-      scope: { read: ['note.md'], write: ['note.md'] },
-    })
-    if (!result.ok) throw new Error(result.message)
-    await prep.entered
-    const failure =
-      kind === 'rollback'
-        ? hold(
-            'link',
-            (args) =>
-              basename(String(args[0])) === 'previous' && basename(String(args[1])) === 'note.md',
-          )
-        : kind === 'temporary cleanup'
-          ? hold('rm', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
-          : undefined
-    const stop = t.jobs.stop(result.sessionId)
-    const stopped =
-      kind === 'safe cancellation'
-        ? expect(stop).resolves.toEqual({ ok: true })
-        : expect(stop).rejects.toThrow(`${kind} refused`)
-    prep.release()
-    if (failure !== undefined) {
-      await failure.entered
-      failure.fail(new Error(`${kind} refused`))
+    const fault = kind === 'safe cancellation' ? undefined : failCopyBack(kind, target)
+    let id: string
+    let stop: ReturnType<Jobs['stop']>
+    try {
+      const result = await t.jobs.start({
+        provider: t.provider,
+        name: 'fixture',
+        prompt: 'go',
+        scope: { read: ['note.md'], write: ['note.md'] },
+      })
+      if (!result.ok) throw new Error(result.message)
+      id = result.sessionId
+      await prep.wait()
+      stop = t.jobs.stop(id)
+    } finally {
+      prep.release()
     }
-    await stopped
     if (kind === 'safe cancellation') {
+      await expect(stop).resolves.toEqual({ ok: true })
       expect(await readFile(target, 'utf8')).toBe('original')
       await t.jobs.leave()
       expect((await readdir(t.root)).filter((name) => name.startsWith('.holi-'))).toEqual([])
       await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
       return
     }
+    const cause = await stop.catch((error: unknown) => error)
+    expect(fault?.calls()).toBe(1)
+    expect(cause).toMatchObject({ message: expect.stringContaining(`${kind} refused`) })
     expect(t.jobs.sessions()[0]).toMatchObject({
       state: 'idle',
       outcome: 'failed',
       error: expect.stringContaining(`${kind} refused`),
     })
     for (let i = 0; i < 2; i++) {
-      await expect(t.jobs.stop(result.sessionId)).rejects.toThrow(`${kind} refused`)
-      await expect(t.jobs.leave()).rejects.toThrow('did not drain')
-      expect(t.jobs.has(result.sessionId)).toBe(true)
-      await expect(
-        access(join(t.scratchRoot, `${result.sessionId}.agent`)),
-      ).resolves.toBeUndefined()
+      await expect(t.jobs.stop(id)).rejects.toBe(cause)
+      await expect(t.jobs.leave()).rejects.toMatchObject({
+        message: expect.stringContaining('did not drain'),
+        errors: [cause],
+      })
+      expect(t.jobs.has(id)).toBe(true)
+      await expect(access(join(t.scratchRoot, `${id}.agent`))).resolves.toBeUndefined()
     }
     const leftovers = (await readdir(t.root)).filter((name) => name.startsWith('.holi-'))
     if (kind === 'rollback') {
+      expect(cause).toMatchObject({ cause: expect.any(CopyBackCancelled) })
       const preserved = leftovers.find((name) => name.startsWith('.holi-copy-'))!
       expect(await readFile(join(t.root, preserved, 'previous'), 'utf8')).toBe('original')
       await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -889,9 +926,19 @@ it.each(['safe cancellation', 'rollback', 'temporary cleanup'] as const)(
 )
 
 it.each(['readFile', 'close'] as const)(
-  'preserves the original when recovery %s fails beside a competing file',
+  'preserves the original when its pre-publication %s fails beside a competing file',
   async (method) => {
-    const t = await rig()
+    const refused = new Error(`pre-publication ${method} refused`)
+    const fail = vi.fn((): never => {
+      throw refused
+    })
+    const t = await rig({
+      beforePublish: async (rel) => {
+        // The original was moved aside. A competing writer takes the now-free name.
+        await writeFile(join(t.root, rel), 'competing version', { flag: 'wx' })
+        native.previousFailure = { method, fail }
+      },
+    })
     const target = join(t.root, 'note.md')
     await writeFile(target, 'original')
     t.provider.capabilities.jobs.command = () => ({
@@ -899,7 +946,6 @@ it.each(['readFile', 'close'] as const)(
       args: ['-e', `require('node:fs').writeFileSync('note.md', 'agent version');${SCRIPT}`],
       env: {},
     })
-    const prep = hold('writeFile', (args) => basename(String(args[0])).startsWith('.holi-tmp-'))
     const run = await t.jobs.start({
       provider: t.provider,
       name: 'fixture',
@@ -907,23 +953,22 @@ it.each(['readFile', 'close'] as const)(
       scope: { read: ['note.md'], write: ['note.md'] },
     })
     if (!run.ok) throw new Error(run.message)
-    await prep.entered
-    const restore = hold(
-      'link',
-      (args) => basename(String(args[0])) === 'previous' && basename(String(args[1])) === 'note.md',
-    )
-    const stop = t.jobs.stop(run.sessionId)
-    const failed = expect(stop).rejects.toThrow(`recovery ${method} refused`)
-    prep.release()
-    await restore.entered
-    await writeFile(target, 'competing version')
-    native.previousFailure = { method, error: new Error(`recovery ${method} refused`) }
-    restore.release()
-    await failed
+    await t.idle(true)
+    expect(fail).toHaveBeenCalledOnce()
+    expect(t.jobs.sessions()[0]).toMatchObject({ outcome: 'failed' })
+    const cause = await t.jobs.stop(run.sessionId).catch((error: unknown) => error)
     const holdDir = (await readdir(t.root)).find((name) => name.startsWith('.holi-copy-'))!
+    expect(cause).toMatchObject({
+      message: `${String(refused)} The previous file is preserved at ${join(holdDir, 'previous')}.`,
+    })
+    expect((cause as Error).cause).toBe(refused)
     expect(await readFile(join(t.root, holdDir, 'previous'), 'utf8')).toBe('original')
     expect(await readFile(target, 'utf8')).toBe('competing version')
-    await expect(t.jobs.leave()).rejects.toThrow('did not drain')
+    await expect(t.jobs.stop(run.sessionId)).rejects.toBe(cause)
+    await expect(t.jobs.leave()).rejects.toMatchObject({
+      message: expect.stringContaining('did not drain'),
+      errors: [cause],
+    })
     expect(t.jobs.has(run.sessionId)).toBe(true)
   },
 )
