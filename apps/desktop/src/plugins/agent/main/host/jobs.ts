@@ -39,8 +39,8 @@
  * (`AgentProvider.release`), and it goes with the job.
  *
  * POSIX turns retain a launch lease that drains the group on exit or stop
- * and handles parent death through control EOF. The PID file is evidence for
- * restart, never signal authority. Recovery only removes proven absent runs.
+ * and handles parent death through control EOF. Recovery joins the durable
+ * launch registry with a caller receipt; a POSIX PID file is diagnostic only.
  *
  * **It is a session in the one list**, named by Holi's id (`j` and twelve hex
  * digits): working while a turn runs, then idle with its `outcome` (and why,
@@ -54,9 +54,8 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import { execFileSync, type ChildProcess } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { constants, rmSync } from 'node:fs'
+import { constants } from 'node:fs'
 import {
   link,
   lstat,
@@ -70,26 +69,15 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
-import { createInterface } from 'node:readline'
 import { isHiddenPath, isSharedContentPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
-import {
-  CapabilityError,
-  readableOrNull,
-  spawnOwnedProgram,
-  ownedProcessDrain,
-  type ProcessGroupSupervision,
-} from '../../../../main/plugin-api'
+import { CapabilityError, readableOrNull } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
 import type { JobRun, JobsProvider, VaultRef } from '../provider'
 import { bounded } from './bounded'
+import { jobScratch, type JobFiles, type JobTurnReceipt } from './job-receipts'
+import { startJobTurn } from './job-turn'
 import type { ActionResult } from './sessions'
-
-/**
- * Holi's id for a job: never a background job id or a PTY session's.
- * @public exported for its test
- */
-export const JOB_SESSION_ID = /^j[0-9a-f]{12}$/
 
 /** What a job may touch: files it reads, copied in, and the paths (or
  *  `folder/**`) whose files it wrote are copied back. */
@@ -112,24 +100,6 @@ type JobSpec = JobSpecBase & ({ scope: JobScope } | { allow: readonly string[] }
 
 export type JobResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
-type JobChild = ChildProcess & { [ownedProcessDrain]?: ProcessGroupSupervision }
-
-/** How a job's process starts. An injected POSIX child must supply its own drain. */
-type SpawnJob = (
-  bin: string,
-  args: string[],
-  opts: { cwd: string; env: Record<string, string> },
-) => JobChild
-
-/** A retained POSIX group lease or the dedicated Windows Job Object helper. */
-const defaultSpawnJob: SpawnJob = (bin, args, { cwd, env }) =>
-  spawnOwnedProgram(bin, args, {
-    cwd,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    posixGroupLease: true,
-  })
-
 export interface JobsDeps {
   vault: VaultRef
   /** This vault's private scratch root from `agentScratchRoots`. */
@@ -138,9 +108,10 @@ export interface JobsDeps {
   /** The vault's turn bracket, for a job in the vault: sync pauses and the
    *  turn is recorded. */
   bracket?(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<unknown>
-  spawn?: SpawnJob
-  /** Read-only restart proof. An injected spawn never probes the real OS. */
-  recoveryAbsent?: (pidOrGroup: number) => boolean
+  /** Injected children supply explicit drainage, not a native journal. */
+  spawn?: NonNullable<Parameters<typeof startJobTurn>[0]['spawn']>
+  ownership?: NonNullable<Parameters<typeof jobScratch>[0]['ownership']>
+  windowsRecovery?: NonNullable<Parameters<typeof jobScratch>[0]['windowsRecovery']>
   /** Windows helper signal grace only; the POSIX lease owns its own grace. */
   killGraceMs?: number
   /** How long a finished job stays in the list. */
@@ -206,7 +177,8 @@ interface Job {
   state: string
   /** What a scratch job was given and wrote (`Made`). */
   made: Made
-  child: ChildProcess | null
+  files: JobFiles
+  turn?: ReturnType<typeof startJobTurn>
   /** A turn is under way: running, or its writes being copied back. */
   busy: boolean
   /** Admission is revoked before asynchronous retirement begins. */
@@ -225,9 +197,6 @@ interface Job {
   tokens: number
   /** Resolves after release, copy-back, bracket completion and owned cleanup. */
   exited: Promise<void>
-  requestDrain?: () => Promise<void>
-  stopWait?: Promise<void>
-  pidWrite?: Promise<void>
   finalizationError?: Error
   dropTimer?: ReturnType<typeof setTimeout>
   retirement?: Promise<void>
@@ -470,37 +439,6 @@ async function filesUnder(dir: string, prefix = ''): Promise<string[]> {
   return out
 }
 
-/** Process-table diagnostic, not ownership or absence proof.
- * @public exported for its test */
-export const defaultCommandOf = (
-  pid: number,
-  platform: NodeJS.Platform = process.platform,
-): string | null => {
-  if (!Number.isInteger(pid) || pid <= 1) return null
-  try {
-    const [file, args] =
-      platform === 'win32'
-        ? [
-            'powershell.exe',
-            [
-              '-NoProfile',
-              '-NonInteractive',
-              '-Command',
-              `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
-            ],
-          ]
-        : ['ps', ['-o', 'args=', '-p', String(pid)]]
-    return execFileSync(file as string, args as string[], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-      timeout: 10_000,
-    }).trim()
-  } catch {
-    return null
-  }
-}
-
 /** A file's bytes, read only when it is still a regular file: a link is
  *  never followed. Null otherwise. */
 async function readRegular(path: string): Promise<Buffer | null> {
@@ -515,34 +453,12 @@ async function readRegular(path: string): Promise<Buffer | null> {
   }
 }
 
-/** The last line of what the process said on stderr, for a failure with no
- *  event to explain it. */
-function lastLine(text: string): string {
-  const lines = text.trim().split('\n')
-  return lines[lines.length - 1]?.trim().slice(0, 300) ?? ''
-}
-
 /** The longest follow-up queue a job keeps. */
 const MAX_QUEUE = 20
 
-// A positively unlaunched follow-up has no PID, but its private state remains
-// resumable until retention. Only this exact record exempts it from PID probing.
-const UNLAUNCHED_FOLLOWUP = 'settled: unlaunched follow-up\n'
-
-/** Signal zero is a read-only kernel check. Permission and probe errors do not prove absence. */
-function kernelAbsent(pidOrGroup: number): boolean {
-  try {
-    process.kill(pidOrGroup, 0)
-    return false
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'ESRCH'
-  }
-}
-
 export function createJobs(deps: JobsDeps): Jobs {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-jobs] ${msg}`))
-  const spawnJob = deps.spawn ?? defaultSpawnJob
-  const recoveryAbsent = deps.recoveryAbsent ?? (deps.spawn ? () => false : kernelAbsent)
+  const scratch = jobScratch(deps)
   const killGraceMs = deps.killGraceMs ?? 2_000
   const keepMs = deps.keepMs ?? 10 * 60_000
   const maxMs = deps.maxMs ?? 30 * 60_000
@@ -574,33 +490,16 @@ export function createJobs(deps: JobsDeps): Jobs {
     deps.onChange(next)
   }
 
-  function rememberFailure(job: Job, err: unknown): Error {
-    return (job.finalizationError ??= err instanceof Error ? err : new Error(String(err)))
-  }
-
-  function signalWindows(child: ChildProcess, sig: 'SIGTERM' | 'SIGKILL'): void {
-    // This is the dedicated Job Object helper's control channel, not a PID signal.
-    if (child.pid === undefined) return
-    try {
-      child.kill(sig)
-    } catch {
-      // The helper's close or the bounded wait reports the result.
+  function rememberFailure(job: Job, receipt: JobTurnReceipt, error: unknown): Error {
+    if (job.finalizationError === undefined) {
+      job.finalizationError = error instanceof Error ? error : new Error(String(error))
+      try {
+        receipt.fail(error)
+      } catch (recordError) {
+        log(`${job.id}: could not persist ownership failure: ${String(recordError)}`)
+      }
     }
-  }
-
-  function waitForExit(job: Job): Promise<void> {
-    return (job.stopWait ??= (async () => {
-      const physical = job.requestDrain?.()
-      if (physical !== undefined) await physical
-      // No output or provider timer can replace the lease's own deadline.
-      await bounded(
-        job.exited,
-        `Output and finalization of job ${job.id}`,
-        physical === undefined && process.platform === 'win32' ? killGraceMs + 5_000 : 5_000,
-      )
-    })().catch((error: unknown) => {
-      throw rememberFailure(job, error)
-    }))
+    return job.finalizationError
   }
 
   async function kill(job: Job, why: string): Promise<void> {
@@ -608,23 +507,10 @@ export function createJobs(deps: JobsDeps): Jobs {
       if (job.finalizationError !== undefined) throw job.finalizationError
       return
     }
-    // Set first: a copy back under way reads it, after the process is gone.
     job.stopped ??= why
     job.queue = []
     job.copyController?.abort()
-    const child = job.child
-    let timer: ReturnType<typeof setTimeout> | undefined
-    if (job.requestDrain === undefined && child !== null && process.platform === 'win32') {
-      signalWindows(child, 'SIGTERM')
-      timer = setTimeout(() => {
-        if (job.child === child) signalWindows(child, 'SIGKILL')
-      }, killGraceMs)
-    }
-    try {
-      await waitForExit(job)
-    } finally {
-      clearTimeout(timer)
-    }
+    await job.turn?.stop(job.exited)
   }
 
   /** Move the current file aside atomically, then publish the replacement
@@ -807,8 +693,6 @@ export function createJobs(deps: JobsDeps): Jobs {
     return { written, skipped }
   }
 
-  const pidFile = (id: string): string => join(deps.scratchRoot, `${id}.pid`)
-
   /** The job leaves the list, and its agent's state goes with it. */
   async function drop(job: Job): Promise<void> {
     // Revoke admission before the first asynchronous filesystem operation.
@@ -820,9 +704,8 @@ export function createJobs(deps: JobsDeps): Jobs {
       const retirement = (async () => {
         await job.exited
         if (job.finalizationError !== undefined) throw job.finalizationError
-        await job.pidWrite
         await rm(job.state, { recursive: true, force: true })
-        await rm(pidFile(job.id), { force: true })
+        await job.files.retire()
         if (jobs.get(job.id) === job) jobs.delete(job.id)
         push()
       })()
@@ -836,287 +719,131 @@ export function createJobs(deps: JobsDeps): Jobs {
     await bounded(job.retirement, `Cleanup of job ${job.id}`)
   }
 
-  /** One turn owns its launch, output and finalization until they settle. */
   function runTurn(
     job: Job,
     run: JobRun,
     write: readonly string[],
   ): { ok: true } | { ok: false; message: string } {
     const { id, provider } = job
-    let child: JobChild | undefined
-    let refused: string | undefined
-    let launchCleanup: Promise<void> | undefined
-    let spawnAttempted = false
-    let launchError: unknown
-    const followup = run.resume !== undefined && process.platform !== 'win32'
-    try {
-      const command = provider.capabilities.jobs.command(run)
-      if (command === null) refused = provider.notInstalled
-      else {
-        try {
-          // A vault job keeps its settled receipt for restart while idle.
-          // Invalidate that old evidence before a new child could exist.
-          if (job.place !== null) rmSync(pidFile(id), { force: true })
-          spawnAttempted = true
-          child = spawnJob(command.bin, command.args, { cwd: run.cwd, env: command.env })
-        } catch (err) {
-          launchError = err
-          refused = `${provider.label} did not start: ${err instanceof Error ? err.message : String(err)}`
-          // Native synchronous spawn failure can still own launch cancellation.
-          const receipt = err as { cleanup?: Promise<void>; cleanupPromise?: Promise<void> } | null
-          launchCleanup = receipt?.cleanup ?? receipt?.cleanupPromise
-        }
-      }
-    } catch (err) {
-      refused = err instanceof Error ? err.message : String(err)
-    }
-    let resolveExited!: () => void
-    let rejectExited!: (err: Error) => void
-    job.exited = new Promise<void>((resolve, reject) => {
-      resolveExited = resolve
-      rejectExited = reject
-    })
-    void job.exited.catch(() => {})
-    job.stopWait = undefined
-    job.child = child ?? null
+    const receipt = job.files.turn()
     job.busy = true
     delete job.stopped
-    job.pidWrite = undefined
     clearTimeout(job.dropTimer)
-    if (child?.pid !== undefined) {
-      const line = `${child.pid}\n${run.cwd}\n`
-      job.pidWrite = mkdir(deps.scratchRoot, { recursive: true }).then(() =>
-        writeFile(pidFile(id), line),
-      )
-      void job.pidWrite.catch((err: unknown) => {
-        rememberFailure(job, err)
-      })
-    }
-    const group = child?.[ownedProcessDrain]
-    const missingLease = child !== undefined && group === undefined && process.platform !== 'win32'
-    const bracket = child !== undefined && job.place !== null && !missingLease
-    const bracketBegin = bracket
-      ? Promise.resolve()
-          .then(() => deps.bracket?.(id, 'begin'))
-          .catch((err: unknown) => {
-            rememberFailure(job, err)
-          })
-      : undefined
-
-    let completed = false
-    let failure: string | undefined
-    let eventError: string | undefined
-    let childError: string | undefined
-    let unlaunchedFollowup = false
-    let stderr = ''
-    if (child?.stdout != null) {
-      createInterface({ input: child.stdout }).on('line', (line) => {
-        const event = provider.capabilities.jobs.event(line)
-        if (event === null) return
+    const fail = (error: unknown) => rememberFailure(job, receipt, error)
+    const turn = startJobTurn({
+      id,
+      provider,
+      run,
+      receipt,
+      killGraceMs,
+      ...(deps.spawn && { spawn: deps.spawn }),
+      rememberFailure: fail,
+      progress(event) {
         if (event.kind === 'thread') {
           job.thread ??= event.id
           log(`${id}: thread ${event.id}`)
-        } else if (event.kind === 'turn-completed') {
-          completed = true
-          if (event.tokens !== undefined) {
-            job.tokens = event.tokens
-            push()
-          }
-        } else if (event.kind === 'turn-failed') failure = event.message
-        else if (event.kind === 'error') eventError = event.message
-      })
-    }
-    child?.stderr?.on('data', (chunk: Buffer) => {
-      stderr = (stderr + chunk.toString('utf8')).slice(-4_000)
+        } else if (event.tokens !== undefined) {
+          job.tokens = event.tokens
+          push()
+        }
+      },
     })
+    job.turn = turn
+    const bracket = turn.bracket && job.place !== null
+    const bracketBegin = bracket
+      ? Promise.resolve()
+          .then(() => deps.bracket?.(id, 'begin'))
+          .catch(fail)
+      : undefined
     const tooLong = setTimeout(() => {
-      void kill(job, 'The job ran too long and was stopped.').catch((err: unknown) =>
-        log(`${id}: could not stop: ${String(err)}`),
+      void kill(job, 'The job ran too long and was stopped.').catch((error: unknown) =>
+        log(`${id}: could not stop: ${String(error)}`),
       )
     }, maxMs)
     tooLong.unref?.()
 
-    let settled = false
-    function complete() {
-      if (settled) return
-      settled = true
-      clearTimeout(tooLong)
-      job.requestDrain = undefined
-      job.copyController = undefined
-      job.finalizing = false
-      job.busy = false
-      if (job.finalizationError !== undefined) {
-        job.queue = []
-        job.outcome = 'failed'
-        job.message = job.finalizationError.message
-        rejectExited(job.finalizationError)
-      } else {
-        if (job.stopped !== undefined) {
-          job.outcome = 'failed'
-          job.message = job.stopped
-        }
-        resolveExited()
-        scheduleDrop(job)
-      }
-      push()
-      if (refused === undefined) followUp(job)
-      else job.queue = []
-    }
-    let physical: Promise<void> | undefined
-    function drain(): Promise<void> {
-      if (physical === undefined) {
-        // An async call also captures a synchronous throw from the supervisor.
-        physical = (async () => {
-          if (group !== undefined) await group.drain()
-          else await launchCleanup
-        })()
-        // Fail independently of output: an inherited pipe may never close
-        // after failed teardown. Nothing below releases or deletes its state.
-        void physical.catch((err: unknown) => {
-          rememberFailure(job, err)
-          complete()
-        })
-      }
-      return physical
-    }
-    job.requestDrain = group !== undefined || launchCleanup !== undefined ? drain : undefined
-
-    let finalizing = false
-    function settle(code: number | null, sig: NodeJS.Signals | null): void {
-      if (finalizing || settled) return
-      finalizing = true
-      clearTimeout(tooLong)
-      void finalize(code, sig).then(complete, (err: unknown) => {
-        rememberFailure(job, err)
-        complete()
-      })
-    }
-
-    async function finalize(code: number | null, sig: NodeJS.Signals | null): Promise<void> {
-      await drain()
-      if (followup && spawnAttempted && job.pidWrite === undefined && !unlaunchedFollowup) {
-        // A synchronous throw can happen after fork. Join its cleanup first,
-        // but never replace missing launch evidence with a settled record.
-        throw launchError ?? new Error(childError ?? `Unresolved owner of job ${id}.`)
-      }
-      job.child = null
-      await bracketBegin
+    job.exited = (async () => {
       try {
-        await provider.release?.(job.state)
-      } catch (err) {
-        rememberFailure(job, err)
-      }
-      if (unlaunchedFollowup && job.finalizationError === undefined) {
-        await writeFile(pidFile(id), UNLAUNCHED_FOLLOWUP, { flag: 'wx', mode: 0o600, flush: true })
-        const dir = await open(deps.scratchRoot, constants.O_RDONLY | constants.O_DIRECTORY)
+        const output = await turn.output
+        clearTimeout(tooLong)
+        await bracketBegin
+        // Physical failure never reaches release. A failed bracket still
+        // needs its end attempted, but cannot publish or delete scratch.
         try {
-          await dir.sync()
-        } finally {
-          await dir.close()
+          await provider.release?.(job.state)
+        } catch (error) {
+          fail(error)
         }
-      }
-      let outcome: 'completed' | 'failed' = 'failed'
-      let why = job.finalizationError?.message ?? job.stopped ?? refused ?? childError
-      if (why === undefined && completed && failure === undefined && code === 0) {
-        outcome = 'completed'
-        if (job.dir !== null) {
+        let outcome: 'completed' | 'failed' = 'failed'
+        let why = job.finalizationError?.message ?? job.stopped ?? output.refusal
+        if (why === undefined && output.completed) {
+          outcome = 'completed'
+          if (job.dir !== null) {
+            try {
+              job.copyController = new AbortController()
+              const { written, skipped } = await copyBack(
+                { ...job, signal: job.copyController.signal },
+                job.dir,
+                write,
+                job.made,
+              )
+              log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
+              why = leftOutMessage(skipped)
+            } catch (error) {
+              outcome = 'failed'
+              why = error instanceof Error ? error.message : String(error)
+              if (error instanceof CopyBackFinalizationError) fail(error)
+            }
+          } else log(`${id}: turn done`)
+        } else {
+          why ??= output.failure
+          log(`${id}: failed: ${why}`)
+        }
+        job.outcome = job.stopped === undefined ? outcome : 'failed'
+        job.message = job.finalizationError?.message ?? job.stopped ?? why
+        if (job.dir !== null && job.finalizationError === undefined) {
+          const results = await Promise.allSettled([
+            rm(job.dir, { recursive: true, force: true }),
+            rm(job.state, { recursive: true, force: true }),
+          ])
+          for (const result of results) if (result.status === 'rejected') fail(result.reason)
+        }
+        // Publish the outcome before ending the bracket, but keep the turn
+        // owned through persistence and the remaining cleanup.
+        job.finalizing = true
+        push()
+        if (bracket) {
           try {
-            job.copyController = new AbortController()
-            const { written, skipped } = await copyBack(
-              { ...job, signal: job.copyController.signal },
-              job.dir,
-              write,
-              job.made,
-            )
-            log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
-            why = leftOutMessage(skipped)
-          } catch (err) {
-            outcome = 'failed'
-            why = err instanceof Error ? err.message : String(err)
-            if (err instanceof CopyBackFinalizationError) rememberFailure(job, err)
+            await deps.bracket?.(id, 'end')
+          } catch (error) {
+            fail(error)
           }
-        } else log(`${id}: turn done`)
-      } else {
-        why ??=
-          failure ??
-          eventError ??
-          (sig !== null
-            ? `${provider.label} was stopped (${sig}).`
-            : `${provider.label} exited with code ${code ?? '?'}${lastLine(stderr) === '' ? '.' : `: ${lastLine(stderr)}`}`)
-        log(`${id}: failed: ${why}`)
-      }
-      job.outcome = job.stopped === undefined ? outcome : 'failed'
-      job.message = job.finalizationError?.message ?? job.stopped ?? why
-      if (job.dir !== null && job.finalizationError === undefined) {
-        await job.pidWrite
-        // Keep the receipt until the owned folders have actually been removed.
-        const results = await Promise.allSettled([
-          rm(job.dir, { recursive: true, force: true }),
-          rm(job.state, { recursive: true, force: true }),
-        ])
-        for (const result of results) {
-          if (result.status === 'rejected') rememberFailure(job, result.reason)
         }
-      }
-      job.finalizing = true
-      push()
-      // The outcome is on the row before the bracket's end is told. The
-      // turn remains owned through persistence and the remaining cleanup.
-      if (bracket) {
-        try {
-          await deps.bracket?.(id, 'end')
-        } catch (err) {
-          rememberFailure(job, err)
+        if (job.finalizationError === undefined) {
+          if (job.dir !== null) await job.files.retire()
+          else receipt.phase('SETTLED')
         }
+      } catch (error) {
+        fail(error)
+      } finally {
+        clearTimeout(tooLong)
+        job.turn = undefined
+        job.copyController = undefined
+        job.finalizing = false
+        job.busy = false
+        if (job.finalizationError !== undefined || job.stopped !== undefined) {
+          job.outcome = 'failed'
+          job.message = job.finalizationError?.message ?? job.stopped
+        }
+        if (job.finalizationError !== undefined || turn.refusal !== undefined) job.queue = []
+        scheduleDrop(job)
+        push()
       }
-      await job.pidWrite
-      if (job.dir !== null && job.finalizationError === undefined) {
-        await rm(pidFile(id), { force: true })
-      }
-    }
-
-    if (child === undefined) {
-      settle(null, null)
-      return { ok: false, message: refused! }
-    }
-    // Node gives a PID even during the lease's pre-exec setup. Treat that
-    // conservatively as possibly started, even before the spawn event.
-    let started = child.pid !== undefined
-    child.once('spawn', () => {
-      started = true
-    })
-    child.once('exit', () => {
-      if (settled) return
-      started = true
-      job.requestDrain?.()
-    })
-    child.once('close', settle)
-    child.on('error', (err) => {
-      if (settled || finalizing) return
-      if (started || child.pid !== undefined) {
-        childError ??= `${provider.label} process error: ${err.message}`
-        job.requestDrain?.()
-      } else {
-        childError ??= `${provider.label} did not start: ${err.message}`
-        // The native POSIX adapter classifies no-PID ENOENT as unlaunched.
-        // The record is only written after that adapter's cancellation settles.
-        unlaunchedFollowup =
-          followup &&
-          deps.spawn === undefined &&
-          group !== undefined &&
-          (err as NodeJS.ErrnoException).code === 'ENOENT'
-        launchError = err
-        settle(null, null)
-      }
-    })
-    if (missingLease) {
-      // The adapter already returned a child; keep its owner rather than
-      // treating this contract violation as an ordinary spawn refusal.
-      const error = new Error(`Job ${id} has no POSIX launch lease; its owner is unresolved.`)
-      rememberFailure(job, error)
-      complete()
-      return { ok: false, message: error.message }
-    }
+      if (job.finalizationError !== undefined) throw job.finalizationError
+      followUp(job)
+    })()
+    void job.exited.catch(() => {})
+    if (turn.refusal !== undefined) return { ok: false, message: turn.refusal }
     push()
     return { ok: true }
   }
@@ -1181,45 +908,10 @@ export function createJobs(deps: JobsDeps): Jobs {
       : { cwd: first, writable: rest, readOnly: false }
   }
 
-  // Resolve the whole private namespace before deleting anything. A receipt
-  // can describe a recycled PID or a leaderless group; neither is ours to
-  // signal. Missing evidence can also mean a crash before the PID was written.
-  async function sweep(): Promise<void> {
-    const root = await lstat(deps.scratchRoot).catch((err: unknown) => {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw err
-    })
-    if (root !== null && !root.isDirectory())
-      throw new Error(`Not a job state directory: ${deps.scratchRoot}`)
-    const names = await readdir(deps.scratchRoot).catch((err: unknown) => {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw err
-    })
-    if (names === null) return
-    const ids = new Set<string>()
-    for (const name of names) {
-      const id = name.replace(/\.(pid|agent)$/, '')
-      if (!JOB_SESSION_ID.test(id)) throw new Error(`Unresolved job state: ${name}.`)
-      ids.add(id)
-    }
-    for (const id of ids) {
-      const receipt = names.includes(`${id}.pid`) ? await readRegular(pidFile(id)) : null
-      const text = receipt?.toString('utf8') ?? ''
-      if (process.platform !== 'win32' && text === UNLAUNCHED_FOLLOWUP) continue
-      // A partial write of a numeric prefix is not evidence for that PID.
-      const pid = Number(/^([1-9]\d{0,9})\n[\s\S]+\n$/.exec(text)?.[1])
-      if (!Number.isInteger(pid) || pid <= 1 || pid > 0x7fffffff) {
-        throw new Error(`Unresolved owner of job ${id}: no valid PID receipt.`)
-      }
-      if (!recoveryAbsent(pid) || (process.platform !== 'win32' && !recoveryAbsent(-pid))) {
-        throw new Error(
-          `Unresolved owner of job ${id}: PID ${pid} or its group is not proven absent.`,
-        )
-      }
-    }
-    await rm(deps.scratchRoot, { recursive: true, force: true })
-  }
-  const sweeping = sweep()
+  const sweeping = scratch.recover().catch((error: unknown) => {
+    log(`Could not recover job state: ${String(error)}`)
+    throw error
+  })
   const swept = bounded(sweeping, 'Agent job state sweep')
   void swept.catch(() => {})
 
@@ -1246,7 +938,7 @@ export function createJobs(deps: JobsDeps): Jobs {
   async function finishRefusal(job: Job, message: string): Promise<JobResult> {
     job.retiring = true
     try {
-      await waitForExit(job)
+      await job.turn?.stop(job.exited)
       await drop(job)
     } catch (err) {
       return { ok: false, message: `${message} Could not finalize job: ${String(err)}` }
@@ -1271,7 +963,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       place: null,
       state: join(deps.scratchRoot, `${id}.agent`),
       made: new Map(),
-      child: null,
+      files: scratch.forJob(id),
       busy: false,
       queue: [],
       tokens: 0,
@@ -1326,7 +1018,6 @@ export function createJobs(deps: JobsDeps): Jobs {
     const fail = async (message: string): Promise<JobResult> => {
       await rm(dir, { recursive: true, force: true }).catch(() => undefined)
       await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
-      await rm(pidFile(id), { force: true }).catch(() => undefined)
       return { ok: false, message }
     }
     const taken = await takenDestination(deps.vault.root, scope.write)

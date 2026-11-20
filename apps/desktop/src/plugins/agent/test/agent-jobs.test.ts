@@ -28,7 +28,6 @@ import { agentCapabilities, scopeRules } from '../main/host/capabilities'
 import {
   createJobs,
   inWriteScope,
-  JOB_SESSION_ID,
   takenMessage,
   vaultSandbox,
   type JobScope,
@@ -215,7 +214,7 @@ describe('a job', () => {
     })
     expect(started.ok).toBe(true)
     const id = (started as { sessionId: string }).sessionId
-    expect(id).toMatch(JOB_SESSION_ID)
+    expect(id).toMatch(/^j[0-9a-f]{12}$/)
     expect(jobs.sessions()[0]).toMatchObject({ id, provider: 'codex', state: 'working' })
 
     const row = await ended(id)

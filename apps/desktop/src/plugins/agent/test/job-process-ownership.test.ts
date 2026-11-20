@@ -1,7 +1,7 @@
 import { ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -10,6 +10,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { ownedProcessDrain, type ProcessGroupSupervision } from '../../../main/plugin-api'
 import { readJobEvent } from '../main/codex'
 import { createJobs, type JobsDeps } from '../main/host/jobs'
+import { activationOwnership } from '../main/host/ownership'
 import type { JobsProvider } from '../main/provider'
 
 const pid = 678_909
@@ -75,7 +76,9 @@ async function fixture() {
       ...options,
     })
   const spec = { provider, name: 'fixture', prompt: 'go' }
-  return { root, scratchRoot, create, spec, release, kill }
+  const registry = () =>
+    activationOwnership(dir, { remote: 'fixture/vault', root }, new AbortController().signal)!
+  return { dir, root, scratchRoot, create, spec, release, kill, registry }
 }
 
 posix('refuses a recycled startup PID without signals or state deletion', async () => {
@@ -85,12 +88,10 @@ posix('refuses a recycled startup PID without signals or state deletion', async 
   await writeFile(evidence, 'retain me')
   await writeFile(join(t.scratchRoot, `${oldId}.pid`), `${pid}\n${t.root}\n`)
   const spawn = vi.fn(() => fakeChild(async () => {}))
-  const recoveryAbsent = vi.fn(() => false)
-  const jobs = t.create({ spawn, recoveryAbsent })
+  const jobs = t.create({ spawn, ownership: t.registry() })
   const result = await jobs.start({ ...t.spec, allow: [] })
   expect(t.kill).not.toHaveBeenCalled()
   expect(result).toMatchObject({ ok: false, message: expect.stringContaining(oldId) })
-  expect(recoveryAbsent).toHaveBeenCalledWith(pid)
   expect(spawn).not.toHaveBeenCalled()
   await expect(jobs.leave()).rejects.toThrow(oldId)
   expect(await readFile(evidence, 'utf8')).toBe('retain me')
@@ -206,47 +207,7 @@ posix('observes and retains a synchronous supervisor throw from a child event', 
   expect(t.release).not.toHaveBeenCalled()
 })
 
-posix.each(['absent', 'leaderless', 'denied', 'missing', 'partial'] as const)(
-  'uses kernel absence for restart and retains %s evidence if unresolved',
-  async (state) => {
-    const t = await fixture()
-    const evidence = join(t.scratchRoot, oldId, 'output.txt')
-    await mkdir(join(t.scratchRoot, oldId), { recursive: true })
-    await writeFile(evidence, 'output')
-    if (state !== 'missing') {
-      await writeFile(
-        join(t.scratchRoot, `${oldId}.pid`),
-        state === 'partial' ? `${pid}` : `${pid}\n${t.root}\n`,
-      )
-    }
-    t.kill.mockImplementation((target, signal) => {
-      expect(signal).toBe(0)
-      expect([pid, -pid]).toContain(target)
-      if (state === 'leaderless' && target === -pid) return true
-      throw Object.assign(new Error('mock kernel result'), {
-        code: state === 'denied' && target === -pid ? 'EPERM' : 'ESRCH',
-      })
-    })
-    const jobs = t.create({})
-    if (state === 'absent') {
-      await jobs.leave()
-      await expect(access(evidence)).rejects.toMatchObject({ code: 'ENOENT' })
-    } else {
-      await expect(jobs.leave()).rejects.toThrow(oldId)
-      expect(await readFile(evidence, 'utf8')).toBe('output')
-    }
-    expect(t.kill.mock.calls).toEqual(
-      state === 'missing' || state === 'partial'
-        ? []
-        : [
-            [pid, 0],
-            [-pid, 0],
-          ],
-    )
-  },
-)
-
-it('joins the cancellation receipt after a proven never-launched error without waiting for close', async () => {
+it('joins explicit drainage and output close after a no-PID fake error', async () => {
   const t = await fixture()
   const cleanup = gate()
   const drain = vi.fn(() => cleanup.promise)
@@ -258,6 +219,7 @@ it('joins the cancellation receipt after a proven never-launched error without w
   await tick()
   expect(t.release).not.toHaveBeenCalled()
   cleanup.resolve()
+  child.emit('close', null, null)
   await vi.waitFor(() =>
     expect(jobs.sessions()[0]).toMatchObject({
       outcome: 'failed',
@@ -269,61 +231,67 @@ it('joins the cancellation receipt after a proven never-launched error without w
   expect(t.release).toHaveBeenCalledTimes(1)
 })
 
-it('retains native synchronous spawn cleanup errors through start refusal and later leave', async () => {
-  const t = await fixture()
-  const cleanup = gate()
-  const invoked = gate()
-  const original = new Error('native launch cancellation failed')
-  const jobs = t.create({
-    spawn: () => {
-      invoked.resolve()
-      throw Object.assign(new Error('spawn refused'), { cleanup: cleanup.promise })
-    },
-  })
-  const starting = jobs.start({ ...t.spec, scope: { read: [], write: [] } })
-  await invoked.promise
-  const id = jobs.sessions()[0]!.id
-  await tick()
-  expect(t.release).not.toHaveBeenCalled()
-  cleanup.reject(original)
-  await expect(starting).resolves.toMatchObject({
-    ok: false,
-    message: expect.stringContaining(original.message),
-  })
-  await expect(jobs.stop(id)).rejects.toBe(original)
-  await expect(jobs.leave()).rejects.toMatchObject({ errors: [original] })
-  await expect(access(join(t.scratchRoot, id))).resolves.toBeUndefined()
-  await expect(access(join(t.scratchRoot, `${id}.agent`))).resolves.toBeUndefined()
-  expect(t.release).not.toHaveBeenCalled()
-})
+posix(
+  'retains native synchronous spawn cleanup errors through start refusal and later leave',
+  async () => {
+    const t = await fixture()
+    const cleanup = gate()
+    const invoked = gate()
+    const original = new Error('native launch cancellation failed')
+    const jobs = t.create({
+      spawn: () => {
+        invoked.resolve()
+        throw Object.assign(new Error('spawn refused'), { cleanup: cleanup.promise })
+      },
+    })
+    const starting = jobs.start({ ...t.spec, scope: { read: [], write: [] } })
+    await invoked.promise
+    const id = jobs.sessions()[0]!.id
+    await tick()
+    expect(t.release).not.toHaveBeenCalled()
+    cleanup.reject(original)
+    await expect(starting).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringContaining(original.message),
+    })
+    await expect(jobs.stop(id)).rejects.toBe(original)
+    await expect(jobs.leave()).rejects.toMatchObject({ errors: [original] })
+    await expect(access(join(t.scratchRoot, id))).resolves.toBeUndefined()
+    await expect(access(join(t.scratchRoot, `${id}.agent`))).resolves.toBeUndefined()
+    expect(t.release).not.toHaveBeenCalled()
+  },
+)
 
-it('keeps a vault receipt while idle and clears stale proof before a follow-up spawn', async () => {
-  const t = await fixture()
-  const first = fakeChild(async () => {})
-  const second = fakeChild(async () => {})
-  const spawn = vi.fn().mockReturnValueOnce(first)
-  const jobs = t.create({ spawn })
-  const result = await jobs.start({ ...t.spec, allow: [] })
-  if (!result.ok) throw new Error(result.message)
-  const receipt = join(t.scratchRoot, `${result.sessionId}.pid`)
-  first.stdout!.push(
-    '{"type":"thread.started","thread_id":"123e4567-e89b-42d3-a456-426614174000"}\n',
-  )
-  first.stdout!.push('{"type":"turn.completed"}\n')
-  await tick()
-  first.emit('close', 0, null)
-  await vi.waitFor(() => expect(jobs.sessions()[0]).toMatchObject({ outcome: 'completed' }))
-  expect(await readFile(receipt, 'utf8')).toBe(`${pid}\n${t.root}\n`)
-  spawn.mockImplementationOnce(() => {
-    expect(existsSync(receipt)).toBe(false)
-    return second
-  })
-  jobs.message(result.sessionId, 'second turn')
-  expect(spawn).toHaveBeenCalledTimes(2)
-  second.emit('close', 0, null)
-  await jobs.leave()
-  await expect(access(receipt)).rejects.toMatchObject({ code: 'ENOENT' })
-})
+posix(
+  'keeps a vault receipt while idle and clears stale proof before a follow-up spawn',
+  async () => {
+    const t = await fixture()
+    const first = fakeChild(async () => {})
+    const second = fakeChild(async () => {})
+    const spawn = vi.fn().mockReturnValueOnce(first)
+    const jobs = t.create({ spawn })
+    const result = await jobs.start({ ...t.spec, allow: [] })
+    if (!result.ok) throw new Error(result.message)
+    const receipt = join(t.scratchRoot, `${result.sessionId}.pid`)
+    first.stdout!.push(
+      '{"type":"thread.started","thread_id":"123e4567-e89b-42d3-a456-426614174000"}\n',
+    )
+    first.stdout!.push('{"type":"turn.completed"}\n')
+    await tick()
+    first.emit('close', 0, null)
+    await vi.waitFor(() => expect(jobs.sessions()[0]).toMatchObject({ outcome: 'completed' }))
+    expect(await readFile(receipt, 'utf8')).toBe(`${pid}\n${t.root}\n`)
+    spawn.mockImplementationOnce(() => {
+      expect(existsSync(receipt)).toBe(false)
+      return second
+    })
+    jobs.message(result.sessionId, 'second turn')
+    expect(spawn).toHaveBeenCalledTimes(2)
+    second.emit('close', 0, null)
+    await jobs.leave()
+    await expect(access(receipt)).rejects.toMatchObject({ code: 'ENOENT' })
+  },
+)
 
 posix(
   'retains an ambiguous follow-up and refuses recovery even after its cleanup settles',
@@ -341,7 +309,7 @@ posix(
       .mockImplementationOnce(() => {
         throw original
       })
-    const jobs = t.create({ spawn })
+    const jobs = t.create({ spawn, ownership: t.registry() })
     const result = await jobs.start({ ...t.spec, allow: [] })
     if (!result.ok) throw new Error(result.message)
     const id = result.sessionId
@@ -368,12 +336,29 @@ posix(
     await expect(jobs.leave()).rejects.toMatchObject({ errors: [original] })
     expect(jobs.has(id)).toBe(true)
     await expect(access(receipt)).rejects.toMatchObject({ code: 'ENOENT' })
-    const recovered = t.create({ spawn, recoveryAbsent: () => true })
+    const recovered = t.create({ spawn, ownership: t.registry() })
     expect(await recovered.start({ ...t.spec, allow: [] })).toMatchObject({
       ok: false,
-      message: expect.stringContaining('no valid PID receipt'),
+      message: expect.stringContaining('Retaining'),
     })
-    await expect(recovered.leave()).rejects.toThrow('no valid PID receipt')
+    await expect(recovered.leave()).rejects.toThrow('Retaining')
+    const base = join(t.dir, 'agent-ownership')
+    const [key] = await readdir(base)
+    const scope = join(base, key!, 'jobs')
+    const entries = await readdir(scope)
+    expect(entries).toHaveLength(2)
+    const links = await Promise.all(
+      entries.map((entry) => readFile(join(scope, entry, 'link'), 'utf8')),
+    )
+    expect(links.every((link) => link.includes(`explicit ${id}\n`))).toBe(true)
+    const failures = await Promise.allSettled(
+      entries.map((entry) => readFile(join(scope, entry, 'failed'), 'utf8')),
+    )
+    expect(failures).toEqual(
+      expect.arrayContaining([
+        { status: 'fulfilled', value: expect.stringContaining('ambiguous native spawn') },
+      ]),
+    )
     expect(await readFile(state, 'utf8')).toBe('original context')
     expect(t.release).toHaveBeenCalledTimes(1)
     expect(t.kill).not.toHaveBeenCalled()
@@ -410,3 +395,40 @@ it('keeps the first provider cleanup failure when bracket end and abort follow i
   expect(jobs.sessions()[0]).toMatchObject({ error: original.message })
   await expect(access(join(t.scratchRoot, `${result.sessionId}.agent`))).resolves.toBeUndefined()
 })
+
+posix(
+  'starts the output deadline only after physical proof and retains its first failure on late close',
+  async () => {
+    const t = await fixture()
+    const proof = gate()
+    const child = fakeChild(() => proof.promise)
+    const jobs = t.create({ spawn: () => child, ownership: t.registry() })
+    const result = await jobs.start({ ...t.spec, allow: [] })
+    if (!result.ok) throw new Error(result.message)
+    const id = result.sessionId
+    child.emit('spawn')
+    const history = join(t.scratchRoot, `${id}.agent`, 'history')
+    await writeFile(history, 'retain this thread')
+    vi.useFakeTimers()
+    try {
+      const wait = jobs.stop(id)
+      const settled = vi.fn()
+      void wait.then(settled, settled)
+      await vi.advanceTimersByTimeAsync(5500)
+      expect(settled).not.toHaveBeenCalled()
+      proof.resolve()
+      await vi.advanceTimersByTimeAsync(5000)
+      const first = await wait.catch((error: unknown) => error)
+      expect(first).toMatchObject({ message: expect.stringContaining('Output and finalization') })
+      child.emit('close', 0, null)
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(jobs.stop(id)).rejects.toBe(first)
+      await expect(jobs.leave()).rejects.toMatchObject({ errors: [first] })
+      expect(t.release).not.toHaveBeenCalled()
+      expect(t.kill).not.toHaveBeenCalled()
+      expect(await readFile(history, 'utf8')).toBe('retain this thread')
+    } finally {
+      vi.useRealTimers()
+    }
+  },
+)
