@@ -1931,9 +1931,12 @@ describe('a fenced session', () => {
     const { fence } = await fencedRig(release)
     expect(fence.state).toBe(`${fence.dir}.agent`)
     expect((await readdir(fence.state)).length).toBe(0)
-    fence.exited()
-    await vi.waitFor(() => expect(release).toHaveBeenCalledWith(fence.state))
-    await vi.waitFor(() => expect(readdir(fence.state)).rejects.toThrow())
+    await fence.exited()
+    expect(release).toHaveBeenCalledWith(fence.state, undefined)
+    await expect(readdir(fence.state)).resolves.toEqual([])
+    expect(fence.retire).toBeTypeOf('function')
+    await fence.retire?.()
+    await expect(readdir(fence.state)).rejects.toThrow()
   })
 
   it('fails its drain and retains ownership when provider state release fails', async () => {
