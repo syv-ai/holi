@@ -6,6 +6,8 @@
  * node-pty is an Electron-ABI native module, so it loads lazily inside the
  * real spawn path only; tests inject a fake PTY and never touch it.
  */
+import { accessSync, constants, statSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { commandLine, launchPlan } from '../launch'
 import { defaultProbePid, killTree, type PidState, type Taskkill } from '../process-group'
 
@@ -32,13 +34,68 @@ export type SpawnPty = (file: string, args: string[], opts: SpawnPtyOptions) => 
 
 /** The only place node-pty is loaded. Loading and preparing a call cannot
  * create a child; once the returned thunk runs, even a throw can own one. */
-function preloadNativePty() {
-  const { spawn } = require('node-pty') as typeof import('node-pty')
+function loadNativePty() {
+  return require('node-pty') as typeof import('node-pty')
+}
+
+function resolveSpawnHelper(): string {
+  // node-pty 1.1.0's UnixTerminal uses this very loader: Release, Debug,
+  // then platform prebuild, taking the first binding that actually loads.
+  const { loadNativeModule } = require('node-pty/lib/utils') as {
+    loadNativeModule(name: string): { dir: string }
+  }
+  const unix = require.resolve('node-pty/lib/unixTerminal')
+  return resolve(dirname(unix), loadNativeModule('pty').dir, 'spawn-helper')
+    .replace('app.asar', 'app.asar.unpacked')
+    .replace('node_modules.asar', 'node_modules.asar.unpacked')
+}
+
+/** @public Adapter seam for tests that must not load the native binding. */
+export function preloadNativePty({
+  load = loadNativePty,
+  helperPath = resolveSpawnHelper,
+  platform = process.platform,
+}: {
+  load?: () => Pick<typeof import('node-pty'), 'spawn'>
+  helperPath?: () => string
+  platform?: NodeJS.Platform
+} = {}) {
+  const { spawn } = load()
   if (typeof spawn !== 'function') throw new Error('node-pty does not export spawn.')
+  if (platform === 'darwin') {
+    const helper = helperPath()
+    try {
+      if (!statSync(helper).isFile()) throw new Error('Expected a regular executable file.')
+      accessSync(helper, constants.X_OK)
+    } catch (cause) {
+      throw new Error(
+        `node-pty spawn-helper is missing or not executable: ${helper} (${String(cause)})`,
+        { cause },
+      )
+    }
+  }
   return (file: string, args: string[], opts: SpawnPtyOptions) => {
+    if (platform !== 'win32') {
+      const valid = (value: unknown): value is string =>
+        typeof value === 'string' && !value.includes('\0')
+      if (!valid(file) || !file || !Array.isArray(args) || !Array.from(args).every(valid))
+        throw new TypeError('Invalid node-pty command.')
+      if (!opts.env || typeof opts.env !== 'object' || Array.isArray(opts.env))
+        throw new TypeError('Invalid node-pty environment.')
+      for (const key in opts.env) {
+        if (!key || key.includes('=') || !valid(key) || !valid(opts.env[key]))
+          throw new TypeError('Invalid node-pty environment.')
+      }
+      if (
+        [opts.cols, opts.rows].some(
+          (size) => size !== undefined && (!Number.isInteger(size) || size < 0 || size > 0xffff),
+        )
+      )
+        throw new TypeError('Invalid node-pty geometry.')
+    }
     // Canonical npm Node shims resolve to their script; opaque Windows batches
     // use cmd.exe. Windows fallback Node is a genuine runtime with interactive stdio.
-    const launch = launchPlan(file, args, { env: opts.env })
+    const launch = launchPlan(file, args, { env: opts.env, platform })
     const argv = commandLine(launch)
     const env = launch.env ? { ...opts.env, ...launch.env } : opts.env
     const options = { name: 'xterm-256color', ...opts, env }
@@ -130,6 +187,7 @@ export function signalPty(
  *  another ABI is the usual cause (AGENTS.md). Null for any other error. */
 export function nativeLoadHint(err: unknown): string | null {
   const text = err instanceof Error ? err.message : String(err)
+  if (/node-pty spawn-helper/.test(text)) return text
   if (
     !/node-pty|NODE_MODULE_VERSION|pty\.node|was compiled against|Cannot find module/i.test(text)
   ) {

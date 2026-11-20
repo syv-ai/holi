@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process'
-import { access, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { buildLeaseForTests } from '../../../../test/fixtures/posix-native-build'
-import { createFencedSessions } from '../main/host/fenced'
+import { nativeLoadHint, preloadNativePty } from '../../../main/terminal/pty'
+import { createFencedSessions, recoverFencedScratch } from '../main/host/fenced'
+import { activationOwnership } from '../main/host/ownership'
+import { AgentRuntime, withPtyOwnership } from '../main/host/pty'
 import { createPtySessions } from '../main/host/pty-sessions'
 import { createAgentTerminals, type AgentTerminalsDeps } from '../main/host/terminals'
 import type { AgentProvider } from '../main/provider'
@@ -86,16 +89,30 @@ function rig(
   })
   const copyBack = vi.fn(async (..._args: unknown[]) => ({ written: 0, skipped: [] }))
   const scratchRoot = join(root, 'fenced')
+  const ownership = activationOwnership(root, vault, new AbortController().signal)
+  if (ownership) recoverFencedScratch(ownership, scratchRoot)
   const fenced = createFencedSessions({
     vault,
     scratchRoot,
+    ...(ownership && { ownership }),
     own: sessions,
     copyBack,
     log: () => {},
   })
   const start = () =>
     fenced.start({ provider, name: 'fenced', prompt: 'go', scope: { read: [], write: [] } })
-  return { terminals, sessions, fenced, start, scratchRoot, copyBack, release, bracket, emit }
+  return {
+    terminals,
+    sessions,
+    fenced,
+    start,
+    scratchRoot,
+    copyBack,
+    release,
+    bracket,
+    emit,
+    vault,
+  }
 }
 
 it.skipIf(process.platform === 'win32')(
@@ -129,6 +146,84 @@ it.skipIf(process.platform === 'win32')(
       signal.mockRestore()
       await rm(root, { recursive: true, force: true })
     }
+  },
+)
+
+it.skipIf(process.platform === 'win32').each(['missing', 'no execute bit'])(
+  'refuses macOS spawn-helper (%s) before preparation and retires the fenced non-launch',
+  async (kind) => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-pty-fenced-helper-'))
+    const helper = join(root, 'resolved-debug-or-prebuild', 'spawn-helper')
+    const spawn = vi.fn()
+    const probePid = vi.fn()
+    const signal = vi.spyOn(process, 'kill')
+    const t = rig(root, { probePid })
+    try {
+      if (kind === 'no execute bit') {
+        await mkdir(join(root, 'resolved-debug-or-prebuild'))
+        await writeFile(helper, '#!/bin/sh\n', { mode: 0o600 })
+        await chmod(helper, 0o600)
+      }
+      native.preload.mockImplementation(() =>
+        preloadNativePty({
+          platform: 'darwin',
+          load: () => ({ spawn }),
+          helperPath: () => helper,
+        }),
+      )
+      native.prepare.mockImplementation(() => {
+        throw new Error('unexpected lease allocation')
+      })
+      const result = await t.start()
+      expect(result).toEqual({ ok: false, message: expect.stringContaining(helper) })
+      if (result.ok) throw new Error('launch unexpectedly succeeded')
+      expect(nativeLoadHint(new Error(result.message))).toBe(result.message)
+      expect(native.prepare).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+      expect(probePid).not.toHaveBeenCalled()
+      expect(signal).not.toHaveBeenCalled()
+      expect(await readdir(t.scratchRoot)).toEqual([])
+      await t.fenced.leave()
+      const next = activationOwnership(root, t.vault, new AbortController().signal)!
+      recoverFencedScratch(next, t.scratchRoot)
+    } finally {
+      signal.mockRestore()
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
+it.skipIf(process.platform === 'win32')(
+  'validates raw POSIX PTY inputs before any record or native work',
+  () => {
+    const spawn = vi.fn()
+    const allocate = vi.fn()
+    const probePid = vi.fn()
+    native.preload.mockImplementation(() =>
+      preloadNativePty({ platform: 'linux', load: () => ({ spawn }) }),
+    )
+    native.prepare.mockImplementation(() => {
+      throw new Error('unexpected preparation')
+    })
+    const runtime = new AgentRuntime({ probePid })
+    const opts = { bin: '/bin/sh', args: [], cwd: '/tmp', env: {} }
+    const local = (overrides: Partial<typeof opts> & { cols?: number; rows?: number }) => {
+      const input = { ...opts, ...overrides }
+      expect(() =>
+        withPtyOwnership({ cwd: input.cwd, allocate }, () => runtime.start(input)),
+      ).toThrow(/Invalid node-pty/)
+      expect(runtime.failedLaunchCleanup).toBeUndefined()
+    }
+    local({ bin: '' })
+    local({ args: ['bad\0argument'] as never[] })
+    local({ cwd: '/tmp\0bad' })
+    local({ env: { PATH: 'a\0b' } })
+    local({ cols: Number.NaN })
+    local({ rows: -1 })
+    expect(allocate).not.toHaveBeenCalled()
+    expect(native.prepare).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(probePid).not.toHaveBeenCalled()
   },
 )
 

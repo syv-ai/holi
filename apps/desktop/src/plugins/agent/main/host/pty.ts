@@ -9,8 +9,10 @@
 
 // The PTY itself is core's (`main/terminal/pty.ts`), shared with the bottom
 // panel's shells: one place loads node-pty.
+import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   defaultSpawnPty,
+  posixLaunchNonAdmission,
   preparePosixLaunch,
   signalPty,
   type PosixLaunch,
@@ -19,6 +21,23 @@ import {
   type SpawnPty,
 } from '../../../../main/plugin-api'
 import { bounded } from './bounded'
+import type { LaunchOwnership } from './ownership'
+
+interface PtyOwnership {
+  cwd: string
+  allocate(proof: 'native' | 'explicit'): LaunchOwnership
+  /** A fence has already linked scratch even if terminal preflight refuses. */
+  fence?: LaunchOwnership
+}
+const ptyOwnership = new AsyncLocalStorage<PtyOwnership>()
+
+/** Carry activation ownership through the synchronous terminal-open interface.
+ * A fenced start also carries its pre-linked scratch through provider setup. */
+export function withPtyOwnership<T>(scope: PtyOwnership, start: () => T): T {
+  if (ptyOwnership.getStore()?.fence && ptyOwnership.getStore()?.cwd === scope.cwd) return start()
+  return ptyOwnership.run(scope, start)
+}
+
 export type { PtyProcess, SpawnPty }
 
 // What a pid is right now lives in core, with the community plugins' servers
@@ -111,6 +130,7 @@ export class AgentRuntime {
   private readonly killBackstopMs: number
   private readonly superviseGroup?: (pid: number) => ProcessGroupSupervision
   private supervision?: ProcessGroupSupervision
+  private ownership?: LaunchOwnership
   private startupCleanup?: Promise<void>
   private exitSettlement?: Promise<void>
   private physicalDrain?: Promise<void>
@@ -168,6 +188,10 @@ export class AgentRuntime {
     // observed immediately and joined by drain, including natural early exit.
     let prepared: PosixLaunch | undefined
     let invoked = false
+    let preparingLease = false
+    const scope = this.platform !== 'win32' ? ptyOwnership.getStore() : undefined
+    const ownership = scope?.cwd === cwd ? scope : undefined
+    this.ownership = ownership?.fence
     this.killPromise = null
     this.draining = false
     this.drainingErrors = []
@@ -176,16 +200,25 @@ export class AgentRuntime {
     this.exitSettlement = undefined
     this.physicalDrain = undefined
     try {
+      const useLease = this.spawnPty === defaultSpawnPty && this.platform !== 'win32'
       const native = this.spawnPty === defaultSpawnPty ? defaultSpawnPty.preload?.() : undefined
-      if (this.spawnPty === defaultSpawnPty && this.platform !== 'win32')
+      const preflight = native?.(bin, args, { cwd, env, cols, rows })
+      if (ownership && !useLease && !this.superviseGroup)
+        throw new Error('An owned PTY adapter must provide explicit physical proof.')
+      if (ownership) this.ownership = ownership.allocate(useLease ? 'native' : 'explicit')
+      if (useLease) {
+        preparingLease = true
         prepared = preparePosixLaunch(bin, args, {
           cwd,
           env: { ...env, PWD: cwd, TERM: 'xterm-256color' },
+          ownershipRecordPath: this.ownership?.ownershipRecordPath,
         })
+        preparingLease = false
+      }
       const executable = prepared?.executable ?? bin
       const argv = prepared?.args ?? args
       const options = { cwd, env: prepared?.options.env ?? env, cols, rows }
-      const invoke = native?.(executable, argv, options)
+      const invoke = prepared ? native?.(executable, argv, options) : preflight
       invoked = true
       const pty = invoke ? invoke() : this.spawnPty(executable, argv, options)
       this.supervision = prepared ? { drain: prepared.drain } : this.superviseGroup?.(pty.pid)
@@ -229,18 +262,28 @@ export class AgentRuntime {
               throw error
             }
           }
+          this.ownership?.retire()
           this.pty = null
         })()
-        void this.exitSettlement.catch(() => {})
+        this.observe(this.exitSettlement)
         this.notifyPublicExit?.()
       })
       if (prepared) void prepared.bind(pty.pid).catch(() => {})
       this.pty = pty
     } catch (error) {
-      const cleanup = [ptyLaunchCleanup(error)]
+      const refusal = preparingLease ? posixLaunchNonAdmission(error) : undefined
+      const cleanup = [refusal?.cleanup ?? ptyLaunchCleanup(error)]
       // node-pty can throw after posix_spawn/forkpty, even before installing
       // its native exit callback. The lease can find that root without an IPty.
       if (prepared) cleanup.push(prepared.cancel(invoked ? 'possibly-launched' : 'unlaunched'))
+      else if (invoked && this.supervision)
+        cleanup.push(Promise.resolve().then(this.supervision.drain))
+      const noLaunch = !invoked && (!preparingLease || refusal !== undefined)
+      const finish = () => {
+        if (noLaunch) this.ownership?.nonLaunch()
+        // The fenced caller still has to remove its source and provider state.
+        if (!ownership?.fence) this.ownership?.retire()
+      }
       if (cleanup.some((work) => work !== undefined)) {
         this.startupCleanup = Promise.allSettled(cleanup).then((results) => {
           const failures = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []))
@@ -248,12 +291,36 @@ export class AgentRuntime {
             throw new AggregateError([error, ...failures], 'PTY launch and cleanup failed.', {
               cause: error,
             })
+          finish()
           this.startupCleanup = undefined
         })
-        void this.startupCleanup.catch(() => {})
+        this.observe(this.startupCleanup)
+      } else if (!noLaunch && this.ownership) {
+        // No retained proof: a returned error is not a non-admission receipt.
+        this.startupCleanup = Promise.reject(error)
+        this.observe(this.startupCleanup)
+      } else if (this.ownership) {
+        try {
+          finish()
+        } catch (failure) {
+          this.startupCleanup = Promise.reject(failure)
+          this.observe(this.startupCleanup)
+        }
       }
       throw error
     }
+  }
+
+  private failed(error: unknown): void {
+    try {
+      this.ownership?.fail(error)
+    } catch (recordError) {
+      console.error('[agent-pty] Could not persist ownership failure:', recordError)
+    }
+  }
+
+  private observe(work: Promise<void>): void {
+    void work.catch((error: unknown) => this.failed(error))
   }
 
   private beginDrain(): void {
@@ -264,6 +331,7 @@ export class AgentRuntime {
         cb()
       } catch (error) {
         this.drainingErrors.push(error)
+        this.failed(error)
       }
     }
     if (!this.supervision) return
@@ -272,7 +340,7 @@ export class AgentRuntime {
     } catch (error) {
       this.physicalDrain = Promise.reject(error)
     }
-    void this.physicalDrain.catch(() => {})
+    this.observe(this.physicalDrain)
   }
 
   write(data: string): void {
@@ -295,6 +363,7 @@ export class AgentRuntime {
     this.beginDrain()
     const pending = this.killAndWait(pty)
     this.killPromise = pending
+    this.observe(pending)
     return pending
   }
 

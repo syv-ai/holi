@@ -12,6 +12,7 @@
  * Electron loads inside `activate`, so the plugin stays importable under
  * plain Node in the tests.
  */
+import { randomUUID } from 'node:crypto'
 import { copyFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
@@ -35,7 +36,9 @@ import { installSignalCommand, registerSignalRoute } from './harness/signal'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { bounded } from './host/bounded'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
-import { createFencedSessions } from './host/fenced'
+import { createFencedSessions, recoverFencedScratch } from './host/fenced'
+import { activationOwnership, type LaunchOwnership } from './host/ownership'
+import { withPtyOwnership } from './host/pty'
 import { agentScratchRoots } from './host/scratch-roots'
 import { createJobs } from './host/jobs'
 import { createAgentSessions } from './host/sessions'
@@ -60,6 +63,17 @@ export const agentMain: MainPlugin = {
     const { app, nativeTheme } = await import('electron')
     if (ctx.activationSignal.aborted)
       throw new Error(`agent activation for ${ctx.remote} was cancelled`)
+    const vault = { remote: ctx.remote, root: ctx.root }
+    const scratchRoots = await agentScratchRoots(ctx.userData, vault)
+    // Single Main excludes another controller; PluginHost serializes replacement
+    // of this Vault's generation and never replaces one with failed live drain.
+    // Check before exposing capabilities or instantiating hosts that sweep.
+    const ownership = activationOwnership(ctx.userData, vault, ctx.activationSignal)
+    if (ownership) {
+      ownership.recover('pty')
+      ownership.recover('pi')
+      recoverFencedScratch(ownership, scratchRoots.fenced)
+    }
     // This machine's agents: the built-in three, each reading its preset as
     // it runs, and the ones a person added in Settings
     // (docs/features/agent-sessions.md, Harnesses).
@@ -132,6 +146,17 @@ export const agentMain: MainPlugin = {
           if (!ctx.activationSignal.aborted) ctx.emit(remote, name, payload)
         },
       })
+      if (ownership) {
+        const open = terminals.open
+        terminals.open = (args) =>
+          withPtyOwnership(
+            {
+              cwd: args.cwd,
+              allocate: (proof) => ownership.allocate('pty', args.attach ?? randomUUID(), proof),
+            },
+            () => open(args),
+          )
+      }
       activationOwners.push(() => terminals.closeAll())
       const sessionLog = createSessionLog(ctx.log)
       // Capabilities and provider hooks belong to this activation's vault, not
@@ -197,17 +222,106 @@ export const agentMain: MainPlugin = {
         resolveBin: () => harnesses.resolve('pi'),
         env: () => harnesses.get('pi')?.env ?? {},
       })
-      const piBackground = createPiBackground({
+      const piOwners = new Map<string, LaunchOwnership>()
+      const seenPi = new Set<string>()
+      let allocatingPi: ((id: string) => LaunchOwnership) | undefined
+      const failPi = (record: LaunchOwnership, error: unknown) => {
+        try {
+          record.fail(error)
+        } catch (recordError) {
+          console.error('[agent] Could not persist Pi ownership failure:', recordError)
+        }
+      }
+      const retirePi = (id: string) => {
+        const record = piOwners.get(id)
+        if (!record) return
+        record.retire()
+        piOwners.delete(id)
+        seenPi.delete(id)
+      }
+      const pi = createPiBackground({
         bin: piRuns.bin,
         env: piRuns.env,
         binDir: ctx.binDir,
         activationSignal: ctx.activationSignal,
-        bracket: (id, edge) => sessions.bracket(id, edge),
+        ...(ownership && {
+          ownershipRecordPath: (id: string) => allocatingPi!(id).ownershipRecordPath,
+        }),
+        bracket: async (id, edge) => {
+          try {
+            await sessions.bracket(id, edge)
+          } catch (error) {
+            const record = piOwners.get(id)
+            if (record) failPi(record, error)
+            throw error
+          }
+        },
         changed: () => {
-          piSessions = piBackground.sessions()
+          piSessions = pi.sessions()
           pushSessions()
+          if (piOwners.size === 0 || ctx.activationSignal.aborted) return
+          const current = new Set(piSessions.map((row) => row.id))
+          for (const id of current) if (piOwners.has(id)) seenPi.add(id)
+          // A published run only disappears after close() and joinTurns().
+          for (const id of seenPi) if (!current.has(id)) retirePi(id)
         },
       })
+      const piBackground = ownership
+        ? {
+            ...pi,
+            async launch(args: Parameters<typeof pi.launch>[0]) {
+              let allocated: { id: string; record: LaunchOwnership } | undefined
+              const previous = allocatingPi
+              allocatingPi = (id) => {
+                const record = ownership.allocate('pi', id)
+                piOwners.set(id, record)
+                allocated = { id, record }
+                return record
+              }
+              try {
+                let work
+                try {
+                  // The allocation callback is synchronous, before PiRpcRun starts.
+                  work = pi.launch(args)
+                } finally {
+                  allocatingPi = previous
+                }
+                const result = await work
+                if (allocated && !result.ok && !ctx.activationSignal.aborted) {
+                  // Pi only returns a refusal here for pure configuration failure
+                  // or typed core non-admission with fulfilled cleanup.
+                  allocated.record.nonLaunch()
+                  retirePi(allocated.id)
+                }
+                return result
+              } catch (error) {
+                if (allocated) failPi(allocated.record, error)
+                throw error
+              }
+            },
+            async stop(id: string) {
+              try {
+                const result = await pi.stop(id)
+                if (result.ok) retirePi(id)
+                return result
+              } catch (error) {
+                const record = piOwners.get(id)
+                if (record) failPi(record, error)
+                throw error
+              }
+            },
+            async leave() {
+              try {
+                await pi.leave()
+              } catch (error) {
+                // No per-run receipt is exposed by the background leave interface.
+                for (const record of piOwners.values()) failPi(record, error)
+                throw error
+              }
+              for (const id of piOwners.keys()) retirePi(id)
+            },
+          }
+        : pi
       piBackground.setVault(ctx.remote, ctx.root)
       activationOwners.push(() => piBackground.leave())
       const ptyHistory = jsonFileStore(join(ctx.userData, 'agent-pty-history.json'), parsePastFile)
@@ -243,12 +357,13 @@ export const agentMain: MainPlugin = {
       // folder of their own, or in the vault, whose turns pause sync and are
       // recorded like a session's. Scratch is private to this canonical vault
       // context, so startup recovery and leave cannot reach another vault.
-      const vault = { remote: ctx.remote, root: ctx.root }
-      const scratchRoots = await agentScratchRoots(ctx.userData, vault)
       assertActive()
+      // The job host must recover('jobs', ...) before any POSIX startup sweep
+      // when it takes up this registry, then link each individual launch.
       const jobs = createJobs({
         vault,
         scratchRoot: scratchRoots.jobs,
+        ...(ownership && { ownership }),
         activationSignal: ctx.activationSignal,
         bracket: (id, edge) => sessions.bracket(id, edge),
         onChange: (list) => {
@@ -262,6 +377,7 @@ export const agentMain: MainPlugin = {
       const fenced = createFencedSessions({
         vault,
         scratchRoot: scratchRoots.fenced,
+        ...(ownership && { ownership }),
         own: ptySessions,
         activationSignal: ctx.activationSignal,
         copyBack: jobs.copyBack,
