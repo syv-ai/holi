@@ -35,16 +35,19 @@ if (mode === 'spoof') {
   const positive = `holi-test-probe-${nonce}`
   const server = createServer()
   server.listen(`\\\\.\\pipe\\${positive}`, () => {
-    const command = createInterface({ input: process.stdin, terminal: false })
+    const stdin = process.stdin
+    const command = createInterface({ input: stdin, terminal: false })
     command.once('line', (target) => {
-      command.close()
-      process.stdin.pause()
       if (!/^holi-owned-[a-f0-9-]{36}$/.test(target)) process.exit(126)
-      // Issue the probe request only after the parent sends the public name. The root stays
-      // quiescent during inspection, holding the positive-control pipe open without clients.
-      process.stdout.write(
-        `probe-request:${JSON.stringify({ pid: process.pid, target, positive })}\n`,
-      )
+      command.close()
+      // Pausing stdin can leave a Windows read pending and block the object-name scan.
+      // Wait for the handle to close; the positive-control server keeps the root live.
+      stdin.once('close', () => {
+        process.stdout.write(
+          `probe-request:${JSON.stringify({ pid: process.pid, target, positive })}\n`,
+        )
+      })
+      stdin.destroy()
     })
     ready()
   })
