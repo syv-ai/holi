@@ -133,7 +133,7 @@ export class AgentRuntime {
   private abandonedCb?: () => void
   private notifyPublicExit?: () => void
   private killTimer: ReturnType<typeof setTimeout> | null = null
-  private killPromise: Promise<void> | null = null
+  private settlement: Promise<void> | null = null
   private readonly spawnPty: SpawnPty
   private readonly probePid: (pid: number) => PidState
   private readonly platform: NodeJS.Platform
@@ -146,7 +146,7 @@ export class AgentRuntime {
   private ownership?: LaunchOwnership
   private fence?: FencedOwnership
   private startupCleanup?: Promise<void>
-  private exitSettlement?: Promise<void>
+  private callbackSettlement?: Promise<void>
   private physicalDrain?: Promise<void>
   private exitReported = false
   private outputExpired = false
@@ -219,12 +219,12 @@ export class AgentRuntime {
     const ownership = scope?.cwd === cwd ? scope : undefined
     this.fence = this.ownership = ownership?.fence
     this.supervision = undefined
-    this.killPromise = null
+    this.settlement = null
     this.draining = false
     this.drainingErrors = []
     this.exitReported = false
     this.outputExpired = false
-    this.exitSettlement = undefined
+    this.callbackSettlement = undefined
     this.physicalDrain = undefined
     let binding: Promise<ProcessGroupSupervision> | undefined
     const assertAdmission = () => {
@@ -258,7 +258,13 @@ export class AgentRuntime {
       const pty = invoke ? invoke() : this.spawnPty(executable, argv, options)
       this.supervision = prepared ? { drain: prepared.drain } : this.superviseGroup?.(pty.pid)
       if (this.supervision && this.platform !== 'win32')
-        observeUnixRootExit(pty, () => this.beginDrain(), prepared !== undefined)
+        observeUnixRootExit(
+          pty,
+          () => {
+            if (this.pty === pty) this.settleOwnedExit(pty)
+          },
+          prepared !== undefined,
+        )
       pty.onData((data) => {
         if (this.pty !== pty) return
         for (const cb of this.dataCbs) cb(data)
@@ -266,13 +272,14 @@ export class AgentRuntime {
       pty.onExit((e) => {
         if (this.pty !== pty || this.exitReported || this.outputExpired) return
         this.exitReported = true
-        this.beginDrain()
+        if (this.supervision && this.platform !== 'win32') this.settleOwnedExit(pty)
+        else this.beginDrain()
         clearTimeout(this.exitBackstop)
         if (this.killTimer) {
           clearTimeout(this.killTimer)
           this.killTimer = null
         }
-        this.exitSettlement = (async () => {
+        this.callbackSettlement = (async () => {
           if (this.physicalDrain) await this.physicalDrain
           if (this.drainingErrors.length)
             throw new AggregateError(this.drainingErrors, 'PTY drain notification failed.')
@@ -312,7 +319,11 @@ export class AgentRuntime {
           this.pty = null
           this.closedCb?.()
         })()
-        this.observeExit(this.exitSettlement)
+        if (this.supervision && this.platform !== 'win32') {
+          // This is only the callback phase. The shared owner joins it; it
+          // must not join the owner (which is also waiting for public exit).
+          void this.callbackSettlement.catch(() => {})
+        } else this.observeExit(this.callbackSettlement)
         this.notifyPublicExit?.()
       })
       if (prepared) {
@@ -434,22 +445,34 @@ export class AgentRuntime {
    * legacy signalling path; their public exit is not POSIX kernel proof. */
   kill(): Promise<void> {
     if (this.startupCleanup) return this.startupCleanup
-    if (this.killPromise !== null) return this.killPromise
-    if (this.exitSettlement) return this.exitSettlement
+    if (this.settlement !== null) return this.settlement
+    if (this.callbackSettlement) return this.callbackSettlement
     const pty = this.pty
     if (!pty) return Promise.resolve()
+    if (this.supervision && this.platform !== 'win32') return this.settleOwnedExit(pty)
     this.beginDrain()
-    const pending = this.killAndWait(pty)
-    this.killPromise = pending
+    const pending = this.waitForExit(pty)
+    this.settlement = pending
     this.observeExit(pending)
     return pending
   }
 
-  private async killAndWait(pty: PtyProcess): Promise<void> {
+  private settleOwnedExit(pty: PtyProcess): Promise<void> {
+    if (this.settlement !== null) return this.settlement
+    // Publish before notifying draining observers, which can reenter Stop.
+    // Start the lease synchronously, not in the wait's first microtask.
+    const pending = Promise.resolve().then(() => this.waitForExit(pty))
+    this.settlement = pending
+    this.observeExit(pending)
+    this.beginDrain()
+    return pending
+  }
+
+  private async waitForExit(pty: PtyProcess): Promise<void> {
     // The lease owns the physical deadline and its original failure. A PTY
     // output timer never runs while that proof is still pending.
     if (this.physicalDrain) await this.physicalDrain
-    if (this.exitSettlement) return this.exitSettlement
+    if (this.callbackSettlement) return this.callbackSettlement
 
     const exited = new Promise<void>((resolve, reject) => {
       this.notifyPublicExit = resolve
@@ -475,7 +498,7 @@ export class AgentRuntime {
       clearTimeout(this.exitBackstop)
       this.notifyPublicExit = undefined
     }
-    return this.exitSettlement
+    return this.callbackSettlement
   }
 
   /** Only for the compatibility path. Never infer native POSIX signal

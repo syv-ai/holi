@@ -14,7 +14,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { inspectPosixOwnership } from '../../../../main/plugin-api'
 import type { VaultRef } from '../provider'
 
@@ -134,12 +134,28 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
   privateDir(scope, true)
   syncDir(base)
 
-  function retire(parent: string, name: string, renamed?: (path: string) => void): void {
-    const path = join(parent, `${name}.retired`)
-    renameSync(join(parent, name), path)
-    renamed?.(path)
-    syncDir(parent)
-    rmSync(path, { recursive: true, force: true })
+  function recordFailure(path: string, header: string, link: string, error: unknown): void {
+    // Recursive removal can fail after unlinking the link (or the directory).
+    // Restore the consumer identity on this side of the rename, never on the
+    // immutable path formerly handed to the native writer.
+    privateDir(path, true)
+    publish(path, 'failed', header + Buffer.from(String(error)).subarray(0, 1500).toString())
+    if (read(path, 'link') === undefined) publish(path, 'link', link)
+    syncDir(dirname(path))
+  }
+
+  function removeRetired(path: string, parent: string, fail: (error: unknown) => void): void {
+    try {
+      syncDir(parent)
+      rmSync(path, { recursive: true, force: true })
+    } catch (error) {
+      try {
+        fail(error)
+      } catch (recordError) {
+        console.error('[agent] Could not persist retirement failure:', recordError)
+      }
+      throw error
+    }
   }
 
   // Only these consumers publish a separate phase for caller settlement.
@@ -165,58 +181,51 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
     const native = join(path, 'native')
     if (proof === 'native') mkdirSync(native, { mode: 0o700 })
     const header = `HOLI-AGENT-1 ${name}\n`
-    publish(path, 'link', `${header}${generation} ${proof} ${id}\n`)
+    const link = `${header}${generation} ${proof} ${id}\n`
+    publish(path, 'link', link)
     syncDir(parent)
     let nonLaunch = false
-    let failed = false
+    let failure: { cause: unknown } | undefined
     let done = false
     let finalizing = false
     let callerSettled = false
     let failurePath = path
     const phased = kind === 'fenced' || kind === 'pi'
+    const fail = (error: unknown) => {
+      if (failure || done) return
+      failure = { cause: error }
+      recordFailure(failurePath, header, link, error)
+    }
     return {
       ownershipRecordPath: proof === 'native' ? join(native, name) : undefined,
       nonLaunch() {
-        if (nonLaunch || failed || done) return
+        if (nonLaunch || failure || done) return
         publish(path, 'nonlaunch', header + 'NONLAUNCH\n')
         nonLaunch = true
       },
-      fail(error) {
-        if (failed || done) return
-        failed = true
-        publish(
-          failurePath,
-          'failed',
-          header + Buffer.from(String(error)).subarray(0, 1500).toString(),
-        )
-      },
+      fail,
       beginCallerFinalization() {
         if (!phased || done) throw new Error(`Cannot begin ${kind} finalization.`)
-        if (finalizing || failed) return
+        if (finalizing || failure) return
         publish(path, 'caller-finalizing', header + 'FINALIZING\n')
         finalizing = true
       },
       settleCaller() {
-        if (!finalizing || failed || done) throw new Error(`Cannot settle ${kind} finalization.`)
+        if (!finalizing || failure || done) throw new Error(`Cannot settle ${kind} finalization.`)
         if (callerSettled) return
         publish(path, 'caller-settled', header + 'SETTLED\n')
         callerSettled = true
       },
       retire() {
         if (done) return
-        if (failed) throw new Error('Cannot retire failed agent ownership.')
+        if (failure) throw failure.cause
         if (phased && !callerSettled && !(nonLaunch && !finalizing))
           throw new Error(`Cannot retire ${kind} ownership without caller settlement.`)
         publish(path, 'settled', header + 'SETTLED\n')
-        retire(
-          parent,
-          name,
-          kind === 'pi'
-            ? (renamed) => {
-                failurePath = renamed
-              }
-            : undefined,
-        )
+        const retired = `${path}.retired`
+        renameSync(path, retired)
+        failurePath = retired
+        removeRetired(retired, parent, fail)
         done = true
       },
     }
@@ -232,30 +241,25 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
       privateDir(parent, true)
       syncDir(scope)
       const links = new Set<string>()
-      const confirmed: string[] = []
-      const retired: string[] = []
+      const confirmed: Array<() => void> = []
       const retain = (entry: string, reason: string): never => {
         throw new Error(`Retaining ${vault.remote} ${kind} ownership (${entry}): ${reason}`)
       }
       for (const name of readdirSync(parent)) {
         const match = entryName.exec(name)
-        if (!match) retain(name, 'Unknown ownership entry.')
+        if (!match)
+          throw new Error(`Retaining ${vault.remote} ${kind}: unknown ownership entry ${name}.`)
+        const [, nonce, suffix] = match
         const path = join(parent, name)
         privateDir(path)
-        if (match?.[2]) {
-          // A Pi retirement can fail after rename (sync or removal). Its
-          // recorded fault still belongs to the original activation.
-          if (kind === 'pi') {
-            const header = `HOLI-AGENT-1 ${match[1]}\n`
-            const failed = read(path, 'failed')
-            if (failed !== undefined) retain(name, `Caller failure: ${failed.slice(header.length)}`)
-            if (read(path, 'failed.tmp') !== undefined)
-              retain(name, 'Partial Pi caller failure evidence.')
-          }
-          retired.push(path)
-          continue
+        const header = `HOLI-AGENT-1 ${nonce}\n`
+        // A renamed path is not proof. In particular, an error during parent
+        // sync or partial removal can leave a failure beside a positive receipt.
+        const failed = read(path, 'failed')
+        if (failed !== undefined) {
+          if (!failed.startsWith(header)) retain(name, 'Invalid caller failure evidence.')
+          retain(name, `Caller failure: ${failed.slice(header.length)}`)
         }
-        const header = `HOLI-AGENT-1 ${name}\n`
         const link = read(path, 'link')
         const matchLink = link?.startsWith(header)
           ? new RegExp(`^(${uuid}) (native|explicit) ([a-zA-Z0-9_-]{1,128})\\n$`).exec(
@@ -274,8 +278,6 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
           )
             retain(name, 'Unknown or partial ownership evidence.')
         }
-        const failed = read(path, 'failed')
-        if (failed !== undefined) retain(name, `Caller failure: ${failed.slice(header.length)}`)
         const settled = read(path, 'settled')
         const preflight = read(path, 'nonlaunch')
         if (settled !== undefined && settled !== header + 'SETTLED\n')
@@ -290,9 +292,32 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
           retain(name, `Invalid ${consumer} caller settlement.`)
         if (finalizing !== undefined && caller === undefined)
           retain(name, `${consumer} caller finalization is pending.`)
-        if (settled === undefined && preflight === undefined) {
+        const native = join(path, 'native')
+        if (suffix) {
+          if (settled === undefined || (phased && caller === undefined && preflight === undefined))
+            retain(name, 'Missing retired caller settlement.')
           if (proof === 'native') {
-            const result = inspectPosixOwnership(join(path, 'native', name))
+            privateDir(native)
+            const entries = readdirSync(native)
+            if (entries.some((entry) => entry !== nonce))
+              retain(name, 'Unexpected retired native evidence.')
+            const journal = join(native, nonce!)
+            if (entries.length !== 0) {
+              privateDir(journal)
+              if (readdirSync(journal).some((file) => !['journal', 'settled'].includes(file)))
+                retain(name, 'Unknown or partial retired native evidence.')
+              // No PID probing for retired receipts. Only an intact cached
+              // native settlement can validate a previously launched owner.
+              if (read(journal, 'settled') === undefined)
+                retain(name, 'Missing retired native settlement.')
+              const result = inspectPosixOwnership(journal)
+              if (result.state === 'retain') retain(name, result.reason)
+            } else if (preflight === undefined) retain(name, 'Missing retired native receipt.')
+          } else if (readdirSync(path).includes('native'))
+            retain(name, 'Unexpected retired native evidence.')
+        } else if (settled === undefined && preflight === undefined) {
+          if (proof === 'native') {
+            const result = inspectPosixOwnership(join(native, nonce!))
             if (result.state === 'retain') retain(name, result.reason)
             // Native SETTLED proves physical absence only. The distinct cold
             // kernel-absence path still works if caller finalization never began.
@@ -305,8 +330,15 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
           } else if (!(kind === 'pi' && caller !== undefined))
             retain(name, 'No explicit physical settlement.')
         }
-        links.add(id!)
-        confirmed.push(name)
+        if (!suffix) links.add(id!)
+        const retired = suffix ? path : `${path}.retired`
+        confirmed.push(() => {
+          if (!suffix) {
+            if (settled === undefined) publish(path, 'settled', header + 'SETTLED\n')
+            renameSync(path, retired)
+          }
+          removeRetired(retired, parent, (error) => recordFailure(retired, header, link!, error))
+        })
       }
       if (scratch) {
         const top = scratchEntries(scratch.root)
@@ -317,8 +349,7 @@ export function activationOwnership(userData: string, vault: VaultRef, signal: A
         rmSync(scratch.root, { recursive: true, force: true })
         syncDir(join(scratch.root, '..'))
       }
-      for (const name of confirmed) retire(parent, name)
-      for (const path of retired) rmSync(path, { recursive: true, force: true })
+      for (const retire of confirmed) retire()
       ready.add(kind)
     },
 

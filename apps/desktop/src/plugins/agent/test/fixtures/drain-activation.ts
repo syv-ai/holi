@@ -116,6 +116,8 @@ function activation(root: string, children: FixtureNative) {
     hook: http.hook,
     expectedFailures,
     observeRetirement: children.observeRetirement,
+    failRetirementAfterRename: children.failRetirementAfterRename,
+    restart: () => activationHosts(root),
     holdCopyWrite: (remote: Remote) => children.holdCopyWrite(h.roots[remote]),
     async failActivation(remote: Remote, cause: Error) {
       const { jobs } = await agentScratchRoots(root, { remote, root: h.roots[remote] })

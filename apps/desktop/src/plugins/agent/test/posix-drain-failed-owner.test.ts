@@ -1,5 +1,5 @@
-import { access, readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { it as test, expect, vi } from 'vitest'
 import { inspectPosixOwnership } from '../../../main/posix-ownership-journal'
 import {
@@ -285,4 +285,125 @@ it.each(['success', 'failure'] as const)(
       expect(retiring).toHaveBeenCalledOnce()
     })
   },
+)
+
+it.each(['pty', 'fenced'] as const)(
+  '%s records natural output timeout without waiting for Stop',
+  async (kind) => {
+    await withDrainActivation(async (f) => {
+      const a = await f.start(f.A, kind, 'inherit', 7)
+      const record = dirname(dirname(a.ownershipPath))
+      const failed = join(record, 'failed')
+      a.drain.hold()
+      a.close.hold()
+      a.exit()
+      await bounded(a.drain.entered, 'natural root triggers physical drain')
+      expect(await bounded(a.exited.promise, 'raw root exit')).toBe(7)
+      await bounded(a.close.entered, 'public output held by the adapter')
+      // Finish real kernel work before faking time; the runtime hasn't seen
+      // proof yet and cannot start the public timeout until the gate opens.
+      await physical(a.nativeDrain!(), 'native lease settled but proof held')
+      a.absent()
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        await vi.advanceTimersByTimeAsync(15_000)
+        await missing(failed)
+        expect(f.syncHeld(f.A)).toBe(true)
+        a.drain.open()
+        await a.proven.promise
+        await vi.advanceTimersByTimeAsync(4_999)
+        await missing(failed)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(await readFile(failed, 'utf8')).toContain(
+          `Error: PTY ${a.pid} did not report process exit before teardown timed out.`,
+        )
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
+      await vi.waitFor(() => expect(f.syncHeld(f.A)).toBe(false))
+      expect(await f.rows(f.A)).toContainEqual(expect.objectContaining({ id: a.sessionId }))
+      expect(await f.call(f.A, 'agent.terminals')).toContainEqual(
+        expect.objectContaining({ id: a.terminalId, launchedFor: a.sessionId }),
+      )
+      expect(f.events).not.toContainEqual(expect.objectContaining({ name: 'pty-exit' }))
+      expect(f.publications).not.toContainEqual(expect.objectContaining({ name: 'turn-end' }))
+      expect(await f.call(f.A, 'agent.history')).toEqual([])
+      expect(a.release.hit).toBe(false)
+      if (kind === 'fenced') {
+        await access(a.cwd)
+        await access(a.home)
+      }
+      await missing(join(f.roots[f.A], 'output.md'))
+      const stop = () => f.call(f.A, 'agent.stop', { id: a.sessionId })
+      const cause = await stop().catch((error: unknown) => error)
+      expect(cause).toBeInstanceOf(Error)
+      expect(await readFile(failed, 'utf8')).toContain(String(cause))
+      await expect(stop()).rejects.toBe(cause)
+      a.close.open()
+      await bounded(a.emittedClose.promise, 'late output edge')
+      expect(f.events).not.toContainEqual(expect.objectContaining({ name: 'pty-exit' }))
+      expect(a.drainCalls).toBe(1)
+      const failure = await f.stop(f.A).catch((error: unknown) => error)
+      f.expectedFailures.set(f.A, failure)
+      expect(nested(failure)).toContain(cause)
+    })
+  },
+  20_000,
+)
+
+it.each(
+  (['pty', 'fenced', 'pi'] as const).flatMap((kind) =>
+    (['sync', 'remove'] as const).map((phase) => ({ kind, phase })),
+  ),
+)(
+  '$kind keeps a retirement failure and its link after rename ($phase)',
+  async ({ kind, phase }) => {
+    await withDrainActivation(async (f) => {
+      const run = await f.start(f.A, kind, 'ignore')
+      const record = dirname(dirname(run.ownershipPath))
+      const retired = `${record}.retired`
+      const link = await readFile(join(record, 'link'), 'utf8')
+      const cause = new Error(`retired ${kind} ${phase} failed`)
+      f.failRetirementAfterRename(record, phase, cause)
+      // Keep owned proof pending until Stop has joined, to check error identity.
+      run.drain.hold()
+      run.exit()
+      await bounded(run.drain.entered, 'physical retirement begins')
+      const stopping = f
+        .call(f.A, 'agent.stop', { id: run.sessionId })
+        .catch((error: unknown) => error)
+      run.drain.open()
+      await physical(run.proven.promise, 'physical proof before retirement')
+      run.absent()
+      const result = await stopping
+      const failure = await f.stop(f.A).catch((error: unknown) => error)
+      f.expectedFailures.set(f.A, failure)
+      expect(nested(result)).toContain(cause)
+      expect(nested(failure)).toContain(cause)
+      await missing(record)
+      expect(await readFile(join(retired, 'link'), 'utf8')).toBe(link)
+      expect(await readFile(join(retired, 'failed'), 'utf8')).toContain(String(cause))
+      // Fenced caller scratch was settled before retirement; a surviving entry
+      // must never be swept by a new activation seeing the failed receipt.
+      const scratch = kind === 'fenced' ? join(run.cwd, 'retained') : undefined
+      if (scratch) {
+        await mkdir(run.cwd, { recursive: true, mode: 0o700 })
+        await writeFile(scratch, 'unretired scratch')
+      }
+      const cold = f.restart()
+      try {
+        await cold.enter(f.A)
+        expect(cold.host.failures(f.A)['agent']).toContain(
+          `${basename(retired)}): Caller failure: ${String(cause)}`,
+        )
+      } finally {
+        await cold.host.stopAll()
+      }
+      if (scratch) expect(await readFile(scratch, 'utf8')).toBe('unretired scratch')
+      expect(await readFile(join(retired, 'link'), 'utf8')).toBe(link)
+      expect(await readFile(join(retired, 'failed'), 'utf8')).toContain(String(cause))
+    })
+  },
+  20_000,
 )
