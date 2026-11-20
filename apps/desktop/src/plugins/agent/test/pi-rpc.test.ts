@@ -479,6 +479,60 @@ describe('PiRpcRun', () => {
     await run.close()
   })
 
+  it.each(['proof succeeds', 'proof rejects'] as const)(
+    'retains the malformed EOF cause and joins physical drain when %s',
+    async (mode) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const rpc = fake(false)
+      let finishProof!: () => void
+      let failProof!: (error: Error) => void
+      const proof = new Promise<void>((resolve, reject) => {
+        finishProof = resolve
+        failProof = reject
+      })
+      const drain = vi.fn(() => proof)
+      const onDrainFailure = vi.fn()
+      const run = new PiRpcRun({
+        bin: 'pi',
+        cwd: '/v',
+        spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: { drain } }),
+        onDrainFailure,
+      })
+      const turn = vi.fn()
+      const drained = vi.fn()
+      void run.prompt('go').then(turn, turn)
+      void run.drained.then(drained, drained)
+      rpc.rootExit()
+      rpc.stdout.write('{"type":"agent_settled"}\n')
+      rpc.stdout.end('{"type":"message_update"')
+      await tick()
+      rpc.close()
+      expect(drained).not.toHaveBeenCalled()
+      if (mode === 'proof rejects') failProof(new Error('later physical failure'))
+      else finishProof()
+      await tick()
+      expect(turn).toHaveBeenCalledExactlyOnceWith(expect.any(SyntaxError))
+      const cause: unknown = turn.mock.calls[0]?.[0]
+      expect(onDrainFailure).toHaveBeenCalledExactlyOnceWith(cause)
+      expect(drained).toHaveBeenCalledExactlyOnceWith(cause)
+      await expect(run.close()).rejects.toBe(cause)
+      await expect(run.cancel()).rejects.toBe(cause)
+      expect(drain).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
+  it('accepts whitespace after the last complete record of an exiting turn', async () => {
+    const rpc = fake(false)
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => rpc.child })
+    const result = run.prompt('go')
+    rpc.rootExit()
+    rpc.stdout.end('{"type":"agent_settled"}\n \t\r')
+    rpc.close()
+    await expect(result).resolves.toMatchObject({ status: 'completed' })
+    await run.drained
+  })
+
   it('starts physical drain on root exit but reads buffered final RPC records', async () => {
     const rpc = fake(false)
     const drain = vi.fn(async () => {})

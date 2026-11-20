@@ -1378,6 +1378,53 @@ describe('Pi background runs', () => {
     },
   )
 
+  it('does not publish or retire an exiting Pi run with a malformed EOF tail', async () => {
+    const rpc = fake(false, false)
+    const bracket = vi.fn()
+    const record = {
+      ownershipRecordPath: undefined,
+      nonLaunch: vi.fn(),
+      fail: vi.fn(),
+      retire: vi.fn(),
+    }
+    const manager = createPiBackground({
+      bin: () => 'pi',
+      spawn: () => rpc.child,
+      allocateOwnership: () => record,
+      bracket,
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const launched = await manager.launch({ name: 'x', prompt: 'go' })
+    if (!launched.ok) throw new Error(launched.message)
+    const id = launched.sessionId
+    try {
+      rpc.rootExit()
+      rpc.stdout.write(
+        '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"not a reply"}}\n{"type":"agent_settled"}\n',
+      )
+      rpc.stdout.end('{"type":"message_update"')
+      await tick()
+      rpc.close()
+      await tick()
+      expect(manager.reply(id)).toBeNull()
+      expect(manager.sessions()[0]).toMatchObject({ id, outcome: 'failed' })
+      expect(record.fail).toHaveBeenCalledExactlyOnceWith(expect.any(SyntaxError))
+      const cause: unknown = record.fail.mock.calls[0]?.[0]
+      expect(record.retire).not.toHaveBeenCalled()
+      expect(bracket.mock.calls).toEqual([
+        [id, 'begin'],
+        [id, 'forget'],
+      ])
+      await expect(manager.stop(id)).rejects.toBe(cause)
+      await expect(manager.stop(id)).rejects.toBe(cause)
+      await expect(manager.leave()).rejects.toBe(cause)
+    } finally {
+      await manager.leave().catch(() => {})
+      rpc.dispose()
+    }
+  })
+
   it('retains the original physical rejection without EOF or child close', async () => {
     const rpc = fake(false, false)
     const failure = new Error('could not prove drainage')
