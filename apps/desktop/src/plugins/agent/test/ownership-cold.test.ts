@@ -35,6 +35,7 @@ const native = vi.hoisted(() => ({
   fds: new Set<number>(),
   onRead: undefined as ((value: string) => void) | undefined,
   holdWrite: undefined as ((value: string) => boolean) | undefined,
+  onRename: undefined as ((edge: 'before' | 'after', from: string, to: string) => void) | undefined,
   onSpawn: undefined as
     | ((child: ChildProcess & { [ownedProcessDrain]?: { drain(): Promise<void> } }) => void)
     | undefined,
@@ -61,6 +62,11 @@ vi.mock('node:fs', async (original) => {
   const fs = await original<typeof import('node:fs')>()
   return {
     ...fs,
+    renameSync: (from: string, to: string) => {
+      native.onRename?.('before', from, to)
+      fs.renameSync(from, to)
+      native.onRename?.('after', from, to)
+    },
     openSync: (...args: Parameters<typeof fs.openSync>) => {
       const fd = fs.openSync(...args)
       if (native.parent && String(args[0]).startsWith(native.parent + '/holi-launch-'))
@@ -471,6 +477,165 @@ const journalIdentities = (text: string) =>
   [...text.matchAll(/^(ROOT|REAPER|ANCHOR) (\d+)$/gm)].flatMap(([, role, value]) =>
     role === 'ANCHOR' ? [Number(value)] : [Number(value), -Number(value)],
   )
+
+it.each([
+  ['pi', 'retired'],
+  ['fenced', 'retired'],
+  ['pty', 'retired'],
+  ['jobs', 'retired'],
+  ['fenced', 'active'],
+  ['fenced', 'partial'],
+  ['fenced', 'malformed'],
+  ['fenced', 'wrong link'],
+  ['fenced', 'wrong journal'],
+  ['fenced', 'caller failed'],
+] as const)(
+  'cold discard for %s is restartable or retains evidence (%s)',
+  async (kind, phase) => {
+    const data = await realpath(await mkdtemp(join(tmpdir(), 'holi-cold-discard-')))
+    const helper = buildLeaseForTests()
+    native.helper = helper.binary
+    native.parent = data
+    const vault = { root: data, remote: 'fixture/discard' }
+    const controller = new AbortController()
+    const recover = (registry: ReturnType<typeof activationOwnership>) => {
+      if (kind === 'fenced') recoverFencedScratch(registry!, join(data, 'scratch'))
+      else registry!.recover(kind)
+    }
+    const old = activationOwnership(data, vault, controller.signal)!
+    recover(old)
+    const record = old.allocate(kind, 'ad012345abcd')
+    const path = record.ownershipRecordPath!
+    const entry = dirname(dirname(path))
+    const retired = `${entry}.retired`
+    const scratch = join(data, 'scratch', 'ad012345abcd', 'output')
+    const launch = preparePosixLaunch('/bin/true', [], {
+      cwd: data,
+      directory: data,
+      ownershipRecordPath: path,
+      graceMs: 25,
+      stdio: 'ignore',
+    })
+    let child: ChildProcess | undefined
+    let exited: Promise<unknown> | undefined
+    let identities: number[] = []
+    let lostController = false
+    try {
+      if (kind === 'fenced') {
+        await mkdir(dirname(scratch), { recursive: true })
+        await writeFile(scratch, 'discard only after full proof')
+      }
+      child = spawn(launch.executable, launch.args, launch.options)
+      exited = once(child, 'exit')
+      void exited.catch(() => {})
+      await launch.bind(child.pid!)
+      const journal = await readFile(join(path, 'journal'), 'utf8')
+      identities = journalIdentities(journal)
+      expect(identities).toHaveLength(5)
+      lostController = true
+      controller.abort()
+      for (const fd of native.fds) closeSync(fd)
+      await exited
+      await vi.waitFor(() => {
+        for (const pid of identities) absent(pid)
+      })
+      const kernel = vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw new Error('kernel proof unavailable')
+      })
+      try {
+        expect(() => recover(activationOwnership(data, vault, signal()))).toThrow(
+          /kernel proof unavailable/,
+        )
+        expect(kernel).toHaveBeenCalled()
+        await expect(access(join(entry, 'cold-discard'))).rejects.toMatchObject({ code: 'ENOENT' })
+        if (kind === 'fenced')
+          expect(await readFile(scratch, 'utf8')).toBe('discard only after full proof')
+      } finally {
+        kernel.mockRestore()
+      }
+      const isActive = phase === 'active' || phase === 'partial'
+      const current = isActive ? entry : retired
+      const interruption = new Error(`interrupted cold discard (${phase})`)
+      native.onRename = (edge, from, to) => {
+        if (isActive) {
+          if (
+            to === join(entry, 'cold-discard') &&
+            edge === (phase === 'partial' ? 'before' : 'after')
+          )
+            throw interruption
+        } else if (edge === 'after' && from === entry && to === retired) throw interruption
+      }
+      expect(() => recover(activationOwnership(data, vault, signal()))).toThrow(interruption)
+      native.onRename = undefined
+      expect(await readdir(current)).toEqual([
+        phase === 'partial' ? 'cold-discard.tmp' : 'cold-discard',
+        'link',
+        'native',
+      ])
+      const currentNative = join(current, 'native', basename(entry))
+      expect(await readdir(currentNative)).toEqual(['journal'])
+      if (isActive) expect(await readFile(scratch, 'utf8')).toBe('discard only after full proof')
+      else if (kind === 'fenced')
+        await expect(access(scratch)).rejects.toMatchObject({ code: 'ENOENT' })
+      if (phase === 'malformed') {
+        await writeFile(join(retired, 'cold-discard'), 'not a complete receipt')
+      } else if (phase === 'wrong link') {
+        const link = await readFile(join(retired, 'link'), 'utf8')
+        await writeFile(join(retired, 'link'), link.replace('ad012345abcd', 'ad012345abce'))
+      } else if (phase === 'wrong journal') {
+        // Complete and correctly framed, but not the proof that was cached.
+        await writeFile(join(currentNative, 'journal'), journal.replace(/ROOT \d+/, 'ROOT 999999'))
+      } else if (phase === 'caller failed') {
+        await writeFile(
+          join(retired, 'failed'),
+          `HOLI-AGENT-1 ${basename(entry)}\noriginal caller failure`,
+          { mode: 0o600 },
+        )
+      }
+      const noProbe = vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw new Error('cached recovery must not probe recycled identities')
+      })
+      try {
+        const restart = () => recover(activationOwnership(data, vault, signal()))
+        if (phase === 'retired' || phase === 'active') {
+          restart()
+          await expect(access(current)).rejects.toMatchObject({ code: 'ENOENT' })
+          if (kind === 'fenced')
+            await expect(access(scratch)).rejects.toMatchObject({ code: 'ENOENT' })
+        } else {
+          expect(restart).toThrow(
+            phase === 'caller failed' ? /original caller failure/ : /Retaining/,
+          )
+          await access(current)
+          if (phase === 'partial')
+            expect(await readFile(scratch, 'utf8')).toBe('discard only after full proof')
+        }
+        expect(noProbe).not.toHaveBeenCalled()
+      } finally {
+        noProbe.mockRestore()
+      }
+    } finally {
+      native.onRename = undefined
+      if (!lostController) {
+        if (child?.pid !== undefined) await launch.drain()
+        else await launch.cancel('possibly-launched')
+      }
+      await exited
+      if (identities.length === 0) {
+        identities = journalIdentities(await readFile(join(path, 'journal'), 'utf8'))
+        if (child?.pid) identities.push(child.pid, -child.pid)
+      }
+      await vi.waitFor(() => {
+        for (const pid of identities) absent(pid)
+      })
+      expect(native.fds.size).toBe(0)
+      native.parent = ''
+      await rm(data, { recursive: true, force: true })
+      await rm(helper.directory, { recursive: true, force: true })
+    }
+  },
+  15_000,
+)
 
 it.each([
   'never drained',
