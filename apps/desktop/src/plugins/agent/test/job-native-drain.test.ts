@@ -1,7 +1,13 @@
+import { execFileSync } from 'node:child_process'
+import { activationOwnership } from '../main/host/ownership'
+import { agentScratchRoots } from '../main/host/scratch-roots'
+import { PRESETS } from '../main/harness/record'
+import { activationHosts } from './fixtures/activation-hosts'
+
 import { readFileSync, renameSync } from 'node:fs'
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import * as processApi from '../../../main/plugin-api'
 import { posixFixtureLedger } from '../../../../test/fixtures/posix-fixture-ledger'
@@ -66,10 +72,12 @@ it.skipIf(process.platform === 'win32')(
         },
       },
     }
+    const vault = { remote: 'fixture/vault', root }
     const open = () =>
       createJobs({
-        vault: { remote: 'fixture/vault', root },
+        vault,
         scratchRoot,
+        ownership: activationOwnership(ledger.root, vault, new AbortController().signal)!,
         onChange: () => {},
         log: () => {},
         keepMs: 60_000,
@@ -121,7 +129,9 @@ it.skipIf(process.platform === 'win32')(
       await ledger.reap()
       await unlaunched
       if (recovery) await Promise.allSettled([recovery.leave()])
-      await jobs.leave()
+      // The crashed owner has no authority over files the next one recovered.
+      // Join its test-only disposal to clear the idle timer, not as recovery.
+      await Promise.allSettled([jobs.leave()])
       await ledger.remove()
     }
   },
@@ -240,4 +250,160 @@ it
       await rm(dir, { recursive: true, force: true })
     }
   },
+)
+
+vi.mock('electron', () => ({
+  app: { getVersion: () => 'test' },
+  nativeTheme: { shouldUseDarkColors: false },
+}))
+vi.mock('../main/claude/cli', async (original) => ({
+  ...(await original<typeof import('../main/claude/cli')>()),
+  resolveClaudeBin: () => null,
+}))
+
+it.skipIf(process.platform === 'win32')(
+  'reopens an actual host after Core refuses a NUL follow-up before retention',
+  async () => {
+    const ledger = await posixFixtureLedger('holi-job-host-refusal-')
+    const data = ledger.root
+    const old = activationHosts(data)
+    const fresh = activationHosts(data)
+    const { A } = old
+    const root = old.roots[A]
+    const home = join(data, 'codex-home')
+    const program = join(data, 'fixture-codex')
+    const script = join(data, 'fixture.cjs')
+    const thread = '123e4567-e89b-42d3-a456-426614174000'
+    const spec = { provider: 'codex', name: 'fixture', prompt: 'go', allow: [] }
+    const original = processApi.spawnOwnedProgram
+    const refusal = vi.fn()
+    const identities = new Set<number>()
+    const spy = vi.spyOn(processApi, 'spawnOwnedProgram').mockImplementation((...args) => {
+      try {
+        const child = original(...args)
+        const pid = ledger.record(child)
+        const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+        const identify = ledger.retain(
+          pid,
+          child[processApi.ownedProcessDrain]!.drain,
+          closed,
+          'job lease',
+        )
+        child.once('spawn', () => {
+          identify()
+          const record = args[2].ownershipRecordPath
+          if (!record) return
+          const journal = readFileSync(join(record, 'journal'), 'utf8')
+          for (const [, role, value] of journal.matchAll(/^(ROOT|REAPER|ANCHOR) (\d+)$/gm)) {
+            const pid = Number(value)
+            identities.add(pid)
+            if (role !== 'ANCHOR') identities.add(-pid)
+          }
+        })
+        return child
+      } catch (error) {
+        refusal(error, processApi.posixLaunchNonAdmission(error))
+        throw error
+      }
+    })
+    vi.stubEnv('TMPDIR', data)
+    try {
+      await mkdir(root)
+      await mkdir(home)
+      await writeFile(join(home, 'auth.json'), '{"fixture":"not a credential"}')
+      await writeFile(join(root, 'note.md'), 'vault history')
+      execFileSync('git', ['init', '--template=', '-q', root])
+      execFileSync('git', ['-C', root, 'add', 'note.md'])
+      execFileSync('git', [
+        '-C',
+        root,
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        'commit',
+        '-qm',
+        'fixture',
+      ])
+      await writeFile(program, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, {
+        mode: 0o700,
+      })
+      await writeFile(
+        script,
+        `
+      const fs = require('node:fs');
+      fs.writeFileSync(process.env.CODEX_HOME + '/history', 'thread contents');
+      console.log(JSON.stringify({type:'thread.started', thread_id:'${thread}'}));
+      console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:5}}));
+    `,
+      )
+      await old.enter(A)
+      await old.call(A, 'agent.harnessSave', {
+        harness: {
+          ...PRESETS.find(({ id }) => id === 'codex')!,
+          command: { bin: program, args: [] },
+          env: { CODEX_HOME: home },
+        },
+      })
+      const first = (await old.call(A, 'agent.job', spec)) as { ok: boolean; sessionId: string }
+      expect(first).toMatchObject({ ok: true })
+      const id = first.sessionId
+      await vi.waitFor(
+        async () =>
+          expect((await old.rows(A)).find((row) => row.id === id)).toMatchObject({
+            outcome: 'completed',
+            usage: { total: 5 },
+          }),
+        { timeout: 4000 },
+      )
+      const { jobs } = await agentScratchRoots(data, { root, remote: A })
+      const history = join(jobs, `${id}.agent`, 'codex-home', 'history')
+      await vi.waitFor(() => old.call(A, 'agent.message', { session: id, text: 'bad\0follow-up' }))
+      await vi.waitFor(async () =>
+        expect((await old.rows(A)).find((row) => row.id === id)).toMatchObject({
+          state: 'idle',
+          outcome: 'failed',
+          error: expect.stringMatching(/cannot contain NUL characters/),
+        }),
+      )
+      expect(refusal).toHaveBeenCalledWith(expect.any(Error), { cleanup: expect.any(Promise) })
+      expect(spy.mock.calls.at(-1)?.[1]).toContain(thread)
+      expect(await readFile(history, 'utf8')).toBe('thread contents')
+      const launched = spy.mock.calls[0]?.[2].ownershipRecordPath
+      const refused = spy.mock.calls.at(-1)?.[2].ownershipRecordPath
+      const nonLaunch =
+        refused && (await readFile(join(dirname(dirname(refused)), 'nonlaunch'), 'utf8'))
+      const settled = await readFile(join(jobs, `${id}.turn`), 'utf8').catch(() => undefined)
+      await expect(access(join(jobs, `${id}.pid`))).rejects.toMatchObject({ code: 'ENOENT' })
+      // Simulate re-entry after Main disappeared: no stop or retention cleanup
+      // from the previous host, which has no pending admission or live child.
+      await fresh.enter(A)
+      expect(await fresh.call(A, 'agent.job', spec)).toMatchObject({ ok: true })
+      expect(launched).toBeDefined()
+      expect(refused).toBeDefined()
+      expect(refused).not.toBe(launched)
+      expect(nonLaunch).toMatch(/NONLAUNCH\n$/)
+      expect(settled).toMatch(/SETTLED\n$/)
+      await expect(access(history)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('vault history')
+      await vi.waitFor(
+        async () =>
+          expect(await fresh.rows(A)).toEqual(
+            expect.arrayContaining([expect.objectContaining({ outcome: 'completed' })]),
+          ),
+        { timeout: 4000 },
+      )
+      await fresh.host.stopAll()
+    } finally {
+      await Promise.allSettled([fresh.host.stopAll(), old.host.stopAll()])
+      vi.unstubAllEnvs()
+      spy.mockRestore()
+      await ledger.reap()
+      await vi.waitFor(() => {
+        for (const pid of identities) expect(absent(pid)).toBe(true)
+      })
+      await ledger.remove()
+    }
+  },
+  15000,
 )
