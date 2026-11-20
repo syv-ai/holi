@@ -84,7 +84,13 @@ async function fixture(
     registry,
     session,
     mdxTrust: options.trust?.(mdxTrust) ?? mdxTrust,
-    mdxCompiler: { compile, invalidate: vi.fn(), close: vi.fn() },
+    mdxCompiler: {
+      createOwner: () => ({}),
+      retireOwner: vi.fn(),
+      compile: vi.fn((_owner, source) => compile(source)),
+      invalidate: vi.fn(),
+      close: vi.fn(),
+    },
     host,
     vaultRoot: join(dir, 'clones'),
     seed: async () => ({ written: [], merged: [], unchanged: [] }),
@@ -211,7 +217,7 @@ describe('MDX trust through the router', () => {
     await expect(
       caller.mdxTrust.compile({ lease: first.lease, generation: 1, source: '# Source' }),
     ).resolves.toEqual([{ message: 'unexpected token', line: 2, column: 4 }])
-    expect(compile).toHaveBeenCalledWith('# Source', expect.any(AbortSignal))
+    expect(compile).toHaveBeenCalledWith('# Source')
     await expect(
       caller.mdxTrust.cancelCompile({ lease: first.lease, generation: 2 }),
     ).resolves.toEqual({ ok: true })

@@ -1,30 +1,11 @@
 /**
- * Adding a message to a running Claude Code session: its inbox socket
- * (Claude Code's cross-session messaging, docs/features/agent-sessions.md).
+ * Adding a message to a running Claude Code session through its inbox socket.
+ * See docs/features/agent-sessions.md for the wire protocol.
  *
- * Every session that is not `--bare` binds a Unix socket and exports its path
- * and a per-session token to its hooks as `CLAUDE_CODE_MESSAGING_SOCKET` and
- * `CLAUDE_CODE_MESSAGING_TOKEN`. The seeded `turn-signal.mjs` hands both to
- * Holi, which keeps them in memory only (`host/sessions.ts`).
- *
- * One connection per message: the auth line, the one user line, then close.
- * An idle session starts a turn with it; a working one reads it after the
- * tool call in flight. The token makes it count as the session's own child,
- * so a session that skips permission prompts does not hold it for approval.
- *
- * **The user line's shape is not on Claude Code's documentation page**, which
- * describes only the auth line. It is the shape Claude Code's own debug log
- * names, checked live; a release that changes it breaks this module and
- * nothing else.
- *
- * The socket answers nothing. A session whose `crossSessionInbound` is
- * `refuse` drops the message without a word, and `hold` sets it aside, so all
- * this can report is whether the bytes were taken. It never retries: a
- * message sent twice is a turn taken twice.
- *
- * NOTE: no `electron` import, so this loads under vitest.
+ * This module has no Electron dependency and keeps socket lifecycle rules
+ * behind postToSession's small interface.
  */
-import { createConnection } from 'node:net'
+import { createConnection, type Socket } from 'node:net'
 import { CapabilityError } from '../../../../main/plugin-api'
 
 /** Where one session takes messages, as its hooks were told. */
@@ -33,11 +14,10 @@ export interface SessionChannel {
   token: string
 }
 
-/** Claude Code closes a connection that sends no complete line in 30 s; a
- *  message is two short lines, so a few seconds is already a dead session. */
 const TIMEOUT_MS = 5_000
 
-/** The bytes one message is: the auth line, then the user line. */
+type SocketFactory = (path: string) => Socket
+
 function messageLines(channel: SessionChannel, text: string): string {
   return (
     JSON.stringify({ type: 'auth', token: channel.token }) +
@@ -47,44 +27,123 @@ function messageLines(channel: SessionChannel, text: string): string {
   )
 }
 
-/** Why a write failed, in the person's words. */
 function refusal(error: NodeJS.ErrnoException): CapabilityError {
   const gone = error.code === 'ENOENT' || error.code === 'ECONNREFUSED'
   return new CapabilityError(
     'UNAVAILABLE',
     gone
       ? 'the session is no longer taking messages (its inbox socket is gone)'
-      : `the session's inbox did not take the message: ${error.message}`,
+      : 'the session inbox connection failed before delivery could be confirmed',
   )
 }
 
-/** Write one message into the session's inbox. Resolves once the session has
- *  the bytes; throws a `CapabilityError` when it could not be delivered. */
+/**
+ * Send exactly once. Settlement joins the socket's physical close: write/end
+ * callbacks alone cannot establish that the connection has been torn down.
+ * A cancellation or timeout after end() is deliberately not described as safe
+ * to retry, since the session may already have received the message.
+ */
 export function postToSession(
   channel: SessionChannel,
   text: string,
   timeoutMs = TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<void> {
+  return postToSessionWithSocketFactory(channel, text, timeoutMs, signal, createConnection)
+}
+
+/** @public Test seam: inject deterministic sockets to verify inbox lifecycle behavior. */
+export function postToSessionWithSocketFactory(
+  channel: SessionChannel,
+  text: string,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+  makeSocket: SocketFactory,
+): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new CapabilityError('UNAVAILABLE', 'session message was cancelled'))
+  }
+
   return new Promise((resolve, reject) => {
+    let conn: Socket
+    let timer: ReturnType<typeof setTimeout> | undefined
     let settled = false
-    const done = (error?: CapabilityError): void => {
+    let closing = false
+    let sent = false
+    let outcome: CapabilityError | null = null
+
+    const cleanup = (): void => {
+      if (timer !== undefined) clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    const settleOnClose = (): void => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
-      if (error === undefined) resolve()
-      else reject(error)
+      cleanup()
+      if (outcome) reject(outcome)
+      else if (sent) resolve()
+      else
+        reject(
+          new CapabilityError(
+            'UNAVAILABLE',
+            'the session inbox closed before accepting the message',
+          ),
+        )
     }
-    const conn = createConnection(channel.socket)
-    const timer = setTimeout(() => {
+    const failAndClose = (error: CapabilityError): void => {
+      if (!outcome) outcome = error
+      if (closing) return
+      closing = true
       conn.destroy()
-      done(new CapabilityError('UNAVAILABLE', "the session's inbox did not answer in time"))
+    }
+    const onAbort = (): void => {
+      failAndClose(
+        new CapabilityError(
+          'UNAVAILABLE',
+          'session message was cancelled; delivery may be uncertain',
+        ),
+      )
+    }
+
+    // Set timer state before socket construction/listener callbacks can fire.
+    timer = setTimeout(() => {
+      failAndClose(
+        new CapabilityError(
+          'UNAVAILABLE',
+          'the session inbox did not answer in time; delivery may be uncertain',
+        ),
+      )
     }, timeoutMs)
-    conn.on('error', (error: NodeJS.ErrnoException) => done(refusal(error)))
+    try {
+      conn = makeSocket(channel.socket)
+    } catch {
+      if (timer !== undefined) clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      reject(new CapabilityError('UNAVAILABLE', 'could not connect to the session inbox'))
+      return
+    }
+
+    conn.on('close', settleOnClose)
+    conn.on('error', (error: NodeJS.ErrnoException) => failAndClose(refusal(error)))
     conn.on('connect', () => {
-      conn.end(messageLines(channel, text), () => {
-        conn.destroy()
-        done()
-      })
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+      if (outcome || closing) return
+      // Set sent before end(): synchronous adapters may emit callbacks inline.
+      sent = true
+      try {
+        conn.end(messageLines(channel, text))
+      } catch {
+        sent = false
+        failAndClose(
+          new CapabilityError('UNAVAILABLE', 'the session inbox could not accept the message'),
+        )
+      }
     })
+    signal?.addEventListener('abort', onAbort, { once: true })
+    // Cover abort between the initial check and listener registration.
+    if (signal?.aborted) onAbort()
   })
 }
