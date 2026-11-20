@@ -29,6 +29,7 @@ function Fixture() {
   const [reload, setReload] = React.useState(0)
   const [mode, setMode] = React.useState<'light' | 'dark'>('dark')
   const [focused, setFocused] = React.useState(true)
+  const [split, setSplit] = React.useState(false)
   const setVim = useSetAtom(vimCodeEditingAtom)
   const vimEnabled = useAtomValue(vimCodeEditingAtom)
   useShortcutDispatcher()
@@ -55,6 +56,7 @@ function Fixture() {
         setMode(nextMode)
       }
       if (event.data?.kind === 'fixture-focused') setFocused(Boolean(event.data.focused))
+      if (event.data?.kind === 'fixture-split') setSplit(Boolean(event.data.split))
       if (event.data?.kind === 'fixture-overlay') {
         document.querySelector('#fixture-host-overlay')?.remove()
         if (event.data.show) {
@@ -93,9 +95,26 @@ function Fixture() {
           event.data.value,
         )
       }
+      if (
+        event.data?.kind === 'fixture-neutral-focused' &&
+        event.source === document.querySelector('iframe')?.contentWindow &&
+        event.data.nonce === state.fixtureNonces?.a
+      ) {
+        ;(window as Window & { fixtureNeutralFocused?: boolean }).fixtureNeutralFocused =
+          event.data.value === true
+      }
       if (event.data?.kind === 'guest-input-value') {
         const output = document.querySelector('#guest-input-value')
         if (output) output.textContent = String(event.data.value)
+      }
+      if (event.data?.kind === 'guest-shadow-input') {
+        ;(window as Window & { fixtureShadowInput?: string }).fixtureShadowInput =
+          `${event.data.editor}:${event.data.value}`
+      }
+      if (event.data?.kind === 'fixture-shadow-focused') {
+        ;(window as Window & { fixtureShadowFocused?: string }).fixtureShadowFocused = String(
+          event.data.editor,
+        )
       }
       if (event.data?.kind === 'stale-result' || event.data?.kind === 'replacement-result') {
         const output = document.querySelector('#stale-result')
@@ -112,9 +131,14 @@ function Fixture() {
       <output id="stale-result"></output>
       <output id="guest-action-count">0</output>
       <output id="guest-input-value"></output>
-      <section data-pane data-pane-focused={focused ? '' : undefined} aria-label="App pane">
+      <section
+        data-pane
+        data-pane-focused={split ? (focused ? 'true' : undefined) : undefined}
+        aria-label="App pane"
+      >
         <AppFrame key={reload} path={bundle} visible={visible} />
       </section>
+      {split ? <section data-pane aria-label="Other pane" /> : null}
       <HostHintLayer scopeKey={`app-frame-smoke:${remote}:${visible}:${reload}:${focused}`} />
     </main>
   )

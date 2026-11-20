@@ -49,7 +49,6 @@ test('re-enables the same focused frame after window blur and focus', () => {
   const frame = fixture()
   const pane = document.createElement('div')
   pane.dataset.pane = ''
-  pane.dataset.paneFocused = ''
   pane.append(frame)
   document.body.append(pane)
   frame.focus()
@@ -84,6 +83,65 @@ test('re-enables the same focused frame after window blur and focus', () => {
   hook.unmount()
   expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ enabled: false })
   hasFocus.mockRestore()
+})
+
+test('single-pane production markup enables hints without a focus attribute', async () => {
+  const frame = fixture()
+  const pane = document.createElement('section')
+  pane.dataset.pane = ''
+  pane.append(frame)
+  document.body.append(pane)
+  frame.focus()
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  const store = createStore()
+  store.set(activeRemoteAtom, 'owner/repo')
+  store.set(vimCodeEditingAtom, true)
+  const post = vi.spyOn(frame.contentWindow!, 'postMessage')
+  const wrapper = ({ children }: { children: React.ReactNode }) => (
+    <Provider store={store}>{children}</Provider>
+  )
+  const hook = renderHook(
+    () =>
+      useAppHints({
+        frame,
+        lease: { nonce, token: 'lease' },
+        remote: 'owner/repo',
+        bundle: 'app',
+        visible: true,
+        gateOpen: true,
+        loaded: 'app',
+        activeRemote: 'owner/repo',
+        store,
+        authorize: async () => true,
+      }),
+    { wrapper },
+  )
+  expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ enabled: true })
+
+  const other = document.createElement('section')
+  other.dataset.pane = ''
+  document.body.append(other)
+  await act(async () => {
+    other.setAttribute('data-pane-focused', 'true')
+  })
+  await waitFor(() => expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ enabled: false }))
+  await act(async () => {
+    pane.setAttribute('data-pane-focused', 'true')
+  })
+  await waitFor(() => expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ enabled: true }))
+  await act(async () => {
+    other.setAttribute('hidden', '')
+  })
+  await waitFor(() => expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ enabled: true }))
+  await act(async () => {
+    pane.removeAttribute('data-pane-focused')
+  })
+  await waitFor(() => expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ enabled: true }))
+  await act(async () => {
+    pane.setAttribute('hidden', '')
+  })
+  await waitFor(() => expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ enabled: false }))
+  hook.unmount()
 })
 
 test('real app hints survive their own portal and activate only through the focused host layer', async () => {
