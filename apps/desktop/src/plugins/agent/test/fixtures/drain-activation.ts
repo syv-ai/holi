@@ -115,6 +115,8 @@ function activation(root: string, children: FixtureNative) {
     cli: http.cli,
     hook: http.hook,
     expectedFailures,
+    observeRetirement: children.observeRetirement,
+    holdCopyWrite: (remote: Remote) => children.holdCopyWrite(h.roots[remote]),
     async failActivation(remote: Remote, cause: Error) {
       const { jobs } = await agentScratchRoots(root, { remote, root: h.roots[remote] })
       const sweep = children.holdReadDir(jobs)
@@ -223,14 +225,21 @@ function activation(root: string, children: FixtureNative) {
       run.live()
       return marker
     },
-    async start(remote: Remote, kind: Kind, stdio: Plan['stdio'], code = 0, prompt = 'hold') {
-      children.plan({ kind, stdio, code })
+    async start(
+      remote: Remote,
+      kind: Kind,
+      stdio: Plan['stdio'],
+      code = 0,
+      prompt = 'hold',
+      fencedPi = false,
+    ) {
+      children.plan({ kind, stdio, code, fencedPi })
       const name = `${remote}:${kind}`
       const result = (await h.call(
         remote,
         { pi: 'agent.launch', pty: 'agent.start', fenced: 'agent.scoped', job: 'agent.job' }[kind],
         {
-          provider: kind === 'pi' ? 'pi' : 'codex',
+          provider: kind === 'pi' || fencedPi ? 'pi' : 'codex',
           name,
           prompt,
           ...(kind === 'pi' ? { keep: true, tools: 'none', system: 'fixture instruction' } : {}),

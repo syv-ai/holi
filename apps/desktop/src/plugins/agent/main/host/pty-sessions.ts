@@ -103,7 +103,7 @@ export interface PtySessionsDeps {
   terminals: Pick<AgentTerminals, 'open' | 'close' | 'paste' | 'list'>
   /** The vault's turn bracket: sync pauses and the turn is recorded. */
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<unknown>
-  /** Keep an ordinary open POSIX turn until its PTY proves physical absence. */
+  /** Keep an open POSIX turn through drain, until its owner can safely forget it. */
   protectPtyTurn?(id: string): (() => void) | undefined
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
@@ -210,7 +210,7 @@ interface Session {
   copying?: boolean
   draining?: boolean
   forgetTurn?: boolean
-  protectTurn: boolean
+  turnCopies: number
   forgetWithProof?: () => void
   exitWork?: Promise<void>
   closeWork?: Promise<void>
@@ -229,6 +229,7 @@ export function nameOf(text: string): string | null {
 export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-pty] ${msg}`))
   const sessions = new Map<string, Session>()
+  const protectTurns = process.platform !== 'win32'
   const finishedFences = new Map<
     string,
     { row: SessionSummary; timer?: ReturnType<typeof setTimeout> }
@@ -244,6 +245,16 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   })()
   const pastStore = deps.past ?? memoryPast
   let pastQueue: Promise<unknown> = Promise.resolve()
+  let storedPast: SessionSummary[] | undefined
+  let lastPastPushed: string | undefined
+  function pushPast(): void {
+    if (storedPast === undefined) return
+    const visible = storedPast.filter(({ id }) => !sessions.has(id))
+    const encoded = JSON.stringify(visible)
+    if (encoded === lastPastPushed) return
+    deps.onPast?.(visible)
+    lastPastPushed = encoded
+  }
   // Keep mutations in their original order until a write commits the whole
   // prefix. Replaying just an older failed removal after a newer append would
   // delete the conversation that has since closed again.
@@ -255,7 +266,9 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       const rows = batch.reduce((rows, change) => change(rows), await pastStore.read())
       await pastStore.write(rows)
       pendingPast.splice(0, batch.length)
-      deps.onPast?.(rows)
+      // Disk may stage closed rows, but readers and notifications hide any
+      // row whose session still owns its terminal slot.
+      storedPast = rows
     })
     pastQueue = next.catch((err: unknown) => {
       log(`closed sessions: ${String(err)}`)
@@ -324,9 +337,9 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     return title === '' ? NEW_SESSION : title
   }
 
-  const summaries = (excluding?: Session): SessionSummary[] => [
+  const summaries = (): SessionSummary[] => [
     ...[...sessions.values()]
-      .filter((s) => s !== excluding && !finishedFences.has(s.id))
+      .filter((s) => !finishedFences.has(s.id))
       .map((s) => ({
         id: s.id,
         provider: s.provider,
@@ -346,8 +359,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     ...[...finishedFences.values()].map(({ row }) => row),
   ]
 
-  function push(excluding?: Session): void {
-    const next = summaries(excluding)
+  function push(): void {
+    const next = summaries()
     const encoded = JSON.stringify(next)
     if (encoded === lastPushed) return
     deps.onChange(next)
@@ -357,8 +370,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   function fenceAdmission(s: Session): void {
     if (s.draining) return
     s.draining = true
-    s.forgetTurn = s.signals.inTurn
-    if (s.forgetTurn && s.protectTurn) s.forgetWithProof = deps.protectPtyTurn?.(s.id)
+    s.forgetTurn = s.signals.inTurn || (protectTurns && s.turnCopies > 0)
+    if (s.forgetTurn && protectTurns) s.forgetWithProof = deps.protectPtyTurn?.(s.id)
     s.signals.dispose()
   }
 
@@ -385,9 +398,19 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     return changePast((rows) => [closed, ...rows.filter((p) => p.id !== s.id)].slice(0, PAST_MAX))
   }
 
+  function presentSettled(update: () => void): void {
+    try {
+      update()
+    } catch (error) {
+      // Ownership has already retired: presentation cannot undo it or strand a slot.
+      log(`settled session: ${String(error)}`)
+    }
+  }
+
   function retire(s: Session): void {
-    push(s)
     sessions.delete(s.id)
+    presentSettled(push)
+    presentSettled(pushPast)
   }
 
   function configure(provider: AgentProvider): Promise<{ dir: string } | null> {
@@ -510,7 +533,10 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         // What a fenced turn wrote is in the vault before its turn closes.
         if (fence === undefined) close()
         else {
-          if (session !== null) session.copying = true
+          if (session !== null) {
+            session.copying = true
+            session.turnCopies += 1
+          }
           let copyWork: Promise<FenceCopy>
           try {
             copyWork = Promise.resolve(fence.turnEnded())
@@ -528,7 +554,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
               },
             )
             .finally(() => {
-              if (session !== null && !session.draining) session.copying = false
+              if (session !== null) {
+                session.turnCopies -= 1
+                // Drain owns the bracket now, even when this copy was admitted
+                // before native stop. It must not report a successful turn.
+                if (session.forgetWithProof) return
+                if (!session.draining) session.copying = false
+              }
               close()
             })
           void trackFinalizer(owner, completion)
@@ -569,13 +601,24 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       signals.dispose()
       return { ok: false, message: 'Fenced launch admission closed.' }
     }
+    let finalRow: SessionSummary | undefined
+    let finalCopyActive = false
+    let keepTranscript = provider.id === 'pi' && fence === undefined
+    let piTitle: string | undefined
+    function forgetWithProof(s: Session): void {
+      const forget = s.forgetWithProof
+      s.forgetWithProof = undefined
+      if (forget === undefined) return
+      s.forgetTurn = false
+      forget()
+    }
     const opened = deps.terminals.open({
       remote: deps.vault.remote,
       cwd: fence?.dir ?? deps.vault.root,
       command,
       notInstalled: provider.notInstalled,
       attach: id,
-      retainOnExit: provider.id === 'pi',
+      retainOnExit: keepTranscript,
       ...(cols === undefined ? {} : { cols }),
       ...(rows === undefined ? {} : { rows }),
       ...(notice === undefined ? {} : { notice }),
@@ -584,12 +627,15 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         const s = session
         if (s === null) return
         fenceAdmission(s)
-        if (s.forgetWithProof && physical) {
+        if (fence === undefined && s.forgetWithProof && physical) {
           // Output or its callbacks can still fail. The process receipt alone
           // permits forgetting, never recording a successful turn.
           void trackFinalizer(
             owner,
-            physical.then(s.forgetWithProof, () => {}),
+            physical.then(
+              () => forgetWithProof(s),
+              () => {},
+            ),
           )
         }
       },
@@ -609,45 +655,47 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       onOutput: (data) => {
         if (!signIn) session?.signals.output(data)
       },
+      onExitAbandoned: () => {
+        const s = session
+        if (fence === undefined || s === null || !s.forgetWithProof) return
+        // No final copy started (lost output), or all caller work finished and
+        // only durable retirement failed. A timed-out copy may still roll back.
+        if (!finalCopyActive) {
+          void joinFinalizers(owner)
+            .then(() => forgetWithProof(s))
+            .catch((error: unknown) => log(`abandoned fenced turn: ${String(error)}`))
+        }
+      },
       onExit: (lastTitle, signal, nonAdmission) => {
         const s = session
         if (s === null || sessions.get(id) !== s) return
         if (s.exitWork !== undefined) return s.exitWork
         fenceAdmission(s)
-        const forget = () => {
+        const forgetLegacy = () => {
           if (!s.forgetTurn || s.forgetWithProof) return
           s.forgetTurn = false
           runBracket(owner, id, 'forget')
         }
         const finish = async () => {
           if (nonAdmission) {
+            keepTranscript = false
             s.persistConversation = false
-            forget()
+            forgetLegacy()
             await joinFinalizers(owner)
             assertFinalized(owner)
             signal?.throwIfAborted()
             await fence?.retire?.(signal)
             signal?.throwIfAborted()
-            retire(s)
-            return
-          }
-          if (s.provider === 'pi' && fence === undefined) {
-            forget()
-            if (s.name === null && lastTitle !== undefined) s.name = nameOf(lastTitle)
-            s.attention = false
-            push()
-            await joinFinalizers(owner)
-            assertFinalized(owner)
             return
           }
           if (fence === undefined) {
-            forget()
+            forgetLegacy()
+            if (keepTranscript) piTitle = lastTitle
             await joinFinalizers(owner)
             assertFinalized(owner)
             signal?.throwIfAborted()
-            await saveClosed(s, lastTitle)
+            if (!keepTranscript) await saveClosed(s, lastTitle)
             signal?.throwIfAborted()
-            retire(s)
             return
           }
 
@@ -659,18 +707,23 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
             // final copy is admitted only at this physical + output edge.
             if (owner.pending.size > 0) await joinFinalizers(owner)
             signal?.throwIfAborted()
+            finalCopyActive = true
             copy = await fence.exited(signal)
             signal?.throwIfAborted()
-            forget()
+            finalCopyActive = false
+            forgetLegacy()
             await joinFinalizers(owner)
             assertFinalized(owner)
             signal?.throwIfAborted()
             await fence.retire?.(signal)
           } catch (error) {
             signal?.throwIfAborted()
-            forget()
+            forgetLegacy()
             await joinFinalizers(owner)
             signal?.throwIfAborted()
+            // The copy and provider work joined; forget without recording success.
+            finalCopyActive = false
+            presentSettled(() => forgetWithProof(s))
             finishedFences.set(id, { row: fenceRow({ error: String(error) }) })
             // Presentation cannot replace the original finalization failure.
             try {
@@ -683,15 +736,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
             throw error
           }
           signal?.throwIfAborted()
-          const timer =
-            copy.error === undefined && copy.leftOut === undefined
-              ? setTimeout(() => {
-                  finishedFences.delete(id)
-                  push()
-                }, FENCED_RESULT_MS)
-              : undefined
-          finishedFences.set(id, { row: fenceRow(copy), timer })
-          retire(s)
+          finalRow = fenceRow(copy)
         }
         const fenceRow = (copy: FenceCopy): SessionSummary => ({
           id,
@@ -708,6 +753,28 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         s.exitWork = work
         void work.catch(() => {})
         return work
+      },
+      onRetired: () => {
+        const s = session
+        if (s === null || sessions.get(id) !== s) return
+        if (fence !== undefined) presentSettled(() => forgetWithProof(s))
+        if (keepTranscript) {
+          if (s.name === null && piTitle !== undefined) s.name = nameOf(piTitle)
+          s.attention = false
+          presentSettled(push)
+          return
+        }
+        if (finalRow !== undefined) {
+          const timer =
+            finalRow.error === undefined && finalRow.message === undefined
+              ? setTimeout(() => {
+                  finishedFences.delete(id)
+                  push()
+                }, FENCED_RESULT_MS)
+              : undefined
+          finishedFences.set(id, { row: finalRow, timer })
+        }
+        retire(s)
       },
     })
     if (!opened.ok) {
@@ -730,7 +797,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       persistConversation: resume !== 'pick' && fence === undefined,
       attention: false,
       signals,
-      protectTurn: process.platform !== 'win32' && fence === undefined,
+      turnCopies: 0,
     }
     sessions.set(id, session)
     // A session started on a prompt is in its first turn already.
@@ -793,11 +860,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         })
         // A process can exit before start() returns. Its onExit has already
         // queued the closed row; do not remove that newer history entry.
-        if (result.ok && sessions.has(id)) {
+        const open = sessions.get(id)
+        if (result.ok && open !== undefined && !open.draining) {
           await bounded(
             changePast((rows) => rows.filter((p) => p.id !== id)),
             'PTY history persistence',
           )
+          pushPast()
         }
         return result
       } finally {

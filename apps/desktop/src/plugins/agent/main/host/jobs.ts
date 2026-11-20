@@ -1116,21 +1116,50 @@ export function createJobs(deps: JobsDeps): Jobs {
   async function leave(): Promise<void> {
     closing = true
     generation += 1
+    const stopRegistered = () => {
+      const all = [...jobs.values()]
+      for (const job of all) {
+        job.retiring = true
+        job.queue = []
+        clearTimeout(job.dropTimer)
+      }
+      // Close every installed lease before scheduling even the registration
+      // retry. kill invokes native drain before its first await.
+      const stopping = all.map((job) =>
+        process.platform !== 'win32' && job.busy && job.turn === undefined
+          ? undefined
+          : kill(job, 'Stopped.'),
+      )
+      // Re-entry during registration: join the turn once the current stack
+      // has installed its native receipt. Observe every result while sweeping.
+      const results = Promise.allSettled(
+        all.map((job, i) => stopping[i] ?? Promise.resolve().then(() => kill(job, 'Stopped.'))),
+      )
+      return { all, results }
+    }
+    let sweepFailure: { reason: unknown } | undefined
+    const joinSweep = () => bounded(sweeping, 'Agent job state sweep')
+    // Keep the compatibility path's sweep-before-signalling order on Windows.
+    if (process.platform === 'win32') await joinSweep()
+    const { all, results } = stopRegistered()
     // The startup deadline may have expired while the actual sweep or a start
     // is still mutating disk. Neither can outlive a successful teardown.
-    await bounded(sweeping, 'Agent job state sweep')
-    const all = [...jobs.values()]
-    for (const job of all) {
-      job.retiring = true
-      job.queue = []
-      clearTimeout(job.dropTimer)
+    if (process.platform !== 'win32') {
+      try {
+        await joinSweep()
+      } catch (reason) {
+        sweepFailure = { reason }
+      }
     }
-    const results = await Promise.allSettled(all.map((job) => kill(job, 'Stopped.')))
-    const failures = results.flatMap((result, i) => {
+    const failures = (await results).flatMap((result, i) => {
       if (result.status !== 'rejected') return []
       const secondary = all[i]?.secondaryPhysicalFailure
       return secondary ? [result.reason, secondary.cause] : [result.reason]
     })
+    if (sweepFailure !== undefined) {
+      if (failures.length === 0) throw sweepFailure.reason
+      failures.unshift(sweepFailure.reason)
+    }
     if (failures.length > 0) {
       throw new AggregateError(failures, 'One or more agent jobs did not drain.')
     }

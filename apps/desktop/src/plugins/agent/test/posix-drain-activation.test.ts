@@ -312,6 +312,7 @@ posix.each(cells)(
           await access(b.pidFile)
         } else {
           // Fence copy-back precedes release, but only after physical proof.
+          expect(f.syncHeld(f.B)).toBe(true)
           expect(await readFile(join(f.roots[f.B], 'output.md'), 'utf8')).toBe(f.B)
         }
         await access(b.cwd)

@@ -10,6 +10,7 @@ import { activationOwnership } from '../main/host/ownership'
 import { AgentRuntime, withPtyOwnership } from '../main/host/pty'
 import { createPtySessions } from '../main/host/pty-sessions'
 import { createAgentTerminals, type AgentTerminalsDeps } from '../main/host/terminals'
+import { createTurnCoordinator } from '../main/host/turn-coordinator'
 import type { AgentProvider } from '../main/provider'
 
 const native = vi.hoisted(() => ({
@@ -62,6 +63,7 @@ function rig(
   release = vi.fn(async (_state: string, _signal?: AbortSignal) => {}),
   command = { bin: '/bin/sh', args: ['-c', 'exit 91'] },
   idleMs = 100,
+  coordinator?: ReturnType<typeof createTurnCoordinator>,
 ) {
   const vault = { root, remote: 'test/vault' }
   const emit = vi.fn()
@@ -79,12 +81,13 @@ function rig(
     capabilities: { fenced: 'sandbox' },
     release,
   }
-  const bracket = vi.fn()
+  const bracket = vi.fn((id: string, edge: 'begin' | 'end' | 'forget') => coordinator?.[edge](id))
   const sessions = createPtySessions({
     vault,
     providers: () => [provider],
     terminals,
     bracket,
+    protectPtyTurn: (id) => coordinator?.protectPtyTurn(id),
     binDir: () => null,
     onChange: () => {},
     idleMs,
@@ -342,6 +345,96 @@ it.each(['root exit', 'explicit Stop'] as const)(
       await stopping?.catch(() => {})
       await t.sessions.leave()
       await t.fenced.leave()
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
+it.skipIf(process.platform === 'win32').each(['open', 'copying'] as const)(
+  'forgets a %s fenced turn without recording success if output is lost after physical proof',
+  async (stage) => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-pty-fenced-'))
+    const resume = vi.fn()
+    const ended = vi.fn()
+    const coordinator = createTurnCoordinator({
+      vault: () => ({
+        root,
+        pauseSync: () => resume,
+        head: async () => '',
+        commitNow: async () => null,
+      }),
+      onTurnEnd: ended,
+      turnSafetyMs: 500,
+    })
+    const physical = deferred<void>()
+    const copy = deferred<{ written: number; skipped: [] }>()
+    let exit!: (event: { exitCode: number }) => void
+    const pty = {
+      pid: 999_999,
+      kill: vi.fn(),
+      write() {},
+      resize() {},
+      onData() {},
+      onExit: (cb: typeof exit) => {
+        exit = cb
+      },
+    }
+    const t = rig(
+      root,
+      {
+        spawnPty: () => pty,
+        superviseGroup: () => ({ drain: () => physical.promise }),
+        killBackstopMs: 1000,
+      },
+      undefined,
+      undefined,
+      2000,
+      coordinator,
+    )
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let stopping: Promise<unknown> | undefined
+    try {
+      const run = await t.start()
+      if (!run.ok) throw new Error(run.message)
+      if (stage === 'copying') {
+        t.copyBack.mockImplementationOnce(() => copy.promise)
+        t.sessions.noteTurn(run.sessionId, false)
+        await vi.waitFor(() => expect(t.copyBack).toHaveBeenCalledOnce())
+      }
+      stopping = t.sessions.stop(run.sessionId).catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(600)
+      coordinator.noteIdle(run.sessionId)
+      await vi.advanceTimersByTimeAsync(1000)
+      coordinator.noteIdle(run.sessionId)
+      coordinator.forget(run.sessionId)
+      expect(coordinator.working.has(run.sessionId)).toBe(true)
+      physical.resolve()
+      await vi.advanceTimersByTimeAsync(1000)
+      const cause = await stopping
+      expect(cause).toMatchObject({
+        message: expect.stringContaining('did not report process exit'),
+      })
+      if (stage === 'copying') {
+        expect(resume).not.toHaveBeenCalled()
+        copy.resolve({ written: 0, skipped: [] })
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      expect(resume).toHaveBeenCalledOnce()
+      expect(ended).not.toHaveBeenCalled()
+      exit({ exitCode: 0 }) // Late output has no caller or success authority.
+      await expect(t.sessions.stop(run.sessionId)).rejects.toBe(cause)
+      await expect(t.terminals.closeAll()).rejects.toBe(cause)
+      expect(t.release).not.toHaveBeenCalled()
+      expect(t.copyBack).toHaveBeenCalledTimes(stage === 'copying' ? 1 : 0)
+      expect(pty.kill).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      copy.resolve({ written: 0, skipped: [] })
+      physical.resolve()
+      exit?.({ exitCode: 0 })
+      await vi.advanceTimersByTimeAsync(6000)
+      await stopping
+      vi.useRealTimers()
       await rm(root, { recursive: true, force: true })
     }
   },
