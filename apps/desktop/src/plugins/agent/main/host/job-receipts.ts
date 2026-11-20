@@ -194,9 +194,14 @@ export function jobScratch({
                 writeFile(pid, `${pidValue}\n${cwd}\n`),
               )
             },
-            phase(phase: Exclude<Phase, 'PENDING'>) {
+            phase(phase: 'ACTIVE' | 'FINALIZING') {
               if (record) publishCaller(caller, callerFrame(id, phase))
-              else if (windows && phase === 'SETTLED') rmSync(pid, { force: true })
+            },
+            settle(scoped: boolean) {
+              if (record) publishCaller(caller, callerFrame(id, 'SETTLED'))
+              // Vault jobs can resume; their idle PID is diagnostic and the
+              // next turn replaces it. Scoped jobs are done after this turn.
+              if (windows || scoped) rmSync(pid, { force: true })
             },
             nonLaunch() {
               record?.nonLaunch()

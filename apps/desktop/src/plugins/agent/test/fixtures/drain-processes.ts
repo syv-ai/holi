@@ -136,6 +136,36 @@ vi.mock('../../../../main/posix-launch-lease', async (original) => {
 })
 vi.mock('../../../../main/plugin-api', async (original) => {
   const api = await original<typeof import('../../../../main/plugin-api')>()
+  const spawnPty: typeof api.defaultSpawnPty = (bin, args, options) => {
+    const run = native.fixture!.runs.at(-1)!
+    const prepared = run.prepared!
+    expect(options.env).toBe(prepared.options.env)
+    const child = spawn(bin, args, prepared.options)
+    native.fixture!.record(run, child, prepared.args[1]!, false)
+    const output = leasedPty(child, (fire) =>
+      run.close.dispatch(() => {
+        let groupAlive = true
+        try {
+          process.kill(-run.pid, 0)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+          groupAlive = false
+        }
+        run.publicExit = { groupAlive, proofDelivered: run.proofDelivered }
+        fire()
+      }),
+    )
+    run.ptyOutput = output
+    void output.outputSettled.then(run.emittedClose.resolve)
+    if (run.launchError) {
+      // The helper was actually spawned, but callback installation fails
+      // before the runtime can bind the native process.
+      output.pty.onExit = () => {
+        throw run.launchError
+      }
+    }
+    return output.pty
+  }
   return {
     ...api,
     spawnOwnedProgram: ((...args: Parameters<typeof api.spawnOwnedProgram>) => {
@@ -160,36 +190,15 @@ vi.mock('../../../../main/plugin-api', async (original) => {
       native.fixture!.record(run, child, 'owned-process descriptor', true)
       return child
     }) as typeof api.spawnOwnedProgram,
-    defaultSpawnPty: (bin: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
-      const run = native.fixture!.runs.at(-1)!
-      const prepared = run.prepared!
-      expect(options.env).toBe(prepared.options.env)
-      const child = spawn(bin, args, prepared.options)
-      native.fixture!.record(run, child, prepared.args[1]!, false)
-      const output = leasedPty(child, (fire) =>
-        run.close.dispatch(() => {
-          let groupAlive = true
-          try {
-            process.kill(-run.pid, 0)
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-            groupAlive = false
-          }
-          run.publicExit = { groupAlive, proofDelivered: run.proofDelivered }
-          fire()
-        }),
-      )
-      run.ptyOutput = output
-      void output.outputSettled.then(run.emittedClose.resolve)
-      if (run.launchError) {
-        // The helper was actually spawned, but callback installation fails
-        // before the runtime can bind the native process.
-        output.pty.onExit = () => {
-          throw run.launchError
-        }
-      }
-      return output.pty
-    },
+    defaultSpawnPty: Object.assign(spawnPty, {
+      // Match core's preflight/thunk seam. No native child exists during preflight;
+      // the thunk spawns the real lease helper and binds the output adapter.
+      preload:
+        () =>
+        (...args: Parameters<typeof spawnPty>) =>
+        () =>
+          spawnPty(...args),
+    }),
   }
 })
 
