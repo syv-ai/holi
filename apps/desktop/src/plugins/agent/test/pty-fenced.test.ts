@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -59,6 +59,7 @@ function rig(
   root: string,
   runtime: Partial<AgentTerminalsDeps>,
   release = vi.fn(async (_state: string) => {}),
+  command = { bin: '/bin/sh', args: ['-c', 'exit 91'] },
 ) {
   const vault = { root, remote: 'test/vault' }
   const emit = vi.fn()
@@ -70,8 +71,7 @@ function rig(
     installed: () => true,
     configure: async () => ({ dir: root }),
     terminal: () => ({
-      bin: '/bin/sh',
-      args: ['-c', 'exit 91'],
+      ...command,
       env: { PATH: '/provider', MODE: 'provider' },
     }),
     capabilities: { fenced: 'sandbox' },
@@ -368,6 +368,151 @@ it.each(['copy', 'release'] as const)(
     } finally {
       // This rig has no OS child; only the test owns these directories.
       await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
+it.skipIf(process.platform === 'win32')(
+  'retains fenced scratch and the first timeout after provider release returns late',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-pty-fenced-'))
+    const release = deferred<void>()
+    const entered = deferred<string>()
+    let exit!: (e: { exitCode: number }) => void
+    const pty = {
+      pid: 999_999,
+      onExit: (cb: typeof exit) => {
+        exit = cb
+      },
+      onData() {},
+      write() {},
+      resize() {},
+      kill: vi.fn(),
+    }
+    const proof = vi.fn(async () => {})
+    const t = rig(
+      root,
+      { spawnPty: () => pty, superviseGroup: () => ({ drain: proof }) },
+      vi.fn((state: string) => {
+        entered.resolve(state)
+        return release.promise
+      }),
+    )
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const run = await t.start()
+      if (!run.ok) throw new Error(run.message)
+      exit({ exitCode: 0 })
+      const state = await entered.promise
+      await writeFile(join(state, 'private'), 'provider resource')
+      const [scope] = await readdir(join(root, 'agent-ownership'))
+      const registry = join(root, 'agent-ownership', scope!, 'fenced')
+      const [link] = await readdir(registry)
+      await vi.advanceTimersByTimeAsync(5_000)
+      const failure = await t.sessions.stop(run.sessionId).catch((error: unknown) => error)
+      expect(failure).toMatchObject({ message: expect.stringMatching(/exit callbacks.*timed out/) })
+      release.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(t.sessions.stop(run.sessionId)).rejects.toBe(failure)
+      await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [failure] })
+      await expect(t.fenced.leave()).rejects.toMatchObject({ errors: [failure] })
+      expect(await readdir(t.scratchRoot)).toHaveLength(2)
+      expect(await readFile(join(state, 'private'), 'utf8')).toBe('provider resource')
+      expect(await readdir(registry)).toEqual([link])
+      expect(await readFile(join(registry, link!, 'failed'), 'utf8')).toContain(String(failure))
+      expect(t.sessions.has(run.sessionId)).toBe(true)
+      expect(t.sessions.sessions().some((row) => row.outcome === 'completed')).toBe(false)
+      expect(proof).toHaveBeenCalledOnce()
+      expect(pty.kill).not.toHaveBeenCalled()
+    } finally {
+      release.resolve()
+      await vi.advanceTimersByTimeAsync(10_000)
+      vi.clearAllTimers()
+      vi.useRealTimers()
+      // Paired fake adapter and proof: no operating-system PID work.
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
+it.skipIf(process.platform === 'win32')(
+  'stops the native fenced lease before the provider body can run',
+  async () => {
+    const helper = buildLeaseForTests()
+    const root = await mkdtemp(join(tmpdir(), 'holi-pty-fenced-'))
+    const leases = join(root, 'receipts')
+    await mkdir(leases)
+    native.helper = helper.binary
+    native.directory = leases
+    const marker = join(root, 'provider-entered')
+    let pid: number | undefined
+    let journal: string | undefined
+    let proof: string | undefined
+    const reaped = deferred<void>()
+    void reaped.promise.catch(() => {})
+    native.spawn.mockImplementationOnce((file, args, opts) => {
+      // Use the real named lease and a native detached root, not a fake PID.
+      journal = args[4]
+      const child = spawn(file, args, {
+        cwd: opts.cwd,
+        env: opts.env,
+        detached: true,
+        stdio: 'ignore',
+      })
+      pid = child.pid
+      child.once('error', reaped.reject)
+      let onExit: ((e: { exitCode: number }) => void) | undefined
+      const pty = {
+        pid,
+        _boundClose: false,
+        onExit(cb: typeof onExit) {
+          onExit = cb
+        },
+        onData() {},
+        write() {},
+        resize() {},
+        kill: vi.fn(),
+      }
+      child.once('exit', (code) => {
+        reaped.resolve()
+        pty._boundClose = true
+        onExit?.({ exitCode: code ?? 1 })
+      })
+      return pty
+    })
+    const t = rig(
+      root,
+      {},
+      vi.fn(async () => {
+        proof = await readFile(journal!, 'utf8')
+      }),
+      { bin: '/usr/bin/touch', args: [marker] },
+    )
+    try {
+      const run = await t.start()
+      if (!run.ok) throw new Error(run.message)
+      await expect(t.sessions.stop(run.sessionId)).resolves.toEqual({ ok: true })
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(t.sessions.has(run.sessionId)).toBe(false)
+      await t.fenced.leave()
+      await expect(access(t.scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await t.terminals.closeAll().catch(() => {})
+      if (pid !== undefined) {
+        await reaped.promise
+        const evidence = proof ?? (await readFile(journal!, 'utf8'))
+        const ids = new Set([pid])
+        for (const [, found] of evidence.matchAll(/^(?:ROOT|REAPER|ANCHOR) (\d+)$/gm))
+          ids.add(Number(found))
+        for (const id of ids) {
+          for (const p of [id, -id])
+            expect(() => process.kill(p, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        }
+      }
+      // Retain the fixture unless caller proof and independent probes agree.
+      expect(await readdir(leases)).toEqual([])
+      await rm(root, { recursive: true, force: true })
+      await rm(helper.directory, { recursive: true, force: true })
     }
   },
 )

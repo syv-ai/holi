@@ -146,27 +146,29 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     // Link before even creating the scratch. A crash in staging is an
     // unknown intent until it has an explicit refusal or physical proof.
     const ownership = deps.ownership?.allocate('fenced', id)
-    const recordFailure = (error: unknown): void => {
+    let firstFailure: { error: unknown } | undefined
+    const recordFailure = (error: unknown): unknown => {
+      if (firstFailure !== undefined) return firstFailure.error
+      firstFailure = { error }
       drainErrors.add(error)
       try {
         ownership?.fail(error)
       } catch (recordError) {
         drainErrors.add(recordError)
       }
+      return error
     }
     const controller = new AbortController()
     cancellations.add(controller)
     let sessionId: string | null = null
-    const drop = async (): Promise<void> => {
-      try {
-        await rm(dir, { recursive: true, force: true })
-        await rm(state, { recursive: true, force: true })
-        cancellations.delete(controller)
-        if (sessionId !== null) active.delete(sessionId)
-      } catch (err) {
-        drainErrors.add(err)
-        throw err
-      }
+    const drop = async (signal?: AbortSignal): Promise<void> => {
+      signal?.throwIfAborted()
+      await rm(dir, { recursive: true, force: true })
+      signal?.throwIfAborted()
+      await rm(state, { recursive: true, force: true })
+      signal?.throwIfAborted()
+      cancellations.delete(controller)
+      if (sessionId !== null) active.delete(sessionId)
     }
     const discard = async (unlaunched: boolean): Promise<void> => {
       try {
@@ -209,36 +211,39 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     // One copy at a time: a turn's end and the exit never overlap.
     // How it went goes on the session's row, where its caller reads it.
     let chain: Promise<unknown> = Promise.resolve()
-    const copy = (): Promise<FenceCopy> => {
+    const copy = (deadline?: AbortSignal): Promise<FenceCopy> => {
       const next = chain.then(async (): Promise<FenceCopy> => {
         try {
+          deadline?.throwIfAborted()
           const { written, skipped } = await deps.copyBack(
             dir,
             scope.write,
             made,
             controller.signal,
+            deadline,
           )
+          deadline?.throwIfAborted()
           log(`${name}: ${written} file(s) copied back, ${skipped.length} left out`)
           const leftOut = leftOutMessage(skipped)
           return leftOut === undefined ? {} : { leftOut }
         } catch (err) {
-          // This error is raised only after temporary files are removed and
-          // any moved destination is restored. An aborted signal alone says
-          // nothing about whether a real mutation or cleanup failed.
+          deadline?.throwIfAborted()
+          // Ordinary cancellation only succeeds after rollback and cleanup.
           if (err instanceof CopyBackCancelled) return {}
-          recordFailure(err)
-          log(`${name}: ${(err as Error).message}`)
-          throw err
+          log(`${name}: ${String(err)}`)
+          throw recordFailure(err)
         }
       })
       chain = next
+      return next
+    }
+
+    function turnEnded(): Promise<FenceCopy> {
+      const next = copy()
       copies.add(next)
       void next.then(
         () => copies.delete(next),
-        (err: unknown) => {
-          drainErrors.add(err)
-          copies.delete(next)
-        },
+        () => copies.delete(next),
       )
       return next
     }
@@ -269,27 +274,30 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
             dir,
             state,
             canLaunch: () => !left() && failedStarts.size === 0,
-            turnEnded: copy,
-            exited: () => {
-              const finalizer = copy()
-                .then(async (result) => {
-                  try {
-                    await provider.release?.(state)
-                    return result
-                  } catch (err) {
-                    recordFailure(err)
-                    throw err
-                  }
-                })
-                .then(async (result) => {
-                  try {
-                    await drop()
-                    return result
-                  } catch (error) {
-                    recordFailure(error)
-                    throw error
-                  }
-                })
+            turnEnded,
+            exited: (signal) => {
+              const work = (async () => {
+                try {
+                  const result = await copy(signal)
+                  signal?.throwIfAborted()
+                  await provider.release?.(state)
+                  await drop(signal)
+                  return result
+                } catch (error) {
+                  throw recordFailure(signal?.aborted ? signal.reason : error)
+                }
+              })()
+              let abort: (() => void) | undefined
+              const cancelled = new Promise<never>((_, reject) => {
+                abort = () => reject(recordFailure(signal?.reason))
+                if (signal?.aborted) abort()
+                else signal?.addEventListener('abort', abort, { once: true })
+              })
+              // Join the PTY's callback deadline, not a new timer. A timed-out
+              // provider may still resolve; the work above must not retire it.
+              const finalizer = Promise.race([work, cancelled]).finally(() => {
+                if (abort !== undefined) signal?.removeEventListener('abort', abort)
+              })
               finalizers.add(finalizer)
               void finalizer.then(
                 () => finalizers.delete(finalizer),

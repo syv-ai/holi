@@ -148,6 +148,7 @@ export interface Jobs {
     write: readonly string[],
     made: Made,
     signal?: AbortSignal,
+    deadline?: AbortSignal,
   ): Promise<{ written: number; skipped: string[] }>
 }
 
@@ -399,8 +400,10 @@ async function createExclusive(
   abs: string,
   data: Buffer,
   stopped: () => boolean,
+  deadline?: AbortSignal,
 ): Promise<boolean> {
   await mkdir(dirname(abs), { recursive: true })
+  if (stopped()) throw new CopyBackCancelled()
   const tmp = join(dirname(abs), `.holi-tmp-${randomBytes(6).toString('hex')}`)
   try {
     await writeFile(tmp, data)
@@ -411,6 +414,7 @@ async function createExclusive(
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false
     throw err
   } finally {
+    deadline?.throwIfAborted()
     try {
       await rm(tmp, { force: true })
     } catch (err) {
@@ -474,8 +478,8 @@ export function createJobs(deps: JobsDeps): Jobs {
       startedAt: j.startedAt,
       ...(j.model === undefined ? {} : { model: j.model }),
       ...(j.tokens > 0 ? { usage: { total: j.tokens } } : {}),
-      ...((j.busy && !j.finalizing) || j.outcome === undefined ? {} : { outcome: j.outcome }),
-      ...((j.busy && !j.finalizing) || j.message === undefined
+      ...(j.busy || j.outcome === undefined ? {} : { outcome: j.outcome }),
+      ...(j.busy || j.message === undefined
         ? {}
         : j.outcome === 'failed'
           ? { error: j.message }
@@ -510,7 +514,8 @@ export function createJobs(deps: JobsDeps): Jobs {
     job.stopped ??= why
     job.queue = []
     job.copyController?.abort()
-    await job.turn?.stop(job.exited)
+    job.turn?.stop()
+    await job.exited
   }
 
   /** Move the current file aside atomically, then publish the replacement
@@ -523,24 +528,28 @@ export function createJobs(deps: JobsDeps): Jobs {
     data: Buffer,
     before: string,
     stopped: () => boolean,
+    deadline?: AbortSignal,
   ) {
     const hold = await mkdtemp(join(dirname(abs), '.holi-copy-'))
     const previous = join(hold, 'previous')
     let moved = false
     let keep = false
     try {
+      if (stopped()) throw new CopyBackCancelled()
       await rename(abs, previous)
       moved = true
       const old = await readRegular(previous)
       if (old === null || hashOf(old) !== before) throw new Error(collision(rel))
+      deadline?.throwIfAborted()
       await deps.beforePublish?.(rel)
       // Check an open descriptor's write before publishing the replacement.
       // A write after this check is the residual race the vault accepts.
       const after = await readRegular(previous)
       if (after === null || hashOf(after) !== before) throw new Error(collision(rel))
       if (stopped()) throw new CopyBackCancelled()
-      if (!(await createExclusive(abs, data, stopped))) throw new Error(collision(rel))
+      if (!(await createExclusive(abs, data, stopped, deadline))) throw new Error(collision(rel))
     } catch (err) {
+      deadline?.throwIfAborted()
       if (moved) {
         try {
           // Restore independently of reads: even an unreadable original must
@@ -573,6 +582,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       }
       throw err
     } finally {
+      deadline?.throwIfAborted()
       if (!keep) {
         try {
           await rm(hold, { recursive: true, force: true })
@@ -594,8 +604,10 @@ export function createJobs(deps: JobsDeps): Jobs {
     dir: string,
     write: readonly string[],
     made: Made,
+    deadline?: AbortSignal,
   ): Promise<{ written: number; skipped: string[] }> {
-    const stopped = (): boolean => job.stopped !== undefined || job.signal?.aborted === true
+    const stopped = (): boolean =>
+      job.stopped !== undefined || job.signal?.aborted === true || deadline?.aborted === true
     const skipped: string[] = []
     const allowed: { path: string; rel: VaultRelPath }[] = []
     let bytes = 0
@@ -672,7 +684,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         // A new file: written only where nothing is, even something that
         // arrived after the checks above (a sync bringing the same app).
         if (stopped()) break
-        if (!(await createExclusive(abs, data, stopped))) throw new Error(collision(rel))
+        if (!(await createExclusive(abs, data, stopped, deadline))) throw new Error(collision(rel))
       } else {
         // What this run was given or wrote before: written over only while
         // the vault still holds exactly that, read again just before.
@@ -682,12 +694,14 @@ export function createJobs(deps: JobsDeps): Jobs {
             `Holi did not copy back what the agent wrote: ${rel} changed in the vault since the agent wrote it, and Holi never writes over it.`,
           )
         }
+        deadline?.throwIfAborted()
         await deps.beforeReplace?.(rel)
         if (stopped()) break
-        await replaceKnown(abs, rel, data, before, stopped)
+        await replaceKnown(abs, rel, data, before, stopped, deadline)
       }
       made.set(rel, hash)
       written += 1
+      deadline?.throwIfAborted()
       await deps.afterWrite?.(rel)
     }
     return { written, skipped }
@@ -730,6 +744,13 @@ export function createJobs(deps: JobsDeps): Jobs {
     delete job.stopped
     clearTimeout(job.dropTimer)
     const fail = (error: unknown) => rememberFailure(job, receipt, error)
+    const tooLong = setTimeout(() => {
+      void kill(job, 'The job ran too long and was stopped.').catch((error: unknown) =>
+        log(`${id}: could not stop: ${String(error)}`),
+      )
+    }, maxMs)
+    tooLong.unref?.()
+
     const turn = startJobTurn({
       id,
       provider,
@@ -738,6 +759,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       killGraceMs,
       ...(deps.spawn && { spawn: deps.spawn }),
       rememberFailure: fail,
+      onDraining: () => clearTimeout(tooLong),
       progress(event) {
         if (event.kind === 'thread') {
           job.thread ??= event.id
@@ -755,73 +777,79 @@ export function createJobs(deps: JobsDeps): Jobs {
           .then(() => deps.bracket?.(id, 'begin'))
           .catch(fail)
       : undefined
-    const tooLong = setTimeout(() => {
-      void kill(job, 'The job ran too long and was stopped.').catch((error: unknown) =>
-        log(`${id}: could not stop: ${String(error)}`),
-      )
-    }, maxMs)
-    tooLong.unref?.()
-
     job.exited = (async () => {
       try {
         const output = await turn.output
         clearTimeout(tooLong)
-        await bracketBegin
-        // Physical failure never reaches release. A failed bracket still
-        // needs its end attempted, but cannot publish or delete scratch.
-        try {
-          await provider.release?.(job.state)
-        } catch (error) {
-          fail(error)
-        }
-        let outcome: 'completed' | 'failed' = 'failed'
-        let why = job.finalizationError?.message ?? job.stopped ?? output.refusal
-        if (why === undefined && output.completed) {
-          outcome = 'completed'
-          if (job.dir !== null) {
-            try {
-              job.copyController = new AbortController()
-              const { written, skipped } = await copyBack(
-                { ...job, signal: job.copyController.signal },
-                job.dir,
-                write,
-                job.made,
-              )
-              log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
-              why = leftOutMessage(skipped)
-            } catch (error) {
-              outcome = 'failed'
-              why = error instanceof Error ? error.message : String(error)
-              if (error instanceof CopyBackFinalizationError) fail(error)
-            }
-          } else log(`${id}: turn done`)
-        } else {
-          why ??= output.failure
-          log(`${id}: failed: ${why}`)
-        }
-        job.outcome = job.stopped === undefined ? outcome : 'failed'
-        job.message = job.finalizationError?.message ?? job.stopped ?? why
-        if (job.dir !== null && job.finalizationError === undefined) {
-          const results = await Promise.allSettled([
-            rm(job.dir, { recursive: true, force: true }),
-            rm(job.state, { recursive: true, force: true }),
-          ])
-          for (const result of results) if (result.status === 'rejected') fail(result.reason)
-        }
-        // Publish the outcome before ending the bracket, but keep the turn
-        // owned through persistence and the remaining cleanup.
+        const controller = new AbortController()
+        const { signal } = controller
         job.finalizing = true
         push()
-        if (bracket) {
+        const finish = async () => {
+          await bracketBegin
+          signal.throwIfAborted()
+          // Physical/output failure never reaches release. A failed bracket
+          // still needs its end attempted, but cannot publish or delete scratch.
           try {
-            await deps.bracket?.(id, 'end')
+            await provider.release?.(job.state)
           } catch (error) {
+            signal.throwIfAborted()
             fail(error)
           }
+          signal.throwIfAborted()
+          let outcome: 'completed' | 'failed' = 'failed'
+          let why = job.finalizationError?.message ?? job.stopped ?? output.refusal
+          if (why === undefined && output.completed) {
+            outcome = 'completed'
+            if (job.dir !== null) {
+              try {
+                job.copyController = new AbortController()
+                const { written, skipped } = await copyBack(
+                  { ...job, signal: job.copyController.signal },
+                  job.dir,
+                  write,
+                  job.made,
+                  signal,
+                )
+                signal.throwIfAborted()
+                log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
+                why = leftOutMessage(skipped)
+              } catch (error) {
+                signal.throwIfAborted()
+                outcome = 'failed'
+                why = error instanceof Error ? error.message : String(error)
+                if (error instanceof CopyBackFinalizationError) fail(error)
+              }
+            } else log(`${id}: turn done`)
+          } else {
+            why ??= output.failure
+            log(`${id}: failed: ${why}`)
+          }
+          if (bracket) {
+            try {
+              await deps.bracket?.(id, 'end')
+            } catch (error) {
+              signal.throwIfAborted()
+              fail(error)
+            }
+          }
+          signal.throwIfAborted()
+          if (job.dir !== null && job.finalizationError === undefined) {
+            await rm(job.dir, { recursive: true, force: true })
+            signal.throwIfAborted()
+            await rm(job.state, { recursive: true, force: true })
+          }
+          return { outcome, why }
         }
-        if (job.finalizationError === undefined) {
-          if (job.dir !== null) await job.files.retire()
-          else receipt.phase('SETTLED')
+        try {
+          const { outcome, why } = await bounded(finish(), `Finalization of job ${id}`)
+          // Persist caller settlement before publishing the row. As with vault
+          // jobs, the link is retired when the job leaves the list.
+          if (job.finalizationError === undefined) receipt.phase('SETTLED')
+          job.outcome = job.stopped === undefined ? outcome : 'failed'
+          job.message = job.finalizationError?.message ?? job.stopped ?? why
+        } catch (error) {
+          controller.abort(fail(error))
         }
       } catch (error) {
         fail(error)
@@ -938,7 +966,8 @@ export function createJobs(deps: JobsDeps): Jobs {
   async function finishRefusal(job: Job, message: string): Promise<JobResult> {
     job.retiring = true
     try {
-      await job.turn?.stop(job.exited)
+      job.turn?.stop()
+      await job.exited
       await drop(job)
     } catch (err) {
       return { ok: false, message: `${message} Could not finalize job: ${String(err)}` }
@@ -1155,6 +1184,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       await leaving
     },
 
-    copyBack: (dir, write, made, signal) => copyBack({ signal }, dir, write, made),
+    copyBack: (dir, write, made, signal, deadline) =>
+      copyBack({ signal }, dir, write, made, deadline),
   }
 }
