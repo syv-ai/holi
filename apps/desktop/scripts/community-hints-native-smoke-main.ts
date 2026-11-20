@@ -17,6 +17,7 @@ app.setPath('userData', userData)
 app.setPath('sessionData', join(root, 'session'))
 let shutdown: (() => Promise<void>) | undefined
 let exiting = false
+const leaseEvents: { kind: string; lease: unknown }[] = []
 app.on('before-quit', (event) => {
   if (exiting) return
   event.preventDefault()
@@ -40,7 +41,7 @@ async function main() {
     join(vault, '.holi/settings/plugins.yaml'),
     'plugins:\n  community: true\n  smoke-plugin: true\n',
   )
-  await writeFile(join(vault, 'slides.md'), '# Native community hint fixture\n')
+  await writeFile(join(vault, 'slides.fixture'), '# Native community retention fixture\n')
   const store = createInstallStore(userData)
   const consent = createConsentStore(join(userData, 'plugin-consent.json'))
   const checks = createChecks()
@@ -117,18 +118,26 @@ async function main() {
       if (op.path !== 'cap.run' || op.input.remote !== remote || !op.input.name)
         return { ok: false, message: 'unsupported fixture operation' }
       try {
-        return {
-          ok: true,
-          data: await call(
-            op.input.name,
-            op.input.paramsJson ? JSON.parse(op.input.paramsJson) : {},
-          ),
-        }
+        const params = op.input.paramsJson ? JSON.parse(op.input.paramsJson) : {}
+        const data = await call(op.input.name, params)
+        if (op.input.name === 'community.acquire')
+          leaseEvents.push({ kind: 'acquire', lease: (data as { lease?: unknown }).lease })
+        if (op.input.name === 'community.release')
+          leaseEvents.push({
+            kind: 'release',
+            lease: (params as { lease?: unknown }).lease,
+          })
+        return { ok: true, data }
       } catch (error) {
         return { ok: false, message: String(error) }
       }
     },
   )
+  ipcMain.handle('smoke:lease-events', (event) => {
+    if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)
+      throw new Error('foreign fixture sender')
+    return leaseEvents
+  })
   ipcMain.on('smoke:quit', (event) => {
     if (event.sender === window.webContents) app.quit()
   })

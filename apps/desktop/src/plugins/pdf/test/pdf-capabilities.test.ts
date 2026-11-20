@@ -77,7 +77,9 @@ async function fakeTypst(): Promise<string> {
   await writeFile(
     bin,
     '#!/usr/bin/env node\n' +
-      "const out = process.argv.slice(1).find((arg) => arg.endsWith('.pdf'));\n" +
+      'const args = process.argv.slice(2);\n' +
+      "const out = args.find((arg) => arg.endsWith('.pdf'));\n" +
+      `require('node:fs').copyFileSync(args[1], ${JSON.stringify(join(base, 'compiled-wrapper.typ'))});\n` +
       "require('node:fs').writeFileSync(out, '%PDF-1.7\\nfake')\n",
   )
   await chmod(bin, 0o755)
@@ -144,9 +146,21 @@ describe('pdf capabilities', () => {
       true,
     )
     const out = join(base, 'report.pdf')
-    const result = await run('pdf.render', { path: 'note.md', template: 'report', out })
+    const result = await run(
+      'pdf.render',
+      {
+        path: 'note.md',
+        template: 'report',
+        out,
+        meta: { title: 'CLI title', client: 'CLI client' },
+      },
+      'cli',
+    )
     expect(result).toMatchObject({ pdfPath: out, vaultPath: null, bytes: expect.any(Number) })
     expect((await readFile(out)).toString()).toContain('%PDF-1.7')
+    const wrapper = await readFile(join(base, 'compiled-wrapper.typ'), 'utf8')
+    expect(wrapper).toContain('client: "CLI client"')
+    expect(reportTemplateTyp).toContain('meta.at("client", default: none)')
     expect(await readFile(join(root, '.holi/document-templates/report/template.typ'), 'utf8')).toBe(
       reportTemplateTyp,
     )

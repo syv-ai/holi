@@ -20,6 +20,10 @@ import { useRetainedSurfaces } from '@/features/shell/retained-surfaces'
 // eslint-disable-next-line no-restricted-imports
 import { googleRenderer } from '../../../../../plugins/google/renderer/index'
 import { activeRemoteAtom } from '@/plugin-api'
+import { openSurfaceAtom } from '@/state/surfaces'
+// The app bridge is the real entrypoint for `holi.open('mail')`.
+// eslint-disable-next-line no-restricted-imports
+import { openTarget } from '../../../../../plugins/apps/renderer/bridge-host'
 
 const searchMock = vi.fn()
 const threadMock = vi.fn()
@@ -331,6 +335,33 @@ test('Mail, session and code-file hosts retain and dispose independently', async
   act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, codeKey)))
   expect(code.isConnected).toBe(false)
 })
+
+test.each(['vault app', 'named surface'])(
+  '%s opens the registered name into retained Mail and back',
+  async (entrypoint) => {
+    const { store, show } = mountMailTabs(false)
+    await screen.findByRole('textbox', { name: 'Other app state' })
+
+    act(() => {
+      if (entrypoint === 'vault app')
+        expect(openTarget(store, { target: 'mail' })).toEqual({ ok: true })
+      else store.set(openSurfaceAtom, 'mail')
+    })
+    const list = await screen.findByRole('list', { name: 'Inbox' })
+    await userEvent.click(within(list).getByText('Q2 budget'))
+    expect(await screen.findByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+
+    show(otherKey)
+    const foreground = await screen.findByRole('textbox', { name: 'Other app state' })
+    expect(screen.queryByRole('heading', { name: 'Q2 budget' })).toBeNull()
+    show(mailKey)
+    expect(await screen.findByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+
+    act(() => store.set(shellWorkspaceAtom, (workspace) => closeTab(workspace, mailKey)))
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Inbox' })).toBeNull())
+    expect(foreground).toBeInTheDocument()
+  },
+)
 
 test('shell switch and back retains real Mail list, selection and scroll without refetching', async () => {
   const { show } = mountMailTabs()

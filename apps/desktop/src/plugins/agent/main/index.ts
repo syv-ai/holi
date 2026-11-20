@@ -57,6 +57,8 @@ export const agentMain: MainPlugin = {
   seed: claudeSeed,
   async activate(ctx) {
     const { app, nativeTheme } = await import('electron')
+    if (ctx.activationSignal.aborted)
+      throw new Error(`agent activation for ${ctx.remote} was cancelled`)
     // This machine's agents: the built-in three, each reading its preset as
     // it runs, and the ones a person added in Settings
     // (docs/features/agent-sessions.md, Harnesses).
@@ -91,6 +93,24 @@ export const agentMain: MainPlugin = {
       },
     })
     let started: ReturnType<typeof createAgentSessions> | undefined
+    const ownedWork = new Set<Promise<unknown>>()
+    const ownedFailures: unknown[] = []
+    const trackOwned = <T>(work: Promise<T>): Promise<T> => {
+      ownedWork.add(work)
+      void work.then(
+        () => ownedWork.delete(work),
+        (error: unknown) => {
+          ownedFailures.push(error)
+          ownedWork.delete(work)
+        },
+      )
+      return work
+    }
+    const drainOwned = async (): Promise<void> => {
+      while (ownedWork.size > 0) await Promise.allSettled([...ownedWork])
+      if (ownedFailures.length > 0)
+        throw new AggregateError(ownedFailures.splice(0), 'agent callbacks failed to drain')
+    }
     const activationOwners: Array<() => unknown | Promise<unknown>> = [() => harnesses.dispose()]
     const assertActive = (): void => {
       if (ctx.activationSignal.aborted)
@@ -165,6 +185,7 @@ export const agentMain: MainPlugin = {
       // Fix the session host to this activation's vault before exposing any
       // provider hook routes; early hook reports queue against this owner.
       await sessions.ensure(ctx)
+      assertActive()
       // Pi's RPC runs find `pi` and its environment as its terminals do: the
       // preset's program and variables, its arguments being a terminal's alone.
       const piRuns = piCommand({
@@ -175,6 +196,7 @@ export const agentMain: MainPlugin = {
         bin: piRuns.bin,
         env: piRuns.env,
         binDir: ctx.binDir,
+        activationSignal: ctx.activationSignal,
         bracket: (id, edge) => sessions.bracket(id, edge),
         changed: () => {
           piSessions = piBackground.sessions()
@@ -210,6 +232,7 @@ export const agentMain: MainPlugin = {
       })
       activationOwners.push(() => ptySessions.leave())
       ownPast = await ptySessions.past()
+      assertActive()
       pushHistory()
       // Prompts run unwatched by a provider without a supervisor: in a scratch
       // folder of their own, or in the vault, whose turns pause sync and are
@@ -217,6 +240,7 @@ export const agentMain: MainPlugin = {
       // context, so startup recovery and leave cannot reach another vault.
       const vault = { remote: ctx.remote, root: ctx.root }
       const scratchRoots = await agentScratchRoots(ctx.userData, vault)
+      assertActive()
       const jobs = createJobs({
         vault,
         scratchRoot: scratchRoots.jobs,
@@ -248,6 +272,7 @@ export const agentMain: MainPlugin = {
       })
       const unproviders = harnesses.subscribe(() => ctx.emit(ctx.remote, 'providers', null))
       activationOwners.push(() => unproviders())
+      assertActive()
       ctx.register(AGENT_NAMESPACES, {
         ...agentCapabilities({
           sessions: started,
@@ -277,13 +302,25 @@ export const agentMain: MainPlugin = {
         raise: (notice) => inbox.raise(notice),
         log: (msg) => console.error(`[agent] ${msg}`),
       })
-      activationOwners.push(() => unwatchNeedsYou())
+      let needsYouStop: Promise<void> | undefined
+      const stopNeedsYou = (): Promise<void> => (needsYouStop ??= unwatchNeedsYou())
+      const needsYouFailures: unknown[] = []
+      const revokeNeedsYou = (): void => {
+        void stopNeedsYou().catch((error: unknown) => needsYouFailures.push(error))
+      }
+      ctx.activationSignal.addEventListener('abort', revokeNeedsYou, { once: true })
+      activationOwners.push(async () => {
+        ctx.activationSignal.removeEventListener('abort', revokeNeedsYou)
+        await stopNeedsYou()
+        if (needsYouFailures.length > 0)
+          throw new AggregateError(needsYouFailures.splice(0), 'needs-you watcher failed to stop')
+      })
       // A teammate's comment that mentions the person, found after a pull.
       const unmention = ctx.onMention((mention) => {
         if (ctx.activationSignal.aborted) return
-        void inbox
-          .raise(mentionNotice(mention))
-          .catch((err: unknown) => console.error('[agent] mention:', err))
+        void trackOwned(inbox.raise(mentionNotice(mention))).catch((err: unknown) =>
+          console.error('[agent] mention:', err),
+        )
       })
       activationOwners.push(() => unmention())
       // Keystrokes and resizes, in the order they were typed. The host drops
@@ -310,18 +347,26 @@ export const agentMain: MainPlugin = {
       // routes are served once.
       for (const p of providers().filter((x) => x.custom !== true)) {
         p.capabilities.turns?.routes(ctx, {
-          onTurn: async (remote, id, active, pending, pid) => {
-            if (ctx.activationSignal.aborted) return null
-            if (PTY_SESSION_ID.test(id)) {
-              if (remote === ctx.remote) ptySessions.noteTurn(id, active)
-              return null
-            }
-            // The settle commit's tree, for the Stop hook to save as where the
-            // turn left the vault.
-            const commit = await sessions.noteTurn(remote, id, active, pending, pid)
-            if (commit === null) return null
-            return runGit(ctx.root, ['rev-parse', '--verify', `${commit}^{tree}`]).catch(() => null)
-          },
+          onTurn: (remote, id, active, pending, pid) =>
+            trackOwned(
+              (async () => {
+                if (ctx.activationSignal.aborted || remote !== ctx.remote) return null
+                if (PTY_SESSION_ID.test(id)) {
+                  ptySessions.noteTurn(id, active)
+                  return null
+                }
+                // The settle commit's tree, for the Stop hook to save as where the
+                // turn left the vault.
+                const commit = await sessions.noteTurn(remote, id, active, pending, pid)
+                if (commit === null) return null
+                const tree = await runGit(ctx.root, [
+                  'rev-parse',
+                  '--verify',
+                  `${commit}^{tree}`,
+                ]).catch(() => null)
+                return ctx.activationSignal.aborted ? null : tree
+              })(),
+            ),
           // A session's status line: how much of its context is used.
           onStatus: (remote, id, status) => {
             if (!ctx.activationSignal.aborted) sessions.noteStatus(remote, id, status)
@@ -406,15 +451,15 @@ export const agentMain: MainPlugin = {
       return async () => {
         clearInterval(sweepTimer)
         unsignal()
-        await sweeping
         unreport()
         unmention()
         unproviders()
-        unwatchNeedsYou()
         // A fenced session still starting opens nothing now, or is one the
         // sessions' leave ends.
         const failures: unknown[] = []
         for (const cleanup of [
+          stopNeedsYou,
+          () => sweeping,
           () => fenced.closing(),
           () => ptySessions.leave(),
           () => piBackground.leave(),
@@ -423,6 +468,7 @@ export const agentMain: MainPlugin = {
           () => sessions.leave(),
           () => terminals.closeAll(),
           () => harnesses.dispose(),
+          () => drainOwned(),
         ]) {
           try {
             await cleanup()

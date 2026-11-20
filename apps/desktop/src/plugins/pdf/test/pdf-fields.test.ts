@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import type { TemplateField } from '../shared/template-fields'
 import { describe, expect, it } from 'vitest'
 import {
@@ -115,6 +116,47 @@ describe('prefillValues', () => {
   it('never seeds a key the template does not declare (no leak)', () => {
     const fields = [field({ key: 'title', type: 'text' })]
     expect(prefillValues(fields, { title: 'T', recipient: 'ACME' }, today)).toEqual({ title: 'T' })
+  })
+})
+
+describe('Report field integration', () => {
+  it('declares Client in the shipped Report so dialog and CLI both infer it', async () => {
+    const manifest = JSON.parse(
+      await readFile(
+        new URL(
+          '../main/vault/once/.holi/document-templates/report/template.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    ) as { fields: TemplateField[] }
+    const fields = manifest.fields
+    const template = await readFile(
+      new URL('../main/vault/once/.holi/document-templates/report/template.typ', import.meta.url),
+      'utf8',
+    )
+    expect(template).toContain('meta.at("client", default: none)')
+    expect(template).toContain('if client != none')
+    expect(fields.map((field) => field.key)).toContain('client')
+    expect(
+      fieldValuesFor(
+        fields,
+        'kunder/Acme/reports/analysis.md',
+        '# Market analysis\n',
+        '2026-08-04',
+      ),
+    ).toMatchObject({ title: 'Market analysis', client: 'Acme' })
+    expect(
+      fieldValuesFor(fields, 'notes/analysis.md', '# Market analysis\n', '2026-08-04').client,
+    ).toBe('')
+    expect(
+      fieldValuesFor(
+        fields,
+        'kunder/Acme/reports/analysis.md',
+        '---\nclient: Explicit Co\n---\n# Market analysis\n',
+        '2026-08-04',
+      ).client,
+    ).toBe('Explicit Co')
   })
 })
 

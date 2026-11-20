@@ -137,7 +137,7 @@ interface BackgroundCapability {
   watch(configDir: string, onChange: () => void, log: (msg: string) => void): () => void
   /** Add a message to a running session's conversation through the channel
    *  its hooks reported. Throws a `CapabilityError` when it is not taken. */
-  message(channel: SessionChannel, text: string): Promise<void>
+  message(channel: SessionChannel, text: string, signal?: AbortSignal): Promise<void>
 }
 
 /** What a job's output said, one line of it at a time. */

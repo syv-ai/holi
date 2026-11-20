@@ -12,13 +12,14 @@ import {
   tabKey,
   type TabDescriptor,
 } from './tab-descriptor'
-import { folderClaimsAtom } from './plugins'
+import { folderClaimsAtom, surfacesAtom } from './plugins'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
 /** Open a surface, or focus its tab: a vault app by its bundle, any other
  *  surface by name. */
-export const openSurfaceAtom = atom(null, (_get, set, surface: string, id?: string): void => {
-  set(openTabAtom, shellSurfaceTab(surface, id))
+export const openSurfaceAtom = atom(null, (get, set, surface: string, id?: string): void => {
+  const canonical = id === undefined ? get(surfacesAtom).get(surface)?.openAs : undefined
+  set(openTabAtom, canonical ?? shellSurfaceTab(surface, id))
 })
 
 /** The shell tab a surface opens as. */
