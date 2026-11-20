@@ -34,7 +34,7 @@ import { isApplicationSender, unauthorizedApplicationSender } from './applicatio
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createMdxTrustStore } from './mdx-trust'
-import { createMdxCompiler } from './mdx-compiler'
+import { createMdxResources } from './mdx-resources'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
 import { installNodeFallback } from './bridge/node-fallback'
@@ -352,7 +352,7 @@ async function main(): Promise<void> {
   const session = await createSession()
   // One app-owned handle; never construct a separate trust store per renderer request.
   const mdxTrust = createMdxTrustStore(join(app.getPath('userData'), 'mdx-trust.json'))
-  const mdxCompiler = createMdxCompiler(join(app.getAppPath(), 'out/mdx-compiler'))
+  const mdxCompiler = createMdxResources(join(app.getAppPath(), 'out/mdx-compiler'))
   session.onGenerationChange(() => mdxCompiler.invalidate())
   app.on('will-quit', () => {
     closeMdxDiagnostics()
