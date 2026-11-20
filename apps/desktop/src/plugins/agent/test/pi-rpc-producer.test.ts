@@ -1,13 +1,30 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams, SpawnOptions } from 'node:child_process'
 
 import { createServer } from 'node:http'
-import { existsSync } from 'node:fs'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { once } from 'node:events'
 import { expect, it, onTestFinished } from 'vitest'
 import { PiRpcRun, type PiChild } from '../main/pi/rpc'
-import { ownedProcessDrain, spawnOwnedProgram } from '../../../main/plugin-api'
+import {
+  inspectPosixOwnership,
+  ownedProcessDrain,
+  posixLaunchNonAdmission,
+  spawnOwnedProgram,
+} from '../../../main/plugin-api'
 
 import {
   kernelGroupAbsent,
@@ -41,11 +58,12 @@ async function runVersionCommand(
   cwd: string,
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
-  ledger: Ledger,
+  ledger: Ledger | undefined,
   scheduleDeadline: (callback: () => void, delayMs: number) => () => void = (callback, delayMs) => {
     const timer = setTimeout(callback, delayMs)
     return () => clearTimeout(timer)
   },
+  launch = spawnOwnedProgram,
 ) {
   let stdout = ''
   let stderr = ''
@@ -63,7 +81,7 @@ async function runVersionCommand(
   }, timeoutMs)
   try {
     if (timedOut) return { code: null, stdout, stderr, timedOut, outputExceeded, spawnError }
-    const child = spawnOwnedProgram(bin, ['--version'], {
+    const child = launch(bin, ['--version'], {
       cwd,
       env,
       stdio: 'pipe',
@@ -77,7 +95,7 @@ async function runVersionCommand(
     child.once('error', (error) => {
       spawnError = error.message
     })
-    if (child.pid) {
+    if (ledger && child.pid) {
       const ancestry = ledger.retain(
         ledger.record(child),
         drain,
@@ -105,7 +123,7 @@ async function runVersionCommand(
     await drain()
     const exitCode = await closed
     const code = spawnError ? null : exitCode
-    if (child.pid) kernelGroupAbsent(child.pid)
+    if (ledger && child.pid) kernelGroupAbsent(child.pid)
     return { code, stdout, stderr, timedOut, outputExceeded, spawnError }
   } finally {
     cancelDeadline()
@@ -215,12 +233,154 @@ posixIt('reports version spawn failure and bounds excessive output', async () =>
   })
 })
 
+const leaseRoles = ['version', 'rpc-first', 'rpc-cancel'] as const
+type LeaseRole = (typeof leaseRoles)[number]
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+// The challenge belongs to this one trusted Vitest worker, never the provider.
+// All spawn calls go through the ledger and publish an intent before entering
+// native code; a launch that never establishes durable proof stays unsettled.
+function claimWorker(evidencePath: string, runId: string, nonce: string) {
+  const root = dirname(evidencePath)
+  const workerTmp = join(root, 'worker-tmp')
+  const admissions = join(root, 'admissions')
+  const ownership = join(root, 'ownership')
+  if (!uuid.test(runId) || !uuid.test(nonce) || evidencePath !== join(root, 'evidence.json'))
+    throw new Error('Invalid private Pi probe challenge')
+  for (const path of [root, workerTmp, admissions, ownership]) {
+    const stat = lstatSync(path)
+    if (
+      realpathSync(path) !== path ||
+      !stat.isDirectory() ||
+      stat.uid !== process.getuid?.() ||
+      stat.mode & 0o077
+    )
+      throw new Error('Invalid private Pi probe directory')
+  }
+  const identity = { version: 1, runId, nonce, workerPid: process.pid }
+  const privateFile = { mode: 0o600, flag: 'wx' } as const
+  writeFileSync(join(root, 'worker.json'), JSON.stringify(identity), privateFile)
+  const work = join(workerTmp, 'probe-work')
+  let workCreated = false
+  let admissionClosed = false
+  const attempts: { role: LeaseRole; id: string; path: string; join?: () => Promise<void> }[] = []
+  return {
+    createWork() {
+      mkdirSync(work, { mode: 0o700 })
+      workCreated = true
+      return work
+    },
+    launch(role: LeaseRole, bin: string, args: readonly string[], options: SpawnOptions) {
+      if (admissionClosed || role !== leaseRoles[attempts.length])
+        throw new Error('Unexpected Pi probe lease admission')
+      const id = randomUUID()
+      const path = join(ownership, id)
+      const attempt: (typeof attempts)[number] = { role, id, path }
+      attempts.push(attempt)
+      mkdirSync(join(admissions, `${role}-${id}`), { mode: 0o700 })
+      try {
+        const child = spawnOwnedProgram(bin, args, {
+          ...options,
+          posixGroupLease: true,
+          ownershipRecordPath: path,
+        })
+        const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+        const drain = child[ownedProcessDrain]?.drain
+        let outputError: Error | undefined
+        for (const stream of [child.stdout, child.stderr])
+          stream?.on('error', (error: Error) => {
+            outputError ??= error
+          })
+        attempt.join = async () => {
+          if (!drain) throw new Error('Missing retained Pi probe lease')
+          await drain()
+          await closed
+          if (outputError) throw outputError
+          if (!child.stdout?.readableEnded || !child.stderr?.readableEnded)
+            throw new Error('Pi probe output did not reach EOF')
+        }
+        return child
+      } catch (error) {
+        const failure = error as { cleanup?: Promise<void> } | null
+        const cleanup = posixLaunchNonAdmission(error)?.cleanup ?? failure?.cleanup
+        if (cleanup) attempt.join = () => cleanup
+        throw error
+      }
+    },
+    async finish(
+      joinCaller: (rpcAdmissions: number) => Promise<void>,
+      joinServer: () => Promise<void>,
+      artifact: () => Record<string, unknown>,
+    ) {
+      admissionClosed = true
+      const cleanup = { piRunDrained: false, fixtureServerClosed: false, localRootRemoved: false }
+      // Always try both caller finalization and owned lease drains, even if one fails.
+      const [caller, leases] = await Promise.all([
+        Promise.allSettled([
+          Promise.resolve().then(() =>
+            joinCaller(attempts.filter(({ role }) => role !== 'version').length),
+          ),
+        ]),
+        Promise.allSettled(
+          attempts.map(async ({ role, id, path, join: joinLease }) => {
+            if (!joinLease) throw new Error('Missing Pi probe launch settlement')
+            await joinLease()
+            const inspection = inspectPosixOwnership(path)
+            if (inspection.state !== 'confirmed') throw new Error('Unsettled Pi probe ownership')
+            return { role, id, proof: inspection.proof }
+          }),
+        ),
+      ])
+      cleanup.piRunDrained =
+        caller[0]?.status === 'fulfilled' && leases.every((result) => result.status === 'fulfilled')
+      try {
+        await joinServer()
+        cleanup.fixtureServerClosed = true
+        if (cleanup.piRunDrained) {
+          if (workCreated) await rm(work, { recursive: true })
+          cleanup.localRootRemoved = true
+        }
+      } catch {}
+      const bytes = JSON.stringify({ ...artifact(), cleanup })
+      if (Buffer.byteLength(bytes) > maxEvidenceBytes) return
+      await writeFile(evidencePath, bytes, privateFile)
+      if (!cleanup.piRunDrained || !cleanup.fixtureServerClosed || !cleanup.localRootRemoved) return
+      const receipt = {
+        ...identity,
+        state: 'final',
+        admission: attempts.length ? 'leases-settled' : 'no-admission',
+        leases: leases.flatMap((lease) => (lease.status === 'fulfilled' ? [lease.value] : [])),
+        evidenceSha256: createHash('sha256').update(bytes).digest('hex'),
+      }
+      const staging = join(root, 'settlement.tmp')
+      await writeFile(staging, JSON.stringify(receipt), privateFile)
+      await rename(staging, join(root, 'settlement.json'))
+    },
+  }
+}
+
+async function withinDeadline(promise: Promise<void>, message: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 const nativeProbeEnabled =
   process.platform !== 'win32' &&
   Boolean(
     process.env.PI_NATIVE_PROBE_BIN &&
     process.env.PI_NATIVE_PROBE_EVIDENCE &&
-    process.env.PI_NATIVE_PROBE_VERSION,
+    process.env.PI_NATIVE_PROBE_VERSION &&
+    process.env.PI_NATIVE_PROBE_RUN_ID &&
+    process.env.PI_NATIVE_PROBE_NONCE,
   )
 
 it.skipIf(!nativeProbeEnabled)(
@@ -229,25 +389,23 @@ it.skipIf(!nativeProbeEnabled)(
     const bin = process.env.PI_NATIVE_PROBE_BIN!
     const evidencePath = process.env.PI_NATIVE_PROBE_EVIDENCE!
     const expectedVersion = process.env.PI_NATIVE_PROBE_VERSION!
-    let ledger: Ledger | undefined
+    const worker = claimWorker(
+      evidencePath,
+      process.env.PI_NATIVE_PROBE_RUN_ID!,
+      process.env.PI_NATIVE_PROBE_NONCE!,
+    )
     let dirs: Record<string, string> = {}
     let server: ReturnType<typeof createServer> | undefined
-    let active: PiRpcRun | undefined
     let heldCancelResponse: import('node:http').ServerResponse | undefined
     let heldQueueResponse: import('node:http').ServerResponse | undefined
     const runTimers = new Map<PiRpcRun, ReturnType<typeof setTimeout>>()
-    const cleanupEvidence = {
-      piRunDrained: false,
-      fixtureServerClosed: false,
-      localRootRemoved: false,
-    }
+    const runs: PiRpcRun[] = []
+    let captureError: string | undefined
     let evidence: Record<string, unknown> | undefined
     let probeStage: 'setup' | 'version' | 'native-rpc' = 'setup'
     let probeFailure: string | undefined
-    let failedStartReceipt: Promise<void> | undefined
     try {
-      ledger = await posixFixtureLedger('holi-pi-producer-')
-      const { root } = ledger
+      const root = worker.createWork()
       dirs = Object.fromEntries(
         await Promise.all(
           ['home', 'config', 'data', 'tmp', 'work', 'pi'].map(async (name) => {
@@ -263,7 +421,6 @@ it.skipIf(!nativeProbeEnabled)(
         messages?: Array<{ content?: unknown }>
         tools?: unknown[]
       }> = []
-      let captureError: string | undefined
       let stderrText = ''
       let stderrBytesTotal = 0
       let latestStats: { tokens?: { total?: number } } | undefined
@@ -373,37 +530,38 @@ it.skipIf(!nativeProbeEnabled)(
         tools: [],
       }
       probeStage = 'version'
-      const versionResult = await runVersionCommand(bin, dirs.work!, env, 5_000, ledger)
+      const versionResult = await runVersionCommand(
+        bin,
+        dirs.work!,
+        env,
+        5_000,
+        undefined,
+        undefined,
+        (bin, args, options) => worker.launch('version', bin, args, options),
+      )
       if (versionResult.spawnError)
         throw new Error(`Could not spawn native Pi version command: ${versionResult.spawnError}`)
       if (versionResult.timedOut || versionResult.outputExceeded)
         throw new Error('Native Pi version command timed out or exceeded output bound')
       version = versionResult.stdout.trim()
-      evidence.observedVersion = version
+      evidence.observedVersion = version.slice(0, 128)
       if (versionResult.code !== 0 || version !== expectedVersion || versionResult.stderr)
         throw new Error('Native Pi version did not match the observed package')
 
       let statsObserved = false
       const childSpawn = (
+        role: LeaseRole,
         executable: string,
         args: string[],
         options: { cwd: string; env?: NodeJS.ProcessEnv; stdio: 'pipe' },
       ) => {
-        const child = spawnOwnedProgram(executable, args, {
-          ...options,
-          posixGroupLease: true,
-        }) as ChildProcessWithoutNullStreams & PiChild
-        if (child.pid) {
-          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
-          const ancestry = ledger!.retain(
-            ledger!.record(child),
-            child[ownedProcessDrain]!.drain,
-            closed,
-            'RPC owned-process descriptor',
-          )
-          child.once('spawn', ancestry)
-        }
         probeStage = 'native-rpc'
+        const child = worker.launch(
+          role,
+          executable,
+          args,
+          options,
+        ) as ChildProcessWithoutNullStreams & PiChild
         commands.push({
           argv: args,
           noTools: [
@@ -437,7 +595,10 @@ it.skipIf(!nativeProbeEnabled)(
           if (stopping) return
           stopping = true
           captureError = 'Native output evidence exceeded bound'
-          void active?.close().catch(() => {})
+          void runs
+            .at(-1)
+            ?.close()
+            .catch(() => {})
         }
         child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
           if (stopping) return
@@ -485,6 +646,9 @@ it.skipIf(!nativeProbeEnabled)(
             }
           }
         })
+        child.stdout.once('end', () => {
+          if (pending && !stopping) captureError = 'Native stdout ended with a partial JSONL record'
+        })
         child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
           stderrBytesTotal += Buffer.byteLength(chunk)
           if (stderrBytesTotal > 16 * 1024) stopChild()
@@ -492,7 +656,7 @@ it.skipIf(!nativeProbeEnabled)(
         })
         return child as PiChild
       }
-      const run = () => {
+      const run = (role: 'rpc-first' | 'rpc-cancel') => {
         const instance = new PiRpcRun({
           bin: bin!,
           cwd: dirs.work!,
@@ -504,9 +668,9 @@ it.skipIf(!nativeProbeEnabled)(
             statsObserved = true
             latestStats = stats as typeof latestStats
           },
-          spawn: childSpawn,
+          spawn: (bin, args, options) => childSpawn(role, bin, args, options),
         })
-        active = instance
+        runs.push(instance)
         const timer = setTimeout(() => {
           void instance.cancel().catch(() => {})
         }, timeoutMs)
@@ -518,7 +682,7 @@ it.skipIf(!nativeProbeEnabled)(
         void instance.drained.then(releaseTimer, releaseTimer)
         return instance
       }
-      const firstRun = run()
+      const firstRun = run('rpc-first')
       const first = await firstRun.prompt('first turn')
       expect(first.status).toBe('completed')
       expect(first.output).toContain('first answer')
@@ -535,15 +699,7 @@ it.skipIf(!nativeProbeEnabled)(
       const failed = await firstRun.prompt('trigger deterministic model failure')
       expect(failed.status).toBe('failed')
       const queuedTurn = firstRun.prompt('hold queued turn')
-      await Promise.race([
-        queueRequest,
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Queued-turn endpoint request was not observed')),
-            timeoutMs,
-          ),
-        ),
-      ])
+      await withinDeadline(queueRequest, 'Queued-turn endpoint request was not observed')
       firstRun.steer('steer consumed marker')
       firstRun.followUp('follow-up consumed marker')
       if (!heldQueueResponse) throw new Error('Queued turn response was not held')
@@ -592,22 +748,13 @@ it.skipIf(!nativeProbeEnabled)(
       }
       await firstRun.close()
       await firstRun.drained
-      active = undefined
 
-      const cancelRun = run()
+      const cancelRun = run('rpc-cancel')
       const pending = cancelRun.prompt('cancel this turn')
-      await Promise.race([
+      await withinDeadline(
         cancelRequest,
-        new Promise((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error('Native cancellation request did not reach the local model endpoint'),
-              ),
-            timeoutMs,
-          ),
-        ),
-      ])
+        'Native cancellation request did not reach the local model endpoint',
+      )
       await waitFor(() => records.some((record) => record.type === 'agent_start'), timeoutMs)
       await cancelRun.cancel()
       const cancelled = await pending
@@ -642,42 +789,135 @@ it.skipIf(!nativeProbeEnabled)(
       expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThan(maxEvidenceBytes)
     } catch (error) {
       probeFailure = String(error instanceof Error ? error.message : error).slice(0, 1000)
-      const failed = error as { cleanupPromise?: Promise<void>; cleanup?: Promise<void> } | null
-      failedStartReceipt = failed?.cleanupPromise ?? failed?.cleanup
       throw error
     } finally {
-      for (const timer of runTimers.values()) clearTimeout(timer)
       try {
-        await failedStartReceipt
-        await active?.cancel()
-        cleanupEvidence.piRunDrained = true
-      } catch {}
-      if (heldCancelResponse && !heldCancelResponse.destroyed) heldCancelResponse.destroy()
-      if (heldQueueResponse && !heldQueueResponse.destroyed) heldQueueResponse.destroy()
-      try {
-        if (server?.listening) {
-          server.closeAllConnections()
-          await new Promise<void>((resolve) => server!.close(() => resolve()))
-        }
-        cleanupEvidence.fixtureServerClosed = true
-      } catch {}
-      try {
-        if (cleanupEvidence.piRunDrained) {
-          await ledger?.reap()
-          await ledger?.remove()
-          cleanupEvidence.localRootRemoved = true
-        }
-      } catch {}
-      const finalEvidence = {
-        ...(evidence ?? {}),
-        ...(probeFailure ? { failure: { stage: probeStage, message: probeFailure } } : {}),
-        cleanup: cleanupEvidence,
+        await worker.finish(
+          async (rpcAdmissions) => {
+            for (const timer of runTimers.values()) clearTimeout(timer)
+            const drained = await Promise.allSettled(runs.map((run) => run.cancel()))
+            if (
+              runs.length !== rpcAdmissions ||
+              drained.some((result) => result.status === 'rejected')
+            )
+              throw new Error('Pi RPC caller did not finalize every admitted run')
+            if (captureError) throw new Error(captureError)
+          },
+          async () => {
+            if (heldCancelResponse && !heldCancelResponse.destroyed) heldCancelResponse.destroy()
+            if (heldQueueResponse && !heldQueueResponse.destroyed) heldQueueResponse.destroy()
+            if (server?.listening) {
+              const closed = new Promise<void>((resolve, reject) =>
+                server!.close((error) => (error ? reject(error) : resolve())),
+              )
+              server.closeAllConnections()
+              await closed
+            }
+          },
+          () => ({
+            expectedVersion,
+            ...evidence,
+            ...(probeFailure && { failure: { stage: probeStage, message: probeFailure } }),
+          }),
+        )
+      } catch {
+        // A failed or partial write must not replace the original probe error.
+        // Without a final receipt the parent retains the private root.
       }
-      try {
-        if (Buffer.byteLength(JSON.stringify(finalEvidence)) <= maxEvidenceBytes)
-          await writeFile(evidencePath, JSON.stringify(finalEvidence, null, 2))
-      } catch {}
     }
   },
   35_000,
+)
+
+// This fixture never invokes the real producer binary or starts a model. Run
+// only this named test with the explicit synthetic-native fixture gate.
+it.runIf(process.platform !== 'win32' && process.env.HOLI_PI_SETTLEMENT_FIXTURE === '1')(
+  'joins the last worker resource before publishing the synthetic Pi settlement',
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'holi-pi-settlement-fixture-')))
+    const ownership = join(root, 'ownership')
+    const evidencePath = join(root, 'evidence.json')
+    const settlementPath = join(root, 'settlement.json')
+    for (const name of ['worker-tmp', 'admissions', 'ownership'])
+      await mkdir(join(root, name), { mode: 0o700 })
+    const runId = randomUUID()
+    const nonce = randomUUID()
+    const worker = claimWorker(evidencePath, runId, nonce)
+    const work = worker.createWork()
+    const bin = join(work, 'pi-fixture')
+    let releaseLastResource!: () => void
+    const lastResource = new Promise<void>((resolve) => {
+      releaseLastResource = resolve
+    })
+    let reportJoining!: () => void
+    const joiningLastResource = new Promise<void>((resolve) => {
+      reportJoining = resolve
+    })
+    let finish: Promise<void> | undefined
+    const beginFinish = () =>
+      worker.finish(
+        async (rpcAdmissions) => {
+          expect(rpcAdmissions).toBe(0)
+        },
+        async () => {
+          reportJoining()
+          await lastResource
+        },
+        () => ({
+          expectedVersion: '1.0.0',
+          observedVersion: '0.0.0-fixture',
+          failure: { stage: 'version', message: 'synthetic version mismatch' },
+        }),
+      )
+    try {
+      await writeFile(bin, '#!/bin/sh\nprintf "0.0.0-fixture\\n"\n', { mode: 0o700 })
+      const result = await runVersionCommand(
+        bin,
+        work,
+        { PATH: '/usr/bin:/bin', HOME: work },
+        5_000,
+        undefined,
+        undefined,
+        (bin, args, options) => worker.launch('version', bin, args, options),
+      )
+      expect(result.code).toBe(0)
+      expect(result.stdout.trim()).toBe('0.0.0-fixture')
+      finish = beginFinish()
+      await joiningLastResource
+      const [id] = await readdir(ownership)
+      expect(id).toMatch(uuid)
+      expect(inspectPosixOwnership(join(ownership, id!))).toEqual({
+        state: 'confirmed',
+        proof: 'settled',
+      })
+      expect(existsSync(settlementPath)).toBe(false)
+      expect(existsSync(work)).toBe(true)
+      releaseLastResource()
+      await finish
+      const bytes = await readFile(evidencePath)
+      expect(JSON.parse(await readFile(settlementPath, 'utf8'))).toEqual({
+        version: 1,
+        runId,
+        nonce,
+        workerPid: process.pid,
+        state: 'final',
+        admission: 'leases-settled',
+        leases: [{ id, role: 'version', proof: 'settled' }],
+        evidenceSha256: createHash('sha256').update(bytes).digest('hex'),
+      })
+      expect(existsSync(work)).toBe(false)
+    } finally {
+      releaseLastResource()
+      await (finish ?? beginFinish())
+      // Test owns the retained launcher, never a PID from the disk receipt.
+      const records = await readdir(ownership)
+      if (
+        records.every((id) => inspectPosixOwnership(join(ownership, id)).state === 'confirmed') &&
+        records.length === (await readdir(join(root, 'admissions'))).length
+      )
+        await rm(root, { recursive: true })
+      else throw new Error(`Retained synthetic Pi settlement fixture at ${root}`)
+    }
+  },
+  20_000,
 )

@@ -1,52 +1,117 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { PassThrough } from 'node:stream'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import test from 'node:test'
 import { checkPiRpcProducer } from './pi-rpc-producer.mjs'
 import { leaseBuildScript } from './producer-command.mjs'
 
 async function checkFixture(t, params, adapter) {
-  const handles = []
-  const calls = []
+  const roots = new Set()
+  t.after(() => {
+    // Every adapter is an in-memory ChildProcess fake. No kernel resources
+    // were admitted; the test that owns these roots can remove them.
+    for (const root of roots) rmSync(root, { recursive: true, force: true })
+  })
   const result = await checkPiRpcProducer({
     ...params,
     adapter: {
       spawnChild(command, args, options) {
-        calls.push(args)
-        if (adapter) return adapter.spawnChild(command, args, options)
-        const child = spawn(command, args[0] === leaseBuildScript ? ['-e', ''] : args, options)
-        handles.push({ child, settled: new Promise((resolve) => child.once('close', resolve)) })
-        return child
+        roots.add(dirname(options.env.PI_NATIVE_PROBE_EVIDENCE))
+        return adapter.spawnChild(command, args, options)
       },
-      probePresence: adapter?.probePresence ?? ((pid) => process.kill(pid, 0)),
+      probePresence: adapter.probePresence,
     },
   })
-  t.after(async (t) => {
-    for (const { child, settled } of handles) {
-      await settled
-      if (child.pid && process.platform !== 'win32') {
-        for (const id of [child.pid, -child.pid])
-          assert.throws(() => process.kill(id, 0), { code: 'ESRCH' })
-      }
-    }
-    // The real fixture executables never launch descendants; fake PIDs only
-    // ever go through their injected adapter, never to the kernel.
-    if (result.cleanup.retainedRoot) rmSync(result.cleanup.retainedRoot, { recursive: true })
-  })
-  assert.deepEqual(calls[0], [leaseBuildScript])
+  assert.deepEqual(adapter.commands[0][1], [leaseBuildScript])
   return result
 }
 
-function runner(source) {
-  const directory = mkdtempSync(join(tmpdir(), 'holi-pi-producer-test-'))
-  const executable = join(directory, 'pnpm')
-  writeFileSync(executable, `#!/usr/bin/env node\n${source}`)
-  chmodSync(executable, 0o755)
-  return { directory, executable }
+const posixTest = process.platform === 'win32' ? test.skip : test
+const cleanup = { piRunDrained: true, fixtureServerClosed: true, localRootRemoved: true }
+const good = {
+  observedVersion: '1.0.0',
+  expectedVersion: '1.0.0',
+  package: '@earendil-works/pi-coding-agent',
+  scenarios: {
+    ...Object.fromEntries(
+      [
+        'streamCompletion',
+        'consecutiveTurns',
+        'modelError',
+        'cancel',
+        'noToolsRequest',
+        'appendSystemPrompt',
+        'statsResponse',
+        'steerAndFollowUp',
+      ].map((key) => [key, 'pass']),
+    ),
+    modelErrorReported: true,
+  },
+  recordCount: 5,
+  commandCount: 2,
+  records: [
+    { type: 'agent_start' },
+    { type: 'agent_settled' },
+    { type: 'response', command: 'set_model', success: true },
+    { type: 'response', command: 'prompt', success: true },
+    { type: 'response', command: 'get_session_stats', success: true },
+  ],
+  commands: [{ argv: ['--no-tools'], noTools: true }, { type: 'abort' }],
+  tools: [],
+  cleanup,
+}
+
+function writeArtifact(env, workerPid, evidence, options) {
+  const { roles = ['version', 'rpc-first', 'rpc-cancel'], change } = options ?? {}
+  const root = dirname(env.PI_NATIVE_PROBE_EVIDENCE)
+  const bytes = typeof evidence === 'string' ? evidence : JSON.stringify(evidence)
+  const worker = {
+    version: 1,
+    runId: env.PI_NATIVE_PROBE_RUN_ID,
+    nonce: env.PI_NATIVE_PROBE_NONCE,
+    workerPid,
+  }
+  const leases = roles.map((role) => ({ role, id: randomUUID(), proof: 'settled' }))
+  for (const { id, role } of leases) {
+    mkdirSync(join(root, 'admissions', `${role}-${id}`), { mode: 0o700 })
+    mkdirSync(join(root, 'ownership', id), { mode: 0o700 })
+  }
+  writeFileSync(env.PI_NATIVE_PROBE_EVIDENCE, bytes, { mode: 0o600 })
+  writeFileSync(join(root, 'worker.json'), JSON.stringify(worker), { mode: 0o600 })
+  const receipt = {
+    ...worker,
+    state: 'final',
+    admission: leases.length ? 'leases-settled' : 'no-admission',
+    leases,
+    evidenceSha256: createHash('sha256').update(bytes).digest('hex'),
+  }
+  const record = change ? change(receipt, root) : receipt
+  if (record !== undefined)
+    writeFileSync(
+      join(root, 'settlement.json'),
+      typeof record === 'string' ? record : JSON.stringify(record),
+      { mode: 0o600 },
+    )
+}
+
+function artifactRunner(evidence, { code = 0, ...options } = {}) {
+  return fakeProcess({
+    onWorker({ child, close, fakePid, env }) {
+      child.pid = fakePid
+      child.emit('spawn')
+      writeArtifact(env, fakePid + 1, evidence, options)
+      close(code)
+    },
+  })
+}
+
+function retained(result) {
+  assert.equal(result.cleanup.status, 'incomplete')
+  assert.equal(result.cleanup.temporaryRootRemoved, false)
+  assert.ok(existsSync(result.cleanup.retainedRoot))
 }
 
 test('requires exact Pi version and binary for native producer probe', async () => {
@@ -57,197 +122,224 @@ test('requires exact Pi version and binary for native producer probe', async () 
   )
 })
 
-test('Pi only removes a successful probe root after worker settlement', async (t) => {
-  const markers = mkdtempSync(join(tmpdir(), 'holi-pi-test-markers-'))
-  const evidenceRootFile = join(markers, 'probe-root.txt')
-  const fixture = runner(`
-    const fs = require('node:fs')
-    const path = require('node:path')
-    if (fs.existsSync(${JSON.stringify(join(markers, 'retain-fixture'))}))
-      fs.mkdirSync(path.join(process.env.TMPDIR, 'holi-pi-version-leftover'))
-    fs.writeFileSync(${JSON.stringify(evidenceRootFile)}, process.env.PI_NATIVE_PROBE_EVIDENCE)
-    fs.writeFileSync(${JSON.stringify(evidenceRootFile + '.env')}, JSON.stringify(Object.keys(process.env)))
-    fs.writeFileSync(process.env.PI_NATIVE_PROBE_EVIDENCE, JSON.stringify({expectedVersion:process.env.PI_NATIVE_PROBE_VERSION,observedVersion:process.env.PI_NATIVE_PROBE_VERSION,package:'@earendil-works/pi-coding-agent',scenarios:{...Object.fromEntries(['streamCompletion','consecutiveTurns','modelError','cancel','noToolsRequest','appendSystemPrompt','statsResponse','steerAndFollowUp'].map(k=>[k,'pass'])),modelErrorReported:true},recordCount:5,commandCount:2,records:[{type:'agent_start'},{type:'agent_settled'},{type:'response',command:'set_model',success:true},{type:'response',command:'prompt',success:true},{type:'response',command:'get_session_stats',success:true}],commands:[{argv:['--no-tools'],noTools:true},{type:'abort'}],tools:[],cleanup:{piRunDrained:true,fixtureServerClosed:true,localRootRemoved:true}}))
-  `)
-  const previousPath = process.env.PATH
-  const previousNodeOptions = process.env.NODE_OPTIONS
-  const previousProxy = process.env.HTTPS_PROXY
-  const previousSecret = process.env.PI_NATIVE_PROBE_SECRET
-  try {
-    process.env.PATH = `${fixture.directory}:${previousPath ?? ''}`
-    process.env.NODE_OPTIONS = '--require=/tmp/must-not-inherit.js'
-    process.env.HTTPS_PROXY = 'http://must-not-inherit.invalid'
-    process.env.PI_NATIVE_PROBE_SECRET = 'must-not-inherit'
-    const result = await checkFixture(t, { bin: '/synthetic/pi', expectedVersion: '9.8.7' })
+posixTest(
+  'removes the root with complete worker, lease and RPC evidence, without re-probing detached PIDs',
+  async (t) => {
+    const adapter = artifactRunner(good)
+    const result = await checkFixture(t, input, adapter)
     assert.equal(result.outcome, 'pass', result.detail)
-    assert.equal(result.evidence.observedVersion, '9.8.7')
     assert.deepEqual(result.cleanup, { temporaryRootRemoved: true })
-    assert.deepEqual(result.evidence.cleanup, {
-      piRunDrained: true,
-      fixtureServerClosed: true,
-      localRootRemoved: true,
-    })
-    const evidencePath = readFileSync(evidenceRootFile, 'utf8')
-    assert.equal(existsSync(evidencePath), false)
-    const childEnv = JSON.parse(readFileSync(`${evidenceRootFile}.env`, 'utf8'))
-    for (const key of ['NODE_OPTIONS', 'HTTPS_PROXY', 'PI_NATIVE_PROBE_SECRET'])
-      assert.equal(childEnv.includes(key), false)
-
-    writeFileSync(join(markers, 'retain-fixture'), '')
-    const unfinished = await checkFixture(t, { bin: '/synthetic/pi', expectedVersion: '9.8.7' })
-    assert.equal(unfinished.outcome, 'unverified')
-    assert.equal(unfinished.stage, 'cleanup')
-    assert.match(unfinished.cleanup.error, /still contains fixture evidence/)
-    assert.ok(
-      existsSync(join(unfinished.cleanup.retainedRoot, 'worker-tmp', 'holi-pi-version-leftover')),
+    assert.deepEqual(result.evidence, good)
+    assert.match(
+      adapter.commands[1][1].at(-1),
+      /^\^captures bounded native Pi RPC producer records through PiRpcRun\$$/,
     )
-  } finally {
-    process.env.PATH = previousPath
-    if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS
-    else process.env.NODE_OPTIONS = previousNodeOptions
-    if (previousProxy === undefined) delete process.env.HTTPS_PROXY
-    else process.env.HTTPS_PROXY = previousProxy
-    if (previousSecret === undefined) delete process.env.PI_NATIVE_PROBE_SECRET
-    else process.env.PI_NATIVE_PROBE_SECRET = previousSecret
-    rmSync(markers, { recursive: true, force: true })
-    rmSync(fixture.directory, { recursive: true, force: true })
-  }
-})
+    if (process.platform !== 'win32')
+      assert.deepEqual(adapter.probes, [12345, -12345, 12346, -12346])
+  },
+)
 
-test('rejects version drift in captured native evidence', async (t) => {
-  const fixture = runner(
-    `require('node:fs').writeFileSync(process.env.PI_NATIVE_PROBE_EVIDENCE, JSON.stringify({expectedVersion:process.env.PI_NATIVE_PROBE_VERSION,observedVersion:'wrong',package:'@earendil-works/pi-coding-agent',scenarios:{},recordCount:3,commandCount:1,records:[],commands:[{}],tools:[],cleanup:{piRunDrained:true,fixtureServerClosed:true,localRootRemoved:true}}))`,
-  )
-  const previousPath = process.env.PATH
-  try {
-    process.env.PATH = `${fixture.directory}:${previousPath ?? ''}`
-    const result = await checkFixture(t, { bin: '/synthetic/pi', expectedVersion: '1.0.0' })
-    assert.equal(result.outcome, 'mismatch')
-    assert.match(result.detail, /Observed Pi version/)
-    assert.deepEqual(result.cleanup, { temporaryRootRemoved: true })
-    assert.deepEqual(result.evidence.cleanup, {
-      piRunDrained: true,
-      fixtureServerClosed: true,
-      localRootRemoved: true,
-    })
-  } finally {
-    process.env.PATH = previousPath
-    rmSync(fixture.directory, { recursive: true, force: true })
-  }
-})
+posixTest(
+  'verifies the receipt without forwarding personal provider credentials or exposing the challenge to the build',
+  async (t) => {
+    const adapter = artifactRunner(good)
+    const spawn = adapter.spawnChild
+    const saved = process.env.PI_NATIVE_PROBE_SECRET
+    process.env.PI_NATIVE_PROBE_SECRET = 'must-not-inherit'
+    try {
+      adapter.spawnChild = (command, args, options) => {
+        assert.equal(options.env.PI_NATIVE_PROBE_SECRET, undefined)
+        if (args[0] === leaseBuildScript) {
+          assert.equal(options.env.PI_NATIVE_PROBE_NONCE, undefined)
+          assert.equal(options.env.PI_NATIVE_PROBE_RUN_ID, undefined)
+        } else {
+          assert.notEqual(options.env.PI_NATIVE_PROBE_NONCE, options.env.PI_NATIVE_PROBE_RUN_ID)
+        }
+        return spawn(command, args, options)
+      }
+      assert.equal((await checkFixture(t, input, adapter)).outcome, 'pass')
+    } finally {
+      if (saved === undefined) delete process.env.PI_NATIVE_PROBE_SECRET
+      else process.env.PI_NATIVE_PROBE_SECRET = saved
+    }
+  },
+)
 
-test('rejects empty, malformed, oversized and incomplete evidence', async (t) => {
-  const good = {
-    observedVersion: '1.0.0',
-    expectedVersion: '1.0.0',
-    package: '@earendil-works/pi-coding-agent',
-    scenarios: {
-      ...Object.fromEntries(
-        [
-          'streamCompletion',
-          'consecutiveTurns',
-          'modelError',
-          'cancel',
-          'noToolsRequest',
-          'appendSystemPrompt',
-          'statsResponse',
-          'steerAndFollowUp',
-        ].map((key) => [key, 'pass']),
-      ),
-      modelErrorReported: true,
-    },
-    recordCount: 5,
-    commandCount: 2,
-    records: [
-      { type: 'agent_start' },
-      { type: 'agent_settled' },
-      { type: 'response', command: 'set_model', success: true },
-      { type: 'response', command: 'prompt', success: true },
-      { type: 'response', command: 'get_session_stats', success: true },
-    ],
-    commands: [{ argv: ['--no-tools'], noTools: true }, { type: 'abort' }],
-    tools: [],
-    cleanup: { piRunDrained: true, fixtureServerClosed: true, localRootRemoved: true },
-  }
-  const invalidEvidence = [
+test('retains the root for malformed or partial evidence even with a receipt and cleanup flags', async (t) => {
+  for (const evidence of [
+    '{',
+    ' '.repeat(65 * 1024),
     {},
+    { cleanup },
     { ...good, recordCount: 0 },
     { ...good, commandCount: -1 },
     { ...good, scenarios: { ...good.scenarios, steerAndFollowUp: 'unverified' } },
     { ...good, package: 'different-package' },
     { ...good, commands: [{ argv: ['--mode', 'rpc'], noTools: false }, { type: 'abort' }] },
-  ].map((item) => JSON.stringify(item))
-  for (const body of ['{}', '{', ' '.repeat(65 * 1024), ...invalidEvidence]) {
-    const fixture = runner(
-      `require('node:fs').writeFileSync(process.env.PI_NATIVE_PROBE_EVIDENCE, ${JSON.stringify(body)})`,
+  ]) {
+    const result = await checkFixture(t, input, artifactRunner(evidence))
+    assert.equal(result.outcome, 'unverified')
+    assert.equal(result.stage, 'evidence')
+    retained(result)
+  }
+})
+
+for (const [label, change] of Object.entries({
+  missing: () => undefined,
+  truncated: () => '{"version":1,',
+  'duplicate fields': (receipt) => JSON.stringify(receipt).replace('{', '{"version":0,'),
+  'partial staging file': (receipt, root) => {
+    writeFileSync(join(root, 'settlement.tmp'), '{', { mode: 0o600 })
+    return receipt
+  },
+  oversized: () => ' '.repeat(4097),
+  partial: ({ version, runId, nonce, workerPid }) => ({ version, runId, nonce, workerPid }),
+  nonfinal: (receipt) => ({ ...receipt, state: 'pending' }),
+  version: (receipt) => ({ ...receipt, version: 2 }),
+  'run mismatch': (receipt) => ({ ...receipt, runId: randomUUID() }),
+  'nonce mismatch': (receipt) => ({ ...receipt, nonce: randomUUID() }),
+  'worker mismatch': (receipt) => ({ ...receipt, workerPid: receipt.workerPid + 1 }),
+  'evidence mismatch': (receipt) => ({ ...receipt, evidenceSha256: '0'.repeat(64) }),
+  'lease omitted': (receipt) => ({ ...receipt, leases: receipt.leases.slice(0, -1) }),
+  'lease mismatch': (receipt) => ({
+    ...receipt,
+    leases: [{ ...receipt.leases[0], id: randomUUID() }, ...receipt.leases.slice(1)],
+  }),
+  'lease duplicate': (receipt) => ({
+    ...receipt,
+    leases: [receipt.leases[0], receipt.leases[0], receipt.leases[2]],
+  }),
+  'native-only proof': ({ leases }) => ({ leases }),
+  'noncanonical ownership': (receipt, root) => {
+    const path = join(root, 'ownership', receipt.leases[0].id)
+    rmSync(path, { recursive: true })
+    symlinkSync(join(root, 'admissions'), path, 'dir')
+    return receipt
+  },
+  'work still present': (receipt, root) => {
+    mkdirSync(join(root, 'worker-tmp', 'probe-work'), { mode: 0o700 })
+    return receipt
+  },
+})) {
+  posixTest(`retains valid RPC evidence with ${label} settlement`, async (t) => {
+    const result = await checkFixture(t, input, artifactRunner(good, { change }))
+    assert.equal(result.outcome, 'unverified')
+    assert.equal(result.stage, 'cleanup')
+    retained(result)
+  })
+}
+
+test('distinguishes runner exec refusal from failure after admission is possible', async (t) => {
+  const unavailable = await checkFixture(
+    t,
+    input,
+    fakeProcess({
+      onWorker({ child }) {
+        child.emit('error', Object.assign(new Error('missing command'), { code: 'ENOENT' }))
+        child.emit('close', null)
+      },
+    }),
+  )
+  assert.match(unavailable.detail, /could not start: missing command/)
+  assert.equal(unavailable.cleanup.temporaryRootRemoved, true)
+})
+
+posixTest('only an explicit no-admission settlement can retire a zero-lease worker', async (t) => {
+  const evidence = {
+    expectedVersion: input.expectedVersion,
+    failure: { stage: 'setup', message: 'worker setup failed' },
+    cleanup,
+  }
+  for (const valid of [false, true]) {
+    const result = await checkFixture(
+      t,
+      input,
+      artifactRunner(evidence, {
+        code: 1,
+        roles: [],
+        change: (receipt) => (valid ? receipt : undefined),
+      }),
     )
-    const previousPath = process.env.PATH
-    try {
-      process.env.PATH = `${fixture.directory}:${previousPath ?? ''}`
-      const result = await checkFixture(t, { bin: '/synthetic/pi', expectedVersion: '1.0.0' })
-      assert.equal(result.outcome, 'unverified')
-    } finally {
-      process.env.PATH = previousPath
-      rmSync(fixture.directory, { recursive: true, force: true })
+    assert.equal(result.outcome, 'unverified')
+    assert.match(result.detail, /runner exited 1/)
+    assert.equal(result.cleanup.temporaryRootRemoved, valid)
+  }
+  retained(await checkFixture(t, input, artifactRunner(good, { roles: [] })))
+})
+
+posixTest('preserves version/provider failures with or without a valid settlement', async (t) => {
+  for (const [stage, observedVersion, roles] of [
+    ['version', 'wrong', ['version']],
+    ['native-rpc', input.expectedVersion, ['version', 'rpc-first']],
+  ]) {
+    for (const valid of [false, true]) {
+      const evidence = {
+        expectedVersion: input.expectedVersion,
+        observedVersion,
+        failure: { stage, message: 'consumer assertion failed' },
+        cleanup,
+      }
+      const result = await checkFixture(
+        t,
+        input,
+        artifactRunner(evidence, {
+          code: 1,
+          roles,
+          change: (receipt) => (valid ? receipt : undefined),
+        }),
+      )
+      assert.equal(result.outcome, 'mismatch')
+      assert.equal(result.stage, stage)
+      assert.match(
+        result.detail,
+        stage === 'version' ? /Observed Pi version/ : /consumer assertion failed/,
+      )
+      if (valid) assert.equal(result.cleanup.temporaryRootRemoved, true)
+      else retained(result)
     }
   }
 })
 
-test('classifies setup failures and incomplete evidence as unverified', async (t) => {
-  const previousPath = process.env.PATH
-  const noRunner = mkdtempSync(join(tmpdir(), 'holi-pi-no-runner-'))
-  try {
-    process.env.PATH = noRunner
-    const unavailable = await checkFixture(t, {
-      bin: '/synthetic/pi',
-      expectedVersion: '1.0.0',
-      timeout: 100,
-    })
-    assert.equal(unavailable.outcome, 'unverified')
-    assert.equal(unavailable.stage, 'runner')
-    assert.equal(unavailable.cleanup.temporaryRootRemoved, true)
-  } finally {
-    process.env.PATH = previousPath
-    rmSync(noRunner, { recursive: true, force: true })
+posixTest('a failing worker receipt cannot omit the last registered lease', async (t) => {
+  const evidence = {
+    expectedVersion: input.expectedVersion,
+    observedVersion: input.expectedVersion,
+    failure: { stage: 'native-rpc', message: 'first provider failure' },
+    cleanup,
   }
-
-  const failing = runner(`process.exit(7)`)
-  try {
-    process.env.PATH = `${failing.directory}:${previousPath ?? ''}`
-    const result = await checkFixture(t, { bin: '/synthetic/pi', expectedVersion: '1.0.0' })
-    assert.equal(result.outcome, 'unverified')
-    assert.equal(result.stage, 'evidence')
-    assert.equal(result.cleanup.temporaryRootRemoved, false)
-  } finally {
-    process.env.PATH = previousPath
-    rmSync(failing.directory, { recursive: true, force: true })
-  }
+  const result = await checkFixture(
+    t,
+    input,
+    artifactRunner(evidence, {
+      code: 1,
+      // Two leases would be enough for a failure in the first RPC run, but the
+      // independently recorded third lease makes this receipt incomplete.
+      change: (receipt) => ({ ...receipt, leases: receipt.leases.slice(0, 2) }),
+    }),
+  )
+  retained(result)
+  assert.match(result.detail, /first provider failure/)
 })
 
-test('classifies evidenced native consumer assertions as mismatches', async (t) => {
-  const fixture = runner(`
-    const fs = require('node:fs')
-    fs.writeFileSync(process.env.PI_NATIVE_PROBE_EVIDENCE, JSON.stringify({
-      expectedVersion: process.env.PI_NATIVE_PROBE_VERSION,
-      observedVersion: process.env.PI_NATIVE_PROBE_VERSION,
-      failure: { stage: 'native-rpc', message: 'consumer assertion failed' }
-    }))
-    process.exit(1)
-  `)
-  const previousPath = process.env.PATH
-  try {
-    process.env.PATH = `${fixture.directory}:${previousPath ?? ''}`
-    const result = await checkFixture(t, { bin: '/synthetic/pi', expectedVersion: '1.0.0' })
-    assert.equal(result.outcome, 'mismatch')
-    assert.equal(result.stage, 'native-rpc')
-    assert.match(result.detail, /consumer assertion failed/)
-    assert.equal(result.evidence.failure.stage, 'native-rpc')
-    assert.equal(result.cleanup.status, 'incomplete')
-    assert.ok(existsSync(join(result.cleanup.retainedRoot, 'evidence.json')))
-  } finally {
-    process.env.PATH = previousPath
-    rmSync(fixture.directory, { recursive: true, force: true })
-  }
+test('an exit zero with cleanup booleans and partial evidence retains the root', async (t) => {
+  const adapter = fakeProcess({
+    onWorker({ child, close, fakePid, env }) {
+      child.pid = fakePid
+      child.emit('spawn')
+      writeFileSync(
+        env.PI_NATIVE_PROBE_EVIDENCE,
+        JSON.stringify({
+          cleanup: { piRunDrained: true, fixtureServerClosed: true, localRootRemoved: true },
+        }),
+        { mode: 0o600 },
+      )
+      close(0)
+    },
+  })
+  const result = await checkFixture(t, input, adapter)
+  assert.equal(result.outcome, 'unverified')
+  assert.equal(result.cleanup.status, 'incomplete')
+  assert.ok(existsSync(join(result.cleanup.retainedRoot, 'evidence.json')))
 })
 
 function fakeProcess({ onWorker, probePresence, buildCode = 0 }) {
