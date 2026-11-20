@@ -963,6 +963,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     const failures: unknown[] = []
     try {
       try {
+        // Join the owner's phase deadlines. An outer race here would latch a
+        // generic error before the disposer can report native teardown proof.
         await Promise.resolve().then(s.dispose)
       } catch (err) {
         failures.push(err)

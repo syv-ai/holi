@@ -33,6 +33,7 @@ import { isIntegration, parseHarnessFile } from './harness/record'
 import { acquireHarnessRegistry, withPreset } from './harness/registry'
 import { installSignalCommand, registerSignalRoute } from './harness/signal'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
+import { bounded } from './host/bounded'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createFencedSessions } from './host/fenced'
 import { agentScratchRoots } from './host/scratch-roots'
@@ -126,7 +127,11 @@ export const agentMain: MainPlugin = {
         console.error('[agent] holi-signal:', err),
       )
       assertActive()
-      const terminals = createAgentTerminals({ emit: ctx.emit })
+      const terminals = createAgentTerminals({
+        emit(remote, name, payload) {
+          if (!ctx.activationSignal.aborted) ctx.emit(remote, name, payload)
+        },
+      })
       activationOwners.push(() => terminals.closeAll())
       const sessionLog = createSessionLog(ctx.log)
       // Capabilities and provider hooks belong to this activation's vault, not
@@ -261,7 +266,10 @@ export const agentMain: MainPlugin = {
         activationSignal: ctx.activationSignal,
         copyBack: jobs.copyBack,
       })
-      activationOwners.unshift(() => fenced.closing())
+      activationOwners.unshift(
+        () => terminals.joinFailedStarts(),
+        () => fenced.closing(),
+      )
       activationOwners.push(() => fenced.leave())
       // What the agent and Holi want the person to see: an entry in the
       // vault's inbox, and a banner while Holi is out of sight.
@@ -460,6 +468,9 @@ export const agentMain: MainPlugin = {
         for (const cleanup of [
           stopNeedsYou,
           () => sweeping,
+          // Invalidation already closed admission. Join uncertain native starts
+          // before the fenced module waits for its non-native startup work.
+          () => terminals.joinFailedStarts(),
           () => fenced.closing(),
           () => ptySessions.leave(),
           () => piBackground.leave(),
@@ -468,7 +479,7 @@ export const agentMain: MainPlugin = {
           () => sessions.leave(),
           () => terminals.closeAll(),
           () => harnesses.dispose(),
-          () => drainOwned(),
+          () => bounded(drainOwned(), 'Agent callbacks'),
         ]) {
           try {
             await cleanup()

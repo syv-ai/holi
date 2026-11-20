@@ -22,6 +22,9 @@ import { install } from '../src/main/plugin-host/installed'
 import { coreSeed } from '../src/main/vault/seed/core'
 import { readSeedState } from '../src/main/vault/seed/state'
 import { readVaultSettings, writeVaultSettings } from '../src/main/vault/settings'
+import { createPtySessions } from '../src/plugins/agent/main/host/pty-sessions'
+import { createAgentTerminals } from '../src/plugins/agent/main/host/terminals'
+import type { AgentProvider } from '../src/plugins/agent/main/provider'
 
 const SKILL = '.claude/skills/fake/SKILL.md'
 const dirs: string[] = []
@@ -1882,6 +1885,103 @@ describe('an owned prefix', () => {
 })
 
 describe('activation cancellation and teardown failures', () => {
+  it.each(['success', 'proof failure'] as const)(
+    'keeps plugin shutdown joined to the original PTY proof past 10 seconds: %s',
+    async (mode) => {
+      const root = await tempDir()
+      const vault = openVault('A', root)
+      const proof = repairGate()
+      const cause = new Error('original PTY proof failure')
+      const drain = vi.fn(async () => {
+        await proof.promise
+        if (mode === 'proof failure') throw cause
+      })
+      let exit!: (event: { exitCode: number }) => void
+      const pty = {
+        pid: 999_999,
+        onData: () => {},
+        onExit: (cb: typeof exit) => {
+          exit = cb
+        },
+        write: () => {},
+        resize: () => {},
+        kill: vi.fn(),
+      }
+      const terminals = createAgentTerminals({
+        emit: () => {},
+        log: () => {},
+        spawnPty: () => pty,
+        superviseGroup: () => ({ drain }),
+      })
+      const provider: AgentProvider = {
+        id: 'codex',
+        label: 'Codex',
+        notInstalled: 'not installed',
+        installed: () => true,
+        configure: async () => ({ dir: root }),
+        terminal: () => ({ bin: 'fixture', args: [], env: {} }),
+        capabilities: {},
+      }
+      const dispose = vi.fn()
+      const sessions = createPtySessions({
+        vault,
+        terminals,
+        providers: () => [provider],
+        bracket: () => {},
+        binDir: () => null,
+        onChange: () => {},
+      })
+      const { host } = rig({
+        plugins: [
+          {
+            info: { id: 'fake', label: 'Fake', default: true },
+            activate: () => () => {
+              dispose()
+              return sessions.leave()
+            },
+          },
+        ],
+      })
+      await host.reconcile(vault, 'open')
+      const started = await sessions.start('codex', {})
+      if (!started.ok) throw new Error(started.message)
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const first = host.stop('A').catch((error: unknown) => error)
+        const second = host.stop('A').catch((error: unknown) => error)
+        const settled = vi.fn()
+        void first.then(settled)
+        await vi.advanceTimersByTimeAsync(12_000)
+        expect(settled).not.toHaveBeenCalled()
+        expect(drain).toHaveBeenCalledOnce()
+        expect(sessions.has(started.sessionId)).toBe(true)
+        proof.resolve()
+        if (mode === 'success') {
+          exit({ exitCode: 0 })
+          await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
+          expect(sessions.has(started.sessionId)).toBe(false)
+        } else {
+          // No public exit: known physical failure must win immediately.
+          await vi.advanceTimersByTimeAsync(0)
+          expect(settled).toHaveBeenCalledOnce()
+          const failure = await first
+          expect(failure).toMatchObject({ errors: [{ errors: [{ errors: [cause] }] }] })
+          expect(await second).toBe(failure)
+          await expect(host.stop('A')).rejects.toBe(failure)
+          await expect(host.reconcile(vault, 'open')).rejects.toBe(failure)
+          expect(sessions.has(started.sessionId)).toBe(true)
+          expect(terminals.launchedFor(started.sessionId)).toBe(started.terminalId)
+        }
+        expect(dispose).toHaveBeenCalledOnce()
+        expect(pty.kill).not.toHaveBeenCalled()
+      } finally {
+        proof.resolve()
+        exit({ exitCode: 0 })
+        vi.useRealTimers()
+      }
+    },
+  )
+
   it('aborts a settings-disabled activation before its queued cleanup can begin', async () => {
     let context: PluginCtx | undefined
     let entered!: () => void

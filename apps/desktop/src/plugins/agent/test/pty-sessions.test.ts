@@ -212,6 +212,34 @@ describe('sessions Holi runs', () => {
     expect(t.sessions.has(started.sessionId)).toBe(true)
   })
 
+  it('does not write closed history for unconfirmed physical close', async () => {
+    const cause = new Error('physical proof unavailable')
+    const write = vi.fn(async () => {})
+    const t = setup('pi', { read: async () => [], write }, {}, async () => {
+      throw cause
+    })
+    const started = await t.sessions.start('pi', {})
+    if (!started.ok) throw new Error(started.message)
+    await expect(t.sessions.leave()).rejects.toThrow('PTY sessions did not drain')
+    expect(write).not.toHaveBeenCalled()
+    await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
+  })
+
+  it('retains a natural exit history failure for subsequent Stop', async () => {
+    const cause = new Error('history write failed')
+    const write = vi.fn(async () => {
+      throw cause
+    })
+    const t = setup('codex', { read: async () => [], write })
+    const conversationId = '123e4567-e89b-42d3-a456-426614174000'
+    const started = await t.sessions.start('codex', { resume: conversationId })
+    if (!started.ok) throw new Error(started.message)
+    await expect(t.opened[0]?.onExit?.()).rejects.toBe(cause)
+    await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
+    await expect(t.sessions.stop(started.sessionId)).rejects.toBe(cause)
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+  })
+
   it('pastes an ask unsent, and stops by ending its terminal', async () => {
     const t = setup()
     const res = await t.sessions.start('codex', {})
@@ -407,6 +435,19 @@ describe('sessions Holi runs', () => {
     expect(t.sessions.sessions()).toEqual([])
   })
 
+  it('reports an in-flight sign-in failure once during leave', async () => {
+    const t = setup('codex', undefined, {
+      background: {} as NonNullable<AgentProvider['capabilities']['background']>,
+    })
+    const cause = new Error('configure failed synchronously')
+    t.provider.configure = () => {
+      throw cause
+    }
+    const started = t.sessions.start('codex', { login: true }).catch((error: unknown) => error)
+    await expect(t.sessions.leave()).rejects.toMatchObject({ errors: [cause] })
+    expect(await started).toBe(cause)
+  })
+
   it('does not create a sign-in terminal when the vault is left during the first-spawn notice', async () => {
     const t = setup('codex', undefined, {
       background: {} as NonNullable<AgentProvider['capabilities']['background']>,
@@ -556,8 +597,9 @@ describe('sessions Holi runs', () => {
     expect(writes).toBe(2)
     expect(history.map((row) => row.id)).toEqual([second.sessionId, first.sessionId])
     expect(t.sessions.has(first.sessionId)).toBe(true)
-    await t.sessions.leave()
-    expect(t.sessions.has(first.sessionId)).toBe(false)
+    await expect(t.sessions.leave()).rejects.toThrow('PTY sessions did not drain')
+    expect(t.sessions.has(first.sessionId)).toBe(true)
+    expect(writes).toBe(2)
   })
 
   it('persists active and already-exited Pi sessions when leaving the vault', async () => {

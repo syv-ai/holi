@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, onTestFailed } from 'vitest'
-import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs'
-import { spawnOwnedProgram } from '../../../main/plugin-api'
+import { ownedProcessDrain, spawnOwnedProgram } from '../../../main/plugin-api'
 import { createServer, type Server } from 'node:http'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import {
+  kernelGroupAbsent,
+  posixFixtureLedger,
+} from '../../../../test/fixtures/posix-fixture-ledger'
 import { gunzipSync } from 'node:zlib'
 import { codexProvider } from '../main/codex/index'
 import { createJobs } from '../main/host/jobs'
@@ -13,6 +16,7 @@ import { createJobs } from '../main/host/jobs'
 const version = '0.169.0'
 const bin = process.env.HOLI_CODEX_BIN
 const roots: string[] = []
+const ledgers = new Map<string, Awaited<ReturnType<typeof posixFixtureLedger>>>()
 const servers: Server[] = []
 const jobsList: ReturnType<typeof createJobs>[] = []
 const bracketGateReleases: Array<() => void> = []
@@ -110,7 +114,10 @@ const proof = {
 }
 async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayBracketEnd = false) {
   if (!bin) throw new Error('HOLI_CODEX_BIN is required for native producer verification')
-  const root = await mkdtemp(join(tmpdir(), 'holi-native-codex-'))
+  const ledger =
+    process.platform === 'win32' ? undefined : await posixFixtureLedger('holi-native-codex-')
+  const root = ledger?.root ?? (await mkdtemp(join(tmpdir(), 'holi-native-codex-')))
+  if (ledger) ledgers.set(root, ledger)
   roots.push(root)
   const home = join(root, 'home')
   const person = join(root, 'person')
@@ -315,8 +322,22 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayB
       brackets.push({ id, edge })
     },
     spawn: (command, args, opts) => {
-      const child = spawnOwnedProgram(command, args, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] })
+      const child = spawnOwnedProgram(command, args, {
+        ...opts,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        posixGroupLease: true,
+      })
       if (child.pid) {
+        if (ledger) {
+          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+          const ancestry = ledger.retain(
+            ledger.record(child),
+            child[ownedProcessDrain]!.drain,
+            closed,
+            'job owned-process descriptor',
+          )
+          child.once('spawn', ancestry)
+        }
         const processRecord: Record<string, unknown> = {
           pid: child.pid,
           bin: command,
@@ -342,11 +363,11 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayB
         })
         rawProcesses.push(processRecord)
         nativePids.push(child.pid)
-        const ledger = process.env.HOLI_CODEX_PROCESS_LEDGER
-        if (ledger) {
-          mkdirSync(dirname(ledger), { recursive: true })
+        const externalLedger = process.env.HOLI_CODEX_PROCESS_LEDGER
+        if (externalLedger) {
+          mkdirSync(dirname(externalLedger), { recursive: true })
           appendFileSync(
-            ledger,
+            externalLedger,
             `${JSON.stringify({ pid: child.pid, group: process.platform === 'win32' ? child.pid : -child.pid, bin: command, cwd: opts.cwd, ownedRoot: root })}\n`,
           )
         }
@@ -367,7 +388,9 @@ async function fixture(mode: 'success' | 'failure' | 'stall' = 'success', delayB
           if (rawLines > 2000 || allowed < chunk.length) {
             processRecord.outputLimited = true
             try {
-              child.kill('SIGTERM')
+              const lease = child[ownedProcessDrain]
+              if (lease) void lease.drain().catch(() => {})
+              else child.kill('SIGTERM')
             } catch {}
           }
         }
@@ -415,9 +438,9 @@ async function nativeVersion(
   ownedRoot: string,
 ) {
   const cwd = process.cwd()
-  const child = spawn(bin!, ['--version'], {
+  const child = spawnOwnedProgram(bin!, ['--version'], {
     env,
-    detached: process.platform !== 'win32',
+    posixGroupLease: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   const record: Record<string, unknown> = {
@@ -433,7 +456,32 @@ async function nativeVersion(
     outputLimited: false,
   }
   scenario.versionProcess = record
+  const closed = new Promise<number | null>((resolve) => {
+    child.once('close', (exitCode, signal) => {
+      record.exitCode = exitCode
+      record.signal = signal
+      persistProof()
+      resolve(exitCode)
+    })
+  })
+  const exited = new Promise<void>((resolve) => {
+    child.once('exit', () => resolve())
+    child.once('error', (error) => {
+      record.spawnError = error.message
+      resolve()
+    })
+  })
   if (child.pid) {
+    const owned = ledgers.get(ownedRoot)
+    if (owned) {
+      const ancestry = owned.retain(
+        owned.record(child),
+        child[ownedProcessDrain]!.drain,
+        closed,
+        'version owned-process descriptor',
+      )
+      child.once('spawn', ancestry)
+    }
     nativePids.push(child.pid)
     const ledger = process.env.HOLI_CODEX_PROCESS_LEDGER
     if (ledger) {
@@ -448,13 +496,17 @@ async function nativeVersion(
     stderr = '',
     timedOut = false,
     limited = false
-  let escalation: ReturnType<typeof setTimeout> | undefined
-  const killGroup = (signal: NodeJS.Signals) => {
-    if (child.pid) {
-      try {
-        process.kill(process.platform === 'win32' ? child.pid : -child.pid, signal)
-      } catch {}
+  const stop = () => {
+    const lease = child[ownedProcessDrain]
+    if (lease) return lease.drain()
+    if (process.platform === 'win32') {
+      child.kill('SIGTERM')
+      return Promise.resolve()
     }
+    return Promise.reject(new Error('Missing Codex version lease'))
+  }
+  const terminate = () => {
+    void stop().catch(() => {})
   }
   let versionBytes = 0
   const collect = (chunk: Buffer, target: 'out' | 'err') => {
@@ -466,51 +518,26 @@ async function nativeVersion(
     if (versionBytes > 8192) {
       record.outputLimited = true
       limited = true
-      killGroup('SIGTERM')
+      terminate()
     }
   }
-  child.stdout.on('data', (chunk) => collect(chunk, 'out'))
-  child.stderr.on('data', (chunk) => collect(chunk, 'err'))
+  child.stdout!.on('data', (chunk) => collect(chunk, 'out'))
+  child.stderr!.on('data', (chunk) => collect(chunk, 'err'))
   const timeout = setTimeout(() => {
     timedOut = true
-    killGroup('SIGTERM')
-    escalation = setTimeout(() => killGroup('SIGKILL'), 250)
+    terminate()
   }, 10_000)
-  const code = await new Promise<number | null>((resolve, reject) => {
-    child.once('error', reject)
-    child.once('close', (exitCode, signal) => {
-      record.exitCode = exitCode
-      record.signal = signal
-      persistProof()
-      resolve(exitCode)
-    })
-  }).finally(() => {
+  let code: number | null
+  try {
+    await Promise.race([exited, closed])
+    if (process.platform !== 'win32') await stop()
+    code = await closed
+    if (record.spawnError) throw new Error(String(record.spawnError))
+  } finally {
     clearTimeout(timeout)
-    if (escalation) clearTimeout(escalation)
-  })
-  let groupDrained = true
-  if (child.pid && process.platform !== 'win32') {
-    try {
-      process.kill(-child.pid, 'SIGTERM')
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    try {
-      process.kill(-child.pid, 'SIGKILL')
-    } catch {}
-    const deadline = Date.now() + 2_000
-    while (Date.now() < deadline) {
-      try {
-        process.kill(-child.pid, 0)
-        await new Promise((resolve) => setTimeout(resolve, 25))
-      } catch {
-        break
-      }
-    }
-    try {
-      process.kill(-child.pid, 0)
-      groupDrained = false
-    } catch {}
   }
+  if (child.pid && process.platform !== 'win32') kernelGroupAbsent(child.pid)
+  const groupDrained = true
   return { code, stdout, timedOut, limited, groupDrained }
 }
 
@@ -533,24 +560,48 @@ async function ended(
 }
 
 afterEach(async () => {
+  proof.cleanup.nativeGroupsDrained = false
+  proof.cleanup.rootsRemoved = false
   // Unblock bracket persistence before draining jobs, even when an assertion or
   // native call failed while a turn was held at the test gate.
   for (const release of bracketGateReleases.splice(0)) release()
   // Vitest runs afterEach before onTestFailed. Clean up first; the callback
   // replaces incomplete-capture fallback evidence with the actual failure.
-  for (const jobs of jobsList.splice(0)) await jobs.leave()
+  const results = await Promise.allSettled([
+    ...jobsList.splice(0).map((jobs) => jobs.leave()),
+    ...Array.from(ledgers.values(), (ledger) => ledger.reap()),
+  ])
   for (const server of servers.splice(0)) {
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))
   }
+  const cleanupFailures = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []))
+  if (cleanupFailures.length)
+    throw new AggregateError(cleanupFailures, 'Codex producer cleanup failed')
+  proof.cleanup.nativeGroupsDrained = nativePids.every((pid) => {
+    if (process.platform !== 'win32') {
+      kernelGroupAbsent(pid)
+      return true
+    }
+    try {
+      process.kill(pid, 0)
+      return false
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ESRCH'
+    }
+  })
+  nativePids.length = 0
   let rootsRemoved = true
   for (const root of roots.splice(0)) {
     try {
-      await rm(root, { recursive: true, force: true })
+      const ledger = ledgers.get(root)
+      if (ledger) await ledger.remove()
+      else await rm(root, { recursive: true, force: true })
     } catch {
       rootsRemoved = false
     }
   }
+  ledgers.clear()
   proof.cleanup.rootsRemoved = rootsRemoved
   for (const scenario of proof.scenarios) {
     if (scenario.status === 'pending') {
@@ -559,14 +610,6 @@ afterEach(async () => {
       scenario.failure ??= 'native evidence was not fully captured'
     }
   }
-  proof.cleanup.nativeGroupsDrained = nativePids.every((pid) => {
-    try {
-      process.kill(-pid, 0)
-      return false
-    } catch {
-      return true
-    }
-  })
   persistProof()
 })
 

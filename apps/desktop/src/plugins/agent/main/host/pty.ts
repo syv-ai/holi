@@ -11,10 +11,14 @@
 // panel's shells: one place loads node-pty.
 import {
   defaultSpawnPty,
+  preparePosixLaunch,
   signalPty,
+  type PosixLaunch,
+  type ProcessGroupSupervision,
   type PtyProcess,
   type SpawnPty,
 } from '../../../../main/plugin-api'
+import { bounded } from './bounded'
 export type { PtyProcess, SpawnPty }
 
 // What a pid is right now lives in core, with the community plugins' servers
@@ -31,7 +35,7 @@ export { defaultProbePid, type PidState }
 
 export interface AgentRuntimeDeps {
   spawnPty?: SpawnPty
-  /** Liveness/ownership probe used before every signal (see `signal()`). */
+  /** Probe for the Windows/unsupervised compatibility path only. */
   probePid?: (pid: number) => PidState
   /** The OS to stop a child as; tests run both branches on any machine. */
   platform?: NodeJS.Platform
@@ -39,8 +43,10 @@ export interface AgentRuntimeDeps {
   taskkill?: (pid: number) => void
   /** SIGTERM → grace → SIGKILL. */
   killGraceMs?: number
-  /** Cap on waiting for the exit event after SIGKILL. */
+  /** Cap on waiting for public PTY exit, not on physical proof or callbacks. */
   killBackstopMs?: number
+  /** Test adapter for native process-group ownership; never inferred from a fake pid. */
+  superviseGroup?: (pid: number) => ProcessGroupSupervision
 }
 
 export interface StartArgs {
@@ -57,11 +63,44 @@ export interface AgentExit {
   signal?: number
 }
 
+/** node-pty 1.1.0's UnixTerminal sets this own field in the native exit
+ * callback, before waiting for socket close (or its 200 ms backstop). Its public
+ * onExit is the output edge, not the root edge. Observe the assignment on this
+ * instance only; never infer process ownership or signal anything from it. */
+function observeUnixRootExit(pty: PtyProcess, notify: () => void, required: boolean): void {
+  const field = Object.getOwnPropertyDescriptor(pty, '_boundClose')
+  if (!field?.configurable || field.value !== false) {
+    if (required) throw new Error('Unsupported node-pty Unix root-exit interface.')
+    return
+  }
+  let bound = false
+  Object.defineProperty(pty, '_boundClose', {
+    configurable: true,
+    enumerable: field.enumerable ?? false,
+    get: () => bound,
+    set: (value: boolean) => {
+      bound = value
+      if (value) notify()
+    },
+  })
+}
+
+/** A native adapter may already hold cleanup authority when it throws. */
+export function ptyLaunchCleanup(error: unknown): Promise<unknown> | undefined {
+  if (typeof error !== 'object' || error === null || !('cleanupPromise' in error)) return
+  const cleanup = error.cleanupPromise
+  if (cleanup && typeof (cleanup as PromiseLike<unknown>).then === 'function')
+    return Promise.resolve(cleanup)
+}
+
 export class AgentRuntime {
   private pty: PtyProcess | null = null
   private dataCbs: Array<(data: string) => void> = []
-  private exitCbs: Array<(e: AgentExit) => void> = []
-  private exitWaiters: Array<{ resolve: () => void; reject: (error: Error) => void }> = []
+  private drainingCbs: Array<() => void> = []
+  private draining = false
+  private drainingErrors: unknown[] = []
+  private exitCbs: Array<(e: AgentExit, signal?: AbortSignal) => void | Promise<void>> = []
+  private notifyPublicExit?: () => void
   private killTimer: ReturnType<typeof setTimeout> | null = null
   private killPromise: Promise<void> | null = null
   private readonly spawnPty: SpawnPty
@@ -70,14 +109,23 @@ export class AgentRuntime {
   private readonly taskkill: ((pid: number) => void) | undefined
   private readonly killGraceMs: number
   private readonly killBackstopMs: number
+  private readonly superviseGroup?: (pid: number) => ProcessGroupSupervision
+  private supervision?: ProcessGroupSupervision
+  private startupCleanup?: Promise<void>
+  private exitSettlement?: Promise<void>
+  private physicalDrain?: Promise<void>
+  private exitReported = false
+  private outputExpired = false
+  private exitBackstop?: ReturnType<typeof setTimeout>
 
   constructor(deps: AgentRuntimeDeps = {}) {
     this.spawnPty = deps.spawnPty ?? defaultSpawnPty
-    this.probePid = deps.probePid ?? defaultProbePid
+    this.probePid = deps.probePid ?? (deps.spawnPty ? () => 'alive' : defaultProbePid)
     this.platform = deps.platform ?? process.platform
     this.taskkill = deps.taskkill
     this.killGraceMs = deps.killGraceMs ?? 2_000
     this.killBackstopMs = deps.killBackstopMs ?? 5_000
+    this.superviseGroup = deps.superviseGroup
   }
 
   get isRunning(): boolean {
@@ -89,8 +137,7 @@ export class AgentRuntime {
    *
    * **The join key to Claude Code's own session listing**: a row there is
    * keyed by pid, and this is how Holi says which of its sessions a row is
-   * about. Derived from `this.pty`, which `onExit` clears before it emits, so a
-   * dead session reports null.
+   * about. It remains owned until physical drainage and its exit callbacks finish.
    */
   get pid(): number | null {
     return this.pty?.pid ?? null
@@ -100,29 +147,132 @@ export class AgentRuntime {
     this.dataCbs.push(cb)
   }
 
-  onExit(cb: (e: AgentExit) => void): void {
+  /** Stop admitting turn work now. Output and ownership can still be live. */
+  onDraining(cb: () => void): void {
+    this.drainingCbs.push(cb)
+  }
+
+  /** Native-start failure cleanup, independent of whether a PTY was returned. */
+  get failedLaunchCleanup(): Promise<void> | undefined {
+    return this.startupCleanup
+  }
+
+  onExit(cb: (e: AgentExit, signal?: AbortSignal) => void | Promise<void>): void {
     this.exitCbs.push(cb)
   }
 
   start({ bin, args, cwd, env, cols, rows }: StartArgs): void {
     if (this.pty) throw new Error('agent session already running')
-    // cols/rows pass straight through — undefined lets node-pty default natively.
-    const pty = this.spawnPty(bin, args, { cwd, env, cols, rows })
-    this.pty = pty
-    pty.onData((data) => {
-      for (const cb of this.dataCbs) cb(data)
-    })
-    pty.onExit((e) => {
-      // clear session state BEFORE emitting: listeners restart on exit, and a
-      // restart racing a stale `pty` would spawn into a half-dead runtime
-      if (this.pty === pty) this.pty = null
-      if (this.killTimer) {
-        clearTimeout(this.killTimer)
-        this.killTimer = null
+    if (this.startupCleanup) throw new Error('previous agent launch cleanup has not succeeded')
+    // Prepare synchronously so start() retains its public interface. Binding is
+    // observed immediately and joined by drain, including natural early exit.
+    let prepared: PosixLaunch | undefined
+    let invoked = false
+    this.killPromise = null
+    this.draining = false
+    this.drainingErrors = []
+    this.exitReported = false
+    this.outputExpired = false
+    this.exitSettlement = undefined
+    this.physicalDrain = undefined
+    try {
+      const native = this.spawnPty === defaultSpawnPty ? defaultSpawnPty.preload?.() : undefined
+      if (this.spawnPty === defaultSpawnPty && this.platform !== 'win32')
+        prepared = preparePosixLaunch(bin, args, {
+          cwd,
+          env: { ...env, PWD: cwd, TERM: 'xterm-256color' },
+        })
+      const executable = prepared?.executable ?? bin
+      const argv = prepared?.args ?? args
+      const options = { cwd, env: prepared?.options.env ?? env, cols, rows }
+      const invoke = native?.(executable, argv, options)
+      invoked = true
+      const pty = invoke ? invoke() : this.spawnPty(executable, argv, options)
+      this.supervision = prepared ? { drain: prepared.drain } : this.superviseGroup?.(pty.pid)
+      if (this.supervision && this.platform !== 'win32')
+        observeUnixRootExit(pty, () => this.beginDrain(), prepared !== undefined)
+      pty.onData((data) => {
+        if (this.pty !== pty) return
+        for (const cb of this.dataCbs) cb(data)
+      })
+      pty.onExit((e) => {
+        if (this.pty !== pty || this.exitReported || this.outputExpired) return
+        this.exitReported = true
+        this.beginDrain()
+        clearTimeout(this.exitBackstop)
+        if (this.killTimer) {
+          clearTimeout(this.killTimer)
+          this.killTimer = null
+        }
+        this.exitSettlement = (async () => {
+          if (this.physicalDrain) await this.physicalDrain
+          if (this.drainingErrors.length)
+            throw new AggregateError(this.drainingErrors, 'PTY drain notification failed.')
+          const controller = new AbortController()
+          const event = { exitCode: e.exitCode, signal: e.signal }
+          const finish = (from: number): void | Promise<void> => {
+            for (let i = from; i < this.exitCbs.length; i++) {
+              const completion = this.exitCbs[i]!(event, controller.signal)
+              if (completion !== undefined)
+                return completion.then(() => {
+                  controller.signal.throwIfAborted()
+                  return finish(i + 1)
+                })
+            }
+          }
+          const work = finish(0)
+          if (work !== undefined) {
+            try {
+              await bounded(work, `PTY ${pty.pid} exit callbacks`)
+            } catch (error) {
+              controller.abort(error)
+              throw error
+            }
+          }
+          this.pty = null
+        })()
+        void this.exitSettlement.catch(() => {})
+        this.notifyPublicExit?.()
+      })
+      if (prepared) void prepared.bind(pty.pid).catch(() => {})
+      this.pty = pty
+    } catch (error) {
+      const cleanup = [ptyLaunchCleanup(error)]
+      // node-pty can throw after posix_spawn/forkpty, even before installing
+      // its native exit callback. The lease can find that root without an IPty.
+      if (prepared) cleanup.push(prepared.cancel(invoked ? 'possibly-launched' : 'unlaunched'))
+      if (cleanup.some((work) => work !== undefined)) {
+        this.startupCleanup = Promise.allSettled(cleanup).then((results) => {
+          const failures = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []))
+          if (failures.length > 0)
+            throw new AggregateError([error, ...failures], 'PTY launch and cleanup failed.', {
+              cause: error,
+            })
+          this.startupCleanup = undefined
+        })
+        void this.startupCleanup.catch(() => {})
       }
-      for (const cb of this.exitCbs) cb({ exitCode: e.exitCode, signal: e.signal })
-      for (const waiter of this.exitWaiters.splice(0)) waiter.resolve()
-    })
+      throw error
+    }
+  }
+
+  private beginDrain(): void {
+    if (this.draining) return
+    this.draining = true
+    for (const cb of this.drainingCbs) {
+      try {
+        cb()
+      } catch (error) {
+        this.drainingErrors.push(error)
+      }
+    }
+    if (!this.supervision) return
+    try {
+      this.physicalDrain = this.supervision.drain()
+    } catch (error) {
+      this.physicalDrain = Promise.reject(error)
+    }
+    void this.physicalDrain.catch(() => {})
   }
 
   write(data: string): void {
@@ -133,86 +283,58 @@ export class AgentRuntime {
     this.pty?.resize(Math.max(1, Math.floor(cols)), Math.max(1, Math.floor(rows)))
   }
 
-  /**
-   * SIGTERM the child's whole **process group** (node-pty children are session
-   * leaders, so `claude`'s helper subprocesses — node sidecars, ripgrep — die
-   * with it; a bare pty.kill leaks them), escalating to SIGKILL after the
-   * grace period. Resolves when the child is actually reaped. On Windows the
-   * first signal already stops the whole tree (`killTree`); there is no
-   * gentler one for a console program.
-   */
+  /** Join physical POSIX proof, public PTY exit (after tail output), and
+   * async exit callbacks. Windows and injected unsupervised PTYs retain the
+   * legacy signalling path; their public exit is not POSIX kernel proof. */
   kill(): Promise<void> {
+    if (this.startupCleanup) return this.startupCleanup
     if (this.killPromise !== null) return this.killPromise
+    if (this.exitSettlement) return this.exitSettlement
     const pty = this.pty
     if (!pty) return Promise.resolve()
+    this.beginDrain()
     const pending = this.killAndWait(pty)
     this.killPromise = pending
-    void pending.then(
-      () => {
-        if (this.killPromise === pending) this.killPromise = null
-      },
-      () => {
-        if (this.killPromise === pending) this.killPromise = null
-      },
-    )
     return pending
   }
 
   private async killAndWait(pty: PtyProcess): Promise<void> {
-    let backstop: ReturnType<typeof setTimeout> | undefined
+    // The lease owns the physical deadline and its original failure. A PTY
+    // output timer never runs while that proof is still pending.
+    if (this.physicalDrain) await this.physicalDrain
+    if (this.exitSettlement) return this.exitSettlement
+
     const exited = new Promise<void>((resolve, reject) => {
-      this.exitWaiters.push({ resolve, reject })
-      backstop = setTimeout(() => {
-        const index = this.exitWaiters.findIndex((waiter) => waiter.resolve === resolve)
-        if (index !== -1) this.exitWaiters.splice(index, 1)
+      this.notifyPublicExit = resolve
+      this.exitBackstop = setTimeout(() => {
+        // A late output edge must not retire a failed POSIX owner. Legacy
+        // unsupervised terminals can still present their eventual exit.
+        if (this.supervision) this.outputExpired = true
         reject(new Error(`PTY ${pty.pid} did not report process exit before teardown timed out.`))
       }, this.killBackstopMs)
     })
-
-    this.signal(pty, 'SIGTERM')
-    this.killTimer = setTimeout(() => {
-      this.killTimer = null
-      if (this.pty === pty) this.signal(pty, 'SIGKILL')
-    }, this.killGraceMs)
-
     try {
+      if (!this.supervision) {
+        this.signal(pty, 'SIGTERM')
+        if (!this.exitReported) {
+          this.killTimer = setTimeout(() => {
+            this.killTimer = null
+            if (this.pty === pty) this.signal(pty, 'SIGKILL')
+          }, this.killGraceMs)
+        }
+      }
       await exited
     } finally {
-      if (backstop !== undefined) clearTimeout(backstop)
+      clearTimeout(this.exitBackstop)
+      this.notifyPublicExit = undefined
     }
+    return this.exitSettlement
   }
 
-  /**
-   * Signal the child, choosing the target from what the pid IS right now.
-   *
-   * ┌─ READ THIS BEFORE TOUCHING THE KILL PATH ────────────────────────────┐
-   * Never an unconditional `process.kill(-pty.pid, signal)`: that once killed
-   * unrelated applications on a developer's machine.
-   *
-   * `kill(-pid)` signals an entire process GROUP, and node-pty reports the
-   * child's exit asynchronously. Between the kernel reaping the child (which
-   * frees its pid for reuse *immediately*) and our `onExit` running, `this.pty`
-   * still looks live, so a signal could hit a pid the OS already handed to
-   * someone else, and the negative of it kills their whole group. The window is
-   * tiny but lands under heavy pid churn plus load. Guard it anyway.
-   *
-   * So: never signal a pid on the strength of a JS object still existing. Ask
-   * the OS what the pid is, immediately before signalling, every time.
-   *   - `group-leader` → still our setsid'd child; signal the group, which is
-   *     the whole point here (claude's helpers — node sidecars, ripgrep — die
-   *     with it instead of leaking).
-   *   - `alive` → a live pid that does not lead its own group, so it cannot be
-   *     our node-pty child's session. Signal only the child via node-pty; NEVER
-   *     negate a pid we have not positively identified as ours. (The
-   *     decision itself lives in `signalPty`, `main/terminal/pty.ts`.)
-   *   - `gone` → already reaped. Send nothing. There is no one left to signal
-   *     and the pid may already belong to someone else.
-   * └──────────────────────────────────────────────────────────────────────┘
-   */
+  /** Only for the compatibility path. Never infer native POSIX signal
+   * authority from a PTY object or a recycled numeric PID. */
   private signal(pty: PtyProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
-    // Cheap guard first: onExit nulls `this.pty`, so a mismatch means we
-    // already know it is dead without paying for a probe.
-    if (this.pty !== pty) return
+    if (this.pty !== pty || this.exitReported) return
 
     signalPty(pty, signal, this.probePid, this.platform, this.taskkill)
   }

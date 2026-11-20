@@ -21,7 +21,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { TerminalCommand } from '../provider'
-import { AgentRuntime, type PidState, type SpawnPty } from './pty'
+import { AgentRuntime, type AgentRuntimeDeps, type PidState, type SpawnPty } from './pty'
 import { TerminalMirror } from './terminal-mirror'
 import { TerminalAppearanceProtocol } from './terminal-appearance'
 
@@ -62,8 +62,12 @@ export interface OpenArgs {
   onInput?(data: string): void
   /** What the program printed. */
   onOutput?(data: string): void
-  /** Its process ended, by itself or closed. The last title survives terminal removal. */
-  onExit?(title?: string): void
+  /** Synchronously close turn admission on root exit or a stop request. */
+  onDraining?(): void
+  /** A failed native launch still has a retained cleanup operation. */
+  onStartupCleanup?(work: Promise<void>): void
+  /** Physical drain and PTY output settled. A deadline aborts retirement, not running work. */
+  onExit?(title?: string, signal?: AbortSignal): void | Promise<void>
   cols?: number
   rows?: number
   /** Written into the record before the program's first byte (the sign-in
@@ -78,7 +82,10 @@ export interface AgentTerminalsDeps {
   /** Liveness probe before every signal. Tests must inject one: a fake PTY's
    *  pid may belong to a real process on the machine running them. */
   probePid?: (pid: number) => PidState
+  superviseGroup?: AgentRuntimeDeps['superviseGroup']
+  /** Compatibility signalling only; the POSIX lease owns its own grace. */
   killGraceMs?: number
+  /** Wait for public exit after POSIX proof (or compatibility signalling). */
   killBackstopMs?: number
   pasteSettleMs?: number
   pasteBackstopMs?: number
@@ -95,7 +102,8 @@ export interface AgentTerminals {
   paste(id: string, text: string): boolean
   /** Set the appearance the child sees through OSC colour queries. */
   setAppearance(id: string, appearance: unknown): void
-  /** Detach: end the client. The session it shows keeps running. */
+  /** End the client. Joins physical proof, then bounds output and callbacks.
+   * A caller must not race this settlement with a shorter overall deadline. */
   close(id: string): Promise<void>
   closeAll(): Promise<void>
   list(): TerminalSummary[]
@@ -114,11 +122,12 @@ interface Terminal {
   mirror: TerminalMirror
   appearance: TerminalAppearanceProtocol
   onInput: ((data: string) => void) | undefined
-  onExit: ((title?: string) => void) | undefined
   /** False until a renderer has taken its state: output goes to the record only. */
   attached: boolean
   retainOnExit: boolean
-  exited: boolean
+  draining: boolean
+  hidden: boolean
+  closeWork?: Promise<void>
   /** True once its TUI has printed and settled; pastes wait until then. */
   ready: boolean
   /** The settle timer is running. */
@@ -127,25 +136,31 @@ interface Terminal {
   timers: ReturnType<typeof setTimeout>[]
 }
 
-export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
+export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals & {
+  /** Join native cleanup for launches that never published a terminal ID. */
+  joinFailedStarts(): Promise<void>
+} {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-terminals] ${msg}`))
   const settleMs = deps.pasteSettleMs ?? PASTE_SETTLE_MS
   const backstopMs = deps.pasteBackstopMs ?? PASTE_BACKSTOP_MS
   /** Insertion-ordered: the order they were opened. */
   const terminals = new Map<string, Terminal>()
+  const failedStarts = new Map<string | null, Promise<void>>()
   let lastPushed = ''
 
-  const list = (): TerminalSummary[] =>
-    [...terminals.values()].map(({ id, launchedFor, title }) => ({ id, launchedFor, title }))
+  const rows = (published = false): TerminalSummary[] =>
+    [...terminals.values()]
+      .filter((t) => !published || !t.hidden)
+      .map(({ id, launchedFor, title }) => ({ id, launchedFor, title }))
 
   /** Push only when the list actually changed. Every terminal is in the
    *  open vault, the one `remote` names. */
   const pushList = (remote: string): void => {
-    const next = list()
+    const next = rows(true)
     const encoded = JSON.stringify(next)
     if (encoded === lastPushed) return
-    lastPushed = encoded
     deps.emit(remote, 'terminals', next)
+    lastPushed = encoded
   }
 
   function markReady(t: Terminal): void {
@@ -154,13 +169,19 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
     for (const text of t.pending.splice(0)) t.runtime.write(bracketedPaste(text))
   }
 
-  function drop(t: Terminal): void {
+  function stopInput(t: Terminal): void {
     for (const timer of t.timers.splice(0)) clearTimeout(timer)
     t.pending.length = 0
-    terminals.delete(t.id)
   }
 
-  const api: AgentTerminals = {
+  async function joinCloses(work: Promise<void>[]): Promise<void> {
+    const results = await Promise.allSettled(work)
+    const errors = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []))
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 1) throw new AggregateError(errors, 'Terminal cleanup failed.')
+  }
+
+  const api: ReturnType<typeof createAgentTerminals> = {
     open({
       remote,
       cwd,
@@ -170,17 +191,28 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       retainOnExit,
       onInput,
       onOutput,
+      onDraining,
+      onStartupCleanup,
       onExit,
       cols,
       rows,
       notice,
     }) {
       if (command === null) return { ok: false, message: notInstalled }
+      const key = attach ?? null
+      const failed = failedStarts.get(key)
+      if (failed !== undefined) {
+        onStartupCleanup?.(failed)
+        return { ok: false, message: 'Previous terminal launch cleanup is unconfirmed.' }
+      }
+      if ([...terminals.values()].some((t) => t.launchedFor === key && t.draining))
+        return { ok: false, message: 'The previous terminal is still closing.' }
       const id = randomUUID()
       const mirror = new TerminalMirror(cols ?? 80, rows ?? 24)
       if (notice !== undefined) mirror.write(notice)
       const runtime = new AgentRuntime({
         ...(deps.spawnPty === undefined ? {} : { spawnPty: deps.spawnPty }),
+        ...(deps.superviseGroup === undefined ? {} : { superviseGroup: deps.superviseGroup }),
         ...(deps.probePid === undefined ? {} : { probePid: deps.probePid }),
         ...(deps.killGraceMs === undefined ? {} : { killGraceMs: deps.killGraceMs }),
         ...(deps.killBackstopMs === undefined ? {} : { killBackstopMs: deps.killBackstopMs }),
@@ -194,10 +226,10 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         mirror,
         appearance: new TerminalAppearanceProtocol(),
         onInput,
-        onExit,
         attached: false,
         retainOnExit: retainOnExit ?? false,
-        exited: false,
+        draining: false,
+        hidden: false,
         ready: false,
         settling: false,
         pending: [],
@@ -207,28 +239,47 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         t.title = title
         pushList(remote)
       })
+      let hasOutput = false
+      runtime.onDraining(() => {
+        t.draining = true
+        stopInput(t)
+        onDraining?.()
+      })
       runtime.onData((data) => {
-        for (const reply of t.appearance.feed(data)) runtime.write(reply)
+        hasOutput = true
+        if (!t.draining) for (const reply of t.appearance.feed(data)) runtime.write(reply)
         mirror.write(data)
         onOutput?.(data)
         if (t.attached) deps.emit(remote, 'pty-data', { id, data })
         // The first output means the TUI is up; a moment later it is reading
         // raw input. Only the fact of output is used, never what it says.
-        if (!t.ready && !t.settling) {
+        if (!t.draining && !t.ready && !t.settling) {
           t.settling = true
           t.timers.push(setTimeout(() => markReady(t), settleMs))
         }
       })
-      runtime.onExit((e) => {
-        log(`terminal ${id} exited (code ${e.exitCode})`)
-        t.exited = true
-        if (!t.retainOnExit) {
-          drop(t)
-          mirror.dispose()
+      runtime.onExit((e, signal) => {
+        const finish = () => {
+          signal?.throwIfAborted()
+          log(`terminal ${id} exited (code ${e.exitCode})`)
+          // Notify while still indexed. A failing notification must not let
+          // close/reopen miss this terminal or retire its session underneath it.
+          deps.emit(remote, 'pty-exit', { id, code: e.exitCode })
+          if (!t.retainOnExit) {
+            t.hidden = true
+            pushList(remote)
+            mirror.dispose()
+          }
+          const retire = () => {
+            signal?.throwIfAborted()
+            if (!t.retainOnExit) terminals.delete(t.id)
+          }
+          const completion = onExit?.(t.title, signal)
+          if (completion !== undefined) return completion.then(retire)
+          retire()
         }
-        deps.emit(remote, 'pty-exit', { id, code: e.exitCode })
-        pushList(remote)
-        onExit?.(t.title)
+        // node-pty delivered the last data, but xterm may still be parsing it.
+        return hasOutput ? mirror.serialize().then(finish) : finish()
       })
       try {
         runtime.start({
@@ -241,6 +292,17 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         })
       } catch (err: unknown) {
         mirror.dispose()
+        // No terminal id was published, but startup cleanup still owns the
+        // launch key. Hand the same promise to any owner of its source files.
+        const cleanup = runtime.failedLaunchCleanup
+        if (cleanup !== undefined) {
+          failedStarts.set(key, cleanup)
+          void cleanup.then(
+            () => failedStarts.delete(key),
+            () => {},
+          )
+          onStartupCleanup?.(cleanup)
+        }
         return { ok: false, message: err instanceof Error ? err.message : String(err) }
       }
       t.timers.push(setTimeout(() => markReady(t), backstopMs))
@@ -264,21 +326,21 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
     write(id, data) {
       const t = terminals.get(id)
       if (t === undefined) return
-      if (t.exited) return
+      if (t.draining) return
       t.onInput?.(data)
       t.runtime.write(data)
     },
 
     resize(id, cols, rows) {
       const t = terminals.get(id)
-      if (t === undefined || t.exited) return
+      if (t === undefined || t.draining) return
       t.runtime.resize(cols, rows)
       t.mirror.resize(cols, rows)
     },
 
     paste(id, text) {
       const t = terminals.get(id)
-      if (t === undefined || t.exited) return false
+      if (t === undefined || t.draining) return false
       if (t.ready) t.runtime.write(bracketedPaste(text))
       else t.pending.push(text)
       return true
@@ -286,34 +348,36 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
 
     setAppearance(id, appearance) {
       const t = terminals.get(id)
-      if (t === undefined || t.exited) return
+      if (t === undefined || t.draining) return
       if (t.appearance.update(appearance)) t.runtime.write(t.appearance.notification())
     },
 
-    async close(id) {
+    close(id) {
       const t = terminals.get(id)
-      if (t === undefined) return
-      // The exit handler drops it and tells the renderer. A client that never
-      // reports its exit is dropped here once the kill path gives up on it.
-      await t.runtime.kill()
-      if (terminals.get(id) === t) {
-        drop(t)
-        t.mirror.dispose()
-        // A retained terminal already emitted its real exit and called the
-        // session once. Closing it only releases its transcript resources.
-        if (!t.exited) {
-          deps.emit(t.remote, 'pty-exit', { id, code: -1 })
-          t.onExit?.(t.title)
-        }
+      if (t === undefined) return Promise.resolve()
+      // Public exit and its callbacks own retirement. An unconfirmed exit is
+      // not a synthetic close; a retained transcript is retired only here.
+      return (t.closeWork ??= t.runtime.kill().then(() => {
+        if (terminals.get(id) !== t) return
+        t.hidden = true
         pushList(t.remote)
-      }
+        t.mirror.dispose()
+        terminals.delete(id)
+      }))
+    },
+
+    async joinFailedStarts() {
+      await joinCloses([...failedStarts.values()])
     },
 
     async closeAll() {
-      await Promise.all([...terminals.keys()].map((id) => api.close(id)))
+      await joinCloses([
+        ...failedStarts.values(),
+        ...[...terminals.keys()].map((id) => api.close(id)),
+      ])
     },
 
-    list,
+    list: () => rows(),
 
     launchedFor(sessionId) {
       for (const t of terminals.values()) if (t.launchedFor === sessionId) return t.id

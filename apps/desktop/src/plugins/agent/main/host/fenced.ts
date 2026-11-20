@@ -37,6 +37,7 @@ import {
   type Made,
 } from './jobs'
 import { bounded } from './bounded'
+import { ptyLaunchCleanup } from './pty'
 import type { FenceCopy, PtySessions } from './pty-sessions'
 import type { Geometry, StartResult } from './sessions'
 
@@ -76,10 +77,11 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   const copies = new Set<Promise<unknown>>()
   const finalizers = new Set<Promise<unknown>>()
   const active = new Set<string>()
+  const failedStarts = new Map<string, unknown>()
   const cancellations = new Set<AbortController>()
   const drainErrors = new Set<unknown>()
   let retirement: Promise<void> | undefined
-  // Folders a crash left behind. Their processes died with Holi's PTYs.
+  // Retire scratch left by an earlier activation, before admitting any start.
   const swept = rm(deps.scratchRoot, { recursive: true, force: true }).catch((err: unknown) => {
     drainErrors.add(err)
     throw err
@@ -110,6 +112,12 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     rows,
   }: Parameters<FencedSessions['start']>[0]): Promise<StartResult> {
     if (closing) return { ok: false, message: 'The vault is closing.' }
+    const blocked = {
+      ok: false as const,
+      message: 'Previous fenced launch cleanup is unconfirmed.',
+      cleanupUnconfirmed: true as const,
+    }
+    if (failedStarts.size > 0) return blocked
     const began = generation
     const left = (): boolean => generation !== began
     const gone = { ok: false as const, message: 'The vault was left before the session started.' }
@@ -184,7 +192,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
           if (err instanceof CopyBackCancelled) return {}
           drainErrors.add(err)
           log(`${name}: ${(err as Error).message}`)
-          return { error: (err as Error).message }
+          throw err
         }
       })
       chain = next
@@ -203,6 +211,12 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
       await drop()
       return gone
     }
+    if (failedStarts.size > 0) {
+      await drop()
+      return blocked
+    }
+    let launchCleanup: Promise<void> | undefined
+    let startFailure: { error: unknown } | undefined
     let started: StartResult
     try {
       started = await deps.own.start(provider.id, {
@@ -210,9 +224,14 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
         prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
         ...(cols === undefined ? {} : { cols }),
         ...(rows === undefined ? {} : { rows }),
+        onStartupCleanup: (work) => {
+          launchCleanup = work
+          failedStarts.set(id, work)
+        },
         fence: {
           dir,
           state,
+          canLaunch: () => !left() && failedStarts.size === 0,
           turnEnded: copy,
           exited: () => {
             const finalizer = copy()
@@ -222,7 +241,7 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
                   return result
                 } catch (err) {
                   drainErrors.add(err)
-                  throw new Error(`Could not release agent state: ${String(err)}`)
+                  throw err
                 }
               })
               .then(async (result) => {
@@ -238,17 +257,43 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
           },
         },
       })
-    } catch (err) {
-      drainErrors.add(err)
-      try {
-        await drop()
-      } catch (cleanupError) {
-        drainErrors.add(cleanupError)
+    } catch (error) {
+      startFailure = { error }
+      started = { ok: false, message: String(error) }
+      if (launchCleanup === undefined) {
+        const cleanup = ptyLaunchCleanup(error)
+        if (cleanup !== undefined)
+          launchCleanup = cleanup.then(
+            () => {},
+            (failure: unknown) => {
+              throw new AggregateError([error, failure], 'Fenced launch and cleanup failed.', {
+                cause: error,
+              })
+            },
+          )
       }
-      throw err
     }
-    if (!started.ok) await drop()
-    else {
+    if (!started.ok) {
+      if (launchCleanup !== undefined) {
+        failedStarts.set(id, launchCleanup)
+        try {
+          await launchCleanup
+        } catch (error) {
+          failedStarts.set(id, error)
+          drainErrors.add(error)
+          throw error
+        }
+      } else if (startFailure !== undefined || started.cleanupUnconfirmed) {
+        // A throw can happen after the terminal opened. Without authority
+        // to verify cleanup, never drop this source or permit replacement.
+        const error = startFailure ? startFailure.error : new Error(started.message)
+        failedStarts.set(id, error)
+        throw error
+      }
+      await drop()
+      failedStarts.delete(id)
+      if (startFailure !== undefined) throw startFailure.error
+    } else {
       sessionId = started.sessionId
       if (cancellations.has(controller)) active.add(sessionId)
     }
@@ -281,9 +326,12 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
       await bounded(Promise.all([...starting]), 'Fenced session starts')
       const work = Promise.allSettled([...copies, ...finalizers])
       await bounded(work, 'Fenced session finalization')
+      if (drainErrors.size > 0 || failedStarts.size > 0)
+        throw new AggregateError(
+          [...new Set([...drainErrors, ...failedStarts.values()])],
+          'Fenced session cleanup did not complete.',
+        )
       if (active.size > 0) throw new Error(`Fenced PTYs did not exit: ${[...active].join(', ')}`)
-      if (drainErrors.size > 0)
-        throw new AggregateError([...drainErrors], 'Fenced session cleanup did not complete.')
       await bounded(swept, 'Fenced startup sweep')
       if (retirement === undefined) {
         const work = rm(deps.scratchRoot, { recursive: true, force: true })

@@ -4,7 +4,9 @@ import { NO_TOOLS, type PiChild } from '../main/pi/rpc'
 import { createPiBackground } from '../main/pi/background'
 import { agentCapabilities } from '../main/host/capabilities'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
+import { ownedProcessDrain } from '../../../main/plugin-api'
 import { join } from 'node:path'
+import { setImmediate as tick } from 'node:timers/promises'
 
 function fake(autoClose = true, autoStats = true) {
   const stdin = new PassThrough()
@@ -38,7 +40,17 @@ function fake(autoClose = true, autoStats = true) {
   let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
   let onClose: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
   let killed = false
+  let exited = false
+  const exit = (code: number | null, signal: NodeJS.Signals | null) => {
+    exited = true
+    onExit?.(code, signal)
+  }
   const child: PiChild = {
+    [ownedProcessDrain]: {
+      drain: async () => {
+        if (!exited) child.kill()
+      },
+    },
     stdin,
     stdout,
     stderr,
@@ -49,7 +61,7 @@ function fake(autoClose = true, autoStats = true) {
     },
     kill() {
       killed = true
-      onExit?.(null, 'SIGTERM')
+      exit(null, 'SIGTERM')
       if (autoClose) onClose?.(null, 'SIGTERM')
       return true
     },
@@ -59,9 +71,10 @@ function fake(autoClose = true, autoStats = true) {
     stdout,
     commands,
     exit: () => {
-      onExit?.(0, null)
+      exit(0, null)
       onClose?.(0, null)
     },
+    rootExit: () => exit(0, null),
     close: () => onClose?.(null, null),
     wasKilled: () => killed,
   }
@@ -316,6 +329,46 @@ describe('Pi background runs', () => {
     await manager.leave()
   })
 
+  it('never probes or signals a reused PID when a successfully drained run expires', async () => {
+    vi.useFakeTimers()
+    const rpc = fake()
+    const pid = 4242
+    let currentOwner = 'Pi'
+    const probe = vi.fn(() => currentOwner)
+    const signal = vi.fn()
+    const drain = vi.fn(async () => {
+      if (probe() === 'Pi') signal(pid)
+    })
+    const child = Object.assign(rpc.child, { pid, [ownedProcessDrain]: { drain } })
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: () => child,
+      bracket: () => {},
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    try {
+      await manager.launch({ name: 'retained', prompt: 'first' })
+      rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(manager.sessions()[0]?.outcome).toBe('completed')
+      rpc.exit()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(drain).toHaveBeenCalledTimes(1)
+      currentOwner = 'unrelated'
+      probe.mockClear()
+      signal.mockClear()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(manager.sessions()).toEqual([])
+      expect(drain).toHaveBeenCalledTimes(1)
+      expect(probe).not.toHaveBeenCalled()
+      expect(signal).not.toHaveBeenCalled()
+      expect(rpc.wasKilled()).toBe(false)
+    } finally {
+      await manager.leave()
+    }
+  })
+
   it('runs a tool-less run kept between turns, whose last answer can be read', async () => {
     vi.useFakeTimers()
     const rpc = fake()
@@ -469,6 +522,154 @@ describe('Pi background runs', () => {
     expect(active.sessions()).toEqual([])
   })
 
+  it.each(['stop', 'follow-up', 'expiry'] as const)(
+    'retains a Pi session after cleanup rejects during %s',
+    async (route) => {
+      vi.useFakeTimers()
+      const rpc = fake(false)
+      const failure = new Error('physical receipt rejected')
+      const drain = vi.fn(async () => {
+        throw failure
+      })
+      const manager = createPiBackground({
+        bin: () => 'pi',
+        spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: { drain } }),
+        bracket: () => {},
+        changed: () => {},
+      })
+      const claudeStop = vi.fn()
+      const capability = agentCapabilities({
+        pi: manager,
+        jobs: { has: () => false },
+        own: { has: () => false },
+        sessions: { stop: claudeStop },
+        liveRemote: () => 'owner/vault',
+      } as never)['agent.stop'] as {
+        run(ctx: CapabilityContext, args: { id: string }): Promise<unknown>
+      }
+      manager.setVault('owner/vault', '/vault')
+      const launched = await manager.launch({ name: 'x', prompt: 'go' })
+      if (!launched.ok) throw new Error(launched.message)
+      const id = launched.sessionId
+      const stop = () => capability.run({ remote: 'owner/vault' } as CapabilityContext, { id })
+      if (route !== 'stop') {
+        rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
+        await vi.advanceTimersByTimeAsync(0)
+        rpc.exit()
+      }
+      if (route === 'stop') await expect(stop()).rejects.toBe(failure)
+      if (route === 'follow-up') await expect(manager.message(id, 'again')).rejects.toBe(failure)
+      if (route === 'expiry') await vi.advanceTimersByTimeAsync(30_000)
+      expect(manager.sessions()).toMatchObject([{ id, provider: 'pi' }])
+      manager.setVault('other/vault', '/other')
+      expect(manager.reply(id)).toBeNull()
+      await expect(manager.stop(id)).resolves.toMatchObject({ ok: false })
+      manager.setVault('owner/vault', '/vault')
+      await expect(stop()).rejects.toBe(failure)
+      expect(claudeStop).not.toHaveBeenCalled()
+      const left = manager.leave()
+      await expect(left).rejects.toBe(failure)
+      expect(manager.leave()).toBe(left)
+      expect(drain).toHaveBeenCalledOnce()
+    },
+  )
+
+  it.each(['held close', 'rejected drain'] as const)(
+    'joins Pi spawned during activation invalidation: %s',
+    async (mode) => {
+      const activation = new AbortController()
+      const rpc = fake(false)
+      const failure = new Error('late drain rejected')
+      const drain = vi.fn(async () => {
+        if (mode === 'rejected drain') throw failure
+      })
+      const bracket = vi.fn()
+      const changed = vi.fn()
+      const manager = createPiBackground({
+        bin: () => 'pi',
+        spawn: () => {
+          activation.abort()
+          return Object.assign(rpc.child, { [ownedProcessDrain]: { drain } })
+        },
+        activationSignal: activation.signal,
+        bracket,
+        changed,
+      })
+      manager.setVault('owner/vault', '/vault')
+      await expect(manager.launch({ name: 'x', prompt: 'go' })).resolves.toMatchObject({
+        ok: false,
+      })
+      const leaving = manager.leave()
+      if (mode === 'rejected drain') await expect(leaving).rejects.toBe(failure)
+      else {
+        const left = vi.fn()
+        void leaving.then(left)
+        await new Promise((resolve) => setImmediate(resolve))
+        expect(left).not.toHaveBeenCalled()
+        rpc.close()
+        await leaving
+      }
+      expect(manager.leave()).toBe(leaving)
+      expect(drain).toHaveBeenCalledOnce()
+      expect(bracket).not.toHaveBeenCalled()
+      expect(changed).not.toHaveBeenCalled()
+    },
+  )
+
+  it('keeps the missing-proof launch rejection on the original Pi owner', async () => {
+    const rpc = fake(false)
+    const manager = createPiBackground({
+      bin: () => 'pi',
+      spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: undefined }),
+      bracket: vi.fn(),
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const launch = manager.launch({ name: 'x', prompt: 'go' })
+    await expect(launch).rejects.toThrow(/ownership proof/)
+    const failure: unknown = await launch.catch((error) => error)
+    const [job] = manager.sessions()
+    expect(job?.provider).toBe('pi')
+    await expect(manager.stop(job!.id)).rejects.toBe(failure)
+    await expect(manager.leave()).rejects.toBe(failure)
+    expect(rpc.commands).toEqual([])
+    expect(rpc.wasKilled()).toBe(false)
+  })
+
+  it('joins a failed spawn receipt and retains both original causes on rejection', async () => {
+    const activation = new AbortController()
+    let rejectCleanup!: (error: Error) => void
+    const cleanupPromise = new Promise<void>((_resolve, reject) => {
+      rejectCleanup = reject
+    })
+    const startup = Object.assign(new Error('startup failed'), { cleanupPromise })
+    const failure = new Error('failed startup cleanup rejected')
+    const manager = createPiBackground({
+      bin: () => 'pi',
+      spawn: () => {
+        activation.abort()
+        throw startup
+      },
+      activationSignal: activation.signal,
+      bracket: () => {},
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const launchError = manager.launch({ name: 'x', prompt: 'go' }).catch((error) => error)
+    const leaving = manager.leave()
+    const left = vi.fn()
+    void leaving.then(left, left)
+    await new Promise((resolve) => setImmediate(resolve))
+    // Reject only after observing that teardown is still waiting. Observe the
+    // fixture itself on red, when the owner has not yet adopted the receipt.
+    void cleanupPromise.catch(() => {})
+    rejectCleanup(failure)
+    expect(left).not.toHaveBeenCalled()
+    expect(await launchError).toBe(startup)
+    await expect(leaving).rejects.toMatchObject({ errors: [startup, failure] })
+    expect(manager.leave()).toBe(leaving)
+  })
+
   it('waits for child close before Stop releases the turn bracket', async () => {
     const rpc = fake(false)
     const brackets: string[] = []
@@ -567,8 +768,12 @@ describe('Pi background runs', () => {
     const rpc = fake(false)
     const edges: string[] = []
     let finishForget!: () => void
+    let enteredForget!: () => void
     const forget = new Promise<void>((resolve) => {
       finishForget = resolve
+    })
+    const forgetting = new Promise<void>((resolve) => {
+      enteredForget = resolve
     })
     const manager = createPiBackground({
       activationSignal: activation.signal,
@@ -576,7 +781,10 @@ describe('Pi background runs', () => {
       spawn: () => rpc.child,
       bracket: async (_id, edge) => {
         edges.push(edge)
-        if (edge === 'forget') await forget
+        if (edge === 'forget') {
+          enteredForget()
+          await forget
+        }
       },
       changed: () => {},
     })
@@ -595,15 +803,103 @@ describe('Pi background runs', () => {
     })
     await Promise.resolve()
     expect(left).toBe(false)
+    expect(edges).toEqual(['begin'])
     rpc.close()
-    await Promise.resolve()
-    expect(edges).toContain('forget')
+    await forgetting
     expect(left).toBe(false)
     finishForget()
     await leaving
     expect(left).toBe(true)
     expect(edges.filter((edge) => edge === 'forget')).toHaveLength(1)
     await expect(manager.leave()).resolves.toBeUndefined()
+  })
+
+  it.each(['settled', 'stats'] as const)(
+    'defers exiting Pi publication and finalization until EOF after late %s',
+    async (late) => {
+      const rpc = fake(false, false)
+      const drain = vi.fn(async () => {})
+      const bracket = vi.fn()
+      const changed = vi.fn()
+      const manager = createPiBackground({
+        bin: () => 'pi',
+        spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: { drain } }),
+        bracket,
+        changed,
+      })
+      manager.setVault('owner/vault', '/vault')
+      const launched = await manager.launch({ name: 'x', prompt: 'go' })
+      if (!launched.ok) throw new Error(launched.message)
+      const id = launched.sessionId
+      try {
+        if (late === 'stats') rpc.stdout.write('{"type":"agent_settled"}\n')
+        const updates = changed.mock.calls.length
+        rpc.rootExit()
+        expect(drain).toHaveBeenCalledOnce()
+        if (late === 'settled') rpc.stdout.write('{"type":"agent_settled"}\n')
+        else {
+          const request = rpc.commands.at(-1)
+          expect(request?.type).toBe('get_session_stats')
+          rpc.stdout.write(
+            JSON.stringify({
+              type: 'response',
+              id: request?.id,
+              success: true,
+              data: { tokens: { total: 9 } },
+            }) + '\n',
+          )
+        }
+        await tick()
+        expect(manager.reply(id)).toBeNull()
+        expect(manager.sessions()[0]).toMatchObject({ state: 'working' })
+        expect(bracket.mock.calls).toEqual([[id, 'begin']])
+        expect(changed).toHaveBeenCalledTimes(updates)
+        rpc.stdout.end(
+          '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"final reply"}}',
+        )
+        await vi.waitFor(() => expect(manager.reply(id)).toBe('final reply'))
+        expect(bracket.mock.calls).toEqual([
+          [id, 'begin'],
+          [id, 'end'],
+        ])
+        expect(manager.sessions()[0]).toMatchObject({ state: 'idle', outcome: 'completed' })
+        if (late === 'stats') expect(manager.sessions()[0]?.usage).toEqual({ total: 9 })
+      } finally {
+        rpc.close()
+        await manager.leave()
+      }
+    },
+  )
+
+  it('retains the original physical rejection without EOF or child close', async () => {
+    const rpc = fake(false, false)
+    const failure = new Error('could not prove drainage')
+    const drain = vi.fn(async () => {
+      throw failure
+    })
+    const bracket = vi.fn()
+    const manager = createPiBackground({
+      bin: () => 'pi',
+      spawn: () => Object.assign(rpc.child, { [ownedProcessDrain]: { drain } }),
+      bracket,
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const launched = await manager.launch({ name: 'x', prompt: 'go' })
+    if (!launched.ok) throw new Error(launched.message)
+    const id = launched.sessionId
+    rpc.rootExit()
+    await vi.waitFor(() =>
+      expect(bracket.mock.calls).toEqual([
+        [id, 'begin'],
+        [id, 'forget'],
+      ]),
+    )
+    rpc.stdout.write('{"type":"agent_settled"}\n')
+    expect(manager.reply(id)).toBeNull()
+    for (let i = 0; i < 2; i++) await expect(manager.stop(id)).rejects.toBe(failure)
+    await expect(manager.leave()).rejects.toBe(failure)
+    expect(drain).toHaveBeenCalledOnce()
   })
 
   it('suppresses late stats and completion after activation abort', async () => {
@@ -705,13 +1001,14 @@ describe('Pi background runs', () => {
   it('retains a failed finalizer without contaminating another job', async () => {
     const children = [fake(), fake()]
     const begun: string[] = []
+    const failure = new Error('first finalizer failed')
     let childIndex = 0
     const manager = createPiBackground({
       bin: () => '/usr/bin/pi',
       spawn: () => children[childIndex++]!.child,
       bracket: async (id, edge) => {
         if (edge === 'begin') begun.push(id)
-        if (edge === 'end' && id === begun[0]) throw new Error('first finalizer failed')
+        if (edge === 'end' && id === begun[0]) throw failure
       },
       changed: () => {},
     })
@@ -729,7 +1026,10 @@ describe('Pi background runs', () => {
       expect(manager.reply(first.sessionId)).toBe('first reply')
       expect(manager.reply(second.sessionId)).toBe('second reply')
     })
-    await expect(manager.leave()).rejects.toThrow(/Pi background runs failed to drain/)
+    await expect(manager.stop(first.sessionId)).rejects.toBe(failure)
+    expect(manager.sessions().map(({ id }) => id)).toContain(first.sessionId)
+    await expect(manager.stop(second.sessionId)).resolves.toEqual({ ok: true })
+    await expect(manager.leave()).rejects.toBe(failure)
   })
 
   it('rejects launches without a vault or installed Pi and isolates jobs on leave', async () => {

@@ -1,6 +1,9 @@
 import { PassThrough } from 'node:stream'
+import { setImmediate as tick } from 'node:timers/promises'
+import { posixFixtureLedger } from '../../../../test/fixtures/posix-fixture-ledger'
 import { describe, expect, it, vi } from 'vitest'
 import { PiRpcRun, type PiChild } from '../main/pi/rpc'
+import { ownedProcessDrain, spawnOwnedProgram } from '../../../main/plugin-api'
 
 function fake(autoClose = true) {
   const stdin = new PassThrough()
@@ -14,7 +17,17 @@ function fake(autoClose = true) {
   let exit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
   let close: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
   let childError: ((error: Error) => void) | undefined
+  let exited = false
+  const rootExit = (code: number | null, signal: NodeJS.Signals | null) => {
+    exited = true
+    exit?.(code, signal)
+  }
   const child: PiChild = {
+    [ownedProcessDrain]: {
+      drain: async () => {
+        if (!exited) child.kill()
+      },
+    },
     stdin,
     stdout,
     stderr,
@@ -27,7 +40,7 @@ function fake(autoClose = true) {
       return this
     },
     kill() {
-      exit?.(null, 'SIGTERM')
+      rootExit(null, 'SIGTERM')
       if (autoClose) close?.(null, 'SIGTERM')
       return true
     },
@@ -37,9 +50,10 @@ function fake(autoClose = true) {
     stdout,
     commands,
     exit: () => {
-      exit?.(1, null)
+      rootExit(1, null)
       close?.(1, null)
     },
+    rootExit: () => rootExit(1, null),
     error: (error: Error) => childError?.(error),
     close: () => close?.(null, null),
   }
@@ -379,7 +393,198 @@ describe('PiRpcRun', () => {
       usage: { input: 12, output: 8, total: 20, cost: 0.04 },
       contextPercent: 13,
     })
-    run.close()
+    expect(run.isAlive).toBe(true)
+    await run.close()
+  })
+
+  it('starts physical drain on root exit but reads buffered final RPC records', async () => {
+    const rpc = fake(false)
+    const drain = vi.fn(async () => {})
+    const child = Object.assign(rpc.child, { [ownedProcessDrain]: { drain } })
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => child, onStats: vi.fn() })
+    const result = run.prompt('go')
+    const drained = vi.fn()
+    void run.drained.then(drained)
+
+    rpc.rootExit()
+    expect(drain).toHaveBeenCalledOnce()
+    rpc.error(new Error('late error after drain started'))
+    const completed = vi.fn()
+    void result.then(completed)
+    rpc.stdout.write(
+      '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"final "}}\n{"type":"agent_settled","aborted":false}\n',
+    )
+    await tick()
+    expect(completed).not.toHaveBeenCalled()
+    rpc.stdout.end(
+      '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"answer"}}',
+    )
+    await expect(result).resolves.toMatchObject({ status: 'completed', output: 'final answer' })
+    expect(rpc.commands.map((command) => command.type)).toEqual(['prompt'])
+    expect(drained).not.toHaveBeenCalled()
+    rpc.close()
+    await run.close()
+    expect(drained).toHaveBeenCalledOnce()
+  })
+
+  it('waits for stdout EOF before classifying an incomplete exiting turn', async () => {
+    const rpc = fake(false)
+    const drain = vi.fn(async () => {})
+    const child = Object.assign(rpc.child, { [ownedProcessDrain]: { drain } })
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => child })
+    const result = run.prompt('go')
+    rpc.rootExit()
+    rpc.stdout.end(
+      '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"partial"}}',
+    )
+    await expect(result).resolves.toMatchObject({
+      status: 'failed',
+      output: 'partial',
+      error: 'Pi RPC exited (1)',
+    })
+    rpc.close()
+    await run.drained
+  })
+
+  it.each(['throw', 'reject'] as const)('memoizes a drain %s even without close', async (mode) => {
+    const rpc = fake(false)
+    const failure = new Error('lost lease')
+    const drain = vi.fn(() => {
+      if (mode === 'throw') throw failure
+      return Promise.reject(failure)
+    })
+    const child = Object.assign(rpc.child, { [ownedProcessDrain]: { drain } })
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => child })
+    const turn = run.prompt('go')
+    const failedTurn = expect(turn).rejects.toBe(failure)
+    rpc.rootExit()
+    rpc.error(new Error('later child error'))
+    await failedTurn
+    await expect(run.drained).rejects.toBe(failure)
+    await expect(run.close()).rejects.toBe(failure)
+    await expect(run.cancel()).rejects.toBe(failure)
+    expect(drain).toHaveBeenCalledOnce()
+  })
+
+  it.each([true, false])('orders pending stats and EOF (newline: %s)', async (newline) => {
+    const rpc = fake(false)
+    const onStats = vi.fn()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => rpc.child, onStats })
+    const result = run.prompt('go')
+    const completed = vi.fn()
+    void result.then(completed)
+    rpc.stdout.write(
+      '{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"native model failed"}}\n{"type":"agent_settled"}\n',
+    )
+    const request = rpc.commands.at(-1)
+    expect(request?.type).toBe('get_session_stats')
+    rpc.rootExit()
+    rpc.stdout.write(
+      JSON.stringify({
+        type: 'response',
+        id: request?.id,
+        success: true,
+        data: { tokens: { total: 12 } },
+      }) + (newline ? '\n' : ''),
+    )
+    await tick()
+    expect(onStats).toHaveBeenCalledTimes(newline ? 1 : 0)
+    expect(completed).not.toHaveBeenCalled()
+    rpc.stdout.end()
+    await expect(result).resolves.toMatchObject({ status: 'failed', error: 'native model failed' })
+    expect(onStats).toHaveBeenCalledExactlyOnceWith({ usage: { total: 12 } })
+    rpc.close()
+    await run.drained
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'completes ordinary native turns without waiting for EOF',
+    async () => {
+      const ledger = await posixFixtureLedger('holi-pi-live-turn-')
+      let run: PiRpcRun | undefined
+      try {
+        const child = spawnOwnedProgram(
+          process.execPath,
+          [
+            '-e',
+            `
+        const send = (record) => console.log(JSON.stringify(record));
+        require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+          const { type, id, message } = JSON.parse(line);
+          if (type === 'prompt') {
+            send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: message } });
+            send({ type: 'agent_settled' });
+          } else if (type === 'get_session_stats') {
+            send({ type: 'response', id, success: true, data: { tokens: { total: 4 } } });
+          }
+        });
+      `,
+          ],
+          { cwd: ledger.root, env: {}, stdio: 'pipe', posixGroupLease: true },
+        ) as PiChild & ReturnType<typeof spawnOwnedProgram>
+        const pid = ledger.record(child)
+        const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+        const identify = ledger.retain(
+          pid,
+          child[ownedProcessDrain]!.drain,
+          closed,
+          'Pi RPC control',
+        )
+        const admitted = new Promise<void>((resolve, reject) => {
+          child.once('error', reject)
+          child.once('spawn', () => {
+            try {
+              identify()
+              resolve()
+            } catch (error) {
+              reject(error)
+            }
+          })
+        })
+        const onStats = vi.fn()
+        run = new PiRpcRun({ bin: 'pi', cwd: ledger.root, spawn: () => child, onStats })
+        await admitted
+        for (const text of ['first', 'second']) {
+          const result = vi.fn()
+          void run.prompt(text).then(result, result)
+          await vi.waitFor(() =>
+            expect(result).toHaveBeenCalledWith(
+              expect.objectContaining({ status: 'completed', output: text }),
+            ),
+          )
+          expect(child.stdout.readableEnded).toBe(false)
+          expect(run.isAlive).toBe(true)
+        }
+        expect(onStats).toHaveBeenCalledTimes(2)
+      } finally {
+        try {
+          await run?.close()
+        } finally {
+          await ledger.reap()
+          await ledger.remove()
+        }
+      }
+    },
+  )
+
+  it('does not accept close as process proof from an adapter without a receipt', async () => {
+    const rpc = fake(false)
+    const child = {
+      ...rpc.child,
+      [ownedProcessDrain]: undefined,
+      pid: 4242,
+      kill: vi.fn(() => true),
+    }
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => child })
+    // Missing proof has already rejected, even before any lifecycle event.
+    const state = vi.fn()
+    void run.drained.then(state, state)
+    await Promise.resolve()
+    expect(state).toHaveBeenCalledWith(expect.any(Error))
+    rpc.rootExit()
+    rpc.close()
+    await expect(run.close()).rejects.toThrow(/ownership proof/)
+    expect(child.kill).not.toHaveBeenCalled()
   })
 
   it('keeps close and cancel pending until the child close event', async () => {

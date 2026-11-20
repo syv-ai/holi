@@ -1,12 +1,18 @@
-import { execFile, spawn } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { once } from 'node:events'
-import { expect, it, vi } from 'vitest'
+import { expect, it, onTestFinished } from 'vitest'
 import { PiRpcRun, type PiChild } from '../main/pi/rpc'
+import { ownedProcessDrain, spawnOwnedProgram } from '../../../main/plugin-api'
+
+import {
+  kernelGroupAbsent,
+  posixFixtureLedger,
+} from '../../../../test/fixtures/posix-fixture-ledger'
 
 const maxEvidenceBytes = 64 * 1024
 const timeoutMs = 20_000
@@ -19,322 +25,203 @@ async function waitFor(predicate: () => boolean, timeout: number): Promise<void>
   }
 }
 
-/** EPERM is ambiguous on Darwin after a group exits, never evidence of absence.
- * A successful, strictly parsed process-table snapshot supplies independent proof. */
-async function versionGroupExists(pgid: number): Promise<boolean> {
-  try {
-    process.kill(-pgid, 0)
-    return true
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ESRCH') return false
-    if (code !== 'EPERM') throw error
-  }
-  const table = await new Promise<string>((resolve, reject) => {
-    execFile(
-      'ps',
-      ['-axo', 'pid=,pgid='],
-      { timeout: 2000, maxBuffer: 1024 * 1024 },
-      (error, stdout) => {
-        if (error) reject(error)
-        else resolve(stdout)
-      },
-    )
-  })
-  const rows = table
-    .trim()
-    .split('\n')
-    .map((row) => row.trim().split(/\s+/).map(Number))
-  if (
-    !rows.length ||
-    rows.some((row) => row.length !== 2 || row.some((id) => !Number.isSafeInteger(id) || id < 0))
-  )
-    throw new Error('Could not verify version process group membership')
-  return rows.some(([, group]) => group === pgid)
-}
+type Ledger = Awaited<ReturnType<typeof posixFixtureLedger>>
 
-// Keep a ready, SIGTERM-resistant group leader until escalation. The version
-// command may exit first: its numeric PID alone must not authorize a later kill.
-const versionAnchor = `
-const { spawn } = require('node:child_process')
-process.on('SIGTERM', () => {})
-setInterval(() => {}, 1000)
-process.once('message', ({ bin }) => {
-  const command = spawn(bin, ['--version'], { stdio: ['ignore', 1, 2] })
-  command.once('error', (error) => process.send({ type: 'result', code: null, spawnError: error.message }))
-  command.once('exit', (code) => process.send({ type: 'result', code }))
-})
-process.send({ type: 'ready' })
-`
+async function versionFixture(prefix: string) {
+  const ledger = await posixFixtureLedger(prefix)
+  onTestFinished(async () => {
+    await ledger.reap()
+    await ledger.remove()
+  })
+  return ledger
+}
 
 async function runVersionCommand(
   bin: string,
   cwd: string,
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
+  ledger: Ledger,
   scheduleDeadline: (callback: () => void, delayMs: number) => () => void = (callback, delayMs) => {
     const timer = setTimeout(callback, delayMs)
     return () => clearTimeout(timer)
   },
-): Promise<{
-  code: number | null
-  stdout: string
-  stderr: string
-  timedOut: boolean
-  outputExceeded: boolean
-  spawnError?: string
-}> {
-  const child = spawn(process.execPath, ['-e', versionAnchor], {
-    cwd,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-    detached: process.platform !== 'win32',
-  })
+) {
   let stdout = ''
   let stderr = ''
   let outputBytes = 0
   let timedOut = false
   let outputExceeded = false
-  let stopping = false
-  let ready = false
-  let code: number | null = null
   let spawnError: string | undefined
-  let cleanupError: unknown
-  let killTimer: ReturnType<typeof setTimeout> | undefined
-  const alive = () => child.exitCode === null && child.signalCode === null
-  const signal = (name: NodeJS.Signals) => {
-    // Never signal a numeric group after its owned anchor exited.
-    if (!ready || !alive()) return
-    try {
-      if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, name)
-      else child.kill(name)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') cleanupError = error
-    }
-  }
-  const terminate = () => {
-    signal('SIGTERM')
-    killTimer = setTimeout(() => signal('SIGKILL'), 200)
-  }
+  let drain: (() => Promise<void>) | undefined
   const stop = () => {
-    if (stopping) return
-    stopping = true
-    if (ready) terminate()
-    // Before ready, the anchor has not launched any command. Kill only this
-    // owned child handle, never an unconfirmed numeric process group.
-    else if (alive()) child.kill('SIGKILL')
+    if (drain) void drain().catch(() => {})
   }
-  child.on('message', (message: { type: string; code?: number | null; spawnError?: string }) => {
-    if (message.type === 'ready') {
-      ready = true
-      if (stopping) terminate()
-      else child.send({ bin })
-    } else if (message.type === 'result') {
-      code = message.code ?? null
-      spawnError ??= message.spawnError
-      stop()
-    }
-  })
-  child.once('error', (error) => {
-    spawnError = error.message
-  })
-  const collect = (assign: 'stdout' | 'stderr') => (chunk: string) => {
-    outputBytes += Buffer.byteLength(chunk)
-    if (outputBytes > 16 * 1024) {
-      outputExceeded = true
-      stop()
-    } else if (assign === 'stdout') stdout = (stdout + chunk).slice(-16 * 1024)
-    else stderr = (stderr + chunk).slice(-16 * 1024)
-  }
-  child.stdout!.setEncoding('utf8').on('data', collect('stdout'))
-  child.stderr!.setEncoding('utf8').on('data', collect('stderr'))
   const cancelDeadline = scheduleDeadline(() => {
     timedOut = true
     stop()
   }, timeoutMs)
   try {
-    await new Promise<void>((resolve) => child.once('close', () => resolve()))
-    if (!stopping && !spawnError)
-      throw new Error('Native Pi version anchor exited before reporting a result')
-    if (cleanupError) throw cleanupError
-    if (process.platform !== 'win32' && child.pid) {
-      const deadline = Date.now() + 2000
-      while (await versionGroupExists(child.pid)) {
-        if (Date.now() >= deadline) throw new Error('Native Pi version process group did not drain')
-        await new Promise((resolve) => setTimeout(resolve, 20))
-      }
+    if (timedOut) return { code: null, stdout, stderr, timedOut, outputExceeded, spawnError }
+    const child = spawnOwnedProgram(bin, ['--version'], {
+      cwd,
+      env,
+      stdio: 'pipe',
+      posixGroupLease: true,
+    })
+    drain = child[ownedProcessDrain]?.drain
+    if (!drain) throw new Error('Missing Pi version lease')
+    const closed = new Promise<number | null>((resolve) => {
+      child.once('close', (code) => resolve(code))
+    })
+    child.once('error', (error) => {
+      spawnError = error.message
+    })
+    if (child.pid) {
+      const ancestry = ledger.retain(
+        ledger.record(child),
+        drain,
+        closed,
+        'version owned-process descriptor',
+      )
+      child.once('spawn', ancestry)
     }
+    const collect = (assign: 'stdout' | 'stderr') => (chunk: string) => {
+      outputBytes += Buffer.byteLength(chunk)
+      if (outputBytes > 16 * 1024) {
+        outputExceeded = true
+        stop()
+      } else if (assign === 'stdout') stdout += chunk
+      else stderr += chunk
+    }
+    child.stdout!.setEncoding('utf8').on('data', collect('stdout'))
+    child.stderr!.setEncoding('utf8').on('data', collect('stderr'))
+    // Root exit is independent of the output pipes that descendants may hold.
+    const exited = new Promise<void>((resolve) => {
+      child.once('exit', () => resolve())
+      child.once('error', () => resolve())
+    })
+    await Promise.race([exited, closed])
+    await drain()
+    const exitCode = await closed
+    const code = spawnError ? null : exitCode
+    if (child.pid) kernelGroupAbsent(child.pid)
+    return { code, stdout, stderr, timedOut, outputExceeded, spawnError }
   } finally {
     cancelDeadline()
-    clearTimeout(killTimer)
   }
-  return { code, stdout, stderr, timedOut, outputExceeded, spawnError }
 }
 
-it('drains a SIGTERM-resistant descendant when the version check hangs', async () => {
-  if (process.platform === 'win32') return
-  const root = await mkdtemp(join(tmpdir(), 'holi-pi-version-hang-'))
+const posixIt = it.runIf(process.platform !== 'win32')
+
+posixIt('drains a SIGTERM-resistant descendant when the version check hangs', async () => {
+  const ledger = await versionFixture('holi-pi-version-hang-')
+  const { root } = ledger
   const bin = join(root, 'pi')
   const pidPath = join(root, 'descendant.pid')
   const readyPath = join(root, 'descendant.ready')
+  await writeFile(
+    bin,
+    `#!/usr/bin/env node\nconst { spawn } = require('node:child_process')\nconst fs = require('node:fs')\nsetTimeout(() => {\n  const child = spawn(process.execPath, ['-e', ${JSON.stringify(`const fs=require('node:fs'); process.on('SIGTERM',()=>{}); fs.writeFileSync(${JSON.stringify(readyPath)}, 'ready'); setInterval(()=>{},1000)`)}], {stdio:'ignore'})\n  fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))\n}, 700)\nsetInterval(()=>{},1000)\n`,
+  )
+  await chmod(bin, 0o755)
+  let deadlineMs: number | undefined
+  let fireDeadline: (() => void) | undefined
+  let deadlineFired = false
+  const scheduleDeadline = (callback: () => void, delayMs: number) => {
+    deadlineMs = delayMs
+    fireDeadline = () => {
+      deadlineFired = true
+      callback()
+    }
+    return () => {}
+  }
+  const resultPromise = runVersionCommand(bin, root, process.env, 500, ledger, scheduleDeadline)
+  void resultPromise.catch(() => {})
   try {
-    await writeFile(
-      bin,
-      `#!/usr/bin/env node\nconst { spawn } = require('node:child_process')\nconst fs = require('node:fs')\nsetTimeout(() => {\n  const child = spawn(process.execPath, ['-e', ${JSON.stringify(`const fs=require('node:fs'); process.on('SIGTERM',()=>{}); fs.writeFileSync(${JSON.stringify(readyPath)}, 'ready'); setInterval(()=>{},1000)`)}], {stdio:'ignore'})\n  fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))\n}, 700)\nsetInterval(()=>{},1000)\n`,
-    )
-    await chmod(bin, 0o755)
-    let deadlineMs: number | undefined
-    let fireDeadline: (() => void) | undefined
-    let deadlineFired = false
-    let resultPromise: ReturnType<typeof runVersionCommand> | undefined
-    const scheduleDeadline = (callback: () => void, delayMs: number) => {
-      deadlineMs = delayMs
-      fireDeadline = () => {
-        deadlineFired = true
-        callback()
-      }
-      return () => {}
-    }
-    resultPromise = runVersionCommand(bin, root, process.env, 500, scheduleDeadline)
-    try {
-      await waitFor(() => existsSync(pidPath) && existsSync(readyPath), 10_000)
-      expect(deadlineMs).toBe(500)
-      expect(fireDeadline).toBeDefined()
-      fireDeadline!()
-      const result = await resultPromise
-      expect(result.timedOut).toBe(true)
-      const pid = Number(await readFile(pidPath, 'utf8'))
-      expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
-    } finally {
-      if (!deadlineFired) fireDeadline?.()
-      await resultPromise
-    }
+    await waitFor(() => existsSync(pidPath) && existsSync(readyPath), 10_000)
+    expect(deadlineMs).toBe(500)
+    expect(fireDeadline).toBeDefined()
+    fireDeadline!()
+    const result = await resultPromise
+    expect(result.timedOut).toBe(true)
+    const pid = Number(await readFile(pidPath, 'utf8'))
+    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
   } finally {
-    await rm(root, { recursive: true, force: true })
+    if (!deadlineFired) fireDeadline?.()
+    onTestFinished(() => resultPromise.then(() => {}))
   }
 })
 
-it.each([0, 7])('drains a SIGTERM-resistant descendant after version exit %i', async (exitCode) => {
-  if (process.platform === 'win32') return
-  const root = await mkdtemp(join(tmpdir(), 'holi-pi-version-exit-'))
-  const bin = join(root, 'pi')
-  const pidPath = join(root, 'descendant.pid')
-  const readyPath = join(root, 'descendant.ready')
-  try {
+posixIt.each([0, 7])(
+  'drains a SIGTERM-resistant descendant after version exit %i',
+  async (exitCode) => {
+    const ledger = await versionFixture('holi-pi-version-exit-')
+    const { root } = ledger
+    const bin = join(root, 'pi')
+    const pidPath = join(root, 'descendant.pid')
+    const readyPath = join(root, 'descendant.ready')
     await writeFile(
       bin,
       `#!/usr/bin/env node\nconst { spawn } = require('node:child_process')\nconst fs = require('node:fs')\nconst child = spawn(process.execPath, ['-e', ${JSON.stringify(`const fs=require('node:fs'); process.on('SIGTERM',()=>{}); fs.writeFileSync(${JSON.stringify(readyPath)}, 'ready'); setInterval(()=>{},1000)`)}], {stdio:'ignore'})\nconst ready = setInterval(() => {\n  if (!fs.existsSync(${JSON.stringify(readyPath)})) return\n  clearInterval(ready)\n  fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))\n  console.log('version')\n  process.exit(${exitCode})\n}, 10)\n`,
     )
     await chmod(bin, 0o755)
-    const result = await runVersionCommand(bin, root, process.env, 5_000)
+    const result = await runVersionCommand(bin, root, process.env, 5_000, ledger)
     expect(result.code).toBe(exitCode)
     expect(result.timedOut).toBe(false)
     expect(result.stdout.trim()).toBe('version')
     const pid = Number(await readFile(pidPath, 'utf8'))
     expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
+  },
+)
 
-it('confirms group absence independently when macOS kill-zero returns EPERM', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'holi-pi-version-eperm-'))
-  const bin = join(root, 'pi')
-  const kill = process.kill.bind(process)
-  const probe = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
-    if (pid < 0 && signal === 0) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
-    return kill(pid, signal)
-  })
-  try {
-    await writeFile(bin, '#!/usr/bin/env node\nconsole.log("version")\n')
-    await chmod(bin, 0o755)
-    expect(await runVersionCommand(bin, root, process.env, 5_000)).toMatchObject({
-      code: 0,
-      timedOut: false,
-      stdout: 'version\n',
-    })
-  } finally {
-    probe.mockRestore()
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-it('does not launch the version command when the deadline fires before anchor readiness', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'holi-pi-version-startup-'))
+posixIt('does not launch the version command when the deadline fires before launch', async () => {
+  const ledger = await versionFixture('holi-pi-version-startup-')
+  const { root } = ledger
   const bin = join(root, 'pi')
   const started = join(root, 'started')
-  try {
-    await writeFile(
-      bin,
-      `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(started)}, 'started')\n`,
-    )
-    await chmod(bin, 0o755)
-    expect(
-      await runVersionCommand(bin, root, process.env, 500, (callback) => {
-        callback()
-        return () => {}
-      }),
-    ).toMatchObject({ timedOut: true, code: null })
-    expect(existsSync(started)).toBe(false)
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
+  await writeFile(
+    bin,
+    `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(started)}, 'started')\n`,
+  )
+  await chmod(bin, 0o755)
+  expect(
+    await runVersionCommand(bin, root, process.env, 500, ledger, (callback) => {
+      callback()
+      return () => {}
+    }),
+  ).toMatchObject({ timedOut: true, code: null })
+  expect(existsSync(started)).toBe(false)
 })
 
-it('does not mistake an inaccessible live group for an absent group', async () => {
-  if (process.platform === 'win32') return
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-    detached: true,
-    stdio: 'ignore',
+posixIt('reports version spawn failure and bounds excessive output', async () => {
+  const ledger = await versionFixture('holi-pi-version-errors-')
+  const { root } = ledger
+  expect(
+    await runVersionCommand(join(root, 'missing'), root, process.env, 5_000, ledger),
+  ).toMatchObject({
+    code: null,
+    spawnError: expect.stringContaining('ENOENT'),
   })
-  await once(child, 'spawn')
-  const kill = process.kill.bind(process)
-  const probe = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
-    if (pid === -child.pid! && signal === 0)
-      throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
-    return kill(pid, signal)
+  const bin = join(root, 'pi')
+  await writeFile(
+    bin,
+    '#!/usr/bin/env node\nprocess.stdout.write("x".repeat(32 * 1024)); setInterval(() => {}, 1000)\n',
+  )
+  await chmod(bin, 0o755)
+  expect(await runVersionCommand(bin, root, process.env, 5_000, ledger)).toMatchObject({
+    outputExceeded: true,
+    timedOut: false,
   })
-  try {
-    expect(await versionGroupExists(child.pid!)).toBe(true)
-    probe.mockImplementation(() => {
-      throw Object.assign(new Error('unexpected probe error'), { code: 'EACCES' })
-    })
-    await expect(versionGroupExists(child.pid!)).rejects.toThrow('unexpected probe error')
-  } finally {
-    probe.mockRestore()
-    const closed = once(child, 'close')
-    child.kill('SIGKILL')
-    await closed
-  }
 })
 
-it('reports version spawn failure and bounds excessive output', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'holi-pi-version-errors-'))
-  try {
-    expect(await runVersionCommand(join(root, 'missing'), root, process.env, 5_000)).toMatchObject({
-      code: null,
-      spawnError: expect.stringContaining('ENOENT'),
-    })
-    const bin = join(root, 'pi')
-    await writeFile(
-      bin,
-      '#!/usr/bin/env node\nprocess.stdout.write("x".repeat(32 * 1024)); setInterval(() => {}, 1000)\n',
-    )
-    await chmod(bin, 0o755)
-    expect(await runVersionCommand(bin, root, process.env, 5_000)).toMatchObject({
-      outputExceeded: true,
-      timedOut: false,
-    })
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-const nativeProbeEnabled = Boolean(
-  process.env.PI_NATIVE_PROBE_BIN &&
-  process.env.PI_NATIVE_PROBE_EVIDENCE &&
-  process.env.PI_NATIVE_PROBE_VERSION,
-)
+const nativeProbeEnabled =
+  process.platform !== 'win32' &&
+  Boolean(
+    process.env.PI_NATIVE_PROBE_BIN &&
+    process.env.PI_NATIVE_PROBE_EVIDENCE &&
+    process.env.PI_NATIVE_PROBE_VERSION,
+  )
 
 it.skipIf(!nativeProbeEnabled)(
   'captures bounded native Pi RPC producer records through PiRpcRun',
@@ -342,7 +229,7 @@ it.skipIf(!nativeProbeEnabled)(
     const bin = process.env.PI_NATIVE_PROBE_BIN!
     const evidencePath = process.env.PI_NATIVE_PROBE_EVIDENCE!
     const expectedVersion = process.env.PI_NATIVE_PROBE_VERSION!
-    let root: string | undefined
+    let ledger: Ledger | undefined
     let dirs: Record<string, string> = {}
     let server: ReturnType<typeof createServer> | undefined
     let active: PiRpcRun | undefined
@@ -357,12 +244,14 @@ it.skipIf(!nativeProbeEnabled)(
     let evidence: Record<string, unknown> | undefined
     let probeStage: 'setup' | 'version' | 'native-rpc' = 'setup'
     let probeFailure: string | undefined
+    let failedStartReceipt: Promise<void> | undefined
     try {
-      root = await mkdtemp(join(tmpdir(), 'holi-pi-producer-'))
+      ledger = await posixFixtureLedger('holi-pi-producer-')
+      const { root } = ledger
       dirs = Object.fromEntries(
         await Promise.all(
           ['home', 'config', 'data', 'tmp', 'work', 'pi'].map(async (name) => {
-            const path = join(root!, name)
+            const path = join(root, name)
             await mkdir(path)
             return [name, path]
           }),
@@ -484,7 +373,7 @@ it.skipIf(!nativeProbeEnabled)(
         tools: [],
       }
       probeStage = 'version'
-      const versionResult = await runVersionCommand(bin, dirs.work!, env, 5_000)
+      const versionResult = await runVersionCommand(bin, dirs.work!, env, 5_000, ledger)
       if (versionResult.spawnError)
         throw new Error(`Could not spawn native Pi version command: ${versionResult.spawnError}`)
       if (versionResult.timedOut || versionResult.outputExceeded)
@@ -500,7 +389,20 @@ it.skipIf(!nativeProbeEnabled)(
         args: string[],
         options: { cwd: string; env?: NodeJS.ProcessEnv; stdio: 'pipe' },
       ) => {
-        const child = spawn(executable, args, options) as unknown as PiChild
+        const child = spawnOwnedProgram(executable, args, {
+          ...options,
+          posixGroupLease: true,
+        }) as ChildProcessWithoutNullStreams & PiChild
+        if (child.pid) {
+          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+          const ancestry = ledger!.retain(
+            ledger!.record(child),
+            child[ownedProcessDrain]!.drain,
+            closed,
+            'RPC owned-process descriptor',
+          )
+          child.once('spawn', ancestry)
+        }
         probeStage = 'native-rpc'
         commands.push({
           argv: args,
@@ -535,15 +437,7 @@ it.skipIf(!nativeProbeEnabled)(
           if (stopping) return
           stopping = true
           captureError = 'Native output evidence exceeded bound'
-          try {
-            child.kill('SIGTERM')
-          } catch {}
-          const escalation = setTimeout(() => {
-            try {
-              child.kill('SIGKILL')
-            } catch {}
-          }, 200)
-          escalation.unref()
+          void active?.close().catch(() => {})
         }
         child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
           if (stopping) return
@@ -596,7 +490,7 @@ it.skipIf(!nativeProbeEnabled)(
           if (stderrBytesTotal > 16 * 1024) stopChild()
           else stderrText = (stderrText + chunk).slice(-16 * 1024)
         })
-        return child
+        return child as PiChild
       }
       const run = () => {
         const instance = new PiRpcRun({
@@ -614,13 +508,14 @@ it.skipIf(!nativeProbeEnabled)(
         })
         active = instance
         const timer = setTimeout(() => {
-          void instance.cancel()
+          void instance.cancel().catch(() => {})
         }, timeoutMs)
         runTimers.set(instance, timer)
-        void instance.drained.then(() => {
+        const releaseTimer = () => {
           clearTimeout(timer)
           runTimers.delete(instance)
-        })
+        }
+        void instance.drained.then(releaseTimer, releaseTimer)
         return instance
       }
       const firstRun = run()
@@ -747,10 +642,13 @@ it.skipIf(!nativeProbeEnabled)(
       expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThan(maxEvidenceBytes)
     } catch (error) {
       probeFailure = String(error instanceof Error ? error.message : error).slice(0, 1000)
+      const failed = error as { cleanupPromise?: Promise<void>; cleanup?: Promise<void> } | null
+      failedStartReceipt = failed?.cleanupPromise ?? failed?.cleanup
       throw error
     } finally {
       for (const timer of runTimers.values()) clearTimeout(timer)
       try {
+        await failedStartReceipt
         await active?.cancel()
         cleanupEvidence.piRunDrained = true
       } catch {}
@@ -764,8 +662,11 @@ it.skipIf(!nativeProbeEnabled)(
         cleanupEvidence.fixtureServerClosed = true
       } catch {}
       try {
-        if (root) await rm(root, { recursive: true, force: true })
-        cleanupEvidence.localRootRemoved = true
+        if (cleanupEvidence.piRunDrained) {
+          await ledger?.reap()
+          await ledger?.remove()
+          cleanupEvidence.localRootRemoved = true
+        }
       } catch {}
       const finalEvidence = {
         ...(evidence ?? {}),

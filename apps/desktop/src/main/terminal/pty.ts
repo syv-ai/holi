@@ -30,19 +30,34 @@ export interface SpawnPtyOptions {
 
 export type SpawnPty = (file: string, args: string[], opts: SpawnPtyOptions) => PtyProcess
 
-/** The only place node-pty is loaded — never reached under vitest. */
-export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
-  const pty = require('node-pty') as typeof import('node-pty')
-  // Canonical npm Node shims resolve to their script; opaque Windows batches
-  // use cmd.exe. Windows fallback Node is a genuine runtime with interactive stdio.
-  const launch = launchPlan(file, args, { env: opts.env })
-  const env = launch.env ? { ...opts.env, ...launch.env } : opts.env
-  return pty.spawn(launch.file, commandLine(launch), {
-    name: 'xterm-256color',
-    ...opts,
-    env,
-  }) as unknown as PtyProcess
+/** The only place node-pty is loaded. Loading and preparing a call cannot
+ * create a child; once the returned thunk runs, even a throw can own one. */
+function preloadNativePty() {
+  const { spawn } = require('node-pty') as typeof import('node-pty')
+  if (typeof spawn !== 'function') throw new Error('node-pty does not export spawn.')
+  return (file: string, args: string[], opts: SpawnPtyOptions) => {
+    // Canonical npm Node shims resolve to their script; opaque Windows batches
+    // use cmd.exe. Windows fallback Node is a genuine runtime with interactive stdio.
+    const launch = launchPlan(file, args, { env: opts.env })
+    const argv = commandLine(launch)
+    const env = launch.env ? { ...opts.env, ...launch.env } : opts.env
+    const options = { name: 'xterm-256color', ...opts, env }
+    if (
+      typeof options.cwd !== 'string' ||
+      options.cwd.includes('\0') ||
+      [options.cols, options.rows].some((size) => size !== undefined && typeof size !== 'number')
+    )
+      throw new TypeError('Invalid node-pty options.')
+    return () => spawn(launch.file, argv, options)
+  }
 }
+
+// Ordinary SpawnPty adapters stay functions; only the real adapter needs to
+// split pre-native work from the call that can have forked.
+export const defaultSpawnPty: SpawnPty & { preload?: typeof preloadNativePty } = Object.assign(
+  ((file, args, opts) => preloadNativePty()(file, args, opts)()) satisfies SpawnPty,
+  { preload: preloadNativePty },
+)
 
 /**
  * node-pty's own `kill`. On Windows it takes no signal and throws if given
@@ -66,7 +81,7 @@ function killPty(
  * a `group-leader` is still our setsid'd child, and its group (the shell's
  * jobs, Claude's helpers) goes with it; a pid that is `alive` but leads no
  * group is signalled alone through node-pty; a `gone` one gets nothing.
- * The agent's runtime (`plugins/agent/main/host/pty.ts`) explains the history.
+ * Supervised POSIX agent PTYs never use this compatibility path.
  *
  * On Windows there are no groups or signals: a live child is a tree root and
  * `killTree` stops the tree by `taskkill`, then the PTY itself is closed.

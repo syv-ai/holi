@@ -1,9 +1,49 @@
 import test from 'node:test'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { existsSync } from 'node:fs'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runProducerProof, validateNativeProof } from './codex-exec-producer.mjs'
+import { leaseBuildScript } from './producer-command.mjs'
+
+// These commands are all fixture programs with no children of their own. Keep
+// their handles so an expected retained root can be removed under test authority.
+async function runFakeProof(t, params) {
+  const processes = []
+  const calls = []
+  const { buildCode = 0, ...proofOptions } = params
+  const adapter = {
+    spawnChild(command, args, options) {
+      calls.push(args)
+      const child = spawn(
+        command,
+        args[0] === leaseBuildScript ? ['-e', `process.exit(${buildCode})`] : args,
+        options,
+      )
+      processes.push({ child, closed: new Promise((resolve) => child.once('close', resolve)) })
+      return child
+    },
+    probePresence: (pid) => process.kill(pid, 0),
+  }
+  const result = await runProducerProof({ ...proofOptions, adapter })
+  const retained = result.evidence.cleanup.retainedRoot
+  t.after(async () => {
+    for (const { child, closed } of processes) {
+      await closed
+      if (child.pid && process.platform !== 'win32') {
+        for (const id of [child.pid, -child.pid])
+          assert.throws(() => process.kill(id, 0), { code: 'ESRCH' })
+      }
+    }
+    if (retained) await rm(retained, { recursive: true })
+  })
+  assert.deepEqual(calls[0], [leaseBuildScript])
+  if (buildCode) assert.equal(calls.length, 1)
+  return result
+}
 
 async function installFixture(root) {
   const npm = join(root, 'npm-fixture.mjs')
@@ -29,12 +69,23 @@ async function pnpmFixture(root, source) {
   return pnpm
 }
 
-test('native producer runner reports install failure as unavailable setup', async () => {
+test('a failed helper build stops Codex before installing the package', async (t) => {
+  const { evidence } = await runFakeProof(t, {
+    buildCode: 1,
+    npm: '/unused/npm',
+    pnpm: '/unused/pnpm',
+  })
+  assert.equal(evidence.classification, 'setup-unavailable')
+  assert.match(evidence.detail, /helper build exited 1/)
+  assert.equal(evidence.cleanup.rootRemoved, true)
+})
+
+test('native producer runner reports install failure as unavailable setup', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-install-'))
   try {
     const npm = join(root, 'npm')
     await writeFile(npm, '#!/bin/sh\nexit 17\n', { mode: 0o755 })
-    const result = await runProducerProof({ npm, pnpm: 'unused' })
+    const result = await runFakeProof(t, { npm, pnpm: 'unused' })
     assert.equal(result.failed, true)
     assert.equal(result.evidence.classification, 'setup-unavailable')
     assert.equal(result.evidence.version, null)
@@ -43,7 +94,7 @@ test('native producer runner reports install failure as unavailable setup', asyn
   }
 })
 
-test('native producer runner distinguishes wrong installed CLI version', async () => {
+test('native producer runner distinguishes wrong installed CLI version', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-version-'))
   try {
     const npm = join(root, 'npm-fixture.mjs')
@@ -60,7 +111,7 @@ await writeFile(join(dir, 'codex.js'), 'console.log("codex-cli 9.9.9")\\n')
 `,
       { mode: 0o755 },
     )
-    const result = await runProducerProof({ npm, pnpm: 'unused' })
+    const result = await runFakeProof(t, { npm, pnpm: 'unused' })
     assert.equal(result.failed, true)
     assert.equal(result.evidence.classification, 'observed-contract-error')
     assert.equal(result.evidence.version, 'codex-cli 9.9.9')
@@ -69,7 +120,7 @@ await writeFile(join(dir, 'codex.js'), 'console.log("codex-cli 9.9.9")\\n')
   }
 })
 
-test('nonzero version probe is setup unavailable, not a version mismatch', async () => {
+test('nonzero version probe is setup unavailable, not a version mismatch', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-version-launch-'))
   try {
     const npm = join(root, 'npm-fixture.mjs')
@@ -78,7 +129,7 @@ test('nonzero version probe is setup unavailable, not a version mismatch', async
       `#!/usr/bin/env node\nimport { mkdir, writeFile } from 'node:fs/promises'; import { join } from 'node:path'; const dir = join(process.argv[process.argv.indexOf('--prefix') + 1], 'node_modules', '@openai', 'codex'); await mkdir(join(dir, 'bin'), { recursive: true }); await writeFile(join(dir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.169.0' })); await writeFile(join(dir, 'bin', 'codex.js'), 'process.exit(1)\\n')`,
       { mode: 0o755 },
     )
-    const result = await runProducerProof({ npm, pnpm: 'unused' })
+    const result = await runFakeProof(t, { npm, pnpm: 'unused' })
     assert.equal(result.failed, true)
     assert.equal(result.evidence.classification, 'setup-unavailable')
     assert.equal(result.evidence.version, '')
@@ -87,7 +138,7 @@ test('nonzero version probe is setup unavailable, not a version mismatch', async
   }
 })
 
-test('zero-exit fake Vitest without a native artifact is never proof', async () => {
+test('zero-exit fake Vitest without a native artifact is never proof', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-empty-'))
   try {
     const npm = await installFixture(root)
@@ -95,15 +146,16 @@ test('zero-exit fake Vitest without a native artifact is never proof', async () 
       root,
       'process.stdout.write("Test Files 1 passed\\nTests 0 passed (0)\\n")',
     )
-    const result = await runProducerProof({ npm, pnpm })
+    const result = await runFakeProof(t, { npm, pnpm })
     assert.equal(result.failed, true)
     assert.equal(result.evidence.classification, 'incomplete-proof')
+    assert.equal(result.evidence.cleanup.rootRemoved, false)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('zero-test and skipped-test runner output cannot pass', async () => {
+test('zero-test and skipped-test runner output cannot pass', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-skipped-'))
   try {
     const npm = await installFixture(root)
@@ -111,7 +163,7 @@ test('zero-test and skipped-test runner output cannot pass', async () => {
       root,
       'process.stdout.write(process.env.HOLI_CODEX_PROOF_OUTPUT ? "Test Files 1 passed\\nTests 5 skipped (5)\\n" : "")',
     )
-    const result = await runProducerProof({ npm, pnpm })
+    const result = await runFakeProof(t, { npm, pnpm })
     assert.equal(result.failed, true)
     assert.equal(result.evidence.classification, 'incomplete-proof')
   } finally {
@@ -119,7 +171,7 @@ test('zero-test and skipped-test runner output cannot pass', async () => {
   }
 })
 
-test('all native contract failures are classified from explicit scenario evidence', async () => {
+test('all native contract failures are classified from explicit scenario evidence', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-contract-'))
   try {
     const npm = await installFixture(root)
@@ -155,14 +207,15 @@ test('all native contract failures are classified from explicit scenario evidenc
       root,
       `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; for (const scenario of proof.scenarios) scenario.rawProcesses[0].bin = proof.bin; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('5 failed')`,
     )
-    const result = await runProducerProof({ npm, pnpm })
-    assert.equal(result.evidence.classification, 'observed-contract-error')
+    const result = await runFakeProof(t, { npm, pnpm })
+    assert.equal(result.evidence.classification, 'incomplete-proof')
+    assert.equal(result.evidence.firstFailure, 'observed-contract-error')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('a setup failure after an earlier native pass remains setup-unavailable', async () => {
+test('preserves a late setup failure when worker cleanup is incomplete', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-late-setup-'))
   try {
     const npm = await installFixture(root)
@@ -192,14 +245,15 @@ test('a setup failure after an earlier native pass remains setup-unavailable', a
       root,
       `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('1 passed 4 failed')`,
     )
-    const result = await runProducerProof({ npm, pnpm })
-    assert.equal(result.evidence.classification, 'setup-unavailable')
+    const result = await runFakeProof(t, { npm, pnpm })
+    assert.equal(result.evidence.classification, 'incomplete-proof')
+    assert.equal(result.evidence.firstFailure, 'setup-unavailable')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('malformed, partial, oversized and unknown native proof are rejected', async () => {
+test('malformed, partial, oversized and unknown native proof are rejected', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-artifact-'))
   try {
     const npm = await installFixture(root)
@@ -212,7 +266,7 @@ test('malformed, partial, oversized and unknown native proof are rejected', asyn
         root,
         `import { writeFile } from 'node:fs/promises'; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, ${JSON.stringify(payload)}); process.stdout.write("5 passed")`,
       )
-      const result = await runProducerProof({ npm, pnpm })
+      const result = await runFakeProof(t, { npm, pnpm })
       assert.equal(result.failed, true)
       assert.equal(result.evidence.classification, 'incomplete-proof')
     }
@@ -236,71 +290,70 @@ test('malformed, partial, oversized and unknown native proof are rejected', asyn
   }
 })
 
-test('detached native groups drain after early exit and timeout without killing unrelated roots', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'holi-producer-detached-'))
-  const pidFile = join(root, 'owned-pids')
+test('retains evidence on early runner exit without signalling a matching detached child', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-producer-owned-fixture-'))
+  // This child belongs to the test, not the runner. Its argv can be made to
+  // match the installed package without giving the runner authority over it.
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      `
+    process.on('message', (argv) => { process.title = argv; process.send('ready') })
+    process.on('disconnect', () => process.exit(0))
+  `,
+    ],
+    { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
+  )
+  // The IPC descriptor is closed by our disconnect; join the actual child exit.
+  const exited = once(child, 'exit')
+  const pid = child.pid
+  let result
   try {
     const npm = await installFixture(root)
-    const grandchildSource = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"
-    const childSource = `process.on('SIGTERM', () => {}); const g = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchildSource)}], { stdio: 'ignore' }); require('node:fs').writeFileSync(${JSON.stringify(pidFile + '.grand')}, String(g.pid)); setInterval(() => {}, 1000)`
-    const run = async (mode, timeout) => {
-      const runner = await pnpmFixture(
-        root,
-        `import { spawn } from 'node:child_process'; import { writeFile } from 'node:fs/promises'; const marker = ${JSON.stringify(pidFile)}; const bin = process.env.HOLI_CODEX_BIN; const p = spawn(process.execPath, ['-e', ${JSON.stringify(childSource)}, bin], { detached: true, stdio: 'ignore' }); await new Promise(r => setTimeout(r, 250)); await writeFile(marker, String(p.pid)); ${mode === 'exit' ? 'process.exit(0)' : 'setInterval(() => {}, 1000)'}`,
-      )
-      return runProducerProof({ npm, pnpm: runner, timeout })
-    }
-    for (const [mode, timeout] of [
-      ['exit', 8_000],
-      ['hang', 3_000],
-    ]) {
-      const result = await run(mode, timeout)
-      assert.equal(result.failed, true)
-      assert.equal(result.evidence.cleanup.processesDrained, true)
-      assert.equal(result.evidence.cleanup.rootRemoved, true)
-      if (mode === 'exit') assert.equal(result.evidence.test.code, 0, result.evidence.test.stderr)
-      else assert.equal(result.evidence.test.timedOut, true)
-      const pid = Number(await (await import('node:fs/promises')).readFile(pidFile, 'utf8'))
-      const grandchild = Number(
-        await (await import('node:fs/promises')).readFile(pidFile + '.grand', 'utf8'),
-      )
-      for (const childPid of [pid, grandchild]) {
-        assert.throws(() => process.kill(childPid, 0), { code: 'ESRCH' })
-      }
-      await (await import('node:fs/promises')).rm(pidFile, { force: true })
-      await (await import('node:fs/promises')).rm(pidFile + '.grand', { force: true })
-    }
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-test('a detached package descendant cannot hold runner pipes past its deadline', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'holi-producer-inherited-pipes-'))
-  const pidFile = join(root, 'descendant-pid')
-  try {
-    const npm = await installFixture(root)
+    // Observe the outer-installed package path without starting a real CLI.
     const pnpm = await pnpmFixture(
       root,
-      `import { spawn } from 'node:child_process'; import { writeFile } from 'node:fs/promises'; const bin = process.env.HOLI_CODEX_BIN; const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', bin], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }); await writeFile(${JSON.stringify(pidFile)}, String(child.pid)); process.exit(0)`,
+      `
+      const fs = await import('node:fs/promises')
+      await fs.writeFile(process.env.HOLI_CODEX_PROCESS_LEDGER, JSON.stringify({ pid: ${pid}, bin: process.env.HOLI_CODEX_BIN }))
+      await fs.writeFile(${JSON.stringify(join(root, 'bin'))}, process.env.HOLI_CODEX_BIN)
+      while (!(await fs.stat(${JSON.stringify(join(root, 'ready'))}).catch(() => null)))
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      process.exit(7)
+    `,
     )
-    const started = Date.now()
-    const result = await runProducerProof({ npm, pnpm, timeout: 3_000 })
-    assert.ok(
-      Date.now() - started < 7_000,
-      'runner finalization must be independent of inherited pipes',
-    )
-    assert.equal(result.evidence.test?.timedOut, true)
-    assert.equal(result.evidence.test?.groupDrained, true)
-    assert.equal(result.evidence.cleanup.processesDrained, true)
-    const pid = Number(await (await import('node:fs/promises')).readFile(pidFile, 'utf8'))
-    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+    const pending = runFakeProof(t, { npm, pnpm })
+    try {
+      const until = Date.now() + 3000
+      let bin
+      while (!bin && Date.now() < until) {
+        bin = await readFile(join(root, 'bin'), 'utf8').catch(() => undefined)
+        if (!bin) await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      assert.ok(bin)
+      const ready = once(child, 'message', { signal: AbortSignal.timeout(3000) })
+      child.send(bin)
+      await ready
+    } finally {
+      await writeFile(join(root, 'ready'), '')
+      result = await pending
+    }
+    assert.equal(child.connected, true)
+    assert.equal(result.evidence.cleanup.status, 'incomplete')
+    assert.match(result.evidence.detail, /exited 7/)
+    assert.ok(existsSync(join(result.evidence.cleanup.retainedRoot, 'native-processes.jsonl')))
   } finally {
+    if (child.connected) child.disconnect()
+    await exited
+    if (process.platform !== 'win32') {
+      for (const id of [pid, -pid]) assert.throws(() => process.kill(id, 0), { code: 'ESRCH' })
+    }
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('timeout scenario evidence remains incomplete instead of a contract mismatch', async () => {
+test('timeout scenario evidence remains incomplete instead of a contract mismatch', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-timeout-classification-'))
   try {
     const npm = await installFixture(root)
@@ -331,14 +384,14 @@ test('timeout scenario evidence remains incomplete instead of a contract mismatc
       root,
       `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('1 failed')`,
     )
-    const result = await runProducerProof({ npm, pnpm })
+    const result = await runFakeProof(t, { npm, pnpm })
     assert.equal(result.evidence.classification, 'incomplete-proof')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('bounded-out raw native evidence stays incomplete despite a mismatch artifact', async () => {
+test('bounded-out raw native evidence stays incomplete despite a mismatch artifact', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-native-output-limit-'))
   try {
     const npm = await installFixture(root)
@@ -370,80 +423,69 @@ test('bounded-out raw native evidence stays incomplete despite a mismatch artifa
       root,
       `import { writeFile } from 'node:fs/promises'; const proof = ${JSON.stringify(artifact)}; proof.bin = process.env.HOLI_CODEX_BIN; await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof)); process.stdout.write('1 failed')`,
     )
-    const result = await runProducerProof({ npm, pnpm })
+    const result = await runFakeProof(t, { npm, pnpm })
     assert.equal(result.evidence.classification, 'incomplete-proof')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('false ledger ownership cannot signal a process from another root', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'holi-producer-false-ledger-'))
-  const pidFile = join(root, 'unrelated-pid')
-  try {
-    const npm = await installFixture(root)
-    const pnpm = await pnpmFixture(
-      root,
-      `import { spawn } from 'node:child_process'; import { appendFile, writeFile } from 'node:fs/promises'; const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' }); await writeFile(${JSON.stringify(pidFile)}, String(child.pid)); await appendFile(process.env.HOLI_CODEX_PROCESS_LEDGER, JSON.stringify({ pid: child.pid, group: -child.pid, bin: process.env.HOLI_CODEX_BIN, cwd: process.cwd(), ownedRoot: ${JSON.stringify(root + '-sibling')} }) + '\\n'); process.exit(0)`,
-    )
-    const result = await runProducerProof({ npm, pnpm })
-    assert.equal(result.evidence.cleanup.processesDrained, true)
-    const pid = Number(await (await import('node:fs/promises')).readFile(pidFile, 'utf8'))
-    assert.doesNotThrow(() => process.kill(pid, 0))
-    process.kill(-pid, 'SIGKILL')
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-test('forged valid-looking SDK ledger cannot kill an unrelated detached live group', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'holi-producer-forged-ledger-'))
-  const pidFile = join(root, 'unrelated-pid')
-  try {
-    const npm = await installFixture(root)
-    const pnpm = await pnpmFixture(
-      root,
-      `import { spawn } from 'node:child_process'; import { appendFile, writeFile } from 'node:fs/promises'; const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' }); await writeFile(${JSON.stringify(pidFile)}, String(child.pid)); await appendFile(process.env.HOLI_CODEX_PROCESS_LEDGER, JSON.stringify({ pid: child.pid, group: -child.pid, bin: process.env.HOLI_CODEX_BIN, cwd: process.cwd(), ownedRoot: ${JSON.stringify(root)} }) + '\\\\n'); process.exit(0)`,
-    )
-    const result = await runProducerProof({ npm, pnpm })
-    assert.equal(result.evidence.cleanup.processesDrained, true)
-    const pid = Number(await (await import('node:fs/promises')).readFile(pidFile, 'utf8'))
-    assert.doesNotThrow(() => process.kill(pid, 0))
-    process.kill(-pid, 'SIGKILL')
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-test('output cap and deadline are incomplete, and early runner exit drains its child group', async () => {
+test('output cap and deadline preserve the initiating failure and retain the root', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'holi-producer-bounds-'))
   try {
     const npm = await installFixture(root)
     const noisy = await pnpmFixture(root, 'process.stdout.write("x".repeat(2 * 1024 * 1024 + 10))')
-    const capped = await runProducerProof({ npm, pnpm: noisy, timeout: 8_000 })
-    assert.equal(capped.failed, true)
+    const capped = await runFakeProof(t, { npm, pnpm: noisy })
     assert.equal(capped.evidence.classification, 'incomplete-proof')
+    assert.equal(capped.evidence.cleanup.status, 'incomplete')
+    assert.match(capped.evidence.detail, /output exceeded bound/)
     assert.ok(capped.evidence.test.retainedBytes <= 2 * 1024 * 1024)
-
-    const child = await pnpmFixture(
-      root,
-      `import { spawn } from 'node:child_process'; const p = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); process.stdout.write(String(p.pid)); process.exit(0)`,
-    )
-    const exited = await runProducerProof({ npm, pnpm: child, timeout: 8_000 })
-    assert.equal(exited.failed, true)
-    assert.equal(exited.evidence.test.groupDrained, true)
-    assert.equal(exited.evidence.cleanup.rootRemoved, true)
-    assert.equal(exited.evidence.cleanup.processesDrained, true)
 
     const resistant = await pnpmFixture(
       root,
-      `import { spawn } from 'node:child_process'; const p = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], { stdio: 'ignore' }); process.stdout.write(String(p.pid)); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)`,
+      `process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)`,
     )
-    const expired = await runProducerProof({ npm, pnpm: resistant, timeout: 3_000 })
-    assert.equal(expired.failed, true)
+    const expired = await runFakeProof(t, { npm, pnpm: resistant, timeout: 2_000 })
     assert.equal(expired.evidence.classification, 'incomplete-proof')
     assert.equal(expired.evidence.test.timedOut, true)
-    assert.equal(expired.evidence.test.groupDrained, true)
+    assert.equal(expired.evidence.cleanup.status, 'incomplete')
+    assert.match(expired.evidence.detail, /timed out/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('Codex only removes the root after the final worker lease settlement receipt', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'holi-producer-final-receipt-'))
+  try {
+    const npm = await installFixture(root)
+    for (const mode of ['pending', 'leftover', 'finished']) {
+      const pnpm = await pnpmFixture(
+        root,
+        `
+        import { mkdir, writeFile } from 'node:fs/promises'
+        import { join } from 'node:path'
+        const mode = ${JSON.stringify(mode)}
+        const proof = {
+          schema: 'holi.codex-exec-producer.v1', bin: process.env.HOLI_CODEX_BIN,
+          scenarios: ['initial-turn', 'follow-up', 'http-400', 'stall-stop', 'stall-leave']
+            .map((name) => ({ name, status: mode === 'pending' && name === 'stall-leave' ? 'pending' : 'pass' })),
+          cleanup: { rootsRemoved: true, nativeGroupsDrained: true },
+        }
+        if (mode === 'leftover') await mkdir(join(process.env.TMPDIR, 'holi-native-codex-leftover'))
+        await writeFile(process.env.HOLI_CODEX_PROOF_OUTPUT, JSON.stringify(proof))
+        console.log('5 passed')
+      `,
+      )
+      const { evidence } = await runFakeProof(t, { npm, pnpm })
+      assert.equal(evidence.cleanup.rootRemoved, mode === 'finished', mode)
+      if (mode !== 'finished') assert.ok(existsSync(evidence.cleanup.retainedRoot))
+      assert.equal(
+        evidence.classification,
+        'incomplete-proof',
+        'receipt is not native contract proof',
+      )
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }
