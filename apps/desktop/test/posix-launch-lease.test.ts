@@ -1,11 +1,14 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { preparePosixLaunch, type PosixLaunch } from '../src/main/posix-launch-lease'
+import { inspectPosixOwnership } from '../src/main/posix-ownership-journal'
 import { buildLeaseForTests, buildPosixTestHelper } from './fixtures/posix-native-build'
 
 const { nativePath, fault } = vi.hoisted(() => ({
@@ -18,6 +21,8 @@ const { nativePath, fault } = vi.hoisted(() => ({
     io: undefined as (() => void) | undefined,
     rack: undefined as (() => 'block' | 'reject') | undefined,
     beforeRemove: undefined as ((path: string) => void) | undefined,
+    beforeCreate: undefined as ((path: string) => void) | undefined,
+    beforeWrite: undefined as ((command: string) => void) | undefined,
   },
 }))
 vi.mock('../src/main/posix-lease-executable', () => ({
@@ -28,6 +33,8 @@ vi.mock('node:fs', async (importOriginal) => {
   return {
     ...fs,
     openSync: (...args: Parameters<typeof fs.openSync>) => {
+      if (typeof args[1] === 'number' && args[1] & fs.constants.O_CREAT)
+        fault.beforeCreate?.(String(args[0]))
       if (fault.prepare && String(args[0]).endsWith('/exec'))
         throw new Error('injected preparation failure')
       return fs.openSync(...args)
@@ -42,7 +49,8 @@ vi.mock('node:fs', async (importOriginal) => {
     },
     writeSync: (fd: number, payload: Buffer, offset: number, length: number) => {
       fault.io?.()
-      const command = payload.toString()
+      const command = payload.length === 1 ? payload.toString() : ''
+      if (command) fault.beforeWrite?.(command)
       if (fault.command && command === 'S') return fs.writeSync(fd, Buffer.from('X'))
       if (fault.rack && command === 'A') {
         if (fault.rack() === 'block') return 0
@@ -109,7 +117,12 @@ async function tracked<T>(run: (directory: string, track: (group: number) => voi
     throw error
   } finally {
     try {
-      for (const group of groups) await kernelGone(group)
+      for (const group of groups) {
+        await kernelGone(group)
+        await vi.waitFor(() => expect(pidExists(group), `process ${group}`).toBe(false), {
+          timeout: 4000,
+        })
+      }
       await rm(directory, { recursive: true, force: true })
     } catch (error) {
       if (!failed) throw error
@@ -255,6 +268,160 @@ describe.runIf(process.platform !== 'win32')('POSIX launch lease', () => {
       }
     }))
 
+  it('retains missing, stale, malformed, partial and failed evidence without PID probes', () =>
+    tracked(async (directory) => {
+      const path = join(directory, randomUUID())
+      const kernel = vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw new Error('Untrusted evidence must not reach the kernel')
+      })
+      const header = `HOLI-POSIX-1 ${basename(path)}\n`
+      const write = (name: string, data: string) =>
+        writeFile(join(path, name), data, { mode: 0o600 })
+      const retains = () => expect(inspectPosixOwnership(path)).toMatchObject({ state: 'retain' })
+      try {
+        retains()
+        await mkdir(path, { mode: 0o700 })
+        retains()
+        for (const body of ['WRONG\n', 'COMPLETE\n', 'ROOT 1\n', 'ROOT 2']) {
+          await write('journal', header + body)
+          retains()
+        }
+        await write('journal', header)
+        retains()
+        await write('settled', `HOLI-POSIX-1 ${randomUUID()}\nSETTLED\n`)
+        retains()
+        await write('settled', header + 'SETTLED\n')
+        expect(inspectPosixOwnership(path)).toEqual({ state: 'confirmed', proof: 'settled' })
+        await write('failed.tmp', '')
+        retains()
+        await rm(join(path, 'failed.tmp'))
+        await write('failed', header + 'FAILED protocol\n')
+        expect(inspectPosixOwnership(path)).toEqual({
+          state: 'retain',
+          reason: 'POSIX ownership cleanup failed (protocol).',
+        })
+        expect(kernel).not.toHaveBeenCalled()
+      } finally {
+        kernel.mockRestore()
+      }
+    }))
+
+  it('records the native root before any bind or ROOT read', () =>
+    tracked(async (directory, track) => {
+      const ownershipRecordPath = join(directory, randomUUID())
+      const prepared = preparePosixLaunch('/bin/false', [], {
+        directory,
+        ownershipRecordPath,
+        stdio: 'ignore',
+      })
+      const root = launch(prepared)
+      track(root.pid)
+      try {
+        await vi.waitFor(async () => {
+          expect(await readFile(join(ownershipRecordPath, 'journal'), 'utf8')).toBe(
+            `HOLI-POSIX-1 ${basename(ownershipRecordPath)}\nROOT ${root.pid}\n`,
+          )
+        })
+        expect(inspectPosixOwnership(ownershipRecordPath)).toMatchObject({ state: 'retain' })
+      } finally {
+        await prepared.cancel('possibly-launched')
+        await root.exit
+        expect(pidExists(root.pid)).toBe(false)
+      }
+      expect(inspectPosixOwnership(ownershipRecordPath)).toEqual({
+        state: 'confirmed',
+        proof: 'settled',
+      })
+    }))
+
+  it(
+    'requires durable RACK/GO identities and cold-probes the whole EOF grace',
+    () =>
+      tracked(async (directory, track) => {
+        const ownershipRecordPath = join(directory, randomUUID())
+        const journal = join(ownershipRecordPath, 'journal')
+        const ready = join(directory, 'descendant-pid')
+        const release = join(directory, 'release')
+        const term = join(directory, 'descendant-term')
+        const descendantScript = `
+        const fs = require('node:fs');
+        process.on('SIGTERM', () => fs.writeFileSync(${JSON.stringify(term)}, 'resisting'));
+        fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));
+        setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) process.exit(0) }, 10);
+        setTimeout(() => process.exit(0), 2200);
+      `
+        const rootScript = `
+        process.on('SIGTERM', () => {});
+        require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], {stdio:'ignore'})
+          .once('exit', () => process.exit(0));
+      `
+        const prepared = preparePosixLaunch(process.execPath, ['-e', rootScript], {
+          directory,
+          ownershipRecordPath,
+          stdio: 'ignore',
+          graceMs: 2800,
+          timeoutMs: 4500,
+        })
+        const helpers = observeHelpers()
+        const root = launch(prepared)
+        track(root.pid)
+        const beforeGate = new Map<string, string>()
+        fault.beforeWrite = (command) => {
+          if (command === 'A' || command === 'G')
+            beforeGate.set(command, readFileSync(journal, 'utf8'))
+        }
+        let cold: ReturnType<typeof inspectPosixOwnership> | undefined
+        let beforeRemove: ReturnType<typeof inspectPosixOwnership> | undefined
+        // Capture kernel-only proof before publishing the final record, then make
+        // sure its publication precedes deletion of the private channel directory.
+        fault.beforeCreate = (path) => {
+          if (path !== join(ownershipRecordPath, 'settled.tmp')) return
+          cold = inspectPosixOwnership(ownershipRecordPath)
+        }
+        fault.beforeRemove = (path) => {
+          if (dirname(path) === directory && basename(path).startsWith('holi-launch-'))
+            beforeRemove = inspectPosixOwnership(ownershipRecordPath)
+        }
+        let descendant: number | undefined
+        try {
+          await prepared.bind(root.pid)
+          const prefix = `HOLI-POSIX-1 ${basename(ownershipRecordPath)}\nROOT ${root.pid}\nREAPER ${helpers.reaper()}\n`
+          expect(beforeGate.get('A')).toBe(prefix)
+          expect(beforeGate.get('G')).toBe(prefix + `ANCHOR ${helpers.anchor()}\nCOMPLETE\n`)
+          await vi.waitFor(async () => {
+            const pid = Number(await readFile(ready, 'utf8'))
+            expect(pid).toBeGreaterThan(1)
+            descendant = pid
+          })
+          const drained = prepared.cancel('possibly-launched') // Same EOF as controller loss.
+          void drained.catch(() => {})
+          await vi.waitFor(async () => expect(await readFile(term, 'utf8')).toBe('resisting'))
+          expect(pidExists(descendant!)).toBe(true)
+          expect(pidExists(helpers.reaper())).toBe(true)
+          expect(inspectPosixOwnership(ownershipRecordPath)).toMatchObject({
+            state: 'retain',
+            reason: expect.stringContaining('kernel'),
+          })
+          await writeFile(release, '')
+          await drained
+          expect(cold).toEqual({ state: 'confirmed', proof: 'kernel-absence' })
+          expect(beforeRemove).toEqual({ state: 'confirmed', proof: 'settled' })
+        } finally {
+          fault.beforeWrite = fault.beforeCreate = fault.beforeRemove = undefined
+          await writeFile(release, '')
+          await prepared.cancel('possibly-launched').catch(() => {})
+          await root.exit
+          if (helpers.reaper() > 1) track(helpers.reaper())
+          if (helpers.anchor() > 1) track(helpers.anchor())
+          if (descendant === undefined)
+            descendant = Number(await readFile(ready, 'utf8').catch(() => ''))
+          if (descendant > 1) track(descendant)
+          fault.observe = undefined
+        }
+      }),
+    7000,
+  )
+
   it('never signals the wrong group even with a hostile provider PATH', () =>
     tracked(async (directory, track) => {
       const marker = join(directory, 'called-ps')
@@ -287,13 +454,21 @@ describe.runIf(process.platform !== 'win32')('POSIX launch lease', () => {
   it('waits for the native START acknowledgement instead of believing a write', () =>
     tracked(async (directory, track) => {
       const marker = join(directory, 'provider-ran')
+      const ownershipRecordPath = join(directory, randomUUID())
       const prepared = preparePosixLaunch('/usr/bin/touch', [marker], {
         directory,
+        ownershipRecordPath,
         graceMs: 15,
         timeoutMs: 1000,
         stdio: 'ignore',
       })
       fault.command = true
+      let failureBeforeFallback = ''
+      fault.observe = (text) => {
+        if (text.includes('ERROR start-command')) {
+          failureBeforeFallback = readFileSync(join(ownershipRecordPath, 'journal'), 'utf8')
+        }
+      }
       const root = launch(prepared)
       track(root.pid)
       try {
@@ -301,11 +476,17 @@ describe.runIf(process.platform !== 'win32')('POSIX launch lease', () => {
         const failure = prepared.drain()
         expect(prepared.drain()).toBe(failure)
         await expect(failure).rejects.toThrow('start-command failed')
+        expect(failureBeforeFallback).toMatch(/^ERROR start-command \d+$/m)
+        expect(inspectPosixOwnership(ownershipRecordPath)).toMatchObject({
+          state: 'retain',
+          reason: expect.stringContaining('native start-command'),
+        })
         await root.exit
         expect(groupExists(root.pid)).toBe(false)
         await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
       } finally {
         fault.command = false
+        fault.observe = undefined
         await prepared.drain().catch(() => {})
       }
     }))

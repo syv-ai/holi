@@ -10,13 +10,18 @@ import {
   writeSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { markPosixNonAdmission } from './posix-ownership-journal'
 import { join, resolve } from 'node:path'
 
 export const leaseEnvironment = { PATH: '/usr/bin:/bin', LC_ALL: 'C' }
 
 /** Own both named and inherited FIFO lifetimes. A read does bounded work:
  * undefined is not ready, null is EOF on this read (not a lifetime proof). */
-export function openLeaseTransport(parent: string | undefined, inherited: boolean) {
+export function openLeaseTransport(
+  parent: string | undefined,
+  inherited: boolean,
+  journal: string | undefined,
+) {
   const buffer = Buffer.alloc(4096)
   const directory = mkdtempSync(resolve(parent ?? tmpdir(), 'holi-launch-'))
   const controlPath = join(directory, 'control')
@@ -33,16 +38,19 @@ export function openLeaseTransport(parent: string | undefined, inherited: boolea
     if (fds.delete(fd)) closeSync(fd)
   }
   const closeAll = () => {
+    let failure: unknown
     for (const fd of fds) {
       try {
         close(fd)
-      } catch {
-        /* preserve first failure */
+      } catch (error) {
+        failure ??= error
       }
     }
+    return failure
   }
   const remove = () => {
-    closeAll()
+    const failure = closeAll()
+    if (failure) throw failure
     rmSync(directory, { recursive: true, force: true })
   }
   let control: number, report: number, result: number
@@ -62,13 +70,14 @@ export function openLeaseTransport(parent: string | undefined, inherited: boolea
     control = open(controlPath, constants.O_WRONLY)
     if (inherited) {
       mapped.push(reader, open(reportPath, constants.O_WRONLY), open(execPath, constants.O_WRONLY))
+      if (journal) mapped.push(open(journal, constants.O_WRONLY | constants.O_APPEND))
       for (const path of paths) rmSync(path)
     } else close(reader)
   } catch (error) {
     try {
       remove()
-    } catch {
-      /* original preparation error wins */
+    } catch (rollback) {
+      markPosixNonAdmission(error, Promise.reject(rollback))
     }
     throw error
   }

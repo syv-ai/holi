@@ -1,4 +1,5 @@
 import { ChildProcess, execFile, spawn, spawnSync, type SpawnOptions } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
 import { tmpdir } from 'node:os'
@@ -8,22 +9,27 @@ import { getSystemErrorName, promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, vi } from 'vitest'
 import { ownedProcessDrain, spawnOwnedProgram } from '../src/main/owned-process'
 import type { ProcessGroupSupervision } from '../src/main/owned-process-supervision'
+import { inspectPosixOwnership, posixLaunchNonAdmission } from '../src/main/posix-ownership-journal'
 
 import { buildLeaseForTests, buildPosixTestHelper } from './fixtures/posix-native-build'
 
 const helper = vi.hoisted(() => ({
   path: '',
   readExec: undefined as (() => 'defer' | 'malformed' | void) | undefined,
+  holdReport: undefined as (() => boolean) | undefined,
   deferPoll: undefined as Promise<void> | undefined,
   receipts: '',
   beforeRemove: undefined as ((directory: string) => void) | undefined,
   afterNativeSpawn: undefined as ((child: ChildProcess) => void) | undefined,
+  holdCommand: undefined as ((command: string) => boolean) | undefined,
+  beforeNativeSpawn: undefined as (() => void) | undefined,
 }))
 vi.mock('../src/main/launch', async (importOriginal) => {
   const launch = await importOriginal<typeof import('../src/main/launch')>()
   return {
     ...launch,
     spawnProgram: (...args: Parameters<typeof launch.spawnProgram>) => {
+      helper.beforeNativeSpawn?.()
       const child = launch.spawnProgram(...args)
       helper.afterNativeSpawn?.(child)
       return child
@@ -36,8 +42,8 @@ vi.mock('node:fs', async (importOriginal) => {
   const readers = new Map<number, string>()
   return {
     ...fs,
-    openSync: (path: string, flags: number) => {
-      const fd = fs.openSync(path, flags)
+    openSync: (path: string, flags: number, mode?: number) => {
+      const fd = fs.openSync(path, flags, mode)
       if (!(flags & fs.constants.O_WRONLY)) readers.set(fd, path)
       return fd
     },
@@ -52,10 +58,16 @@ vi.mock('node:fs', async (importOriginal) => {
         if (fault === 'defer') throw Object.assign(new Error('injected EAGAIN'), { code: 'EAGAIN' })
         if (fault === 'malformed') return buffer.write('invalid\n', offset, length, 'utf8')
       }
+      if (path?.endsWith('/report') && helper.holdReport?.())
+        throw Object.assign(new Error('injected report EAGAIN'), { code: 'EAGAIN' })
       const bytes = fs.readSync(fd, buffer, offset, length, pos)
       if (path?.endsWith('/report'))
         helper.receipts += buffer.toString('utf8', offset, offset + bytes)
       return bytes
+    },
+    writeSync: (fd: number, buffer: Buffer, offset: number, length: number) => {
+      if (length === 1 && helper.holdCommand?.(buffer.toString())) return 0
+      return fs.writeSync(fd, buffer, offset, length)
     },
     rmSync: (path: string, options: Parameters<typeof fs.rmSync>[1]) => {
       helper.beforeRemove?.(path)
@@ -197,22 +209,41 @@ describe('spawnOwnedProgram', () => {
     ['argv0', 17, 'ERR_INVALID_ARG_TYPE'],
     ['argv0', 'x\0', 'ERR_INVALID_ARG_VALUE'],
     ['stdio', 'ipc', 'ERR_INVALID_ARG_VALUE'],
+    ['timeout', -1, 'ERR_OUT_OF_RANGE'],
+    ['serialization', 'binary', 'ERR_INVALID_ARG_VALUE'],
+    ['serialization', null, 'ERR_INVALID_ARG_VALUE'],
+    ['windowsHide', 'true', 'ERR_INVALID_ARG_TYPE'],
+    ['windowsVerbatimArguments', 1, 'ERR_INVALID_ARG_TYPE'],
+    ['uid', 0.5, 'ERR_INVALID_ARG_TYPE'],
+    ['gid', 2 ** 32, 'ERR_INVALID_ARG_TYPE'],
+    ['signal', null, 'ERR_INVALID_ARG_TYPE'],
+    ['killSignal', 'INVALID', 'ERR_UNKNOWN_SIGNAL'],
+    ['stdio', ['ipc', 'ipc'], 'ERR_IPC_ONE_PIPE'],
+    ['stdio', ['nonsense'], 'ERR_INVALID_SYNC_FORK_INPUT'],
   ])('rejects invalid %s before entering native spawn', async (name, value, code) => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-owned-invalid-option-'))
     vi.stubEnv('TMPDIR', dir)
     const nativeCalled = vi.fn()
-    helper.afterNativeSpawn = nativeCalled
+    helper.beforeNativeSpawn = nativeCalled
     const opts = { [name]: value } as SpawnOptions
     let child: ChildProcess | undefined
     try {
       expect(() => spawn('/bin/true', [], opts)).toThrow(expect.objectContaining({ code }))
-      expect(() => {
+      let failure: unknown
+      try {
         child = spawnOwnedProgram('/bin/true', [], { ...opts, posixGroupLease: true })
-      }).toThrow(expect.objectContaining({ code }))
+      } catch (error) {
+        failure = error
+      }
+      expect(nativeCalled).not.toHaveBeenCalled()
+      expect(failure).toMatchObject({ code })
+      const refusal = posixLaunchNonAdmission(failure)
+      expect(refusal?.cleanup).toBeInstanceOf(Promise)
+      await refusal!.cleanup
       expect(nativeCalled).not.toHaveBeenCalled()
       expect(await readdir(dir)).toEqual([])
     } finally {
-      helper.afterNativeSpawn = undefined
+      helper.beforeNativeSpawn = undefined
       vi.unstubAllEnvs()
       if (child) await drain(child)
       // Do not remove an unconfirmed launch receipt if validation regresses.
@@ -631,8 +662,9 @@ async function trackedLaunch(
     )
     expect(removed).toBe(true)
     if (removal) throw removal
-    expect(await readdir(dir)).toEqual([])
+    expect((await readdir(dir)).filter((name) => name.startsWith('holi-launch-'))).toEqual([])
   } finally {
+    helper.holdCommand = helper.holdReport = undefined
     helper.beforeRemove = helper.readExec = helper.deferPoll = helper.afterNativeSpawn = undefined
     vi.unstubAllEnvs()
     await Promise.allSettled(cleanups)
@@ -665,6 +697,7 @@ it.skipIf(windows)(
       expect(() =>
         spawnOwnedProgram('/usr/bin/touch', [marker], { stdio: 'ignore', posixGroupLease: true }),
       ).toThrow(failure)
+      expect(posixLaunchNonAdmission(failure)).toBeUndefined()
       const cleanup = failure.cleanup!
       expect(cleanup).toBeInstanceOf(Promise)
       retain(cleanup)
@@ -675,6 +708,174 @@ it.skipIf(windows)(
       expect(helper.receipts).toMatch(/^ROOT \d+\n$/)
       await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
     }),
+)
+
+it.skipIf(windows).each(['already aborted', 'S', 'G'])(
+  'closes admission before forwarding AbortError (%s)',
+  (gate) =>
+    trackedLaunch(async (dir, retain, track) => {
+      const marker = join(dir, 'provider-ran')
+      const ownershipRecordPath = join(dir, randomUUID())
+      const controller = new AbortController()
+      const timeline: string[] = []
+      let held = false
+      const commands: string[] = []
+      helper.holdCommand = (command) => {
+        commands.push(command)
+        if (command !== gate) return false
+        held = true
+        return true
+      }
+      if (gate === 'already aborted') controller.abort('fixture')
+      const child = spawnOwnedProgram(
+        process.execPath,
+        [
+          '-e',
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'bad'); console.log('bad')`,
+        ],
+        {
+          posixGroupLease: true,
+          signal: controller.signal,
+          ownershipRecordPath,
+        },
+      )
+      track(child.pid!)
+      let failure: unknown
+      child.on('error', (error) => {
+        timeline.push('error')
+        failure ??= error
+      })
+      child.on('spawn', () => timeline.push('spawn'))
+      child.on('exit', () => timeline.push('exit'))
+      child.stdout!.on('data', () => timeline.push('data'))
+      const closed = new Promise<void>((resolve) =>
+        child.once('close', () => {
+          timeline.push('close')
+          resolve()
+        }),
+      )
+      // Exercise joining drain before the AbortSignal fires, not just after it.
+      const cleanup = drain(child)!
+      retain(cleanup)
+      try {
+        if (gate !== 'already aborted') {
+          await vi.waitFor(() => expect(held).toBe(true), { timeout: 2000 })
+          controller.abort('fixture')
+          expect(timeline).toEqual(['error'])
+        }
+        await cleanup
+        await closed
+        expect(timeline).toEqual(['error', 'close'])
+        expect(failure).toMatchObject({ code: 'ABORT_ERR', name: 'AbortError', cause: 'fixture' })
+        expect(posixLaunchNonAdmission(failure)?.cleanup).toBe(cleanup)
+        expect(drain(child)).toBe(cleanup)
+        expect(commands).not.toContain('T')
+        expect(inspectPosixOwnership(ownershipRecordPath)).toEqual({
+          state: 'confirmed',
+          proof: 'settled',
+        })
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        if (!controller.signal.aborted) controller.abort('fixture emergency close')
+        await cleanup.catch(() => {})
+      }
+    }),
+)
+
+it.skipIf(windows)('treats abort after writing GO as post-admission even before the ACK', () =>
+  trackedLaunch(async (dir, retain, track) => {
+    const ready = join(dir, 'provider-ready')
+    const controller = new AbortController()
+    let go = false
+    helper.holdCommand = (command) => {
+      if (command === 'G') go = true
+      return false
+    }
+    helper.holdReport = () => go
+    const child = spawnOwnedProgram(
+      process.execPath,
+      [
+        '-e',
+        `
+      process.on('SIGTERM', () => process.stdout.write('term', () => process.exit(0)));
+      require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready');
+      setInterval(() => {}, 1000);
+    `,
+      ],
+      { posixGroupLease: true, signal: controller.signal },
+    )
+    track(child.pid!)
+    const timeline: string[] = []
+    let abortError: unknown
+    child.on('error', (error) => {
+      timeline.push('error')
+      abortError ??= error
+    })
+    child.on('spawn', () => timeline.push('spawn'))
+    child.stdout!.on('data', () => timeline.push('data'))
+    child.on('exit', () => timeline.push('exit'))
+    const closed = new Promise<void>((resolve) =>
+      child.once('close', () => {
+        timeline.push('close')
+        resolve()
+      }),
+    )
+    try {
+      await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready'), {
+        timeout: 2000,
+      })
+      controller.abort('post-admission')
+      expect(timeline).toEqual([])
+      helper.holdReport = undefined
+      const cleanup = drain(child)!
+      retain(cleanup)
+      await cleanup
+      await closed
+      expect(timeline).toEqual(['spawn', 'error', 'data', 'exit', 'close'])
+      expect(abortError).toMatchObject({ code: 'ABORT_ERR', cause: 'post-admission' })
+      expect(posixLaunchNonAdmission(abortError)).toBeUndefined()
+    } finally {
+      helper.holdReport = undefined
+      await drain(child)!.catch(() => {})
+    }
+  }),
+)
+
+it.skipIf(windows)(
+  'settles the durable intent on a definite NUL refusal without replacing the error',
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-owned-nul-'))
+    const ownershipRecordPath = join(dir, randomUUID())
+    const original = new Error('original argv validation failure')
+    const arg = {
+      includes: () => {
+        throw original
+      },
+    } as unknown as string
+    try {
+      for (const value of ['x\0y', arg]) {
+        const record = value === arg ? join(dir, randomUUID()) : ownershipRecordPath
+        let error: unknown
+        try {
+          spawnOwnedProgram('/bin/true', [value], {
+            posixGroupLease: true,
+            ownershipRecordPath: record,
+          })
+        } catch (failure) {
+          error = failure
+        }
+        if (value === arg) expect(error).toBe(original)
+        else expect(error).toMatchObject({ message: expect.stringContaining('NUL') })
+        const refusal = posixLaunchNonAdmission(error)
+        expect(refusal?.cleanup).toBeInstanceOf(Promise)
+        await refusal!.cleanup
+        expect(inspectPosixOwnership(record)).toEqual({ state: 'confirmed', proof: 'settled' })
+      }
+    } finally {
+      // Both commands were rejected before the native call or transport creation.
+      await rm(dir, { recursive: true, force: true })
+    }
+  },
 )
 
 function deferExecPoll(): () => void {

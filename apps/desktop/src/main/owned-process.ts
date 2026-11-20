@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { launchPlan, spawnProgram } from './launch'
 import { spawnOwnedLaunch } from './owned-process-launch'
 import type { ProcessGroupSupervision } from './owned-process-supervision'
-import { preparePosixSpawn } from './posix-launch-lease'
+import { preparePosixSpawn, refusePosixSpawnPreparation } from './posix-launch-lease'
+import { markPosixNonAdmission } from './posix-ownership-journal'
 
 export const ownedProcessDrain = Symbol('ownedProcessDrain')
 
@@ -18,13 +19,13 @@ type SupervisedChild = ChildProcess & { [ownedProcessDrain]?: ProcessGroupSuperv
 export function spawnOwnedProgram(
   bin: string,
   args: readonly string[],
-  options: SpawnOptions & { posixGroupLease?: boolean },
+  options: SpawnOptions & { posixGroupLease?: boolean; ownershipRecordPath?: string },
   parentPid = process.pid,
 ): SupervisedChild {
   if (process.platform !== 'win32') {
-    const { posixGroupLease, ...spawnOptions } = options
+    const { posixGroupLease, ownershipRecordPath, ...spawnOptions } = options
     if (!posixGroupLease) return spawnProgram(bin, args, { ...spawnOptions, detached: true })
-    return spawnLeased(bin, args, spawnOptions)
+    return spawnLeased(bin, args, spawnOptions, ownershipRecordPath)
   }
   const launchEnv = { ...(options.env ?? process.env) }
   const planningEnv = { ...launchEnv }
@@ -62,16 +63,23 @@ export function spawnOwnedProgram(
 type Stdio = NonNullable<Exclude<SpawnOptions['stdio'], string>>
 
 function optionError(code: string, field: string, expected: string): never {
-  throw Object.assign(new TypeError(`Invalid ${field}: ${expected}.`), { code })
+  const ErrorType = code === 'ERR_OUT_OF_RANGE' ? RangeError : TypeError
+  throw Object.assign(new ErrorType(`Invalid ${field}: ${expected}.`), { code })
 }
 
-function leasedStdio(options: SpawnOptions): Stdio {
-  // Validate the caller values *before* replacing them with helper values.
-  // Keep Node's validation for untouched fields too; a throw from the actual
-  // spawn call is never classified by the exception class or code alone.
-  const { detached, argv0, shell, cwd } = options
-  if (detached != null && typeof detached !== 'boolean')
-    optionError('ERR_INVALID_ARG_TYPE', 'options.detached', 'expected a boolean')
+function validateSpawnOptions(options: SpawnOptions): Stdio {
+  // Mirror Node's pre-native option checks before constructing a private lease.
+  // Actual spawn still validates; nothing that throws there is presumed safe.
+  const { argv0, shell, cwd, signal, timeout, killSignal, serialization } = options
+  for (const key of ['detached', 'windowsHide', 'windowsVerbatimArguments'] as const) {
+    if (options[key] != null && typeof options[key] !== 'boolean')
+      optionError('ERR_INVALID_ARG_TYPE', `options.${key}`, 'expected a boolean')
+  }
+  for (const key of ['uid', 'gid'] as const) {
+    const value = options[key]
+    if (value != null && (typeof value !== 'number' || (value | 0) !== value))
+      optionError('ERR_INVALID_ARG_TYPE', `options.${key}`, 'expected an int32')
+  }
   if (shell != null && typeof shell !== 'boolean' && typeof shell !== 'string')
     optionError('ERR_INVALID_ARG_TYPE', 'options.shell', 'expected a boolean or string')
   if (argv0 != null && typeof argv0 !== 'string')
@@ -88,25 +96,86 @@ function leasedStdio(options: SpawnOptions): Stdio {
   if (path != null && typeof path !== 'string' && !(path instanceof Uint8Array))
     optionError('ERR_INVALID_ARG_TYPE', 'options.cwd', 'expected a string, Buffer or URL')
 
+  if (timeout != null && (!Number.isInteger(timeout) || timeout < 0))
+    optionError('ERR_OUT_OF_RANGE', 'timeout', 'expected an unsigned integer')
+  if (
+    signal !== undefined &&
+    (signal === null || typeof signal !== 'object' || !('aborted' in signal))
+  )
+    optionError('ERR_INVALID_ARG_TYPE', 'options.signal', 'expected an AbortSignal')
+  if (killSignal != null) {
+    if (typeof killSignal !== 'number' && typeof killSignal !== 'string')
+      optionError('ERR_INVALID_ARG_TYPE', 'options.killSignal', 'expected a string or number')
+    const signals = constants.signals
+    if (
+      !(typeof killSignal === 'number'
+        ? Object.values(signals).includes(killSignal)
+        : Object.hasOwn(signals, killSignal.toUpperCase()))
+    )
+      optionError('ERR_UNKNOWN_SIGNAL', 'options.killSignal', 'unknown signal')
+  }
+  if (serialization !== undefined && serialization !== 'json' && serialization !== 'advanced')
+    optionError('ERR_INVALID_ARG_VALUE', 'options.serialization', 'expected json or advanced')
+
   // Insert private descriptors after every caller slot, including IPC.
   const value = options.stdio || 'pipe'
   if (!Array.isArray(value) && !['pipe', 'overlapped', 'ignore', 'inherit'].includes(value))
     optionError('ERR_INVALID_ARG_VALUE', 'stdio', 'expected a stdio shortcut or array')
   const stdio: Stdio = Array.isArray(value) ? [...value] : [value, value, value]
   while (stdio.length < 3) stdio.push('pipe')
+  let ipc = false
+  for (const entry of stdio) {
+    if (entry === 'ipc') {
+      if (ipc) optionError('ERR_IPC_ONE_PIPE', 'stdio', 'only one IPC descriptor is allowed')
+      ipc = true
+      continue
+    }
+    if (
+      entry == null ||
+      typeof entry === 'number' ||
+      ['pipe', 'overlapped', 'ignore', 'inherit'].some((mode) => mode === entry)
+    )
+      continue
+    const stream = entry as { fd?: number; handle?: unknown; _handle?: unknown }
+    if (typeof stream.fd === 'number') continue
+    // Native stream handles still go through Node's own instance validation.
+    if (
+      [entry, stream.handle, stream._handle].some((handle) =>
+        /^(Pipe|TTY|TCP|UDP)$/.test(handle?.constructor?.name ?? ''),
+      )
+    )
+      continue
+    optionError(
+      typeof entry === 'string' || ArrayBuffer.isView(entry)
+        ? 'ERR_INVALID_SYNC_FORK_INPUT'
+        : 'ERR_INVALID_ARG_VALUE',
+      'stdio',
+      'invalid descriptor',
+    )
+  }
   return stdio
 }
 
-function spawnLeased(bin: string, args: readonly string[], options: SpawnOptions): SupervisedChild {
-  const stdio = leasedStdio(options)
-  const { file, args: argv } = launchPlan(bin, args)
-  const command = options.shell
-    ? typeof options.shell === 'string'
-      ? options.shell
-      : '/bin/sh'
-    : file
-  const commandArgs = options.shell ? ['-c', [file, ...argv].join(' ')] : argv
-  const launch = preparePosixSpawn(command, commandArgs, options, stdio)
+function spawnLeased(
+  bin: string,
+  args: readonly string[],
+  options: SpawnOptions,
+  ownershipRecordPath: string | undefined,
+): SupervisedChild {
+  let command: string
+  let commandArgs: string[]
+  let stdio: Stdio
+  try {
+    stdio = validateSpawnOptions(options)
+    if (typeof bin !== 'string') optionError('ERR_INVALID_ARG_TYPE', 'file', 'expected a string')
+    if (!bin) optionError('ERR_INVALID_ARG_VALUE', 'file', 'cannot be empty')
+    const { file, args: argv } = launchPlan(bin, args)
+    command = options.shell ? (typeof options.shell === 'string' ? options.shell : '/bin/sh') : file
+    commandArgs = options.shell ? ['-c', [file, ...argv].join(' ')] : argv
+  } catch (error) {
+    refusePosixSpawnPreparation(ownershipRecordPath, error)
+  }
+  const launch = preparePosixSpawn(command, commandArgs, { ...options, ownershipRecordPath }, stdio)
   let child: SupervisedChild
   try {
     child = spawnProgram(launch.executable, launch.args, launch.options)
@@ -136,9 +205,11 @@ function spawnLeased(bin: string, args: readonly string[], options: SpawnOptions
     // not exec (e.g. a missing cwd). Other native outcomes are ambiguous.
     const cleanup = new Promise<void>((resolve, reject) => {
       child.prependOnceListener('error', (error: NodeJS.ErrnoException) => {
-        launch
-          .cancel(error.code === 'ENOENT' ? 'unlaunched' : 'possibly-launched')
-          .then(resolve, reject)
+        // This is Node's no-PID asynchronous exec outcome, not a caught
+        // exception from invoking spawn.
+        const unlaunched = error.code === 'ENOENT'
+        if (unlaunched) markPosixNonAdmission(error, cleanup)
+        launch.cancel(unlaunched ? 'unlaunched' : 'possibly-launched').then(resolve, reject)
       })
     })
     void cleanup.catch(() => {})
@@ -148,6 +219,10 @@ function spawnLeased(bin: string, args: readonly string[], options: SpawnOptions
   const binding = launch.bind(child.pid)
   child[ownedProcessDrain] = { drain: launch.drain }
   adaptExecEvents(child, launch, binding)
+  // Node reports an already-aborted signal on nextTick. Close the gate now;
+  // startup continuations may run before that tick when called in a microtask.
+  if (options.signal?.aborted) launch.abortBeforeCommit()
+  let abortKillAcknowledged = false
   child.kill = (signal = 'SIGTERM') => {
     const number =
       typeof signal === 'number'
@@ -157,8 +232,15 @@ function spawnLeased(bin: string, args: readonly string[], options: SpawnOptions
       throw Object.assign(new TypeError('Unknown signal: ' + signal), {
         code: 'ERR_UNKNOWN_SIGNAL',
       })
-    if (child.exitCode !== null || child.signalCode !== null) return false
-    if (!launch.signal(number)) return false
+    const preCommitAbort =
+      options.signal?.aborted &&
+      !abortKillAcknowledged &&
+      (launch.abortClosedGate() || launch.abortBeforeCommit())
+    if (preCommitAbort) abortKillAcknowledged = true
+    else {
+      if (child.exitCode !== null || child.signalCode !== null) return false
+      if (!launch.signal(number)) return false
+    }
     Object.assign(child, { killed: true })
     return true
   }
@@ -177,23 +259,29 @@ function adaptExecEvents(
   let state: 'pending' | 'spawned' | 'failed' = 'pending'
   let reportedFailure = false
   let failureCode: number | undefined
+  let abortError: unknown
   // At most one native notification of each kind can be pending.
   const lifecycle: Array<{ event: 'exit' | 'close' | 'disconnect'; args: unknown[] }> = []
   const restorePipes: Array<() => void> = []
 
   function fail(error: unknown, errno?: number) {
-    if (state !== 'pending') return
+    // Node's scheduled AbortError is authoritative after deliberate gate closure.
+    if (state !== 'pending' || launch.abortClosedGate()) return
     state = 'failed'
     failureCode = errno
     const cleanup = errno === undefined ? launch.failExecution(error) : launch.drain()
     void cleanup.catch(() => {})
     // Return normally to Node's onexit/onread, including its native close
     // accounting. Notify the consumer before forwarding a pending close.
-    process.nextTick(() => {
-      emit('error', error)
-      reportedFailure = true
-      flushLifecycle()
-    })
+    process.nextTick(() => reportFailure(abortError ?? error))
+  }
+
+  function reportFailure(error: unknown) {
+    if (reportedFailure) return false
+    reportedFailure = true
+    const reported = emit('error', error)
+    flushLifecycle()
+    return reported
   }
 
   function emitLifecycle(event: 'exit' | 'close' | 'disconnect', args: unknown[]) {
@@ -227,6 +315,7 @@ function adaptExecEvents(
     state = 'spawned'
     for (const restore of restorePipes) restore()
     emit('spawn')
+    if (abortError !== undefined) emit('error', abortError)
     flushLifecycle()
   }
 
@@ -261,6 +350,22 @@ function adaptExecEvents(
   }
   child.emit = (event: string | symbol, ...args: unknown[]) => {
     if (event === 'spawn') return false
+    if (event === 'error' && (args[0] as NodeJS.ErrnoException)?.code === 'ABORT_ERR') {
+      if (launch.abortClosedGate()) {
+        // Keep the actual AbortError Node constructed (including its cause).
+        // The gate was closed synchronously by kill(), before users see it.
+        abortError ??= args[0]
+        markPosixNonAdmission(abortError, launch.drain())
+        state = 'failed'
+        return reportFailure(abortError)
+      }
+      if (state !== 'spawned') {
+        // GO was written. A delayed ACK may still precede a successful exec.
+        // Don't let a post-admission AbortError reorder synthetic spawn.
+        abortError ??= args[0]
+        return false
+      }
+    }
     if (event === 'message') {
       probe(true)
       if (state !== 'spawned') {
