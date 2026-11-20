@@ -32,7 +32,9 @@ vi.mock('node:crypto', async (original) => {
   const crypto = await original<typeof import('node:crypto')>()
   return {
     ...crypto,
-    randomUUID: () => 'abcdef01-0000-4000-8000-000000000001',
+    // Pi takes only the first eight digits. Collide those across vaults, not
+    // the full UUIDs that identify individual durable ownership records.
+    randomUUID: () => `abcdef01${crypto.randomUUID().slice(8)}`,
     randomBytes: (size: number) => (size === 6 ? Buffer.alloc(6, 0x67) : crypto.randomBytes(size)),
   }
 })
@@ -96,7 +98,13 @@ vi.mock('../../../../main/posix-launch-lease', async (original) => {
       args: string[],
       options: Parameters<typeof lease.preparePosixLaunch>[2],
     ) => {
-      const run = native.fixture!.prepare(bin, args, String(options.cwd), options.env ?? {})
+      const run = native.fixture!.prepare(
+        bin,
+        args,
+        String(options.cwd),
+        options.env ?? {},
+        options.ownershipRecordPath,
+      )
       const prepared = lease.preparePosixLaunch(process.execPath, run.args, {
         ...options,
         directory: run.directory,
@@ -108,10 +116,15 @@ vi.mock('../../../../main/posix-launch-lease', async (original) => {
       prepared.drain = run.consumerDrain
       if (run.launchError) {
         const cancel = prepared.cancel
-        run.nativeDrain = () => cancel('possibly-launched')
+        run.nativeDrain = async () => {
+          await cancel('possibly-launched')
+          await run.captureJournal()
+        }
         prepared.cancel = async (state) => {
+          expect(state).toBe('possibly-launched')
           await run.drain.enter()
-          await cancel(state)
+          await run.nativeDrain!()
+          run.proofDelivered = true
           run.proven.resolve()
         }
         run.drain.hold()
@@ -127,7 +140,13 @@ vi.mock('../../../../main/plugin-api', async (original) => {
     ...api,
     spawnOwnedProgram: ((...args: Parameters<typeof api.spawnOwnedProgram>) => {
       const [bin, argv, options] = args
-      const run = native.fixture!.prepare(bin, argv, String(options.cwd), options.env ?? {})
+      const run = native.fixture!.prepare(
+        bin,
+        argv,
+        String(options.cwd),
+        options.env ?? {},
+        options.ownershipRecordPath,
+      )
       expect(options.posixGroupLease).toBe(true)
       const child = api.spawnOwnedProgram(process.execPath, run.args, {
         ...options,
@@ -147,7 +166,19 @@ vi.mock('../../../../main/plugin-api', async (original) => {
       expect(options.env).toBe(prepared.options.env)
       const child = spawn(bin, args, prepared.options)
       native.fixture!.record(run, child, prepared.args[1]!, false)
-      const output = leasedPty(child, () => run.close.enter())
+      const output = leasedPty(child, (fire) =>
+        run.close.dispatch(() => {
+          let groupAlive = true
+          try {
+            process.kill(-run.pid, 0)
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+            groupAlive = false
+          }
+          run.publicExit = { groupAlive, proofDelivered: run.proofDelivered }
+          fire()
+        }),
+      )
       run.ptyOutput = output
       void output.outputSettled.then(run.emittedClose.resolve)
       if (run.launchError) {
@@ -177,33 +208,52 @@ function gate() {
   const permit = deferred<void>()
   void permit.promise.catch(() => {})
   let held = false
-  return {
+  const gate = {
     entered: entered.promise,
     hit: false,
     hold() {
       held = true
     },
-    open: permit.resolve,
+    open() {
+      held = false
+      permit.resolve()
+    },
     reject: permit.reject,
+    dispatch(fire: () => void) {
+      const wait = held
+      void gate.enter()
+      if (wait) void permit.promise.then(fire)
+      else fire()
+    },
     async enter() {
       this.hit = true
       entered.resolve()
       if (held) await permit.promise
     },
   }
+  return gate
 }
 
-function newRun(plan: Plan, directory: string, i: number, cwd: string, home: string) {
+function newRun(
+  plan: Plan,
+  directory: string,
+  i: number,
+  cwd: string,
+  home: string,
+  ownershipPath: string,
+) {
   const receipt = join(directory, `descendant-${i}.receipt`)
   let consumerProof: Promise<void> | undefined
   let ancestry: { anchor: number; reaper: number } | undefined
   let descendant: number | undefined
+  const journalOwners = new Map<string, number>()
   const run = {
     ...plan,
     cwd,
     home,
     directory,
     receipt,
+    ownershipPath,
     args: [
       fileURLToPath(new URL('./drain-provider.mjs', import.meta.url)),
       plan.kind,
@@ -216,13 +266,28 @@ function newRun(plan: Plan, directory: string, i: number, cwd: string, home: str
     child: undefined as ChildProcess | undefined,
     ptyOutput: undefined as ReturnType<typeof leasedPty> | undefined,
     ancestry: undefined as (() => void) | undefined,
+    publicExit: undefined as { groupAlive: boolean; proofDelivered: boolean } | undefined,
+    proofDelivered: false,
     consumerDrain() {
       run.drainCalls++
       return (consumerProof ??= (async () => {
         await run.drain.enter()
         await run.nativeDrain!()
+        run.proofDelivered = true
         run.proven.resolve()
       })())
+    },
+    async captureJournal() {
+      const journal = await readFile(join(ownershipPath, 'journal'), 'utf8').catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+          return ''
+        },
+      )
+      for (const match of journal.matchAll(/^(ROOT|REAPER|ANCHOR) (\d+)$/gm))
+        journalOwners.set(match[1]!, Number(match[2]))
+      if (journalOwners.has('ROOT')) expect(journalOwners.get('ROOT')).toBe(run.pid)
+      return journal
     },
     async waitReady() {
       await bounded(run.ready.promise, `provider readiness: ${run.errors}`)
@@ -230,6 +295,19 @@ function newRun(plan: Plan, directory: string, i: number, cwd: string, home: str
       ancestry = JSON.parse(await readFile(join(directory, `lease-${run.pid}.json`), 'utf8'))
       descendant = Number(await readFile(receipt, 'utf8'))
       expect(groupMembers(run.pid)).toContain(descendant)
+      const journal = await run.captureJournal()
+      expect(journal).toContain(
+        `ROOT ${run.pid}\nREAPER ${ancestry!.reaper}\nANCHOR ${ancestry!.anchor}\nCOMPLETE\n`,
+      )
+    },
+    live() {
+      expect(run.child!.exitCode).toBeNull()
+      expect(run.child!.signalCode).toBeNull()
+      expect(() => process.kill(run.pid, 0)).not.toThrow()
+      expect(groupMembers(run.pid)).toContain(run.pid)
+      for (const pid of [ancestry!.anchor, ancestry!.reaper, -ancestry!.reaper])
+        expect(() => process.kill(pid, 0)).not.toThrow()
+      run.aliveAfterExit()
     },
     aliveAfterExit() {
       expect(descendant).toBeGreaterThan(1)
@@ -238,8 +316,15 @@ function newRun(plan: Plan, directory: string, i: number, cwd: string, home: str
     },
     absent() {
       kernelGroupAbsent(run.pid)
-      if (ancestry) kernelGroupAbsent(ancestry.reaper)
-      for (const pid of [run.pid, descendant, ancestry?.anchor, ancestry?.reaper]) {
+      const reaper = journalOwners.get('REAPER') ?? ancestry?.reaper
+      if (reaper) kernelGroupAbsent(reaper)
+      for (const pid of new Set([
+        run.pid,
+        descendant,
+        ancestry?.anchor,
+        ancestry?.reaper,
+        ...journalOwners.values(),
+      ])) {
         if (pid === undefined) continue
         expect(() => process.kill(pid, 0), `fixture PID ${pid}`).toThrow(
           expect.objectContaining({ code: 'ESRCH' }),
@@ -249,8 +334,8 @@ function newRun(plan: Plan, directory: string, i: number, cwd: string, home: str
     exit() {
       run.child!.stdin!.end('exit\n')
     },
-    ping() {
-      run.child!.stdin!.write('ping\n')
+    input(line: string) {
+      run.child!.stdin!.write(`${line}\n`)
     },
     tail: () => writeFile(`${receipt}.tail`, ''),
     pid: 0,
@@ -299,7 +384,13 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
     plan(plan: Plan) {
       next = plan
     },
-    prepare(bin: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv) {
+    prepare(
+      bin: string,
+      args: readonly string[],
+      cwd: string,
+      env: NodeJS.ProcessEnv,
+      ownershipPath: string | undefined,
+    ) {
       const plan = next!
       next = undefined
       expect(bin).toBe(process.execPath)
@@ -342,7 +433,8 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
           plan.kind === 'job' ? 'approval_policy="never"' : 'approval_policy="on-request"',
         )
       }
-      const run = newRun(plan, ledger.root, runs.length, cwd, env.CODEX_HOME ?? '')
+      expect(ownershipPath).toEqual(expect.stringContaining(`${ledger.root}/agent-ownership/`))
+      const run = newRun(plan, ledger.root, runs.length, cwd, env.CODEX_HOME ?? '', ownershipPath!)
       runs.push(run)
       return run
     },
@@ -354,7 +446,16 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
     ) {
       run.child = child
       run.pid = ledger.record(child)
-      run.ancestry = ledger.retain(run.pid, run.nativeDrain!, run.nativeClosed.promise, control)
+      run.ancestry = ledger.retain(
+        run.pid,
+        async () => {
+          await run.captureJournal()
+          await run.nativeDrain!()
+          await run.captureJournal()
+        },
+        run.nativeClosed.promise,
+        control,
+      )
       child.on('error', (error) => {
         run.errors += String(error)
       })
@@ -408,6 +509,16 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
         if (!run.child) continue
         await bounded(run.emittedClose.promise, `close ${run.pid}`)
         expect(run.ptyOutput?.timerPending() ?? false).toBe(false)
+        const receipt = await readFile(run.receipt, 'utf8').catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error
+            return ''
+          },
+        )
+        if (receipt)
+          expect(() => process.kill(Number(receipt), 0)).toThrow(
+            expect.objectContaining({ code: 'ESRCH' }),
+          )
         run.absent()
       }
       while (filesystem.size) await Promise.allSettled([...filesystem])

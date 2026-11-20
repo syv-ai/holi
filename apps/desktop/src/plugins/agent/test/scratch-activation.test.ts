@@ -197,13 +197,13 @@ vi.mock('../../../main/plugin-api', async (original) => {
     preparedPtys.delete(args)
     const child = spawn(bin, args, launch.options)
     native.recordChild!(provider, child, launch.drain, launch.args[1]!)
-    return leasedPty(child, async () => {
+    return leasedPty(child, (fire) => {
       const hold = native.heldExit
       if (hold !== null && hold.cwd === opts.cwd) {
         native.heldExit = null
         hold.entered()
-        await hold.wait
-      }
+        void hold.wait.then(fire)
+      } else fire()
     }).pty
   }
   return {

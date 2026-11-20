@@ -23,6 +23,7 @@ export function activationHosts(
   const publications: PluginEvent[] = []
   const pending = new Set<Promise<unknown>>()
   const registry = createCapabilityRegistry()
+  const agentListeners = new Set<(message: unknown) => void>()
   const host = createPluginHost({
     plugins: [
       agentMain,
@@ -51,7 +52,11 @@ export function activationHosts(
     rootFor: async (remote) => roots[remote as Remote] ?? null,
     events: {
       send: (_channel, event) => events.push(event),
-      listen: () => () => {},
+      listen(channel, handler) {
+        if (channel !== 'plugin:agent') return () => {}
+        agentListeners.add(handler)
+        return () => void agentListeners.delete(handler)
+      },
       liveRemote: () => host.displayed(),
     },
     openAppDoor: () => {
@@ -146,6 +151,11 @@ export function activationHosts(
     pending,
     events,
     publications,
+    write(remote: Remote, id: string, data: string) {
+      for (const handler of agentListeners)
+        handler({ remote, name: 'pty-write', payload: { id, data } })
+    },
+    listenerCount: () => agentListeners.size,
   }
 }
 
@@ -184,7 +194,10 @@ export function activationHttp(h: ReturnType<typeof activationHosts>) {
   return {
     route: bridge.route,
     start: bridge.start,
-    stop: bridge.stop,
+    async stop() {
+      await bridge.stop()
+      expect(bridge.port()).toBeNull()
+    },
     cli(remote: Remote, ...argv: string[]) {
       return request(
         remote,

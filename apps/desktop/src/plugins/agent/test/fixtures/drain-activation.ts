@@ -1,5 +1,6 @@
 // Register the native/process mocks before importing the activation host.
 import {
+  bounded,
   physical,
   drainProcesses,
   type FixtureNative,
@@ -19,26 +20,47 @@ import { activationHosts, activationHttp } from './activation-hosts'
 
 export { bounded, physical } from './drain-processes'
 
+export const missing = (path: string) =>
+  expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
+
+export function pending(work: Promise<unknown>) {
+  let done = false
+  const settled = () => {
+    done = true
+  }
+  void work.then(settled, settled)
+  return () => expect(done).toBe(false)
+}
+
 type Remote = 'fixture/a' | 'fixture/b'
 
 export async function withDrainActivation(
   test: (f: ReturnType<typeof activation>) => Promise<void>,
 ) {
-  const ledger = await posixFixtureLedger()
+  const ledger = await posixFixtureLedger('holi-drain-activation-')
   const children = drainProcesses(ledger)
   const f = activation(ledger.root, children)
   onTestFinished(async () => {
     children.openGates()
-    const [disposed, reaped] = await Promise.allSettled([
-      f.dispose(),
-      physical(ledger.reap(), 'retained fixture leases'),
-    ])
     try {
-      if (reaped.status === 'rejected') throw reaped.reason
-      await children.joinOutput()
-      if (disposed.status === 'rejected' && f.pending.size !== 0) throw disposed.reason
-      await ledger.remove()
-      if (disposed.status === 'rejected') throw disposed.reason
+      const [disposed, reaped] = await Promise.allSettled([
+        f.dispose(),
+        physical(ledger.reap(), 'retained fixture leases'),
+      ])
+      const failures = [disposed, reaped].flatMap((r) =>
+        r.status === 'rejected' ? [r.reason] : [],
+      )
+      if (reaped.status === 'fulfilled' && f.pending.size === 0) {
+        try {
+          await bounded(children.joinOutput(), 'fixture output and filesystem work')
+          await ledger.remove()
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      // Vitest reports cleanup separately, preserving any original test failure.
+      if (failures.length)
+        throw new AggregateError(failures, `Drain fixture cleanup: ${ledger.root}`)
     } finally {
       children.reset()
     }
@@ -153,12 +175,53 @@ function activation(root: string, children: FixtureNative) {
       await Promise.allSettled([...h.pending])
       const results = await Promise.allSettled([h.stop(h.A), h.stop(h.B), http.stop()])
       await Promise.allSettled([...h.pending])
+      expect(h.listenerCount()).toBe(0)
       for (const [i, result] of results.entries()) {
         const expected = expectedFailures.get(i === 0 ? h.A : h.B)
         if (i !== 2 && expected !== undefined)
           expect(result).toEqual({ status: 'rejected', reason: expected })
         else if (result.status === 'rejected') throw result.reason
       }
+    },
+    async work(
+      remote: Remote,
+      run: FixtureNative['runs'][number] & { sessionId: string; terminalId?: string },
+      phase: string,
+      tokens: number,
+    ) {
+      run.live()
+      const marker = `fixture-work:${remote}:${phase}`
+      if (run.kind === 'pi') {
+        expect(await http.cli(remote, 'agent', 'message', run.sessionId, `probe:${phase}`)).toEqual(
+          { status: 200, text: 'sent' },
+        )
+        await vi.waitFor(async () =>
+          expect(await h.call(remote, 'agent.reply', { session: run.sessionId })).toEqual({
+            output: marker,
+          }),
+        )
+      } else if (run.terminalId) {
+        h.host.setDisplayed(remote)
+        await h.call(remote, 'agent.attach', { id: run.terminalId })
+        h.write(remote, run.terminalId, `probe:${phase}\n`)
+        await vi.waitFor(() =>
+          expect(h.events).toContainEqual({
+            remote,
+            name: 'pty-data',
+            payload: { id: run.terminalId, data: expect.stringContaining(marker) },
+          }),
+        )
+      } else {
+        run.input(`probe:${phase}:${tokens}`)
+        await vi.waitFor(async () =>
+          expect(await h.rows(remote)).toContainEqual(
+            expect.objectContaining({ id: run.sessionId, usage: { total: tokens } }),
+          ),
+        )
+      }
+      expect(run.output).toContain(marker)
+      run.live()
+      return marker
     },
     async start(remote: Remote, kind: Kind, stdio: Plan['stdio'], code = 0, prompt = 'hold') {
       children.plan({ kind, stdio, code })
@@ -180,6 +243,12 @@ function activation(root: string, children: FixtureNative) {
       })
       const run = children.runs.at(-1)!
       await run.waitReady()
+      if (kind === 'pi' && prompt === 'reply')
+        await vi.waitFor(async () =>
+          expect(await h.call(remote, 'agent.reply', { session: result.sessionId })).toEqual({
+            output: remote,
+          }),
+        )
       const pidFile = join(dirname(run.cwd), `${result.sessionId}.pid`)
       if (kind === 'job') await vi.waitFor(() => access(pidFile))
       return Object.assign(run, result, {
