@@ -200,9 +200,6 @@ interface Job {
   tokens: number
   /** Resolves after release, copy-back, bracket completion and owned cleanup. */
   exited: Promise<void>
-  /** The managed history phase can be bounded for Stop/leave without cutting
-   *  short physical proof or detaching the job from its pending write. */
-  writingHistory?: Promise<void>
   finalizationError?: Error
   secondaryPhysicalFailure?: { cause: unknown }
   dropTimer?: ReturnType<typeof setTimeout>
@@ -533,13 +530,8 @@ export function createJobs(deps: JobsDeps): Jobs {
     job.queue = []
     job.copyController?.abort()
     job.turn?.stop()
-    const { exited, writingHistory } = job
-    await (writingHistory === undefined
-      ? exited
-      : Promise.race([
-          exited,
-          writingHistory.then(() => bounded(exited, `Turn history for job ${job.id}`)),
-        ]))
+    // Stop joins the natural owner's deadline, which only starts after drain.
+    await job.exited
   }
 
   /** Move the current file aside atomically, then publish the replacement
@@ -790,11 +782,9 @@ export function createJobs(deps: JobsDeps): Jobs {
     job.turn = turn
     const bracket = turn.bracket && job.place !== null
     let managed: ManagedTurn | undefined
-    let historyStarted: (() => void) | undefined
     if (bracket && deps.beginManagedTurn !== undefined) {
       try {
         managed = deps.beginManagedTurn(id)
-        job.writingHistory = new Promise<void>((resolve) => (historyStarted = resolve))
       } catch (error) {
         fail(error)
       }
@@ -873,14 +863,14 @@ export function createJobs(deps: JobsDeps): Jobs {
             signal.throwIfAborted()
             await rm(job.state, { recursive: true, force: true })
           }
+          signal.throwIfAborted()
+          if (managed !== undefined && job.finalizationError === undefined)
+            await managed.end(signal)
+          signal.throwIfAborted()
           return { outcome, why }
         }
         try {
           const { outcome, why } = await bounded(finish(), `Finalization of job ${id}`)
-          if (managed !== undefined && job.finalizationError === undefined) {
-            historyStarted?.()
-            await managed.end()
-          }
           // Persist caller settlement and clear a scoped job's diagnostic PID
           // before making its outcome visible. The link follows row retirement.
           if (job.finalizationError === undefined) receipt.settle(job.dir !== null)
@@ -902,7 +892,6 @@ export function createJobs(deps: JobsDeps): Jobs {
           }
         }
         clearTimeout(tooLong)
-        delete job.writingHistory
         job.turn = undefined
         job.copyController = undefined
         job.finalizing = false

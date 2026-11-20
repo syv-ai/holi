@@ -240,6 +240,9 @@ export const agentMain: MainPlugin = {
         activationSignal: ctx.activationSignal,
         ...(ownership && { allocateOwnership: (id, proof) => ownership.allocate('pi', id, proof) }),
         bracket: (id, edge) => sessions.bracket(id, edge),
+        ...(process.platform !== 'win32' && {
+          beginManagedTurn: (id: string) => managedTurns.begin(id, sessions.bracket),
+        }),
         changed: () => {
           piSessions = pi.sessions()
           pushSessions()
