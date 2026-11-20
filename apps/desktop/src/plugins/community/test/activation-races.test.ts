@@ -33,7 +33,12 @@ vi.mock('@holi/shared/path-safety-node', async (importOriginal) => {
     },
   }
 })
+import * as pluginApi from '../../../main/plugin-api'
 import type { CapabilityTable, PluginCtx } from '../../../main/plugin-api'
+import { createCapabilityHost } from '../../../main/capabilities/dispatch'
+import { createCapabilityRegistry } from '../../../main/capabilities/registry'
+import { noCoreServices } from '../../../main/capabilities/services'
+import { createPluginHost, type OpenVault } from '../../../main/plugin-host/host'
 import { communityMain } from '../main'
 import { communityOwner } from '../main/owner'
 import type { Install } from '../main/store'
@@ -112,15 +117,7 @@ async function harness() {
     disposals.push(dispose)
     activations.push({ root, remote, table, events, origins, dispose })
   }
-  const pluginDir = join(base, 'plugin')
-  await mkdir(join(pluginDir, 'bin'), { recursive: true })
-  await writeFile(join(pluginDir, 'bin/sample'), '#!/bin/sh\necho sample\n')
-  await chmod(join(pluginDir, 'bin/sample'), 0o755)
-  await writeFile(
-    join(pluginDir, 'serve.cjs'),
-    "const h=require('node:http');const s=h.createServer((q,r)=>r.end('ok'));s.listen(Number(process.argv[2]),'127.0.0.1');if(process.argv.includes('resist'))process.on('SIGTERM',()=>{});",
-  )
-  await writeFile(join(pluginDir, 'holi-plugin.json'), JSON.stringify(manifest()))
+  const pluginDir = await serverFixture(base)
   const call = async (activation: Activation, name: string, params: unknown = {}) => {
     const entry = activation.table[name] as unknown as {
       params(raw: unknown): unknown
@@ -134,6 +131,145 @@ async function harness() {
   await call(activations[0]!, 'community.installFolder', { folder: pluginDir })
   await call(activations[0]!, 'community.setup', { id: 'sample' })
   return { base, userData, owner, activations, pluginDir, call, frameOrigins }
+}
+
+async function serverFixture(base: string) {
+  const pluginDir = join(base, 'plugin')
+  await mkdir(join(pluginDir, 'bin'), { recursive: true })
+  await writeFile(join(pluginDir, 'bin/sample'), '#!/bin/sh\necho sample\n')
+  await chmod(join(pluginDir, 'bin/sample'), 0o755)
+  await writeFile(
+    join(pluginDir, 'serve.cjs'),
+    "const h=require('node:http');const s=h.createServer((q,r)=>r.end('ok'));s.listen(Number(process.argv[2]),'127.0.0.1');if(process.argv.includes('resist'))process.on('SIGTERM',()=>{});",
+  )
+  await writeFile(join(pluginDir, 'holi-plugin.json'), JSON.stringify(manifest()))
+  return pluginDir
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+async function hostedRaceHarness() {
+  const base = await mkdtemp(join(tmpdir(), 'holi-community-host-race-'))
+  roots.push(base)
+  const userData = join(base, 'user-data')
+  const owner = communityOwner({ userData })
+  const a = { root: join(base, 'vault-a'), remote: 'owner/vault-a' }
+  const b = { root: join(base, 'vault-b'), remote: 'owner/vault-b' }
+  const rootFor = async (remote: string) =>
+    [a, b].find((vault) => vault.remote === remote)?.root ?? null
+  const contexts = new Map<string, PluginCtx>()
+  const registry = createCapabilityRegistry()
+  const frameOrigins = createFrameOrigins()
+  const dependentDisposing = deferred()
+  const releaseDependent = deferred()
+  const communityDisposing = vi.fn()
+  const idle = () => () => {}
+  const host = createPluginHost({
+    plugins: [
+      {
+        ...communityMain,
+        async activate(ctx) {
+          contexts.set(ctx.remote, ctx)
+          const dispose = await communityMain.activate!(ctx)
+          return async () => {
+            communityDisposing(ctx)
+            await dispose?.()
+          }
+        },
+      },
+      {
+        // The host revokes community before this dependent's disposer runs.
+        info: { id: 'hold-stop', label: 'Hold stop', default: true, requires: ['community'] },
+        activate: (ctx) => async () => {
+          if (ctx.remote !== a.remote) return
+          dependentDisposing.resolve()
+          await releaseDependent.promise
+        },
+      },
+    ],
+    registry,
+    userData,
+    coreSeeds: [],
+    active: () => null,
+    rootFor,
+    events: { send() {}, listen: idle, liveRemote: () => null },
+    openAppDoor: () => {
+      throw new Error('unexpected app door')
+    },
+    route: idle,
+    binDir: () => '',
+    githubToken: () => null,
+    frameOrigin: frameOrigins.acquire,
+    notify: () => false,
+    focused: () => false,
+  })
+  disposals.push(async () => {
+    releaseDependent.resolve()
+    await host.stopAll()
+  })
+  const caps = createCapabilityHost({
+    registry,
+    rootFor,
+    active: () => null,
+    core: noCoreServices,
+    pluginEnabled: async (id, root, allowDrain) => (await host.serving(root, allowDrain)).has(id),
+    claims: async () => [],
+  })
+  const call = async (remote: string, name: string, params: unknown) =>
+    (await caps.dispatch({ door: 'ui', remote, name, params })).value
+  for (const target of [a, b]) {
+    await mkdir(join(target.root, '.holi/settings'), { recursive: true })
+    await writeFile(
+      join(target.root, '.holi/settings/plugins.yaml'),
+      'plugins:\n  community: true\n  sample: true\n' +
+        (target === a ? '  setup-sample: true\n' : ''),
+    )
+    await writeFile(join(target.root, 'page.md'), '# Page\n')
+    const vault: OpenVault = {
+      ...target,
+      pause() {},
+      resume() {},
+      drainSync: async () => {},
+      commitNow: async () => null,
+      repo: { head: async () => null },
+    }
+    await host.reconcile(vault, 'open')
+  }
+  const folder = await serverFixture(base)
+  await call(a.remote, 'community.installFolder', { folder })
+  await call(a.remote, 'community.setup', { id: 'sample' })
+  const setupFolder = join(base, 'setup-plugin')
+  await mkdir(setupFolder)
+  await writeFile(join(setupFolder, 'setup.cjs'), 'setInterval(() => {}, 1000)')
+  await writeFile(
+    join(setupFolder, 'holi-plugin.json'),
+    JSON.stringify({
+      id: 'setup-sample',
+      name: 'Setup sample',
+      version: '1.0.0',
+      skills: [],
+      setup: [process.execPath, 'setup.cjs', '{vault}'],
+    }),
+  )
+  await call(a.remote, 'community.installFolder', { folder: setupFolder })
+  return {
+    a,
+    b,
+    owner,
+    host,
+    call,
+    contexts,
+    frameOrigins,
+    dependentDisposing,
+    releaseDependent,
+    communityDisposing,
+  }
 }
 
 const acquire = (h: Awaited<ReturnType<typeof harness>>, a: Activation) =>
@@ -444,39 +580,149 @@ describe('production community activation races', () => {
   })
 
   test('setup and late acquire are drained when their owning activation disposes', async () => {
-    const h = await harness()
-    let entered!: () => void
-    let release!: () => void
-    const barrier = new Promise<void>((resolve) => {
-      entered = resolve
+    const h = await hostedRaceHarness()
+    const original = h.contexts.get(h.a.remote)!
+    const sibling = h.contexts.get(h.b.remote)!
+    const supervisor = h.owner.supervisor
+    const lateKey = `${original.root}\0sample\0page.md`
+    const siblingKey = `${sibling.root}\0sample\0page.md`
+    const beforeSpawnAdmission = deferred()
+    const resumeAdmission = deferred()
+    const admittedLateSpawn = vi.fn()
+    const acquireServer = supervisor.acquire
+    const serverSpy = vi.spyOn(supervisor, 'acquire').mockImplementation((key, spec, readmit) => {
+      if (key !== lateKey) return acquireServer(key, spec, readmit)
+      const authorize = spec.authorizeSpawn
+      if (!authorize) throw new Error('missing post-port server authorization')
+      return acquireServer(
+        key,
+        {
+          ...spec,
+          authorizeSpawn(runSpawn) {
+            // Hold a preceding turn in the real FIFO. The next call queues
+            // the original post-port authorization behind it.
+            void h.owner.admit(async () => {
+              beforeSpawnAdmission.resolve()
+              await resumeAdmission.promise
+            })
+            return authorize(() => {
+              admittedLateSpawn()
+              return runSpawn()
+            })
+          },
+        },
+        readmit,
+      )
     })
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const owner = h.owner
-    const originalGet = owner.store.get
-    let block = true
-    owner.store.get = async (id) => {
-      const value = await originalGet(id)
-      if (block && id === 'sample') {
-        block = false
-        entered()
-        await blocked
-      }
-      return value
+
+    const spawn = pluginApi.spawnOwnedProgram
+    const setupSpawned = deferred()
+    let setupChild: ReturnType<typeof spawn> | undefined
+    const spawnSpy = vi
+      .spyOn(pluginApi, 'spawnOwnedProgram')
+      .mockImplementation((bin, args, opts) => {
+        const child = spawn(bin, args, opts)
+        if (args[0] === 'setup.cjs') {
+          setupChild = child
+          child.once('spawn', () => setupSpawned.resolve())
+        }
+        return child
+      })
+    const setupJoined = deferred<pluginApi.OwnedProgramResult>()
+    const releaseSetupJoin = deferred()
+    const join = pluginApi.joinOwnedProgram
+    const joinSpy = vi
+      .spyOn(pluginApi, 'joinOwnedProgram')
+      .mockImplementation((child, platform) => {
+        const completion = join(child, platform)
+        if (child !== setupChild) return completion
+        // Hold delivery of the exact child's real join, not a synthetic exit or receipt.
+        return completion.then(async (result) => {
+          setupJoined.resolve(result)
+          await releaseSetupJoin.promise
+          return result
+        })
+      })
+    const callAcquire = (ctx: PluginCtx) =>
+      h.call(ctx.remote, 'community.acquire', { path: 'page.md' }) as Promise<{
+        port: number
+        lease: string
+      }>
+    try {
+      const setupFinished = vi.fn()
+      const setup = h.call(original.remote, 'community.setup', { id: 'setup-sample' })
+      void setup.then(setupFinished, setupFinished)
+      await Promise.race([
+        setupSpawned.promise,
+        setup.then(() => {
+          throw new Error('setup finished before admitting its root')
+        }),
+      ])
+      expect(spawnSpy.mock.calls.map(([, args]) => args)).toEqual([['setup.cjs', original.root]])
+      expect(original.activationSignal.aborted).toBe(false)
+
+      const late = callAcquire(original)
+      await Promise.race([
+        beforeSpawnAdmission.promise,
+        late.then(() => {
+          throw new Error('late acquire bypassed post-port authorization')
+        }),
+      ])
+      expect(supervisor.state(lateKey)).toMatchObject({ state: 'starting' })
+      expect(spawnSpy).toHaveBeenCalledTimes(1)
+      const stopFinished = vi.fn()
+      const stopping = h.host.stop(original.remote)
+      void stopping.then(stopFinished, stopFinished)
+      await h.dependentDisposing.promise
+      expect(original.activationSignal.aborted).toBe(true)
+      expect(sibling.activationSignal.aborted).toBe(false)
+      expect(h.communityDisposing).not.toHaveBeenCalled()
+
+      resumeAdmission.resolve()
+      await expect(late).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'community attachment is closed',
+      })
+      expect(admittedLateSpawn).not.toHaveBeenCalled()
+      expect(spawnSpy).toHaveBeenCalledTimes(1)
+      expect(supervisor.state(lateKey)).toBeNull()
+      expect(h.frameOrigins.origins.size).toBe(0)
+
+      // Revocation alone also stops the already-admitted setup root; the
+      // community disposer has not run yet.
+      await expect(setupJoined.promise).resolves.toMatchObject({
+        code: null,
+        signal: 'SIGKILL',
+        error: null,
+      })
+      h.releaseDependent.resolve()
+      // A fresh sibling acquire takes the same owner queue while A's disposer
+      // and setup are still waiting on the admitted root's join.
+      const beside = await callAcquire(sibling)
+      expect(h.communityDisposing).toHaveBeenCalledExactlyOnceWith(original)
+      expect(setupFinished).not.toHaveBeenCalled()
+      expect(stopFinished).not.toHaveBeenCalled()
+      expect(supervisor.state(siblingKey)).toMatchObject({ state: 'running', port: beside.port })
+      expect([...h.frameOrigins.origins]).toEqual([pluginServerOrigin(beside.port)])
+      expect(spawnSpy.mock.calls.map(([, args]) => args[0])).toEqual(['setup.cjs', 'serve.cjs'])
+      expect(spawnSpy.mock.lastCall?.[2].env?.HOLI_VAULT_ROOT).toBe(sibling.root)
+
+      releaseSetupJoin.resolve()
+      await expect(setup).resolves.toBe(false)
+      await expect(stopping).resolves.toBeUndefined()
+      expect(h.contexts.get(original.remote)).toBe(original)
+      expect(h.contexts.get(sibling.remote)).toBe(sibling)
+      expect(await fetchOrigin(beside.port)).toBe('ok')
+      await h.call(sibling.remote, 'community.release', { lease: beside.lease })
+      expect(supervisor.state(siblingKey)).toBeNull()
+      expect(h.frameOrigins.origins.size).toBe(0)
+    } finally {
+      resumeAdmission.resolve()
+      releaseSetupJoin.resolve()
+      h.releaseDependent.resolve()
+      serverSpy.mockRestore()
+      spawnSpy.mockRestore()
+      joinSpy.mockRestore()
     }
-    const pending = acquire(h, h.activations[0]!)
-    await barrier
-    const dispose = h.activations[0]!.dispose()
-    release()
-    await expect(pending).rejects.toThrow()
-    await dispose
-    owner.store.get = originalGet
-    expect(h.activations[0]!.origins.size).toBe(0)
-    const eventsAfterDispose = h.activations[0]!.events.length
-    await new Promise((resolve) => setTimeout(resolve, 25))
-    expect(h.activations[0]!.events).toHaveLength(eventsAfterDispose)
-    expect(h.activations[0]!.origins.size).toBe(0)
-    await h.call(h.activations[1]!, 'community.remove', { id: 'sample' })
   })
 })

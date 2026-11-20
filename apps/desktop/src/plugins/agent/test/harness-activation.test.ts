@@ -1538,6 +1538,12 @@ it('activates real agents and shares save/remove/reset/reload and remote notific
 
 it('keeps real native provider commands and vault configuration local after a shared edit', async () => {
   const { host, enter, call, capabilities, roots, userData } = await rig()
+  let nextJob = 0
+  adapters.run.mockImplementation(async (_bin, args) =>
+    args.includes('--bg')
+      ? `backgrounded · ${(++nextJob).toString(16).padStart(8, '0')} · Bound run`
+      : '[]',
+  )
   await enter(A)
   await enter(B)
   const codex = {
@@ -1578,10 +1584,11 @@ it('keeps real native provider commands and vault configuration local after a sh
   await call(A, 'agent.harnessSave', {
     harness: { ...PRESETS[0]!, command: { bin: process.execPath, args: [] } },
   })
+  const boundJobs = { [A]: '00000001', [B]: '00000002' }
   for (const remote of [A, B] as const) {
     expect(
       await call(remote, 'agent.launch', { name: `${remote} bound`, prompt: `${remote} prompt` }),
-    ).toMatchObject({ ok: true })
+    ).toMatchObject({ ok: true, sessionId: boundJobs[remote] })
   }
   const launches = adapters.run.mock.calls.filter(([, args]) => args.includes('--bg'))
   expect(launches).toHaveLength(2)
@@ -1618,7 +1625,10 @@ it('keeps real native provider commands and vault configuration local after a sh
     schedule: schedule.path,
     fingerprint: changed!.fingerprint,
   })
-  await call(B, 'schedules.run', { schedule: schedule.path })
+  expect(await call(B, 'schedules.run', { schedule: schedule.path })).toMatchObject({
+    outcome: 'started',
+    jobId: '00000003',
+  })
   const scheduled = adapters.run.mock.calls
     .filter(([, args]) => args.some((arg) => arg.includes('Changed scheduled B')))
     .at(-1)!
@@ -2260,8 +2270,11 @@ it.each(['start', 'fork', 'respawn'] as const)(
     const release = deferred()
     const commandCalls: { args: string[]; cwd: string; config: string }[] = []
     const sessionId = 'abc12345'
-    const forkId = 'def56789'
-    const session = '123e4567-e89b-42d3-a456-426614174000'
+    const created = { [A]: 'def56789', [B]: 'def5678a' }
+    const conversation = {
+      [A]: '123e4567-e89b-42d3-a456-426614174000',
+      [B]: '123e4567-e89b-42d3-a456-426614174001',
+    }
     let holdUsed = false
     adapters.run.mockImplementation(async (_bin, args, opts) => {
       const config = opts.env.CLAUDE_CONFIG_DIR
@@ -2273,7 +2286,7 @@ it.each(['start', 'fork', 'respawn'] as const)(
             kind: 'background',
             id: sessionId,
             name: 'Existing session',
-            sessionId: session,
+            sessionId: conversation[opts.cwd === roots[A] ? A : B],
             cwd: opts.cwd,
             pid: process.pid,
             status: 'idle',
@@ -2289,11 +2302,11 @@ it.each(['start', 'fork', 'respawn'] as const)(
         entered.resolve()
         await release.promise
         if (operation === 'respawn') return ''
-        return `backgrounded · ${operation === 'fork' ? forkId : sessionId} · Late A`
+        return `backgrounded · ${created[A]} · Late A`
       }
       if (opts.cwd === roots[B] && isTarget) {
         if (operation === 'respawn') return ''
-        return `backgrounded · ${sessionId} · B`
+        return `backgrounded · ${created[B]} · B`
       }
       return ''
     })
@@ -2314,6 +2327,17 @@ it.each(['start', 'fork', 'respawn'] as const)(
       ).length
       const resultB = await invoke(B)
       expect(resultB).toMatchObject({ ok: true })
+      if (operation !== 'respawn') {
+        expect(resultB).toMatchObject({ sessionId: created[B] })
+        expect(adapters.pty.at(-1)).toMatchObject({ cwd: roots[B], args: ['attach', created[B]] })
+      }
+      if (operation === 'fork') {
+        const forks = commandCalls.filter(({ args }) => args.includes('--fork-session'))
+        expect(forks.map(({ args, cwd }) => [cwd, args.slice(0, 4)])).toEqual([
+          [roots[A], ['--bg', '--resume', conversation[A], '--fork-session']],
+          [roots[B], ['--bg', '--resume', conversation[B], '--fork-session']],
+        ])
+      }
       expect(adapters.pty.filter((args) => args.cwd === roots[A])).toHaveLength(0)
 
       let stopped = false
@@ -2323,6 +2347,7 @@ it.each(['start', 'fork', 'respawn'] as const)(
       expect(stopped).toBe(false)
       await expect(call(A, 'agent.harnesses')).rejects.toThrow(/no such method/)
       expect(await call(B, 'agent.harnesses')).toMatchObject({ agents: expect.any(Array) })
+      expect(stopped).toBe(false)
       release.resolve()
       const late = await held
       expect(late).toMatchObject({ ok: false })
@@ -2335,7 +2360,7 @@ it.each(['start', 'fork', 'respawn'] as const)(
         expect.objectContaining({
           cwd: roots[A],
           config: onA.config,
-          args: ['stop', operation === 'fork' ? forkId : sessionId],
+          args: ['stop', operation === 'respawn' ? sessionId : created[A]],
         }),
       )
       expect(adapters.pty.filter((args) => args.cwd === roots[A])).toHaveLength(0)

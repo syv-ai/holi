@@ -233,7 +233,7 @@ interface Job {
   bracketBegin?: Promise<unknown>
   /** End the host's wait without authorizing finalization of an unproven launch. */
   abandonNativeWait?: (failure: unknown) => void
-  stopOperation?: Promise<void>
+  windowsStopOperation?: Promise<void>
   marker?: string
   pidWrite?: Promise<void>
   finalizationError?: Error
@@ -613,13 +613,13 @@ export function createJobs(deps: JobsDeps): Jobs {
       if (job.finalizationError !== undefined) throw job.finalizationError
       return
     }
-    if (job.stopOperation !== undefined) return job.stopOperation
-    // Revoke admission and copy-back synchronously. Install one deadline and
-    // one reaction on the turn, even when Stop, abort, and leave overlap.
-    job.stopped = why
+    if (job.windowsStopOperation !== undefined) return job.windowsStopOperation
+    // Revoke admission and copy-back synchronously. Windows shares a single
+    // stop deadline; a POSIX retry waits anew on the same turn settlement.
+    job.stopped ??= why
     job.queue = []
     const settlement = job.turnSettled
-    job.stopOperation = Promise.resolve().then(async () => {
+    const operation = Promise.resolve().then(async () => {
       signal(job, 'SIGTERM')
       const escalation =
         platform === 'win32' ? undefined : setTimeout(() => signal(job, 'SIGKILL'), killGraceMs)
@@ -629,8 +629,9 @@ export function createJobs(deps: JobsDeps): Jobs {
         clearTimeout(escalation)
       }
     })
+    if (platform === 'win32') job.windowsStopOperation = operation
     job.copyController?.abort()
-    return job.stopOperation
+    return operation
   }
 
   /** Kill whatever the job's process left running in its group, so nothing
@@ -915,7 +916,7 @@ export function createJobs(deps: JobsDeps): Jobs {
   ): Promise<{ ok: true } | { ok: false; message: string }> {
     const { id, provider } = job
     job.busy = true
-    delete job.stopOperation
+    delete job.windowsStopOperation
     clearTimeout(job.dropTimer)
     let admit!: (result: { ok: true } | { ok: false; message: string }) => void
     const admission = new Promise<{ ok: true } | { ok: false; message: string }>((resolve) => {

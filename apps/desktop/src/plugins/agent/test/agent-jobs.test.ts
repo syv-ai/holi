@@ -829,12 +829,15 @@ describe('a job in the vault', () => {
   it('preserves failed leave ownership and retries after a late bracket close', async () => {
     let reachEnd!: () => void
     let finishEnd!: () => void
+    let closeBracket!: () => void
     const reachedEnd = new Promise<void>((resolve) => (reachEnd = resolve))
     const endGate = new Promise<void>((resolve) => (finishEnd = resolve))
+    const bracketClosed = new Promise<void>((resolve) => (closeBracket = resolve))
     const { jobs, provider } = await vaultRig(FOLLOW, async (_id, edge) => {
       if (edge === 'end') {
         reachEnd()
         await endGate
+        closeBracket()
       }
     })
     const started = await jobs.start({
@@ -845,10 +848,14 @@ describe('a job in the vault', () => {
     })
     if (!started.ok) throw new Error(started.message)
     await reachedEnd
-    await expect(jobs.leave()).rejects.toThrow('did not drain')
-    expect(jobs.has(started.sessionId)).toBe(true)
-    finishEnd()
-    await vi.waitFor(() => expect(jobs.sessions()[0]?.state).toBe('idle'))
+    try {
+      await expect(jobs.leave()).rejects.toThrow('did not drain')
+      expect(jobs.has(started.sessionId)).toBe(true)
+    } finally {
+      finishEnd()
+    }
+    // The row is already idle while bracket persistence is still pending.
+    await bracketClosed
     await jobs.leave()
     expect(jobs.has(started.sessionId)).toBe(false)
   })

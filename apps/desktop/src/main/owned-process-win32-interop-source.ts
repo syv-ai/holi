@@ -45,7 +45,7 @@ public static partial class HoliOwnedProcess {
   [DllImport("kernel32.dll", ExactSpelling=true)] static extern void SetLastError(uint error);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)] static extern IntPtr CreateJobObjectW(IntPtr attrs,string name);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)] static extern IntPtr OpenJobObjectW(uint access,bool inherit,string name);
-  [DllImport("kernel32.dll", ExactSpelling=true, SetLastError=true)] static extern bool CompareObjectHandles(IntPtr left,IntPtr right);
+  [DllImport("Kernelbase.dll", ExactSpelling=true, SetLastError=true)] static extern bool CompareObjectHandles(IntPtr left,IntPtr right);
   [DllImport("ntdll.dll", ExactSpelling=true)] static extern int NtQueryInformationProcess(IntPtr process,int cls,IntPtr data,uint size,out uint used);
   [StructLayout(LayoutKind.Sequential)] struct HandleSnapshotEntry {
     public IntPtr HandleValue;

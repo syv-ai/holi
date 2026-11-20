@@ -5,7 +5,7 @@ public static partial class HoliWitness {
   [DllImport("kernel32.dll", SetLastError=true)] static extern uint GetProcessId(IntPtr h);
   [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
   [DllImport("kernel32.dll", ExactSpelling=true)] static extern void SetLastError(uint error);
-  [DllImport("kernel32.dll", ExactSpelling=true, SetLastError=true)] static extern bool CompareObjectHandles(IntPtr a, IntPtr b);
+  [DllImport("Kernelbase.dll", ExactSpelling=true, SetLastError=true)] static extern bool CompareObjectHandles(IntPtr a, IntPtr b);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool DuplicateHandle(IntPtr from, IntPtr slot, IntPtr to, out IntPtr copy, uint access, bool inherit, uint options);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)] static extern IntPtr OpenJobObjectW(uint access, bool inherit, string name);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)] static extern IntPtr CreateEventW(IntPtr security, bool manual, bool initial, string name);

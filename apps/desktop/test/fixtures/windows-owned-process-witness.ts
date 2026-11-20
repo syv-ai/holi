@@ -391,12 +391,10 @@ async function launchWitness(
   if (!Number.isSafeInteger(parentPid) || parentPid < 1 || parentPid > 0x7fffffff)
     throw new Error('invalid witness parent')
   const source = script(parentPid, allowStall, inspectRegistration)
-  const command = inspectRegistration
-    ? [
-        '-Command',
-        `$b=[Convert]::FromBase64String('${gzipSync(source).toString('base64')}');$m=[IO.MemoryStream]::new($b);$z=[IO.Compression.GzipStream]::new($m,[IO.Compression.CompressionMode]::Decompress);$r=[IO.StreamReader]::new($z,[Text.Encoding]::UTF8);& ([ScriptBlock]::Create($r.ReadToEnd()))`,
-      ]
-    : ['-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')]
+  const command = [
+    '-Command',
+    `$b=[Convert]::FromBase64String('${gzipSync(source).toString('base64')}');$m=[IO.MemoryStream]::new($b);$z=[IO.Compression.GzipStream]::new($m,[IO.Compression.CompressionMode]::Decompress);$r=[IO.StreamReader]::new($z,[Text.Encoding]::UTF8);& ([ScriptBlock]::Create($r.ReadToEnd()))`,
+  ]
   if (command[1]!.length > 32_000)
     throw new Error('witness script exceeds the Win32 command-line budget')
   const child = spawn(
