@@ -48,6 +48,7 @@ describe.skipIf(process.platform !== 'win32')('Windows owned-process native cont
         )
         if (!cleanup) throw new Error('control cleanup did not report a result')
         expect(cleanup.helperClosed).toBe(true)
+        expect(cleanup.nativeFixtureClosed).toBe(true)
         expect(cleanup.heldHandleFallbacks).toBe(0)
         expect(cleanup.rootExit).toBe(
           proof.rootStarted === false ? 'absent-after-helper-exit' : 'observed',

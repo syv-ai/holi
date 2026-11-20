@@ -300,6 +300,7 @@ export class ControlFixture {
   private nativeHelperBirth?: string
   private helper?: ReturnType<typeof observe> & { stderr: () => string }
   private native?: ReturnType<typeof observe>
+  private nativeAdmissionAttempted = false
   private nativeReply = 1 // First complete line is the readiness marker.
   private control?: NonNullable<ReturnType<typeof ownedLaunchControl>>
   private retained = false
@@ -317,12 +318,14 @@ export class ControlFixture {
 
   async prepareNative(): Promise<void> {
     if (this.native) return
+    if (this.nativeAdmissionAttempted) throw new Error('native fixture admission was not tracked')
     const source = readFileSync(
       new URL('./windows-owned-process-control-native.ps1', import.meta.url),
       'utf8',
     )
     const bundled = gzipSync(source).toString('base64')
     const bootstrap = `$b=[Convert]::FromBase64String('${bundled}');$m=[IO.MemoryStream]::new($b);$g=[IO.Compression.GzipStream]::new($m,[IO.Compression.CompressionMode]::Decompress);$r=[IO.StreamReader]::new($g,[Text.Encoding]::UTF8);& ([ScriptBlock]::Create($r.ReadToEnd()))`
+    this.nativeAdmissionAttempted = true
     const child = spawn(
       this.powershell,
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', bootstrap],
@@ -331,7 +334,13 @@ export class ControlFixture {
     let spawnError: NodeJS.ErrnoException | undefined
     child.on('error', (error) => (spawnError = error))
     child.stdin.on('error', () => undefined)
-    const native = (this.native = observe(child))
+    // ChildProcess close joins the process and output pipes, but not stdin.
+    const inputClosed = new Promise<void>((resolve) => child.stdin.once('close', resolve))
+    const observed = observe(child)
+    const native = (this.native = {
+      ...observed,
+      closed: Promise.all([observed.closed, inputClosed]).then(([exit]) => exit),
+    })
     const stderr = capture(child.stderr)
     await until(
       () => {
@@ -688,11 +697,19 @@ export class ControlFixture {
       }
     }
     const closeNative = async () => {
-      if (!this.native || nativeFixtureClosed) return
-      this.native.child.stdin?.end()
-      heldHandleFallbacks += await ensureClosed(this.native, 2_000)
-      const { code, signal } = await this.native.closed
-      if (code !== 0 || signal !== null || !this.native.exited())
+      if (nativeFixtureClosed) return
+      const native = this.native
+      if (!native) {
+        if (this.nativeAdmissionAttempted)
+          throw new Error('native fixture admission was not tracked')
+        // No admission was attempted; there is no native fixture actor to join.
+        nativeFixtureClosed = true
+        return
+      }
+      native.child.stdin?.end()
+      heldHandleFallbacks += await ensureClosed(native, 2_000)
+      const { code, signal } = await native.closed
+      if (code !== 0 || signal !== null || !native.exited())
         throw new Error('native fixture exit was not clean')
       nativeFixtureClosed = true
     }
