@@ -1,17 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  openSync,
-  readdirSync,
-  readSync,
-  realpathSync,
-  rmSync,
-} from 'node:fs'
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
@@ -19,12 +7,16 @@ import {
   producerCommandFailure,
   runProducerCommand,
 } from './producer-command.mjs'
+import {
+  exactKeys,
+  privateDirectory,
+  readFinalSettlement,
+  readPrivate,
+} from './producer-settlement.mjs'
 
 const maxDiagnosticChars = 1000
 const maxEvidenceBytes = 64 * 1024
-const maxReceiptBytes = 4096
 const leaseRoles = ['version', 'rpc-first', 'rpc-cancel']
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const timeoutMs = 90_000
 const requiredScenarios = [
   'streamCompletion',
@@ -111,55 +103,6 @@ function settled(evidence) {
   )
 }
 
-function exactKeys(value, keys) {
-  return (
-    value &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === keys.length &&
-    keys.every((key) => Object.hasOwn(value, key))
-  )
-}
-
-function privateDirectory(path) {
-  const stat = lstatSync(path)
-  if (
-    realpathSync(path) !== path ||
-    !stat.isDirectory() ||
-    stat.uid !== process.getuid?.() ||
-    stat.mode & 0o077
-  )
-    throw new Error('Not a private directory')
-}
-
-function readPrivate(path, limit) {
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-  try {
-    const stat = fstatSync(fd)
-    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || stat.mode & 0o077)
-      throw new Error('Not a private regular file')
-    const bytes = Buffer.alloc(limit + 1)
-    let size = 0
-    while (size < bytes.length) {
-      const count = readSync(fd, bytes, size, bytes.length - size, null)
-      if (!count) break
-      size += count
-    }
-    if (size > limit) throw new Error('Private producer file exceeded bound')
-    return bytes.subarray(0, size)
-  } finally {
-    closeSync(fd)
-  }
-}
-
-function readReceipt(path) {
-  const text = readPrivate(path, maxReceiptBytes).toString('utf8')
-  const record = JSON.parse(text)
-  // The writer uses compact JSON. Reject duplicate members and noncanonical framing.
-  if (JSON.stringify(record) !== text) throw new Error('Invalid private receipt framing')
-  return record
-}
-
 function validFailureEvidence(evidence, expectedVersion) {
   const failure = evidence?.failure
   return (
@@ -180,64 +123,19 @@ function validFailureEvidence(evidence, expectedVersion) {
   )
 }
 
-// The outer ChildProcess receipt covers its own non-detached descendants, not
-// these leases. Join the private worker claim, pre-launch admissions, and final
-// receipt; never re-probe PIDs that the worker already proved absent.
 function verifyWorkerSettlement(root, identity, bytes, evidence, successful) {
-  const admissions = join(root, 'admissions')
-  const ownership = join(root, 'ownership')
-  for (const path of [root, join(root, 'worker-tmp'), admissions, ownership]) privateDirectory(path)
-  if (lstatSync(join(root, 'settlement.tmp'), { throwIfNoEntry: false })) return false
-  const worker = readReceipt(join(root, 'worker.json'))
-  const receipt = readReceipt(join(root, 'settlement.json'))
-  const identityKeys = ['version', 'runId', 'nonce', 'workerPid']
-  if (
-    !exactKeys(worker, identityKeys) ||
-    !exactKeys(receipt, [...identityKeys, 'state', 'admission', 'leases', 'evidenceSha256']) ||
-    worker.version !== 1 ||
-    worker.runId !== identity.runId ||
-    worker.nonce !== identity.nonce ||
-    !Number.isSafeInteger(worker.workerPid) ||
-    worker.workerPid <= 1 ||
-    worker.workerPid > 0x7fffffff ||
-    !identityKeys.every((key) => receipt[key] === worker[key]) ||
-    receipt.state !== 'final' ||
-    receipt.evidenceSha256 !== createHash('sha256').update(bytes).digest('hex') ||
-    !Array.isArray(receipt.leases) ||
-    receipt.leases.length > leaseRoles.length
-  )
-    return false
-
-  const seen = new Set()
-  const expectedAdmissions = []
-  for (const [index, lease] of receipt.leases.entries()) {
-    if (
-      !exactKeys(lease, ['id', 'role', 'proof']) ||
-      typeof lease.id !== 'string' ||
-      !uuid.test(lease.id) ||
-      seen.has(lease.id) ||
-      lease.role !== leaseRoles[index] ||
-      !['settled', 'kernel-absence'].includes(lease.proof)
-    )
-      return false
-    seen.add(lease.id)
-    expectedAdmissions.push(`${lease.role}-${lease.id}`)
-    privateDirectory(join(ownership, lease.id))
-    privateDirectory(join(admissions, expectedAdmissions[index]))
-  }
-  const sameEntries = (path, expected) => {
-    const entries = readdirSync(path)
-    return entries.length === expected.length && expected.every((name) => entries.includes(name))
-  }
-  if (!sameEntries(admissions, expectedAdmissions) || !sameEntries(ownership, [...seen]))
-    return false
+  const receipt = readFinalSettlement(root, identity, leaseRoles, {
+    evidenceSha256: createHash('sha256').update(bytes).digest('hex'),
+  })
+  if (!receipt) return false
+  const count = receipt.leases.length
   // This exact working directory is a separate resource, not a prefix scan or
   // evidence of process absence. Even a valid native proof cannot join it.
   if (lstatSync(join(root, 'worker-tmp', 'probe-work'), { throwIfNoEntry: false })) return false
-  if (successful) return receipt.admission === 'leases-settled' && seen.size === leaseRoles.length
-  if (evidence.failure.stage === 'native-rpc' && seen.size < 2) return false
-  if (evidence.failure.stage === 'version' && seen.size !== 1) return false
-  return seen.size > 0
+  if (successful) return receipt.admission === 'leases-settled' && count === leaseRoles.length
+  if (evidence.failure.stage === 'native-rpc' && count < 2) return false
+  if (evidence.failure.stage === 'version' && count !== 1) return false
+  return count > 0
     ? evidence.failure.stage !== 'setup' && receipt.admission === 'leases-settled'
     : evidence.failure.stage === 'setup' && receipt.admission === 'no-admission'
 }
