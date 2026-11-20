@@ -255,6 +255,41 @@ describe('activation-owned inbox writes', () => {
     },
   )
 
+  it('persists an admitted notify but suppresses its native banner after stop', async () => {
+    const { host, enter, machineCall, roots, notifications } = await rig(undefined, undefined, true)
+    await enter(A)
+    const entered = deferred()
+    const release = deferred()
+    adapters.writeGates.push({
+      fragment: `${roots[A]}/.holi/state/inbox.local.json.tmp`,
+      entered: entered.resolve,
+      wait: release.promise,
+    })
+    adapters.writeGateReleases.push(release.resolve)
+    const notification = machineCall(A, 'agent', 'notify', 'Admitted', 'Still durable')
+    const observed = notification.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    )
+    await entered.promise
+    const stopping = host.stop(A)
+    await new Promise((resolve) => setImmediate(resolve))
+    release.resolve()
+    await expect(notification).resolves.toMatchObject({ status: 200 })
+    await stopping
+    const inbox = JSON.parse(
+      await readFile(join(roots[A], '.holi/state/inbox.local.json'), 'utf8'),
+    ) as { entries: { title: string; line: string }[] }
+    expect(inbox.entries).toContainEqual(
+      expect.objectContaining({ title: 'Admitted', line: 'Still durable' }),
+    )
+    expect(await readFile(join(roots[A], workLogPath(new Date())), 'utf8')).toContain(
+      'Admitted: Still durable',
+    )
+    expect(notifications).toHaveLength(0)
+    await expect(observed).resolves.toMatchObject({ value: { status: 200 } })
+  })
+
   it('does not poison teardown when notify persistence succeeds but its best-effort work log fails', async () => {
     const { host, enter, call, machineCall, roots } = await rig(undefined, undefined, true)
     await enter(A)

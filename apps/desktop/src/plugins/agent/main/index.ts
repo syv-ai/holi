@@ -275,7 +275,10 @@ export const agentMain: MainPlugin = {
       // vault's inbox, and a banner while Holi is out of sight.
       const inbox = createInbox({
         store: jsonFileStore(join(ctx.root, INBOX_FILE), parseInbox),
-        notify: (notice) => ctx.notify(notice),
+        notify: (notice) => {
+          if (!ctx.activationSignal.aborted) return ctx.notify(notice)
+          return false
+        },
         changed: (view) => {
           if (!ctx.activationSignal.aborted) ctx.emit(ctx.remote, 'inbox', view)
         },
