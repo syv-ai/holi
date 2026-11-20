@@ -65,7 +65,7 @@ vi.mock('node:fs', async (original) => {
 
 it
   .skipIf(process.platform === 'win32')
-  .each(['S', 'G', 'after GO', 'registering', 'activation abort'] as const)(
+  .each(['S', 'G', 'after GO', 'registering', 'activation abort', 'direct Stop'] as const)(
   'jobs teardown closes native admission with the sweep join held: %s',
   async (phase) => {
     const ledger = await posixFixtureLedger('holi-job-leave-')
@@ -99,10 +99,20 @@ it
     })
     gates.reached = reached
     if (phase === 'S' || phase === 'G') gates.hold = phase
-    if (phase === 'activation abort') gates.hold = 'G'
+    if (phase === 'activation abort' || phase === 'direct Stop') gates.hold = 'G'
     const activation = new AbortController()
     let drainAtFirstPublish: number | undefined
     let leaving: Promise<void> | undefined
+    let stopping: ReturnType<ReturnType<typeof createJobs>['stop']> | undefined
+    let stopped = false
+    let releaseProof!: () => void
+    const proof = new Promise<void>((resolve) => (releaseProof = resolve))
+    const managed = {
+      end: vi.fn(async () => {
+        throw new Error('a non-admitted turn cannot write history')
+      }),
+      forget: vi.fn(),
+    }
     const provider: JobsProvider = {
       id: 'codex',
       label: 'Codex',
@@ -136,6 +146,7 @@ it
       vault,
       scratchRoot,
       activationSignal: activation.signal,
+      ...(phase === 'direct Stop' && { beginManagedTurn: () => managed }),
       onChange: (rows) => {
         if (activation.signal.aborted && rows.length)
           drainAtFirstPublish ??= drain.mock.calls.length
@@ -156,7 +167,19 @@ it
           closed,
           'job leave control',
         )
-        lease.drain = drain.mockImplementation(original)
+        lease.drain = drain.mockImplementation(() => {
+          const drained = original()
+          return phase === 'direct Stop' ? Promise.all([drained, proof]).then(() => {}) : drained
+        })
+        if (phase === 'direct Stop') {
+          stopping = jobs.stop(jobs.sessions()[0]!.id)
+          void stopping.then(
+            () => {
+              stopped = true
+            },
+            () => {},
+          )
+        }
         if (phase === 'registering') {
           gates.sweep = sweep
           leaving = jobs.leave()
@@ -179,9 +202,20 @@ it
         expect(drain).toHaveBeenCalledOnce()
         gates.hold = undefined
         await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      } else if (phase === 'direct Stop') {
+        // The adapter called Stop before returning the held-GO lease. Stop has
+        // to close that lease now and join this turn's proof, not the old exit.
+        expect(drain).toHaveBeenCalledOnce()
+        expect(stopped).toBe(false)
+        expect(gates.goAttempts).toBe(0)
+        releaseProof()
+        await expect(stopping).resolves.toEqual({ ok: true })
+        expect(managed.end).not.toHaveBeenCalled()
+        expect(managed.forget).toHaveBeenCalledOnce()
+        expect(jobs.sessions()[0]).toMatchObject({ outcome: 'failed', error: 'Stopped.' })
       } else if (phase !== 'registering') await bounded(atGate, 'queued native command', 2000)
 
-      if (phase !== 'registering' && phase !== 'activation abort') {
+      if (phase !== 'registering' && phase !== 'activation abort' && phase !== 'direct Stop') {
         capture()
         expect(ids.has(rootPid!)).toBe(true)
       }
@@ -204,13 +238,14 @@ it
       expect(drain).toHaveBeenCalledOnce()
       if (phase !== 'after GO')
         await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
-      if (phase === 'activation abort') expect(gates.goAttempts).toBe(0)
+      if (phase === 'activation abort' || phase === 'direct Stop') expect(gates.goAttempts).toBe(0)
       expect(jobs.sessions()).toEqual([])
       await expect(access(scratchRoot)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       gates.hold = undefined
       releaseSweep()
-      await Promise.allSettled([leaving ?? jobs.leave()])
+      releaseProof()
+      await Promise.allSettled([leaving ?? jobs.leave(), stopping])
       await ledger.reap()
       for (const id of ids) {
         expect(() => process.kill(id, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))

@@ -292,7 +292,11 @@ export const agentMain: MainPlugin = {
         scratchRoot: scratchRoots.jobs,
         ...(ownership && { ownership }),
         activationSignal: ctx.activationSignal,
-        beginManagedTurn: (id) => managedTurns.begin(id, sessions.bracket),
+        // Windows retains the legacy edge-only, best-effort history bracket.
+        bracket: sessions.bracket,
+        ...(process.platform !== 'win32' && {
+          beginManagedTurn: (id: string) => managedTurns.begin(id, sessions.bracket),
+        }),
         onChange: (list) => {
           jobRows = list
           pushSessions()
