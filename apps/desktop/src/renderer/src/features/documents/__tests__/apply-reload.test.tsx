@@ -3,23 +3,28 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import { applyReload } from '../apply-reload'
 import { createDocumentExtensions } from '../document-extensions'
+import { configureRichTextVim, RichTextVim } from '../rich-text-vim'
 
 const editors: Editor[] = []
 afterEach(() => {
   for (const editor of editors.splice(0)) editor.destroy()
 })
 
-function open(markdown: string): Editor {
+function open(markdown: string, vim = false): Editor {
   const editor = new Editor({
-    extensions: createDocumentExtensions({
-      folder: 'notes',
-      placeholder: '',
-      onOpenLink: () => undefined,
-    }),
+    extensions: [
+      ...createDocumentExtensions({
+        folder: 'notes',
+        placeholder: '',
+        onOpenLink: () => undefined,
+      }),
+      ...(vim ? [RichTextVim.configure({ enabled: false, editable: () => true })] : []),
+    ],
     content: markdown,
     contentType: 'markdown',
   })
   editors.push(editor)
+  if (vim) configureRichTextVim(editor.view, true, true, () => true)
   return editor
 }
 
@@ -31,6 +36,22 @@ function caretIn(ed: Editor, text: string, offset: number) {
   if (at < 0) throw new Error(`No textblock found: ${text}`)
   ed.commands.setTextSelection(at)
 }
+
+test('external reload preserves the displayed inclusive Vim range for its operator', () => {
+  const ed = open('abcd\n', true)
+  caretIn(ed, 'abcd', 0)
+  const key = (value: string) =>
+    ed.view.dom.dispatchEvent(
+      new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+    )
+  key('v')
+  key('l')
+  expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe('ab')
+  expect(applyReload(ed, 'aXbcd\n')).toBe(true)
+  expect(ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to)).toBe('aXb')
+  key('d')
+  expect(ed.getMarkdown()).toBe('cd')
+})
 
 const where = (ed: Editor) => {
   const { $from } = ed.state.selection

@@ -38,25 +38,46 @@ const needsYouNotice = (s: SessionSummary): InboxNotice => ({
 })
 
 /** Watch the vault's sessions for needs-you. Returns the undo. */
-export function watchNeedsYou(deps: NeedsYouDeps): () => void {
-  // One listing at a time, in order, after the inbox has been read.
+export function watchNeedsYou(deps: NeedsYouDeps): () => Promise<void> {
+  // One listing at a time, in order, after the inbox has been read. Stopping
+  // revokes admission synchronously, then awaits every callback and inbox write
+  // already admitted so teardown cannot outlive its activation.
+  let closed = false
+  const failures: unknown[] = []
   let waiting: Promise<Set<string>> = deps.told().then(
     (ids) => new Set(ids),
     (err: unknown) => {
+      failures.push(err)
       deps.log?.(`needs-you could not read the inbox: ${String(err)}`)
       return new Set<string>()
     },
   )
-  return deps.sessions.onSessions((sessions) => {
-    waiting = waiting.then((before) => {
+  const unsubscribe = deps.sessions.onSessions((sessions) => {
+    if (closed) return
+    waiting = waiting.then(async (before) => {
+      if (closed) return before
       const step = enteredNeedsYou(before, sessions)
       for (const s of step.entered) {
+        if (closed) return before
         if (deps.sessions.watched(s.id) && deps.focused()) continue
-        void deps
-          .raise(needsYouNotice(s))
-          .catch((err: unknown) => deps.log?.(`needs-you notice failed: ${String(err)}`))
+        try {
+          await deps.raise(needsYouNotice(s))
+        } catch (err) {
+          failures.push(err)
+          deps.log?.(`needs-you notice failed: ${String(err)}`)
+        }
       }
       return step.waiting
     })
   })
+  let stopped: Promise<void> | undefined
+  return () => {
+    closed = true
+    unsubscribe()
+    stopped ??= waiting.then(() => {
+      if (failures.length > 0)
+        throw new AggregateError(failures, 'Could not finish needs-you notifications.')
+    })
+    return stopped
+  }
 }

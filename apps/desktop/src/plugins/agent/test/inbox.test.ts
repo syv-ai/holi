@@ -160,11 +160,11 @@ describe('needs-you', () => {
     expect(step.entered.map((s) => s.id)).toEqual(['b'])
   })
 
-  function watcher(told: string[] = []) {
+  function watcher(told: string[] = [], raise: (id: string) => Promise<void> = async () => {}) {
     let listener: (s: SessionSummary[]) => void = () => {}
     const raised: string[] = []
     const state = { focused: true }
-    watchNeedsYou({
+    const stop = watchNeedsYou({
       sessions: {
         onSessions: (l) => {
           listener = l
@@ -174,9 +174,12 @@ describe('needs-you', () => {
       },
       focused: () => state.focused,
       told: async () => told,
-      raise: async (n) => void raised.push(n.session!),
+      raise: async (n) => {
+        raised.push(n.session!)
+        await raise(n.session!)
+      },
     })
-    return { list: (s: SessionSummary[]) => listener(s), raised, state }
+    return { list: (s: SessionSummary[]) => listener(s), raised, state, stop }
   }
 
   it('stays quiet about a session Holi shows while its window has focus', async () => {
@@ -187,6 +190,39 @@ describe('needs-you', () => {
     w.list([session('shown', 'working')])
     w.list([session('shown', 'needs-you')])
     await vi.waitFor(() => expect(w.raised).toEqual(['other', 'shown']))
+  })
+
+  it('revokes new listings and drains an admitted inbox write at stop', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const w = watcher([], async () => gate)
+    w.state.focused = false
+    w.list([session('admitted', 'needs-you')])
+    await vi.waitFor(() => expect(w.raised).toEqual(['admitted']))
+    const stopped = w.stop()
+    w.list([session('stale', 'needs-you')])
+    let completed = false
+    void stopped.then(() => (completed = true))
+    await Promise.resolve()
+    expect(completed).toBe(false)
+    release()
+    await stopped
+    expect(w.raised).toEqual(['admitted'])
+  })
+
+  it('reports an admitted notification write failure from stop', async () => {
+    const failure = new Error('inbox write failed')
+    const w = watcher([], async () => {
+      throw failure
+    })
+    w.state.focused = false
+    w.list([session('failed', 'needs-you')])
+    await vi.waitFor(() => expect(w.raised).toEqual(['failed']))
+    await expect(w.stop()).rejects.toMatchObject({
+      message: 'Could not finish needs-you notifications.',
+      errors: [failure],
+    })
+    await expect(w.stop()).rejects.toMatchObject({ errors: [failure] })
   })
 
   it('does not tell again, after a restart, about a session the inbox already holds', async () => {

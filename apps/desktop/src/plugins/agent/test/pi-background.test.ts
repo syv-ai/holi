@@ -6,7 +6,7 @@ import { agentCapabilities } from '../main/host/capabilities'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
 import { join } from 'node:path'
 
-function fake(autoClose = true) {
+function fake(autoClose = true, autoStats = true) {
   const stdin = new PassThrough()
   const stdout = new PassThrough()
   const stderr = new PassThrough()
@@ -16,7 +16,7 @@ function fake(autoClose = true) {
       if (!line) continue
       const command = JSON.parse(line) as { type: string; id: string }
       commands.push(command)
-      if (command.type === 'get_session_stats') {
+      if (command.type === 'get_session_stats' && autoStats) {
         queueMicrotask(() =>
           stdout.write(
             JSON.stringify({
@@ -223,6 +223,63 @@ describe('Pi background runs', () => {
     await manager.leave()
     expect(brackets).toEqual(['begin', 'end'])
     expect(manager.sessions()).toEqual([])
+  })
+
+  it('acknowledges a follow-up before its turn finishes and drains held close on leave', async () => {
+    const rpc = fake(false)
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: () => rpc.child,
+      bracket: () => {},
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const launched = await manager.launch({ name: 'x', prompt: 'first' })
+    if (!launched.ok) throw new Error(launched.message)
+    rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await new Promise((resolve) => setImmediate(resolve))
+
+    await expect(manager.message(launched.sessionId, 'second')).resolves.toBeUndefined()
+    expect(rpc.commands.filter((command) => command.type === 'prompt')).toHaveLength(2)
+    let left = false
+    const leaving = manager.leave().then(() => {
+      left = true
+    })
+    await Promise.resolve()
+    expect(left).toBe(false)
+    rpc.close()
+    await leaving
+    expect(left).toBe(true)
+  })
+
+  it('uses native usage totals and nested cost when session stats are unavailable', async () => {
+    const rpc = fake(true, false)
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: () => rpc.child,
+      bracket: () => {},
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const launched = await manager.launch({ name: 'x', prompt: 'first' })
+    if (!launched.ok) throw new Error(launched.message)
+    rpc.stdout.write(
+      '{"type":"message_end","message":{"role":"assistant","usage":{"input":12,"output":8,"totalTokens":20,"cost":{"total":0.04}}}}\n{"type":"agent_settled","aborted":false}\n',
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    const stats = rpc.commands.find((command) => command.type === 'get_session_stats')
+    if (!stats) throw new Error('expected session stats request')
+    rpc.stdout.write(
+      JSON.stringify({
+        type: 'response',
+        id: stats.id,
+        command: 'get_session_stats',
+        success: false,
+      }) + '\n',
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(manager.sessions()[0]?.usage).toEqual({ input: 12, output: 8, total: 20, cost: 0.04 })
+    await manager.leave()
   })
 
   it('keeps a successful Pi process available for follow-ups, then expires it and its row', async () => {
@@ -481,6 +538,198 @@ describe('Pi background runs', () => {
       { state: 'idle', outcome: 'failed', error: 'provider unavailable' },
     ])
     await manager.leave()
+  })
+
+  it('rejects a pre-aborted activation without spawning or allowing a later vault', async () => {
+    const activation = new AbortController()
+    activation.abort()
+    let spawned = 0
+    const manager = createPiBackground({
+      activationSignal: activation.signal,
+      bin: () => '/usr/bin/pi',
+      spawn: () => {
+        spawned++
+        return fake().child
+      },
+      bracket: () => {},
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    await expect(manager.launch({ name: 'x', prompt: 'x' })).resolves.toMatchObject({ ok: false })
+    expect(spawned).toBe(0)
+    await manager.leave()
+    manager.setVault('other/vault', '/other')
+    expect(manager.sessions()).toEqual([])
+  })
+
+  it('invalidates synchronously and joins held physical close and bracket finalization', async () => {
+    const activation = new AbortController()
+    const rpc = fake(false)
+    const edges: string[] = []
+    let finishForget!: () => void
+    const forget = new Promise<void>((resolve) => {
+      finishForget = resolve
+    })
+    const manager = createPiBackground({
+      activationSignal: activation.signal,
+      bin: () => '/usr/bin/pi',
+      spawn: () => rpc.child,
+      bracket: async (_id, edge) => {
+        edges.push(edge)
+        if (edge === 'forget') await forget
+      },
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const launched = await manager.launch({ name: 'x', prompt: 'x' })
+    if (!launched.ok) throw new Error(launched.message)
+    activation.abort()
+    expect(manager.reply(launched.sessionId)).toBeNull()
+    manager.setVault('other/vault', '/other')
+    await expect(manager.launch({ name: 'late', prompt: 'x' })).resolves.toMatchObject({
+      ok: false,
+    })
+    let left = false
+    const leaving = manager.leave().then(() => {
+      left = true
+    })
+    await Promise.resolve()
+    expect(left).toBe(false)
+    rpc.close()
+    await Promise.resolve()
+    expect(edges).toContain('forget')
+    expect(left).toBe(false)
+    finishForget()
+    await leaving
+    expect(left).toBe(true)
+    expect(edges.filter((edge) => edge === 'forget')).toHaveLength(1)
+    await expect(manager.leave()).resolves.toBeUndefined()
+  })
+
+  it('suppresses late stats and completion after activation abort', async () => {
+    const activation = new AbortController()
+    const rpc = fake(true, false)
+    let publications = 0
+    const manager = createPiBackground({
+      activationSignal: activation.signal,
+      bin: () => '/usr/bin/pi',
+      spawn: () => rpc.child,
+      bracket: () => {},
+      changed: () => {
+        publications++
+      },
+    })
+    manager.setVault('owner/vault', '/vault')
+    const launched = await manager.launch({ name: 'x', prompt: 'x' })
+    if (!launched.ok) throw new Error(launched.message)
+    rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await Promise.resolve()
+    await Promise.resolve()
+    const stats = rpc.commands.find((command) => command.type === 'get_session_stats')
+    expect(stats).toBeDefined()
+    const beforeAbort = publications
+    activation.abort()
+    await manager.leave()
+    rpc.stdout.write(
+      JSON.stringify({
+        type: 'response',
+        id: stats?.id,
+        command: 'get_session_stats',
+        success: true,
+        data: { tokens: { input: 100, output: 100, total: 200 }, contextUsage: { percent: 90 } },
+      }) + '\n',
+    )
+    await Promise.resolve()
+    expect(publications).toBe(beforeAbort)
+    expect(manager.reply(launched.sessionId)).toBeNull()
+    expect(manager.sessions()).toEqual([])
+  })
+
+  it('isolates overlapping turn finalizers and stop drains the superseded turn', async () => {
+    vi.useFakeTimers()
+    const rpc = fake()
+    let releaseFirst!: () => void
+    let enteredFirst!: () => void
+    const firstEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const firstFinalizer = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let ends = 0
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: () => rpc.child,
+      bracket: async (_id, edge) => {
+        if (edge !== 'end') return
+        ends++
+        if (ends === 1) {
+          enteredFirst()
+          await firstFinalizer
+        }
+      },
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const launched = await manager.launch({ name: 'x', prompt: 'first' })
+    if (!launched.ok) throw new Error(launched.message)
+    const answer = (text: string) =>
+      rpc.stdout.write(
+        `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":${JSON.stringify(text)}}}\n{"type":"agent_settled","aborted":false}\n`,
+      )
+
+    answer('old reply')
+    await vi.advanceTimersByTimeAsync(0)
+    await firstEntered
+    await expect(manager.message(launched.sessionId, 'second')).resolves.toBeUndefined()
+    answer('new reply')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(manager.reply(launched.sessionId)).toBe('new reply')
+    expect(manager.sessions()[0]?.outcome).toBe('completed')
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(manager.sessions()).toHaveLength(1)
+
+    let stopped = false
+    const stopping = manager.stop(launched.sessionId).then(() => {
+      stopped = true
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(stopped).toBe(false)
+    releaseFirst()
+    await stopping
+    expect(stopped).toBe(true)
+    expect(ends).toBe(2)
+    await manager.leave()
+  })
+
+  it('retains a failed finalizer without contaminating another job', async () => {
+    const children = [fake(), fake()]
+    const begun: string[] = []
+    let childIndex = 0
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: () => children[childIndex++]!.child,
+      bracket: async (id, edge) => {
+        if (edge === 'begin') begun.push(id)
+        if (edge === 'end' && id === begun[0]) throw new Error('first finalizer failed')
+      },
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const first = await manager.launch({ name: 'first', prompt: 'first' })
+    const second = await manager.launch({ name: 'second', prompt: 'second' })
+    if (!first.ok || !second.ok) throw new Error('expected both Pi jobs to launch')
+    const answer = (rpc: ReturnType<typeof fake>, text: string) =>
+      rpc.stdout.write(
+        `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":${JSON.stringify(text)}}}\n{"type":"agent_settled","aborted":false}\n`,
+      )
+    answer(children[0]!, 'first reply')
+    answer(children[1]!, 'second reply')
+    await vi.waitFor(() => {
+      expect(manager.reply(first.sessionId)).toBe('first reply')
+      expect(manager.reply(second.sessionId)).toBe('second reply')
+    })
+    await expect(manager.leave()).rejects.toThrow(/Pi background runs failed to drain/)
   })
 
   it('rejects launches without a vault or installed Pi and isolates jobs on leave', async () => {
