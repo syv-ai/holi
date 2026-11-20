@@ -133,7 +133,7 @@ export interface Fence {
   /** A turn ended: copy back what it wrote, and say how that went. */
   turnEnded(): Promise<FenceCopy>
   /** The session's process exited; report its final copy before losing the row. */
-  exited(): Promise<FenceCopy>
+  exited(signal?: AbortSignal): Promise<FenceCopy>
 }
 
 export interface PtySessions {
@@ -631,13 +631,16 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
             // final copy is admitted only at this physical + output edge.
             if (owner.pending.size > 0) await joinFinalizers(owner)
             signal?.throwIfAborted()
-            copy = await fence.exited()
+            copy = await fence.exited(signal)
+            signal?.throwIfAborted()
             forget()
             await joinFinalizers(owner)
             assertFinalized(owner)
           } catch (error) {
+            signal?.throwIfAborted()
             forget()
             await joinFinalizers(owner)
+            signal?.throwIfAborted()
             finishedFences.set(id, { row: fenceRow({ error: String(error) }) })
             // Presentation cannot replace the original finalization failure.
             try {

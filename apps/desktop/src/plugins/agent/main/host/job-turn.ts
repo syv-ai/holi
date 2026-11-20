@@ -28,6 +28,7 @@ interface TurnOptions {
   progress(
     event: { kind: 'thread'; id: string } | { kind: 'turn-completed'; tokens?: number },
   ): void
+  onDraining(): void
   rememberFailure(error: unknown): Error
 }
 
@@ -47,6 +48,7 @@ export function startJobTurn({
   spawn,
   killGraceMs,
   progress,
+  onDraining,
   rememberFailure,
 }: TurnOptions) {
   const windows = process.platform === 'win32'
@@ -95,49 +97,62 @@ export function startJobTurn({
   const missingLease = child !== undefined && group === undefined && !windows
   const pidWritten = child?.pid === undefined ? undefined : receipt.writePid(child.pid, run.cwd)
   void pidWritten?.catch(rememberFailure)
-  let physical: Promise<void> | undefined
-  let closing = false
-  let outputDone = false
-  let outputFailed = false
-  let winTimer: ReturnType<typeof setTimeout> | undefined
-  function drain() {
-    return (physical ??= (async () => {
-      try {
-        receipt.phase('FINALIZING')
-      } catch (error) {
-        rememberFailure(error)
-      }
-      if (missingLease)
-        throw new Error(`Job ${id} has no POSIX launch lease; its owner is unresolved.`)
-      if (group) await group.drain()
-      await (typed?.cleanup ?? cleanup)
-      if (!windows && child === undefined && invoked && !typed) throw launchError
-      if (!invoked || typed) receipt.nonLaunch()
-    })().catch((error: unknown) => {
-      const first = rememberFailure(error)
-      failOutput(first)
-      throw first
-    }))
-  }
-
   let resolveOutput!: (result: Output) => void
   let rejectOutput!: (error: Error) => void
   const output = new Promise<Output>((resolve, reject) => {
     resolveOutput = resolve
     rejectOutput = reject
   })
-  function failOutput(error: Error) {
-    outputFailed = true
-    rejectOutput(error)
+
+  const stdout = child?.stdout
+  let stdoutEnded = stdout == null
+  let stdoutFailure: Error | undefined
+  let execObserved = false
+  let childClose: { code: number | null; signal: NodeJS.Signals | null } | undefined
+  let resolveClose!: () => void
+  let rejectClose!: (error: Error) => void
+  const closed = new Promise<void>((resolve, reject) => {
+    resolveClose = resolve
+    rejectClose = reject
+  })
+  // A broken pipe can report failure before the physical lease settles.
+  void closed.catch(() => {})
+  function checkClose() {
+    if (stdoutFailure !== undefined && !typed) {
+      // Before exec, let the core report a typed non-admission before native
+      // close. A pipe failure does not poison a proven pre-GO cancellation.
+      if (childClose !== undefined || (execObserved && (!windows || group)))
+        rejectClose(stdoutFailure)
+    } else if (childClose !== undefined && (stdoutEnded || typed)) resolveClose()
   }
+  function failStdout(error: Error) {
+    if (stdoutEnded || stdoutFailure !== undefined) return
+    stdoutFailure = error
+    checkClose()
+    if (!windows || group) drain()
+  }
+
   let completed = false
   let failure: string | undefined
   let eventError: string | undefined
   let childError: string | undefined
   let stderr = ''
-  const lines = child?.stdout == null ? undefined : createInterface({ input: child.stdout })
+  let draining = false
+  let outputFinished = false
+  let winTimer: ReturnType<typeof setTimeout> | undefined
+
+  // Register end after readline: its end handler emits the last unterminated
+  // line synchronously, and that line belongs to this clean output receipt.
+  const lines = stdout == null ? undefined : createInterface({ input: stdout })
+  lines?.on('error', failStdout)
+  stdout?.on('error', failStdout)
+  stdout?.once('end', () => {
+    stdoutEnded = true
+    checkClose()
+  })
+  stdout?.once('close', () => failStdout(new Error(`Job ${id} stdout closed before end.`)))
   lines?.on('line', (line) => {
-    if (closing || outputFailed) return
+    if (outputFinished || stdoutFailure !== undefined || typed) return
     const event = provider.capabilities.jobs.event(line)
     if (event?.kind === 'thread') progress(event)
     else if (event?.kind === 'turn-completed') {
@@ -150,17 +165,34 @@ export function startJobTurn({
     stderr = (stderr + chunk.toString('utf8')).slice(-4_000)
   })
 
-  function settle(code: number | null, sig: NodeJS.Signals | null) {
-    if (closing) return
-    closing = true
-    clearTimeout(winTimer)
-    lines?.close()
+  function drain(outputMs = 5_000) {
+    if (draining) return
+    draining = true
+    onDraining()
     void (async () => {
-      await drain()
-      await pidWritten
+      try {
+        receipt.phase('FINALIZING')
+      } catch (error) {
+        rememberFailure(error)
+      }
+      if (missingLease)
+        throw new Error(`Job ${id} has no POSIX launch lease; its owner is unresolved.`)
+      // Invoke the lease synchronously: a pre-GO Stop must close admission
+      // before any startup continuation can admit the provider.
+      if (group) await group.drain()
+      await (typed?.cleanup ?? cleanup)
+      if (!windows && child === undefined && invoked && !typed) throw launchError
+      // Only positive physical proof starts the output deadline. An already
+      // known physical error never waits for the pipes or a caller callback.
+      try {
+        await bounded(Promise.all([closed, pidWritten]), `Output of job ${id}`, outputMs)
+      } catch (error) {
+        throw typed ? error : (stdoutFailure ?? error)
+      }
+      if (!invoked || typed) receipt.nonLaunch()
+      const { code, signal } = childClose!
       const last = stderr.trim().split('\n').at(-1)?.trim().slice(0, 300) ?? ''
-      outputDone = true
-      resolveOutput({
+      return {
         completed: completed && code === 0 && failure === undefined && childError === undefined,
         ...(refusal === undefined ? {} : { refusal }),
         failure:
@@ -168,41 +200,57 @@ export function startJobTurn({
           childError ??
           failure ??
           eventError ??
-          (sig !== null
-            ? `${provider.label} was stopped (${sig}).`
+          (signal !== null
+            ? `${provider.label} was stopped (${signal}).`
             : `${provider.label} exited with code ${code ?? '?'}${last === '' ? '.' : `: ${last}`}`),
+      }
+    })()
+      .finally(() => {
+        outputFinished = true
+        clearTimeout(winTimer)
+        lines?.close()
       })
-    })().catch((error: unknown) => failOutput(rememberFailure(error)))
+      .then(resolveOutput, (error: unknown) => rejectOutput(rememberFailure(error)))
   }
-  function requestDrain() {
-    void drain().catch(() => {})
+
+  function settle(code: number | null, signal: NodeJS.Signals | null) {
+    if (childClose !== undefined) return
+    childClose = { code, signal }
+    clearTimeout(winTimer)
+    checkClose()
+    drain()
   }
+
   let started = child?.pid !== undefined
   child?.once('spawn', () => {
     started = true
-    if (physical === undefined) {
+    execObserved = true
+    checkClose()
+    if (!draining) {
       try {
         receipt.phase('ACTIVE')
       } catch (error) {
         rememberFailure(error)
-        requestDrain()
+        drain()
       }
     }
   })
   child?.once('exit', () => {
     started = true
-    requestDrain()
+    execObserved = true
+    checkClose()
+    drain()
   })
   child?.once('close', settle)
   child?.on('error', (error) => {
-    if (closing) return
+    if (outputFinished) return
     typed ??= windows ? undefined : posixLaunchNonAdmission(error)
     childError ??=
       started && !typed
         ? `${provider.label} process error: ${error.message}`
         : `${provider.label} did not start: ${error.message}`
     if (typed || (!started && windows)) settle(null, null)
-    else requestDrain()
+    else drain()
   })
   if (missingLease) {
     refusal = rememberFailure(
@@ -212,39 +260,27 @@ export function startJobTurn({
   } else if (!child) settle(null, null)
 
   function signalWindows(sig: 'SIGTERM' | 'SIGKILL') {
-    if (child?.pid === undefined || closing) return
+    if (child?.pid === undefined || childClose !== undefined) return
     try {
       child.kill(sig)
     } catch {
       /* The owned helper may already have exited. */
     }
   }
-  let stopping: Promise<void> | undefined
+  let stopRequested = false
   return {
     refusal,
     bracket: child !== undefined && !missingLease,
     output,
-    stop(finalized: Promise<void>) {
-      return (stopping ??= (async () => {
-        try {
-          if (windows && !group && !closing) {
-            signalWindows('SIGTERM')
-            winTimer = setTimeout(() => signalWindows('SIGKILL'), killGraceMs)
-          } else if (!outputDone) await drain()
-          // The lease's physical deadline is independent of the output/provider deadline.
-          await bounded(
-            finalized,
-            `Output and finalization of job ${id}`,
-            windows && !group ? killGraceMs + 5_000 : 5_000,
-          )
-        } catch (error) {
-          const first = rememberFailure(error)
-          failOutput(first)
-          throw first
-        } finally {
-          clearTimeout(winTimer)
-        }
-      })())
+    stop() {
+      if (stopRequested) return
+      stopRequested = true
+      if (windows && !group && childClose === undefined) {
+        signalWindows('SIGTERM')
+        if (childClose === undefined)
+          winTimer = setTimeout(() => signalWindows('SIGKILL'), killGraceMs)
+        drain(killGraceMs + 5_000)
+      } else drain()
     },
   }
 }
