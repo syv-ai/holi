@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, vi } from 'vitest'
 import { createCapabilityHost } from '../../../main/capabilities/dispatch'
@@ -35,8 +36,20 @@ const adapters = vi.hoisted(() => ({
     error?: Error
   }[],
   readGates: [] as { fragment: string; error: Error }[],
-  removeGates: [] as { fragment: string; error: Error }[],
+  removeGates: [] as {
+    fragment: string
+    entered?: () => void
+    wait?: Promise<void>
+    error?: Error
+  }[],
   writeGateReleases: [] as (() => void)[],
+  cleanupReleases: [] as (() => void)[],
+  commitGates: [] as {
+    root: string
+    entered: () => void
+    wait: Promise<void>
+    error?: Error
+  }[],
   contextRename: null as null | {
     destination: string
     entered: () => void
@@ -78,7 +91,12 @@ vi.mock('node:fs/promises', async (original) => {
     rm: async (...args: Parameters<typeof fs.rm>) => {
       const path = String(args[0])
       const index = adapters.removeGates.findIndex((gate) => path.includes(gate.fragment))
-      if (index >= 0) throw adapters.removeGates.splice(index, 1)[0]!.error
+      if (index >= 0) {
+        const [gate] = adapters.removeGates.splice(index, 1)
+        gate!.entered?.()
+        await gate!.wait
+        if (gate!.error !== undefined) throw gate!.error
+      }
       return fs.rm(...args)
     },
     writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
@@ -228,6 +246,8 @@ beforeEach(() => {
   adapters.historyRename = null
   adapters.writeGates.length = 0
   adapters.writeGateReleases.length = 0
+  adapters.cleanupReleases.length = 0
+  adapters.commitGates.length = 0
   adapters.readGates.length = 0
   adapters.removeGates.length = 0
   adapters.contextRename = null
@@ -240,7 +260,8 @@ beforeEach(() => {
   adapters.heldSocket = null
 })
 afterEach(async () => {
-  for (const release of adapters.writeGateReleases) release()
+  for (const release of [...adapters.cleanupReleases, ...adapters.writeGateReleases]) release()
+  for (const gate of adapters.commitGates) gate.wait.catch(() => {})
   try {
     await Promise.all(stops.splice(0).map((stop) => stop()))
   } finally {
@@ -253,6 +274,10 @@ afterEach(async () => {
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   }
 })
+
+export async function tempDirectory(prefix: string): Promise<string> {
+  return mkdtemp(join(await realpath(tmpdir()), prefix))
+}
 
 export function deferred() {
   let resolve!: () => void
@@ -290,6 +315,13 @@ export async function waitForGone(pid: number): Promise<void> {
 
 async function commit(root: string): Promise<string> {
   execFileSync('git', ['-C', root, 'add', '-A'])
+  const gateIndex = adapters.commitGates.findIndex((gate) => gate.root === root)
+  if (gateIndex >= 0) {
+    const [gate] = adapters.commitGates.splice(gateIndex, 1)
+    gate!.entered()
+    await gate!.wait
+    if (gate!.error !== undefined) throw gate!.error
+  }
   const staged = spawnSync('git', ['-C', root, 'diff', '--cached', '--quiet'], {
     stdio: 'ignore',
   })
@@ -311,7 +343,7 @@ export async function rig(
     agentDisposerStarted?: () => void
   },
 ) {
-  userData ??= await mkdtemp('/private/tmp/h674-agent-')
+  userData ??= await tempDirectory('h674-agent-')
   dirs.push(userData)
   const roots = { [A]: join(userData, 'vault-a'), [B]: join(userData, 'vault-b') }
   for (const root of Object.values(roots)) {
@@ -328,6 +360,7 @@ export async function rig(
     execFileSync('git', ['-C', root, 'commit', '-qm', 'fixture'])
   }
   const sent: { remote: string; name: string }[] = []
+  const notifications: unknown[] = []
   const syncHolds = new Map<string, number>()
   const pause = (remote: string) => syncHolds.set(remote, 1)
   const resume = (remote: string) => syncHolds.set(remote, 0)
@@ -450,7 +483,10 @@ export async function rig(
     binDir: () => userData,
     githubToken: () => null,
     frameOrigin: () => () => {},
-    notify: () => false,
+    notify: (notice) => {
+      notifications.push(notice)
+      return false
+    },
     focused: () => false,
     call: async (remote, name, params, beforeInvoke, finalization) =>
       (
@@ -584,6 +620,7 @@ export async function rig(
     roots,
     userData,
     sent,
+    notifications,
     syncHolds,
     setActive,
     bridge,
