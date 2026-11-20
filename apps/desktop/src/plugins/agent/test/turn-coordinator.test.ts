@@ -18,6 +18,7 @@ describe('telling a turn ended', () => {
     head: () => Promise.resolve('sha'),
     commitNow: () => Promise.resolve(null),
     pauseSync: () => () => {},
+    captureFinalization: () => async (work) => work(),
   }
 
   it('says so on Stop and on a confirmed idle, and not for a session that died', () => {
@@ -72,6 +73,7 @@ function rig(
     head: () => (activeRemote === VAULT ? Promise.resolve(head) : left()),
     commitNow: () =>
       activeRemote === VAULT ? (opts.commitNow ?? (() => Promise.resolve('end-sha')))() : left(),
+    captureFinalization: () => async (work) => work(),
     pauseSync: (reason) => {
       pauses.push(reason)
       return () => {
@@ -120,6 +122,43 @@ describe('the working set', () => {
     void r.coordinator.end('a')
     await expect(r.coordinator.drain()).rejects.toThrow('did not drain before teardown timed out')
   })
+  it('closes turn admission while joining the base captured by an open turn', async () => {
+    let capture!: (sha: string) => void
+    let captured = false
+    const base = new Promise<string>((resolve) => (capture = resolve))
+    const appended: TurnRecord[] = []
+    const vault: TurnVault = {
+      root: '/captured-vault',
+      head: async () => {
+        captured = true
+        return base
+      },
+      commitNow: async () => 'settled',
+      pauseSync: () => () => {},
+    }
+    const coordinator = createTurnCoordinator({
+      vault: () => vault,
+      turnLogFor: () => ({
+        list: async () => appended,
+        append: async (r) => void appended.push(r),
+      }),
+      log: () => {},
+    })
+    coordinator.begin('owned')
+    const ending = coordinator.end('owned')
+    const draining = coordinator.drain()
+    coordinator.begin('late')
+    expect(coordinator.working.size).toBe(0)
+    let finished = false
+    void draining.then(() => (finished = true))
+    await settle()
+    expect(finished).toBe(false)
+    capture('base')
+    await Promise.all([ending, draining])
+    expect(captured).toBe(true)
+    expect(appended).toEqual([expect.objectContaining({ sessionId: 'owned', base: 'base' })])
+  })
+
   it('drains turn records before teardown reports success', async () => {
     let finish!: (sha: string) => void
     const r = rig({ commitNow: () => new Promise<string>((resolve) => (finish = resolve)) })

@@ -34,6 +34,12 @@ export type SaveState = 'saved' | 'saving' | 'error'
 
 /** Faces shown before the rest fold into "+N". */
 const MAX_FACES = 4
+const VIM_MODE_LABELS: Record<string, string> = {
+  normal: 'normal',
+  insert: 'insert',
+  visual: 'Visual',
+  'visual-line': 'Visual Line',
+}
 
 function Dot() {
   return <span aria-hidden="true" className="bg-muted-foreground/40 size-1 shrink-0 rounded-full" />
@@ -80,7 +86,7 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
   path: string
   title: string
   saveState: SaveState
-  vimMode?: 'normal' | 'insert' | ''
+  vimMode?: 'normal' | 'insert' | 'visual' | 'visual-line' | ''
   taskDone?: { pending: boolean; error: string | null; onDone: () => void }
   /** An agent run is editing the document. */
   locked: boolean
@@ -146,7 +152,9 @@ export function DocumentHeader({
               <span aria-live="polite" className="shrink-0">
                 {saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}
               </span>
-              {vimMode ? <Badge variant="secondary">Vim {vimMode}</Badge> : null}
+              {vimMode ? (
+                <Badge variant="secondary">Vim {VIM_MODE_LABELS[vimMode] ?? vimMode}</Badge>
+              ) : null}
             </>
           }
         />

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import type { MdxResourceOwner } from './mdx-resources'
 import { realpathSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
@@ -30,7 +31,9 @@ type Lease = {
   watcher: FSWatcher
   highGeneration: number
   controller: AbortController | null
+  contextChanged: boolean
   closed: boolean
+  resourceOwner: MdxResourceOwner
 }
 
 export interface MdxDiagnostics {
@@ -48,7 +51,9 @@ export function createMdxDiagnostics(options: {
   context(token: string, remote: string): Identity | null
   root(remote: string): Promise<string>
   trusted(identity: Identity): Promise<boolean>
-  compile(source: string, signal: AbortSignal): Promise<MdxDiagnostic[]>
+  createResourceOwner(isCurrent: () => Promise<boolean>): MdxResourceOwner
+  retireResourceOwner(owner: MdxResourceOwner): void
+  compile(owner: MdxResourceOwner, source: string, signal: AbortSignal): Promise<MdxDiagnostic[]>
 }): MdxDiagnostics {
   const leases = new Map<string, Lease>()
   let pending = 0
@@ -72,6 +77,7 @@ export function createMdxDiagnostics(options: {
   const drop = (lease: Lease) => {
     if (lease.closed) return
     lease.closed = true
+    options.retireResourceOwner(lease.resourceOwner)
     lease.controller?.abort()
     lease.controller = null
     lease.watcher?.close()
@@ -189,8 +195,15 @@ export function createMdxDiagnostics(options: {
           watcher: null as unknown as FSWatcher,
           highGeneration: 0,
           controller: null,
+          contextChanged: false,
           closed: false,
+          resourceOwner: null as unknown as MdxResourceOwner,
         }
+        lease.resourceOwner = options.createResourceOwner(async () => {
+          if (!current(lease)) return false
+          const state = await pathState(lease)
+          return current(lease) && state !== null && state.fingerprint === lease.fingerprint
+        })
         unpublishedLease = lease
         try {
           lease.watcher = watch(dirname(canonical), { persistent: false }, (_event, name) => {
@@ -205,9 +218,12 @@ export function createMdxDiagnostics(options: {
                 currentPath !== join(currentRoot, vaultRelPath(lease.path)) ||
                 !currentInfo.isFile() ||
                 currentFingerprint !== lease.fingerprint
-              )
+              ) {
+                lease.contextChanged = true
                 drop(lease)
+              }
             } catch {
+              lease.contextChanged = true
               drop(lease)
             }
           })
@@ -269,6 +285,7 @@ export function createMdxDiagnostics(options: {
       const controller = new AbortController()
       lease.controller = controller
       const state = await pathState(lease)
+      if (lease.contextChanged) fail('MDX context changed')
       if (
         lease.controller !== controller ||
         input.generation !== lease.highGeneration ||
@@ -282,7 +299,7 @@ export function createMdxDiagnostics(options: {
       try {
         if (!current(lease) || lease.controller !== controller || controller.signal.aborted)
           fail('MDX compile superseded')
-        const result = await options.compile(input.source, controller.signal)
+        const result = await options.compile(lease.resourceOwner, input.source, controller.signal)
         if (
           lease.controller !== controller ||
           input.generation !== lease.highGeneration ||

@@ -29,6 +29,8 @@ import type { SessionChannel } from '../claude/messaging'
 import { firstSpawnNotice, type BackgroundProvider } from '../provider'
 import type { AgentTerminals } from './terminals'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
+import { createLateSessionCleanup } from './late-session-cleanup'
+import { admitAgentSessions, createOwnedOperationTracker } from './session-admission'
 import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
 import type { TurnLog } from './turn-log'
 
@@ -214,6 +216,31 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   /** Set while `leave` runs: nothing may attach to a vault on its way out,
    *  which would watch a directory Holi is letting go of. */
   let leaving: Promise<void> | null = null
+  let drainFailure: AggregateError | null = null
+  let admissionClosed = deps.activationSignal?.aborted ?? false
+  const lifetime = new AbortController()
+  const lateCleanup = createLateSessionCleanup((target, id) =>
+    bg.cli.stop(target, id).then((result) => {
+      if (!result.ok) throw new Error(`Could not stop late session ${id}: ${result.message}`)
+    }),
+  )
+  let focusStop: Promise<void> | null = null
+  let focusStopFailure: unknown | null = null
+  function revoke(): void {
+    if (admissionClosed) return
+    admissionClosed = true
+    lifetime.abort()
+    if (idleRecheck !== null) {
+      clearTimeout(idleRecheck)
+      idleRecheck = null
+    }
+    if (focusWriter !== null && focusStop === null) {
+      focusStop = focusWriter.snapshot.stop().catch((error: unknown) => {
+        focusStopFailure = error
+      })
+    }
+  }
+  deps.activationSignal?.addEventListener('abort', revoke, { once: true })
   /** The latest listing for the current vault, live or not. */
   let rows: ClaudeRow[] = []
   let lastPushed = ''
@@ -346,6 +373,28 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     binDir: deps.binDir(),
   })
 
+  /** Revalidate ownership after every await before admitting native work. */
+  const admittedFor = (c: Current | null, owner: AgentVault | null): c is Current =>
+    c !== null &&
+    !admissionClosed &&
+    !deps.activationSignal?.aborted &&
+    leaving === null &&
+    attached === owner &&
+    owner !== null &&
+    current === c
+
+  /** An unidentifiable provider creation remains an unresolved drain. */
+  function retainUncertainReceipt(result: {
+    ok: false
+    message: string
+    cleanupUnconfirmed?: true
+  }): void {
+    if (result.cleanupUnconfirmed)
+      lateCleanup.recordFailure(
+        new Error(`Provider session creation is unresolved: ${result.message}`),
+      )
+  }
+
   async function activate(vault: AgentVault): Promise<Current | null> {
     const config = await provider
       .configure({ remote: vault.remote, root: vault.root })
@@ -353,7 +402,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         log(`config directory unresolved: ${String(err)}`)
         return null
       })
-    if (config === null) return null
+    if (config === null || admissionClosed || deps.activationSignal?.aborted) return null
     const next: Current = {
       remote: vault.remote,
       root: vault.root,
@@ -363,7 +412,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       unwatch: () => {},
       seeded: false,
     }
-    next.unwatch = bg.watch(config.dir, () => void refresh(), log)
+    next.unwatch = bg.watch(
+      config.dir,
+      () => {
+        if (!admissionClosed) void refresh()
+      },
+      log,
+    )
     for (const [id, report] of earlyStatus) applyStatus(id, report)
     earlyStatus.clear()
     for (const [id, channel] of earlyChannels) channels.set(id, channel)
@@ -372,7 +427,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   async function ensureCurrent(): Promise<Current | null> {
-    if (deps.activationSignal?.aborted || leaving !== null) return null
+    if (admissionClosed || deps.activationSignal?.aborted || leaving !== null) return null
     const vault = attached
     if (vault === null) return null
     if (current?.remote === vault.remote) return current
@@ -403,7 +458,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     const c = current
     if (c === null) return
     const stdout = await bg.cli.list(targetOf(c))
-    if (current !== c || deps.activationSignal?.aborted) return // the vault moved while we read
+    if (current !== c || admissionClosed || deps.activationSignal?.aborted) return // the vault moved while we read
     rows = bg.parseListing(stdout, c.root)
     const liveRows = live()
     const liveIds = new Set(liveRows.map((r) => r.id))
@@ -464,6 +519,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   async function refresh(): Promise<void> {
+    if (admissionClosed) return
     if (reading !== null) {
       readAgain = true
       return reading
@@ -471,8 +527,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     reading = (async () => {
       do {
         readAgain = false
+        if (admissionClosed) break
         await readOnce().catch((err: unknown) => log(`refresh failed: ${String(err)}`))
-      } while (readAgain)
+      } while (readAgain && !admissionClosed)
     })()
     try {
       await reading
@@ -482,7 +539,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   async function release(c: Current): Promise<void> {
-    c.unwatch()
+    const unwatch = c.unwatch
+    c.unwatch = () => {}
+    unwatch()
   }
 
   async function openOn(
@@ -496,7 +555,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       c.spawnChecked = true
       notice = await firstSpawnNotice(provider, c.configDir)
     }
-    if (deps.activationSignal?.aborted || current !== c)
+    if (admissionClosed || deps.activationSignal?.aborted || current !== c)
       return { ok: false, message: 'The vault was left before the terminal opened.' }
     const target = targetOf(c)
     const res = deps.terminals.open({
@@ -536,28 +595,33 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     refresh,
 
     async open(args) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       return openOn(c, args)
     },
 
     async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
       const origin = attached
       const c = await ensureCurrent()
-      if (c === null || origin === null || attached !== origin || current !== c)
+      if (!admittedFor(c, origin))
         return { ok: false, message: 'The vault changed before the session started.' }
-      const res = await bg.cli.startBg(targetOf(c), {
+      const target = targetOf(c)
+      const res = await bg.cli.startBg(target, {
         ...(name === undefined ? {} : { name }),
         ...(prompt === undefined ? {} : { prompt }),
         ...(model === undefined ? {} : { model }),
         ...(allow === undefined ? {} : { allow }),
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
-      if (!res.ok) return res
+      if (!res.ok) {
+        retainUncertainReceipt(res)
+        return res
+      }
       const cleanup = async () => {
         try {
-          const stopped = await bg.cli.stop(targetOf(c), res.id)
-          return stopped.ok
+          await trackStop(target, res.id)
+          return true
         } catch {
           return false
         }
@@ -568,7 +632,12 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         cleanupUnconfirmed: true,
         sessionId: res.id,
       })
-      if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
+      if (
+        admissionClosed ||
+        deps.activationSignal?.aborted ||
+        attached !== origin ||
+        current !== c
+      ) {
         return (await cleanup())
           ? { ok: false, message: 'The vault closed as the session started.' }
           : cleanupFailure()
@@ -577,7 +646,12 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       let opened: Awaited<ReturnType<typeof openOn>>
       try {
         await refresh()
-        if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
+        if (
+          admissionClosed ||
+          deps.activationSignal?.aborted ||
+          attached !== origin ||
+          current !== c
+        ) {
           return (await cleanup())
             ? { ok: false, message: 'The vault closed as the session started.' }
             : cleanupFailure()
@@ -591,7 +665,12 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           message: error instanceof Error ? error.message : 'Could not open session.',
         }
       }
-      if (deps.activationSignal?.aborted || attached !== origin || current !== c) {
+      if (
+        admissionClosed ||
+        deps.activationSignal?.aborted ||
+        attached !== origin ||
+        current !== c
+      ) {
         return (await cleanup())
           ? { ok: false, message: 'The vault closed as the session started.' }
           : cleanupFailure()
@@ -607,9 +686,11 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async launch({ name, prompt, model, allow, deny, appendSystemPrompt, mcpConfig }) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
-      const res = await bg.cli.startBg(targetOf(c), {
+      if (!admittedFor(c, owner)) return noVault
+      const target = targetOf(c)
+      const res = await bg.cli.startBg(target, {
         name,
         prompt,
         ...(model === undefined ? {} : { model }),
@@ -618,19 +699,44 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
         ...(mcpConfig === undefined ? {} : { mcpConfig }),
       })
-      if (!res.ok) return res
-      if (deps.activationSignal?.aborted || current !== c) {
+      if (!res.ok) {
+        retainUncertainReceipt(res)
+        return res
+      }
+      if (!admittedFor(c, owner)) {
         // The leave read the sessions to stop before this one was listed, so
         // it would go on running in the vault left while its caller is told
-        // it failed: stop it here.
-        await bg.cli.stop(targetOf(c), res.id)
-        return { ok: false, message: 'The vault closed as the session started.' }
+        // it failed: stop it here, and keep the cleanup failure in the drain.
+        try {
+          await trackStop(targetOf(c), res.id)
+          return { ok: false, message: 'The vault closed as the session started.' }
+        } catch {
+          return {
+            ok: false,
+            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+            cleanupUnconfirmed: true,
+            sessionId: res.id,
+          }
+        }
       }
       await refresh()
+      if (admissionClosed || deps.activationSignal?.aborted || current !== c) {
+        try {
+          await trackStop(target, res.id)
+          return { ok: false, message: 'The vault closed as the session started.' }
+        } catch {
+          return {
+            ok: false,
+            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+            cleanupUnconfirmed: true,
+            sessionId: res.id,
+          }
+        }
+      }
       return { ok: true, sessionId: res.id }
     },
 
-    watched: (id) => deps.terminals.launchedFor(id) !== null,
+    watched: (id) => !admissionClosed && deps.terminals.launchedFor(id) !== null,
 
     onTurnEnd(listener) {
       turnEnds.add(listener)
@@ -642,8 +748,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async send({ text, target, cols, rows: r }) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       let terminalId: string
       if (target === 'new') {
         // The CLI makes a name of the text's first line.
@@ -662,44 +769,133 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           terminalId = opened.terminalId
         }
       }
+      if (!admittedFor(c, owner))
+        return { ok: false, message: 'The vault was left before the message was sent.' }
       deps.terminals.paste(terminalId, text)
       return { ok: true, terminalId }
     },
 
     async stop(id) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       const res = await bg.cli.stop(targetOf(c), id)
+      if (admissionClosed || current !== c)
+        return { ok: false, message: 'The vault was left before stop completed.' }
       await refresh()
+      if (admissionClosed || current !== c)
+        return { ok: false, message: 'The vault was left before stop completed.' }
       return res
     },
 
     async respawn(id) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
-      const res = await bg.cli.respawn(targetOf(c), id)
+      if (!admittedFor(c, owner)) return noVault
+      const target = targetOf(c)
+      const res = await bg.cli.respawn(target, id)
+      const cleanupLateRespawn = async () => {
+        if (!res.ok) return
+        try {
+          await trackStop(target, id)
+        } catch {
+          // The late-session cleanup owner retains this failure for teardown.
+        }
+      }
+      if (admissionClosed || current !== c) {
+        await cleanupLateRespawn()
+        return { ok: false, message: 'The vault was left before respawn completed.' }
+      }
       await refresh()
+      if (admissionClosed || current !== c) {
+        await cleanupLateRespawn()
+        return { ok: false, message: 'The vault was left before respawn completed.' }
+      }
       return res
     },
 
     async duplicate(id, geometry = {}) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) return noVault
+      if (!admittedFor(c, owner)) return noVault
       const row = rows.find((r) => r.id === id)
       if (row?.sessionId === undefined) {
         return { ok: false, message: 'Claude Code has not said which conversation this is yet.' }
       }
       const label = bg.summarise(row, coordinator.working).name
       const name = label === 'New session' ? undefined : `${label} (copy)`
-      const res = await bg.cli.forkBg(targetOf(c), row.sessionId, name)
-      if (!res.ok) return res
-      if (deps.activationSignal?.aborted || current !== c) {
-        await bg.cli.stop(targetOf(c), res.id)
+      const target = targetOf(c)
+      const res = await bg.cli.forkBg(target, row.sessionId, name)
+      if (!res.ok) {
+        retainUncertainReceipt(res)
+        return res
+      }
+      const cleanup = async () => {
+        try {
+          await trackStop(target, res.id)
+          return true
+        } catch {
+          return false
+        }
+      }
+      if (admissionClosed || current !== c) {
+        if (!(await cleanup()))
+          return {
+            ok: false,
+            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+            cleanupUnconfirmed: true,
+            sessionId: res.id,
+          }
         return { ok: false, message: 'The vault closed as the session started.' }
       }
       await refresh()
-      const opened = await openOn(c, { attach: res.id, ...geometry })
-      return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
+      if (admissionClosed || current !== c) {
+        if (!(await cleanup()))
+          return {
+            ok: false,
+            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+            cleanupUnconfirmed: true,
+            sessionId: res.id,
+          }
+        return { ok: false, message: 'The vault closed as the session started.' }
+      }
+      let opened: OpenResult
+      try {
+        opened = await openOn(c, { attach: res.id, ...geometry })
+      } catch (error) {
+        if (!(await cleanup()))
+          return {
+            ok: false,
+            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+            cleanupUnconfirmed: true,
+            sessionId: res.id,
+          }
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : 'Could not open session.',
+        }
+      }
+      if (!opened.ok) {
+        if (!(await cleanup()))
+          return {
+            ok: false,
+            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+            cleanupUnconfirmed: true,
+            sessionId: res.id,
+          }
+        return opened
+      }
+      if (admissionClosed || current !== c) {
+        if (!(await cleanup()))
+          return {
+            ok: false,
+            message: `Cleanup unconfirmed: session ${res.id} may still be running.`,
+            cleanupUnconfirmed: true,
+            sessionId: res.id,
+          }
+        return { ok: false, message: 'The vault closed as the session started.' }
+      }
+      return { ok: true, sessionId: res.id, terminalId: opened.terminalId }
     },
 
     async noteTurn(remote, jobId, active, pending = null, pid) {
@@ -743,8 +939,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async message(id, text) {
+      const owner = attached
       const c = await ensureCurrent()
-      if (c === null) throw new CapabilityError('UNAVAILABLE', noVault.message)
+      if (!admittedFor(c, owner)) throw new CapabilityError('UNAVAILABLE', noVault.message)
       if (!live().some((row) => row.id === id)) {
         throw new CapabilityError('NOT_FOUND', `no running session ${id}`)
       }
@@ -758,7 +955,12 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         )
       }
       try {
-        await bg.message(channel, text)
+        await bg.message(channel, text, lifetime.signal)
+        if (admissionClosed || current !== c)
+          throw new CapabilityError(
+            'UNAVAILABLE',
+            'The vault was left before the message completed.',
+          )
       } catch (error) {
         // Not tried again until the session reports it anew, at its next turn
         // or its next process: a gone socket stays gone.
@@ -770,26 +972,46 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     setFocus(focus) {
       const vault = attached
       if (vault === null) return
+      if (admissionClosed) return
       if (focusWriter?.root !== vault.root) {
-        focusWriter?.snapshot.stop()
+        if (focusWriter !== null) {
+          focusStop = focusWriter.snapshot.stop().catch((error: unknown) => {
+            focusStopFailure = error
+          })
+        }
         focusWriter = { root: vault.root, snapshot: new ContextSnapshot({ workRoot: vault.root }) }
+        focusStop = null
+        focusStopFailure = null
       }
       focusWriter.snapshot.setFocus(focus)
     },
 
     bracket(id, edge) {
       if (edge === 'begin') {
+        if (admissionClosed || deps.activationSignal?.aborted) return
         bracketed.add(id)
         coordinator.begin(id)
         return
       }
+      if (edge === 'end') {
+        if (!bracketed.delete(id)) return null
+        return coordinator.end(id)
+      }
       bracketed.delete(id)
-      if (edge === 'end') return coordinator.end(id)
       coordinator.forget(id)
     },
 
     async leave({ stopSessions = true } = {}) {
       if (leaving !== null) return leaving
+      if (drainFailure !== null) throw drainFailure
+      revoke()
+      const unwatch = current?.unwatch
+      if (current !== null) current.unwatch = () => {}
+      try {
+        unwatch?.()
+      } catch (error) {
+        lateCleanup.recordFailure(error)
+      }
       leaving = leaveNow(stopSessions)
       try {
         await leaving
@@ -799,18 +1021,61 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
   }
 
+  const trackStop = lateCleanup.stop
+
   async function leaveNow(stopSessions: boolean): Promise<void> {
+    const failures: unknown[] = lateCleanup.takeFailures()
     // A vault still attaching is the one being left: let it land first.
-    if (activating !== null) await activating
+    if (activating !== null) {
+      try {
+        await activating
+      } catch (error) {
+        failures.push(error)
+      }
+    }
     attached = null
+    while (operations.pending.size > 0 || lateCleanup.size > 0 || reading !== null) {
+      await Promise.allSettled([
+        ...operations.pending,
+        ...lateCleanup.pending,
+        ...(reading === null ? [] : [reading]),
+      ])
+      failures.push(...lateCleanup.takeFailures())
+    }
+    failures.push(...lateCleanup.takeFailures())
     const c = current
-    if (c === null) return
+    if (c === null) {
+      try {
+        await coordinator.drain()
+      } catch (error) {
+        failures.push(error)
+      }
+      try {
+        await focusStop
+      } catch (error) {
+        failures.push(error)
+      }
+      if (focusStopFailure !== null) failures.push(focusStopFailure)
+      focusStop = null
+      focusStopFailure = null
+      focusWriter = null
+      if (failures.length > 0) {
+        drainFailure = new AggregateError(failures, 'Agent session teardown failed.')
+        throw drainFailure
+      }
+      return
+    }
     if (stopSessions) {
       // Stop, then remove the ones that never had a turn (`unprompted`).
-      const stops = Promise.all(
+      const stops = Promise.allSettled(
         live().map(async (row) => {
           const stopped = await bg.cli.stop(targetOf(c), row.id)
-          if (stopped.ok && unprompted.has(row.id)) await bg.cli.rm(targetOf(c), row.id)
+          if (!stopped.ok) throw new Error(`Could not stop session ${row.id}: ${stopped.message}`)
+          if (unprompted.has(row.id)) {
+            const removed = await bg.cli.rm(targetOf(c), row.id)
+            if (!removed.ok)
+              throw new Error(`Could not remove session ${row.id}: ${removed.message}`)
+          }
         }),
       )
       let timer: ReturnType<typeof setTimeout> | undefined
@@ -821,14 +1086,29 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         )
       })
       try {
-        await Promise.race([stops, timedOut])
+        const results = await Promise.race([stops, timedOut])
+        failures.push(
+          ...results
+            .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+            .map((result) => result.reason),
+        )
+      } catch (error) {
+        failures.push(error)
       } finally {
         if (timer !== undefined) clearTimeout(timer)
       }
     }
-    await deps.terminals.closeAll()
+    try {
+      await deps.terminals.closeAll()
+    } catch (error) {
+      failures.push(error)
+    }
     for (const id of [...coordinator.working]) coordinator.forget(id)
-    await coordinator.drain()
+    try {
+      await coordinator.drain()
+    } catch (error) {
+      failures.push(error)
+    }
     bracketed.clear()
     workingPid.clear()
     unprompted.clear()
@@ -842,13 +1122,35 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       clearTimeout(idleRecheck)
       idleRecheck = null
     }
-    focusWriter?.snapshot.stop()
+    try {
+      await (focusStop ?? focusWriter?.snapshot.stop())
+    } catch (error) {
+      focusStopFailure ??= error
+    }
+    if (focusStopFailure !== null) failures.push(focusStopFailure)
+    focusStopFailure = null
+    focusStop = null
     focusWriter = null
     current = null
     rows = []
-    await release(c)
+    try {
+      await release(c)
+    } catch (error) {
+      failures.push(error)
+    }
     push(c.remote)
     pushPast(c.remote)
+    if (failures.length > 0) {
+      drainFailure = new AggregateError(failures, 'Agent session teardown failed.')
+      throw drainFailure
+    }
   }
-  return api
+  const operations = createOwnedOperationTracker(
+    () => !admissionClosed && !deps.activationSignal?.aborted && leaving === null,
+  )
+  return admitAgentSessions(
+    api,
+    operations,
+    () => admissionClosed || deps.activationSignal?.aborted === true,
+  )
 }

@@ -71,6 +71,8 @@
         "scripts/mdx-diagnostics-native-smoke-main.ts",
         "scripts/mdx-diagnostics-native-smoke.tsx",
         "scripts/mdx-diagnostics-smoke-trpc.ts",
+        // Native GitHub safeStorage entry is built as an Electron SSR fixture.
+        "scripts/github-storage-native-smoke-main.ts",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",
