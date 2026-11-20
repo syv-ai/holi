@@ -43,6 +43,7 @@ import { agentScratchRoots } from './host/scratch-roots'
 import { createJobs } from './host/jobs'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
+import { createManagedTurnBrackets } from './host/turn-coordinator'
 import { openTurnLog } from './host/turn-log'
 import { createSessionLog } from './host/session-log'
 import { worktreeEnd } from './host/worktree-end'
@@ -193,6 +194,7 @@ export const agentMain: MainPlugin = {
         sessionLog.sessions(all)
       }
 
+      const managedTurns = createManagedTurnBrackets()
       const sessions = createAgentSessions({
         activationSignal: ctx.activationSignal,
         emit: (remote, name, payload) => {
@@ -223,7 +225,7 @@ export const agentMain: MainPlugin = {
       activationOwners.push(() => sessions.leave({ stopSessions: false }))
       // Fix the session host to this activation's vault before exposing any
       // provider hook routes; early hook reports queue against this owner.
-      await sessions.ensure(ctx)
+      await sessions.ensure({ ...ctx, claimManagedTurn: managedTurns.claimManagedTurn })
       assertActive()
       // Pi's RPC runs find `pi` and its environment as its terminals do: the
       // preset's program and variables, its arguments being a terminal's alone.
@@ -286,7 +288,7 @@ export const agentMain: MainPlugin = {
         scratchRoot: scratchRoots.jobs,
         ...(ownership && { ownership }),
         activationSignal: ctx.activationSignal,
-        bracket: (id, edge) => sessions.bracket(id, edge),
+        beginManagedTurn: (id) => managedTurns.begin(id, sessions.bracket),
         onChange: (list) => {
           jobRows = list
           pushSessions()

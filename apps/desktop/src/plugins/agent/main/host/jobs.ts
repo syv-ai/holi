@@ -78,6 +78,7 @@ import { bounded } from './bounded'
 import { jobScratch, type JobFiles, type JobTurnReceipt } from './job-receipts'
 import { startJobTurn } from './job-turn'
 import type { ActionResult } from './sessions'
+import type { ManagedTurn } from './turn-coordinator'
 
 /** What a job may touch: files it reads, copied in, and the paths (or
  *  `folder/**`) whose files it wrote are copied back. */
@@ -105,8 +106,10 @@ export interface JobsDeps {
   /** This vault's private scratch root from `agentScratchRoots`. */
   scratchRoot: string
   onChange(list: SessionSummary[]): void
-  /** The vault's turn bracket, for a job in the vault: sync pauses and the
-   *  turn is recorded. */
+  /** Vault jobs hold sync until their physical proof is available, then join
+   *  persistence of their own turn before publishing its outcome. */
+  beginManagedTurn?(id: string): ManagedTurn
+  /** Edge-only bracket for hosts without managed turn history. */
   bracket?(id: string, edge: 'begin' | 'end' | 'forget'): unknown | Promise<unknown>
   /** Injected children supply explicit drainage, not a native journal. */
   spawn?: NonNullable<Parameters<typeof startJobTurn>[0]['spawn']>
@@ -198,6 +201,9 @@ interface Job {
   tokens: number
   /** Resolves after release, copy-back, bracket completion and owned cleanup. */
   exited: Promise<void>
+  /** The managed history phase can be bounded for Stop/leave without cutting
+   *  short physical proof or detaching the job from its pending write. */
+  writingHistory?: Promise<void>
   finalizationError?: Error
   secondaryPhysicalFailure?: { cause: unknown }
   dropTimer?: ReturnType<typeof setTimeout>
@@ -475,8 +481,6 @@ export function createJobs(deps: JobsDeps): Jobs {
       id: j.id,
       provider: j.provider.id,
       name: j.name,
-      // The end bracket can notify observers before it persists the turn.
-      // An idle job must already have its terminal outcome at that point.
       state: j.busy ? 'working' : 'idle',
       startedAt: j.startedAt,
       ...(j.model === undefined ? {} : { model: j.model }),
@@ -526,7 +530,13 @@ export function createJobs(deps: JobsDeps): Jobs {
     job.queue = []
     job.copyController?.abort()
     job.turn?.stop()
-    await job.exited
+    const { exited, writingHistory } = job
+    await (writingHistory === undefined
+      ? exited
+      : Promise.race([
+          exited,
+          writingHistory.then(() => bounded(exited, `Turn history for job ${job.id}`)),
+        ]))
   }
 
   /** Move the current file aside atomically, then publish the replacement
@@ -760,7 +770,11 @@ export function createJobs(deps: JobsDeps): Jobs {
     job.busy = true
     delete job.stopped
     clearTimeout(job.dropTimer)
-    const fail = (error: unknown, phase?: 'physical') => rememberFailure(job, receipt, error, phase)
+    let physicalFailed = false
+    const fail = (error: unknown, phase?: 'physical') => {
+      if (phase === 'physical') physicalFailed = true
+      return rememberFailure(job, receipt, error, phase)
+    }
     const tooLong = setTimeout(() => {
       void kill(job, 'The job ran too long and was stopped.').catch((error: unknown) =>
         log(`${id}: could not stop: ${String(error)}`),
@@ -789,14 +803,33 @@ export function createJobs(deps: JobsDeps): Jobs {
     })
     job.turn = turn
     const bracket = turn.bracket && job.place !== null
-    const bracketBegin = bracket
+    let managed: ManagedTurn | undefined
+    let historyStarted: (() => void) | undefined
+    if (bracket && deps.beginManagedTurn !== undefined) {
+      try {
+        managed = deps.beginManagedTurn(id)
+        job.writingHistory = new Promise<void>((resolve) => (historyStarted = resolve))
+      } catch (error) {
+        fail(error)
+      }
+    }
+    const legacyBracket = bracket && deps.beginManagedTurn === undefined
+    const bracketBegin = legacyBracket
       ? Promise.resolve()
           .then(() => deps.bracket?.(id, 'begin'))
           .catch(fail)
       : undefined
     job.exited = (async () => {
+      let safeToForget = false
       try {
-        const output = await turn.output
+        const output = await turn.output.catch((error: unknown) => {
+          // A bracketed POSIX turn has a lease. Its output only rejects after
+          // joining that lease; physical failure is reported separately, even
+          // if a broken pipe was the first error. Don't infer it from `error`.
+          safeToForget = process.platform !== 'win32' && bracket && !physicalFailed
+          throw error
+        })
+        safeToForget = true
         clearTimeout(tooLong)
         const controller = new AbortController()
         const { signal } = controller
@@ -804,8 +837,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         const finish = async () => {
           await bracketBegin
           signal.throwIfAborted()
-          // Physical/output failure never reaches release. A failed bracket
-          // still needs its end attempted, but cannot publish or delete scratch.
+          // Physical/output failure never reaches release.
           try {
             await provider.release?.(job.state, signal)
           } catch (error) {
@@ -841,7 +873,7 @@ export function createJobs(deps: JobsDeps): Jobs {
             why ??= output.failure
             log(`${id}: failed: ${why}`)
           }
-          if (bracket) {
+          if (legacyBracket) {
             try {
               await deps.bracket?.(id, 'end')
             } catch (error) {
@@ -859,6 +891,10 @@ export function createJobs(deps: JobsDeps): Jobs {
         }
         try {
           const { outcome, why } = await bounded(finish(), `Finalization of job ${id}`)
+          if (managed !== undefined && job.finalizationError === undefined) {
+            historyStarted?.()
+            await managed.end()
+          }
           // Persist caller settlement before publishing the row. As with vault
           // jobs, the link is retired when the job leaves the list.
           if (job.finalizationError === undefined) receipt.phase('SETTLED')
@@ -870,7 +906,17 @@ export function createJobs(deps: JobsDeps): Jobs {
       } catch (error) {
         fail(error)
       } finally {
+        if (managed !== undefined && safeToForget) {
+          // No-op if end already consumed the bracket. Otherwise output or
+          // finalization was abandoned after proof and must not record an end.
+          try {
+            managed.forget()
+          } catch (error) {
+            fail(error)
+          }
+        }
         clearTimeout(tooLong)
+        delete job.writingHistory
         job.turn = undefined
         job.copyController = undefined
         job.finalizing = false

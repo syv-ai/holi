@@ -11,6 +11,9 @@ import { ownedProcessDrain, type ProcessGroupSupervision } from '../../../main/p
 import { readJobEvent } from '../main/codex'
 import { createJobs, type JobsDeps } from '../main/host/jobs'
 import { activationOwnership } from '../main/host/ownership'
+import { createManagedTurnBrackets, createTurnCoordinator } from '../main/host/turn-coordinator'
+import { openTurnLog, type TurnLog } from '../main/host/turn-log'
+
 import type { JobsProvider } from '../main/provider'
 
 const pid = 678_909
@@ -219,6 +222,7 @@ it('joins explicit drainage and output close after a no-PID fake error', async (
   await tick()
   expect(t.release).not.toHaveBeenCalled()
   cleanup.resolve()
+  child.stdout!.push(null)
   child.emit('close', null, null)
   await vi.waitFor(() =>
     expect(jobs.sessions()[0]).toMatchObject({
@@ -277,6 +281,7 @@ posix(
       '{"type":"thread.started","thread_id":"123e4567-e89b-42d3-a456-426614174000"}\n',
     )
     first.stdout!.push('{"type":"turn.completed"}\n')
+    first.stdout!.push(null)
     await tick()
     first.emit('close', 0, null)
     await vi.waitFor(() => expect(jobs.sessions()[0]).toMatchObject({ outcome: 'completed' }))
@@ -287,6 +292,7 @@ posix(
     })
     jobs.message(result.sessionId, 'second turn')
     expect(spawn).toHaveBeenCalledTimes(2)
+    second.stdout!.push(null)
     second.emit('close', 0, null)
     await jobs.leave()
     await expect(access(receipt)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -320,6 +326,7 @@ posix(
       '{"type":"thread.started","thread_id":"123e4567-e89b-42d3-a456-426614174000"}\n',
     )
     first.stdout!.push('{"type":"turn.completed"}\n')
+    first.stdout!.push(null)
     await tick()
     first.emit('close', 0, null)
     await vi.waitFor(() => expect(jobs.sessions()[0]).toMatchObject({ outcome: 'completed' }))
@@ -386,6 +393,7 @@ it('keeps the first provider cleanup failure when bracket end and abort follow i
   })
   const result = await jobs.start({ ...t.spec, allow: [] })
   if (!result.ok) throw new Error(result.message)
+  child.stdout!.push(null)
   child.emit('close', 0, null)
   await ended.promise
   activation.abort()
@@ -419,7 +427,7 @@ posix(
       proof.resolve()
       await vi.advanceTimersByTimeAsync(5000)
       const first = await wait.catch((error: unknown) => error)
-      expect(first).toMatchObject({ message: expect.stringContaining('Output and finalization') })
+      expect(first).toMatchObject({ message: expect.stringContaining('Output of job') })
       child.emit('close', 0, null)
       await vi.advanceTimersByTimeAsync(0)
       await expect(jobs.stop(id)).rejects.toBe(first)
@@ -430,5 +438,134 @@ posix(
     } finally {
       vi.useRealTimers()
     }
+  },
+)
+
+function managedHistory(t: Awaited<ReturnType<typeof fixture>>, append: TurnLog['append']) {
+  const resume = vi.fn()
+  const managed = createManagedTurnBrackets()
+  const coordinator = createTurnCoordinator({
+    vault: () => ({
+      root: t.root,
+      head: async () => 'base',
+      commitNow: async () => 'settled',
+      pauseSync: () => resume,
+      claimManagedTurn: managed.claimManagedTurn,
+    }),
+    turnSafetyMs: 10,
+    snapshot: async () => 'snapshot',
+    turnLogFor: () => ({ list: async () => [], append }),
+    log: () => {},
+  })
+  return {
+    coordinator,
+    resume,
+    beginManagedTurn: (id: string) => managed.begin(id, (job, edge) => coordinator[edge](job)),
+  }
+}
+
+it.each(['success', 'failure'] as const)(
+  'joins the managed bracket history write under an overlapping turn: %s',
+  async (mode) => {
+    const t = await fixture()
+    const entered = gate()
+    const write = gate()
+    const original = new Error('turn history write failed')
+    const history = openTurnLog(t.root)
+    const append: TurnLog['append'] = async (record) => {
+      entered.resolve()
+      await write.promise
+      await history.append(record)
+    }
+    const { coordinator, resume, beginManagedTurn } = managedHistory(t, append)
+    const other = beginManagedTurn('other')
+    const child = fakeChild(async () => {})
+    const onChange = vi.fn<JobsDeps['onChange']>()
+    const jobs = t.create({
+      beginManagedTurn,
+      onChange,
+      spawn: () => child,
+      ownership: t.registry(),
+    })
+    const result = await jobs.start({ ...t.spec, allow: [] })
+    if (!result.ok) throw new Error(result.message)
+    const id = result.sessionId
+    child.stdout!.push('{"type":"turn.completed"}\n')
+    child.stdout!.push(null)
+    child.emit('close', 0, null)
+    await entered.promise
+    try {
+      await tick()
+      expect(resume).not.toHaveBeenCalled()
+      expect(await history.list()).toEqual([])
+      for (const [rows] of onChange.mock.calls) expect(rows[0]).not.toHaveProperty('outcome')
+      expect(jobs.sessions()[0]).toMatchObject({ state: 'working' })
+    } finally {
+      if (mode === 'failure') write.reject(original)
+      else write.resolve()
+      other.forget()
+    }
+    await vi.waitFor(() =>
+      expect(jobs.sessions()[0]).toMatchObject({
+        state: 'idle',
+        outcome: mode === 'success' ? 'completed' : 'failed',
+      }),
+    )
+    if (mode === 'success') {
+      expect(await history.list()).toMatchObject([{ sessionId: id, end: 'snapshot' }])
+      await jobs.leave()
+      await coordinator.drain()
+    } else {
+      await expect(jobs.stop(id)).rejects.toBe(original)
+      await expect(jobs.leave()).rejects.toMatchObject({ errors: [original] })
+      await expect(coordinator.drain()).rejects.toMatchObject({ errors: [original] })
+      expect(await history.list()).toEqual([])
+      expect(jobs.has(id)).toBe(true)
+      await expect(access(join(t.scratchRoot, `${id}.agent`))).resolves.toBeUndefined()
+      if (process.platform !== 'win32') {
+        const owners = join(t.dir, 'agent-ownership')
+        const [vault] = await readdir(owners)
+        const scope = join(owners, vault!, 'jobs')
+        const [owner] = await readdir(scope)
+        expect(await readFile(join(scope, owner!, 'failed'), 'utf8')).toContain(original.message)
+      }
+    }
+  },
+)
+
+posix.each(['positive', 'unknown'] as const)(
+  'only forgets a managed bracket on stdout loss with positive physical proof: %s',
+  async (mode) => {
+    const t = await fixture()
+    const proof = gate()
+    const append = vi.fn(async () => {})
+    const { coordinator, resume, beginManagedTurn } = managedHistory(t, append)
+    const child = fakeChild(() => proof.promise)
+    const jobs = t.create({ beginManagedTurn, spawn: () => child, ownership: t.registry() })
+    const result = await jobs.start({ ...t.spec, allow: [] })
+    if (!result.ok) throw new Error(result.message)
+    const id = result.sessionId
+    const stdout = new Error('stdout lost after spawn')
+    const physical = new Error('no physical proof')
+    child.emit('spawn')
+    child.stdout!.emit('error', stdout)
+    const stop = jobs.stop(id)
+    await tick()
+    expect(coordinator.working.has(id)).toBe(true)
+    if (mode === 'positive') proof.resolve()
+    else proof.reject(physical)
+    await expect(stop).rejects.toBe(stdout)
+    // Passing the native safety cap or tearing down the session host must
+    // not certify that an unresolved managed writer has gone.
+    coordinator.forget(id)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(coordinator.working.has(id)).toBe(mode === 'unknown')
+    expect(resume).toHaveBeenCalledTimes(mode === 'unknown' ? 0 : 1)
+    expect(append).not.toHaveBeenCalled()
+    expect(t.release).not.toHaveBeenCalled()
+    expect(jobs.sessions()[0]?.outcome).toBe('failed')
+    await expect(jobs.leave()).rejects.toMatchObject({
+      errors: mode === 'unknown' ? [stdout, physical] : [stdout],
+    })
   },
 )
