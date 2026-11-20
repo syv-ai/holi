@@ -26,7 +26,6 @@ const native = vi.hoisted(() => ({
   heldRelease: null as null | { state: string; entered: () => void; wait: Promise<void> },
   released: [] as { state: string; outcome: 'resolved' | 'rejected' }[],
   heldFs: [] as {
-    method: 'link' | 'rename' | 'writeFile'
     matches: (args: string[]) => boolean
     entered: () => void
     wait: Promise<void>
@@ -129,14 +128,8 @@ vi.mock('node:crypto', async (original) => {
 // so the fixture never removes its parent while a host is still writing to it.
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
-  const gated = async <T>(
-    method: 'link' | 'rename' | 'writeFile',
-    args: unknown[],
-    run: () => Promise<T>,
-  ): Promise<T> => {
-    const hold = native.heldFs.find(
-      (gate) => gate.method === method && gate.matches(args.map(String)),
-    )
+  const gated = async <T>(args: unknown[], run: () => Promise<T>): Promise<T> => {
+    const hold = native.heldFs.find((gate) => gate.matches(args.map(String)))
     const work = (async () => {
       if (hold !== undefined) {
         native.heldFs.splice(native.heldFs.indexOf(hold), 1)
@@ -154,11 +147,8 @@ vi.mock('node:fs/promises', async (original) => {
   }
   return {
     ...fs,
-    link: (...args: Parameters<typeof fs.link>) => gated('link', args, () => fs.link(...args)),
-    rename: (...args: Parameters<typeof fs.rename>) =>
-      gated('rename', args, () => fs.rename(...args)),
     writeFile: (...args: Parameters<typeof fs.writeFile>) =>
-      gated('writeFile', args, () => fs.writeFile(...args)),
+      gated(args, () => fs.writeFile(...args)),
     rm: (...args: Parameters<typeof fs.rm>) => {
       const done = fs.rm(...args)
       native.removals.push({ path: String(args[0]), done })
@@ -361,14 +351,11 @@ async function createScratchFixture() {
     native.heldRelease = { state, entered: entered.resolve, wait: gate.promise }
     return { gate, entered: within(entered.promise) }
   }
-  const holdFs = (
-    method: 'link' | 'rename' | 'writeFile',
-    matches: (args: string[]) => boolean,
-  ) => {
+  const holdFs = (matches: (args: string[]) => boolean) => {
     const gate = deferred<void>()
     const entered = deferred<void>()
     releases.push(gate.resolve)
-    native.heldFs.push({ method, matches, entered: entered.resolve, wait: gate.promise })
+    native.heldFs.push({ matches, entered: entered.resolve, wait: gate.promise })
     return { gate, entered: within(entered.promise) }
   }
   native.recordChild = (provider, child, drain, control) => {
@@ -687,7 +674,9 @@ it('keeps live job and fenced data planes independent through another vault star
     await settle(B, bFence)
     expect(await readFile(join(roots[A], 'job.md'), 'utf8')).toBe(`${A}:job:finished`)
     await expect(access(join(roots[A], 'fenced.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-    await removed(join(b.jobs, `${bJob.sessionId}.pid`))
+    await expect(access(join(b.jobs, `${bJob.sessionId}.pid`))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
     expect(children).toHaveLength(5)
   } finally {
     onTestFinished(() => fixture.dispose())
@@ -926,32 +915,34 @@ for (const kind of ['job', 'fenced'] as const) {
     },
   )
 
-  it.each(['link', 'rename'] as const)(
-    `joins admitted ${kind} copy-back %s before vault a stop and cancels future publications`,
-    async (method) => {
+  it.each(['new file', 'replacement'] as const)(
+    `joins admitted ${kind} copy-back staging for a %s and cancels publication on stop`,
+    async (mode) => {
       const f = await createScratchFixture()
-      let failed = false
+      const replacement = mode === 'replacement'
       try {
         const target = join(f.roots[f.A], `${kind}.md`)
-        if (method === 'rename') await writeFile(target, 'original file')
+        if (replacement) await writeFile(target, 'original file')
         const a = await f.start(f.A, kind, {
-          read: ['input.md', ...(method === 'rename' ? [`${kind}.md`] : [])],
+          read: ['input.md', ...(replacement ? [`${kind}.md`] : [])],
           write: [`${kind}.md`, 'z-cancelled.md'],
         })
         await writeFile(join(a.entry.cwd, 'z-cancelled.md'), 'must never publish')
         await f.enter(f.B)
         const bJob = await f.start(f.B, 'job')
         const bFence = await f.start(f.B, 'fenced')
-        const hold = f.holdFs(method, (args) =>
-          method === 'link'
-            ? args[1] === target
-            : args[0] === target && basename(args[1]!) === 'previous',
+        // Publication and the move to `previous` are synchronous. Hold the
+        // preceding temporary-file write, the last async preparation shared
+        // by both copy paths, without moving their cancellation check.
+        const hold = f.holdFs(
+          ([path]) =>
+            path !== undefined &&
+            dirname(path) === f.roots[f.A] &&
+            basename(path).startsWith('.holi-tmp-'),
         )
         await f.finish(a.entry)
         await hold.entered
-        // Simulate a newer sync write after production's last hash check but
-        // before the admitted native rename actually moves the file aside.
-        if (method === 'rename') await writeFile(target, 'newer sync file')
+        if (replacement) await writeFile(target, 'newer sync file')
         let stopped = false
         const stopping = f.stop(f.A).then(() => {
           stopped = true
@@ -963,45 +954,31 @@ for (const kind of ['job', 'fenced'] as const) {
         await f.intact(f.B, bFence.entry)
         expect(stopped).toBe(false)
         hold.gate.resolve()
-        if (kind === 'fenced' && method === 'rename') {
-          // A fenced copy error is sticky and must be an explicit drain failure.
-          await expect(stopping).rejects.toThrow(`plugins in ${f.A} failed to stop`)
-          failed = true
-          await expect(f.enter(f.A)).rejects.toThrow()
-        } else await stopping
+        await stopping
         quiet()
-        expect(await readFile(target, 'utf8')).toBe(
-          method === 'rename' ? 'newer sync file' : `${f.A}:${kind}:finished`,
-        )
+        if (replacement) expect(await readFile(target, 'utf8')).toBe('newer sync file')
+        else await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
         await expect(access(join(f.roots[f.A], 'z-cancelled.md'))).rejects.toMatchObject({
           code: 'ENOENT',
         })
         expect((await readdir(f.roots[f.A])).filter((name) => name.startsWith('.holi-'))).toEqual(
           [],
         )
-        if (failed) {
-          await access(a.entry.cwd)
-          await access(dirname(a.entry.home))
-        } else {
-          await f.removed(a.entry.cwd)
-          await f.removed(dirname(a.entry.home))
-        }
+        await f.removed(a.entry.cwd)
+        await f.removed(dirname(a.entry.home))
         await f.settle(f.B, bJob)
         await f.settle(f.B, bFence)
         quiet()
-        // The held original native operation completed; no old mutation can
-        // arrive in a subsequent generation of the same vault.
-        if (!failed) {
-          await f.enter(f.A)
-          const fresh = await f.start(f.A, 'job', {
-            read: ['input.md', ...(kind === 'job' ? ['job.md'] : [])],
-            write: ['job.md'],
-          })
-          await f.settle(f.A, fresh)
-          await f.stop(f.A)
-        }
+        // No old mutation can arrive in a subsequent generation of this vault.
+        await f.enter(f.A)
+        const fresh = await f.start(f.A, 'job', {
+          read: ['input.md', ...(kind === 'job' && replacement ? ['job.md'] : [])],
+          write: ['job.md'],
+        })
+        await f.settle(f.A, fresh)
+        await f.stop(f.A)
       } finally {
-        onTestFinished(() => f.dispose(failed ? f.A : undefined))
+        onTestFinished(() => f.dispose())
       }
     },
   )
@@ -1043,7 +1020,6 @@ it('drains retained pty conversation history publication before restarting vault
     ])
     expect(await history()).toEqual(before)
     const hold = f.holdFs(
-      'writeFile',
       (args) => args[0] === `${historyPath}.tmp` && args[1]!.includes('retained a'),
     )
     let stopped = false

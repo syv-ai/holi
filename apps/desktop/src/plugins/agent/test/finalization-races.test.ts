@@ -434,6 +434,11 @@ it('bounds final root deletion and joins the underlying operation on retry', asy
   expect(await readFile(join(t.scratchRoot, 'replacement'), 'utf8')).toBe('safe')
 })
 
+function finishExit(args: OpenArgs | undefined, title?: string) {
+  if (!args) return
+  return Promise.resolve(args.onExit?.(title)).then(() => args.onRetired?.())
+}
+
 async function ptyRig() {
   const dir = await mkdtemp(join(tmpdir(), 'holi-history-race-'))
   roots.push(dir)
@@ -480,7 +485,7 @@ async function ptyRig() {
         closeCalls += 1
         if (closeError) throw closeError
         await closeWait
-        await opened[Number(id.split('-')[1]) - 1]?.onExit?.()
+        await finishExit(opened[Number(id.split('-')[1]) - 1])
       },
       paste: () => true,
       list: () => [],
@@ -519,7 +524,7 @@ it('never replays a failed reopen removal after the newer close append', async (
   t.fail(1)
   await expect(t.sessions.reopen(old.id, {})).rejects.toThrow('history unavailable')
   t.sessions.noteConversation(old.id, { conversationId: '123e4567-e89b-42d3-a456-426614174001' })
-  t.opened[0]!.onExit?.()
+  finishExit(t.opened[0])
   await t.sessions.leave()
   expect(JSON.parse(await readFile(t.history, 'utf8'))).toEqual([
     expect.objectContaining({ id: old.id, conversationId: '123e4567-e89b-42d3-a456-426614174001' }),
@@ -537,10 +542,10 @@ it('preserves an older failed append when an unrelated conversation saves succes
     })
   }
   t.fail(1)
-  await expect(t.opened[0]!.onExit?.()).rejects.toBe(t.historyFailure)
+  await expect(finishExit(t.opened[0])).rejects.toBe(t.historyFailure)
   await t.sessions.past()
   expect(JSON.parse(await readFile(t.history, 'utf8'))).toEqual([])
-  await t.opened[1]!.onExit?.()
+  await finishExit(t.opened[1])
   await t.sessions.past()
   const rows = JSON.parse(await readFile(t.history, 'utf8')) as SessionSummary[]
   expect(rows.map((row) => row.id)).toEqual([second.sessionId, first.sessionId])
@@ -667,7 +672,7 @@ async function fencedRig(options: Pick<JobsDeps, 'beforePublish'> = {}) {
         return { ok: true, id: `terminal-${opened.length}` }
       },
       close: async (id) => {
-        await opened[Number(id.split('-')[1]) - 1]?.onExit?.()
+        await finishExit(opened[Number(id.split('-')[1]) - 1])
       },
       paste: () => true,
       list: () => [],
@@ -990,7 +995,7 @@ it.each(['pending', 'failed'] as const)(
     const a = await t.start()
     const b = await t.sessions.start('codex', {})
     if (!b.ok) throw new Error(b.message)
-    a.entry.onExit?.()
+    void finishExit(a.entry)?.catch(() => {})
     await entered.promise
     if (kind === 'failed') {
       gate.resolve()

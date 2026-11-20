@@ -130,6 +130,7 @@ export class AgentRuntime {
   private drainingErrors: unknown[] = []
   private exitCbs: Array<(e: AgentExit, signal?: AbortSignal) => void | Promise<void>> = []
   private closedCb?: () => void
+  private abandonedCb?: () => void
   private notifyPublicExit?: () => void
   private killTimer: ReturnType<typeof setTimeout> | null = null
   private killPromise: Promise<void> | null = null
@@ -199,6 +200,11 @@ export class AgentRuntime {
    * Unlike onExit, this notification does no fallible work. */
   onClosed(cb: () => void): void {
     this.closedCb = cb
+  }
+
+  /** Exit cannot complete, but the process is independently proved absent. */
+  onExitAbandoned(cb: () => void): void {
+    this.abandonedCb = cb
   }
 
   start({ bin, args, cwd, env, cols, rows }: StartArgs): void {
@@ -306,7 +312,7 @@ export class AgentRuntime {
           this.pty = null
           this.closedCb?.()
         })()
-        this.observe(this.exitSettlement)
+        this.observeExit(this.exitSettlement)
         this.notifyPublicExit?.()
       })
       if (prepared) {
@@ -375,6 +381,17 @@ export class AgentRuntime {
     void work.catch((error: unknown) => this.failed(error))
   }
 
+  private observeExit(work: Promise<void>): void {
+    void work.catch((error: unknown) => {
+      this.failed(error)
+      const notify = this.abandonedCb
+      if (!notify || !this.physicalDrain) return
+      this.abandonedCb = undefined
+      // Observation cannot replace the exit failure or infer proof from it.
+      void this.physicalDrain.then(notify, () => {}).catch((error: unknown) => this.failed(error))
+    })
+  }
+
   private beginDrain(): void {
     if (this.draining) return
     this.draining = true
@@ -424,7 +441,7 @@ export class AgentRuntime {
     this.beginDrain()
     const pending = this.killAndWait(pty)
     this.killPromise = pending
-    this.observe(pending)
+    this.observeExit(pending)
     return pending
   }
 

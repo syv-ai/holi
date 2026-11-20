@@ -13,7 +13,13 @@ import {
 import { leasedPty } from './leased-pty'
 
 export type Kind = 'pi' | 'pty' | 'fenced' | 'job'
-export type Plan = { kind: Kind; stdio: 'ignore' | 'inherit'; code: number; launchError?: Error }
+export type Plan = {
+  kind: Kind
+  stdio: 'ignore' | 'inherit'
+  code: number
+  launchError?: Error
+  fencedPi?: boolean
+}
 const native = vi.hoisted(() => ({ fixture: null as FixtureNative | null }))
 
 export type FixtureNative = ReturnType<typeof drainProcesses>
@@ -57,6 +63,16 @@ vi.mock('../../main/codex', async (original) => {
 })
 // Let real finalizers mutate disk, but join their in-flight filesystem work
 // before removing a private fixture on assertion failure.
+vi.mock('node:fs', async (original) => {
+  const fs = await original<typeof import('node:fs')>()
+  return {
+    ...fs,
+    renameSync: (...args: Parameters<typeof fs.renameSync>) => {
+      native.fixture?.beforeRetirement(String(args[1]))
+      return fs.renameSync(...args)
+    },
+  }
+})
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
   const track = <T>(path: unknown, work: Promise<T>): Promise<T> => {
@@ -67,7 +83,10 @@ vi.mock('node:fs/promises', async (original) => {
     ...fs,
     mkdir: (...args: Parameters<typeof fs.mkdir>) => track(args[0], fs.mkdir(...args)),
     rm: (...args: Parameters<typeof fs.rm>) => track(args[0], fs.rm(...args)),
-    writeFile: (...args: Parameters<typeof fs.writeFile>) => track(args[0], fs.writeFile(...args)),
+    writeFile: (...args: Parameters<typeof fs.writeFile>) => {
+      const wait = native.fixture?.beforeCopyWrite(String(args[0]))
+      return track(args[0], wait ? wait.then(() => fs.writeFile(...args)) : fs.writeFile(...args))
+    },
     copyFile: (...args: Parameters<typeof fs.copyFile>) => track(args[1], fs.copyFile(...args)),
     readdir: ((...args: Parameters<typeof fs.readdir>) => {
       const work = (async () => {
@@ -369,10 +388,29 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
   const runs: ReturnType<typeof newRun>[] = []
   let next: Plan | undefined
   const filesystem = new Set<Promise<unknown>>()
+  const retirements = new Map<string, () => void>()
+  const stagedCopies = new Map<string, ReturnType<typeof gate>>()
   const readDirs = new Map<string, ReturnType<typeof gate>>()
   const fixture = {
     directory: ledger.root,
     runs,
+    beforeRetirement(path: string) {
+      retirements.get(path)?.()
+    },
+    observeRetirement(path: string, callback: () => void) {
+      retirements.set(`${path}.retired`, callback)
+    },
+    holdCopyWrite(vault: string) {
+      const hold = gate()
+      hold.hold()
+      stagedCopies.set(vault, hold)
+      return hold
+    },
+    beforeCopyWrite(path: string) {
+      if (!path.includes('/.holi-tmp-')) return
+      for (const [vault, hold] of stagedCopies)
+        if (path.startsWith(`${vault}/`)) return hold.enter()
+    },
     holdReadDir(path: string) {
       const hold = gate()
       hold.hold()
@@ -420,6 +458,11 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
         )
         expect(env.FIXTURE_PERMISSION).toBe('unchanged')
         expect(env.PATH).toContain(ledger.root)
+      } else if (plan.fencedPi) {
+        expect(plan.kind).toBe('fenced')
+        expect(args).toContain('--session-id')
+        expect(args).not.toContain('--sandbox')
+        expect(env.FIXTURE_PERMISSION).toBe('unchanged')
       } else {
         expect(env.FIXTURE_PERMISSION).toBe('unchanged')
         if (plan.kind !== 'job') {
@@ -435,7 +478,7 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
           expect(env.CODEX_HOME).toBe(`${cwd}.agent/codex-home`)
         }
       }
-      if (plan.kind === 'job' || plan.kind === 'fenced') {
+      if (plan.kind === 'job' || (plan.kind === 'fenced' && !plan.fencedPi)) {
         expect(args).toContain('workspace-write')
         expect(args).toContain('sandbox_workspace_write.network_access=false')
         expect(args).toContain(
@@ -506,6 +549,7 @@ export function drainProcesses(ledger: Awaited<ReturnType<typeof posixFixtureLed
     },
     openGates() {
       for (const hold of readDirs.values()) hold.open()
+      for (const hold of stagedCopies.values()) hold.open()
       for (const run of runs) {
         run.drain.open()
         run.close.open()

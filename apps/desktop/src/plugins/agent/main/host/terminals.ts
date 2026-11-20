@@ -68,6 +68,10 @@ export interface OpenArgs {
   onStartupCleanup?(work: Promise<void>): void
   /** Physical drain and PTY output settled. A deadline aborts retirement, not running work. */
   onExit?(title?: string, signal?: AbortSignal, nonAdmission?: true): void | Promise<void>
+  /** Positive physical proof, but output or exit finalization was abandoned. */
+  onExitAbandoned?(): void
+  /** Commit staged session state only after durable ownership retirement. */
+  onRetired?(): void
   cols?: number
   rows?: number
   /** Written into the record before the program's first byte (the sign-in
@@ -205,6 +209,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
       onDraining,
       onStartupCleanup,
       onExit,
+      onExitAbandoned,
+      onRetired,
       cols,
       rows,
       notice,
@@ -290,9 +296,11 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals &
         // node-pty delivered the last data, but xterm may still be parsing it.
         return hasOutput ? mirror.serialize().then(finish) : finish()
       })
+      if (onExitAbandoned) runtime.onExitAbandoned(onExitAbandoned)
       runtime.onClosed(() => {
         // A hidden terminal still owns its slot until durable retirement succeeds.
         if (!t.retainOnExit) terminals.delete(t.id)
+        onRetired?.()
       })
       try {
         runtime.start({

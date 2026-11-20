@@ -11,23 +11,23 @@ import {
 } from './fixtures/drain-activation'
 
 const it = test.runIf(process.platform !== 'win32')
-const families = ['pi', 'pty', 'fenced', 'job', 'direct PTY stop'] as const
+const families = ['pi', 'pty', 'fenced', 'job', 'direct PTY stop', 'fenced Pi'] as const
 const nested = (error: unknown): unknown[] =>
   error instanceof AggregateError ? error.errors.flatMap(nested) : [error]
 
 it.each(families)(
   '%s retains original failure without waiting for inherited stdio close',
   async (route) => {
-    const kind = route === 'direct PTY stop' ? 'pty' : route
+    const kind = route === 'direct PTY stop' ? 'pty' : route === 'fenced Pi' ? 'fenced' : route
     await withDrainActivation(async (f) => {
-      const a = await f.start(f.A, kind, 'inherit', 7)
+      const a = await f.start(f.A, kind, 'inherit', 7, 'hold', route === 'fenced Pi')
       const b = await f.start(f.B, kind, 'ignore', 0, 'reply')
       expect(b.sessionId).toBe(a.sessionId)
       if (kind === 'pi') {
         expect(f.syncHeld(f.A)).toBe(true)
         expect(f.syncHeld(f.B)).toBe(false)
       }
-      if (kind === 'pty') {
+      if (kind === 'pty' || route === 'fenced Pi') {
         expect(f.syncHeld(f.A)).toBe(true)
         expect(f.syncHeld(f.B)).toBe(true)
       }
@@ -56,7 +56,7 @@ it.each(families)(
         ).rejects.toBe(cause)
       }
       if (explicit) await expect(explicit).rejects.toBe(cause)
-      if (kind === 'pty') {
+      if (kind === 'pty' || route === 'fenced Pi') {
         expect(f.syncHeld(f.A)).toBe(true)
         expect(await f.call(f.A, 'agent.terminals')).toContainEqual(
           expect.objectContaining({ id: a.terminalId, launchedFor: a.sessionId }),
@@ -136,7 +136,8 @@ it.each(families)(
       await expect(f.stop(f.A)).rejects.toBe(failure)
       await expect(f.enter(f.A)).rejects.toBe(failure)
       expect(a.release.hit).toBe(false)
-      if (kind === 'pi' || kind === 'pty') expect(f.syncHeld(f.A)).toBe(true)
+      if (kind === 'pi' || kind === 'pty' || route === 'fenced Pi')
+        expect(f.syncHeld(f.A)).toBe(true)
     })
   },
   15_000,
@@ -220,3 +221,68 @@ it('joins admitted job recovery when agent activation fails during hook setup', 
     )
   })
 })
+
+it.each(['success', 'failure'] as const)(
+  'keeps agent.stop routing until the final fenced ownership retirement: %s',
+  async (mode) => {
+    await withDrainActivation(async (f) => {
+      const run = await f.start(f.A, 'fenced', 'ignore')
+      const record = dirname(dirname(run.ownershipPath))
+      const cause = new Error('durable fenced retirement failed')
+      const completed = () =>
+        f.publications.filter(
+          ({ remote, name, payload }) =>
+            remote === f.A &&
+            name === 'sessions' &&
+            Array.isArray(payload) &&
+            payload.some((row) => row.id === run.sessionId && row.outcome === 'completed'),
+        )
+      const retiring = vi.fn(() => {
+        expect(completed()).toEqual([])
+        if (mode === 'failure') throw cause
+      })
+      f.observeRetirement(record, retiring)
+      run.release.hold()
+      const copy = f.holdCopyWrite(f.A)
+      run.exit()
+      await physical(run.proven.promise, 'fenced exit proof')
+      run.absent()
+      await bounded(copy.entered, 'physical proof while vault copy is still staged')
+      expect(f.syncHeld(f.A)).toBe(true)
+      expect(completed()).toEqual([])
+      await missing(join(f.roots[f.A], 'output.md'))
+      copy.open()
+      await bounded(run.release.entered, 'provider release after successful copy')
+      expect(await readFile(join(f.roots[f.A], 'output.md'), 'utf8')).toBe(f.A)
+      expect(f.syncHeld(f.A)).toBe(true)
+      const stopping = f.call(f.A, 'agent.stop', { id: run.sessionId })
+      const notStopped = pending(stopping)
+      expect(await f.rows(f.A)).toContainEqual(
+        expect.objectContaining({ id: run.sessionId, copying: true }),
+      )
+      notStopped()
+      run.release.open()
+      if (mode === 'failure') {
+        await expect(stopping).rejects.toBe(cause)
+        await expect(f.call(f.A, 'agent.stop', { id: run.sessionId })).rejects.toBe(cause)
+        expect(completed()).toEqual([])
+        expect(await f.rows(f.A)).not.toContainEqual(
+          expect.objectContaining({ outcome: 'completed' }),
+        )
+        const failure = await f.stop(f.A).catch((error: unknown) => error)
+        f.expectedFailures.set(f.A, failure)
+        expect(nested(failure)).toContain(cause)
+        await expect(f.stop(f.A)).rejects.toBe(failure)
+      } else {
+        await expect(stopping).resolves.toEqual({ ok: true })
+        expect(completed()).toHaveLength(1)
+        await missing(record)
+        expect(f.syncHeld(f.A)).toBe(false)
+        expect(await f.call(f.A, 'agent.terminals')).not.toContainEqual(
+          expect.objectContaining({ launchedFor: run.sessionId }),
+        )
+      }
+      expect(retiring).toHaveBeenCalledOnce()
+    })
+  },
+)
