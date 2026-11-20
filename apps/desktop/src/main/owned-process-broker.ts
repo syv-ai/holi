@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { addAbortListener } from 'node:events'
+import { brokerHostPlan } from './owned-process-broker-host'
 import {
   createOwnedProtocol,
   type JobAction,
@@ -8,6 +9,7 @@ import {
 } from './owned-process-protocol'
 import { win32Adapter } from './owned-process-win32'
 import type { RetainedExecMetadata } from './owned-program-lifetime'
+import { resolveBundledWindowsNode } from './windows-node-runtime'
 
 type RetainedOwnedProgramLease = NonNullable<
   Extract<RetainedExecMetadata, { kind: 'settled' }>['lease']
@@ -199,13 +201,20 @@ export function runBroker(
   const binding = { jobId, commitGuardId }
   const launchId = `${ticket.launchId}:${jobId}:${commitGuardId}:${randomUUID()}`
   const protocol = createOwnedProtocol({ launchId, secret: ticket.secret, role: 'parent' })
-  const adapter = win32Adapter('RunBroker', process.env, fixture?.transformSource)
   const operation = new Promise<void>((resolve, reject) => {
-    const child = spawn(adapter.file, adapter.args, {
-      cwd: adapter.cwd,
-      env: adapter.env,
-      // Don't let libuv's parent-owned kill-on-close Job kill our rollback
-      // broker during a guard-clear/OBSERVED race. Keep the child and pipes referenced.
+    const nodeImage =
+      process.versions.electron === undefined ? process.execPath : resolveBundledWindowsNode()
+    if (!nodeImage)
+      throw new Error('The bundled Windows Node runtime for the Job broker is missing.')
+    const adapter = win32Adapter('RunBroker', process.env, fixture?.transformSource)
+    const plan = brokerHostPlan(nodeImage, adapter)
+    const child = spawn(plan.file, plan.args, {
+      cwd: plan.cwd,
+      env: Object.fromEntries(
+        Object.entries(adapter.env).filter(([name]) => name.toUpperCase() !== 'NODE_OPTIONS'),
+      ),
+      // Detach only the host so parent exit cannot kill native rollback via
+      // libuv's kill-on-close Job. Keep the host and its pipes referenced here.
       detached: true,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -343,8 +352,8 @@ export function runBroker(
         fail(error)
       }
     })
-    // A terminal frame and EOF prove the transcript, not that the referenced
-    // broker and its stdio have closed. Both outcomes join this same child.
+    // The host exits only after joining native PowerShell and its pipes.
+    // Join the host and its pipes too, on both success and failure.
     child.once('close', (code, signal) => {
       closed = true
       clearTimeout(timer)

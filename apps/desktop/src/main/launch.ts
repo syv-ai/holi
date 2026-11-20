@@ -22,7 +22,6 @@ import {
 } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { readFileSync, statSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { win32 } from 'node:path'
 import { resolveBin, type Platform } from './bin'
@@ -34,6 +33,7 @@ import {
   UnconfirmedOwnedProgramError,
   type RetainedExecMetadata,
 } from './owned-program-lifetime'
+import { resolveBundledWindowsNode } from './windows-node-runtime'
 
 /** What to hand `spawn`, `execFile` or node-pty. */
 export interface Launch {
@@ -104,20 +104,6 @@ export interface LaunchOptions {
 
 /** A bare name: no folder in it, so only the `PATH` can say where it is. */
 const isBare = (name: string): boolean => !/[\\/]/.test(name)
-
-/** Resolve the optional runtime without making it a requirement on other OSes. */
-function resolveBundledWindowsNode(): string | null {
-  try {
-    const moduleRequire = typeof require === 'function' ? require : createRequire(import.meta.url)
-    const file = moduleRequire.resolve('node-win-x64/bin/node.exe')
-    return file.replace(
-      /(.*[\\/])resources([\\/])app\.asar([\\/])/i,
-      '$1resources$2app.asar.unpacked$3',
-    )
-  } catch {
-    return null
-  }
-}
 
 /**
  * What to run for `file` and `args`. Windows first resolves bare names and

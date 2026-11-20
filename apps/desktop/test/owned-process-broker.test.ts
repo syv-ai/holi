@@ -1,11 +1,17 @@
 import { EventEmitter, once } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { describe, expect, it, vi } from 'vitest'
-import { brokerFailureDiagnostic, ownedJobLease } from '../src/main/owned-process-broker'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { brokerFailureDiagnostic, ownedJobLease, runBroker } from '../src/main/owned-process-broker'
+import { brokerHostPlan } from '../src/main/owned-process-broker-host'
 import { createOwnedProtocol, type OwnedProcessMessage } from '../src/main/owned-process-protocol'
+import { win32Adapter } from '../src/main/owned-process-win32'
 
-const spawnBroker = vi.hoisted(() => vi.fn())
+const { spawnBroker, resolveBundledWindowsNode } = vi.hoisted(() => ({
+  spawnBroker: vi.fn(),
+  resolveBundledWindowsNode: vi.fn(),
+}))
 vi.mock('node:child_process', () => ({ spawn: spawnBroker }))
+vi.mock('../src/main/windows-node-runtime', () => ({ resolveBundledWindowsNode }))
 
 const ticket = {
   launchId: 'launch',
@@ -174,12 +180,14 @@ function wireChild(stdin = new PassThrough()) {
     kill: vi.fn(),
   })
   let spec!: Omit<typeof ticket, 'secret'> & { secret: string; action: Parameters<Broker>[1] }
+  let firstLine!: string
   let helper!: ReturnType<typeof createOwnedProtocol>
   const commands: OwnedProcessMessage[] = []
   child.stdin.on('data', (chunk: Buffer) => {
     if (helper) commands.push(...helper.push(chunk))
     else {
-      spec = JSON.parse(chunk.toString())
+      firstLine = chunk.toString()
+      spec = JSON.parse(firstLine)
       helper = createOwnedProtocol({
         launchId: spec.launchId,
         secret: Buffer.from(spec.secret, 'base64'),
@@ -191,6 +199,9 @@ function wireChild(stdin = new PassThrough()) {
   return {
     child,
     commands,
+    get firstLine() {
+      return firstLine
+    },
     get spec() {
       return spec
     },
@@ -219,6 +230,112 @@ function wireChild(stdin = new PassThrough()) {
     },
   }
 }
+
+function mockElectronRuntime() {
+  const previous = Object.getOwnPropertyDescriptor(process.versions, 'electron')
+  Object.defineProperty(process.versions, 'electron', { configurable: true, value: '43.0.0' })
+  onTestFinished(() => {
+    if (previous) Object.defineProperty(process.versions, 'electron', previous)
+    else Reflect.deleteProperty(process.versions, 'electron')
+  })
+}
+
+describe('native Job broker startup plan', () => {
+  const bundledNode =
+    'C:\\Program Files\\Holi\\resources\\app.asar.unpacked\\node_modules\\node-win-x64\\bin\\node.exe'
+
+  it.each(
+    (['Node', 'Electron'] as const).flatMap((runtime) =>
+      ['NODE_OPTIONS', 'node_options', 'NoDe_OpTiOnS'].map((option) => [runtime, option] as const),
+    ),
+  )(
+    'uses the %s runtime without inherited %s and sends the private spec first',
+    async (runtime, option) => {
+      vi.stubEnv(option, '--inspect-brk=0 --require forbidden-host-preload')
+      vi.stubEnv('HOLI_BROKER_ENV_CONTROL', 'retained-host-value')
+      onTestFinished(() => vi.unstubAllEnvs())
+      if (runtime === 'Electron') mockElectronRuntime()
+      resolveBundledWindowsNode.mockReset().mockReturnValue(bundledNode)
+      const native = wireChild()
+      spawnBroker.mockReset().mockReturnValueOnce(native.child)
+      const authorize = vi.fn(() => true)
+      const fixture = {
+        transformSource: vi.fn((source: string) => `${source}\n// Instrumented fixture`),
+        directory: 'C:\\private broker fixture',
+        closed: vi.fn(),
+      }
+      const operation = runBroker(ticket, 'revoke', authorize, undefined, fixture)
+      const rejected = expect(operation).rejects.toThrow('ended without proof')
+      expect(resolveBundledWindowsNode).toHaveBeenCalledTimes(runtime === 'Electron' ? 1 : 0)
+      expect(fixture.transformSource).toHaveBeenCalledTimes(1)
+      const adapter = win32Adapter(
+        'RunBroker',
+        process.env,
+        (source) => `${source}\n// Instrumented fixture`,
+      )
+      const expected = brokerHostPlan(
+        runtime === 'Electron' ? bundledNode : process.execPath,
+        adapter,
+      )
+      expect(spawnBroker).toHaveBeenCalledTimes(1)
+      const [file, args, { env, ...options }] = spawnBroker.mock.calls[0]!
+      expect(file).toBe(expected.file)
+      expect(args).toEqual(expected.args) // Exact public argv, no ticket or fixture data.
+      expect(env === adapter.env).toBe(false)
+      expect(Object.keys(env).some((name) => name.toUpperCase() === 'NODE_OPTIONS')).toBe(false)
+      expect(env.HOLI_BROKER_ENV_CONTROL).toBe('retained-host-value')
+      expect(
+        Object.entries(adapter.env).every(
+          ([name, value]) => name.toUpperCase() === 'NODE_OPTIONS' || env[name] === value,
+        ),
+      ).toBe(true)
+      expect(process.env[option]).toBe('--inspect-brk=0 --require forbidden-host-preload')
+      expect(options).toEqual({
+        cwd: adapter.cwd,
+        detached: true,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      expect(native.firstLine).toMatch(/^[^\r\n]+\n$/)
+      expect(native.spec).toEqual({
+        ...ticket,
+        launchId: expect.stringMatching(
+          new RegExp(`^${ticket.launchId}:${ticket.jobId}:${ticket.commitGuardId}:`),
+        ),
+        secret: ticket.secret.toString('base64'),
+        action: 'revoke',
+        fixtureDirectory: fixture.directory,
+      })
+      expect(native.commands).toEqual([])
+      expect(authorize).not.toHaveBeenCalled()
+      await native.eof()
+      expect(fixture.closed).not.toHaveBeenCalled()
+      native.child.emit('close', 0, null)
+      await rejected // A silent zero from the host is never ownership proof.
+      expect(fixture.closed).toHaveBeenCalledExactlyOnceWith({
+        code: 0,
+        signal: null,
+        eof: true,
+        receipt: null,
+      })
+    },
+  )
+
+  it('fails closed under Electron with no bundled Node runtime', async () => {
+    mockElectronRuntime()
+    resolveBundledWindowsNode.mockReset().mockReturnValue(null)
+    spawnBroker.mockReset()
+    const authorize = vi.fn(() => true)
+    const operation = runBroker(ticket, 'revoke', authorize)
+    await expect(operation).rejects.toThrow(
+      'bundled Windows Node runtime for the Job broker is missing',
+    )
+    expect(resolveBundledWindowsNode).toHaveBeenCalledTimes(1)
+    expect(spawnBroker).not.toHaveBeenCalled()
+    expect(authorize).not.toHaveBeenCalled()
+    expect(brokerFailureDiagnostic(operation)).toBeUndefined()
+  })
+})
 
 async function preparingWireLease(signal?: AbortSignal) {
   const release = wireChild()
@@ -408,6 +525,8 @@ describe('native commit observation protocol', () => {
   it('lets an admitted release finish its native decision and close after activation abort', async () => {
     const owner = new AbortController()
     const { release, job, commit } = await wireLease(owner.signal)
+    const settled = vi.fn()
+    void commit.then(settled)
     owner.abort()
     expect(job.markStop()).toBe(false)
     const revoke = job.lease.revoke()
@@ -420,9 +539,14 @@ describe('native commit observation protocol', () => {
     expect(release.commands.at(-1)).toMatchObject({ type: 'closeSources' })
     release.released()
     await release.eof()
+    release.child.emit('exit', 0, null)
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled() // Process exit is not the host/pipe join.
     expect(release.child.kill).not.toHaveBeenCalled()
     release.child.emit('close', 0, null)
     await commit
+    expect(settled).toHaveBeenCalledTimes(1)
+    expect(release.child.kill).not.toHaveBeenCalled()
     await denied
     expect(job.lease.revoke()).toBe(revoke)
     expect(spawnBroker).toHaveBeenCalledTimes(1)
