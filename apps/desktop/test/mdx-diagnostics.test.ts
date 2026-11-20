@@ -234,19 +234,32 @@ describe('MDX diagnostics lease acquisition', () => {
     diagnostics.close()
   })
 
-  test('replacement of the leased file fails closed', async () => {
-    const { diagnostics, root } = await fixture()
+  test('replacement during the compile path check fails closed as a context change', async () => {
+    const trustGate = gate<boolean>()
+    let trustedCalls = 0
+    let signalRetired!: () => void
+    const retired = new Promise<void>((resolve) => (signalRetired = resolve))
+    const { diagnostics, root } = await fixture({
+      trusted: async () => {
+        trustedCalls += 1
+        if (trustedCalls === 7) return trustGate.promise
+        return true
+      },
+      retireResourceOwner: signalRetired,
+    })
     const lease = await diagnostics.acquire({
       remote: identity.remote,
       path: 'docs/page.mdx',
       context: 'token',
     })
+    const compiling = diagnostics.compile({ lease: lease.lease, generation: 1, source: '# page' })
+    while (trustedCalls < 7) await new Promise((resolve) => setImmediate(resolve))
     const replacement = join(root, 'docs/replacement.mdx')
     await writeFile(replacement, '# Page')
     await rename(replacement, join(root, 'docs/page.mdx'))
-    await expect(
-      diagnostics.compile({ lease: lease.lease, generation: 1, source: '# page' }),
-    ).rejects.toThrow('MDX context changed')
+    await retired
+    trustGate.resolve(true)
+    await expect(compiling).rejects.toThrow('MDX context changed')
     diagnostics.close()
   })
 

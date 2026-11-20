@@ -31,6 +31,7 @@ type Lease = {
   watcher: FSWatcher
   highGeneration: number
   controller: AbortController | null
+  contextChanged: boolean
   closed: boolean
   resourceOwner: MdxResourceOwner
 }
@@ -194,6 +195,7 @@ export function createMdxDiagnostics(options: {
           watcher: null as unknown as FSWatcher,
           highGeneration: 0,
           controller: null,
+          contextChanged: false,
           closed: false,
           resourceOwner: null as unknown as MdxResourceOwner,
         }
@@ -216,9 +218,12 @@ export function createMdxDiagnostics(options: {
                 currentPath !== join(currentRoot, vaultRelPath(lease.path)) ||
                 !currentInfo.isFile() ||
                 currentFingerprint !== lease.fingerprint
-              )
+              ) {
+                lease.contextChanged = true
                 drop(lease)
+              }
             } catch {
+              lease.contextChanged = true
               drop(lease)
             }
           })
@@ -280,6 +285,7 @@ export function createMdxDiagnostics(options: {
       const controller = new AbortController()
       lease.controller = controller
       const state = await pathState(lease)
+      if (lease.contextChanged) fail('MDX context changed')
       if (
         lease.controller !== controller ||
         input.generation !== lease.highGeneration ||
